@@ -282,3 +282,84 @@ def test_inclusion_gate_logs_kept_and_dropped(tmp_path, monkeypatch):
         r.get("symbol") == "KEEP" and r.get("decision") == "kept"
         for r in kept_rows
     )
+
+
+def test_range_pos_reads_admit_range_pos_spelling(_ledger_tmp):
+    """admission_filter stamps rows as ``admit_range_pos``; the ledger must
+    capture it, including a legitimate 0.0 (bottom of range)."""
+    rows = [
+        ("AAA", {"symbol": "AAA", "source": "momentum", "admit_range_pos": 88.5}, 88.5),
+        ("BBB", {"symbol": "BBB", "source": "momentum", "admit_range_pos": 0.0}, 0.0),
+        ("CCC", {"symbol": "CCC", "source": "momentum", "range_pos": 42.0}, 42.0),
+    ]
+    for sym, row, _ in rows:
+        pl.log_proposal(
+            stage="inclusion",
+            symbol=sym,
+            proposer="momentum",
+            decision="dropped",
+            reason="admit_range_pos",
+            row=row,
+            cfg=CFG_ON,
+        )
+    got = {d["symbol"]: d.get("range_pos") for d in _lines(_ledger_tmp)}
+    for sym, _, want in rows:
+        assert got[sym] == want, f"{sym}: expected range_pos {want}, got {got[sym]!r}"
+
+
+def test_range_pos_absent_when_row_has_neither(_ledger_tmp):
+    pl.log_proposal(
+        stage="inclusion",
+        symbol="DDD",
+        proposer="momentum",
+        decision="dropped",
+        reason="not_uptrend",
+        row={"symbol": "DDD", "source": "momentum"},
+        cfg=CFG_ON,
+    )
+    assert "range_pos" not in _lines(_ledger_tmp)[0]
+
+
+def _et_ts(day: int, hh: int, mm: int = 0) -> float:
+    import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.datetime(
+        2026, 9, day, hh, mm, tzinfo=ZoneInfo("America/New_York")
+    ).timestamp()
+
+
+def test_inclusion_carries_all_seed_proposers(_ledger_tmp):
+    """Shortlist rows carry only the first-wins source; inclusion must still
+    name everyone who proposed the symbol, and flag that the label collapsed."""
+    for proposer in ("momentum", "grok"):
+        pl.log_proposal(stage="seed", symbol="GME", proposer=proposer,
+                        decision="kept", cfg=CFG_ON, ts=_et_ts(16, 9))
+    pl.log_proposal(stage="seed", symbol="VEEA", proposer="trending",
+                    decision="kept", cfg=CFG_ON, ts=_et_ts(16, 9))
+    for sym, src in (("GME", "momentum"), ("VEEA", "trending")):
+        pl.log_proposal(stage="inclusion", symbol=sym, proposer=src,
+                        decision="kept", owner=src, cfg=CFG_ON,
+                        ts=_et_ts(16, 9, 1))
+
+    inc = {d["symbol"]: d for d in _lines(_ledger_tmp) if d["stage"] == "inclusion"}
+    assert inc["GME"]["proposers_seen"] == ["momentum", "research:xai"]
+    assert inc["GME"]["proposer_collapsed"] is True
+    # Single proposer is not a collapse — do not cry wolf.
+    assert inc["VEEA"]["proposers_seen"] == ["trending"]
+    assert inc["VEEA"]["proposer_collapsed"] is False
+
+
+def test_day_rollover_writes_fresh_first_sight(_ledger_tmp):
+    """Unchanged state on a new ET day must write a real first-sight row, not
+    wait for a heartbeat — the scorecard anchors on first proposal."""
+    args = dict(stage="seed", symbol="AAA", proposer="momentum",
+                decision="dropped", reason="thin_rvol", cfg=CFG_ON)
+    pl.log_proposal(**args, ts=_et_ts(16, 9))
+    pl.log_proposal(**args, ts=_et_ts(16, 9, 1))   # same day, suppressed
+    pl.log_proposal(**args, ts=_et_ts(17, 9))      # next day, fresh
+
+    rows = _lines(_ledger_tmp)
+    assert [r["day"] for r in rows] == ["2026-09-16", "2026-09-17"]
+    assert all(r["heartbeat"] is False for r in rows)
+    # Rollover bounds memory to one session.
+    assert len(pl._last) == 1 and len(pl._seed_proposers) == 1

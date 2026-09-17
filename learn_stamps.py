@@ -164,6 +164,9 @@ _FINGERPRINT_KEYS = (
     "ai_local_trail_decay_idle_sec",
     "ai_local_trail_decay_step_r",
     "ai_local_trail_decay_max_mfe_r",
+    # Where the green catch-up stop parks: last (legacy overtake) vs
+    # last-$0.01 (e7fa69e). Different exit prices, so it must stamp.
+    "ai_local_trail_decay_overtake",
     # Dead-trade is a time-stop, so it decides holds the same way the
     # min-hold gate does — and the two now interact.
     "ai_dead_trade_min",

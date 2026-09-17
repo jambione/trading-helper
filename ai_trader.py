@@ -317,6 +317,41 @@ def _watch_rejected(limit: int = 12) -> list[dict]:
         return []
 
 
+def _extreme_off_book_meta(limit: int = 8) -> list[dict]:
+    """Last admit_funnel extreme off-book rows (symbol, pct, reason)."""
+    try:
+        import ai_entry_watch as ew
+        path = ew.REPORT_DIR / "admit_funnel.json"
+        if not path.exists():
+            return []
+        data = json.loads(path.read_text(encoding="utf-8"))
+        rows = data.get("extreme_off_book") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            return []
+        out = []
+        for r in rows[:limit]:
+            if not isinstance(r, dict) or not r.get("symbol"):
+                continue
+            out.append({
+                "symbol": str(r.get("symbol") or "").upper(),
+                "pct": r.get("pct"),
+                "reason": r.get("reason"),
+                "stage": r.get("stage"),
+                "source": r.get("source"),
+            })
+        return out
+    except Exception:
+        return []
+
+
+def _extreme_move_pct_meta() -> float:
+    try:
+        import ai_entry_watch as ew
+        return float(ew.extreme_move_pct(None))
+    except Exception:
+        return 100.0
+
+
 def _positions_payload(
     mode: str,
     now: float,
@@ -513,6 +548,9 @@ def _positions_payload(
             # at this bug died on 2026-08-31 for want of exactly this.
             "quote_paths": _quote_path_stats(),
             "decision_max_age_sec": decision_max_age,
+            # Extreme day-movers off the book + reason (from last admit funnel).
+            "extreme_off_book": _extreme_off_book_meta(),
+            "extreme_move_pct": _extreme_move_pct_meta(),
         },
         "duel": _duel_public(),
     }
@@ -1430,7 +1468,6 @@ def main() -> None:
                 except Exception as e:  # noqa: BLE001
                     print(f"[ai] manage_open_positions failed: {e}",
                           flush=True)
-
 
                 # Phase B premarket session (Hybrid C). Default OFF / dry —
                 # no broker orders when ai_phase_b_dry_run. Isolated from

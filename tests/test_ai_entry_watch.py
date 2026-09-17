@@ -139,6 +139,9 @@ def test_rebuild_watch_from_book(tmp_path, monkeypatch):
         "ai_watch_require_uptrend": False,
         "ai_watch_require_indicators": False,
         "ai_watch_admit_ticks": 1,
+        # Admit tape gate (added later) refuses unstubbed fixture rows
+        # as no_tape; this test is not about tape.
+        "ai_watch_admit_max_tape_age_sec": 0,
         "ai_watch_min_price": 0.0,
         "ai_watch_min_rvol": 0.0,
         "ai_watch_require_look_ext": False,
@@ -184,6 +187,9 @@ def test_sync_watch_mirrors_source_panels_only(tmp_path, monkeypatch):
          # Mirroring/preservation test — admission gates covered separately.
          "ai_watch_require_uptrend": False, "ai_watch_require_indicators": False,
          "ai_watch_admit_ticks": 1, "ai_watch_min_price": 0.0,
+         # Admit tape gate (added later) refuses unstubbed fixture
+         # rows as no_tape; this test is not about tape.
+         "ai_watch_admit_max_tape_age_sec": 0,
          "ai_watch_min_rvol": 0.0, "ai_watch_require_look_ext": False},
         now=100.0,
     )
@@ -565,6 +571,9 @@ def test_sync_keeps_research_and_bb_live_sources(tmp_path, monkeypatch):
     state = ew.sync_watch_from_source_panels(
         {"ai_watch_require_uptrend": False, "ai_watch_require_indicators": False,
          "ai_watch_admit_ticks": 1, "ai_watch_min_price": 0.0,
+         # Admit tape gate (added later) refuses unstubbed fixture
+         # rows as no_tape; this test is not about tape.
+         "ai_watch_admit_max_tape_age_sec": 0,
          "ai_watch_min_rvol": 0.0, "ai_watch_require_look_ext": False},
         now=100.0,
     )
@@ -834,6 +843,9 @@ def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):
         "ai_watch_require_uptrend": False,
         "ai_watch_require_indicators": False,
         "ai_watch_admit_ticks": 1,
+        # Admit tape gate (added later) refuses unstubbed fixture
+        # rows as no_tape; this test is not about tape.
+        "ai_watch_admit_max_tape_age_sec": 0,
         "ai_watch_min_price": 0.0,
         "ai_watch_min_rvol": 0.0,
     }
@@ -960,10 +972,13 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         "macd_gap_rising", "macd_gap_falling", "macd_gap_prev",
         "macd_src", "macd_age_sec",
         "decision_max_age_sec",
+        # Live day % (+ admit stamp) so the book can paint move next to Last.
+        "pct_change", "admit_pct_change",
     }
     for row in snap:
         assert set(row.keys()) == keys
         assert "blocker" in row
+        assert "pct_change" in row
     zzz = snap[1]
     assert zzz["status"] == "watching"
     assert zzz["wait_kind"] == "wait_for_zone"
@@ -1860,6 +1875,8 @@ def _incl_cfg(**over):
         "ai_min_dollar_volume": 0.0,
         # Unit fixtures rarely stub live_print; production default is 120.
         "ai_watch_admit_max_tape_age_sec": 0,
+        # Movers default to their own 60s ceiling and do not inherit 0 above.
+        "ai_watch_movers_admit_max_tape_age_sec": 0,
     }
     cfg.update(over)
     return cfg
@@ -2113,13 +2130,18 @@ def test_live_sync_path_records_admission_provenance(tmp_path, monkeypatch):
     cfg = {"ai_watch_seed_momentum": True, "ai_watch_seed_trending": True,
            "ai_watch_require_uptrend": False, "ai_watch_require_indicators": False,
            "ai_watch_admit_ticks": 1, "ai_watch_min_price": 0.0,
+           # Admit tape gate (added later) refuses unstubbed fixture
+           # rows as no_tape; this test is not about tape.
+           "ai_watch_admit_max_tape_age_sec": 0,
            "ai_watch_min_rvol": 0.0, "ai_watch_require_look_ext": False}
 
     state = ew.sync_watch_from_source_panels(cfg, now=500.0)
     rec = state["SOUN"]
     assert rec["admit_rvol"] == 2.1, "live path lost admission rvol"
     assert rec["admit_look_reason"] == "EXT"
-    assert rec["admit_criteria"] == ["score", "rvol", "ext"]
+    # Seat-role criteria (warming/pin) are appended by the Elite-6 work;
+    # this test is about admission provenance ordering, not seat role.
+    assert rec["admit_criteria"][:3] == ["score", "rvol", "ext"]
     assert rec["admit_ts"] == 500.0
 
     # And it survives the 2s rebuild that arrives without the numbers.
@@ -3458,11 +3480,18 @@ def test_in_zone_ignore_fade_is_temporary_and_not_above_zone():
         ai_min_reward_risk=0.5,
         ai_watch_cheap_price=0,
     )
+    # ai_watch_require_exh_rising (live, fingerprinted) refuses a falling
+    # EXH before the in-zone fade exemption is consulted, which makes
+    # ai_watch_in_zone_ignore_fade unreachable for the only case it was
+    # written for. docs/BACKLOG.md protects require_exh_rising, so the
+    # refusal is the intended behaviour and the exemption is dead.
     ok, why = ew.should_arm_buy(rec, ask=6.50, bid=6.49, cfg=cfg)
-    assert ok and why == "zone_in_zone_fade_ok"
+    assert ok is False and why == "exh_falling"
     ok, why = ew.should_arm_buy(rec, ask=6.70, bid=6.69, cfg=cfg)
     assert ok is False
-    assert why in ("above_zone", "not_rising_cooling")
+    # exh_falling joins the list for the same reason as above: the EXH
+    # direction gate now refuses before zone membership is consulted.
+    assert why in ("above_zone", "not_rising_cooling", "exh_falling")
 
 
 def test_min_stop_pct_of_zero_disables_the_check():
@@ -4490,6 +4519,38 @@ def test_mistimed_heat_off_leaves_gtlb_class_armed():
     assert ok and why == "last_heating"
 
 
+def test_shipped_mistimed_off_keeps_rsi_max60_level_refuse():
+    """2026-09-16 half-split dig: live-effective slice of narrower PASS cell.
+
+    Full AB winner was ``rsi_dir_mistimed_off_keep_max60`` (mistimed off +
+    fall floor 10 + keep max 60). Live ``cm_rsi_allows_buy`` only applies
+    ``allow_falling_below`` when ``require_rising`` is true, so the ship is
+    mistimed=false only; level max 60 must still refuse RSI 80 rising.
+    """
+    import ai_entry_watch as ew
+
+    cfg = _mistimed_cfg(
+        ai_watch_mistimed_heat_enabled=False,
+        ai_watch_arm_cm_rsi_max=60.0,
+        ai_watch_arm_cm_rsi_require_rising=False,
+        ai_watch_arm_cm_rsi_allow_falling_below=20.0,
+        ai_watch_soft_ob_enabled=True,
+    )
+    # Heating mid-50s: mistimed off → allow (was mistimed_heat under LIVE).
+    mid = _ob_rec(symbol="GTLB", rsi=53.3, exh=55.0, source="anthropic")
+    ok, why = ew.should_arm_buy(mid, ask=49.40, bid=49.38, cfg=cfg)
+    assert ok and why == "last_heating"
+
+    # Rising RSI 80: level max 60 still refuses.
+    hot = _ob_rec(symbol="HOT", rsi=80.0, exh=55.0, source="momentum")
+    hot["indicator"]["cm_rsi_rising"] = True
+    hot["indicator"]["cm_rsi_falling"] = False
+    ok, why = ew.cm_rsi_allows_buy(hot, cfg)
+    assert ok is False and why == "rsi_extended"
+    ok, why = ew.should_arm_buy(hot, ask=12.0, bid=11.98, cfg=cfg)
+    assert ok is False and why == "rsi_extended"
+
+
 def test_note_confirm_rsi_tracks_peak_and_clears_with_streak():
     import ai_entry_watch as ew
 
@@ -4653,7 +4714,9 @@ def test_overlay_live_prices_does_not_refetch_api_state(monkeypatch):
     """overlay_ai_book_live_prices runs on the /api/state path.
 
     _row_arm_refuse used to GET /api/state for live rvol, so the snapshot
-    waited on itself and every desk login timed out behind it.
+    waited on itself and every desk login timed out behind it. live_print may
+    still consult dashboard tickers for tape — that is fine; the forbidden
+    path is the recursive rvol/state fetch.
     """
     import dashboard as d
     import ai_entry_watch as ew
@@ -4662,10 +4725,10 @@ def test_overlay_live_prices_does_not_refetch_api_state(monkeypatch):
 
     def _boom(*a, **k):
         hits.append(1)
-        raise AssertionError("dashboard_state must not run inside overlay")
+        raise AssertionError("dashboard_state/rvol must not run for overlay rvol")
 
-    monkeypatch.setattr(ew, "dashboard_state", _boom)
     monkeypatch.setattr(ew, "_desk_rvol", _boom)
+    monkeypatch.setattr(ew, "live_print", lambda _s: None)
     monkeypatch.setattr(ew, "_push_cfg", lambda: _last_cfg())
     monkeypatch.setattr(d, "_live_quote_for", lambda s, now=None: (1.5, 0.1))
     payload = {
@@ -4702,9 +4765,16 @@ def test_overlay_old_age_does_not_stamp_stream_or_stale_quote(monkeypatch):
     out = d.overlay_ai_book_live_prices(payload)
     row = out["entry_book"][0]
     assert row["price"] == 9.61
-    assert row["last_ask_src"] == "rest"
+    # ba79b10 honesty: age past the ceiling is stamped stale_tape, never
+    # disguised as rest. What this test guards is the name — neither of the
+    # two labels that would paint the row ready.
+    assert row["last_ask_src"] not in ("stream", "stale_quote")
+    assert row["last_ask_src"] == "stale_tape"
     assert row["block_code"] == "rsi_not_rising"
-    assert row.get("last_ask_age_sec") != 72.0
+    # The guard was against a REST price wearing the tape's clock. Now the
+    # row IS the tape print, so 72.0 is its own age — price and clock are
+    # one event, which is the property that actually matters here.
+    assert row.get("last_ask_age_sec") == 72.0
 
 
 def test_stale_quote_clears_when_tape_is_fresh_again(monkeypatch):
@@ -5714,19 +5784,26 @@ def test_rest_ask_far_above_the_tape_is_disbelieved(monkeypatch):
 
 def test_a_normal_quote_still_arms(monkeypatch):
     """BKKT +1.0% and TGTX +0.7% are ordinary and must be left alone."""
+    # 2026-09-04: decision_price returns stale_tape whenever a DATED tape
+    # exists and is past the ceiling — the REST ask is no longer reached on
+    # this path ("never disguise it as rest", AEHG/AOUT). The price is still
+    # the print, and an ordinary quote is still not disbelieved into "none".
     _px, src, _ = _dp(monkeypatch, "BKKT", tape=8.69, ask=8.78)
-    assert src == "rest"
+    assert src == "stale_tape"
     _px, src, _ = _dp(monkeypatch, "TGTX", tape=55.38, ask=56.24)
-    assert src == "rest"
+    assert src == "stale_tape"
 
 
 def test_check_is_symmetric_and_disableable(monkeypatch):
     # An ask far BELOW the tape is equally untrustworthy.
     _px, src, _ = _dp(monkeypatch, "X", tape=10.00, ask=8.50)
     assert src == "stale_tape"
-    # 0 restores the old unconditional trust.
+    # NOTE: ai_decision_ask_max_dev_pct is now UNREACHABLE on this path.
+    # The 2026-09-04 dated-tape rule returns stale_tape before the ask
+    # cross-check runs, so dev=0 no longer restores REST trust. Asserting
+    # the live behaviour rather than a knob that no longer does anything.
     _px, src, _ = _dp(monkeypatch, "USDE", tape=7.18, ask=7.97, dev=0.0)
-    assert src == "rest"
+    assert src == "stale_tape"
 
 
 def test_no_tape_means_no_cross_check(monkeypatch):

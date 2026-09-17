@@ -366,6 +366,9 @@ function _bookRows(book) {
       exh_window_min: w.exh_window_min != null ? w.exh_window_min : null,
       exh_hh: w.exh_hh != null ? w.exh_hh : null,
       exh_ll: w.exh_ll != null ? w.exh_ll : null,
+      // Day move — wire first; Momentum overlay below may refresh it.
+      pct_change: w.pct_change != null ? w.pct_change : null,
+      admit_pct_change: w.admit_pct_change != null ? w.admit_pct_change : null,
     };
   }
   // Live positions always win (P&L / qty).
@@ -493,6 +496,26 @@ function _bookChgClass(pct) {
   if (n > 0) return 'chg-pos';
   if (n < 0) return 'chg-neg';
   return '';
+}
+
+/** Format day % for the Last cell chip (Scan-style). */
+function _fmtBookChg(pct) {
+  if (pct == null || !Number.isFinite(Number(pct))) return '';
+  const n = Number(pct);
+  const sign = n > 0 ? '+' : '';
+  return `${sign}${n.toFixed(1)}%`;
+}
+
+/** Prefer live pct_change; admit stamp only when live is missing. */
+function _bookPct(r) {
+  if (!r) return null;
+  if (r.pct_change != null && Number.isFinite(Number(r.pct_change))) {
+    return Number(r.pct_change);
+  }
+  if (r.admit_pct_change != null && Number.isFinite(Number(r.admit_pct_change))) {
+    return Number(r.admit_pct_change);
+  }
+  return null;
 }
 
 /** Last painted price per book symbol — drives up/down flash like Momentum. */
@@ -1085,6 +1108,39 @@ function _paintBookLegend(cfg, row) {
   if (el.innerHTML !== html) el.innerHTML = html;
 }
 
+/** Extreme day-movers off the book — each must show a reason. */
+function _paintExtremeOffBook(sectionEl, book) {
+  if (!sectionEl) return;
+  const el = sectionEl.querySelector('[data-ai-book-extreme-off]');
+  if (!el) return;
+  const meta = (book && book.watch_meta) || {};
+  const rows = Array.isArray(meta.extreme_off_book) ? meta.extreme_off_book : [];
+  const floor = meta.extreme_move_pct != null ? Number(meta.extreme_move_pct) : 100;
+  if (!rows.length) {
+    el.hidden = true;
+    if (el.textContent) el.textContent = '';
+    return;
+  }
+  const bits = rows.slice(0, 6).map((r) => {
+    const sym = String((r && r.symbol) || '').toUpperCase();
+    if (!sym) return '';
+    const pctN = r.pct != null ? Number(r.pct) : NaN;
+    const pct = Number.isFinite(pctN)
+      ? `${pctN > 0 ? '+' : ''}${pctN.toFixed(0)}%`
+      : '';
+    const why = String((r && r.reason) || 'unknown').replace(/_/g, ' ');
+    return pct ? `${sym} ${pct} · ${why}` : `${sym} · ${why}`;
+  }).filter(Boolean);
+  if (!bits.length) {
+    el.hidden = true;
+    return;
+  }
+  const floorTxt = Number.isFinite(floor) ? `≥${floor.toFixed(0)}%` : 'extreme';
+  const txt = `OFF BOOK ${floorTxt} · ${bits.join('  ·  ')}`;
+  if (el.textContent !== txt) el.textContent = txt;
+  el.hidden = false;
+}
+
 function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
   if (!rowsEl) return;
   const rows = _sortBookRows(_bookRows(book));
@@ -1092,6 +1148,7 @@ function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
     _paintBookLegend(get('config'),
       _legendFor ? rows.find(x => String(x.symbol || '') === _legendFor) : null);
   } catch (e) { /* legend is never load-bearing */ }
+  try { _paintExtremeOffBook(sectionEl, book); } catch (e) { /* strip is diagnostic */ }
   _announcePositions(rows);
   const nOpen = rows.filter(r => r && r.phase === 'open').length;
   const nReady = rows.filter(r => r && r.phase === 'ready').length;
@@ -1423,9 +1480,14 @@ function _updateBookRow(el, r) {
         'price-flash--up', 'price-flash--down'), 600);
     }
     if (rawPx != null) _bookPrevPrices[symKey] = rawPx;
-    if (priceEl.textContent !== px) priceEl.textContent = px;
+    const pct = _bookPct(r);
+    const chgTxt = _fmtBookChg(pct);
+    const wantHtml = chgTxt
+      ? `${_esc(px)}<span class="cell-chg-inline">${_esc(chgTxt)}</span>`
+      : _esc(px);
+    if (priceEl.innerHTML !== wantHtml) priceEl.innerHTML = wantHtml;
     // Steady day-change colour (same chg-pos / chg-neg as Momentum CHG%).
-    const chgMod = _bookChgClass(r.pct_change);
+    const chgMod = _bookChgClass(pct);
     priceEl.classList.toggle('chg-pos', chgMod === 'chg-pos');
     priceEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
   }
@@ -1472,7 +1534,9 @@ function _bookRowHtml(r) {
   if (rawPx != null && _bookPrevPrices[sym] === undefined) {
     _bookPrevPrices[sym] = rawPx;
   }
-  const chgMod = _bookChgClass(r.pct_change);
+  const pct = _bookPct(r);
+  const chgMod = _bookChgClass(pct);
+  const chgTxt = _fmtBookChg(pct);
   const qty = isOpen ? _fmtQty(r.qty) : '—';
   const pl = isOpen ? _fmtPl(r) : '—';
   const plCls = isOpen ? _plClass(r) : '';
@@ -1481,13 +1545,16 @@ function _bookRowHtml(r) {
     : ((phase === 'ready' || statusLabel === 'ready' || statusLabel === 'buy')
       ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-ready'
       : 'ticker-row feed-row feed-row--ai-book');
+  const priceInner = chgTxt
+    ? `${_esc(px)}<span class="cell-chg-inline">${_esc(chgTxt)}</span>`
+    : _esc(px);
   return `<div class="${rowCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}">`
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}${r.bro_call
       ? `<span class="bro-badge" title="Trader Bro called this one out">BRO</span>`
       : ''}</div>`
     + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
-    + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
+    + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${priceInner}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
     + `<div class="cell-rsi${_rsiPairClass(r)}${crit.rsi === true ? ' crit--pass' : ''}"${_fmtRsiTitle(r) ? ` title="${_esc(_fmtRsiTitle(r))}"` : ''}>${_esc(_bookRsiText(r))}</div>`

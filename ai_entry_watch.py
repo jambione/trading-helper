@@ -1635,13 +1635,17 @@ def _soft_seed_source_rows(cfg: dict) -> list[dict]:
                 s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
                 if not s or not s[0].isalpha() or s in have:
                     continue
+                pct = _pct_change_value(r.get("pct_change"))
                 if is_levered_etp(s):
+                    _note_seed_drop("momentum", s, "levered_etp",
+                                    pct=pct, price=r.get("price"))
                     continue
                 if not _price_under_cap(r.get("price"), max_price):
+                    _note_seed_drop("momentum", s, "price_cap",
+                                    pct=pct, price=r.get("price"))
                     continue
                 if _is_wash_look(r):
                     continue
-                pct = _pct_change_value(r.get("pct_change"))
                 try:
                     px = float(r.get("price")) if r.get("price") is not None else None
                 except (TypeError, ValueError):
@@ -3577,6 +3581,10 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             # Same ceiling the arm gate uses, so the UI cannot say stale at 8s
             # while the poller still buys at 30s.
             "decision_max_age_sec": decision_max_age_sec(_push_cfg()),
+            # Live day % (desk first, admit stamp fallback). Book UI paints
+            # this next to Last; without it only Momentum dual-lists colored.
+            "pct_change": _wire_pct_change(sym, rec),
+            "admit_pct_change": _f_or_none(rec.get("admit_pct_change")),
         })
     # Ready first, then higher score, then symbol for stable UI.
     rows.sort(key=lambda r: (
@@ -3676,6 +3684,8 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "blocker": b_label,
         "block_reason": b_label,
         "block_detail": rec.get("block_detail"),
+        "pct_change": _wire_pct_change(sym, rec),
+        "admit_pct_change": _f_or_none(rec.get("admit_pct_change")),
         "qty": None,
         "avg_entry": None,
         "pl": None,
@@ -4831,6 +4841,32 @@ def _price_under_cap(px: Any, max_price: Any) -> bool:
     return p < cap
 
 
+def extreme_move_pct(cfg: dict | None = None) -> float:
+    """Day-chg % at/above which an off-book name needs an explicit reason."""
+    c = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(c.get("ai_watch_extreme_move_pct", 100.0) or 0.0))
+    except (TypeError, ValueError):
+        return 100.0
+
+
+def _wire_pct_change(sym: str, rec: dict | None = None) -> float | None:
+    """Live desk day % for the book wire; admit stamp as fallback."""
+    live = None
+    try:
+        live = _desk_pct_change(sym)
+    except Exception:
+        live = None
+    if live is not None:
+        return live
+    if isinstance(rec, dict):
+        for key in ("pct_change", "admit_pct_change"):
+            v = _pct_change_value(rec.get(key))
+            if v is not None:
+                return v
+    return None
+
+
 _RESEARCH_SOURCES = frozenset({
     "research", "xai", "agy", "google", "gemini", "anthropic", "grok", "claude",
     "a", "g", "x", "ax", "gx", "ai",
@@ -5132,8 +5168,12 @@ def _big_mover_from_dashboard(
         if not s or not s[0].isalpha():
             continue
         if is_levered_etp(s):
+            _note_seed_drop("momentum", s, "levered_etp", pct=pct,
+                            price=r.get("price"))
             continue
         if not _price_under_cap(r.get("price"), max_price):
+            _note_seed_drop("momentum", s, "price_cap", pct=pct,
+                            price=r.get("price"))
             continue
         try:
             px = float(r.get("price")) if r.get("price") is not None else None
@@ -5451,16 +5491,20 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         },
                     )
                     continue
+                seed_pct = _pct_change_value(r.get("pct_change"))
                 if is_levered_etp(s):
+                    _note_seed_drop("momentum", s, "levered_etp",
+                                    pct=seed_pct, price=r.get("price"))
                     continue
                 if not _price_under_cap(r.get("price"), max_price):
+                    _note_seed_drop("momentum", s, "price_cap",
+                                    pct=seed_pct, price=r.get("price"))
                     continue
                 # Known-thin tape: hot day-move waives (same as movers).
                 try:
                     rv = float(r.get("rvol")) if r.get("rvol") is not None else None
                 except (TypeError, ValueError):
                     rv = None
-                seed_pct = _pct_change_value(r.get("pct_change"))
                 if rvol_blocks_admit(
                         rv, seed_pct, cfg, source="momentum") == "thin_rvol":
                     _note_seed_drop("momentum", s, "thin_rvol",
@@ -5558,9 +5602,21 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                 }))
             open_scored.sort(key=lambda t: t[0], reverse=True)
             added = 0
+            extreme_floor = extreme_move_pct(cfg)
             for _, r in open_scored:
                 if added >= n:
-                    break
+                    # Extreme movers truncated by soft-open N must not vanish.
+                    pct_left = _pct_change_value(r.get("pct_change"))
+                    if (
+                        extreme_floor > 0
+                        and pct_left is not None
+                        and pct_left + 1e-12 >= extreme_floor
+                        and r["symbol"] not in seen
+                    ):
+                        _note_seed_drop(
+                            "momentum", r["symbol"], "shortlist_cap",
+                            pct=pct_left, price=r.get("price"))
+                    continue
                 if r["symbol"] in seen:
                     _note_proposal_overlap("momentum", r["symbol"], row=r)
                     continue
@@ -6052,6 +6108,18 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
         except Exception:
             pass
 
+    # Extreme movers on the desk that never made the shortlist must still
+    # carry a reason (price_cap / levered / shortlist_cap / …). Silent miss
+    # is the failure mode the operator called out for +100% names.
+    try:
+        _audit_extreme_desk_movers(
+            cfg,
+            seated={str(r.get("symbol") or "").upper() for r in rows if r},
+            max_price=max_price,
+        )
+    except Exception:
+        pass
+
     return rows
 
 
@@ -6196,6 +6264,145 @@ def seed_drop_snapshot() -> dict:
         "counts": {s: dict(c) for s, c in _seed_drop_counts.items()},
         "samples": {s: list(v) for s, v in _seed_drop_samples.items()},
     }
+
+
+def _seed_drop_reason_for(symbol: str) -> tuple[str | None, float | None, float | None]:
+    """Latest seed-drop reason/pct/price for *symbol* this sync, if any."""
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return None, None, None
+    for samples in _seed_drop_samples.values():
+        for row in reversed(samples or []):
+            if str(row.get("symbol") or "").upper() != sym:
+                continue
+            return (
+                str(row.get("reason") or "") or None,
+                _f_or_none(row.get("pct")),
+                _f_or_none(row.get("price")),
+            )
+    return None, None, None
+
+
+def _audit_extreme_desk_movers(
+    cfg: dict,
+    *,
+    seated: set[str],
+    max_price: Any = None,
+) -> None:
+    """Ensure every desk name ≥ extreme_move_pct has a seed-drop reason if off shortlist.
+
+    Classifies leftovers the seed loops never touched (or silently skipped
+    before logging existed). Fail-open; never raises into trading.
+    """
+    floor = extreme_move_pct(cfg)
+    if floor <= 0:
+        return
+    seated_u = {str(s or "").upper() for s in (seated or set()) if s}
+    try:
+        tickers = _dashboard_tickers()
+    except Exception:
+        tickers = []
+    for r in tickers:
+        if not isinstance(r, dict):
+            continue
+        s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+        if not s or not s[0].isalpha():
+            continue
+        if s in seated_u:
+            continue
+        pct = _pct_change_value(r.get("pct_change"))
+        if pct is None or pct + 1e-12 < floor:
+            continue
+        why, _, _ = _seed_drop_reason_for(s)
+        if why:
+            continue
+        # Classify what the seed path would have done.
+        if is_levered_etp(s):
+            _note_seed_drop("momentum", s, "levered_etp",
+                            pct=pct, price=r.get("price"))
+            continue
+        if not _price_under_cap(r.get("price"), max_price):
+            _note_seed_drop("momentum", s, "price_cap",
+                            pct=pct, price=r.get("price"))
+            continue
+        if pct <= 0:
+            _note_seed_drop("momentum", s, "not_uptrend",
+                            pct=pct, price=r.get("price"))
+            continue
+        try:
+            rv = float(r.get("rvol")) if r.get("rvol") is not None else None
+        except (TypeError, ValueError):
+            rv = None
+        thin = rvol_blocks_admit(rv, pct, cfg, source="momentum")
+        if thin:
+            _note_seed_drop("momentum", s, thin, pct=pct, rvol=rv,
+                            price=r.get("price"))
+            continue
+        # Cleared seed filters but still not shortlisted — capacity / claim.
+        _note_seed_drop("momentum", s, "shortlist_miss",
+                        pct=pct, price=r.get("price"), rvol=rv)
+
+
+def extreme_off_book_rows(
+    *,
+    kept_symbols: list[str] | None = None,
+    rejected: list[dict] | None = None,
+    cfg: dict | None = None,
+    limit: int = 12,
+) -> list[dict]:
+    """Operator-facing list: extreme day-movers not kept, each with a reason."""
+    floor = extreme_move_pct(cfg)
+    if floor <= 0:
+        return []
+    kept = {str(s or "").upper() for s in (kept_symbols or []) if s}
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    # Inclusion rejects with extreme pct.
+    for r in rejected or []:
+        if not isinstance(r, dict):
+            continue
+        sym = str(r.get("symbol") or "").upper().strip()
+        if not sym or sym in kept or sym in seen:
+            continue
+        pct = _pct_change_value(r.get("pct_change"))
+        if pct is None:
+            pct = _pct_change_value(r.get("pct"))
+        if pct is None or pct + 1e-12 < floor:
+            continue
+        why = str(r.get("reason") or "inclusion_reject").strip() or "inclusion_reject"
+        seen.add(sym)
+        out.append({
+            "symbol": sym,
+            "pct": round(float(pct), 2),
+            "reason": why,
+            "stage": "inclusion",
+            "source": str(r.get("source") or "") or None,
+        })
+
+    # Seed-drop samples at/above the floor.
+    for src, samples in (_seed_drop_samples or {}).items():
+        for row in samples or []:
+            if not isinstance(row, dict):
+                continue
+            sym = str(row.get("symbol") or "").upper().strip()
+            if not sym or sym in kept or sym in seen:
+                continue
+            pct = _f_or_none(row.get("pct"))
+            if pct is None or pct + 1e-12 < floor:
+                continue
+            seen.add(sym)
+            out.append({
+                "symbol": sym,
+                "pct": round(float(pct), 2),
+                "reason": str(row.get("reason") or "seed_drop"),
+                "stage": "seed",
+                "source": str(row.get("source") or src or "") or None,
+                "price": _f_or_none(row.get("price")),
+            })
+
+    out.sort(key=lambda r: -(r.get("pct") or 0.0))
+    return out[: max(0, int(limit or 0))]
 
 
 def _push_cfg() -> dict:
@@ -7631,6 +7838,12 @@ def write_admit_funnel(
     )
     # Scouts == warming seats in the funnel; sync later stamps live book counts.
     scout_n = warming_n
+    extreme_off = extreme_off_book_rows(
+        kept_symbols=kept_symbols,
+        rejected=list(rejected or []),
+        cfg=_push_cfg(),
+        limit=12,
+    )
     payload = {
         "ts": round(t0, 2),
         "n_candidates": len(candidates or []),
@@ -7644,6 +7857,9 @@ def write_admit_funnel(
         "inclusion_reject_reasons": dict(rej_reasons),
         "seed_drops": seed,
         "kept_symbols": kept_symbols,
+        # +100% (or knob) day-movers not on the book — each with a reason.
+        "extreme_off_book": extreme_off,
+        "extreme_move_pct": extreme_move_pct(_push_cfg()),
     }
     path = REPORT_DIR / "admit_funnel.json"
     try:

@@ -179,7 +179,9 @@ def test_the_engine_stamps_the_pair_at_write_time():
     its timestamp under one lock as one event."""
     src = (_ROOT / "signal_engine.py").read_text(encoding="utf-8")
     i = src.index("def _write_signal_state")
-    body = src[i:i + 3000]
+    # Docstring + promote path are long; keep enough of the writer body.
+    j = src.find("\ndef ", i + 1)
+    body = src[i:j if j > i else i + 8000]
     assert "rt_bars.last_trade(" in body, "one lock, one event"
     assert "rt_price_age_sec" in body
     assert "proximity_state()" in body, "still the base row"

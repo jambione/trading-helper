@@ -57,7 +57,11 @@ def _row(sym="AAA", **over):
 
 def _cfg(**over):
     c = {"ai_watch_max_float_m": 20.0, "ai_watch_require_uptrend": False,
-         "ai_watch_min_price": 1.0, "ai_min_dollar_volume": 0.0}
+         "ai_watch_min_price": 1.0, "ai_min_dollar_volume": 0.0,
+         # This file tests the float gate. The admit tape gate (added later)
+         # would refuse every fixture row as no_tape before float is reached;
+         # it has its own coverage in test_etp_and_stale_timeout.py.
+         "ai_watch_admit_max_tape_age_sec": 0}
     c.update(over)
     return c
 

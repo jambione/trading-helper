@@ -589,19 +589,28 @@ def test_a_pinned_overbought_reading_passes_when_macd_is_armed():
 
 def test_a_pinned_overbought_reading_is_still_refused_without_the_flag():
     rec = {"symbol": "AAA", "indicator": dict(
-        _armed_ind(), pctr=0.0, pctr_rising=False, pctr_falling=False)}
-    ok, why = ew.exhaustion_allows_buy(rec, RT)
+        _armed_ind(), pctr=0.0, pctr_rising=False, pctr_falling=False,
+        pctr_src="live")}
+    cfg = dict(RT, ai_watch_exhaustion_rules=True, ai_watch_require_exh_rising=True,
+               ai_watch_exhaustion_heat_max_pct=0.0,
+               ai_watch_exhaustion_heat_min_pct=0.0)
+    ok, why = ew.exhaustion_allows_buy(rec, cfg)
     assert ok is False
-    assert why == "not_rising_overbought"
+    assert why == "exh_not_rising"
 
 
 def test_a_rolling_over_top_is_still_refused_with_the_flag():
     """The half that must not regress: falling is checked before this."""
     rec = {"symbol": "AAA", "indicator": dict(
-        _armed_ind(), pctr=0.0, pctr_rising=False, pctr_falling=True)}
-    ok, why = ew.exhaustion_allows_buy(rec, _OBFLAT)
+        _armed_ind(), pctr=0.0, pctr_rising=False, pctr_falling=True,
+        pctr_src="live")}
+    cfg = dict(_OBFLAT, ai_watch_exhaustion_rules=True,
+               ai_watch_require_exh_rising=True,
+               ai_watch_exhaustion_heat_max_pct=0.0,
+               ai_watch_exhaustion_heat_min_pct=0.0)
+    ok, why = ew.exhaustion_allows_buy(rec, cfg)
     assert ok is False
-    assert why == "not_rising_overbought"
+    assert why == "exh_falling"
 
 
 def test_a_pinned_reading_is_refused_when_macd_is_not_armed():

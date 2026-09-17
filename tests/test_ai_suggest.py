@@ -526,15 +526,14 @@ def test_momentum_and_trending_candidate_rows(tmp_path):
     assert all(r["symbol"] != "BTC" for r in heat)
 
 
-def test_defaults_are_three_scheduled_runs_at_full_depth():
+def test_defaults_are_two_scheduled_runs_at_full_depth():
     """Cost is dominated by search fees, not thinking tokens, so effort buys
-    cheap depth — spend is cut by running three times a day instead."""
+    cheap depth — spend is cut by running twice a day (pre-open + afternoon)."""
     from config import DEFAULT_CONFIG
 
     assert DEFAULT_CONFIG["claude_effort"] == "high"
-    # 11:30 and 14:30 are both inside RTH (08:30 is pre-open prep) — two real
-    # chances a day to actually open a position, not just one.
-    assert DEFAULT_CONFIG["claude_research_times"] == ["08:30", "11:30", "14:30"]
+    # 08:30 pre-open prep; 14:30 inside RTH. Midday 11:30 slot was dropped.
+    assert DEFAULT_CONFIG["claude_research_times"] == ["08:30", "14:30"]
     assert DEFAULT_CONFIG["claude_research_weekdays_only"] is True
 
 

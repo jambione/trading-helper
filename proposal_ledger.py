@@ -37,8 +37,18 @@ _lock = threading.Lock()
 _PATH_OVERRIDE: Path | None = None
 
 # In-process last-write map: (symbol, proposer_norm, stage) -> state.
-# Cleared only by tests via reset_dedupe_state().
+# Cleared by tests via reset_dedupe_state() and on ET day rollover.
 _last: dict[tuple[str, str, str], dict[str, Any]] = {}
+# Seed-stage proposers seen this ET day: symbol -> {proposer_norm}. The
+# shortlist row carries only the first-wins winner (later sources hit `seen`
+# and continue), so inclusion rows cannot name the true proposer on their own.
+# This records every proposer at seed stage so inclusion can say who was there.
+_seed_proposers: dict[str, set[str]] = {}
+# ET day the two maps above belong to. A rollover clears both: otherwise the
+# first row of a new day for an unchanged name is suppressed until the
+# heartbeat fires, and the scorecard's "first proposal" anchor lands late on a
+# heartbeat row. Also bounds memory to one session.
+_cur_day: str | None = None
 
 
 def _report_dir() -> Path:
@@ -65,9 +75,12 @@ def set_ledger_path_for_tests(path: Path | None) -> None:
 
 
 def reset_dedupe_state() -> None:
-    """Clear in-process dedupe map (tests)."""
+    """Clear in-process dedupe / attribution state (tests, day rollover)."""
+    global _cur_day
     with _lock:
         _last.clear()
+        _seed_proposers.clear()
+        _cur_day = None
 
 
 def _f(v: Any) -> float | None:
@@ -119,7 +132,14 @@ def _pick_features(row: dict[str, Any] | None, extra: dict[str, Any] | None) -> 
     if rvol_raw is not None:
         out["rvol_raw"] = rvol_raw
 
+    # admission_filter writes the canonical value onto the row as
+    # ``admit_range_pos`` (admission_filter.py:140); its snapshot payload uses
+    # the bare ``range_pos``. Read both or the largest inclusion gate
+    # (admit_range_pos, ~37% of refuses) is logged without the input that
+    # caused it. Explicit None checks — 0.0 is a legitimate range position.
     range_pos = _f(src.get("range_pos"))
+    if range_pos is None:
+        range_pos = _f(src.get("admit_range_pos"))
     if range_pos is not None:
         out["range_pos"] = range_pos
 
@@ -211,6 +231,15 @@ def log_proposal(
         key = (sym, prop_norm, stage_s)
 
         with _lock:
+            global _cur_day
+            if day != _cur_day:
+                _last.clear()
+                _seed_proposers.clear()
+                _cur_day = day
+            if stage_s == "seed":
+                # Record before the dedupe decision: a suppressed row still
+                # means this proposer named the symbol today.
+                _seed_proposers.setdefault(sym, set()).add(prop_norm)
             prev = _last.get(key)
             is_heartbeat = False
             if prev is None:
@@ -238,6 +267,15 @@ def log_proposal(
                 "decision": dec,
                 "heartbeat": bool(is_heartbeat),
             }
+            if stage_s == "inclusion":
+                # `proposer` here is the shortlist row's source — the first-wins
+                # winner, not necessarily who found the name. Say so, and carry
+                # everyone who proposed it at seed so attribution stays
+                # recoverable without re-deriving first-wins order.
+                seen_props = sorted(_seed_proposers.get(sym, ()))
+                if seen_props:
+                    out["proposers_seen"] = seen_props
+                    out["proposer_collapsed"] = len(seen_props) > 1
             if why is not None:
                 out["reason"] = why
             if owner is not None and str(owner).strip():

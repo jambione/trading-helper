@@ -501,6 +501,10 @@ DEFAULT_CONFIG = {
     "ai_watch_movers_min_rvol":         1.0,
     # Day-chg % that waives known-thin RVOL at seed + inclusion. 0 = off.
     "ai_watch_hot_move_rvol_waive_pct": 20.0,
+    # Extreme day-move accountability: desk names at/above this % that are
+    # not on the book must carry an explicit seed/inclusion reason (never
+    # silent). Used for funnel extreme_off_book + operator strip. 0 = off.
+    "ai_watch_extreme_move_pct": 100.0,
     "ai_watch_arm_min_rvol":            0.0,
     # Credibility bound, not a heat ceiling. A relative-volume reading above
     # this is not a hot name, it is a broken number, and the desk must not
@@ -1803,6 +1807,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_min_rvol",
     "ai_watch_movers_min_rvol",
     "ai_watch_hot_move_rvol_waive_pct",
+    "ai_watch_extreme_move_pct",
     "ai_watch_arm_min_rvol",
     "ai_watch_arm_rvol_sane_max",
     "ai_watch_look_max",

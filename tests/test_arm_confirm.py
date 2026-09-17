@@ -43,16 +43,21 @@ def _rec(pctr):
         "macd_gap_rising": True, "macd_gap_falling": False}}
 
 
-def _exh_cfg():
-    """The operator's config with the EXH rules forced ON.
+def _exh_cfg(**over):
+    """EXH rules forced ON with knobs isolated from live bot_config.
 
-    These two tests assert what exhaustion_allows_buy decides. Reading
-    ai_watch_exhaustion_rules off the live file makes them assert whether
-    the desk currently consults EXH at all, which is a different question
-    and one that flips with a knob (it went false on 2026-09-01).
+    These tests assert what exhaustion_allows_buy decides for the flat-OB
+    exemption. Live lean Plan A turns the exemption off and may set a heat
+    max — neither belongs in this fixture.
     """
     c = dict(_config.load_config())
     c["ai_watch_exhaustion_rules"] = True
+    c["ai_watch_require_exh_rising"] = True
+    c["ai_watch_ob_allow_flat_when_macd_armed"] = True
+    c["ai_watch_ob_flat_min_pct"] = 99.0
+    c["ai_watch_exhaustion_heat_min_pct"] = 0.0
+    c["ai_watch_exhaustion_heat_max_pct"] = 0.0
+    c.update(over)
     return c
 
 
@@ -69,7 +74,9 @@ def test_gap_at_eighty_percent_is_refused():
     c = _exh_cfg()
     ok, why = ew.exhaustion_allows_buy(_rec(-19.3), c)
     assert ok is False
-    assert why == "not_rising_overbought"
+    # Gaining-EXH rule: flat below the pinned ceiling is exh_not_rising
+    # (legacy label was not_rising_overbought when require_exh_rising was off).
+    assert why == "exh_not_rising"
 
 
 def test_the_threshold_is_configurable_and_near_the_ceiling():
@@ -126,10 +133,9 @@ def test_the_rebuild_must_not_eat_the_count():
     happened to skip. Arming was a race, not a confirmation.
     """
     src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
-    i = src.index('"block_code", "block_reason", "block_ts", "block_detail",')
-    carried = src[i:i + 400]
-    assert '"arm_streak"' in carried, "the 2s rebuild must carry the count"
-    assert '"arm_streak_poll"' in carried, "...and the poll it was earned on"
+    # Carry-over whitelist inside sync rebuild (not the earlier pop() list).
+    needle = '"zone_touch_ts", "arm_streak", "arm_streak_poll"'
+    assert needle in src, "the 2s rebuild must carry the count"
 
 
 def test_non_consecutive_polls_do_not_accumulate():
@@ -171,10 +177,11 @@ def test_the_poll_resets_on_refusal_and_gates_on_the_streak():
     # so a name vetoed on the post-refresh check left no trace on disk.
     src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
     i = src.index("ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)")
-    body = src[i:i + 4200]
+    body = src[i:i + 8000]
     assert "_arm_streak(rec, False" in body, "a refusal must reset the count"
     assert "streak < need_arm" in body
     assert 'set_block_reason(rec, "arm_confirming"' in body
+    assert 'why="arm_confirming"' in body
 
 
 def test_the_entry_bar_is_not_looser_than_the_exit():

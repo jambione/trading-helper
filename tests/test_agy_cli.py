@@ -16,8 +16,9 @@ def test_agy_is_the_anthropic_slot():
     assert m.is_agy_backend("gemini_cli")
     assert m.is_agy_backend("claude_cli", cli_bin="agy")
     assert not m.is_agy_backend("claude_cli", cli_bin="claude")
-    assert m.source_from_backend("agy") == "anthropic"
-    assert m.normalize_ai_source("gemini") == "anthropic"
+    # Canonical board label is agy (SOURCE_AGY); anthropic is a legacy alias only.
+    assert m.source_from_backend("agy") == "agy"
+    assert m.normalize_ai_source("gemini") == "agy"
 
 
 def test_agy_model_and_effort_maps():

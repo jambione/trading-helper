@@ -133,14 +133,21 @@ def test_a_mover_reaches_the_book(tmp_path, monkeypatch):
 def test_known_thin_rvol_does_not_seed_a_mover(tmp_path, monkeypatch):
     """WOOF 0.72 and MOVE 0.06 occupied the book on 2026-09-03 because
     movers were exempt from the known-thin gate. A None still seeds —
-    that is a producer who could not divide, not a thin tape."""
+    that is a producer who could not divide, not a thin tape.
+
+    Hot-move waive (default 20% day change) can still let a thin name through;
+    keep MOVE under that floor so this test stays about the thin gate.
+    """
     _write(tmp_path, monkeypatch, [
         {"symbol": "WOOF", "pct_change": 18.0, "price": 6.0, "rvol": 0.72},
-        {"symbol": "MOVE", "pct_change": 22.0, "price": 6.0, "rvol": 0.06},
+        {"symbol": "MOVE", "pct_change": 15.0, "price": 6.0, "rvol": 0.06},
         {"symbol": "HOT", "pct_change": 18.0, "price": 6.0, "rvol": 5.0},
         {"symbol": "UNK", "pct_change": 18.0, "price": 6.0, "rvol": None},
     ])
-    got = _seeded({"ai_watch_min_rvol": 2.0})
+    got = _seeded({
+        "ai_watch_min_rvol": 2.0,
+        "ai_watch_hot_move_rvol_waive_pct": 20.0,
+    })
     assert [r["symbol"] for r in got] == ["HOT", "UNK"]
 
 

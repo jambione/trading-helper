@@ -106,21 +106,22 @@ def test_a_crossed_gap_still_exits_within_seconds(monkeypatch):
 # ── breakeven now needs a real move ──────────────────────────────────────
 
 def test_breakeven_no_longer_arms_on_three_ticks():
-    """BULL: $9.645 fill, peak $9.655. At 0.15% the floor armed on a 1.4c
-    move and pinned the trade flat; at 0.4% that peak does not reach it."""
+    """BULL: $9.645 fill, peak $9.655 (~0.104%). At 0.15% the floor armed on
+    a 1.4¢ move and pinned the trade flat. Current default is 0 (off) so that
+    noise tick cannot arm; if re-enabled it must sit above this peak."""
     import config
     pct = float(config.load_config()["ai_local_trail_be_at_pct"])
     entry, peak = 9.645, 9.655
     gain = (peak - entry) / entry * 100.0
-    assert gain < pct, (
+    assert pct == 0.0 or gain < pct, (
         f"a {gain:.3f}% peak still arms a {pct}% breakeven floor")
 
 
 def test_breakeven_still_arms_inside_a_normal_move():
-    """It has to protect something. Median peak across the book is ~+0.31%
-    on quiet days and higher on movers, so the floor must sit under that."""
+    """When enabled, the floor must sit under a normal peak (~0.31%+). 0 = off."""
     import config
-    assert float(config.load_config()["ai_local_trail_be_at_pct"]) <= 0.5
+    pct = float(config.load_config()["ai_local_trail_be_at_pct"])
+    assert pct == 0.0 or pct <= 0.5
 
 
 # ── three strikes ────────────────────────────────────────────────────────

@@ -23,7 +23,7 @@ from config import DEFAULT_CONFIG  # noqa: E402
 def test_hot_move_waive_knobs_default():
     assert DEFAULT_CONFIG["ai_watch_movers_min_rvol"] == 1.0
     assert DEFAULT_CONFIG["ai_watch_hot_move_rvol_waive_pct"] == 20.0
-    assert DEFAULT_CONFIG["ai_watch_seed_movers_n"] == 16
+    assert DEFAULT_CONFIG["ai_watch_seed_movers_n"] == 8
 
 
 def test_rvol_blocks_admit_waives_hot_movers():
@@ -31,6 +31,11 @@ def test_rvol_blocks_admit_waives_hot_movers():
         "ai_watch_movers_min_rvol": 1.0,
         "ai_watch_min_rvol": 2.0,
         "ai_watch_hot_move_rvol_waive_pct": 20.0,
+        # This test is about the rvol waive, not the tape gate. Both knobs
+        # must be 0: movers_admit_max_tape_age_sec falls back to the general
+        # ceiling when it is <= 0, so zeroing one alone still gates.
+        "ai_watch_admit_max_tape_age_sec": 0,
+        "ai_watch_movers_admit_max_tape_age_sec": 0,
     }
     # BIAF-class: known-thin vs movers floor, but +52% waives.
     assert ew.rvol_blocks_admit(0.80, 52.0, cfg, source="movers") is None
@@ -56,6 +61,11 @@ def test_passes_inclusion_admits_hot_thin_mover(monkeypatch):
         "ai_watch_min_rvol": 2.0,
         "ai_watch_movers_min_rvol": 1.0,
         "ai_watch_hot_move_rvol_waive_pct": 20.0,
+        # This test is about the rvol waive, not the tape gate. Both knobs
+        # must be 0: movers_admit_max_tape_age_sec falls back to the general
+        # ceiling when it is <= 0, so zeroing one alone still gates.
+        "ai_watch_admit_max_tape_age_sec": 0,
+        "ai_watch_movers_admit_max_tape_age_sec": 0,
     }
     ok, met, why = ew.passes_inclusion(
         {"symbol": "BIAF", "source": "movers", "price": 19.4,
