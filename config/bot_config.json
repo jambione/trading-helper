@@ -384,7 +384,7 @@
   "ai_seed_rank_publish_mode": "union",
   "ai_seed_rank_per_model_max": 3,
   "ai_seed_rank_second_opinion": true,
-  "ai_phase_b_enabled": false,
+  "ai_phase_b_enabled": true,
   "ai_phase_b_dry_run": true,
   "ai_phase_b_start_time": "04:00",
   "ai_phase_b_entry_cutoff": "09:20",
