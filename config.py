@@ -268,18 +268,19 @@ DEFAULT_CONFIG = {
     # poller does not re-place every 20s (2026-08-11 QMCO thrash).
     "ai_wash_cooldown_sec":      1800.0,
     # ── Entry order shape ───────────────────────────────────────────────────
-    # "market" (desk default) or "limit". With broker stops ON, market means a
-    # true market/bracket parent. With ai_broker_stop_enabled=false (local-stop
-    # desk), "market" still submits a *marketable* DAY limit at send-ask×(1+pad)
-    # — bare ask rests and misses on thin IEX (GLXY 2026-09-03). Limit style
-    # pads then hard-caps at the zone top.
+    # "market" (desk default) or "limit". Plan A RTH: market → Alpaca MARKET
+    # buy (local-stop desk included). Limit style → marketable DAY limit
+    # (pad, zone-capped when broker stops on). Phase B / extended hours always
+    # uses limits — Alpaca rejects market orders outside RTH.
     "ai_entry_order_style":    "market",
-    # Marketable pad above the ask. Limit style: then hard-capped at zone top.
-    # Local-stop + market style: same pad, optionally dollar-capped via
+    # Marketable pad above the ask for limit-style / Phase B entries.
+    # Limit + broker stops: then hard-capped at zone top.
+    # Local-stop + limit: same pad, optionally dollar-capped via
     # ai_entry_marketable_pad_max_px (no zone cap — immediacy over geometry).
     "ai_entry_limit_pad_pct":     0.15,
-    # Dollar cap on the marketable pad for local-stop market-style entries
+    # Dollar cap on the marketable pad for local-stop *limit*-style entries
     # (ask*(1+pad) never more than ask+this). 0 disables the dollar cap.
+    # Irrelevant for Plan A market opens.
     "ai_entry_marketable_pad_max_px": 0.05,
     # An unfilled entry limit is cancelled after this long: if price left the
     # zone the setup is gone, and re-evaluating beats leaving a stale order

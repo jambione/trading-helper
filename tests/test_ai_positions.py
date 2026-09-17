@@ -271,6 +271,7 @@ class _StubBroker:
         self.cancel_calls: list[str] = []
         self.close_calls: list[str] = []
         self.limit_calls: list[dict] = []
+        self.market_calls: list[dict] = []
         self.broker_positions: dict = {}
 
     def is_active(self):
@@ -288,6 +289,19 @@ class _StubBroker:
     def size_by_risk(self, equity, risk_pct, entry, stop):
         return alpaca_trader.size_by_risk(equity, risk_pct, entry, stop)
 
+    def buy_market_shares(self, ticker, price, dollar_amount=None, **kwargs):
+        oid = f"mkt_{self._next_id}"
+        self._next_id += 1
+        qty = int(float(dollar_amount) / float(price)) if price and dollar_amount else 0
+        self.market_calls.append({
+            "ticker": ticker, "price": price, "dollar_amount": dollar_amount,
+            "kind": "market",
+        })
+        self.calls.append({
+            "ticker": ticker, "qty": qty, "naked": True, "kind": "market",
+        })
+        return {"ok": True, "order_id": oid, "status": "accepted", "qty": qty}
+
     def buy_limit_at_price(self, ticker, price, dollar_amount, **kwargs):
         oid = f"naked_{self._next_id}"
         self._next_id += 1
@@ -295,6 +309,8 @@ class _StubBroker:
         self.limit_calls.append({
             "ticker": ticker, "price": price, "dollar_amount": dollar_amount,
             "kind": "naked_limit",
+            "extended_hours": kwargs.get("extended_hours"),
+            "note": kwargs.get("note"),
         })
         self.calls.append({"ticker": ticker, "qty": qty, "naked": True})
         return {"ok": True, "order_id": oid, "status": "accepted"}
@@ -2143,7 +2159,7 @@ def test_place_scaled_entry_refuses_when_ask_is_through_the_stop(
 
 
 def test_place_scaled_entry_naked_limit_when_broker_stop_off(tmp_path, monkeypatch):
-    """Local ratchet owns the stop — parent buy is a bare limit."""
+    """Local ratchet owns the stop — parent buy is a bare limit (style=limit)."""
     _use_tmp_state(tmp_path, monkeypatch)
     monkeypatch.setattr(cp, "_entry_cfg", lambda: {
         "ai_day_scalp_dual_tranche": True,
@@ -2151,6 +2167,7 @@ def test_place_scaled_entry_naked_limit_when_broker_stop_off(tmp_path, monkeypat
         "ai_watch_synth_scale_out_pct": 50.0,
         "ai_max_position_pct": 25.0,
         "ai_broker_stop_enabled": False,
+        "ai_entry_order_style": "limit",
     })
     stub = _StubBroker()
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
@@ -2161,7 +2178,8 @@ def test_place_scaled_entry_naked_limit_when_broker_stop_off(tmp_path, monkeypat
         current_ask=40.5)
     assert out["ok"] is True
     assert stub.calls and stub.calls[0].get("naked") is True
-    assert not stub.limit_calls or stub.limit_calls[0].get("kind") == "naked_limit"
+    assert stub.limit_calls and stub.limit_calls[0].get("kind") == "naked_limit"
+    assert not stub.market_calls
     state = json.loads(_state_path(tmp_path).read_text())
     pos = state["NVDA"]
     # Working shelf is entry − 0.10R, not the 5% plan stop.
@@ -4187,7 +4205,7 @@ def test_anchor_falls_back_to_ask_when_the_book_is_unusable(monkeypatch):
     assert _anchor(monkeypatch, "bid", bid=0.0) == pytest.approx(76.37, abs=0.005)
 
 
-# ── Package A: marketable local-stop when style=market ───────────────────────
+# ── Package A: true MARKET on local-stop when style=market ───────────────────
 
 def test_marketable_local_limit_pads_and_dollar_caps(monkeypatch):
     _lim_cfg(monkeypatch, ai_entry_limit_pad_pct=0.15,
@@ -4202,14 +4220,13 @@ def test_marketable_local_limit_pads_and_dollar_caps(monkeypatch):
     assert cp._marketable_local_limit(100.0) == 100.15
 
 
-def test_local_stop_market_style_uses_padded_limit_and_stamps_ttl_anchor(
+def test_local_stop_market_style_uses_market_buy_not_limit(
         tmp_path, monkeypatch):
-    """GLXY-class: market + broker_stop off must not rest a bare ask.
-
-    Bare ask left entry_limit_price=None so the 30s limit TTL never bound and
-    the order sat until entry_unconfirmed_expired (~15m).
-    """
+    """Plan A local-stop + style=market → Alpaca MARKET; no limit TTL anchor."""
     _use_tmp_state(tmp_path, monkeypatch)
+    events = tmp_path / "events.jsonl"
+    events.write_text("")
+    monkeypatch.setattr(cp, "EVENTS_PATH", events)
     monkeypatch.setattr(cp, "_entry_cfg", lambda: {
         "ai_day_scalp_dual_tranche": True,
         "ai_entry_broker_target": True,
@@ -4220,6 +4237,7 @@ def test_local_stop_market_style_uses_padded_limit_and_stamps_ttl_anchor(
         "ai_entry_limit_pad_pct": 0.15,
         "ai_entry_marketable_pad_max_px": 0.05,
         "ai_entry_limit_ttl_sec": 30.0,
+        "ai_local_trail_give_r": 0.10,
     })
     stub = _StubBroker()
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
@@ -4229,12 +4247,154 @@ def test_local_stop_market_style_uses_padded_limit_and_stamps_ttl_anchor(
         "nvda", decision, account_equity=50_000.0, risk_pct=1.0,
         current_ask=40.50)
     assert out["ok"] is True
+    assert out.get("order_type") == "MARKET"
+    assert stub.market_calls, "expected buy_market_shares"
+    assert not stub.limit_calls, "buy_limit_at_price must not be called"
+    assert stub.market_calls[0]["price"] == pytest.approx(40.50)
+    state = json.loads(_state_path(tmp_path).read_text())
+    pos = state["NVDA"]
+    assert pos.get("entry_limit_price") is None
+    assert pos.get("entry_order_type") == "MARKET"
+    assert pos.get("protection_mode") == "local_stop"
+    assert pos.get("local_stop_price") == pytest.approx(
+        40.5 - 0.10 * (40.5 - 38.0))
+    rows = [json.loads(l) for l in events.read_text().splitlines() if l.strip()]
+    oks = [r for r in rows if r.get("kind") == "entry_ok"]
+    assert oks and oks[-1].get("order_type") == "MARKET"
+
+
+def test_local_stop_limit_style_still_uses_marketable_limit_and_ttl(
+        tmp_path, monkeypatch):
+    """Explicit style=limit on local-stop desk → marketable limit + TTL anchor."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_entry_broker_target": True,
+        "ai_watch_synth_scale_out_pct": 50.0,
+        "ai_max_position_pct": 25.0,
+        "ai_broker_stop_enabled": False,
+        "ai_entry_order_style": "limit",
+        "ai_entry_limit_pad_pct": 0.15,
+        "ai_entry_marketable_pad_max_px": 0.05,
+        "ai_entry_limit_ttl_sec": 30.0,
+        "ai_local_trail_give_r": 0.10,
+    })
+    stub = _StubBroker()
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    decision = _buy_decision(entry_low=40.0, entry_high=41.0, stop_price=38.0,
+                             target_1=42.0)
+    out = cp.place_scaled_entry(
+        "nvda", decision, account_equity=50_000.0, risk_pct=1.0,
+        current_ask=40.50)
+    assert out["ok"] is True
+    assert out.get("order_type") == "LIMIT"
     assert stub.limit_calls, "expected naked marketable limit"
+    assert not stub.market_calls
     lim = float(stub.limit_calls[0]["price"])
-    assert lim == pytest.approx(40.55, abs=0.001)
+    # style=limit uses _entry_limit_price (ask+pad, zone-capped): 40.50*1.0015
+    assert lim == pytest.approx(40.56, abs=0.001)
     assert lim > 40.50
     state = json.loads(_state_path(tmp_path).read_text())
     pos = state["NVDA"]
-    assert pos["entry_limit_price"] == pytest.approx(40.55, abs=0.001), (
-        "TTL anchor must be the resting limit, not None"
+    assert pos["entry_limit_price"] == pytest.approx(40.56, abs=0.001)
+    assert pos.get("entry_order_type") == "LIMIT"
+    assert pos.get("local_stop_price") == pytest.approx(
+        40.5 - 0.10 * (40.5 - 38.0))
+
+
+def test_phase_b_local_stop_still_uses_limit_extended_hours(
+        tmp_path, monkeypatch):
+    """Phase B extended hours must stay on DAY limit even when style=market."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_entry_broker_target": True,
+        "ai_watch_synth_scale_out_pct": 50.0,
+        "ai_max_position_pct": 25.0,
+        "ai_broker_stop_enabled": False,
+        "ai_entry_order_style": "market",
+        "ai_entry_limit_pad_pct": 0.15,
+        "ai_entry_marketable_pad_max_px": 0.05,
+        "ai_phase_b_entry_limit_pad_pct": 0.15,
+        "ai_phase_b_entry_limit_pad_max_px": 0.05,
+    })
+    stub = _StubBroker(market_open=False)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    class _PB:
+        @staticmethod
+        def enabled():
+            return True
+
+        @staticmethod
+        def phase_b_allow_entries():
+            return True
+
+        @staticmethod
+        def dry_run():
+            return False
+
+        @staticmethod
+        def entry_limit_price(last, cfg=None):
+            return round(float(last) * 1.0015, 2)
+
+    monkeypatch.setitem(sys.modules, "phase_b", _PB)
+    decision = _buy_decision(entry_low=40.0, entry_high=41.0, stop_price=38.0,
+                             target_1=42.0)
+    decision["phase_b"] = True
+    decision["arm_last"] = 40.50
+    out = cp.place_scaled_entry(
+        "nvda", decision, account_equity=50_000.0, risk_pct=1.0,
+        current_ask=40.50)
+    assert out["ok"] is True
+    assert stub.limit_calls, "Phase B must use limit, not market"
+    assert not stub.market_calls
+    assert stub.limit_calls[0].get("extended_hours") is True
+    state = json.loads(_state_path(tmp_path).read_text())
+    pos = state["NVDA"]
+    assert pos.get("entry_order_type") == "LIMIT"
+    assert pos.get("entry_limit_price") is not None
+    assert pos.get("protection_mode") == "local_stop"
+    assert pos.get("local_stop_price") is not None
+
+
+def test_market_entry_confirm_does_not_dead_on_limit_slip(
+        tmp_path, monkeypatch):
+    """MARKET fill above submit ask must not trip fill-vs-limit dead logic."""
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {
+        "ai_fill_abort_r": 0.15,
+        "ai_broker_stop_enabled": False,
+        "ai_stale_data_flatten": False,
+        "ai_local_trail_enabled": False,
+        "ai_dead_trade_min": 0,
+        "ai_watch_exhaustion_rules": False,
+        "ai_position_shadow_enabled": False,
+        "ai_heal_unprotected": False,
+        "ai_sell_signal_breakeven": False,
+    })
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_price=40.50, entry_stop_price=38.0, stop_price=38.0,
+        risk_per_share=2.5, target_1=42.0,
+        entry_confirmed=False, entry_limit_price=None,
+        entry_order_type="MARKET",
+        tranche_a_order_id="mkt_1",
+        qty_a=10, qty_b=10, total_qty=20,
+        local_stop_price=40.25, protection_mode="local_stop",
     )
+    # Paid up vs submit ask — would look like adverse limit slip if we
+    # incorrectly treated ask as a resting limit basis for dead-fill.
+    stub = _StubBrokerManage(
+        order_status="new", current_price=40.85,
+        fills={"mkt_1": 40.80}, live_qty=20)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    events = cp.manage_open_positions(now=1_000_100.0)
+    assert not any(e.get("event") == "fill_through_stop" for e in events)
+    assert "NVDA" not in stub.closed
+    state = json.loads(_state_path(tmp_path).read_text())
+    pos = state["NVDA"]
+    assert pos.get("entry_confirmed") is True
+    assert pos.get("entry_price") == pytest.approx(40.80)
+    assert pos.get("closing_reason") is None
+    # Slip vs submit ask (40.50), not a phantom limit.
+    assert pos.get("entry_slippage_r") == pytest.approx(0.12)

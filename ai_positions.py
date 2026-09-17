@@ -1140,13 +1140,13 @@ def _marketable_local_limit(
     current_ask: float | None,
     cfg: dict[str, Any] | None = None,
 ) -> float | None:
-    """Marketable DAY limit for local-stop + market-style entries.
+    """Marketable DAY limit for local-stop + *limit*-style (and Phase B) entries.
 
-    With ``ai_broker_stop_enabled=false``, a bare ask limit rests and often
-    never fills on thin IEX (GLXY 2026-09-03: limit $26.67 while tape walked
-    to ~$26.76, then ``entry_unconfirmed_expired``). Pad above the *send* ask
-    so the order takes liquidity; optional dollar cap keeps the pad small on
-    higher-priced names. No zone cap — this path chose immediacy over geometry.
+    Plan A RTH with ``ai_entry_order_style=market`` uses a true MARKET buy
+    instead. This helper remains for explicit limit style and Phase B
+    extended-hours (Alpaca rejects market orders outside RTH). Pad above the
+    *send* ask so a resting limit can still take liquidity; optional dollar
+    cap keeps the pad small on higher-priced names. No zone cap.
     """
     cfg = cfg if isinstance(cfg, dict) else _entry_cfg()
     try:
@@ -1700,15 +1700,38 @@ def place_scaled_entry(
         qty_a = int(total_qty)
         qty_b = 0
 
-    # Local-stop desk: always a marketable limit so TTL binds and the order
-    # can take liquidity. Market style used to fall through to bare ask with
-    # entry_limit_price=None — 30s TTL never applied and GLXY-class rests missed.
+    # Local-stop desk parent shape:
+    # - Plan A RTH + ai_entry_order_style=market → true Alpaca MARKET buy.
+    #   No resting limit / 30s entry TTL (KPI: minutes with filled opens).
+    # - style=limit, or Phase B extended hours → marketable DAY limit only
+    #   (Alpaca rejects market orders outside RTH).
+    # Local software stop still stamps after fill either way — not naked.
+    style = str(cfg.get("ai_entry_order_style", "limit") or "limit").lower().strip()
+    use_market_entry = bool(not broker_stop and not _phase_b and style == "market")
     placed_entry_limit = entry_limit
-    if not broker_stop and placed_entry_limit is None:
+    if not broker_stop and not use_market_entry and placed_entry_limit is None:
         placed_entry_limit = _marketable_local_limit(current_ask, cfg)
+    entry_order_type = (
+        "MARKET" if use_market_entry
+        else ("LIMIT" if (placed_entry_limit or entry_limit) else "MARKET")
+    )
 
     def _place_parent():
         if not broker_stop:
+            if use_market_entry:
+                ref = float(current_ask or sizing_entry or 0)
+                if ref <= 0:
+                    return {"ok": False, "status": "no_price"}
+                out = alpaca_trader.buy_market_shares(
+                    ticker, ref,
+                    dollar_amount=float(parent_qty) * ref + 0.01,
+                ) or {}
+                if out.get("ok"):
+                    out["buy_order_id"] = out.get("order_id")
+                    out["stop_order_id"] = None
+                    out["target_order_id"] = None
+                    out["order_type"] = "MARKET"
+                return out
             lim = placed_entry_limit
             if not lim or lim <= 0:
                 return {"ok": False, "status": "no_limit"}
@@ -1727,6 +1750,7 @@ def place_scaled_entry(
                 out["stop_order_id"] = None
                 out["target_order_id"] = None
                 out["limit_px"] = float(lim)
+                out["order_type"] = "LIMIT"
             return out
         if entry_limit is not None:
             return alpaca_trader.buy_limit_bracket(
@@ -1849,7 +1873,13 @@ def place_scaled_entry(
         "qty_b": qty_b,
         "total_qty": total_qty,
         "entry_price": sizing_entry,
-        "entry_limit_price": (placed_entry_limit if not broker_stop else entry_limit),
+        # MARKET Plan A: None so manage_open_positions does not apply the
+        # short limit TTL / limit-confirm slip basis.
+        "entry_limit_price": (
+            None if use_market_entry
+            else (placed_entry_limit if not broker_stop else entry_limit)
+        ),
+        "entry_order_type": entry_order_type,
         "tranche_a_order_id": result_a.get("buy_order_id"),
         # The take-profit leg — NOT the parent buy. "Has tranche A scaled out?"
         # must key off this; the parent fills at entry. Dual path attaches this
@@ -1953,6 +1983,11 @@ def place_scaled_entry(
         parent_qty=parent_qty,
         protection_mode=protection_mode,
         local_stop_price=local_stop_px,
+        order_type=entry_order_type,
+        entry_limit_price=(
+            None if use_market_entry
+            else (placed_entry_limit if not broker_stop else entry_limit)
+        ),
     )
     try:
         import ai_duel as duel
@@ -1975,6 +2010,7 @@ def place_scaled_entry(
         "target_1": target_1,
         "local_stop_price": local_stop_px,
         "protection_mode": protection_mode,
+        "order_type": entry_order_type,
         "tranche_a": result_a,
         "tranche_b": result_b,
         "strategy": strategy,
@@ -5272,7 +5308,17 @@ def manage_open_positions(
                     # on it blocks good fills; this measures the price we really
                     # paid. Positive = we paid up. Feed a few days of these into
                     # ai_max_spread_r before turning that gate on.
+                    #
+                    # MARKET Plan A has no resting limit: slip vs submit-time
+                    # sizing ask (still in entry_price), and skip the
+                    # fill-vs-limit dead check meant for resting limits.
+                    is_mkt = (
+                        str(pos.get("entry_order_type") or "").upper() == "MARKET"
+                        or not _num(pos.get("entry_limit_price"))
+                    )
                     want = _num(pos.get("entry_limit_price"))
+                    if not (want and want > 0):
+                        want = _num(pos.get("entry_price"))
                     risk = _num(pos.get("risk_per_share"))
                     if want and want > 0 and risk and risk > 0:
                         pos["entry_slippage_r"] = round((fill - want) / risk, 4)
@@ -5280,13 +5326,20 @@ def manage_open_positions(
                     tape = _num(live.get("current")) or fill
                     planned = _num(pos.get("entry_stop_price")) or _num(
                         pos.get("stop_price"))
-                    intended = _num(pos.get("entry_limit_price")) or fill
+                    # Limit confirms: fill vs resting limit. Market: only
+                    # through-stop / tape-dead (intended=fill → no under-limit).
+                    intended = fill if is_mkt else (
+                        _num(pos.get("entry_limit_price")) or fill
+                    )
                     risk = _num(pos.get("risk_per_share"))
                     if (
                         fill_already_dead(
                             tape, fill, planned, risk, cfg=_cfg_all())
-                        or fill_already_dead(
-                            fill, intended, planned, risk, cfg=_cfg_all())
+                        or (
+                            not is_mkt
+                            and fill_already_dead(
+                                fill, intended, planned, risk, cfg=_cfg_all())
+                        )
                     ):
                         alpaca_trader.cancel_open_orders(ticker)
                         if _premarket_working_sell_on():
@@ -5419,8 +5472,13 @@ def manage_open_positions(
             # and leaving the order to rest for 15 minutes lets it fill long
             # after the zone has re-anchored away from it. Re-evaluating from
             # current state next poll is strictly better than a stale fill.
+            # MARKET Plan A parents have no entry_limit_price — keep the long
+            # unconfirmed TTL (fills are immediate; do not TTL-cancel them).
             eff_ttl = ttl
-            if pos.get("entry_limit_price"):
+            if (
+                pos.get("entry_limit_price")
+                and str(pos.get("entry_order_type") or "").upper() != "MARKET"
+            ):
                 try:
                     eff_ttl = min(ttl, float(
                         _entry_cfg().get("ai_entry_limit_ttl_sec", 30.0) or ttl))
@@ -5439,6 +5497,7 @@ def manage_open_positions(
                     "entry_unconfirmed_expired", symbol=ticker,
                     age_sec=round(age, 1), ttl_sec=eff_ttl,
                     entry_limit=pos.get("entry_limit_price"),
+                    order_type=pos.get("entry_order_type"),
                 )
                 events.append({
                     "ticker": ticker, "event": "entry_unconfirmed_expired",
