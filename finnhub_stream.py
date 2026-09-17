@@ -544,6 +544,39 @@ def get_latest_price(ticker: str) -> "float | None":
         return float(data["price"]) if data.get("price") else None
 
 
+def get_latest_print(ticker: str) -> "dict | None":
+    """Return stream last with age for Phase B arm/stop/limit anchors.
+
+    Keys: ``price``, ``trade_ts``, ``ts_unix``, ``age_sec``. Age prefers
+    ``trade_ts`` (when the print happened) over ``ts_unix`` (when we learned
+    it). None when the symbol has no stream price.
+    """
+    sym = str(ticker or "").upper().strip()
+    if not sym:
+        return None
+    now = time.time()
+    with FINNHUB_STATE.lock:
+        data = FINNHUB_STATE.prices.get(sym)
+        if data is None or not data.get("price"):
+            return None
+        try:
+            px = float(data["price"])
+        except (TypeError, ValueError):
+            return None
+        if px <= 0:
+            return None
+        trade_ts = data.get("trade_ts")
+        ts_unix = data.get("ts_unix")
+        basis = trade_ts if trade_ts is not None else ts_unix
+        age = (now - float(basis)) if basis is not None else None
+        return {
+            "price": px,
+            "trade_ts": trade_ts,
+            "ts_unix": ts_unix,
+            "age_sec": age,
+        }
+
+
 __all__ = [
     "FINNHUB_STATE",
     "MAX_WS_SUBSCRIPTIONS",
@@ -554,4 +587,5 @@ __all__ = [
     "get_subscribe_priority",
     "fetch_realtime_quote",
     "get_latest_price",
+    "get_latest_print",
 ]

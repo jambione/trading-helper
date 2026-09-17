@@ -1335,8 +1335,30 @@ def place_scaled_entry(
     # Alpaca rejects bracket orders (and plain market orders) outside regular
     # trading hours — both tranches need one or the other. A pre-market BUY
     # verdict is discarded rather than attempted and failing partway through.
-    if not alpaca_trader.market_is_open() and not bool(
-            decision.get("desk_force") or decision.get("skip_zone")):
+    #
+    # Phase B (docs/PHASE_B_PREMARKET.md) is the explicit exception: DAY limit
+    # + extended_hours only, gated by ai_phase_b_enabled + entry clock.
+    _phase_b = bool(decision.get("phase_b"))
+    if _phase_b:
+        try:
+            import phase_b as _pb
+            if not _pb.enabled() or not _pb.phase_b_allow_entries():
+                err = "phase_b_outside_entries"
+                log_event("entry_fail", symbol=ticker, reason=err)
+                return {"ok": False, "error": err}
+            if _pb.dry_run():
+                err = "phase_b_dry_run — no broker order"
+                log_event("entry_fail", symbol=ticker, reason=err)
+                return {"ok": False, "error": err, "dry_run": True}
+        except Exception as e:  # noqa: BLE001
+            err = f"phase_b_gate_error:{e}"
+            log_event("entry_fail", symbol=ticker, reason=err)
+            return {"ok": False, "error": err}
+    if (
+        not alpaca_trader.market_is_open()
+        and not bool(decision.get("desk_force") or decision.get("skip_zone"))
+        and not _phase_b
+    ):
         err = (
             "market is closed — bracket orders aren't valid outside regular "
             "trading hours; this entry was not queued for the open"
@@ -1646,6 +1668,19 @@ def place_scaled_entry(
     entry_limit = _entry_limit_price(
         current_ask, entry_high, entry_low, cap_at_zone=not skip_zone,
         current_bid=current_bid)
+    # Phase B: always stream-last + pad (never IEX ask anchor / never brackets).
+    if _phase_b:
+        try:
+            import phase_b as _pb
+            _pb_last = float(
+                decision.get("arm_last")
+                or current_ask
+                or sizing_entry
+                or 0
+            )
+            entry_limit = _pb.entry_limit_price(_pb_last, cfg=cfg) or entry_limit
+        except Exception:
+            pass
     broker_target = bool(cfg.get("ai_entry_broker_target", False))
     # Dual: stop-only parent; partial T1 after fill. Single: optional full TP.
     place_target = None if logical_dual else (target_1 if broker_target else None)
@@ -1656,6 +1691,14 @@ def place_scaled_entry(
     use_stop_mkt = bool(cfg.get("ai_stop_use_market", True))
     parent_qty = int(total_qty)
     broker_stop = bool(cfg.get("ai_broker_stop_enabled", True))
+    # Phase B: no broker stop outside RTH — software hard stop + working sell.
+    if _phase_b:
+        broker_stop = False
+        place_target = None
+        t1_attach_pending = False
+        logical_dual = False
+        qty_a = int(total_qty)
+        qty_b = 0
 
     # Local-stop desk: always a marketable limit so TTL binds and the order
     # can take liquidity. Market style used to fall through to bare ask with
@@ -1669,10 +1712,16 @@ def place_scaled_entry(
             lim = placed_entry_limit
             if not lim or lim <= 0:
                 return {"ok": False, "status": "no_limit"}
+            note = "phase_b_ext" if _phase_b else "local_stop_only"
+            # Phase B forces extended_hours=True (DAY limit) regardless of
+            # desk-wide _extended_hours policy / RTH clock.
+            kw = {}
+            if _phase_b:
+                kw["extended_hours"] = True
             out = alpaca_trader.buy_limit_at_price(
                 ticker, float(lim),
                 dollar_amount=float(parent_qty) * float(lim) + 0.01,
-                note="local_stop_only") or {}
+                note=note, **kw) or {}
             if out.get("ok"):
                 out["buy_order_id"] = out.get("order_id")
                 out["stop_order_id"] = None
@@ -1851,7 +1900,12 @@ def place_scaled_entry(
         # and stamps no %R. Both land in one outcomes.jsonl, where they were
         # indistinguishable — so a slice by entry_exhaustion_state silently
         # mixed gated and ungated rows. Named at the source instead.
-        "entry_path": decision.get("entry_path") or "unknown",
+        "entry_path": (
+            "phase_b" if _phase_b
+            else (decision.get("entry_path") or "unknown")
+        ),
+        "phase_b": bool(_phase_b),
+        "session": ("phase_b" if _phase_b else decision.get("session")),
         # Overbought-only entries: arm means we already tagged the band, so the
         # left_overbought exit is armed from the first position tick. Without
         # this latch a name that rolls under the band before the first poll
@@ -4001,9 +4055,23 @@ def _premarket_book(symbol: str) -> tuple[float | None, float | None]:
 
 
 def handoff_working_sell_to_rth(ticker: str, pos: dict) -> bool:
-    """09:30: cancel the ext-hours sell; the RTH ratchet owns the name."""
+    """09:30: cancel the ext-hours sell; the RTH ratchet owns the name.
+
+    Phase B lots with ``ai_phase_b_no_rth_handoff`` (v1 default) must not
+    hand off into Plan A — flatten before the bell or count as score failure.
+    """
     if not isinstance(pos, dict):
         return False
+    try:
+        import phase_b as _pb
+        if _pb.is_phase_b_position(pos) and not _pb.should_handoff_to_rth(pos):
+            log_event(
+                "phase_b_no_rth_handoff", symbol=ticker,
+                reason="ai_phase_b_no_rth_handoff",
+            )
+            return False
+    except Exception:
+        pass
     if not (pos.get("working_sell_id") or pos.get("working_sell_state")):
         return False
     if not _rth_now(time.time()):
@@ -4049,6 +4117,20 @@ def _rest_working_sell(
 
     cfg = _cfg_all()
     now = time.time()
+    # Phase B positions use scoped chase/slip knobs (ai_phase_b_*), not the
+    # global ai_premarket_* path — and do not require ai_premarket_working_sell.
+    try:
+        import phase_b as _pb
+        if _pb.is_phase_b_position(pos):
+            cfg = _pb.working_sell_cfg_overlay(pos, cfg)
+            try:
+                slip_override = _pb.flatten_slip_r(pos, cfg, now=now)
+                cfg = dict(cfg)
+                cfg["ai_premarket_max_exit_slip_r"] = slip_override
+            except Exception:
+                pass
+    except Exception:
+        pass
 
     # CHASE STEP. Premarket books are thin and jumpy; re-pricing on every
     # tick spends the rate limit chasing noise and can walk the resting sell

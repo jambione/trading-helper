@@ -479,10 +479,12 @@ def buy_limit_at_price(
     rsi: float = 0.0,
     hist: float = 0.0,
     note: str = "limit",
+    extended_hours: bool | None = None,
 ) -> dict:
     """Fixed-dollar BUY as whole-share DAY limit at an explicit price.
 
     Used by entry_pricing policy and by buy_limit_at_ask (ask+pad).
+    ``extended_hours`` None → ``ext_hours_now()``; Phase B passes True.
     """
     amount = float(dollar_amount if dollar_amount is not None else _trade_amount)
     mode_tag = f"[{_mode.upper()}]"
@@ -534,6 +536,7 @@ def buy_limit_at_price(
         from alpaca.trading.requests import LimitOrderRequest
         from alpaca.trading.enums import OrderSide, TimeInForce
 
+        ext = ext_hours_now() if extended_hours is None else bool(extended_hours)
         order = _client.submit_order(
             LimitOrderRequest(
                 symbol=ticker,
@@ -541,7 +544,7 @@ def buy_limit_at_price(
                 side=OrderSide.BUY,
                 time_in_force=TimeInForce.DAY,
                 limit_price=limit_px,
-                extended_hours=ext_hours_now(),
+                extended_hours=ext,
             )
         )
         order_id = str(order.id)
@@ -550,7 +553,8 @@ def buy_limit_at_price(
         _log_action("BUY", ticker, limit_px, rsi, hist,
                     order_id=order_id, order_status=status, qty=qty, note=note)
         return {"ok": True, "order_id": order_id, "status": status,
-                "note": None, "qty": qty, "limit_px": limit_px}
+                "note": None, "qty": qty, "limit_px": limit_px,
+                "extended_hours": ext}
     except Exception as e:
         print(f"  [TRADER] ❌  BUY order failed: {e}")
         _log_action("BUY_ERROR", ticker, limit_px, rsi, hist, error=str(e))

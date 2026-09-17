@@ -1,0 +1,131 @@
+{
+  "rows": [
+    {"kind": "arm", "day": "2026-09-11", "symbol": "AAA", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-11", "symbol": "AAA", "limit_px": 3.01, "last": 3.0},
+    {"kind": "fill", "day": "2026-09-11", "symbol": "AAA", "fill_px": 3.005, "last": 3.0, "entry_slip_pct": 0.17, "mfe_r": 0.35, "pl_pct": 0.80, "peak_opens": 1},
+    {"kind": "flat_on_time", "day": "2026-09-11", "symbol": "AAA"},
+
+    {"kind": "arm", "day": "2026-09-11", "symbol": "BBB", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-11", "symbol": "BBB", "limit_px": 2.51, "last": 2.5},
+    {"kind": "fill", "day": "2026-09-11", "symbol": "BBB", "fill_px": 2.505, "last": 2.5, "entry_slip_pct": 0.20, "mfe_r": 0.22, "pl_pct": 0.60, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-11", "symbol": "BBB"},
+
+    {"kind": "arm", "day": "2026-09-11", "symbol": "CCC", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-11", "symbol": "CCC", "limit_px": 4.01, "last": 4.0},
+    {"kind": "fill", "day": "2026-09-11", "symbol": "CCC", "fill_px": 4.01, "last": 4.0, "entry_slip_pct": 0.25, "mfe_r": 0.18, "pl_pct": 0.55, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-11", "symbol": "CCC"},
+
+    {"kind": "arm", "day": "2026-09-12", "symbol": "DDD", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-12", "symbol": "DDD", "limit_px": 3.51, "last": 3.5},
+    {"kind": "fill", "day": "2026-09-12", "symbol": "DDD", "fill_px": 3.505, "last": 3.5, "entry_slip_pct": 0.14, "mfe_r": 0.40, "pl_pct": 0.90, "peak_opens": 1},
+    {"kind": "flat_on_time", "day": "2026-09-12", "symbol": "DDD"},
+
+    {"kind": "arm", "day": "2026-09-12", "symbol": "EEE", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-12", "symbol": "EEE", "limit_px": 2.21, "last": 2.2},
+    {"kind": "fill", "day": "2026-09-12", "symbol": "EEE", "fill_px": 2.205, "last": 2.2, "entry_slip_pct": 0.23, "mfe_r": 0.15, "pl_pct": 0.40, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-12", "symbol": "EEE"},
+
+    {"kind": "arm", "day": "2026-09-12", "symbol": "FFF", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-12", "symbol": "FFF", "limit_px": 5.01, "last": 5.0},
+    {"kind": "fill", "day": "2026-09-12", "symbol": "FFF", "fill_px": 5.01, "last": 5.0, "entry_slip_pct": 0.20, "mfe_r": 0.28, "pl_pct": 0.70, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-12", "symbol": "FFF"},
+
+    {"kind": "arm", "day": "2026-09-13", "symbol": "GGG", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-13", "symbol": "GGG", "limit_px": 3.11, "last": 3.1},
+    {"kind": "fill", "day": "2026-09-13", "symbol": "GGG", "fill_px": 3.105, "last": 3.1, "entry_slip_pct": 0.16, "mfe_r": 0.33, "pl_pct": 0.75, "peak_opens": 1},
+    {"kind": "flat_on_time", "day": "2026-09-13", "symbol": "GGG"},
+
+    {"kind": "arm", "day": "2026-09-13", "symbol": "HHH", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-13", "symbol": "HHH", "limit_px": 2.81, "last": 2.8},
+    {"kind": "fill", "day": "2026-09-13", "symbol": "HHH", "fill_px": 2.805, "last": 2.8, "entry_slip_pct": 0.18, "mfe_r": 0.21, "pl_pct": 0.50, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-13", "symbol": "HHH"},
+
+    {"kind": "arm", "day": "2026-09-13", "symbol": "III", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-13", "symbol": "III", "limit_px": 4.51, "last": 4.5},
+    {"kind": "fill", "day": "2026-09-13", "symbol": "III", "fill_px": 4.51, "last": 4.5, "entry_slip_pct": 0.22, "mfe_r": 0.19, "pl_pct": 0.45, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-13", "symbol": "III"},
+
+    {"kind": "arm", "day": "2026-09-14", "symbol": "JJJ", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-14", "symbol": "JJJ", "limit_px": 3.31, "last": 3.3},
+    {"kind": "fill", "day": "2026-09-14", "symbol": "JJJ", "fill_px": 3.305, "last": 3.3, "entry_slip_pct": 0.15, "mfe_r": 0.30, "pl_pct": 0.65, "peak_opens": 1},
+    {"kind": "flat_on_time", "day": "2026-09-14", "symbol": "JJJ"},
+
+    {"kind": "arm", "day": "2026-09-14", "symbol": "KKK", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-14", "symbol": "KKK", "limit_px": 2.61, "last": 2.6},
+    {"kind": "fill", "day": "2026-09-14", "symbol": "KKK", "fill_px": 2.605, "last": 2.6, "entry_slip_pct": 0.19, "mfe_r": 0.25, "pl_pct": 0.55, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-14", "symbol": "KKK"},
+
+    {"kind": "arm", "day": "2026-09-14", "symbol": "LLL", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-14", "symbol": "LLL", "limit_px": 3.81, "last": 3.8},
+    {"kind": "fill", "day": "2026-09-14", "symbol": "LLL", "fill_px": 3.81, "last": 3.8, "entry_slip_pct": 0.26, "mfe_r": 0.17, "pl_pct": 0.42, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-14", "symbol": "LLL"},
+
+    {"kind": "arm", "day": "2026-09-15", "symbol": "MMM", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-15", "symbol": "MMM", "limit_px": 2.91, "last": 2.9},
+    {"kind": "fill", "day": "2026-09-15", "symbol": "MMM", "fill_px": 2.905, "last": 2.9, "entry_slip_pct": 0.17, "mfe_r": 0.36, "pl_pct": 0.85, "peak_opens": 1},
+    {"kind": "flat_on_time", "day": "2026-09-15", "symbol": "MMM"},
+
+    {"kind": "arm", "day": "2026-09-15", "symbol": "NNN", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-15", "symbol": "NNN", "limit_px": 4.21, "last": 4.2},
+    {"kind": "fill", "day": "2026-09-15", "symbol": "NNN", "fill_px": 4.205, "last": 4.2, "entry_slip_pct": 0.12, "mfe_r": 0.27, "pl_pct": 0.62, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-15", "symbol": "NNN"},
+
+    {"kind": "arm", "day": "2026-09-15", "symbol": "OOO", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-15", "symbol": "OOO", "limit_px": 3.41, "last": 3.4},
+    {"kind": "fill", "day": "2026-09-15", "symbol": "OOO", "fill_px": 3.41, "last": 3.4, "entry_slip_pct": 0.29, "mfe_r": 0.20, "pl_pct": 0.48, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-15", "symbol": "OOO"},
+
+    {"kind": "arm", "day": "2026-09-16", "symbol": "PPP", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-16", "symbol": "PPP", "limit_px": 2.71, "last": 2.7},
+    {"kind": "fill", "day": "2026-09-16", "symbol": "PPP", "fill_px": 2.705, "last": 2.7, "entry_slip_pct": 0.19, "mfe_r": 0.31, "pl_pct": 0.72, "peak_opens": 1},
+    {"kind": "flat_on_time", "day": "2026-09-16", "symbol": "PPP"},
+
+    {"kind": "arm", "day": "2026-09-16", "symbol": "QQQ", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-16", "symbol": "QQQ", "limit_px": 3.61, "last": 3.6},
+    {"kind": "fill", "day": "2026-09-16", "symbol": "QQQ", "fill_px": 3.605, "last": 3.6, "entry_slip_pct": 0.14, "mfe_r": 0.24, "pl_pct": 0.58, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-16", "symbol": "QQQ"},
+
+    {"kind": "arm", "day": "2026-09-16", "symbol": "RRR", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-16", "symbol": "RRR", "limit_px": 4.81, "last": 4.8},
+    {"kind": "fill", "day": "2026-09-16", "symbol": "RRR", "fill_px": 4.81, "last": 4.8, "entry_slip_pct": 0.21, "mfe_r": 0.16, "pl_pct": 0.44, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-16", "symbol": "RRR"},
+
+    {"kind": "arm", "day": "2026-09-16", "symbol": "SSS", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-16", "symbol": "SSS", "limit_px": 2.41, "last": 2.4},
+    {"kind": "fill", "day": "2026-09-16", "symbol": "SSS", "fill_px": 2.405, "last": 2.4, "entry_slip_pct": 0.21, "mfe_r": 0.29, "pl_pct": 0.66, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-16", "symbol": "SSS"},
+
+    {"kind": "arm", "day": "2026-09-16", "symbol": "TTT", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-16", "symbol": "TTT", "limit_px": 3.91, "last": 3.9},
+    {"kind": "fill", "day": "2026-09-16", "symbol": "TTT", "fill_px": 3.905, "last": 3.9, "entry_slip_pct": 0.13, "mfe_r": 0.34, "pl_pct": 0.78, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-16", "symbol": "TTT"},
+
+    {"kind": "arm", "day": "2026-09-16", "symbol": "UUU", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-16", "symbol": "UUU", "limit_px": 5.11, "last": 5.1},
+    {"kind": "fill", "day": "2026-09-16", "symbol": "UUU", "fill_px": 5.11, "last": 5.1, "entry_slip_pct": 0.20, "mfe_r": 0.23, "pl_pct": 0.52, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-16", "symbol": "UUU"},
+
+    {"kind": "arm", "day": "2026-09-16", "symbol": "VVV", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-16", "symbol": "VVV", "limit_px": 2.31, "last": 2.3},
+    {"kind": "fill", "day": "2026-09-16", "symbol": "VVV", "fill_px": 2.305, "last": 2.3, "entry_slip_pct": 0.22, "mfe_r": 0.26, "pl_pct": 0.59, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-16", "symbol": "VVV"},
+
+    {"kind": "arm", "day": "2026-09-16", "symbol": "WWW", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-16", "symbol": "WWW", "limit_px": 3.71, "last": 3.7},
+    {"kind": "fill", "day": "2026-09-16", "symbol": "WWW", "fill_px": 3.705, "last": 3.7, "entry_slip_pct": 0.14, "mfe_r": 0.32, "pl_pct": 0.71, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-16", "symbol": "WWW"},
+
+    {"kind": "arm", "day": "2026-09-16", "symbol": "XXX", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-16", "symbol": "XXX", "limit_px": 4.41, "last": 4.4},
+    {"kind": "fill", "day": "2026-09-16", "symbol": "XXX", "fill_px": 4.41, "last": 4.4, "entry_slip_pct": 0.23, "mfe_r": 0.18, "pl_pct": 0.47, "peak_opens": 2},
+    {"kind": "flat_on_time", "day": "2026-09-16", "symbol": "XXX"},
+
+    {"kind": "arm", "day": "2026-09-16", "symbol": "YYY", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-16", "symbol": "YYY", "limit_px": 2.11, "last": 2.1},
+    {"kind": "unfilled", "day": "2026-09-16", "symbol": "YYY", "reason": "phase_b_unfilled"},
+
+    {"kind": "arm", "day": "2026-09-16", "symbol": "ZZZ", "phase_b": true},
+    {"kind": "entry_limit", "day": "2026-09-16", "symbol": "ZZZ", "limit_px": 3.21, "last": 3.2},
+    {"kind": "unfilled", "day": "2026-09-16", "symbol": "ZZZ", "reason": "phase_b_unfilled"}
+  ]
+}

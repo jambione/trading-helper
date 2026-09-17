@@ -1431,6 +1431,34 @@ def main() -> None:
                     print(f"[ai] manage_open_positions failed: {e}",
                           flush=True)
 
+
+                # Phase B premarket session (Hybrid C). Default OFF / dry —
+                # no broker orders when ai_phase_b_dry_run. Isolated from
+                # RTH Plan A; see docs/PHASE_B_PREMARKET.md.
+                try:
+                    if bool(live_cfg.get("ai_phase_b_enabled", False)):
+                        import phase_b as _phase_b
+                        eq = 0.0
+                        open_pos = {}
+                        try:
+                            st = ai_positions._load_state() or {}
+                            eq = float(
+                                (st.get("_account") or {}).get("equity") or 0.0
+                            )
+                            open_pos = {
+                                k: v for k, v in st.items()
+                                if isinstance(v, dict) and not str(k).startswith("_")
+                            }
+                        except Exception:
+                            eq = 0.0
+                            open_pos = {}
+                        _phase_b.tick(
+                            cfg=live_cfg, now=t0, equity=eq,
+                            open_positions=open_pos,
+                        )
+                except Exception as e:  # noqa: BLE001
+                    print(f"[ai] phase_b tick failed: {e}", flush=True)
+
                 # 15:50 ET (configurable): cancel open orders + flatten positions.
                 try:
                     if _eod_liquidate_due(live_cfg, t0):
