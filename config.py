@@ -1601,6 +1601,8 @@ _EFFECTIVE_KEYS = (
     "ai_watch_arm_rvol_sane_max",
     "ai_watch_no_stream_strike_limit",
     "ai_watch_no_stream_strike_grace_sec",
+    "ai_watch_stale_restream_grace_sec",
+    "ai_watch_stale_restream_pins_only",
     "ai_watch_soft_seed_enabled",
     "ai_watch_soft_seed_momentum",
     "ai_watch_soft_seed_research",
