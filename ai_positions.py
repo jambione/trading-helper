@@ -1943,6 +1943,12 @@ def place_scaled_entry(
         ),
         "phase_b": bool(_phase_b),
         "session": ("phase_b" if _phase_b else decision.get("session")),
+        "arm_last": (
+            _num(decision.get("arm_last")) if _phase_b else None
+        ),
+        "phase_b_limit_px": (
+            placed_entry_limit if _phase_b else None
+        ),
         # Overbought-only entries: arm means we already tagged the band, so the
         # left_overbought exit is armed from the first position tick. Without
         # this latch a name that rolls under the band before the first poll
@@ -5224,6 +5230,56 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         "book_owner": pos.get("book_owner") or pos.get("duel_source"),
     }
     outcome = merge_regime(outcome)
+    # Phase B scoreboard: exit + flat_on_time (must be flat by 09:28 ET).
+    if pos.get("phase_b"):
+        try:
+            import phase_b as _pb
+            import phase_b_ledger as pbl
+            flat_ok = False
+            try:
+                # Past flatten start and not past deadline miss → on time.
+                flat_ok = bool(
+                    _pb.phase_b_flatten_active(now)
+                    or not _pb.phase_b_past_flat_deadline(now)
+                )
+                # Prefer explicit: exit before flat deadline.
+                if _pb.phase_b_past_flat_deadline(now):
+                    flat_ok = False
+                elif close_reason in ("sod_wipe", "flat_deadline_miss"):
+                    flat_ok = False
+                else:
+                    # Any exit before 09:28 is on time for the lot.
+                    flat_ok = not _pb.phase_b_past_flat_deadline(now)
+            except Exception:
+                flat_ok = False
+            entry_px = _num(pos.get("entry_price"))
+            pl_pct = None
+            if exit_price and entry_px and entry_px > 0:
+                pl_pct = (float(exit_price) - float(entry_px)) / float(entry_px) * 100.0
+            pbl.log_event(
+                "exit",
+                symbol=ticker,
+                exit_px=exit_price,
+                entry=entry_px,
+                fill_px=entry_px,
+                mfe_r=_num(pos.get("mfe_r")),
+                mae_r=_num(pos.get("mae_r")),
+                pl_pct=pl_pct,
+                realized_r=realized_r,
+                flat_on_time=bool(flat_ok),
+                close_reason=close_reason,
+                ts=now,
+            )
+            if flat_ok:
+                pbl.log_event(
+                    "flat_on_time",
+                    symbol=ticker,
+                    exit_px=exit_price,
+                    close_reason=close_reason,
+                    ts=now,
+                )
+        except Exception:
+            pass
     try:
         OUTCOMES_PATH.parent.mkdir(parents=True, exist_ok=True)
         with OUTCOMES_PATH.open("a", encoding="utf-8") as f:
@@ -5492,6 +5548,42 @@ def manage_open_positions(
                         changed = True
                         continue
             _stamp_entry_confirmed(pos, now)
+            # Phase B scoreboard: first confirm → ledger fill (+ slip vs arm last).
+            if pos.get("phase_b") and not pos.get("phase_b_fill_logged"):
+                try:
+                    import phase_b_ledger as pbl
+                    fill_px = (
+                        _order_fill_price(pos.get("tranche_a_order_id"))
+                        or _num(live.get("avg_entry_price"))
+                        or _num(pos.get("entry_price"))
+                    )
+                    arm_last = _num(pos.get("arm_last"))
+                    slip = None
+                    if fill_px and arm_last and arm_last > 0:
+                        slip = (float(fill_px) - float(arm_last)) / float(arm_last) * 100.0
+                    open_n = sum(
+                        1 for p in state.values()
+                        if isinstance(p, dict) and p.get("phase_b")
+                        and p.get("entry_confirmed")
+                        and not p.get("closing_reason")
+                    )
+                    pbl.log_event(
+                        "fill",
+                        symbol=ticker,
+                        fill_px=fill_px,
+                        entry=fill_px,
+                        arm_last=arm_last,
+                        last=arm_last,
+                        limit_px=_num(pos.get("phase_b_limit_px")
+                                      or pos.get("entry_limit_price")),
+                        entry_slip_pct=slip,
+                        peak_opens=open_n,
+                        open_count=open_n,
+                        ts=now,
+                    )
+                    pos["phase_b_fill_logged"] = True
+                except Exception:
+                    pass
             # High print ratchets the shelf; low print is the liquidation
             # trigger so a tape dip through TRAIL sells even if the broker
             # mark is still above.

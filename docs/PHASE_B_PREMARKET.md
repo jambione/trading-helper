@@ -1,8 +1,10 @@
 # Phase B — Premarket session extension (design)
 
-**Status:** plumbing shipped / dry default (2026-09-17 Hybrid C). Not live. Not Plan B burst.  
-**Defaults:** `ai_phase_b_enabled=false`, `ai_phase_b_dry_run=true` — paper ledger only; zero broker orders until human enable.  
-**Modules:** `phase_b.py`, `phase_b_ledger.py`, `tools/phase_b_scoreboard.py`.
+**Status:** scoreable paper lane (2026-09-17 pack #6). Hybrid C. Not Plan B burst.  
+**Live bot_config (mini):** `ai_phase_b_enabled=true`, `ai_phase_b_dry_run=false` — real Alpaca paper extended DAY limits.  
+**Defaults (fresh checkout):** `ai_phase_b_enabled=false`, `ai_phase_b_dry_run=true` until human enable.  
+**Modules:** `phase_b.py`, `phase_b_ledger.py`, `tools/phase_b_scoreboard.py`.  
+**Paper fill caveat:** `docs/PHASE_B_ALPACA_PAPER_EXTENDED_FILLS.md` — do not trust first PASS as live edge.
 
 ## Why
 

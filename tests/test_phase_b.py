@@ -332,3 +332,119 @@ def test_get_latest_print_age(monkeypatch):
     assert got["price"] == 2.5
     assert got["age_sec"] is not None
     assert 2.0 <= got["age_sec"] <= 5.0
+
+
+# ── Pack #6: scoreable path ──────────────────────────────────────────────
+
+def test_williams_pctr_converts_to_exh_band(monkeypatch):
+    """Engine Williams %R −45 → exhaustion 55 → inside 40–70 band."""
+    monkeypatch.setattr(pb, "fresh_stream_last", lambda *a, **k: (3.0, None))
+    rec = {
+        "symbol": "WPR",
+        "indicator": {
+            "pctr": -45.0,  # Williams
+            "pctr_rising": True,
+            "cm_rsi": 25.0,
+            "cm_rsi_rising": True,
+        },
+    }
+    ok, why = pb.phase_b_arm_allows(rec, cfg=CFG_ON, now=_ts(8, 0), last=3.0)
+    assert ok is True, why
+
+
+def test_empty_indicator_still_no_exh(monkeypatch):
+    monkeypatch.setattr(pb, "fresh_stream_last", lambda *a, **k: (3.0, None))
+    ok, why = pb.phase_b_arm_allows(
+        {"symbol": "MT", "indicator": {}}, cfg=CFG_ON, now=_ts(8, 0), last=3.0,
+    )
+    assert ok is False and why == "phase_b_no_exh"
+
+
+def test_refresh_seat_indicators_stamps_engine(monkeypatch, tmp_path):
+    pb.set_book_path_for_tests(tmp_path / "book.json")
+    book = {
+        "AAA": {
+            "symbol": "AAA", "status": "watching", "indicator": {},
+            "admit_ts": _ts(8, 0),
+        },
+    }
+    pb.save_book(book)
+    monkeypatch.setattr(
+        pb, "fresh_stream_last", lambda *a, **k: (4.0, None),
+    )
+
+    class _EW:
+        @staticmethod
+        def _engine_indicator_map():
+            return {
+                "AAA": {
+                    "pctr": -50.0, "pctr_rising": True, "pctr_falling": False,
+                    "cm_rsi": 22.0, "cm_rsi_rising": True,
+                },
+            }
+
+        @staticmethod
+        def load_watch():
+            return {}
+
+        @staticmethod
+        def live_exhaustion(*a, **k):
+            return None
+
+    monkeypatch.setitem(__import__("sys").modules, "ai_entry_watch", _EW)
+    out = pb.refresh_seat_indicators(cfg=CFG_ON, now=_ts(8, 1))
+    ind = out["AAA"]["indicator"]
+    assert ind.get("pctr_rising") is True
+    # Normalized exhaustion present for arm band.
+    assert ind.get("exhaustion") == pytest.approx(50.0)
+    ok, why = pb.phase_b_arm_allows(out["AAA"], cfg=CFG_ON, now=_ts(8, 1), last=4.0)
+    assert ok is True, why
+
+
+def test_rearm_statuses_include_dry_armed():
+    assert "dry_armed" in pb._REARM_STATUSES
+    assert "dry_shadow" in pb._REARM_STATUSES
+
+
+def test_sync_book_logs_admit_refuse(monkeypatch, tmp_path):
+    pb.set_book_path_for_tests(tmp_path / "book.json")
+    pbl.set_ledger_path_for_tests(tmp_path / "phase_b.jsonl")
+    # Fill seats so next candidate is refused for capacity / source.
+    cfg = dict(CFG_ON, ai_phase_b_max_seats=1)
+    monkeypatch.setattr(pb, "fresh_stream_last", lambda *a, **k: (5.0, None))
+    monkeypatch.setattr(
+        pb, "gather_candidates",
+        lambda *a, **k: [
+            {"symbol": "ONE", "source": "momentum", "price": 5.0},
+            {"symbol": "TWO", "source": "trending", "price": 5.0},
+        ],
+    )
+    summary = pb.sync_book(cfg=cfg, now=_ts(8, 0), open_count=0)
+    assert summary["admitted"] or summary["refused"]
+    rows = pbl.read_day(path=tmp_path / "phase_b.jsonl")
+    # At least one admit or refuse row landed.
+    kinds = {r.get("kind") for r in rows}
+    assert "admit" in kinds or "admit_refuse" in kinds
+
+
+def test_live_paper_entry_calls_place_when_dry_off(monkeypatch, tmp_path):
+    placed = []
+    cfg = dict(CFG_ON, ai_phase_b_dry_run=False)
+    monkeypatch.setattr(pb, "fresh_stream_last", lambda *a, **k: (3.0, None))
+    rec = {
+        "symbol": "PAP",
+        "source": "momentum",
+        "indicator": {
+            "pctr": 55.0, "pctr_rising": True,
+            "cm_rsi": 25.0, "cm_rsi_rising": True,
+        },
+    }
+    out = pb.try_phase_b_entry(
+        rec, equity=10_000, cfg=cfg, now=_ts(8, 0),
+        place_fn=lambda *a, **k: placed.append(1) or {
+            "ok": True, "buy_order_id": "x",
+        },
+    )
+    assert out["ok"] is True
+    assert out.get("broker") is True
+    assert placed == [1]

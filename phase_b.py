@@ -32,6 +32,8 @@ SOURCE_OFF_V1 = frozenset({"research", "seed_rank"})
 _BOOK_LOCK = threading.Lock()
 _BOOK_OVERRIDE: Path | None = None
 _BOOK: dict[str, dict[str, Any]] = {}
+# ET day → max concurrent Phase B opens observed this process.
+_PEAK_OPENS_BY_DAY: dict[str, int] = {}
 
 
 def _cfg(cfg: dict | None = None) -> dict:
@@ -390,7 +392,8 @@ def phase_b_arm_allows(
             return False, why
 
     ind = _ind(record)
-    # EXH band + rising
+    # EXH band + rising. Engine stores Williams %R on ``pctr`` (−100..0);
+    # Phase B band is 0–100 exhaustion (= 100+%R). Prefer explicit exhaustion.
     try:
         exh_min = float(c.get("ai_phase_b_exh_min", 40.0) or 40.0)
     except (TypeError, ValueError):
@@ -399,11 +402,16 @@ def phase_b_arm_allows(
         exh_max = float(c.get("ai_phase_b_exh_max", 70.0) or 70.0)
     except (TypeError, ValueError):
         exh_max = 70.0
-    exh = _f(ind.get("pctr"))
-    if exh is None:
-        exh = _f(ind.get("exhaustion"))
+    exh = _f(ind.get("exhaustion"))
     if exh is None and isinstance(record, dict):
         exh = _f(record.get("exhaustion"))
+    if exh is None:
+        raw = _f(ind.get("pctr"))
+        if raw is None and isinstance(record, dict):
+            raw = _f(record.get("pctr"))
+        if raw is not None:
+            # Negative / zero → Williams %R; positive → already 0–100 heat.
+            exh = (100.0 + float(raw)) if float(raw) <= 0.0 else float(raw)
     if exh is None:
         return False, "phase_b_no_exh"
     if exh < exh_min or exh > exh_max:
@@ -641,6 +649,104 @@ def seat_symbol(
     except Exception:
         pass
     return True, "admitted"
+
+
+def refresh_seat_indicators(
+    book: dict[str, dict[str, Any]] | None = None,
+    *,
+    cfg: dict | None = None,
+    now: float | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Stamp live EXH/RSI onto seated Phase B symbols (admit-time ind is often {}).
+
+    Sources (first hit wins fields): engine indicator map, then
+    ``ai_entry_watch.load_watch`` row, then ``live_exhaustion`` on stream last.
+    Mutates and returns the book dict.
+    """
+    c = _cfg(cfg)
+    t0 = float(now if now is not None else time.time())
+    book = book if isinstance(book, dict) else load_book()
+    if not book:
+        return book
+
+    eng: dict[str, dict] = {}
+    try:
+        import ai_entry_watch as ew
+        eng = ew._engine_indicator_map() or {}
+    except Exception:
+        eng = {}
+
+    watch: dict[str, dict] = {}
+    try:
+        import ai_entry_watch as ew
+        if hasattr(ew, "load_watch"):
+            raw = ew.load_watch() or {}
+            if isinstance(raw, dict):
+                nested = raw.get("watch") or raw.get("records")
+                src = nested if isinstance(nested, dict) else raw
+                for k, v in src.items():
+                    if isinstance(v, dict):
+                        watch[str(k).upper()] = v
+    except Exception:
+        watch = {}
+
+    changed = False
+    for sym, rec in list(book.items()):
+        if not isinstance(rec, dict):
+            continue
+        ind = dict(_ind(rec))
+        before = dict(ind)
+
+        e = eng.get(sym) if isinstance(eng.get(sym), dict) else {}
+        wrec = watch.get(sym) if isinstance(watch.get(sym), dict) else {}
+        wind = wrec.get("indicator") if isinstance(wrec.get("indicator"), dict) else {}
+
+        for src in (e, wind):
+            for k, v in src.items():
+                if v is not None and (k not in ind or ind.get(k) is None):
+                    ind[k] = v
+                elif k in ("pctr", "pctr_rising", "pctr_falling", "cm_rsi",
+                           "cm_rsi_rising", "cm_rsi_falling", "cm_rsi_src",
+                           "pctr_src", "exhaustion"):
+                    if v is not None:
+                        ind[k] = v
+
+        # Live recompute against stream last when still missing EXH direction.
+        last, _why = fresh_stream_last(sym, now=t0, cfg=c)
+        if last is not None:
+            try:
+                import ai_entry_watch as ew
+                got = ew.live_exhaustion(sym, float(last), c, t0)
+                if got:
+                    pctr_w, exh, rising, falling = got
+                    ind["pctr_williams"] = pctr_w
+                    ind["exhaustion"] = exh
+                    # Phase B arm band reads exhaustion; keep rising bits honest.
+                    ind["pctr_rising"] = bool(rising)
+                    ind["pctr_falling"] = bool(falling)
+                    # Also expose 0–100 on pctr for seats that only look there.
+                    if exh is not None:
+                        ind["pctr"] = float(exh)
+            except Exception:
+                pass
+            rec["price"] = float(last)
+            rec["last_print_ts"] = t0
+
+        # Normalize: if only Williams pctr present, derive exhaustion.
+        if ind.get("exhaustion") is None:
+            raw = _f(ind.get("pctr"))
+            if raw is not None and float(raw) <= 0.0:
+                ind["exhaustion"] = max(0.0, min(100.0, 100.0 + float(raw)))
+
+        rec["indicator"] = ind
+        rec["indicator_ts"] = t0
+        book[sym] = rec
+        if ind != before:
+            changed = True
+
+    if changed or book:
+        save_book(book)
+    return book
 
 
 def demote_stale_seats(
@@ -1000,10 +1106,80 @@ def sync_book(
             book = load_book()
         else:
             if why not in ("already_seated",):
+                sym_u = str(row.get("symbol") or "").upper().strip()
+                print_age = None
+                try:
+                    got = stream_last_print(sym_u, now=t0, cfg=c) if sym_u else None
+                    if got:
+                        print_age = got.get("age_sec")
+                except Exception:
+                    print_age = None
                 summary["refused"].append(
-                    {"symbol": row.get("symbol"), "reason": why}
+                    {
+                        "symbol": sym_u or row.get("symbol"),
+                        "reason": why,
+                        "print_age_sec": print_age,
+                        "source": row.get("source"),
+                    }
                 )
+                try:
+                    import phase_b_ledger as pbl
+                    pbl.log_event(
+                        "admit_refuse",
+                        symbol=sym_u or None,
+                        reason=str(why),
+                        print_age_sec=print_age,
+                        source=row.get("source"),
+                        cfg=c,
+                        ts=t0,
+                    )
+                except Exception:
+                    pass
     return summary
+
+
+# Statuses that may attempt arm/entry this tick. dry_armed/dry_shadow included
+# so flipping dry_run off (or a prior dry one-shot) does not permanently park.
+_REARM_STATUSES = frozenset({
+    "", "watching", "armed", "dry_armed", "dry_shadow",
+})
+
+
+def _config_fingerprint(cfg: dict | None = None) -> dict[str, Any]:
+    c = _cfg(cfg)
+    keys = (
+        "ai_phase_b_enabled", "ai_phase_b_dry_run", "ai_phase_b_ledger_enabled",
+        "ai_phase_b_exh_min", "ai_phase_b_exh_max", "ai_phase_b_require_exh_rising",
+        "ai_phase_b_rsi_block_falling_above", "ai_phase_b_max_seats",
+        "ai_phase_b_max_open", "ai_phase_b_entry_limit_ttl_sec",
+        "ai_phase_b_print_max_age_sec", "ai_phase_b_hard_stop_pct",
+        "ai_phase_b_no_rth_handoff", "ai_phase_b_working_sell",
+    )
+    return {k: c.get(k) for k in keys}
+
+
+def _maybe_log_daily_fingerprint(
+    *,
+    cfg: dict | None = None,
+    now: float | None = None,
+) -> None:
+    """Once per ET day, stamp config fingerprint into the Phase B ledger."""
+    c = _cfg(cfg)
+    t0 = float(now if now is not None else time.time())
+    day = datetime.fromtimestamp(t0, tz=ET).strftime("%Y-%m-%d")
+    try:
+        import phase_b_ledger as pbl
+        rows = pbl.read_day(day)
+        if any(str(r.get("kind") or "") == "config_fingerprint" for r in rows):
+            return
+        pbl.log_event(
+            "config_fingerprint",
+            cfg=c,
+            ts=t0,
+            fingerprint=_config_fingerprint(c),
+        )
+    except Exception:
+        pass
 
 
 def tick(
@@ -1022,12 +1198,30 @@ def tick(
     if not enabled(c):
         return events
     t0 = float(now if now is not None else time.time())
+    _maybe_log_daily_fingerprint(cfg=c, now=t0)
 
     open_pos = open_positions if isinstance(open_positions, dict) else {}
     phase_b_opens = {
         k: v for k, v in open_pos.items() if is_phase_b_position(v)
     }
     open_count = len(phase_b_opens)
+
+    # Peak concurrent opens — scoreboard bar (log only on new high).
+    try:
+        day = datetime.fromtimestamp(t0, tz=ET).strftime("%Y-%m-%d")
+        prev = int(_PEAK_OPENS_BY_DAY.get(day) or 0)
+        if open_count > prev:
+            _PEAK_OPENS_BY_DAY[day] = open_count
+            import phase_b_ledger as pbl
+            pbl.log_event(
+                "peak_opens",
+                open_count=open_count,
+                peak_opens=open_count,
+                cfg=c,
+                ts=t0,
+            )
+    except Exception:
+        pass
 
     # Cancel resting entries at cutoff / TTL.
     if not phase_b_allow_entries(t0, c):
@@ -1044,11 +1238,18 @@ def tick(
     sync_summary = sync_book(cfg=c, now=t0, open_count=open_count)
     events.append({"kind": "book_sync", **sync_summary})
 
+    # Per-tick live indicators for seated symbols (fixes admit-time {}).
+    book = refresh_seat_indicators(cfg=c, now=t0)
+    events.append({
+        "kind": "indicators_refreshed",
+        "n": len(book),
+    })
+
     # Arm / entry attempts during entry window.
     if phase_b_allow_entries(t0, c):
         book = load_book()
         for sym, rec in list(book.items()):
-            if str(rec.get("status") or "") not in ("", "watching", "armed"):
+            if str(rec.get("status") or "") not in _REARM_STATUSES:
                 continue
             if open_count >= max_open(c):
                 break
@@ -1063,8 +1264,16 @@ def tick(
             elif result.get("ok") and result.get("broker"):
                 rec["status"] = "entry_pending"
                 rec["entry_submitted_ts"] = t0
+                rec["arm_last"] = result.get("arm_last")
+                rec["limit_px"] = result.get("limit_px")
                 book[sym] = rec
                 open_count += 1
+            elif not result.get("ok") and str(rec.get("status") or "") in (
+                "dry_armed", "dry_shadow",
+            ):
+                # Stay re-armable next tick when dry→live or refuse was transient.
+                rec["status"] = "watching"
+                book[sym] = rec
         save_book(book)
 
     # Hard stop + flatten hooks for open Phase B lots.
@@ -1159,6 +1368,7 @@ __all__ = [
     "phase_b_session_active",
     "price_ok_for_book",
     "print_max_age_sec",
+    "refresh_seat_indicators",
     "save_book",
     "seat_symbol",
     "set_book_path_for_tests",
