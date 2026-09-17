@@ -783,28 +783,22 @@ DEFAULT_CONFIG = {
     "ai_watch_exhaustion_exit_give_pct": 0.0,
     # Under continuation: minimum exhaustion % for a *heating* arm (0–100).
     # Overbought band still arms regardless. Under exhaustion_scalp: unused.
-    # 0 = any rising %R may arm. The 50 floor blocked UMAC at 37% in-zone.
-    # 20–50 + rising (2026-08-17 tape): from-OS polls +1.45%/30m; 65+ heat
-    # and OB fills were the loss bucket.
-    "ai_watch_exhaustion_heat_min_pct": 20.0,
+    # 0 = any rising %R may arm. Plan A (2026-09-17): floor 50 with RSI
+    # arm gates off — tighten heat so we do not chase junk without RSI.
+    "ai_watch_exhaustion_heat_min_pct": 50.0,
     # Refuse to arm once %R is already this extended (0–100).
-    # 0 = no cap. A 50 ceiling parked AMLX (EXH ~86) as "extended"
-    # while it was in/below the zone; operator wants those fills.
+    # 0 = no cap (Plan A: ≥ heat_min only, no upper band).
     "ai_watch_exhaustion_heat_max_pct": 0.0,
     # Require gaining EXH (pctr_rising) to arm. Falling EXH → exh_falling;
     # flat → exh_not_rising (except pinned-ceiling + MACD-armed). Missing
     # reading → exh_rising_required (no blind no_exhaustion_fallback).
-    # Intent: more early opens, fewer late chases. RSI hard max stays 60;
-    # mistimed_heat + soft_ob still separate GTLB/HPE from BULL (RSI 46 OB).
     "ai_watch_require_exh_rising": True,
     # Soft overbought / late-heat arm veto. Refuse when the name is already
-    # in the overbought band AND RSI is at/above this floor (still below the
-    # hard RSI max). Separates HPE-class (RSI 59.6 + EXH 83.5 OB, −0.10R)
-    # from BULL-class (RSI 46.3 + EXH 85 OB, +0.53R) on 2026-09-03. A blunt
-    # heat_max ~80 would have killed both. 0 / enabled false = off. Does
-    # not change RSI max 60, macd_min_gap, or the EXH override.
+    # in the overbought band AND RSI is at/above this floor. 0 / enabled
+    # false = off. Also inert when ai_watch_arm_require_cm_rsi is false
+    # (do not reintroduce RSI level gates via soft OB).
     "ai_watch_soft_ob_enabled": True,
-    "ai_watch_soft_ob_rsi_min": 55.0,
+    "ai_watch_soft_ob_rsi_min": 0.0,
     # Mistimed heating-band chase (GTLB 2026-09-04). Soft OB only covers
     # overbought+RSI≥55; a name still in the heat band with mid/high RSI
     # used to arm (confirm RSI ~59, pass 53.3 → MFE ~0.01R). Heating-only:

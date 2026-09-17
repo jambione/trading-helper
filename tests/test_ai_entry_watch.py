@@ -4576,6 +4576,94 @@ def test_late_heat_off_and_floor_zero_leave_hpe_class_armed():
     assert ok and why == "last_overbought"
 
 
+def test_plan_a_rsi_arm_off_high_rsi_still_arms():
+    """2026-09-17: require_cm_rsi=false → RSI level cannot veto arms.
+
+    Soft OB / mistimed RSI floors stay inert when the CM RSI gate is off.
+    Heat band (≥50, no max) and rising EXH still gate.
+    """
+    import ai_entry_watch as ew
+
+    cfg = _last_cfg(
+        ai_watch_arm_require_cm_rsi=False,
+        ai_watch_arm_cm_rsi_max=100.0,
+        ai_watch_require_realtime_rsi=True,
+        ai_watch_soft_ob_enabled=True,
+        ai_watch_soft_ob_rsi_min=0.0,
+        ai_watch_mistimed_heat_enabled=False,
+        ai_watch_exhaustion_heat_min_pct=50.0,
+        ai_watch_exhaustion_heat_max_pct=0.0,
+        ai_watch_require_exh_rising=True,
+        ai_watch_ob_allow_hot=False,
+    )
+    # RSI 80 rising, non-realtime src — must not refuse on RSI family.
+    hot = _ob_rec(symbol="HOT", rsi=80.0, exh=65.0, source="momentum")
+    hot["indicator"]["cm_rsi_rising"] = True
+    hot["indicator"]["cm_rsi_src"] = "alpaca"
+    ok, why = ew.cm_rsi_allows_buy(hot, cfg)
+    assert ok is True and why == "cm_rsi_off"
+    ok, why = ew.should_arm_buy(hot, ask=12.0, bid=11.98, cfg=cfg)
+    assert ok is True, why
+    assert why.startswith("last_")
+    assert why not in (
+        "rsi_extended", "rsi_not_rising", "no_rsi_data", "late_heat",
+        "mistimed_heat",
+    )
+    assert not str(why).startswith("rsi_not_realtime")
+
+    # Soft OB floor 0: HPE-class OB+high RSI still arms when require is false.
+    hpe = _ob_rec(symbol="HPE", rsi=59.6, exh=83.5, source="momentum")
+    assert ew.late_heat_blocks_buy(hpe, cfg) is None
+    ok, why = ew.should_arm_buy(hpe, ask=50.44, bid=50.40, cfg=cfg)
+    assert ok and why == "last_overbought"
+
+    # Heat floor 50 still refuses sub-50 heating.
+    low = _ob_rec(symbol="LOW", rsi=40.0, exh=40.0, source="momentum")
+    ok, why = ew.should_arm_buy(low, ask=12.0, bid=11.98, cfg=cfg)
+    assert ok is False and why in ("heating_too_low", "last_heating_too_low")
+
+
+def test_heat_band_min50_no_upper_cap():
+    """Plan A heat: ≥50% rising; heat_max=0 means no already_extended."""
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_require_exhaustion_data": True,
+        "ai_watch_require_exh_rising": True,
+        "rte_threshold": 20,
+        "ai_watch_exhaustion_heat_min_pct": 50.0,
+        "ai_watch_exhaustion_heat_max_pct": 0.0,
+        "ai_watch_ob_allow_hot": False,
+    }
+    mid = {
+        "symbol": "MID",
+        "indicator": {
+            "pctr": -40.0, "pctr_rising": True, "pctr_falling": False,
+        },
+    }
+    ok, why = ew.exhaustion_allows_buy(mid, cfg)
+    assert ok is True and why == "heating"
+
+    hot = {
+        "symbol": "HOT",
+        "indicator": {
+            "pctr": -5.0, "pctr_rising": True, "pctr_falling": False,
+        },
+    }
+    ok, why = ew.exhaustion_allows_buy(hot, cfg)
+    assert ok is True and why == "overbought"
+
+    low = {
+        "symbol": "LOW",
+        "indicator": {
+            "pctr": -60.0, "pctr_rising": True, "pctr_falling": False,
+        },
+    }
+    ok, why = ew.exhaustion_allows_buy(low, cfg)
+    assert ok is False and why == "heating_too_low"
+
+
 def test_rsi_hard_max_still_wins_above_sixty():
     """Do not rename rsi_extended to late_heat when RSI is already illegal."""
     import ai_entry_watch as ew

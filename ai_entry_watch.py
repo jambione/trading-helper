@@ -9745,10 +9745,10 @@ def cm_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     timing confirm; RSI only says "not chasing". 0 disables the exception.
 
     ``ai_watch_require_realtime_rsi`` additionally refuses a reading the
-    engine drew on the REST fallback rather than the Finnhub tape. The source
-    flips per ticker mid-session, so without the check the same gate is
-    sometimes reading the live tape and sometimes not, with nothing to say
-    which. Mirrors ai_watch_require_live_pctr on the %R side.
+    engine drew on the REST fallback rather than the Finnhub tape — but only
+    when this gate is on. When ``ai_watch_arm_require_cm_rsi`` is false the
+    function short-circuits before level / rising / realtime checks, so RSI
+    cannot veto arms (display + provenance elsewhere stay intact).
     """
     if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
         return True, "cm_rsi_off"
@@ -9806,26 +9806,22 @@ def cm_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
 def late_heat_blocks_buy(record: dict, cfg: dict) -> str | None:
     """Refuse a new long that is already overbought AND RSI-near-cap.
 
-    The hard RSI max (live ``ai_watch_arm_cm_rsi_max`` = 60) did not catch
-    HPE on 2026-09-03: RSI 59.6 in-band, EXH 83.5 overbought, why
-    ``last_overbought``, then MFE 0 / −0.10R in ~2.5 min. BULL the same
-    session also armed ``last_overbought`` (EXH 85.0) but RSI 46.3 and
-    paid +0.53R. A blunt ``ai_watch_exhaustion_heat_max_pct`` ~80 would
-    have killed both. Conjunction with a soft RSI floor (default 55,
-    still below the hard 60) is the separator.
-
-    Uses the desk's existing overbought definition (``exhaustion_state``,
-    rte_threshold) rather than a parallel EXH ceiling. Off when
-    ``ai_watch_soft_ob_enabled`` is false or the RSI floor is 0. Missing
-    RSI abstains — ``cm_rsi_allows_buy`` already named that when the RSI
-    gate is on. Does not loosen RSI max 60, MACD gap, or the EXH override.
+    Conjunction with a soft RSI floor (historically 55, below a hard max)
+    separated HPE-class OB+high-RSI chases from BULL-class early OB heats.
+    Off when ``ai_watch_soft_ob_enabled`` is false, the RSI floor is 0, or
+    ``ai_watch_arm_require_cm_rsi`` is false (Plan A 2026-09-17: RSI is not
+    an arm gate — do not reintroduce level vetoes via soft OB). Missing RSI
+    abstains. Does not change MACD gap or the EXH override.
     """
     if not bool(cfg.get("ai_watch_soft_ob_enabled", False)):
         return None
+    # RSI arm gate off → soft-OB RSI floor must not veto either.
+    if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
+        return None
     try:
-        rsi_floor = float(cfg.get("ai_watch_soft_ob_rsi_min", 55.0) or 0.0)
+        rsi_floor = float(cfg.get("ai_watch_soft_ob_rsi_min", 0.0) or 0.0)
     except (TypeError, ValueError):
-        rsi_floor = 55.0
+        rsi_floor = 0.0
     if rsi_floor <= 0:
         return None
     if exhaustion_state(record, cfg) != "overbought":
@@ -9912,6 +9908,10 @@ def mistimed_heat_blocks_buy(
     the EXH override.
     """
     if not bool(cfg.get("ai_watch_mistimed_heat_enabled", True)):
+        return None
+    # Aligned with soft OB: when CM RSI is not an arm gate, do not refuse
+    # on RSI floors here either.
+    if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
         return None
     why = str(exh_why or "").strip().lower()
     # Accept raw exhaustion why or the last_/zone_ wrapped form.
