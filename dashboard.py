@@ -78,7 +78,8 @@ from traffic_log import (
     client_ip_from_request,
 )
 
-from config import load_config, save_config, SAFE_CONFIG_KEYS
+from config import (load_config, save_config, SAFE_CONFIG_KEYS,
+                    PROTECTED_CONFIG_KEYS)
 from session_clock import session_window, next_shot
 import engine_env
 import version
@@ -3302,7 +3303,13 @@ _PUBLIC_PATHS   = {"/", "/login", "/register", "/forgot", "/reset",
                    "/auth/login", "/auth/register", "/auth/logout",
                    "/auth/forgot", "/auth/reset",
                    "/api/meta", "/api/pnl", "/favicon.ico"}
-_PUBLIC_PREFIX  = ("/static/", "/api/agent/")
+# "/api/agent/" was here too, which made two unauthenticated proxies into
+# localhost:8889 reachable from the public tunnel. Neither has a caller
+# anywhere in the repo (add-wb is marked "broker retired"), so they now take
+# the same auth as everything else — a token, or the X-Desk-Secret machine
+# credential. If an external client (phone shortcut, Stream Deck) turns out to
+# call them, give it the desk secret rather than reopening the prefix.
+_PUBLIC_PREFIX  = ("/static/",)
 
 
 def _bearer_token(request: Request) -> str:
@@ -3340,6 +3347,21 @@ def _desk_secret_ok(request: Request) -> bool:
 
 
 def _request_identity(request: Request) -> tuple[str, str]:
+    """(token, username) for a request. Identity comes from a token, only.
+
+    This used to fall back to ``?user=jmb`` in the query string when no token
+    resolved, which meant appending that parameter to any URL produced the
+    owner's identity with no credential at all — and ``_AuthMiddleware`` admits
+    a request on ``username == "jmb"``. Through the Cloudflare tunnel that made
+    every endpoint behind the middleware, including the config write path that
+    can set broker credentials and risk limits, reachable unauthenticated from
+    the public internet.
+
+    The fallback was already vestigial when it was removed: the dashboard reads
+    admin status out of the stored JWT (dashboard.html), and the desk's own
+    processes authenticate with the X-Desk-Secret machine credential
+    (:func:`_desk_secret_ok`), which is checked before this.
+    """
     # Prefer a still-valid token. An expired Authorization header must not
     # hide a good HttpOnly session cookie — that's how visits stay logged in.
     token = first_valid_token(
@@ -3348,13 +3370,7 @@ def _request_identity(request: Request) -> tuple[str, str]:
         request.cookies.get(COOKIE_NAME, ""),
     )
 
-    username = get_token_username(token) if token else ""
-    if not username:
-        query_user = request.query_params.get("user", "").strip().lower()
-        if query_user == "jmb":
-            username = "jmb"
-
-    return token, username
+    return token, (get_token_username(token) if token else "")
 
 
 def _ws_token(ws: WebSocket, token: str = "") -> str:
@@ -3466,7 +3482,11 @@ class _AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         token, username = _request_identity(request)
-        if not (verify_token(token) or username == "jmb"):
+        # A valid token is the only way in. The old `or username == "jmb"` arm
+        # is gone with the ?user=jmb fallback that fed it: _request_identity
+        # now derives the username from the token, so that arm could only ever
+        # admit a request verify_token had already rejected.
+        if not verify_token(token):
             return _SJSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
         if username and username != "jmb" and not user_is_active(username):
             return _SJSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
@@ -3648,8 +3668,8 @@ async def _startup():
 @app.get("/")
 async def root(request: Request):
     if is_auth_required():
-        token, username = _request_identity(request)
-        if not (verify_token(token) or username == "jmb"):
+        token, _username = _request_identity(request)
+        if not verify_token(token):
             return RedirectResponse("/login", status_code=302)
     return FileResponse("dashboard.html")
 
@@ -4700,8 +4720,47 @@ async def api_config():
 
 @app.post("/api/config")
 async def api_config_save(request: Request):
+    """Write whitelisted config keys.
+
+    This endpoint used to carry no authorization of its own, relying entirely
+    on _AuthMiddleware — which the ?user=jmb fallback defeated. It writes keys
+    that include the Alpaca credentials, so it now requires an authenticated
+    admin, and refuses PROTECTED_CONFIG_KEYS outright (risk limits, kill
+    switches, trading enables, audit-trail flags): those take a file edit and a
+    restart, like TRADER_MODE=live.
+    """
+    username, err = _require_admin(request)
+    if err:
+        return err
+
     try:
-        body       = await request.json()
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "Expected an object"},
+                            status_code=400)
+
+    refused = sorted(k for k in body if k in PROTECTED_CONFIG_KEYS)
+    if refused:
+        log.warning("[CFG] %s tried to set protected key(s) over HTTP: %s",
+                    username, ", ".join(refused))
+        return JSONResponse(
+            {"ok": False, "error": "Protected keys must be edited in "
+                                   "config/bot_config.json and the desk "
+                                   "restarted", "refused": refused},
+            status_code=403,
+        )
+
+    # Credential rotation stays available (the Settings panel writes these),
+    # but it never happens quietly on an account that can trade.
+    cred_keys = sorted(k for k in body if k in ("api_key", "secret_key",
+                                                "finnhub_key"))
+    if cred_keys:
+        log.warning("[CFG] %s is rotating credential(s): %s",
+                    username, ", ".join(cred_keys))
+
+    try:
         old_fh_key = STATE.cfg.get("finnhub_key", "")
         with STATE.lock:
             for k, v in body.items():

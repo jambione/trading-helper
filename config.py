@@ -2211,6 +2211,51 @@ SAFE_CONFIG_KEYS = [
 ]
 
 
+# Keys that move money, set a risk limit, decide whether the desk trades at
+# all, or control the audit trail. They are in SAFE_CONFIG_KEYS (so the desk
+# and tooling still read and write them through load_config/save_config) but
+# the dashboard's HTTP write path refuses them — the same posture that already
+# keeps TRADER_MODE=live out of the Engine panel: a file edit plus a restart,
+# where the change is reviewable and cannot be made by a stray request.
+#
+# None of these has a UI control today, so refusing them over HTTP costs no
+# functionality. Broker credentials are deliberately NOT here: the Settings
+# panel writes api_key/secret_key, and taking that away is a product decision
+# rather than a security fix. Credential writes are logged loudly instead —
+# see dashboard.api_config_save.
+PROTECTED_CONFIG_KEYS = frozenset({
+    # Does the desk trade, and as whom
+    "ai_trading_enabled",
+    "ai_trader_enabled",
+    "ai_trading_host",
+    "ai_trading_source",
+    "grok_trading_enabled",
+    "ai_phase_b_enabled",
+    "ai_strength_trade_enabled",
+    "ai_strength_trade_dry_run",
+    # Position sizing and risk limits
+    "ai_risk_pct",
+    "ai_trade_amount",
+    "ai_max_positions",
+    "ai_max_open_risk_pct",
+    "ai_max_position_pct",
+    "ai_max_position_pct_cheap",
+    "ai_position_slot_equity",
+    "ai_min_reward_risk",
+    # Kill switches and protective machinery
+    "ai_daily_loss_limit_r",
+    "ai_broker_stop_enabled",
+    "require_protective_exit",
+    "ai_eod_liquidate_enabled",
+    "ai_sod_liquidate_enabled",
+    "ai_pdt_protect",
+    # Audit trail — turning off the record is not an ordinary config change
+    "ai_fill_ledger_enabled",
+    "ai_admit_ledger_enabled",
+    "ai_proposal_ledger_enabled",
+})
+
+
 def _stamp() -> tuple:
     """(path, mtime, size) of both config files — cheap staleness check.
 
