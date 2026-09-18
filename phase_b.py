@@ -359,6 +359,60 @@ def _f(v: Any) -> float | None:
         return None
 
 
+def _legacy_arm_allows(record: dict, c: dict) -> tuple[bool, str]:
+    """The pre-2026-09-18 Phase B arm: 40-70 exhaustion band + direction RSI.
+
+    Kept behind ``ai_phase_b_legacy_arm`` so the change is reversible without
+    a deploy. Note what it does NOT do, which is why it conflicted with the
+    square: it refuses exhaustion above ai_phase_b_exh_max (70) outright, and
+    its RSI leg lets a FLAT reading pass — it blocks only on actively falling.
+    RTH treats flat as not-rising.
+    """
+    ind = _ind(record)
+    try:
+        exh_min = float(c.get("ai_phase_b_exh_min", 40.0) or 40.0)
+    except (TypeError, ValueError):
+        exh_min = 40.0
+    try:
+        exh_max = float(c.get("ai_phase_b_exh_max", 70.0) or 70.0)
+    except (TypeError, ValueError):
+        exh_max = 70.0
+    exh = _f(ind.get("exhaustion"))
+    if exh is None and isinstance(record, dict):
+        exh = _f(record.get("exhaustion"))
+    if exh is None:
+        raw = _f(ind.get("pctr"))
+        if raw is None and isinstance(record, dict):
+            raw = _f(record.get("pctr"))
+        if raw is not None:
+            exh = (100.0 + float(raw)) if float(raw) <= 0.0 else float(raw)
+    if exh is None:
+        return False, "phase_b_no_exh"
+    if exh < exh_min or exh > exh_max:
+        return False, "phase_b_exh_band"
+
+    if bool(c.get("ai_phase_b_require_exh_rising", True)):
+        if ind.get("pctr_falling"):
+            return False, "phase_b_exh_falling"
+        if not ind.get("pctr_rising"):
+            return False, "phase_b_exh_not_rising"
+
+    try:
+        rsi_block = float(c.get("ai_phase_b_rsi_block_falling_above", 10.0) or 10.0)
+    except (TypeError, ValueError):
+        rsi_block = 10.0
+    rsi = _f(ind.get("cm_rsi"))
+    if rsi is None and isinstance(record, dict):
+        rsi = _f(record.get("cm_rsi"))
+    rsi_rising = ind.get("cm_rsi_rising")
+    rsi_falling = ind.get("cm_rsi_falling")
+    if rsi_falling is None and rsi_rising is False:
+        rsi_falling = True
+    if rsi is not None and rsi_falling and float(rsi) > rsi_block:
+        return False, "phase_b_rsi_falling"
+    return True, "phase_b_arm_legacy"
+
+
 def phase_b_arm_allows(
     record: dict,
     *,
@@ -366,7 +420,27 @@ def phase_b_arm_allows(
     now: float | None = None,
     last: float | None = None,
 ) -> tuple[bool, str]:
-    """Stripped EXH+RSI arm on Finnhub last. Ignores Plan A mistimed/soft_ob/MACD/cm_rsi_max.
+    """Session mechanics here; the indicator arm is RTH's, shared not copied.
+
+    Phase B used to carry its own exhaustion band (ai_phase_b_exh_min/max,
+    40-70) and its own direction-only RSI rule. That put the two lanes in
+    direct contradiction once the square arm shipped: RTH enters on the dual-%R
+    red square, which needs BOTH lines overbought (exhaustion >= 100-
+    rte_threshold, i.e. 80 by default), and Phase B refused anything over 70 as
+    phase_b_exh_band. Premarket was gated to reject exactly the state the
+    thesis says to buy.
+
+    So the indicator legs now call the same functions the RTH arm calls —
+    exhaustion_allows_buy (square/triangle) and cm_rsi_allows_buy (direction)
+    — rather than reimplementing them. Shared, so the lanes cannot drift apart
+    again: a change to the square is a change to both.
+
+    What stays Phase B's own is session mechanics, which are genuinely
+    different premarket: the entry clock, print freshness, seat caps and the
+    confirm-tick streak.
+
+    ``ai_phase_b_legacy_arm`` restores the old band + direction-only RSI for
+    rollback without a code change.
 
     Returns ``(True, reason)`` or ``(False, reason_token)``.
     """
@@ -391,57 +465,27 @@ def phase_b_arm_allows(
         if sym and why:
             return False, why
 
-    ind = _ind(record)
-    # EXH band + rising. Engine stores Williams %R on ``pctr`` (−100..0);
-    # Phase B band is 0–100 exhaustion (= 100+%R). Prefer explicit exhaustion.
-    try:
-        exh_min = float(c.get("ai_phase_b_exh_min", 40.0) or 40.0)
-    except (TypeError, ValueError):
-        exh_min = 40.0
-    try:
-        exh_max = float(c.get("ai_phase_b_exh_max", 70.0) or 70.0)
-    except (TypeError, ValueError):
-        exh_max = 70.0
-    exh = _f(ind.get("exhaustion"))
-    if exh is None and isinstance(record, dict):
-        exh = _f(record.get("exhaustion"))
-    if exh is None:
-        raw = _f(ind.get("pctr"))
-        if raw is None and isinstance(record, dict):
-            raw = _f(record.get("pctr"))
-        if raw is not None:
-            # Negative / zero → Williams %R; positive → already 0–100 heat.
-            exh = (100.0 + float(raw)) if float(raw) <= 0.0 else float(raw)
-    if exh is None:
-        return False, "phase_b_no_exh"
-    if exh < exh_min or exh > exh_max:
-        return False, "phase_b_exh_band"
+    if not bool(c.get("ai_phase_b_legacy_arm", False)):
+        # Shared with RTH. exhaustion_allows_buy routes to the square arm when
+        # ai_watch_exh_square_arm is on (it is), so premarket and RTH agree on
+        # what a good entry looks like by construction rather than by two
+        # sets of knobs that happen to match.
+        try:
+            import ai_entry_watch as ew
+        except Exception as e:  # noqa: BLE001
+            return False, f"phase_b_arm_unavailable:{e}"
 
-    require_rising = bool(c.get("ai_phase_b_require_exh_rising", True))
-    if require_rising:
-        rising = ind.get("pctr_rising")
-        falling = ind.get("pctr_falling")
-        if falling:
-            return False, "phase_b_exh_falling"
-        if rising is False:
-            return False, "phase_b_exh_not_rising"
-        if not rising:
-            return False, "phase_b_exh_not_rising"
+        ok_exh, why_exh = ew.exhaustion_allows_buy(record, c)
+        if not ok_exh:
+            return False, why_exh
 
-    # RSI: block only if falling AND rsi > threshold (direction-only; no cm_rsi_max)
-    try:
-        rsi_block = float(c.get("ai_phase_b_rsi_block_falling_above", 10.0) or 10.0)
-    except (TypeError, ValueError):
-        rsi_block = 10.0
-    rsi = _f(ind.get("cm_rsi"))
-    if rsi is None and isinstance(record, dict):
-        rsi = _f(record.get("cm_rsi"))
-    rsi_rising = ind.get("cm_rsi_rising")
-    rsi_falling = ind.get("cm_rsi_falling")
-    if rsi_falling is None and rsi_rising is False:
-        rsi_falling = True
-    if rsi is not None and rsi_falling and float(rsi) > rsi_block:
-        return False, "phase_b_rsi_falling"
+        ok_rsi, why_rsi = ew.cm_rsi_allows_buy(record, c)
+        if not ok_rsi:
+            return False, why_rsi
+    else:
+        ok_legacy, why_legacy = _legacy_arm_allows(record, c)
+        if not ok_legacy:
+            return False, why_legacy
 
     # Confirm ticks (default 1) — one fresh last is enough when ticks==1.
     try:

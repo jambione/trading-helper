@@ -23,6 +23,11 @@ def _ts(h: int, m: int, day: int = 17) -> float:
 
 
 CFG_ON = {
+    # The indicator arm is RTH's as of 2026-09-18 (square + cm_rsi). The cases
+    # below assert the legacy 40-70 band and its reason codes, which still ship
+    # behind this knob; premarket/RTH parity is covered in
+    # tests/test_phase_b_shared_arm.py.
+    "ai_phase_b_legacy_arm": True,
     "ai_phase_b_enabled": True,
     "ai_phase_b_dry_run": True,
     "ai_phase_b_start_time": "04:00",
@@ -390,6 +395,14 @@ def test_refresh_seat_indicators_stamps_engine(monkeypatch, tmp_path):
         @staticmethod
         def live_exhaustion(*a, **k):
             return None
+
+        @staticmethod
+        def exhaustion_allows_buy(record, cfg):
+            return True, "stub_exh"
+
+        @staticmethod
+        def cm_rsi_allows_buy(record, cfg):
+            return True, "stub_rsi"
 
     monkeypatch.setitem(__import__("sys").modules, "ai_entry_watch", _EW)
     out = pb.refresh_seat_indicators(cfg=CFG_ON, now=_ts(8, 1))

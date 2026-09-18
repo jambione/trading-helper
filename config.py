@@ -1268,6 +1268,11 @@ DEFAULT_CONFIG = {
     # Factor 1 of 2 for live trading. Tracked in git so arming shows up in a
     # diff; factor 2 is the gitignored config/live_armed.json naming the
     # account. Neither alone arms anything — see live_arm.py.
+    # Rollback for the 2026-09-18 change that pointed Phase B's indicator arm
+    # at RTH's (exhaustion_allows_buy + cm_rsi_allows_buy). True restores the
+    # old 40-70 band + direction-only RSI, which CONFLICTS with the square arm
+    # — keep it off unless you mean to run the lanes on different theses.
+    "ai_phase_b_legacy_arm":          False,
     "ai_live_trading_enabled":        False,
     "ai_fill_ledger_enabled":         True,
     "ai_fill_ledger_poll_sec":        60.0,   # broker closed-orders poll pace
@@ -2058,6 +2063,7 @@ SAFE_CONFIG_KEYS = [
     "ai_admit_ledger_seed",
     "ai_admit_ledger_inclusion",
     "ai_admit_ledger_kept_sample",
+    "ai_phase_b_legacy_arm",
     "ai_live_trading_enabled",
     "ai_fill_ledger_enabled",
     "ai_fill_ledger_poll_sec",
