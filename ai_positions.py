@@ -4141,7 +4141,9 @@ def _fresh_tape_px(ticker: str) -> float | None:
     try:
         return px if float(age) <= stale else None
     except (TypeError, ValueError):
-        return px
+        # An age that will not parse is not a young age. Returning px here
+        # undid the None check three lines up for every malformed clock.
+        return None
 
 
 def _tick_prints(ticker: str, live: dict | None) -> tuple[float | None, float | None]:
@@ -4172,7 +4174,28 @@ def _tick_prints(ticker: str, live: dict | None) -> tuple[float | None, float | 
                 )
             except (TypeError, ValueError):
                 stale = DEFAULT_STALE_DATA_MAX_AGE_SEC
-            if age is None or float(age) <= stale:
+            # live_print's contract: "Age None means the desk has a number
+            # but cannot prove it is live — callers must not treat that as
+            # fresh." This read it as fresh, and price_age_sec is None on
+            # 100% of watched shadow rows (20,000 sampled 2026-09-18), so the
+            # unprovable branch was the ONLY branch.
+            #
+            # It matters in both directions. A phantom low is a flatten
+            # trigger — "any print at or below the shelf market-closes" — and
+            # a phantom high inflates MFE, which raises the shelf off a price
+            # that never traded and then flattens against it. Either way the
+            # desk acts on a number it cannot date.
+            #
+            # Dropping it costs nothing, for the same reason _fresh_tape_px
+            # above gives: the broker mark still feeds vals, the 1s book tick
+            # still owns the REST fallback, and the blind-book flatten (which
+            # fails closed on quote_is_live) still owns total data loss.
+            age_f = None
+            try:
+                age_f = float(age) if age is not None else None
+            except (TypeError, ValueError):
+                age_f = None
+            if age_f is not None and age_f <= stale:
                 vals.append(float(tape[0]))
     except Exception:
         pass
