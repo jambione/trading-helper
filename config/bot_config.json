@@ -20,7 +20,7 @@
   "ai_exh_falling_flatten_enabled": false,
   "ai_no_progress_flatten_enabled": false,
   "ai_no_progress_mfe_r": 0.05,
-  "ai_no_progress_sec": 60.0,
+  "ai_no_progress_sec": 90.0,
   "ai_duel_chance3_time": "14:30",
   "ai_duel_close_before_research_min": 10,
   "ai_duel_enabled": false,
@@ -33,7 +33,7 @@
   "ai_entry_unconfirmed_ttl_sec": 900.0,
   "ai_eod_liquidate_enabled": true,
   "ai_eod_liquidate_time": "15:50",
-  "ai_exit_left_overbought": false,
+  "ai_exit_left_overbought": true,
   "ai_exit_macd_confirm_ticks": 3,
   "ai_exit_macd_hard_sell_sep": 0.8,
   "ai_exit_macd_liquidate": false,
@@ -437,5 +437,6 @@
   "ai_phase_b_seat_stale_sec": 75.0,
   "ai_breakeven_offset_px": 0.01,
   "ai_entry_confirm_max_slip_pct": 0.5,
-  "ai_entry_confirm_max_slip_px": 0.08
+  "ai_entry_confirm_max_slip_px": 0.08,
+  "ai_watch_exh_square_arm": true
 }
