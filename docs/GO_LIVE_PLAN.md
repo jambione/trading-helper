@@ -52,7 +52,12 @@ Operational facts that shape everything below:
 These are ordered by what goes wrong if you skip them. None of them depend on
 the P&L track.
 
-### 2.1 Unauthenticated remote write to credentials and risk limits
+### 2.1 Unauthenticated remote write ✅ FIXED + DEPLOYED 2026-09-18
+
+> **Status:** closed in `c186c98`, deployed to the mini and verified against
+> the running desk — `GET /api/config?user=jmb`, `GET /api/state?user=jmb`
+> and `POST /api/config?user=jmb` all return **401**. Credential rotation is
+> still outstanding; the exposure window was real.
 
 **This one is live right now, with real broker credentials behind it.** Worth
 fixing this week whether or not go-live happens this quarter.
@@ -121,46 +126,38 @@ config, and credentials/risk limits are not reachable over HTTP at all.
 
 ---
 
-### 2.2 No broker-side stops — positions go naked if the process dies
+### 2.2 Software stops are the design — not a gap
 
-`ai_broker_stop_enabled = False`. Two consequences:
+**Operator decision, 2026-09-18: software stops stay.** `ai_broker_stop_enabled
+= False` is deliberate; the local trail is the heart of the project and broker-
+side protective orders are explicitly not wanted. This section previously
+argued for attaching them; that argument is withdrawn and is not a go-live
+blocker.
 
-1. Stops live **only in the desk process**. With `local_trail` at 73% of exits,
-   three quarters of the book's protection depends on `ai_trader.py` running,
-   the Finnhub stream delivering, and the mini having power and network.
-2. It **disables the unprotected-entry rail** as a side effect
-   (`alpaca_trader.py:186`: `if cfg.get("ai_broker_stop_enabled") is False:
-   return False`), so buys may open with no protective exit at all.
+What follows from the decision, stated once so the ramp accounts for it:
 
-The comment documenting why that rail exists:
+`local_trail` is 578 of 790 exits (73%), so **the desk process IS the stop.**
+That makes process liveness the protective mechanism rather than a
+convenience, and moves the safety requirement from §2.2 to §3: heartbeat
+alerting and the independent flatten switch are load-bearing controls here,
+not nice-to-haves. A desk that dies with a position open is the failure this
+design has to answer, and it answers it by being noticed fast.
 
-> On 2026-08-06 one of them opened 353 shares of CELH — 83% of account
-> equity — with no stop, after the bracket was rejected for extended hours.
-> It sat naked for 44 minutes. ALOY and XNDU took the same path on 08-04.
+Two consequences worth carrying into the ramp:
 
-In paper that was a log line. With real money it is a microcap that can gap 30%
-while nobody is managing it.
-
-**Fix**
-
-- Every live position carries a **broker-side** stop from the moment it fills.
-- The software trail may ratchet *inside* that stop; it must never be the only
-  line of defense.
-- Handle the extended-hours bracket rejection explicitly — that is the specific
-  path that produced CELH. If the protective order cannot be placed, the entry
-  does not happen.
-
-**Done when:** you open a paper position, `kill -9` the desk, and confirm the
-broker still holds a protective order. This is a test to write, not a thing to
-reason about.
-
----
+- `ai_broker_stop_enabled = False` also disables the unprotected-entry rail
+  (`alpaca_trader.py:186`: `if cfg.get("ai_broker_stop_enabled") is False:
+  return False`), so an entry may open with no protective exit of any kind.
+  That is a separate switch from the stop policy and worth deciding on its own
+  terms — keeping software stops does not require keeping unprotected entries.
+- Stage criteria in §6 test *detection and response* (heartbeat fires, flatten
+  works, ledger reconciles) rather than the presence of a broker order.
 
 ### 2.3 No fill ledger — the trade log records submissions ✅ BUILT 2026-09-18
 
-> **Status:** `fill_ledger.py` + `tools/fill_reconcile.py` landed, 21 tests.
-> Not yet deployed to the mini, and the daily reconcile is not yet on a cron.
-> See "What shipped" at the end of this section.
+> **Status:** `fill_ledger.py` + `tools/fill_reconcile.py` landed (21 tests)
+> and deployed to the mini 2026-09-18. The daily reconcile is not yet on a
+> cron. See "What shipped" at the end of this section.
 
 
 `alpaca_trade_log.json` carries 1,000 rolling rows, every one with
@@ -407,6 +404,18 @@ ended up owning, not rows it found.
 **proposals** rather than fills — hundreds of observations per day instead of
 ~12. Design exists at `scratchpad/SOURCE_SCORECARD_DESIGN.md`.
 
+**Replay cannot evaluate the shipped arm config.** Found 2026-09-18 while
+repairing the suite: the frozen tapes predate the dual-%R work — 0 of 10,585
+rows in the `sim_2026-08-11` fixture carry `pctr_slow` — so the shipped square
+arm refuses every historical bar and the replay zeroes out (`arm_both` 194 ->
+0). The sim configs now replay the single-line model their tape was recorded
+under, which keeps the pinned numbers honest but does **not** let replay answer
+"does this config help?" for anything built on both lines.
+
+*Fix:* record `pctr_slow` into the shadow/tape rows going forward, then re-pin
+a fixture from a day that carries both lines. Until then, any dual-%R change is
+live-only and therefore underpowered — see the churn note below.
+
 **Config churn outruns evidence.** ~3.5 live-config changes per session against
 ~12 fills per session, with per-trade sd ≈ 0.21R. Any A/B needs ~138 fills per
 arm to see a 0.05R effect, and every `config_fp` stamp resets the pool. Worth
@@ -427,7 +436,7 @@ so more of it buys no more information.
 
 **Stage 0 — Shadow live (2 weeks).** Live keys, live account, `TRADER_MODE`
 still paper. Prove the live path initializes against the right account, the mode
-assertion fires, broker stops attach, and nothing routes an order. Zero dollars
+assertion fires, and nothing routes an order. Zero dollars
 at risk.
 *Pass:* mode assertion demonstrated firing on a deliberately wrong account; zero
 orders routed.
@@ -436,10 +445,10 @@ orders routed.
 Purpose is to measure the paper→live slippage delta. Paper baseline is
 −0.0996R entry / −0.0426R exit; live on $1–20 microcaps will be worse, and you
 need the real number.
-*Pass:* every fill reconciles against the broker; every position carried a
-broker-side stop; measured slippage recorded.
-*Abort:* any position ever found without a broker-side stop, or any
-ledger/broker disagreement.
+*Pass:* every fill reconciles against the broker; the software trail closed
+every position it opened; measured slippage recorded.
+*Abort:* any ledger/broker disagreement, or a desk death with a position open
+that the heartbeat did not surface inside its alert window.
 
 **Stage 2 — Quarter size (4 weeks).** Concurrency comes back on. This is where
 per-instance risk caps, `liquidate_all`, and the daily brake get exercised
@@ -520,14 +529,19 @@ Also:
 
 **Must close before a live dollar:**
 
-1. Unauthenticated remote write to credentials and risk limits (§2.1) — live
-   today regardless of go-live timing
-2. No broker-side stops; 73% of exits depend on one process staying alive (§2.2)
-3. No fill ledger — submission log disagrees with the broker (§2.3)
-4. No live code path; replacing the rail is a design task (§2.4)
-5. Staleness guards fail open (§2.5)
+1. ~~Unauthenticated remote write to credentials and risk limits (§2.1)~~ —
+   **fixed and deployed 2026-09-18**, verified 401 against the running desk.
+   Credential rotation still outstanding.
+2. ~~No fill ledger (§2.3)~~ — **built and deployed**; the daily reconcile
+   still needs a cron.
+3. No live code path; replacing the rail is a design task (§2.4)
+4. Staleness guards fail open (§2.5)
+5. Heartbeat alerting and an independent flatten switch (§3). Promoted to
+   blocker status: with software stops as the design (§2.2), the desk process
+   is the protective mechanism, so noticing its death *is* the safety system.
 
-**Then:** ops resilience (§3), broker/tax mechanics (§4), and the ramp (§6).
+**Then:** the rest of ops resilience (§3), broker/tax mechanics (§4), and the
+ramp (§6).
 
 **Rough sequencing.** §2.1 and §2.3 are worth starting now — the security hole
 is open with real credentials behind it, and the ledger is what every later
