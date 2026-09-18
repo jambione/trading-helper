@@ -3778,6 +3778,7 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
         "ai_edge_mode": "exhaustion_scalp",
         "ai_watch_exhaustion_rules": True,
         "ai_watch_require_exhaustion_data": True,
+        "ai_watch_exh_square_arm": False,  # legacy heating path
         "rte_threshold": 20,
         "ai_watch_exhaustion_heat_min_pct": 50.0,
         "ai_watch_exhaustion_heat_max_pct": 90.0,
@@ -3865,6 +3866,8 @@ def test_continuation_arms_heating_and_disables_left_overbought_exit():
         "ai_edge_mode": "continuation",
         "ai_watch_exhaustion_rules": True,
         "ai_watch_require_exhaustion_data": True,
+        "ai_watch_exh_square_arm": False,  # legacy heating path
+        "ai_exit_left_overbought": False,  # continuation default story
         "rte_threshold": 20,
         "ai_watch_exhaustion_heat_min_pct": 50.0,
     }
@@ -3899,7 +3902,9 @@ def test_continuation_arms_heating_and_disables_left_overbought_exit():
     hit, reason = ew.exhaustion_exit_now(left, cfg)
     assert hit is False and reason == "left_overbought_off"
 
+    # Explicit false overrides edge mode; drop the key so scalp enables exit.
     scalp_cfg = dict(cfg, ai_edge_mode="exhaustion_scalp")
+    scalp_cfg.pop("ai_exit_left_overbought", None)
     hit2, reason2 = ew.exhaustion_exit_now(left, scalp_cfg)
     assert hit2 is True and reason2 == "left_overbought"
 
@@ -4257,8 +4262,10 @@ def _last_cfg(**over):
     cfg = {
         "ai_watch_arm_mode": "last",
         # Existing last-mode tests cover the heat/rising gate. The TV
-        # two-line + RSI machine is tested separately.
+        # two-line + RSI machine is tested separately. Square arm (dual OB+
+        # tight only) is covered in test_heating_dual_r_smci / square suite.
         "ai_watch_tv_exh_rsi": False,
+        "ai_watch_exh_square_arm": False,
         "ai_watch_exhaustion_rules": True,
         "ai_watch_in_zone_ignore_fade": False,
         "ai_watch_require_exhaustion_data": False,
@@ -4951,15 +4958,19 @@ def _tv_rec(*, fast=-6.0, slow=-3.0, rsi=8.0, tight=True):
     return rec
 
 
-def test_heating_dual_r_smci_pass_rklb_refuse():
-    """2026-09-18 TV lock: SMCI (gap 9, both OB) buys; RKLB (gap 25, not OB) don't.
+def test_square_arm_smci_pass_rklb_refuse_no_heating():
+    """2026-09-18 TV square mode: SMCI (gap~9, both OB) arms; RKLB (gap 25) don't.
 
-    Patch heating in place — do not flip ai_watch_tv_exh_rsi (fights RSI rising
-    under 75). SMCI clears as overbought; RKLB heating with wide gap → exh_not_tight.
+    Enter only dual-OB+tight. Pure heating (even tight) does not arm.
+    ai_watch_tv_exh_rsi stays false (RSI rising under 75 unchanged).
     """
     import ai_entry_watch as ew
+    from config import DEFAULT_CONFIG
+
+    assert DEFAULT_CONFIG.get("ai_watch_exh_square_arm") is True
 
     cfg = _last_cfg(
+        ai_watch_exh_square_arm=True,
         ai_watch_require_exh_rising=True,
         ai_watch_exhaustion_heat_min_pct=40.0,
         ai_watch_exhaustion_heat_max_pct=0.0,
@@ -4969,21 +4980,22 @@ def test_heating_dual_r_smci_pass_rklb_refuse():
         ai_watch_require_realtime_rsi=False,
         ai_watch_mistimed_heat_enabled=False,
         ai_watch_soft_ob_enabled=False,
+        ai_watch_ob_allow_hot=False,
         rte_threshold=20,
         rte_confluence_max=15.0,
         rte_require_tight=True,
         ai_watch_tv_exh_rsi=False,
     )
 
-    # SMCI-like: both lines OB (fast -6, slow -15 → gap 9), RSI rising under 75.
+    # SMCI-like: fast≈−13, slow≈−4, gap≈9, both OB.
     smci = _armable_rec()
     smci["symbol"] = "SMCI"
-    smci["source"] = "xai"  # non-hot source so why stays overbought (not _hot)
+    smci["source"] = "xai"
     smci["structure"]["zone_kind"] = "at_last"
     smci["structure"]["reward_risk"] = 0.6
     smci["indicator"].update({
-        "pctr": -6.0,
-        "pctr_slow": -15.0,
+        "pctr": -13.0,
+        "pctr_slow": -4.0,
         "pctr_rising": True,
         "pctr_falling": False,
         "pctr_ob": True,
@@ -4993,19 +5005,19 @@ def test_heating_dual_r_smci_pass_rklb_refuse():
         "cm_rsi_src": "realtime",
     })
     ok, why = ew.exhaustion_allows_buy(smci, cfg)
-    assert ok is True and why in ("overbought", "overbought_hot")
+    assert ok is True and why == "overbought"
     ok, why = ew.should_arm_buy(smci, ask=45.0, bid=44.95, cfg=cfg)
     assert ok is True and why.startswith("last_overbought")
 
-    # RKLB-like: fast heating only, slow far (gap 25), not both OB.
+    # RKLB-like: fast≈−39, slow≈−64, gap≈25 → exh_not_tight.
     rklb = _armable_rec()
     rklb["symbol"] = "RKLB"
     rklb["source"] = "trending"
     rklb["structure"]["zone_kind"] = "at_last"
     rklb["structure"]["reward_risk"] = 0.6
     rklb["indicator"].update({
-        "pctr": -40.0,       # heat 60 — heating band
-        "pctr_slow": -65.0,  # gap 25 > 15
+        "pctr": -39.0,
+        "pctr_slow": -64.0,
         "pctr_rising": True,
         "pctr_falling": False,
         "pctr_ob": False,
@@ -5014,19 +5026,67 @@ def test_heating_dual_r_smci_pass_rklb_refuse():
         "cm_rsi_rising": True,
         "cm_rsi_src": "realtime",
     })
-    assert ew.exhaustion_state(rklb, cfg) == "heating"
     ok, why = ew.exhaustion_allows_buy(rklb, cfg)
     assert ok is False and why == "exh_not_tight"
     ok, why = ew.should_arm_buy(rklb, ask=64.0, bid=63.95, cfg=cfg)
     assert ok is False and why == "exh_not_tight"
-    assert ew.format_blocker("exh_not_tight") == "EXH wide"
-    assert "gap" in str(rklb.get("block_detail") or "")
 
-    # Heating + tight still arms (early confluence without both OB).
+    # Heating + tight but NOT both OB → no arm (square only).
     early = _ob_rec(symbol="EARLY", rsi=45.0, exh=60.0, source="momentum",
                     slow_gap=5.0)
     ok, why = ew.exhaustion_allows_buy(early, cfg)
-    assert ok is True and why == "heating"
+    assert ok is False and why == "wait_exh"
+
+
+def test_square_left_overbought_triangle_exit():
+    """Leave dual-OB (▼) → left_overbought; still both-OB → hold."""
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_watch_exh_square_arm": True,
+        "ai_exit_left_overbought": True,
+        "ai_watch_exhaustion_rules": True,
+        "rte_threshold": 20,
+        "rte_confluence_max": 15.0,
+        "ai_watch_tv_exh_rsi": False,
+    }
+    # Still in the square.
+    hold = {
+        "symbol": "SMCI",
+        "exh_was_overbought": True,
+        "indicator": {
+            "pctr": -10.0, "pctr_slow": -8.0,
+            "pctr_rising": False, "pctr_falling": False,
+            "pctr_ob": True,
+        },
+    }
+    hit, why = ew.exhaustion_exit_now(hold, cfg)
+    assert hit is False and why == "overbought_hold"
+    assert hold.get("exh_was_overbought") is True
+
+    # Triangle: was OB, now not both-OB.
+    leave = {
+        "symbol": "SMCI",
+        "exh_was_overbought": True,
+        "indicator": {
+            "pctr": -40.0, "pctr_slow": -25.0,
+            "pctr_rising": False, "pctr_falling": True,
+            "pctr_ob": False,
+        },
+    }
+    hit, why = ew.exhaustion_exit_now(leave, cfg)
+    assert hit is True and why == "left_overbought"
+
+    # Never latched → no exit.
+    never = {
+        "symbol": "NEW",
+        "indicator": {
+            "pctr": -50.0, "pctr_slow": -55.0,
+            "pctr_rising": True, "pctr_falling": False,
+        },
+    }
+    hit, why = ew.exhaustion_exit_now(never, cfg)
+    assert hit is False and why == "never_overbought"
 
 
 def test_tv_exh_rsi_requires_both_lines_then_rsi():

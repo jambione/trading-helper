@@ -40,6 +40,10 @@ DEFAULT_CONFIG = {
     "cm_rsi_prefer_green": True,  # Connors color is a strength flag, not a gate
     # Desk buy = MACD bullish cross with wide line separation (gap).
     "ai_watch_tv_exh_rsi": False,
+    # TV %R Trend Exhaustion square arm: enter only on dual-OB + tight
+    # (red ■). When true, last_heating / fast-only OB cannot arm. Rollback:
+    # set false to restore legacy heating path (still dual-tight gated).
+    "ai_watch_exh_square_arm": True,
 
     # Live bar tape. iex is the free Alpaca feed. sip needs Algo Trader Plus
     # and is what matches TradingView highs/lows on thin names.
@@ -757,9 +761,10 @@ DEFAULT_CONFIG = {
     "h4_stop_pct":               2.0,
     "h4_haircut_pct":            0.20,   # vs cash, same units as desk_null
 
-    # Explicit override for left_overbought software exit. None/absent → follow
-    # edge mode (on only for exhaustion_scalp). Set false to force off.
-    # "ai_exit_left_overbought": False,
+    # Explicit override for left_overbought software exit (TV red ▼ triangle).
+    # Square mode ships this ON so leave dual-OB flattens; trail is backup only.
+    # None/absent → follow edge mode (on only for exhaustion_scalp).
+    "ai_exit_left_overbought": True,
     # Exhaustion / %R is a *direction* filter, not a heat floor.
     # BUY: %R rising, or already overbought and not falling.
     # Refuse cooling / rolling-over OB. Missing %R still passes when
@@ -1584,6 +1589,7 @@ def validate_ai_config(cfg: dict) -> list[str]:
 # and commit messages have disagreed (continuation vs exhaustion_scalp vs
 # "hybrid arm"); this is the resolved set the process is actually running.
 _EFFECTIVE_KEYS = (
+    "ai_watch_exh_square_arm",
     "ai_edge_mode",
     "ai_stop_use_market",
     "ai_watch_synth_rr",
@@ -1875,6 +1881,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_armable_zone_kinds",
     "ai_edge_mode",
     "ai_exit_left_overbought",
+    "ai_watch_exh_square_arm",
     "ai_watch_exhaustion_rules",
     # Published so the book legend can state the live entry/exit criteria
     # instead of a fallback. The attempt cap and the dead-reentry pair are

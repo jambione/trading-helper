@@ -9950,34 +9950,78 @@ def exhaustion_pct(record: dict) -> float | None:
     return max(0.0, min(100.0, 100.0 + v))
 
 
+def exh_square_arm_enabled(cfg: dict | None) -> bool:
+    """Dual-%R OB+tight square arm (TV red ■). Default on once shipped."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return bool(cfg.get("ai_watch_exh_square_arm", True))
+
+
+def _rte_threshold(cfg: dict | None) -> float:
+    try:
+        return float((cfg or {}).get("rte_threshold", 20) or 20)
+    except (TypeError, ValueError):
+        return 20.0
+
+
+def _rte_confluence_max(cfg: dict | None) -> float:
+    try:
+        return float((cfg or {}).get("rte_confluence_max", 15) or 15)
+    except (TypeError, ValueError):
+        return 15.0
+
+
+def dual_r_ob_tight(
+    record: dict,
+    cfg: dict | None = None,
+) -> tuple[bool | None, bool | None, str | None]:
+    """Dual-%R square read: ``(both_ob, tight, refuse_reason)``.
+
+    ``both_ob`` / ``tight`` are None when lines are missing.
+    ``refuse_reason`` is set when the square cannot be evaluated or fails
+    a hard presence check (``no_exhaustion_data``).
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    fast = _f_or_none(ind.get("pctr"))
+    slow = _f_or_none(ind.get("pctr_slow"))
+    if fast is None or slow is None:
+        return None, None, "no_exhaustion_data"
+    thr = _rte_threshold(cfg)
+    both_ob = bool(ind.get("pctr_ob")) or (
+        float(fast) >= -thr and float(slow) >= -thr
+    )
+    tight_max = _rte_confluence_max(cfg)
+    gap = abs(float(fast) - float(slow))
+    tight = bool(ind.get("pctr_tight")) or gap <= tight_max + 1e-9
+    return bool(both_ob), bool(tight), None
+
+
 def is_overbought(record: dict, cfg: dict) -> bool | None:
     """True when %R has reached the overbought band. None when unknown.
 
-    TV desk mode (both lines): red boxes = fast AND slow >= -threshold.
+    Square / TV desk mode (both lines): red boxes = fast AND slow >= -threshold.
     Legacy: fast line only (100 + %R >= 100 - threshold).
     """
-    if tv_exh_rsi_enabled(cfg):
+    if tv_exh_rsi_enabled(cfg) or exh_square_arm_enabled(cfg):
         ind = record.get("indicator") if isinstance(record, dict) else None
         if not isinstance(ind, dict):
             return None
         if ind.get("pctr_ob") is True:
             return True
-        fast = _f_or_none(ind.get("pctr"))
-        slow = _f_or_none(ind.get("pctr_slow"))
-        if fast is None or slow is None:
-            return None if fast is None and slow is None else False
-        try:
-            thr = float(cfg.get("rte_threshold", 20) or 20)
-        except (TypeError, ValueError):
-            thr = 20.0
-        return fast >= -thr and slow >= -thr
+        both_ob, _tight, err = dual_r_ob_tight(record, cfg)
+        if err == "no_exhaustion_data":
+            # Square mode needs both lines; unknown ≠ overbought.
+            if exh_square_arm_enabled(cfg) and not tv_exh_rsi_enabled(cfg):
+                fast = _f_or_none(ind.get("pctr"))
+                if fast is None:
+                    return None
+                return False
+            return None if _f_or_none(ind.get("pctr")) is None else False
+        return bool(both_ob)
     ex = exhaustion_pct(record)
     if ex is None:
         return None
-    try:
-        thr = float(cfg.get("rte_threshold", 20) or 20)
-    except (TypeError, ValueError):
-        thr = 20.0
+    thr = _rte_threshold(cfg)
     return ex >= (100.0 - thr)
 
 
@@ -10667,6 +10711,10 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
             return False, f"pctr_not_live_{src or 'missing'}"
     if tv_exh_rsi_enabled(cfg):
         return _tv_exh_rsi_allows_buy(record, cfg)
+    # Square mode (TV red ■): enter only on dual-OB + tight. Replaces
+    # last_heating / fast-only OB as the arm story when enabled.
+    if exh_square_arm_enabled(cfg):
+        return _square_exh_allows_buy(record, cfg, require_rising=require_rising)
     state = exhaustion_state(record, cfg)
     if state == "unknown":
         # Gaining-EXH rule needs a reading. Fallback used to arm blind when
@@ -10749,14 +10797,64 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         return False, f"not_rising_{state}"
     if state == "overbought":
         return True, "overbought"
-    # Heating without OB: require dual-%R confluence (TV red-box picture).
-    # Fast-only heaters with a wide |fast−slow| (RKLB-class) must not arm as
-    # last_heating. SMCI-class both-OB + tight still clears via overbought
-    # above; heating path needs slow present + tight when rte_require_tight.
+    # Legacy heating path (square arm off): still require dual-%R tight so
+    # RKLB-class wide-gap heaters cannot last_heating.
     tight_ok, tight_why = _heating_dual_r_allows(record, cfg)
     if not tight_ok:
         return False, tight_why
     return True, "heating"
+
+
+def _square_exh_allows_buy(
+    record: dict,
+    cfg: dict,
+    *,
+    require_rising: bool,
+) -> tuple[bool, str]:
+    """Enter only on TV red-square: both %R OB and tight.
+
+    No ``last_heating`` / fast-only heat. Falling still refuses. Already in
+    the square (dual OB+tight) may arm even if flat (pinned at highs).
+    """
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    both_ob, tight, err = dual_r_ob_tight(record, cfg)
+    if err:
+        if require_rising and (
+            ind.get("pctr_falling") or exhaustion_state(record, cfg) == "cooling"
+        ):
+            return False, "exh_falling"
+        if bool(cfg.get("ai_watch_require_exhaustion_data", True)):
+            return False, err
+        return False, "exh_not_tight"
+    if ind.get("pctr_falling") or exhaustion_state(record, cfg) == "cooling":
+        if require_rising or both_ob:
+            return False, "exh_falling"
+        return False, "exh_falling"
+    if not both_ob:
+        # Not in the square. Wide gap → exh_not_tight (RKLB); else wait_exh.
+        if tight is False:
+            fast = _f_or_none(ind.get("pctr"))
+            slow = _f_or_none(ind.get("pctr_slow"))
+            if fast is not None and slow is not None:
+                gap = abs(float(fast) - float(slow))
+                record["block_detail"] = (
+                    f"exh gap {gap:.1f}>{_rte_confluence_max(cfg):g}")
+            return False, "exh_not_tight"
+        return False, "wait_exh"
+    if not tight:
+        fast = _f_or_none(ind.get("pctr"))
+        slow = _f_or_none(ind.get("pctr_slow"))
+        if fast is not None and slow is not None:
+            gap = abs(float(fast) - float(slow))
+            record["block_detail"] = (
+                f"exh gap {gap:.1f}>{_rte_confluence_max(cfg):g}")
+        return False, "exh_not_tight"
+    # In the square. Rising preferred; flat while both OB is still a square.
+    if require_rising and not ind.get("pctr_rising") and not both_ob:
+        return False, "exh_not_rising"
+    if bool(cfg.get("ai_watch_ob_allow_hot", True)) and _hot_ob_source(record):
+        return True, "overbought_hot"
+    return True, "overbought"
 
 
 def _heating_dual_r_allows(record: dict, cfg: dict) -> tuple[bool, str]:
@@ -10829,14 +10927,14 @@ def _macd_is_armed(record: dict) -> bool:
 
 
 def exhaustion_exit_now(record: dict, cfg: dict) -> tuple[bool, str]:
-    """Sell when %R leaves the overbought band (exhaustion_scalp only).
+    """Sell when %R leaves the overbought band (triangle ▼ / left_overbought).
 
-    Disabled under **continuation** (Option A): left_overbought was the
-    2026-08-11 small-loss factory (median MFE +0.06R, 8/12 exits). Upside is
-    broker T1 / runner trail / dead_trade / stop instead.
+    Square mode / dual-%R: latch and exit on **both-line** OB edge
+    (``ob_reversal``: was dual-OB, now not) — not fast-only heat drop.
 
-    Arms only after the position has actually been overbought. Until then
-    there is nothing to exit *out of*.
+    Legacy (square off): fast-line band only.
+
+    Disabled when ``left_overbought_exit_enabled`` is false.
 
     Returns (exit_now, reason).
     """
@@ -10844,13 +10942,26 @@ def exhaustion_exit_now(record: dict, cfg: dict) -> tuple[bool, str]:
         return False, "left_overbought_off"
     if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
         return False, "exhaustion_off"
+
+    use_dual = bool(
+        exh_square_arm_enabled(cfg) or tv_exh_rsi_enabled(cfg)
+    )
+    if use_dual:
+        both_ob, _tight, err = dual_r_ob_tight(record, cfg)
+        if err == "no_exhaustion_data" and both_ob is None:
+            # Missing slow: do not latch or fire on incomplete dual read.
+            return False, "no_exhaustion_data"
+        if both_ob:
+            record["exh_was_overbought"] = True
+            return False, "overbought_hold"
+        if not record.get("exh_was_overbought"):
+            return False, "never_overbought"
+        return True, "left_overbought"
+
     ex = exhaustion_pct(record)
     if ex is None:
         return False, "no_exhaustion_data"
-    try:
-        thr = float(cfg.get("rte_threshold", 20) or 20)
-    except (TypeError, ValueError):
-        thr = 20.0
+    thr = _rte_threshold(cfg)
     band = 100.0 - thr
     if ex >= band:
         record["exh_was_overbought"] = True
