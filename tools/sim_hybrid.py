@@ -60,6 +60,17 @@ def hybrid_cfg() -> dict[str, Any]:
         "ai_watch_require_exhaustion_data": True,
         "rte_threshold": 20,
         "ai_watch_exhaustion_heat_min_pct": 50.0,
+        # The replayed tapes carry a single %R line — pctr_slow did not
+        # exist when they were recorded (0 of 10,585 rows in the
+        # 2026-08-11 fixture). ai_watch_exh_square_arm defaults ON and
+        # refuses every one of them as no_exhaustion_data, which zeroes
+        # the whole replay rather than measuring anything. Replay the
+        # model the tape was recorded under.
+        "ai_watch_exh_square_arm": False,
+        # Same reason: the legacy heating path also runs a dual-%R tight
+        # check (_heating_dual_r_allows), which a single-line tape can
+        # never satisfy.
+        "rte_require_tight": False,
     }
 
 

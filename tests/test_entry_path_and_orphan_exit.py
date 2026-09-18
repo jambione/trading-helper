@@ -52,9 +52,12 @@ def test_adopted_orphans_keep_left_overbought_when_edge_mode_disables_it():
 
     # A name that was overbought and has faded out of the band exits under the
     # adopted override, and does not under the plain hybrid config.
+    # pctr_slow tracks pctr: the left_overbought latch reads both %R lines
+    # since e5339b9, and a fast-only row answers no_exhaustion_data instead of
+    # grading the fade under test.
     faded = {
         "symbol": "ORPH",
-        "indicator": {"pctr": -40.0},
+        "indicator": {"pctr": -40.0, "pctr_slow": -40.0},
         "exh_was_overbought": True,
     }
     hit_adopted, why_adopted = ew.exhaustion_exit_now(dict(faded), adopted_cfg)
@@ -84,5 +87,10 @@ def test_entry_path_is_stamped_by_every_entry_path():
     assert '"entry_path": "adopted"' in positions
     # Carried from the decision onto the position, and from the position onto
     # the outcome row — both hops are needed for the ledger to see it.
-    assert '"entry_path": decision.get("entry_path") or "unknown"' in positions
+    # Wrapped in a phase_b conditional by b615db1. Matched on the pieces for
+    # the same reason the watch assertions above are: the behaviour guarded
+    # here is "the decision's own path name reaches the position, and an
+    # unnamed path says unknown", not one particular line of source.
+    assert '"phase_b" if _phase_b' in positions
+    assert '(decision.get("entry_path") or "unknown")' in positions
     assert '"entry_path": pos.get("entry_path") or "unknown"' in positions

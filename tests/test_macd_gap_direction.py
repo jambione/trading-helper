@@ -541,7 +541,16 @@ def test_the_same_record_without_provenance_is_still_refused():
 # while MACD is armed. A falling %R is still refused, so a top that has
 # already rolled over cannot get in this way.
 
-_OBFLAT = dict(RT, ai_watch_ob_allow_flat_when_macd_armed=True)
+# ai_watch_exh_square_arm (e5339b9, default ON) intercepts exhaustion_allows_buy
+# ahead of these rules and wants BOTH %R lines, so a fast-only fixture dies on
+# no_exhaustion_data before reaching the pinned-OB rule under test. The square
+# arm is a different arm story with its own cover in test_ai_entry_watch.py;
+# these tests are about the legacy path, which is still live code and still
+# reachable via the documented rollback (square_arm=false). Pin it the same way
+# this file already pins ai_watch_tv_exh_rsi.
+_LEGACY_ARM = {"ai_watch_exh_square_arm": False}
+
+_OBFLAT = dict(RT, ai_watch_ob_allow_flat_when_macd_armed=True, **_LEGACY_ARM)
 
 
 def _armed_ind(**over):
@@ -593,7 +602,7 @@ def test_a_pinned_overbought_reading_is_still_refused_without_the_flag():
         pctr_src="live")}
     cfg = dict(RT, ai_watch_exhaustion_rules=True, ai_watch_require_exh_rising=True,
                ai_watch_exhaustion_heat_max_pct=0.0,
-               ai_watch_exhaustion_heat_min_pct=0.0)
+               ai_watch_exhaustion_heat_min_pct=0.0, **_LEGACY_ARM)
     ok, why = ew.exhaustion_allows_buy(rec, cfg)
     assert ok is False
     assert why == "exh_not_rising"
@@ -685,6 +694,9 @@ def _veto_arm_cfg(**over):
         "ai_watch_synth_rr": 0.6,
         "ai_watch_arm_require_macd": False,
         "ai_watch_macd_block_narrowing": True,
+        # See _LEGACY_ARM: the square arm would refuse these fast-only %R
+        # fixtures before the MACD veto under test ever runs.
+        "ai_watch_exh_square_arm": False,
     }
     cfg.update(over)
     return cfg

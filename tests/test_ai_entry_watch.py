@@ -32,7 +32,9 @@ def test_watch_config_defaults_present():
     # Code default False so tests / paper keep REST fallback; live bot_config
     # turns the stream-only arm gate on.
     assert DEFAULT_CONFIG["ai_watch_arm_require_stream_price"] is False
-    assert DEFAULT_CONFIG["ai_watch_stale_timeout_sec"] == 360.0
+    # Halved 360 -> 180 in f8437af, baking the mid-session 2026-09-18 knobs
+    # into the defaults. A stuck seat now gets ~3 minutes, not ~6.
+    assert DEFAULT_CONFIG["ai_watch_stale_timeout_sec"] == 180.0
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_grace_sec"] == 90.0
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_reseed_sec"] == 300.0
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_include_need_stream"] is False
@@ -55,7 +57,8 @@ def test_watch_config_defaults_present():
     assert DEFAULT_CONFIG["ai_watch_arm_mode"] == "last"
     assert DEFAULT_CONFIG["ai_watch_zone_mode"] == "pullback"
     assert int(DEFAULT_CONFIG["ai_max_positions"]) == 2
-    assert float(DEFAULT_CONFIG["ai_local_trail_arm_r"]) == 0.5
+    # 0.5 -> 0.25 in 71b6547: the ratchet arms at half the old R.
+    assert float(DEFAULT_CONFIG["ai_local_trail_arm_r"]) == 0.25
 
 
 def test_upsert_requires_agreement_by_default(tmp_path, monkeypatch):
@@ -2751,6 +2754,12 @@ def _arm_cfg(**over):
         "ai_watch_arm_min_proximity": 0,
         # These tests target the named cm/pctr flags, not live %R bars.
         "ai_watch_exhaustion_rules": False,
+        # ai_watch_exh_square_arm (e5339b9, default ON) intercepts
+        # exhaustion_allows_buy and wants BOTH %R lines. These fixtures
+        # carry a single pctr and exercise the legacy arm rules, which
+        # are still live code behind the documented square_arm=false
+        # rollback. Only bites when a test turns exhaustion_rules on.
+        "ai_watch_exh_square_arm": False,
     }
     cfg.update(over)
     return cfg
@@ -2788,7 +2797,10 @@ def test_zone_entry_opens_a_window_for_exh_to_arm():
     import ai_entry_watch as ew
 
     rec = _armable_rec(pctr=False)
+    # pctr_slow mirrors pctr: both arm paths run a dual-%R check since
+    # e5339b9, so a fast-only record never reaches the zone window rule.
     rec["indicator"]["pctr"] = -80.0
+    rec["indicator"]["pctr_slow"] = -80.0
     rec["indicator"]["pctr_rising"] = False
     rec["indicator"]["pctr_falling"] = True
     cfg = _arm_cfg(
@@ -2804,6 +2816,7 @@ def test_zone_entry_opens_a_window_for_exh_to_arm():
     assert rec.get("zone_touch_ts") == t0
 
     rec["indicator"]["pctr"] = -40.0
+    rec["indicator"]["pctr_slow"] = -40.0
     rec["indicator"]["pctr_rising"] = True
     rec["indicator"]["pctr_falling"] = False
     rec["indicator"]["pctr_ok"] = True
@@ -2812,6 +2825,7 @@ def test_zone_entry_opens_a_window_for_exh_to_arm():
 
     rec_late = _armable_rec(pctr=False)
     rec_late["indicator"]["pctr"] = -80.0
+    rec_late["indicator"]["pctr_slow"] = -80.0
     rec_late["indicator"]["pctr_rising"] = False
     rec_late["indicator"]["pctr_falling"] = True
     rec_late["zone_touch_ts"] = t0
@@ -3252,6 +3266,12 @@ def _db_cfg(**over):
         "ai_watch_zone_mode": "double_bottom",
         "ai_min_reward_risk": 0.5,
         "ai_watch_exhaustion_rules": False,
+        # ai_watch_exh_square_arm (e5339b9, default ON) intercepts
+        # exhaustion_allows_buy and wants BOTH %R lines. These fixtures
+        # carry a single pctr and exercise the legacy arm rules, which
+        # are still live code behind the documented square_arm=false
+        # rollback. Only bites when a test turns exhaustion_rules on.
+        "ai_watch_exh_square_arm": False,
     }
     cfg.update(over)
     return cfg
@@ -3361,7 +3381,8 @@ def test_cheap_pullback_band_overbought_is_refused():
     rec["indicator"] = {
         # 85 exhaustion: overbought, under the 90 heat_max so cheap_ob_band
         # (not already_extended) is the refusal we are testing.
-        "pctr": -15.0, "pctr_rising": True, "pctr_falling": False,
+        "pctr": -15.0, "pctr_slow": -15.0,
+        "pctr_rising": True, "pctr_falling": False,
     }
     cfg = _db_cfg(
         ai_watch_exhaustion_rules=True,
@@ -3384,13 +3405,17 @@ def test_cheap_pullback_band_overbought_is_refused():
     ok4, why4 = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=cfg)
     assert (ok4, why4) == (False, "cheap_ob_band")
     # Heating (not yet OB) cheap pullback still arms — LFS-style.
+    # pctr_slow moves with pctr: leaving it behind opens a 25-point gap and
+    # the dual-%R tight check refuses on exh_not_tight instead.
     rec["indicator"]["pctr"] = -40.0
+    rec["indicator"]["pctr_slow"] = -40.0
     rec["indicator"]["pctr_rising"] = True
     rec["source"] = "momentum"
     ok5, why5 = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=cfg)
     assert ok5 and why5.startswith("zone")
     # Last-mode used to skip cheap_ob and buy the same dump at the tape.
     rec["indicator"]["pctr"] = -15.0
+    rec["indicator"]["pctr_slow"] = -15.0
     rec["indicator"]["pctr_rising"] = True
     rec["indicator"]["pctr_falling"] = False
     last_cfg = dict(cfg)
@@ -3411,7 +3436,8 @@ def test_cheap_name_already_extended_on_the_day_is_refused():
     })
     rec["admit_pct_change"] = 64.94
     rec["indicator"] = {
-        "pctr": -60.0, "pctr_rising": True, "pctr_falling": False,
+        "pctr": -60.0, "pctr_slow": -60.0,
+        "pctr_rising": True, "pctr_falling": False,
     }
     cfg = _db_cfg(
         ai_watch_exhaustion_rules=True,
@@ -3809,7 +3835,8 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
     too_hot = {
         "symbol": "HOT",
         "indicator": {
-            "pctr": -5.0, "pctr_rising": True, "pctr_falling": False,
+            "pctr": -5.0, "pctr_slow": -5.0,
+            "pctr_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(too_hot, cfg)
@@ -3851,7 +3878,8 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
     heat_low = {
         "symbol": "LOW",
         "indicator": {
-            "pctr": -60.0, "pctr_rising": True, "pctr_falling": False,
+            "pctr": -60.0, "pctr_slow": -60.0,
+            "pctr_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(heat_low, cfg)
@@ -4653,11 +4681,13 @@ def test_heat_band_min50_no_upper_cap():
         "ai_watch_exhaustion_heat_min_pct": 50.0,
         "ai_watch_exhaustion_heat_max_pct": 0.0,
         "ai_watch_ob_allow_hot": False,
+        "ai_watch_exh_square_arm": False,
     }
     mid = {
         "symbol": "MID",
         "indicator": {
-            "pctr": -40.0, "pctr_rising": True, "pctr_falling": False,
+            "pctr": -40.0, "pctr_slow": -40.0,
+            "pctr_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(mid, cfg)
@@ -4757,6 +4787,14 @@ def test_stale_tape_never_paints_ready_in_last_mode(monkeypatch):
 def test_old_stream_age_never_paints_ready(monkeypatch):
     import ai_entry_watch as ew
 
+    # _LAST_QUOTE_TS is module-level and keyed by symbol, and three other
+    # tests in this file also use "LIVE". Whichever ran first could leave a
+    # young timestamp behind, and row_quote_age_sec prefers that map over the
+    # row's own price_age_sec — so the 40s age under test was overridden, the
+    # row read fresh, and the blocker came back exh_rising_required instead of
+    # stale_quote. The test passed alone and failed in a full run. Isolate it
+    # the way the row_quote_age_sec tests below already do.
+    monkeypatch.setattr(ew, "_LAST_QUOTE_TS", {}, raising=False)
     monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
     monkeypatch.setattr(ew, "_push_cfg", lambda: _last_cfg())
     row = {
@@ -5275,14 +5313,23 @@ def test_rvol_ranked_survives_a_throwing_lookup():
 
 def _exh_rec(src, ex_pct=70.0, rising=True):
     # pctr = ex - 100, so exhaustion_pct() reads back as ex_pct.
+    #
+    # pctr_slow tracks fast here: since e5339b9 BOTH arm paths run a dual-%R
+    # tight check (_heating_dual_r_allows on the legacy path, dual_r_ob_tight
+    # on the square path), so a fast-only record is refused as
+    # no_exhaustion_data before the rule under test is reached. A zero gap is
+    # inside any rte_confluence_max, which keeps these tests about %R
+    # provenance rather than line confluence.
     return {"symbol": "AAA",
-            "indicator": {"pctr": ex_pct - 100.0, "pctr_src": src,
-                          "pctr_rising": rising}}
+            "indicator": {"pctr": ex_pct - 100.0, "pctr_slow": ex_pct - 100.0,
+                          "pctr_src": src, "pctr_rising": rising}}
 
 
+# Legacy single-line %R rules — see the _arm_cfg note on ai_watch_exh_square_arm.
 _EXH_CFG = {"ai_watch_exhaustion_rules": True,
             "ai_watch_exhaustion_heat_min_pct": 40.0,
-            "ai_watch_require_exhaustion_data": True}
+            "ai_watch_require_exhaustion_data": True,
+            "ai_watch_exh_square_arm": False}
 
 
 def test_live_reading_still_allowed():
@@ -5356,6 +5403,11 @@ def _exh_cfg() -> dict:
         # Existing EXH tests pin IEX cache rows. Stream overlay is tested
         # separately so a denser tape cannot rewrite those fixtures.
         "ai_watch_stream_bars_live": False,
+        # These tests compute a single live %R line and read it back through
+        # is_overbought / exhaustion_state. Since e5339b9 those consult both
+        # lines when the square arm is on, so a fast-only reading grades
+        # "heating" and the single-line semantics under test disappear.
+        "ai_watch_exh_square_arm": False,
     }
 
 

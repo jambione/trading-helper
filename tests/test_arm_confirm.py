@@ -36,7 +36,8 @@ def _rec(pctr):
     # before the exemption is ever reached, and these tests stop being
     # about the exemption.
     return {"symbol": "X", "indicator": {
-        "pctr": pctr, "pctr_rising": False, "pctr_falling": False,
+        "pctr": pctr, "pctr_slow": pctr,
+        "pctr_rising": False, "pctr_falling": False,
         "pctr_src": "live",
         "macd_src": "realtime", "macd_age_sec": 1.0, "macd_gap": 0.02,
         "macd_sep_ratio": 2.0, "macd_bull": True,
@@ -57,6 +58,10 @@ def _exh_cfg(**over):
     c["ai_watch_ob_flat_min_pct"] = 99.0
     c["ai_watch_exhaustion_heat_min_pct"] = 0.0
     c["ai_watch_exhaustion_heat_max_pct"] = 0.0
+    # load_config() brings the live ai_watch_exh_square_arm (on), which routes
+    # past the flat-OB exemption these tests are about and refuses on the
+    # dual-line square instead. The exemption is legacy-path behaviour.
+    c["ai_watch_exh_square_arm"] = False
     c.update(over)
     return c
 

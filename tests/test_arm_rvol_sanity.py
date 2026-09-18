@@ -102,6 +102,9 @@ def test_should_arm_buy_respects_sane_max_zero_and_twenty_five():
     rec["structure"]["reward_risk"] = 0.6
     rec["rvol"] = 1044.9
     rec["indicator"]["pctr"] = -30.0
+    # Both arm paths run a dual-%R tight check since e5339b9; a fast-only
+    # reading refuses on exh_not_tight before the RVOL rule under test.
+    rec["indicator"]["pctr_slow"] = -30.0
     rec["indicator"]["pctr_rising"] = True
     rec["indicator"]["pctr_falling"] = False
 

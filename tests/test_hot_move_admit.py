@@ -177,7 +177,13 @@ def test_soft_seed_and_warming_helpers():
     sc_hot = ew.soft_seed_scout_score(
         row, {}, ind={"pctr": -20.0, "pctr_rising": True, "cm_rsi": 58.0})
     assert sc_warm > sc_hot
-    tagged = [{"symbol": "W", "pctr": -65.0, "pctr_rising": True}]
+    # ai_watch_admit_prefer_square (on) grades a candidate row by dual-%R
+    # seat class, not the single-line warming band: a fast-only -65 reading is
+    # "unknown" (no slow line) and, once given one, "far" — the approach band
+    # is both lines >= -exh_pre_thr (35). -30/-34 is pre_square and tight,
+    # which is what "warming scout" now means for a row.
+    tagged = [{"symbol": "W", "pctr": -30.0, "pctr_slow": -34.0,
+               "pctr_rising": True}]
     assert ew.tag_warming_on_candidates(tagged, {}) == 1
     assert tagged[0].get("seat_role") == "warming"
     assert "preheat_steal" in ew._BLOCKER_LABELS
