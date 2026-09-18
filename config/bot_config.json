@@ -72,6 +72,7 @@
   "ai_max_position_pct": 8.0,
   "ai_max_position_pct_cheap": 5.0,
   "ai_max_positions": 5,
+  "ai_size_from_free_equity": true,
   "ai_max_price": 100.0,
   "ai_max_sells_per_poll": 5,
   "ai_max_spread_pct": 0.25,
