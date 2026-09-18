@@ -44,6 +44,11 @@ DEFAULT_CONFIG = {
     # (red ■). When true, last_heating / fast-only OB cannot arm. Rollback:
     # set false to restore legacy heating path (still dual-tight gated).
     "ai_watch_exh_square_arm": True,
+    # Square-aligned admit bus: prefer pre_square/square seats; evict far.
+    "ai_watch_admit_prefer_square": True,
+    "ai_watch_exh_pre_thr": 35.0,          # both lines ≥ −pre_thr = approach
+    "ai_watch_max_far_exh_seats": 2,       # soft-seed far keep cap
+    "ai_watch_far_exh_evict_sec": 90.0,    # far seat TTL before drop/steal
 
     # Live bar tape. iex is the free Alpaca feed. sip needs Algo Trader Plus
     # and is what matches TradingView highs/lows on thin names.
@@ -1063,7 +1068,8 @@ DEFAULT_CONFIG = {
     # Flatten if last prints through. This is the stop of record when
     # ai_broker_stop_enabled is False — broker buys may sit naked.
     "ai_local_trail_enabled":         True,
-    "ai_local_trail_arm_r":            0.5,
+    # Mid-session 2026-09-18 square desk: arm trail only after +0.25R MFE.
+    "ai_local_trail_arm_r":            0.25,
     # ...or this much percent of price, whichever comes first. Same reason
     # as be_at_pct: 1R is ~5% of price here, so an R-only arm freezes the
     # shelf through moves that are plainly real.
@@ -1188,7 +1194,8 @@ DEFAULT_CONFIG = {
     # last−cushion (~$0.01 when min_give_px=0) unless
     # ai_local_trail_decay_overtake=True (legacy stop>=last, no dip).
     # Raise-only overlay on give_r.
-    "ai_local_trail_time_decay_enabled": True,
+    # Mid-session 2026-09-18: time-decay off — trail is backup leash only.
+    "ai_local_trail_time_decay_enabled": False,
     "ai_local_trail_decay_idle_sec":  8.0,
     "ai_local_trail_decay_step_r":    0.05,
     # Optional MFE ceiling for decay; 0 = off (green gate alone).
@@ -1590,6 +1597,10 @@ def validate_ai_config(cfg: dict) -> list[str]:
 # "hybrid arm"); this is the resolved set the process is actually running.
 _EFFECTIVE_KEYS = (
     "ai_watch_exh_square_arm",
+    "ai_watch_admit_prefer_square",
+    "ai_watch_exh_pre_thr",
+    "ai_watch_max_far_exh_seats",
+    "ai_watch_far_exh_evict_sec",
     "ai_edge_mode",
     "ai_stop_use_market",
     "ai_watch_synth_rr",
@@ -1882,6 +1893,10 @@ SAFE_CONFIG_KEYS = [
     "ai_edge_mode",
     "ai_exit_left_overbought",
     "ai_watch_exh_square_arm",
+    "ai_watch_admit_prefer_square",
+    "ai_watch_exh_pre_thr",
+    "ai_watch_max_far_exh_seats",
+    "ai_watch_far_exh_evict_sec",
     "ai_watch_exhaustion_rules",
     # Published so the book legend can state the live entry/exit criteria
     # instead of a fallback. The attempt cap and the dead-reentry pair are
