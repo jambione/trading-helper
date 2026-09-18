@@ -2727,12 +2727,15 @@ def _armable_rec(cm=True, pctr=True, macd=False, sell=False, with_indicator=True
         },
     }
     if with_indicator:
+        # Dual-%R: heating path needs pctr_slow within rte_confluence_max.
+        fast = -5.0 if pctr else -80.0
         rec["indicator"] = {
             "cm_ok": cm, "pctr_ok": pctr, "macd_ok": macd,
             "sell_signal": sell,
             "proximity_pct": 33 * sum((cm, pctr, macd)),
             # Raw %R so exhaustion_allows_buy can pass when rules are on.
-            "pctr": -5.0 if pctr else -80.0,
+            "pctr": fast,
+            "pctr_slow": fast - 3.0,  # tight with fast (gap 3 ≤ 15)
             "pctr_rising": bool(pctr),
             "pctr_falling": not pctr,
         }
@@ -3783,7 +3786,8 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
     heat = {
         "symbol": "BBB",
         "indicator": {
-            "pctr": -30.0, "pctr_rising": True, "pctr_falling": False,
+            "pctr": -30.0, "pctr_slow": -33.0,
+            "pctr_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(heat, cfg)
@@ -3867,7 +3871,8 @@ def test_continuation_arms_heating_and_disables_left_overbought_exit():
     heat = {
         "symbol": "BBB",
         "indicator": {
-            "pctr": -30.0, "pctr_rising": True, "pctr_falling": False,
+            "pctr": -30.0, "pctr_slow": -33.0,
+            "pctr_rising": True, "pctr_falling": False,
         },
         "exh_was_overbought": True,
     }
@@ -4318,6 +4323,7 @@ def test_arm_at_last_refuses_cooling_and_buys_rising_or_ob():
     rec["source"] = "trending"
     rec["structure"]["reward_risk"] = 0.6
     rec["indicator"]["pctr"] = -80.0
+    rec["indicator"]["pctr_slow"] = -75.0  # tight dual-%R for heating path
     rec["indicator"]["pctr_rising"] = False
     rec["indicator"]["pctr_falling"] = True
     ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
@@ -4329,6 +4335,7 @@ def test_arm_at_last_refuses_cooling_and_buys_rising_or_ob():
     assert ok and why == "last_heating"
 
     rec["indicator"]["pctr"] = -5.0
+    rec["indicator"]["pctr_slow"] = -8.0
     rec["indicator"]["pctr_rising"] = False
     rec["indicator"]["pctr_falling"] = True
     ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
@@ -4356,14 +4363,18 @@ def _soft_ob_cfg(**over):
     return cfg
 
 
-def _ob_rec(*, symbol, rsi, exh, source="trending"):
+def _ob_rec(*, symbol, rsi, exh, source="trending", slow_gap: float = 3.0):
     rec = _armable_rec()
     rec["symbol"] = symbol
     rec["source"] = source
     rec["structure"]["zone_kind"] = "at_last"
     rec["structure"]["synthetic"] = True
     rec["structure"]["reward_risk"] = 0.6
-    rec["indicator"]["pctr"] = float(exh) - 100.0
+    fast = float(exh) - 100.0
+    rec["indicator"]["pctr"] = fast
+    # Dual-%R tight by default (heating path). Pass slow_gap > confluence to
+    # exercise exh_not_tight.
+    rec["indicator"]["pctr_slow"] = fast - float(slow_gap)
     rec["indicator"]["pctr_rising"] = True
     rec["indicator"]["pctr_falling"] = False
     rec["indicator"]["cm_rsi"] = rsi
@@ -4938,6 +4949,84 @@ def _tv_rec(*, fast=-6.0, slow=-3.0, rsi=8.0, tight=True):
         },
     }
     return rec
+
+
+def test_heating_dual_r_smci_pass_rklb_refuse():
+    """2026-09-18 TV lock: SMCI (gap 9, both OB) buys; RKLB (gap 25, not OB) don't.
+
+    Patch heating in place — do not flip ai_watch_tv_exh_rsi (fights RSI rising
+    under 75). SMCI clears as overbought; RKLB heating with wide gap → exh_not_tight.
+    """
+    import ai_entry_watch as ew
+
+    cfg = _last_cfg(
+        ai_watch_require_exh_rising=True,
+        ai_watch_exhaustion_heat_min_pct=40.0,
+        ai_watch_exhaustion_heat_max_pct=0.0,
+        ai_watch_arm_require_cm_rsi=True,
+        ai_watch_arm_cm_rsi_max=75.0,
+        ai_watch_arm_cm_rsi_require_rising=True,
+        ai_watch_require_realtime_rsi=False,
+        ai_watch_mistimed_heat_enabled=False,
+        ai_watch_soft_ob_enabled=False,
+        rte_threshold=20,
+        rte_confluence_max=15.0,
+        rte_require_tight=True,
+        ai_watch_tv_exh_rsi=False,
+    )
+
+    # SMCI-like: both lines OB (fast -6, slow -15 → gap 9), RSI rising under 75.
+    smci = _armable_rec()
+    smci["symbol"] = "SMCI"
+    smci["source"] = "xai"  # non-hot source so why stays overbought (not _hot)
+    smci["structure"]["zone_kind"] = "at_last"
+    smci["structure"]["reward_risk"] = 0.6
+    smci["indicator"].update({
+        "pctr": -6.0,
+        "pctr_slow": -15.0,
+        "pctr_rising": True,
+        "pctr_falling": False,
+        "pctr_ob": True,
+        "pctr_tight": True,
+        "cm_rsi": 42.0,
+        "cm_rsi_rising": True,
+        "cm_rsi_src": "realtime",
+    })
+    ok, why = ew.exhaustion_allows_buy(smci, cfg)
+    assert ok is True and why in ("overbought", "overbought_hot")
+    ok, why = ew.should_arm_buy(smci, ask=45.0, bid=44.95, cfg=cfg)
+    assert ok is True and why.startswith("last_overbought")
+
+    # RKLB-like: fast heating only, slow far (gap 25), not both OB.
+    rklb = _armable_rec()
+    rklb["symbol"] = "RKLB"
+    rklb["source"] = "trending"
+    rklb["structure"]["zone_kind"] = "at_last"
+    rklb["structure"]["reward_risk"] = 0.6
+    rklb["indicator"].update({
+        "pctr": -40.0,       # heat 60 — heating band
+        "pctr_slow": -65.0,  # gap 25 > 15
+        "pctr_rising": True,
+        "pctr_falling": False,
+        "pctr_ob": False,
+        "pctr_tight": False,
+        "cm_rsi": 48.0,
+        "cm_rsi_rising": True,
+        "cm_rsi_src": "realtime",
+    })
+    assert ew.exhaustion_state(rklb, cfg) == "heating"
+    ok, why = ew.exhaustion_allows_buy(rklb, cfg)
+    assert ok is False and why == "exh_not_tight"
+    ok, why = ew.should_arm_buy(rklb, ask=64.0, bid=63.95, cfg=cfg)
+    assert ok is False and why == "exh_not_tight"
+    assert ew.format_blocker("exh_not_tight") == "EXH wide"
+    assert "gap" in str(rklb.get("block_detail") or "")
+
+    # Heating + tight still arms (early confluence without both OB).
+    early = _ob_rec(symbol="EARLY", rsi=45.0, exh=60.0, source="momentum",
+                    slow_gap=5.0)
+    ok, why = ew.exhaustion_allows_buy(early, cfg)
+    assert ok is True and why == "heating"
 
 
 def test_tv_exh_rsi_requires_both_lines_then_rsi():
