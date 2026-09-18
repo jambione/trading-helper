@@ -1,8 +1,10 @@
-"""Paper-only Alpaca trading tools for Claude research.
+"""Alpaca trading tools for the AI desk.
 
-Claude never gets live keys through this module. Even if TRADER_MODE=live in
-signal_engine.env, Claude's session is forced to paper. Orders use the same
-whole-share sizing path as the desk hotkeys.
+Paper by default. Live requires live_arm's two factors (a tracked config
+flag and a per-machine gitignored file naming the account) plus a startup
+assertion that the connected account is the armed one. TRADER_MODE in
+signal_engine.env does not reach this path and cannot arm it. Orders use
+the same whole-share sizing path as the desk hotkeys.
 
 Tools exposed to the model (function calling):
   buy_stock, sell_stock, list_positions, get_account
@@ -28,7 +30,7 @@ _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,5}$")
 
 # Module state — set by init_for_ai()
 _ready = False
-_mode = "off"  # always "paper" when ready, else "off"
+_mode = "off"  # "off" | "paper" | "live" (see live_arm.py)
 _trade_amount = 1000.0
 _max_positions = 5
 _slot_equity = 250.0
@@ -89,8 +91,33 @@ def init_for_ai(
     _buys_this_poll = 0
     _sells_this_poll = 0
 
-    api = os.getenv("ALPACA_API_KEY", "").strip()
-    sec = os.getenv("ALPACA_SECRET_KEY", "").strip()
+    # Live arming is a two-factor decision owned by live_arm.py: a tracked
+    # config flag AND a per-machine, gitignored file naming the account. The
+    # old rail here was `mode="paper"` hard-coded under "HARD RULE: AI desk
+    # path never places live orders through this module". That rail was doing
+    # real work, so it is replaced rather than removed — by something a single
+    # config push, a single env var or a single stray file still cannot get
+    # past, and by an account assertion the desk never had.
+    import live_arm
+
+    want_live = False
+    armed_account = ""
+    try:
+        state = live_arm.arm_state()
+        want_live = bool(state.get("armed"))
+        armed_account = str(state.get("account_number") or "")
+        print(f"[trading] {live_arm.describe()}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        # Ambiguity disarms. An arming check that cannot run has not armed.
+        print(f"[trading] live arming check failed ({e}) — staying on paper",
+              flush=True)
+        want_live = False
+
+    if want_live:
+        api, sec = live_arm.live_keys()
+    else:
+        api = os.getenv("ALPACA_API_KEY", "").strip()
+        sec = os.getenv("ALPACA_SECRET_KEY", "").strip()
     if not api or not sec:
         _ready = False
         _mode = "off"
@@ -98,9 +125,8 @@ def init_for_ai(
 
     import alpaca_trader
 
-    # HARD RULE: AI desk path never places live orders through this module.
     alpaca_trader.init(
-        mode="paper",
+        mode=("live" if want_live else "paper"),
         api_key=api,
         secret_key=sec,
         trade_amount=_trade_amount,
@@ -111,7 +137,24 @@ def init_for_ai(
         use_brackets=False,
     )
     _ready = alpaca_trader.is_active()
-    _mode = "paper" if _ready else "off"
+    _mode = (("live" if want_live else "paper") if _ready else "off")
+
+    # The assertion the desk never had. init() builds its client with
+    # `paper = (_mode == "paper")` and never checks what came back, so a wrong
+    # key pair produced a healthy-looking desk pointed at an account nobody
+    # intended. Refuse to trade at all rather than trade the wrong account:
+    # "off" when live was meant is a missed session, the other way round is
+    # real money somewhere nobody is looking.
+    if _ready and _mode == "live":
+        actual = alpaca_trader.account_number()
+        ok, why = live_arm.verify_account(actual, armed_account)
+        if not ok:
+            print(f"[trading] LIVE REFUSED — {why}", flush=True)
+            alpaca_trader.shutdown()
+            _ready = False
+            _mode = "off"
+            return "off"
+        print(f"[trading] LIVE ARMED on account {actual}", flush=True)
     # On every session start, collapse stacked open orders so the book
     # never carries multiple buys for the same name from prior polls.
     if _ready:
@@ -135,7 +178,14 @@ def reset_poll_counters() -> None:
 
 
 def is_ready() -> bool:
-    return _ready and _mode == "paper"
+    """True when the desk may place orders — paper OR live.
+
+    Gates ai_trader.py:424, ai_positions.py:1199 and
+    ai_entry_watch.py:13498. It read `_mode == "paper"`, which is what made
+    live unreachable; `_mode` is only ever set to "live" after live_arm's two
+    factors AND the account assertion have both passed.
+    """
+    return _ready and _mode in ("paper", "live")
 
 
 def mode() -> str:

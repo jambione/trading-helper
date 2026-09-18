@@ -1265,6 +1265,10 @@ DEFAULT_CONFIG = {
     # ai_reports/fills/. alpaca_trade_log.json records SUBMISSIONS only (every
     # row PENDING_NEW, capped at 1000), so it cannot answer what filled or at
     # what price. This is the audit record; required before live money.
+    # Factor 1 of 2 for live trading. Tracked in git so arming shows up in a
+    # diff; factor 2 is the gitignored config/live_armed.json naming the
+    # account. Neither alone arms anything — see live_arm.py.
+    "ai_live_trading_enabled":        False,
     "ai_fill_ledger_enabled":         True,
     "ai_fill_ledger_poll_sec":        60.0,   # broker closed-orders poll pace
     # Proposal ledger — attributed seed/inclusion kept+dropped (observe-only).
@@ -2054,6 +2058,7 @@ SAFE_CONFIG_KEYS = [
     "ai_admit_ledger_seed",
     "ai_admit_ledger_inclusion",
     "ai_admit_ledger_kept_sample",
+    "ai_live_trading_enabled",
     "ai_fill_ledger_enabled",
     "ai_fill_ledger_poll_sec",
     "ai_proposal_ledger_enabled",
@@ -2224,6 +2229,10 @@ SAFE_CONFIG_KEYS = [
 # rather than a security fix. Credential writes are logged loudly instead —
 # see dashboard.api_config_save.
 PROTECTED_CONFIG_KEYS = frozenset({
+    # Real money. Listed here rather than merely omitted from
+    # SAFE_CONFIG_KEYS so an attempt to flip it over HTTP is refused with a
+    # 403 AND logged with the username, instead of vanishing silently.
+    "ai_live_trading_enabled",
     # Does the desk trade, and as whom
     "ai_trading_enabled",
     "ai_trader_enabled",

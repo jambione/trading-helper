@@ -173,3 +173,8 @@ benchmarks/universe_cost/
 benchmarks/entry_ab/results.jsonl
 benchmarks/entry_ab/summary.md
 benchmarks/entry_ab/phase_a_top.json
+
+# Factor 2 of live arming — per-machine on purpose. It names the live account
+# this box is allowed to trade, so it must NOT travel with a deploy: a config
+# push can then never arm a machine that was not armed by hand. See live_arm.py.
+config/live_armed.json

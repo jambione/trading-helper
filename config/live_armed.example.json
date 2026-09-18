@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy to config/live_armed.json ON THE TRADING MACHINE ONLY. This file is factor 2 of 2; factor 1 is ai_live_trading_enabled in bot_config.json. Neither alone arms live trading. account_number must match the account the LIVE keys connect to, or the desk refuses to trade at all and falls back to off.",
+  "account_number": "REPLACE_WITH_LIVE_ACCOUNT_NUMBER",
+  "armed_by": "jmb",
+  "armed_at": "YYYY-MM-DD",
+  "note": "why this box is armed, and for what"
+}

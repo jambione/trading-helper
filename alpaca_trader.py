@@ -38,6 +38,7 @@ _stop_loss_pct:  float = 0.0      # % below entry for bracket stop (0 = off)
 _take_profit_pct: float = 0.0     # % above entry for bracket TP (0 = off)
 _use_brackets:   bool  = False    # attach OTOCO legs on RTH market buys
 _client                = None     # alpaca TradingClient instance
+_account_number: str   = ""       # set by init() from the broker's own answer
 
 
 # ── Initialisation ────────────────────────────────────────────────────────────
@@ -126,6 +127,9 @@ def init(mode: str, api_key: str, secret_key: str, trade_amount: float = 500.0,
         _mode   = "off"
         _client = None
         return
+
+    global _account_number
+    _account_number = str(getattr(acct, "account_number", "") or "").strip()
 
     cash = float(acct.cash)
     bp   = float(acct.buying_power)
@@ -251,6 +255,29 @@ def _can_mutate() -> bool:
 def is_active() -> bool:
     """True if the trader is initialised and will place orders."""
     return _mode != "off" and _client is not None
+
+
+def account_number() -> str:
+    """The connected account, as the BROKER reported it at init.
+
+    Read back rather than inferred: init() builds its client with
+    `paper = (_mode == "paper")` and a wrong key pair still connects happily,
+    so the only way to know which account this is, is to have asked. Empty
+    when the trader is off or the field was missing.
+    """
+    return _account_number
+
+
+def shutdown() -> None:
+    """Drop the client and return to mode=off.
+
+    Exists so a failed live account assertion can UNDO a connection rather
+    than leave a live client reachable behind a disarmed flag.
+    """
+    global _mode, _client, _account_number
+    _mode = "off"
+    _client = None
+    _account_number = ""
 
 
 # Alpaca's own asset registry, cached — the answer is static per symbol.
