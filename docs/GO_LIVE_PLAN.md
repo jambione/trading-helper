@@ -333,8 +333,20 @@ unmanaged position. All of these have been observed before:
 **Actions**
 
 1. **A flatten-everything switch that does not depend on the desk process.**
-   Standalone script, runnable from a phone, cancels all open orders and
-   liquidates all positions using the live keys directly. Test it monthly.
+   ✅ **BUILT 2026-09-18** — `tools/flatten.py`, 15 tests. Imports nothing from
+   the desk (a test asserts that), resolves credentials from `secrets.json` /
+   `signal_engine.env` / env, cancels then waits `CANCEL_SETTLE_SEC` before
+   closing, retries, and exits 0 only when the **broker** confirms flat. Paper
+   is the default, `--live` is a separate flag, and `--yes` is required when
+   stdin is not a tty so an ssh one-liner cannot fire by accident:
+
+       ssh mac-mini-away 'cd ~/repo/trading-helper && \
+           .venv/bin/python tools/flatten.py --yes'
+
+   Verified end-to-end against the paper account (PA3VCF6H9RXG) on the mini.
+   **Not yet exercised against a live position** — the book was flat — so the
+   close path itself has unit cover only. Run `--dry-run` monthly; otherwise
+   the first real flatten is also that path's first real test.
 2. **Heartbeat alerting.** If `ai_trader.py` stops writing state for N seconds
    during RTH with a position open, page yourself. Right now silence looks the
    same as a quiet market.
