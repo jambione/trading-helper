@@ -289,7 +289,7 @@ remains unreachable from any network-facing surface.
 
 ---
 
-### 2.5 Staleness guards fail open
+### 2.5 Staleness guards fail open ✅ FIXED + DEPLOYED 2026-09-18
 
 `price_age_sec` is `None`, and that single dead field disables the ratchet, the
 arm check, and the blind-book staleness check — they fail **open**. Twenty-six
@@ -305,6 +305,27 @@ consumes a freshness value must fail **closed** — missing age means stale mean
 no trade.
 
 **Done when:** each staleness guard refuses under a missing field, with a test.
+
+**What shipped (2026-09-18)** — `25dde8f`, 13 tests, verified red against the
+old code. Two consumers in `ai_positions` treated an undatable price as fresh,
+against `live_print`'s own stated contract:
+
+- `_tick_prints` (`age is None or ...`) fed both the flatten trigger and the
+  excursion high that ratchets the shelf — so a phantom low sold on a price
+  that never traded, and a phantom high raised the shelf above the real market
+  and then flattened against it.
+- `_fresh_tape_px` returned the price on an unparseable age, undoing its own
+  None check three lines above.
+
+The scale: `price_age_sec` was absent from **20,000 of 20,000** watched shadow
+rows sampled that day, while `price_src` was present on all of them — so the
+unprovable branch was the only branch these guards ever took.
+
+**Still open — the source.** Nothing here explains why the clock never reaches
+the row. Until it does, the shelf runs at the broker mark's cadence rather than
+the tape's: correct, but coarser than the design intends. Diagnosing it needs a
+live session with a populated watchlist. This is the same defect family as "a
+price and its clock must be one event".
 
 ---
 
