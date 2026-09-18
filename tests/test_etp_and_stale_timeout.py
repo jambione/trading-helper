@@ -142,7 +142,8 @@ def test_passes_inclusion_refuses_levered_etp(monkeypatch):
 # ── B: stale_timeout drop ────────────────────────────────────────────────
 
 def test_stale_timeout_knobs_default_around_six_minutes():
-    assert DEFAULT_CONFIG["ai_watch_stale_timeout_sec"] == 360.0
+    # Mid-session 2026-09-18 arm-ready pack: stale_timeout 180s (was 360).
+    assert DEFAULT_CONFIG["ai_watch_stale_timeout_sec"] == 180.0
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_grace_sec"] == 90.0
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_reseed_sec"] == 300.0
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_include_need_stream"] is False
@@ -153,7 +154,7 @@ def test_stale_timeout_knobs_default_around_six_minutes():
     assert DEFAULT_CONFIG["ai_watch_no_stream_strike_reasons"] == ["no_stream_trade"]
     assert DEFAULT_CONFIG["ai_watch_stale_restream_grace_sec"] == 60.0
     assert DEFAULT_CONFIG["ai_watch_stale_restream_pins_only"] is False
-    assert ew.stale_timeout_sec({}) == 360.0
+    assert ew.stale_timeout_sec({}) == 180.0
     assert ew.stale_timeout_reseed_sec({}) == 300.0
     assert ew.stale_timeout_grace_sec({}) == 90.0
     assert ew.stale_timeout_quiet_max_sec({}) == 180.0
@@ -535,9 +536,9 @@ def test_clear_stale_quote_on_stream_age_le_15():
 
 
 def test_no_trade_reseed_longer_than_generic():
-    # Default now matches stale_timeout_reseed (300); 0 still falls back.
-    assert DEFAULT_CONFIG["ai_watch_no_trade_reseed_sec"] == 300.0
-    assert ew.no_trade_reseed_sec({}) == 300.0
+    # Mid-session 2026-09-18: 120s default; 0 still falls back to stale reseed.
+    assert DEFAULT_CONFIG["ai_watch_no_trade_reseed_sec"] == 120.0
+    assert ew.no_trade_reseed_sec({}) == 120.0
     assert ew.no_trade_reseed_sec({
         "ai_watch_no_trade_reseed_sec": 0,
         "ai_watch_stale_timeout_reseed_sec": 300.0,

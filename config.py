@@ -289,15 +289,20 @@ DEFAULT_CONFIG = {
     "ai_entry_limit_ttl_sec":     30.0,
     # Atomic confirm→submit (Package B): refuse place if send-ask moved more
     # than this from the streak-pass print (pct OR absolute cents).
-    "ai_entry_confirm_max_slip_pct": 1.0,
-    "ai_entry_confirm_max_slip_px":  0.10,
+    # Mid-session 2026-09-18 post-10:57 quality: tighter confirm slip.
+    "ai_entry_confirm_max_slip_pct": 0.5,
+    "ai_entry_confirm_max_slip_px":  0.08,
     # True → stop-MARKET (default: gap through the trigger still fills).
     # False → stop-LIMIT with ai_stop_limit_slip_pct room; can miss entirely
     # on the high-RVOL names this book selects for.
     "ai_stop_use_market":         True,
     "ai_stop_limit_slip_pct":      1.0,     # room under trigger when stop-LIMIT
     "ai_entry_unconfirmed_ttl_sec": 900.0,  # cancel unfilled managed entries
-    "ai_daily_loss_limit_r":        3.0,    # stop new entries after -NR today
+    # Stop new entries after −NR realized today. Live desk often raises this
+    # mid-session (999 was an emergency unlock 2026-09-18); keep a high-but-sane
+    # default so a checkout does not re-halt the book at −3R. Operator can
+    # tighten via bot_config / dashboard.
+    "ai_daily_loss_limit_r":        12.0,
     # Optional house day-trade throttle (legacy name). FINRA Rule 4210 PDT
     # designation and the $25k minimum were eliminated 2026-06-04 (Reg Notice
     # 26-10). Alpaca implemented the same day and deprecated daytrade_count.
@@ -330,7 +335,8 @@ DEFAULT_CONFIG = {
     # default — the live path reads IEX quotes, which are a few percent of the
     # tape and always look wide, so this would block good fills. Turn it on
     # once outcomes.jsonl has real entry_slippage_r to calibrate against.
-    "ai_max_spread_r":              0.0,
+    # Mid-session 2026-09-18: round-trip spread cap in R (was 0=off).
+    "ai_max_spread_r":              2.0,
     # Above this, a logged spread_r is the IEX quote being wrong rather than a
     # wide book, and it stops sizing the trail. Measured against SIP on the
     # 2026-08-28 fills: the artifacts run 30-170x, every real reading 1.3-6x.
@@ -596,7 +602,8 @@ DEFAULT_CONFIG = {
     # young trade_ts. Poll-count above ships off; this is the live default
     # (~6 min RTH). 0 disables. Open positions are never dropped. By default
     # brief need-stream after admit does NOT count (subscribe lag).
-    "ai_watch_stale_timeout_sec":         360.0,
+    # Mid-session 2026-09-18: faster dead-tape eviction (was 360).
+    "ai_watch_stale_timeout_sec":         180.0,
     # Seconds on-book before the stale_timeout clock may start (Finnhub
     # subscribe grace). 0 = start immediately.
     "ai_watch_stale_timeout_grace_sec":   90.0,
@@ -619,7 +626,8 @@ DEFAULT_CONFIG = {
     # ai_watch_stale_timeout_reseed_sec (no_stream_trade uses that helper
     # directly; this knob remains if still referenced). 0 falls back to
     # ai_watch_stale_timeout_reseed_sec.
-    "ai_watch_no_trade_reseed_sec": 300.0,
+    # Mid-session 2026-09-18: shorter reseed cool after no_stream_trade.
+    "ai_watch_no_trade_reseed_sec": 120.0,
     # Same-day strike demote after repeated no_stream_trade drops (A2).
     # After N drops for a symbol on the ET calendar day, refuse re-admit for
     # the rest of that day. Young stream does NOT clear strikes (unlike the
@@ -649,12 +657,26 @@ DEFAULT_CONFIG = {
     "ai_watch_movers_admit_max_tape_age_sec": 60.0,
     # Max watching rows that may sit on stale_tape at once. Excess dropped
     # (lowest $vol / oldest first). 0 = no stale_tape seats; <0 = unlimited.
-    "ai_watch_max_stale_tape_seats": 2,
+    "ai_watch_max_stale_tape_seats": 3,
+    # Arm-ready admit pre-qualify (soft-seed keep seats). Default ON in RTH.
+    # Does not loosen RSI/EXH arm gates. Failures → reject or scout-only TTL.
+    "ai_watch_admit_require_arm_ready": True,
+    "ai_watch_admit_arm_ready_rth_only": True,
+    # Drop watching seats stuck on rsi_not_rising / exh_falling / above_max
+    # past this grace so arm-ready candidates can enter. 0 disables.
+    "ai_watch_unarmable_evict_sec": 90.0,
+    # Soft day CHG% band (admit/rank only — not arm). Prefer +8…+40; soft-demote
+    # above soft_max unless pullback + arm-ready + young tape.
+    "ai_watch_admit_chg_prefer_min": 8.0,
+    "ai_watch_admit_chg_prefer_max": 40.0,
+    "ai_watch_admit_chg_soft_max": 50.0,
+    # Scout-only (non-arm-ready warming soft-seed) short TTL. 0 disables expiry.
+    "ai_watch_scout_ttl_sec": 120.0,
     # Continuous soft seed (trending + movers + momentum + research) —
     # earlier discovery scout path. Shared max; sources compete on scout score.
     # Interval gate inside sync; 0 / enabled false disables.
     "ai_watch_soft_seed_enabled": True,
-    "ai_watch_soft_seed_interval_sec": 300.0,
+    "ai_watch_soft_seed_interval_sec": 120.0,
     "ai_watch_soft_seed_movers": True,
     "ai_watch_soft_seed_trending": True,
     "ai_watch_soft_seed_momentum": True,
@@ -1046,7 +1068,8 @@ DEFAULT_CONFIG = {
     # at fill; the trail keeps give_r. See initial_local_stop for why the two
     # were never separable and why that made the question unmeasurable.
     "ai_local_trail_initial_give_r": 0.0,
-    "ai_local_trail_give_r":           0.05,
+    # Mid-session 2026-09-18 post-10:57: give 0.35R (was 0.05).
+    "ai_local_trail_give_r":           0.35,
     "ai_local_trail_give_open_r":      0.05,
     "ai_local_trail_tighten_mfe_r":    0.25,
     "ai_local_trail_give_px":          0.0,
@@ -1061,7 +1084,8 @@ DEFAULT_CONFIG = {
     # Once MFE reaches this, the local shelf never sits under the fill
     # again. 0 = off. The runner stop already floors at breakeven; this is
     # the same guarantee for the pre-scale-out shelf.
-    "ai_local_trail_be_at_r":       0.0,
+    # Mid-session 2026-09-18: breakeven floor at +0.15R MFE.
+    "ai_local_trail_be_at_r":       0.15,
     # ...or this much percent of price, whichever comes first. 1R is ~5% of
     # price on these zones, so an R-only floor needs a half-percent move.
     "ai_local_trail_be_at_pct":     0.0,
@@ -1166,10 +1190,11 @@ DEFAULT_CONFIG = {
     "ai_local_trail_decay_max_mfe_r": 0.0,
     # True = stop>=last at ceiling (overtake; greens bank without a dip).
     # False = park at last−cushion and wait for a 1¢ dip.
-    "ai_local_trail_decay_overtake":  True,
+    # Mid-session 2026-09-18: overtake off — park and wait for 1¢ dip.
+    "ai_local_trail_decay_overtake":  False,
     # Abort a confirm when fill or tape is this far (R) through the limit/stop.
-    # 0.30 let FGI/SPAI/TDIC open 2R in the hole on a stale ask (08-14).
-    "ai_fill_abort_r":                 0.15,
+    # Mid-session 2026-09-18: 5.0 (was 0.15 — too tight for IEX noise).
+    "ai_fill_abort_r":                 5.0,
     "ai_runner_step_r":                0.1,  # min ratchet gain before re-placing
     # Display/telemetry only since the runner moved to R. Kept so the zone
     # payload and UI keep their field.
@@ -1190,13 +1215,15 @@ DEFAULT_CONFIG = {
     # confirm, if peak MFE_r stays under the threshold for T seconds →
     # market flatten with close_reason=no_progress. Clock starts at confirm,
     # not submit. Does not wait on ai_exit_min_hold_sec past T.
-    "ai_no_progress_flatten_enabled":  True,
+    # Mid-session 2026-09-18: leave off (revolving-door / early scratch risk).
+    "ai_no_progress_flatten_enabled":  False,
     "ai_no_progress_sec":              60.0,
     "ai_no_progress_mfe_r":            0.05,
     # Open Plan A long + EXH/pctr falling → market flatten (pack #9).
     # Dedicated flag — does not turn on left_overbought scalp semantics.
     # Confirm ticks: consecutive falling polls before exit (2 = anti-flicker).
-    "ai_exh_falling_flatten_enabled":  True,
+    # Mid-session 2026-09-18: leave off (do not re-enable with admit fix).
+    "ai_exh_falling_flatten_enabled":  False,
     "ai_exh_falling_flatten_confirm_ticks": 2,
     # Paper experiment: last-hour hold (gate 1+2, 2026-08-20). When on,
     # daytime auto-arm is off. New entries only 14:00–15:30 ET on names
@@ -1222,6 +1249,12 @@ DEFAULT_CONFIG = {
     "ai_admit_ledger_seed":           True,
     "ai_admit_ledger_inclusion":      True,
     "ai_admit_ledger_kept_sample":    False,  # optional paired digs; off v1
+    # Fill ledger — broker-confirmed fills, append-only, day-split under
+    # ai_reports/fills/. alpaca_trade_log.json records SUBMISSIONS only (every
+    # row PENDING_NEW, capped at 1000), so it cannot answer what filled or at
+    # what price. This is the audit record; required before live money.
+    "ai_fill_ledger_enabled":         True,
+    "ai_fill_ledger_poll_sec":        60.0,   # broker closed-orders poll pace
     # Proposal ledger — attributed seed/inclusion kept+dropped (observe-only).
     # Additive to admit_ledger. State-change + heartbeat; fail-open.
     "ai_proposal_ledger_enabled":     True,
@@ -1606,6 +1639,13 @@ _EFFECTIVE_KEYS = (
     "ai_watch_soft_seed_enabled",
     "ai_watch_soft_seed_momentum",
     "ai_watch_soft_seed_research",
+    "ai_watch_admit_require_arm_ready",
+    "ai_watch_admit_arm_ready_rth_only",
+    "ai_watch_unarmable_evict_sec",
+    "ai_watch_admit_chg_prefer_min",
+    "ai_watch_admit_chg_prefer_max",
+    "ai_watch_admit_chg_soft_max",
+    "ai_watch_scout_ttl_sec",
     "ai_watch_rank_rvol_band",
     "ai_watch_rank_move_band",
     "ai_watch_max_entries_per_symbol_day",
@@ -1992,6 +2032,8 @@ SAFE_CONFIG_KEYS = [
     "ai_admit_ledger_seed",
     "ai_admit_ledger_inclusion",
     "ai_admit_ledger_kept_sample",
+    "ai_fill_ledger_enabled",
+    "ai_fill_ledger_poll_sec",
     "ai_proposal_ledger_enabled",
     "ai_proposal_ledger_seed",
     "ai_proposal_ledger_inclusion",
@@ -2032,6 +2074,13 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_movers_min_price",
     "ai_watch_movers_admit_max_tape_age_sec",
     "ai_watch_max_stale_tape_seats",
+    "ai_watch_admit_require_arm_ready",
+    "ai_watch_admit_arm_ready_rth_only",
+    "ai_watch_unarmable_evict_sec",
+    "ai_watch_admit_chg_prefer_min",
+    "ai_watch_admit_chg_prefer_max",
+    "ai_watch_admit_chg_soft_max",
+    "ai_watch_scout_ttl_sec",
     "ai_watch_soft_seed_enabled",
     "ai_watch_soft_seed_interval_sec",
     "ai_watch_soft_seed_movers",

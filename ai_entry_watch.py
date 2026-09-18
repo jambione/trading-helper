@@ -104,7 +104,7 @@ _WASH_COOLDOWN_SEC = 1800.0  # 30 minutes
 # the tape is still dead. A young stream print clears the cool immediately
 # (see _stale_timeout_blocked). 30m cool starved selection on 2026-09-04.
 _STALE_TIMEOUT_UNTIL: dict[str, float] = {}
-_STALE_TIMEOUT_DEFAULT_SEC = 360.0  # 6 min RTH
+_STALE_TIMEOUT_DEFAULT_SEC = 180.0  # mid-session 2026-09-18 (was 360)
 _STALE_TIMEOUT_RESEED_DEFAULT_SEC = 300.0  # 5 min (was 30m — too hungry)
 _STALE_TIMEOUT_GRACE_DEFAULT_SEC = 90.0  # don't count until on-book this long
 
@@ -265,6 +265,17 @@ _BLOCKER_LABELS: dict[str, str] = {
     "stale_tape_cap": "stale seat cap",
     "unarmable_steal": "unarmable steal",
     "preheat_steal": "preheat steal",
+    "never_armable": "never armable",
+    "scout_ttl": "scout TTL",
+    "arm_ready_stale": "not arm-ready",
+    "arm_ready_rsi_not_rising": "not arm-ready",
+    "arm_ready_rsi_extended": "not arm-ready",
+    "arm_ready_exh_falling": "not arm-ready",
+    "arm_ready_exh_too_low": "not arm-ready",
+    "arm_ready_above_max_price": "not arm-ready",
+    "arm_ready_chg_band": "CHG% band",
+    "arm_ready_no_rsi_data": "not arm-ready",
+    "arm_ready_exh_rising_required": "not arm-ready",
     "stale_tape_admit": "tape too old",
     "no_tape": "no tape",
     "no_stream_trade": "no stream trade",
@@ -770,8 +781,9 @@ def stream_price_required_block(px_src: str | None, cfg: dict | None) -> str | N
 def stale_timeout_sec(cfg: dict | None = None) -> float:
     """Seconds a watch may sit on dead stale_tape before drop.
 
-    0 disables. Default ~6 min RTH — long enough for a thin name to print,
-    short enough that a Finnhub-dead symbol does not own a book slot all day.
+    0 disables. Default 180s RTH (mid-session 2026-09-18; was 360) — long
+    enough for a thin name to print, short enough that a Finnhub-dead symbol
+    does not own a book slot all day.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
@@ -894,14 +906,14 @@ def no_trade_after_subscribe_sec(cfg: dict | None = None) -> float:
 def no_trade_reseed_sec(cfg: dict | None = None) -> float:
     """Reseed cool after a no_stream_trade drop. 0 → stale_timeout_reseed_sec.
 
-    Default matches ``ai_watch_stale_timeout_reseed_sec`` (300s). Kept as a
-    separate knob; no_stream_trade itself now uses stale_timeout_reseed_sec.
+    Default 120s (mid-session 2026-09-18). Kept as a separate knob;
+    no_stream_trade itself now uses stale_timeout_reseed_sec.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
-        v = float(cfg.get("ai_watch_no_trade_reseed_sec", 300.0) or 0.0)
+        v = float(cfg.get("ai_watch_no_trade_reseed_sec", 120.0) or 0.0)
     except (TypeError, ValueError):
-        v = 300.0
+        v = 120.0
     if v > 0:
         return v
     return stale_timeout_reseed_sec(cfg)
@@ -1432,6 +1444,317 @@ def _exh_rising_hint(row: dict | None, ind: dict | None = None) -> bool | None:
     return None
 
 
+# ── Arm-ready admit pre-qualify (soft-seed / keep) ─────────────────────────
+# Admit-time filter only — does not loosen RSI/EXH *arm* gates. Soft-seed
+# failures must not consume keep seats; warming/scout-only short TTL is OK.
+
+_NEVER_ARMABLE_BLOCK_CODES = frozenset({
+    "rsi_not_rising",
+    "rsi_extended",
+    "exh_falling",
+    "exh_not_rising",
+    "exh_rising_required",
+    "stale_quote",
+    "stale_tape",
+    "no_quote",
+    "no_quote_age",
+    "stream_required",
+    "above_max_price",
+})
+
+_ARM_READY_DESK_SOURCES = frozenset({
+    "momentum", "trending", "mom", "st", "stocktwits", "movers",
+})
+
+
+def admit_require_arm_ready(cfg: dict | None, now: float | None = None) -> bool:
+    """True when arm-ready pre-qualify is active (default ON in RTH)."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get("ai_watch_admit_require_arm_ready", True)):
+        return False
+    if not bool(cfg.get("ai_watch_admit_arm_ready_rth_only", True)):
+        return True
+    t0 = float(now if now is not None else time.time())
+    try:
+        return bool(trading_hours_active(cfg, t0, market_open=True))
+    except Exception:
+        return True
+
+
+def unarmable_evict_sec(cfg: dict | None = None) -> float:
+    """Seconds a never-armable block may stick before eviction. 0 disables."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(
+            cfg.get("ai_watch_unarmable_evict_sec", 90.0) or 0.0))
+    except (TypeError, ValueError):
+        return 90.0
+
+
+def scout_ttl_sec(cfg: dict | None = None) -> float:
+    """Short TTL for scout-only (non-arm-ready warming) soft-seed seats."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(cfg.get("ai_watch_scout_ttl_sec", 120.0) or 0.0))
+    except (TypeError, ValueError):
+        return 120.0
+
+
+def admit_chg_band_bounds(cfg: dict | None = None) -> tuple[float, float, float]:
+    """(prefer_min, prefer_max, soft_max) for day CHG% admit/rank band."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        lo = float(cfg.get("ai_watch_admit_chg_prefer_min", 8.0) or 8.0)
+    except (TypeError, ValueError):
+        lo = 8.0
+    try:
+        hi = float(cfg.get("ai_watch_admit_chg_prefer_max", 40.0) or 40.0)
+    except (TypeError, ValueError):
+        hi = 40.0
+    try:
+        soft = float(cfg.get("ai_watch_admit_chg_soft_max", 50.0) or 50.0)
+    except (TypeError, ValueError):
+        soft = 50.0
+    if hi < lo:
+        lo, hi = hi, lo
+    if soft < hi:
+        soft = hi
+    return lo, hi, soft
+
+
+def classify_admit_chg_band(
+    pct: float | None,
+    cfg: dict | None = None,
+) -> str:
+    """``prefer`` | ``below_prefer`` | ``over_soft`` | ``mid`` | ``unknown``."""
+    if pct is None:
+        return "unknown"
+    lo, hi, soft = admit_chg_band_bounds(cfg)
+    p = float(pct)
+    if lo <= p <= hi:
+        return "prefer"
+    if p > soft:
+        return "over_soft"
+    if p < lo:
+        return "below_prefer"
+    return "mid"
+
+
+def admit_pullback_ok(row: dict | None, cfg: dict | None = None) -> bool:
+    """True when an extended CHG% name still looks like a pullback admit."""
+    if not isinstance(row, dict):
+        return False
+    # Explicit flag from seed / prior stamp.
+    if row.get("pullback") is True or row.get("admit_pullback") is True:
+        return True
+    rp = _f_or_none(row.get("admit_range_pos"))
+    if rp is None:
+        rp = _f_or_none(row.get("range_pos"))
+    try:
+        cap = float((cfg or {}).get("ai_watch_admit_max_range_pos", 90.0) or 90.0)
+    except (TypeError, ValueError):
+        cap = 90.0
+    if cap <= 0:
+        cap = 90.0
+    if rp is not None and float(rp) + 1e-9 < cap:
+        return True
+    structure = row.get("structure") if isinstance(row.get("structure"), dict) else {}
+    kind = str(structure.get("zone_kind") or row.get("zone_kind") or "").lower()
+    if kind in ("pullback_band", "double_bottom", "offset"):
+        # In/below zone is the pullback geometry the desk arms on.
+        try:
+            ask = float(row.get("price") or row.get("last_ask") or 0)
+            lo = float(structure.get("entry_low") or 0)
+            hi = float(structure.get("entry_high") or 0)
+            if ask > 0 and lo > 0 and hi >= lo and ask <= hi * 1.01:
+                return True
+        except (TypeError, ValueError):
+            pass
+    return False
+
+
+def _arm_ready_ind(row: dict, indicators: dict | None = None) -> dict:
+    ind = row.get("indicator") if isinstance(row.get("indicator"), dict) else None
+    if isinstance(ind, dict) and ind:
+        return ind
+    sym = str(row.get("symbol") or "").upper().strip()
+    if sym and isinstance(indicators, dict):
+        got = indicators.get(sym)
+        if isinstance(got, dict):
+            return got
+    return {}
+
+
+def _arm_ready_young_tape(
+    row: dict,
+    cfg: dict,
+    *,
+    now: float,
+) -> tuple[bool, str]:
+    """Young stream tape for admit; fail closed on stale / need-stream."""
+    sym = str(row.get("symbol") or "").upper().strip()
+    code = str(row.get("block_code") or "").strip().lower()
+    if code in ("stale_quote", "stale_tape", "stream_required", "no_quote",
+                "no_quote_age"):
+        return False, "stale"
+    if code == "await_stream":
+        return False, "stale"
+    ceiling = decision_max_age_sec(cfg)
+    try:
+        admit_ceil = admit_max_tape_age_sec(cfg)
+        if admit_ceil > 0:
+            ceiling = min(ceiling, admit_ceil) if ceiling > 0 else admit_ceil
+    except Exception:
+        pass
+    if ceiling <= 0:
+        ceiling = 15.0
+
+    src = str(
+        row.get("last_ask_src") or row.get("price_src") or ""
+    ).strip().lower()
+    age = _f_or_none(row.get("last_ask_age_sec"))
+    if age is None:
+        age = _f_or_none(row.get("tape_age_sec"))
+    if age is None:
+        age = _f_or_none(row.get("price_age_sec"))
+    if src == "stream" and age is not None and float(age) <= ceiling:
+        return True, "ok"
+    if sym:
+        try:
+            tape = live_print(sym)
+        except Exception:
+            tape = None
+        if tape is not None and tape[1] is not None and float(tape[1]) <= ceiling:
+            return True, "ok"
+    if src in ("stale_tape", "none", "") or (
+        age is not None and float(age) > ceiling
+    ):
+        return False, "stale"
+    if age is None and src != "stream":
+        return False, "stale"
+    return False, "stale"
+
+
+def evaluate_arm_ready(
+    row: dict,
+    cfg: dict | None = None,
+    *,
+    indicators: dict[str, dict] | None = None,
+    now: float | None = None,
+    max_price: float | None = None,
+) -> tuple[bool, str]:
+    """Admit-time arm-ready check. Returns ``(ok, reason)``.
+
+    Requires young tape, RSI rising under arm max, EXH rising at/above heat
+    min, and price under effective max. Reason codes match arm/block labels
+    where possible (``stale``, ``rsi_not_rising``, ``rsi_extended``,
+    ``exh_falling``, ``above_max_price``, …).
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not isinstance(row, dict):
+        return False, "bad_row"
+    t0 = float(now if now is not None else time.time())
+
+    tape_ok, tape_why = _arm_ready_young_tape(row, cfg, now=t0)
+    if not tape_ok:
+        return False, tape_why
+
+    # Price under effective max (no above_max_price seeds).
+    px = _f_or_none(row.get("price"))
+    if px is None:
+        px = _f_or_none(row.get("last_ask"))
+    cap = max_price
+    if cap is None:
+        try:
+            cap = float(cfg.get("ai_max_price")) if cfg.get("ai_max_price") is not None else None
+        except (TypeError, ValueError):
+            cap = None
+    if cap is not None and px is not None and float(px) + 1e-12 >= float(cap):
+        return False, "above_max_price"
+
+    ind = _arm_ready_ind(row, indicators)
+    # RSI: rising and under arm max (same locked arm knobs — not loosened).
+    rsi = _f_or_none(ind.get("cm_rsi"))
+    if rsi is None:
+        rsi = _f_or_none(row.get("cm_rsi"))
+    if rsi is None:
+        return False, "no_rsi_data"
+    try:
+        rsi_max = float(cfg.get("ai_watch_arm_cm_rsi_max", 75.0) or 75.0)
+    except (TypeError, ValueError):
+        rsi_max = 75.0
+    if float(rsi) > rsi_max:
+        return False, "rsi_extended"
+    if bool(cfg.get("ai_watch_arm_cm_rsi_require_rising", True)):
+        rising_rsi = ind.get("cm_rsi_rising")
+        if rising_rsi is None:
+            rising_rsi = row.get("cm_rsi_rising")
+        if not bool(rising_rsi):
+            return False, "rsi_not_rising"
+
+    # EXH: rising and ≥ heat_min.
+    exh = _exh_from_row_or_ind(row, ind)
+    if exh is None and isinstance(row.get("indicator"), dict):
+        exh = exhaustion_pct(row)
+    if exh is None:
+        return False, "exh_rising_required"
+    try:
+        heat_min = float(cfg.get("ai_watch_exhaustion_heat_min_pct", 40.0) or 0.0)
+    except (TypeError, ValueError):
+        heat_min = 40.0
+    if heat_min > 0 and float(exh) + 1e-9 < heat_min:
+        return False, "exh_too_low"
+    rising_exh = _exh_rising_hint(row, ind)
+    falling = ind.get("pctr_falling")
+    if falling is None:
+        falling = row.get("pctr_falling")
+    if falling is True or rising_exh is False:
+        return False, "exh_falling"
+    if bool(cfg.get("ai_watch_require_exh_rising", True)) and rising_exh is not True:
+        return False, "exh_falling"
+
+    return True, "ok"
+
+
+def stamp_arm_ready_fields(
+    row: dict,
+    cfg: dict | None = None,
+    *,
+    indicators: dict[str, dict] | None = None,
+    now: float | None = None,
+    max_price: float | None = None,
+) -> tuple[bool, str]:
+    """Stamp ``arm_ready`` / ``arm_ready_reason`` / CHG band on *row*."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    ready, why = evaluate_arm_ready(
+        row, cfg, indicators=indicators, now=now, max_price=max_price)
+    row["arm_ready"] = bool(ready)
+    row["arm_ready_reason"] = str(why or ("ok" if ready else "unknown"))
+    pct = _pct_change_value(row.get("pct_change"))
+    if pct is None:
+        pct = _pct_change_value(row.get("admit_pct_change"))
+    band = classify_admit_chg_band(pct, cfg)
+    row["admit_chg_band"] = band
+    if pct is not None:
+        row["admit_pct_change"] = float(pct)
+    return ready, why
+
+
+def _row_needs_arm_ready_gate(row: dict) -> bool:
+    """Soft-seed keep seats only.
+
+    Continuous soft-seed was filling the book with never-armable inventory.
+    Desk panel seeds (momentum/trending/movers/research) keep existing
+    inclusion; never-armable eviction clears stuck seats after grace.
+    """
+    if not isinstance(row, dict):
+        return False
+    if row.get("soft_seed") is True:
+        return True
+    crit = {str(c).lower() for c in (row.get("criteria") or [])}
+    return "soft_seed" in crit
+
+
 def is_warming_exh_profile(
     exh: float | None,
     exh_rising: bool | None,
@@ -1457,7 +1780,11 @@ def soft_seed_scout_score(
     *,
     ind: dict | None = None,
 ) -> float:
-    """Higher = better soft-seed scout. Deprioritize hot/mistimed-looking RSI."""
+    """Higher = better soft-seed scout. Deprioritize hot/mistimed-looking RSI.
+
+    Day CHG% soft band (admit/rank only): prefer ~+8…+40; soft-demote above
+    soft_max (~50) unless pullback. Movers/trending floors stay elsewhere.
+    """
     exh = _exh_from_row_or_ind(row, ind)
     rising = _exh_rising_hint(row, ind)
     lo, hi = warming_exh_band(cfg)
@@ -1485,8 +1812,28 @@ def soft_seed_scout_score(
         score -= 15.0
     dvol = _f_or_none(row.get("dollar_volume")) or 0.0
     score += min(20.0, math.log10(max(dvol, 1.0)) * 2.0)
-    pct = _f_or_none(row.get("pct_change")) or 0.0
-    score += min(15.0, max(0.0, pct) * 0.3)
+    pct = _f_or_none(row.get("pct_change"))
+    if pct is None:
+        pct = 0.0
+    band = classify_admit_chg_band(pct, cfg)
+    if isinstance(row, dict):
+        row["admit_chg_band"] = band
+        row["admit_pct_change"] = float(pct)
+    if band == "prefer":
+        score += 25.0
+    elif band == "mid":
+        score += 8.0
+    elif band == "below_prefer":
+        score += min(10.0, max(0.0, float(pct)) * 0.25)
+    elif band == "over_soft":
+        if admit_pullback_ok(row, cfg):
+            score -= 10.0
+            if isinstance(row, dict):
+                row["admit_chg_band"] = "over_soft_pullback"
+        else:
+            score -= 55.0
+    else:
+        score += min(15.0, max(0.0, float(pct)) * 0.3)
     return score
 
 
@@ -1778,6 +2125,10 @@ def maybe_soft_seed_rows(
     per-source quota. Mechanical only. Prefers EXH 15–45 rising; deprioritizes
     hot RSI. Does not call ``desk_candidate_rows`` (avoids clearing seed-drop
     tallies).
+
+    When ``ai_watch_admit_require_arm_ready`` is on (default RTH): arm-ready
+    candidates take keep seats first; non-ready warming profiles may enter as
+    scout-only with short TTL; other failures do not consume soft-seed seats.
     """
     global _SOFT_SEED_LAST_TS
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -1804,6 +2155,17 @@ def maybe_soft_seed_rows(
 
     seen = set(seen or set())
     indicators = indicators if isinstance(indicators, dict) else {}
+    max_px = None
+    try:
+        max_px = _soft_seed_max_price(cfg)
+        if max_px is not None:
+            max_px = float(max_px)
+    except (TypeError, ValueError):
+        max_px = None
+    require_ready = admit_require_arm_ready(cfg, t0)
+    ttl = scout_ttl_sec(cfg)
+    _, _, chg_soft = admit_chg_band_bounds(cfg)
+
     ranked: list[tuple[float, dict]] = []
     for r in _soft_seed_source_rows(cfg):
         sym = str(r.get("symbol") or "").upper().strip()
@@ -1823,15 +2185,101 @@ def maybe_soft_seed_rows(
                 crit.append("warming")
         out["criteria"] = crit
         out["soft_seed"] = True
+        if ind and "indicator" not in out:
+            out["indicator"] = dict(ind)
+        stamp_arm_ready_fields(
+            out, cfg, indicators=indicators, now=t0, max_price=max_px)
         ranked.append((sc, out))
     ranked.sort(key=lambda t: -t[0])
+
     picked: list[dict] = []
+    if not require_ready:
+        for sc, row in ranked:
+            if len(picked) >= max_n:
+                break
+            if sc < 0 and any(s >= 20 for s, _ in ranked[: max(1, max_n)]):
+                continue
+            picked.append(row)
+        _SOFT_SEED_LAST_TS = t0
+        return picked, True
+
+    # Pass 1: arm-ready keep seats (CHG over soft_max needs pullback).
     for sc, row in ranked:
         if len(picked) >= max_n:
             break
         if sc < 0 and any(s >= 20 for s, _ in ranked[: max(1, max_n)]):
             continue
+        if not bool(row.get("arm_ready")):
+            continue
+        pct = _pct_change_value(row.get("pct_change"))
+        if pct is None:
+            pct = _pct_change_value(row.get("admit_pct_change"))
+        if (
+            pct is not None
+            and float(pct) > chg_soft
+            and not admit_pullback_ok(row, cfg)
+        ):
+            # Do not soft-seed extended day-moves without pullback.
+            row["arm_ready"] = False
+            row["arm_ready_reason"] = "chg_band"
+            row["admit_chg_band"] = "over_soft"
+            continue
+        row["scout_only"] = False
         picked.append(row)
+
+    # Pass 2: scout-only warming (short TTL) — does not take keep inventory.
+    if len(picked) < max_n:
+        picked_syms = {
+            str(r.get("symbol") or "").upper() for r in picked
+        }
+        for sc, row in ranked:
+            if len(picked) >= max_n:
+                break
+            sym = str(row.get("symbol") or "").upper().strip()
+            if not sym or sym in picked_syms:
+                continue
+            if bool(row.get("arm_ready")):
+                continue
+            # Scout path: warming profile + under max. Stale/no_tape is OK —
+            # soft-seed calls ensure_watch_stream after pick; keep seats still
+            # require young tape via evaluate_arm_ready.
+            why = str(row.get("arm_ready_reason") or "")
+            if why == "above_max_price":
+                continue
+            pct = _pct_change_value(row.get("pct_change"))
+            if pct is None:
+                pct = _pct_change_value(row.get("admit_pct_change"))
+            if (
+                pct is not None
+                and float(pct) > chg_soft
+                and not admit_pullback_ok(row, cfg)
+            ):
+                row["arm_ready_reason"] = "chg_band"
+                continue
+            exh = _exh_from_row_or_ind(
+                row,
+                row.get("indicator") if isinstance(row.get("indicator"), dict) else None,
+            )
+            rising = _exh_rising_hint(
+                row,
+                row.get("indicator") if isinstance(row.get("indicator"), dict) else None,
+            )
+            if not is_warming_exh_profile(exh, rising, cfg, allow_unknown=True):
+                continue
+            out = dict(row)
+            out["scout_only"] = True
+            out["seat_role"] = "warming"
+            crit = list(out.get("criteria") or [])
+            if "warming" not in crit:
+                crit.append("warming")
+            if "scout_only" not in crit:
+                crit.append("scout_only")
+            out["criteria"] = crit
+            if ttl > 0:
+                out["scout_until"] = float(t0) + float(ttl)
+            picked.append(out)
+            picked_syms.add(sym)
+
     _SOFT_SEED_LAST_TS = t0
     return picked, True
 
@@ -2574,7 +3022,8 @@ def _is_unarmable_stale_watching(
 
     Past subscribe grace only. Confirmed via ``stale_tape`` src, sticky
     ``stale_quote`` block, or tape_only (``stale_tape``). Never armed /
-    submitted / filled.
+    submitted / filled. Also true for sticky RSI/EXH never-armable blocks
+    past ``ai_watch_unarmable_evict_sec`` so arm-ready admits can steal.
     """
     if not isinstance(rec, dict):
         return False
@@ -2583,13 +3032,25 @@ def _is_unarmable_stale_watching(
         return False
     if _within_subscribe_grace(rec, cfg, now):
         return False
-    # Young stream seat is armable on tape — never steal it.
+    # Young stream seat is armable on tape — never steal for *stale* alone.
+    # RSI/EXH stuck seats may still be young-tape but never armable.
+    code = str(rec.get("block_code") or "").strip().lower()
+    if code in ("rsi_not_rising", "rsi_extended", "exh_falling",
+                "exh_not_rising", "exh_rising_required", "above_max_price"):
+        limit = unarmable_evict_sec(cfg)
+        if limit <= 0:
+            return False
+        since = _f_or_none(rec.get("unarmable_since"))
+        if since is None:
+            since = _f_or_none(rec.get("block_ts"))
+        if since is None or since <= 0:
+            return False
+        return (float(now) - float(since)) >= limit
     if _is_stream_ready_seat(rec, cfg, now=now):
         return False
     src = str(
         rec.get("last_ask_src") or rec.get("price_src") or ""
     ).strip().lower()
-    code = str(rec.get("block_code") or "").strip().lower()
     tape_only = src == "stale_tape"
     sticky_stale_quote = code == "stale_quote"
     if not (tape_only or sticky_stale_quote or src in ("none", "")):
@@ -2604,6 +3065,154 @@ def _is_unarmable_stale_watching(
         return True
     # Pure stale_tape src after grace is itself confirmation (seat-cap spirit).
     return tape_only or src in ("none", "")
+
+
+def _track_unarmable_block(rec: dict, *, now: float) -> None:
+    """Start/clear ``unarmable_since`` from sticky never-armable block codes."""
+    if not isinstance(rec, dict):
+        return
+    code = str(rec.get("block_code") or "").strip().lower()
+    if code in _NEVER_ARMABLE_BLOCK_CODES:
+        if _f_or_none(rec.get("unarmable_since")) is None:
+            # Prefer block_ts so a long-stuck code does not get a fresh clock.
+            bt = _f_or_none(rec.get("block_ts"))
+            rec["unarmable_since"] = float(bt) if bt is not None else float(now)
+    else:
+        rec.pop("unarmable_since", None)
+
+
+def _maybe_scout_ttl_drop(
+    rec: dict,
+    *,
+    sym: str,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    gt,
+) -> bool:
+    """Drop scout-only warming seats past ``scout_until``. Returns True if dropped."""
+    if not isinstance(rec, dict):
+        return False
+    until = _f_or_none(rec.get("scout_until"))
+    if until is None:
+        return False
+    if not bool(rec.get("scout_only")) and str(
+        rec.get("seat_role") or ""
+    ).lower() != "warming":
+        # scout_until without scout_only — still honor expiry.
+        pass
+    if float(now) < float(until):
+        return False
+    status = str(rec.get("status") or "").lower().strip()
+    if status in ("submitted", "filled", "armed"):
+        return False
+    # Arm-ready now → promote out of scout TTL instead of dropping.
+    try:
+        ready, _why = evaluate_arm_ready(rec, cfg, now=now)
+        if ready:
+            rec["scout_only"] = False
+            rec.pop("scout_until", None)
+            rec["arm_ready"] = True
+            rec["arm_ready_reason"] = "ok"
+            return False
+    except Exception:
+        pass
+    try:
+        if gt is not None and gt.has_open_position(sym):
+            return False
+    except Exception:
+        pass
+    try:
+        events.append(cp.log_event(
+            "watch_drop", symbol=sym, reason="scout_ttl",
+            arm_ready=False,
+            arm_ready_reason=str(rec.get("arm_ready_reason") or "scout_ttl"),
+            admit_pct_change=_f_or_none(rec.get("admit_pct_change")),
+            admit_chg_band=str(rec.get("admit_chg_band") or "") or None,
+            seat_role=str(rec.get("seat_role") or "") or None))
+    except Exception:  # noqa: BLE001
+        events.append({
+            "kind": "watch_drop", "symbol": sym, "reason": "scout_ttl",
+            "arm_ready": False,
+        })
+    drop_watch_symbols([sym])
+    return True
+
+
+def _maybe_never_armable_evict(
+    rec: dict,
+    *,
+    sym: str,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    gt,
+) -> bool:
+    """Drop watching seats stuck on never-armable blocks past short grace."""
+    limit = unarmable_evict_sec(cfg)
+    if limit <= 0 or not isinstance(rec, dict):
+        return False
+    status = str(rec.get("status") or "").lower().strip()
+    if status != "watching":
+        return False
+    if _is_protected_pin_seat(rec, cfg, now=now):
+        return False
+    if _within_subscribe_grace(rec, cfg, now):
+        return False
+    _track_unarmable_block(rec, now=now)
+    code = str(rec.get("block_code") or "").strip().lower()
+    if code not in _NEVER_ARMABLE_BLOCK_CODES:
+        return False
+    # Stale tape already has stale_timeout / no_stream_trade — avoid double drop
+    # unless the code is RSI/EXH/above_max (the inventory that blocked opens).
+    if code in ("stale_quote", "stale_tape", "no_quote", "no_quote_age",
+                "stream_required"):
+        # Align with stale timeout: only evict here when past the shorter
+        # unarmable grace AND stale_timeout would not already own the drop.
+        # Prefer dedicated stale paths; this branch covers RSI/EXH primarily.
+        return False
+    since = _f_or_none(rec.get("unarmable_since"))
+    if since is None or since <= 0:
+        return False
+    if (float(now) - float(since)) < limit:
+        return False
+    try:
+        if gt is not None and gt.has_open_position(sym):
+            return False
+    except Exception:
+        pass
+    # Re-check: if now arm-ready, clear clock instead of dropping.
+    try:
+        ready, why = evaluate_arm_ready(rec, cfg, now=now)
+        if ready:
+            rec.pop("unarmable_since", None)
+            rec["arm_ready"] = True
+            rec["arm_ready_reason"] = "ok"
+            return False
+        rec["arm_ready"] = False
+        rec["arm_ready_reason"] = why
+    except Exception:
+        rec["arm_ready"] = False
+        rec["arm_ready_reason"] = code or "never_armable"
+    try:
+        events.append(cp.log_event(
+            "watch_drop", symbol=sym, reason="never_armable",
+            block=code,
+            arm_ready=False,
+            arm_ready_reason=str(rec.get("arm_ready_reason") or code),
+            elapsed_sec=round(float(now) - float(since), 1),
+            admit_pct_change=_f_or_none(rec.get("admit_pct_change")),
+            admit_chg_band=str(rec.get("admit_chg_band") or "") or None,
+            seat_role=str(rec.get("seat_role") or "") or None))
+    except Exception:  # noqa: BLE001
+        events.append({
+            "kind": "watch_drop", "symbol": sym, "reason": "never_armable",
+            "block": code, "arm_ready": False,
+        })
+    drop_watch_symbols([sym])
+    return True
 
 
 def _candidate_young_stream_age(
@@ -4137,6 +4746,23 @@ def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
             row, prev.get("admit_look_reason")),
         "admit_criteria": _merge_admit_criteria(row, prev),
         "admit_ts": float(prev.get("admit_ts") or now),
+        # Arm-ready admit provenance (soft-seed / keep hygiene).
+        "arm_ready": (
+            bool(row["arm_ready"]) if "arm_ready" in row
+            else (bool(prev["arm_ready"]) if "arm_ready" in prev else None)),
+        "arm_ready_reason": (
+            str(row.get("arm_ready_reason") or "")
+            or str(prev.get("arm_ready_reason") or "")
+            or None),
+        "admit_chg_band": (
+            str(row.get("admit_chg_band") or "")
+            or str(prev.get("admit_chg_band") or "")
+            or None),
+        "scout_only": bool(row.get("scout_only") or prev.get("scout_only") or False),
+        "scout_until": (
+            _f_or_none(row.get("scout_until"))
+            if row.get("scout_until") is not None
+            else _f_or_none(prev.get("scout_until"))),
     }
 
 
@@ -7420,11 +8046,47 @@ def passes_inclusion(
             ):
                 met.append("hot_move_rvol_waive")
 
+    def _arm_ready_inclusion_refuse() -> str | None:
+        """Refuse reason when arm-ready keep gate fails; None if ok/N/A."""
+        if not (
+            admit_require_arm_ready(cfg)
+            and _row_needs_arm_ready_gate(row)
+            and not bool(row.get("scout_only"))
+        ):
+            if isinstance(row, dict) and row.get("admit_chg_band") is None:
+                pct_b = _pct_change_value(row.get("pct_change"))
+                row["admit_chg_band"] = classify_admit_chg_band(pct_b, cfg)
+            return None
+        ready, why = stamp_arm_ready_fields(
+            row, cfg, indicators=indicators, now=time.time())
+        if ready:
+            if "arm_ready" not in met:
+                met.append("arm_ready")
+            return None
+        pct = _pct_change_value(row.get("pct_change"))
+        if pct is None:
+            pct = _pct_change_value(row.get("admit_pct_change"))
+        _, _, soft_max = admit_chg_band_bounds(cfg)
+        if (
+            pct is not None
+            and float(pct) > soft_max
+            and not admit_pullback_ok(row, cfg)
+        ):
+            return "arm_ready_chg_band"
+        return f"arm_ready_{why or 'fail'}"
+
     # Soft mom_open path: after price + rvol (+ uptrend above), admit without
-    # score / EXT / indicator gates.
+    # score / EXT / indicator gates. Arm-ready keep gate still applies.
     if mom_soft:
+        refuse = _arm_ready_inclusion_refuse()
+        if refuse:
+            return False, met, refuse
         met = list(dict.fromkeys(met))
         return True, met, ""
+
+    refuse = _arm_ready_inclusion_refuse()
+    if refuse:
+        return False, met, refuse
 
     # Trending admission: day green (uptrend above), never WASH. EXT is
     # optional unless ai_watch_require_look_ext is true. Score is not required
@@ -7531,7 +8193,14 @@ def apply_inclusion_gate(
             reason=None,
             owner=src_k or None,
             row=out,
-            extra={"criteria": met},
+            extra={
+                "criteria": met,
+                "arm_ready": out.get("arm_ready"),
+                "arm_ready_reason": out.get("arm_ready_reason"),
+                "admit_pct_change": out.get("admit_pct_change"),
+                "admit_chg_band": out.get("admit_chg_band"),
+                "scout_only": bool(out.get("scout_only")),
+            },
             cfg=cfg,
         )
     for rec in last_reject.values():
@@ -8000,9 +8669,16 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             "arm_confirm_rsi_max",
             "stale_feed_since", "stale_tape_streak",
             "seat_role", "pin_stream_ready_sec", "pin_dead_since",
+            "unarmable_since", "scout_until", "scout_only",
+            "arm_ready", "arm_ready_reason", "admit_chg_band",
         ):
             if prev.get(k) is not None:
                 rec[k] = prev[k]
+        # Fresh soft-seed / inclusion stamps win over stale prev.
+        for k in ("arm_ready", "arm_ready_reason", "admit_chg_band",
+                  "scout_only", "scout_until"):
+            if row.get(k) is not None:
+                rec[k] = row[k]
         # Seat roles: pin wins over warming; warming scout prefers fresh tag.
         prev_role = str(prev.get("seat_role") or "").strip().lower()
         row_role = str(row.get("seat_role") or "").strip().lower()
@@ -13654,6 +14330,17 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 pass
             drop_watch_symbols([sym])
             continue
+
+        # Scout-only short TTL + never-armable RSI/EXH eviction (arm-ready admit).
+        if status not in ("submitted", "filled"):
+            if _maybe_scout_ttl_drop(
+                rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
+            ):
+                continue
+            if _maybe_never_armable_evict(
+                rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
+            ):
+                continue
 
         live_rv = _desk_rvol(sym)
         if live_rv is not None:
