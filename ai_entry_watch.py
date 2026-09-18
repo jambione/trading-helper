@@ -10749,7 +10749,52 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         return False, f"not_rising_{state}"
     if state == "overbought":
         return True, "overbought"
+    # Heating without OB: require dual-%R confluence (TV red-box picture).
+    # Fast-only heaters with a wide |fast−slow| (RKLB-class) must not arm as
+    # last_heating. SMCI-class both-OB + tight still clears via overbought
+    # above; heating path needs slow present + tight when rte_require_tight.
+    tight_ok, tight_why = _heating_dual_r_allows(record, cfg)
+    if not tight_ok:
+        return False, tight_why
     return True, "heating"
+
+
+def _heating_dual_r_allows(record: dict, cfg: dict) -> tuple[bool, str]:
+    """Dual-%R gate for the heating (non-OB) arm path.
+
+    Locked 2026-09-18 from TV: SMCI (both OB, gap ~9) = buy; RKLB (not OB,
+    gap ~25) = don't. Does not enable ``ai_watch_tv_exh_rsi`` (that path
+    also demands CM RSI ≤ buy_max and fights scalp_legacy RSI rising under 75).
+
+    When ``rte_require_tight`` is on (default): require ``pctr`` +
+    ``pctr_slow`` and ``abs(fast−slow) ≤ rte_confluence_max``. Missing slow
+    → ``no_exhaustion_data``; wide gap → ``exh_not_tight``.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get("rte_require_tight", True)):
+        return True, "tight_off"
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    fast = _f_or_none(ind.get("pctr"))
+    slow = _f_or_none(ind.get("pctr_slow"))
+    if fast is None or slow is None:
+        if bool(cfg.get("ai_watch_require_exhaustion_data", True)):
+            return False, "no_exhaustion_data"
+        # Heat path with unknown slow: refuse rather than arm blind on fast.
+        return False, "exh_not_tight"
+    try:
+        tight_max = float(cfg.get("rte_confluence_max", 15) or 15)
+    except (TypeError, ValueError):
+        tight_max = 15.0
+    gap = abs(float(fast) - float(slow))
+    tight = bool(ind.get("pctr_tight")) or gap <= tight_max + 1e-9
+    if not tight:
+        if isinstance(record, dict):
+            record["block_detail"] = f"exh gap {gap:.1f}>{tight_max:g}"
+        return False, "exh_not_tight"
+    # Optional both-OB confirmation when already in the red-box band: if both
+    # lines are OB and tight, heating is fine (same confluence picture).
+    # Not required — heat_min + rising + tight is enough for early confluence.
+    return True, "exh_tight"
 
 
 def _macd_is_armed(record: dict) -> bool:
