@@ -13,6 +13,8 @@ def _cfg(**over):
     c = {
         "ai_watch_admit_require_arm_ready": True,
         "ai_watch_admit_arm_ready_rth_only": False,  # force on in tests
+        # Isolate arm-ready soft-seed from square-prefer bus (own suite).
+        "ai_watch_admit_prefer_square": False,
         "ai_watch_arm_cm_rsi_max": 75.0,
         "ai_watch_arm_cm_rsi_require_rising": True,
         "ai_watch_require_exh_rising": True,

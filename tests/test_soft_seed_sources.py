@@ -26,8 +26,9 @@ def _base_cfg(**over):
         "ai_max_price": 100.0,
         "ai_watch_min_pct_change": 50.0,
         "ai_movers_max_age_sec": 0.0,  # accept any movers file age in tests
-        # Source-parity tests exercise scout shortlist, not arm-ready keep.
+        # Source-parity tests exercise scout shortlist, not arm-ready / square bus.
         "ai_watch_admit_require_arm_ready": False,
+        "ai_watch_admit_prefer_square": False,
     }
     cfg.update(over)
     return cfg

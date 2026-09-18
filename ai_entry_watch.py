@@ -266,6 +266,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "unarmable_steal": "unarmable steal",
     "preheat_steal": "preheat steal",
     "never_armable": "never armable",
+    "far_exh": "far EXH",
+    "never_square": "far EXH",
     "scout_ttl": "scout TTL",
     "arm_ready_stale": "not arm-ready",
     "arm_ready_rsi_not_rising": "not arm-ready",
@@ -1454,6 +1456,8 @@ _NEVER_ARMABLE_BLOCK_CODES = frozenset({
     "exh_falling",
     "exh_not_rising",
     "exh_rising_required",
+    "exh_not_tight",
+    "wait_exh",
     "stale_quote",
     "stale_tape",
     "no_quote",
@@ -1761,8 +1765,24 @@ def is_warming_exh_profile(
     cfg: dict | None = None,
     *,
     allow_unknown: bool = True,
+    row: dict | None = None,
+    ind: dict | None = None,
 ) -> bool:
-    """True when EXH is in the pre-heat scout band (or unknown if allowed)."""
+    """True when EXH is a warming / pre-square scout.
+
+    When ``ai_watch_admit_prefer_square`` is on and dual-%R is present:
+    warming ≡ ``pre_square`` or ``square`` (approach/OB band + tight + rising).
+    Missing slow → unknown (not pre-square); ``allow_unknown`` only then.
+    Legacy fallback: single-line heat in ``warming_exh_band``.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if admit_prefer_square(cfg) and (row is not None or ind is not None):
+        cls, _gap = classify_exh_seat(row if isinstance(row, dict) else {}, cfg, ind=ind)
+        if cls in ("pre_square", "square"):
+            return True
+        if cls == "unknown":
+            return bool(allow_unknown)
+        return False  # far
     lo, hi = warming_exh_band(cfg)
     if exh is None:
         return bool(allow_unknown)
@@ -1780,26 +1800,40 @@ def soft_seed_scout_score(
     *,
     ind: dict | None = None,
 ) -> float:
-    """Higher = better soft-seed scout. Deprioritize hot/mistimed-looking RSI.
+    """Higher = better soft-seed scout.
 
-    Day CHG% soft band (admit/rank only): prefer ~+8…+40; soft-demote above
-    soft_max (~50) unless pullback. Movers/trending floors stay elsewhere.
+    Primary (when prefer_square): square > pre_square ≫ far.
+    Secondary: day CHG% soft band (~+8…+40). Deprioritize hot RSI.
     """
-    exh = _exh_from_row_or_ind(row, ind)
-    rising = _exh_rising_hint(row, ind)
-    lo, hi = warming_exh_band(cfg)
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if isinstance(row, dict) and ind and "indicator" not in row:
+        # Allow classify_exh_seat to see dual-%R on the row.
+        pass
+    cls = stamp_exh_seat_fields(row, cfg, ind=ind) if isinstance(row, dict) else "unknown"
     score = 0.0
-    if exh is None:
-        score += 20.0  # unknown — still scouting
-    elif lo <= exh <= hi:
-        score += 50.0 + (hi - abs((lo + hi) / 2.0 - exh))
-        if rising is True:
-            score += 15.0
-    elif exh < lo:
-        score += 10.0
+    if admit_prefer_square(cfg):
+        if cls == "square":
+            score += 80.0
+        elif cls == "pre_square":
+            score += 55.0
+        elif cls == "unknown":
+            score += 15.0  # scout-only candidate
+        else:  # far
+            score -= 60.0
     else:
-        # Already hot (≥ warming max) — deprioritize hard
-        score -= 40.0 + max(0.0, exh - hi)
+        exh = _exh_from_row_or_ind(row, ind)
+        rising = _exh_rising_hint(row, ind)
+        lo, hi = warming_exh_band(cfg)
+        if exh is None:
+            score += 20.0
+        elif lo <= exh <= hi:
+            score += 50.0 + (hi - abs((lo + hi) / 2.0 - exh))
+            if rising is True:
+                score += 15.0
+        elif exh < lo:
+            score += 10.0
+        else:
+            score -= 40.0 + max(0.0, exh - hi)
     rsi = None
     for src in (ind, row):
         if isinstance(src, dict):
@@ -1819,12 +1853,13 @@ def soft_seed_scout_score(
     if isinstance(row, dict):
         row["admit_chg_band"] = band
         row["admit_pct_change"] = float(pct)
+    # CHG band is secondary to square-distance.
     if band == "prefer":
-        score += 25.0
+        score += 15.0 if admit_prefer_square(cfg) else 25.0
     elif band == "mid":
-        score += 8.0
+        score += 5.0 if admit_prefer_square(cfg) else 8.0
     elif band == "below_prefer":
-        score += min(10.0, max(0.0, float(pct)) * 0.25)
+        score += min(8.0, max(0.0, float(pct)) * 0.2)
     elif band == "over_soft":
         if admit_pullback_ok(row, cfg):
             score -= 10.0
@@ -1833,7 +1868,7 @@ def soft_seed_scout_score(
         else:
             score -= 55.0
     else:
-        score += min(15.0, max(0.0, float(pct)) * 0.3)
+        score += min(10.0, max(0.0, float(pct)) * 0.25)
     return score
 
 
@@ -2163,8 +2198,10 @@ def maybe_soft_seed_rows(
     except (TypeError, ValueError):
         max_px = None
     require_ready = admit_require_arm_ready(cfg, t0)
+    prefer_sq = admit_prefer_square(cfg)
     ttl = scout_ttl_sec(cfg)
     _, _, chg_soft = admit_chg_band_bounds(cfg)
+    far_cap = max_far_exh_seats(cfg)
 
     ranked: list[tuple[float, dict]] = []
     for r in _soft_seed_source_rows(cfg):
@@ -2172,28 +2209,39 @@ def maybe_soft_seed_rows(
         if not sym or sym in seen:
             continue
         ind = indicators.get(sym) if isinstance(indicators.get(sym), dict) else None
-        sc = soft_seed_scout_score(r, cfg, ind=ind)
         out = dict(r)
+        if ind and "indicator" not in out:
+            out["indicator"] = dict(ind)
+        sc = soft_seed_scout_score(out, cfg, ind=ind)
         crit = list(out.get("criteria") or [])
         if "soft_seed" not in crit:
             crit.append("soft_seed")
         exh = _exh_from_row_or_ind(out, ind)
         rising = _exh_rising_hint(out, ind)
-        if is_warming_exh_profile(exh, rising, cfg, allow_unknown=True):
+        if is_warming_exh_profile(
+            exh, rising, cfg, allow_unknown=True, row=out, ind=ind,
+        ):
             out["seat_role"] = "warming"
             if "warming" not in crit:
                 crit.append("warming")
         out["criteria"] = crit
         out["soft_seed"] = True
-        if ind and "indicator" not in out:
-            out["indicator"] = dict(ind)
         stamp_arm_ready_fields(
             out, cfg, indicators=indicators, now=t0, max_price=max_px)
         ranked.append((sc, out))
     ranked.sort(key=lambda t: -t[0])
 
+    def _far_keep_count(rows: list[dict]) -> int:
+        n = 0
+        for r in rows:
+            if bool(r.get("scout_only")):
+                continue
+            if str(r.get("exh_seat_class") or "") == "far":
+                n += 1
+        return n
+
     picked: list[dict] = []
-    if not require_ready:
+    if not require_ready and not prefer_sq:
         for sc, row in ranked:
             if len(picked) >= max_n:
                 break
@@ -2203,14 +2251,20 @@ def maybe_soft_seed_rows(
         _SOFT_SEED_LAST_TS = t0
         return picked, True
 
-    # Pass 1: arm-ready keep seats (CHG over soft_max needs pullback).
+    # Pass 1: square / pre_square keeps (arm-ready when required).
     for sc, row in ranked:
         if len(picked) >= max_n:
             break
         if sc < 0 and any(s >= 20 for s, _ in ranked[: max(1, max_n)]):
             continue
-        if not bool(row.get("arm_ready")):
+        cls = str(row.get("exh_seat_class") or "")
+        if prefer_sq and cls not in ("square", "pre_square"):
             continue
+        if require_ready and not bool(row.get("arm_ready")):
+            # Square/pre-square without full arm-ready still keep if square
+            # class — arm gates may need stream that arrives after seed.
+            if cls != "square":
+                continue
         pct = _pct_change_value(row.get("pct_change"))
         if pct is None:
             pct = _pct_change_value(row.get("admit_pct_change"))
@@ -2219,7 +2273,6 @@ def maybe_soft_seed_rows(
             and float(pct) > chg_soft
             and not admit_pullback_ok(row, cfg)
         ):
-            # Do not soft-seed extended day-moves without pullback.
             row["arm_ready"] = False
             row["arm_ready_reason"] = "chg_band"
             row["admit_chg_band"] = "over_soft"
@@ -2227,7 +2280,22 @@ def maybe_soft_seed_rows(
         row["scout_only"] = False
         picked.append(row)
 
-    # Pass 2: scout-only warming (short TTL) — does not take keep inventory.
+    # Pass 1b: limited far keeps only when under far_cap and no prefer_square
+    # hard refuse — when prefer_square, far never takes keep seats here.
+    if not prefer_sq and len(picked) < max_n:
+        for sc, row in ranked:
+            if len(picked) >= max_n:
+                break
+            if str(row.get("exh_seat_class") or "") != "far":
+                continue
+            if far_cap >= 0 and _far_keep_count(picked) >= far_cap:
+                break
+            if require_ready and not bool(row.get("arm_ready")):
+                continue
+            row["scout_only"] = False
+            picked.append(row)
+
+    # Pass 2: scout-only warming / unknown (short TTL) — not far keeps.
     if len(picked) < max_n:
         picked_syms = {
             str(r.get("symbol") or "").upper() for r in picked
@@ -2238,11 +2306,15 @@ def maybe_soft_seed_rows(
             sym = str(row.get("symbol") or "").upper().strip()
             if not sym or sym in picked_syms:
                 continue
-            if bool(row.get("arm_ready")):
-                continue
-            # Scout path: warming profile + under max. Stale/no_tape is OK —
-            # soft-seed calls ensure_watch_stream after pick; keep seats still
-            # require young tape via evaluate_arm_ready.
+            cls = str(row.get("exh_seat_class") or "")
+            if prefer_sq and cls == "far":
+                continue  # far does not consume soft-seed seats
+            if cls in ("square", "pre_square") and not bool(row.get("scout_only")):
+                # Already eligible for keep; skip duplicate scout.
+                if any(
+                    str(p.get("symbol") or "").upper() == sym for p in picked
+                ):
+                    continue
             why = str(row.get("arm_ready_reason") or "")
             if why == "above_max_price":
                 continue
@@ -2256,16 +2328,19 @@ def maybe_soft_seed_rows(
             ):
                 row["arm_ready_reason"] = "chg_band"
                 continue
-            exh = _exh_from_row_or_ind(
-                row,
-                row.get("indicator") if isinstance(row.get("indicator"), dict) else None,
+            ind_r = (
+                row.get("indicator")
+                if isinstance(row.get("indicator"), dict) else None
             )
-            rising = _exh_rising_hint(
-                row,
-                row.get("indicator") if isinstance(row.get("indicator"), dict) else None,
-            )
-            if not is_warming_exh_profile(exh, rising, cfg, allow_unknown=True):
-                continue
+            exh = _exh_from_row_or_ind(row, ind_r)
+            rising = _exh_rising_hint(row, ind_r)
+            # Unknown (no slow) may scout briefly; far never.
+            allow_unk = cls == "unknown"
+            if not is_warming_exh_profile(
+                exh, rising, cfg, allow_unknown=allow_unk, row=row, ind=ind_r,
+            ):
+                if not (allow_unk and prefer_sq):
+                    continue
             out = dict(row)
             out["scout_only"] = True
             out["seat_role"] = "warming"
@@ -2301,9 +2376,15 @@ def tag_warming_on_candidates(
             continue
         sym = str(r.get("symbol") or "").upper().strip()
         ind = indicators.get(sym) if sym else None
+        if isinstance(ind, dict) and not isinstance(r.get("indicator"), dict):
+            r["indicator"] = dict(ind)
+        stamp_exh_seat_fields(r, cfg, ind=ind if isinstance(ind, dict) else None)
         exh = _exh_from_row_or_ind(r, ind if isinstance(ind, dict) else None)
         rising = _exh_rising_hint(r, ind if isinstance(ind, dict) else None)
-        if not is_warming_exh_profile(exh, rising, cfg, allow_unknown=True):
+        if not is_warming_exh_profile(
+            exh, rising, cfg, allow_unknown=False, row=r,
+            ind=ind if isinstance(ind, dict) else None,
+        ):
             continue
         r["seat_role"] = "warming"
         crit = list(r.get("criteria") or [])
@@ -3036,7 +3117,8 @@ def _is_unarmable_stale_watching(
     # RSI/EXH stuck seats may still be young-tape but never armable.
     code = str(rec.get("block_code") or "").strip().lower()
     if code in ("rsi_not_rising", "rsi_extended", "exh_falling",
-                "exh_not_rising", "exh_rising_required", "above_max_price"):
+                "exh_not_rising", "exh_rising_required", "above_max_price",
+                "exh_not_tight", "wait_exh"):
         limit = unarmable_evict_sec(cfg)
         if limit <= 0:
             return False
@@ -3046,6 +3128,18 @@ def _is_unarmable_stale_watching(
         if since is None or since <= 0:
             return False
         return (float(now) - float(since)) >= limit
+    # Far dual-%R seats (square bus): stealable past far_exh grace — including
+    # pins so the book does not freeze on lagging names.
+    if admit_prefer_square(cfg):
+        cls = str(rec.get("exh_seat_class") or "")
+        if not cls:
+            cls, _ = classify_exh_seat(rec, cfg)
+        if cls == "far":
+            limit = far_exh_evict_sec(cfg)
+            if limit > 0:
+                since = _f_or_none(rec.get("far_exh_since"))
+                if since is not None and (float(now) - float(since)) >= limit:
+                    return True
     if _is_stream_ready_seat(rec, cfg, now=now):
         return False
     src = str(
@@ -3215,6 +3309,74 @@ def _maybe_never_armable_evict(
     return True
 
 
+def _track_far_exh_seat(rec: dict, cfg: dict | None, *, now: float) -> None:
+    """Start/clear ``far_exh_since`` from dual-%R seat class."""
+    if not isinstance(rec, dict):
+        return
+    cls = stamp_exh_seat_fields(rec, cfg)
+    if cls == "far":
+        if _f_or_none(rec.get("far_exh_since")) is None:
+            rec["far_exh_since"] = float(now)
+    else:
+        rec.pop("far_exh_since", None)
+
+
+def _maybe_far_exh_evict(
+    rec: dict,
+    *,
+    sym: str,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    gt,
+) -> bool:
+    """Drop seats stuck ``far`` from dual-%R square past short grace.
+
+    Pins are eligible (book must not freeze on HOOD/ONON-class lag). Promote
+    instead of drop when the seat has become pre_square/square.
+    """
+    if not admit_prefer_square(cfg):
+        return False
+    limit = far_exh_evict_sec(cfg)
+    if limit <= 0 or not isinstance(rec, dict):
+        return False
+    status = str(rec.get("status") or "").lower().strip()
+    if status != "watching":
+        return False
+    if _within_subscribe_grace(rec, cfg, now):
+        return False
+    _track_far_exh_seat(rec, cfg, now=now)
+    if str(rec.get("exh_seat_class") or "") != "far":
+        return False
+    since = _f_or_none(rec.get("far_exh_since"))
+    if since is None or since <= 0:
+        return False
+    if (float(now) - float(since)) < limit:
+        return False
+    try:
+        if gt is not None and gt.has_open_position(sym):
+            return False
+    except Exception:
+        pass
+    try:
+        events.append(cp.log_event(
+            "watch_drop", symbol=sym, reason="far_exh",
+            exh_seat_class="far",
+            pctr_gap=_f_or_none(rec.get("pctr_gap")),
+            elapsed_sec=round(float(now) - float(since), 1),
+            seat_role=str(rec.get("seat_role") or "") or None,
+            arm_ready=bool(rec.get("arm_ready")) if "arm_ready" in rec else None,
+        ))
+    except Exception:  # noqa: BLE001
+        events.append({
+            "kind": "watch_drop", "symbol": sym, "reason": "far_exh",
+            "exh_seat_class": "far",
+        })
+    drop_watch_symbols([sym])
+    return True
+
+
 def _candidate_young_stream_age(
     cand: dict,
     cfg: dict | None,
@@ -3315,9 +3477,14 @@ def _preferential_unarmable_steal(
     for key, rec in state.items():
         if not isinstance(rec, dict):
             continue
-        # Pins + stream-ready warming are not steal victims for scouts.
-        if _is_protected_pin_seat(rec, cfg, now=now):
-            continue
+        # Pins protected unless far dual-%R (square bus — don't freeze on lag).
+        pin_prot = _is_protected_pin_seat(rec, cfg, now=now)
+        if pin_prot:
+            cls = str(rec.get("exh_seat_class") or "")
+            if not cls:
+                cls, _ = classify_exh_seat(rec, cfg)
+            if cls != "far" or not admit_prefer_square(cfg):
+                continue
         if _is_protected_warming_seat(rec, cfg, now=now):
             continue
         if not _is_unarmable_stale_watching(rec, cfg, now=now):
@@ -4763,6 +4930,18 @@ def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
             _f_or_none(row.get("scout_until"))
             if row.get("scout_until") is not None
             else _f_or_none(prev.get("scout_until"))),
+        "exh_seat_class": (
+            str(row.get("exh_seat_class") or "")
+            or str(prev.get("exh_seat_class") or "")
+            or None),
+        "pctr_gap": (
+            _f_or_none(row.get("pctr_gap"))
+            if row.get("pctr_gap") is not None
+            else _f_or_none(prev.get("pctr_gap"))),
+        "far_exh_since": (
+            _f_or_none(row.get("far_exh_since"))
+            if row.get("far_exh_since") is not None
+            else _f_or_none(prev.get("far_exh_since"))),
     }
 
 
@@ -8671,12 +8850,13 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             "seat_role", "pin_stream_ready_sec", "pin_dead_since",
             "unarmable_since", "scout_until", "scout_only",
             "arm_ready", "arm_ready_reason", "admit_chg_band",
+            "exh_seat_class", "pctr_gap", "far_exh_since",
         ):
             if prev.get(k) is not None:
                 rec[k] = prev[k]
         # Fresh soft-seed / inclusion stamps win over stale prev.
         for k in ("arm_ready", "arm_ready_reason", "admit_chg_band",
-                  "scout_only", "scout_until"):
+                  "scout_only", "scout_until", "exh_seat_class", "pctr_gap"):
             if row.get(k) is not None:
                 rec[k] = row[k]
         # Seat roles: pin wins over warming; warming scout prefers fresh tag.
@@ -9994,6 +10174,104 @@ def dual_r_ob_tight(
     gap = abs(float(fast) - float(slow))
     tight = bool(ind.get("pctr_tight")) or gap <= tight_max + 1e-9
     return bool(both_ob), bool(tight), None
+
+
+def exh_pre_thr(cfg: dict | None = None) -> float:
+    """Approach band for pre-square (both lines ≥ −pre_thr). Default 35."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return float(cfg.get("ai_watch_exh_pre_thr", 35.0) or 35.0)
+    except (TypeError, ValueError):
+        return 35.0
+
+
+def admit_prefer_square(cfg: dict | None = None) -> bool:
+    """Prefer square/pre-square seats on soft-seed / keep (default ON)."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return bool(cfg.get("ai_watch_admit_prefer_square", True))
+
+
+def max_far_exh_seats(cfg: dict | None = None) -> int:
+    """Cap on far dual-%R keep seats. <0 disables. Default 2."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return int(cfg.get("ai_watch_max_far_exh_seats", 2))
+    except (TypeError, ValueError):
+        return 2
+
+
+def far_exh_evict_sec(cfg: dict | None = None) -> float:
+    """Seconds a far seat may stick before eviction. 0 disables."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(cfg.get("ai_watch_far_exh_evict_sec", 90.0) or 0.0))
+    except (TypeError, ValueError):
+        return 90.0
+
+
+def classify_exh_seat(
+    row: dict | None,
+    cfg: dict | None = None,
+    *,
+    ind: dict | None = None,
+) -> tuple[str, float | None]:
+    """Classify dual-%R seat quality for admit/seed/eviction.
+
+    Returns ``(class, gap)`` where class is ``square`` | ``pre_square`` |
+    ``far`` | ``unknown``.
+
+    - square: both ≥ −rte_threshold and gap ≤ confluence
+    - pre_square: both ≥ −pre_thr, gap ≤ confluence, and rising (fast or slow)
+    - far: otherwise when both lines present
+    - unknown: missing slow (or fast) — not pre-square
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    src = ind if isinstance(ind, dict) else None
+    if src is None and isinstance(row, dict):
+        nested = row.get("indicator")
+        src = nested if isinstance(nested, dict) else row
+    if not isinstance(src, dict):
+        return "unknown", None
+    fast = _f_or_none(src.get("pctr"))
+    slow = _f_or_none(src.get("pctr_slow"))
+    if fast is None or slow is None:
+        return "unknown", None
+    gap = abs(float(fast) - float(slow))
+    thr = _rte_threshold(cfg)
+    pre = exh_pre_thr(cfg)
+    tight_max = _rte_confluence_max(cfg)
+    tight = bool(src.get("pctr_tight")) or gap <= tight_max + 1e-9
+    both_ob = bool(src.get("pctr_ob")) or (
+        float(fast) >= -thr and float(slow) >= -thr
+    )
+    if both_ob and tight:
+        return "square", gap
+    both_pre = float(fast) >= -pre and float(slow) >= -pre
+    rising = src.get("pctr_rising")
+    if rising is None and isinstance(row, dict):
+        rising = _exh_rising_hint(row, src)
+    slow_rising = src.get("pctr_slow_rising")
+    rising_ok = (rising is True) or (slow_rising is True)
+    if both_pre and tight and rising_ok:
+        return "pre_square", gap
+    return "far", gap
+
+
+def stamp_exh_seat_fields(
+    row: dict,
+    cfg: dict | None = None,
+    *,
+    ind: dict | None = None,
+) -> str:
+    """Stamp ``exh_seat_class`` + ``pctr_gap`` on *row*. Returns class."""
+    cls, gap = classify_exh_seat(row, cfg, ind=ind)
+    if isinstance(row, dict):
+        row["exh_seat_class"] = cls
+        if gap is not None:
+            row["pctr_gap"] = round(float(gap), 2)
+        elif "pctr_gap" not in row:
+            row["pctr_gap"] = None
+    return cls
 
 
 def is_overbought(record: dict, cfg: dict) -> bool | None:
@@ -14487,7 +14765,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             drop_watch_symbols([sym])
             continue
 
-        # Scout-only short TTL + never-armable RSI/EXH eviction (arm-ready admit).
+        # Scout-only short TTL + never-armable / far-exh eviction (square bus).
         if status not in ("submitted", "filled"):
             if _maybe_scout_ttl_drop(
                 rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
@@ -14497,6 +14775,16 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
             ):
                 continue
+            if _maybe_far_exh_evict(
+                rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
+            ):
+                continue
+            # Keep seat class fresh for UI / steal even when not dropping.
+            try:
+                stamp_exh_seat_fields(rec, cfg)
+                _track_far_exh_seat(rec, cfg, now=t0)
+            except Exception:
+                pass
 
         live_rv = _desk_rvol(sym)
         if live_rv is not None:
