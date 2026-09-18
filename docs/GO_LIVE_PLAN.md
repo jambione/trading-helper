@@ -404,6 +404,49 @@ without the desk process cooperating, and you get paged when it dies.
 
 ---
 
+### 3.1 Premarket (Phase B) — enabled, aligned, and still blind
+
+Status 2026-09-18: `ai_phase_b_enabled=true`, `ai_phase_b_dry_run=false`.
+04:00 start, 09:20 entry cutoff, flatten 09:25, hard deadline 09:28,
+`no_rth_handoff`. It has produced **zero trades** across all 878 closes.
+
+**Why it cannot trade.** Yesterday's ledger, 141,008 rows: 104,913
+`admit_refuse` (all `phase_b_seats_full`) and 33,264 `arm_refuse` dominated by
+**`phase_b_missing_print`** — 34,659 of them. The print gate runs before any
+indicator, so nothing downstream of it has ever executed. IEX's own session
+starts at 08:00, and Phase B starts at 04:00, so for four hours it reads a feed
+that structurally cannot contain anything.
+
+**What SIP would change** (measured 2026-09-17, 04:00–09:30 ET):
+
+| | IEX bars | IEX before 08:00 | SIP bars |
+|---|---:|---:|---:|
+| RKLB | 1 | 0 | 265 |
+| AKAN | 8 | 0 | 156 |
+| TNMG | 0 | 0 | 11 |
+
+The square needs `rte_slow_native_length = 112` bars for its slow line. Of the
+eight names Phase B admitted that morning, **5 of 8** clear 112 SIP bars by the
+09:20 cutoff (CRWV 295, RKLB 255, NFLX 196, SNAP 163, AKAN 146; RUM 104 misses
+narrowly, SBUX 12 and TNMG 10 do not come close). So SIP makes the square
+computable for most of what the lane admits, skewed toward the liquid end —
+and the thin microcaps the screen selects are the ones it still cannot serve.
+
+**The subscription decision is measurable before it is purchasable**: historical
+SIP access is already in hand. Replay the square over SIP premarket bars for
+admitted symbols across 2–3 weeks and score it. Two caveats — premarket spikes
+and fades much like RTH (§7), so more data is not edge; and the Phase B ledger
+records no indicators (only symbol/ts/kind/source), so a replay reconstructs
+from bars rather than replaying what the lane saw.
+
+**Fixed 2026-09-18 (`d9132fc`).** The lane used to arm on a 40–70 exhaustion
+band that refused the 80+ dual-OB square outright — premarket and RTH ran
+opposed theses. Both indicator legs now call RTH's own functions, so they
+cannot drift apart. Net stricter: the square is narrower than the band, and a
+flat RSI no longer passes. `ai_phase_b_legacy_arm` rolls it back.
+
+---
+
 ## 4. Money, tax, and broker mechanics
 
 Paper trading hides all of this, and none of it depends on the P&L track.
@@ -595,17 +638,58 @@ Also:
    path has never run against a real position.
 
 **Every §2 engineering blocker is now closed.** What stands between here and a
-live dollar is no longer code:
+live dollar is no longer code.
 
-- Credentials have not been rotated since the §2.1 exposure.
-- Stage 0 of §6 — the live path has never placed an order, in any account.
-- §4 is untouched: PDT confirmed with Alpaca *in writing*, cash vs margin
-  chosen deliberately, an accountant on wash sales at this trade frequency.
-- The flatten switch's close path and the account assertion are both proven
-  only against fakes.
-- §7 is unchanged: expectancy is −0.0421R over 790 closes. "Ready" here means
-  the machinery will handle real orders correctly, not that the account will
-  go up. Those are independent claims and only the first is now true.
+### Outstanding — ordered
+
+**A. Rotate the credentials.** Oldest open item. The §2.1 hole was reachable
+from the public internet with the Alpaca and Finnhub keys behind it. The fix
+closed the door; it did not un-ring the bell. Cheapest thing on this list.
+
+**B. Put the daily loss brake back, or decide not to.** `f8437af` moved
+`ai_daily_loss_limit_r` from **3.0 → 999.0** on 2026-09-18, inside a commit
+described as baking in trail/slip/flatten/stale knobs. It is committed and
+live. That brake ended the three worst sessions on record — 09-01 (−3.04R),
+09-16 (−3.19R), 09-17 (−3.08R) — all of which stopped *because of it*. The
+first session without it closed at **−5.26R**, the worst yet. This contradicts
+a standing rule in §6 ("the daily brake stays on"). Not reverted here because
+it may be deliberate, but it should not stand by accident.
+
+**C. Stage 0 (§6).** The live path has never placed an order in any account.
+The account assertion is proven against fakes, not against a real mismatched
+account. Two weeks, live keys, `TRADER_MODE` still paper, zero dollars at risk.
+
+**D. Prove the flatten switch against a real position.** Its close path has
+never run — the book was flat both times it was tested. Open a small paper
+position and fire it, or the first real flatten is also its first real test.
+
+**E. §4, none of which is engineering.** PDT confirmed with Alpaca *in
+writing*; cash vs margin chosen deliberately; an accountant on wash sales at
+13–67 trades/session.
+
+**F. Put `tools/fill_reconcile.py` on a post-close cron.** Built, exits
+nonzero on any disagreement, currently run by hand.
+
+### Known-broken, not blocking
+
+- **`price_age_sec` never reaches the row** — 0 of 20,000 watched shadow rows.
+  The guards fail closed correctly now (§2.5), so the shelf runs at the broker
+  mark's cadence instead of the tape's: correct, but coarser than designed.
+- **Premarket cannot trade** (§3.1 below). The lane is enabled and live, arms
+  on the same thesis as RTH since `d9132fc`, and still refuses everything
+  upstream on `phase_b_missing_print` — 34,659 times on 2026-09-17 — because
+  IEX carries no premarket prints. SIP fixes the data; measured 2026-09-17,
+  IEX gave RKLB 1 bar and TNMG 0 across 04:00–09:30 where SIP gave 265 and 11.
+  5 of 8 admitted names clear the 112-bar slow line by the 09:20 cutoff.
+  Decision is measurable with the historical SIP access already in hand.
+- **Replay cannot evaluate the current arm config** — the frozen tapes predate
+  `pctr_slow` (§5).
+
+### The distinction that matters
+
+§7 is unchanged: expectancy is **−0.0421R over 790 closes**. "Ready" here means
+the machinery will handle real orders correctly. It does not mean the account
+will go up. Those are independent claims and only the first one is now true.
 
 **Then:** the rest of ops resilience (§3), broker/tax mechanics (§4), and the
 ramp (§6).
