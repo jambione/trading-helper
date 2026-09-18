@@ -227,7 +227,7 @@ revisit, since turning off the audit trail is not an ordinary config change.
 
 ---
 
-### 2.4 There is no live code path
+### 2.4 There is no live code path ✅ BUILT + DEPLOYED 2026-09-18
 
 Flipping to real money is **not a config change**. The AI desk has no live path,
 by deliberate design.
@@ -286,6 +286,27 @@ live path refuse to *start* on the wrong host, not just refuse to mutate.
 **Done when:** a reviewed diff adds the path, a dry run proves the mode
 assertion fires against a deliberately wrong account, and `TRADER_MODE=live`
 remains unreachable from any network-facing surface.
+
+**What shipped (2026-09-18)** — `aa273ef`, `live_arm.py`, 23 tests.
+
+Two factors, neither sufficient alone: `ai_live_trading_enabled` (tracked, in
+PROTECTED_CONFIG_KEYS so an HTTP attempt is refused *and logged*) plus
+`config/live_armed.json` (gitignored, per-machine, naming the account). A
+config push cannot arm a box nobody armed by hand.
+
+The arming file carries the account number on purpose — that is what makes the
+startup assertion possible. The desk reads the account back from the broker,
+compares, and on mismatch calls `alpaca_trader.shutdown()` and falls to `off`,
+because disarming a flag is not enough while a live client is still reachable.
+Live uses `ALPACA_LIVE_*` and never falls back to the paper pair; the host lock
+gates arming; every ambiguity disarms, including a check that throws.
+
+Verified on the mini: `live arming: not armed` (host ✓, other three ✗), desk up
+on `mode=paper`, book flat.
+
+**Not yet proven:** no live order has ever been placed by this code. The
+assertion is unit-tested against fakes, not against a real mismatched account —
+that is exactly what Stage 0 of §6 is for, at zero dollars at risk.
 
 ---
 
@@ -567,11 +588,24 @@ Also:
    Credential rotation still outstanding.
 2. ~~No fill ledger (§2.3)~~ — **built and deployed**; the daily reconcile
    still needs a cron.
-3. No live code path; replacing the rail is a design task (§2.4)
-4. Staleness guards fail open (§2.5)
-5. Heartbeat alerting and an independent flatten switch (§3). Promoted to
-   blocker status: with software stops as the design (§2.2), the desk process
-   is the protective mechanism, so noticing its death *is* the safety system.
+3. ~~No live code path (§2.4)~~ — **built and deployed**; never yet executed.
+4. ~~Staleness guards fail open (§2.5)~~ — **fixed and deployed**. The clock
+   source that makes them necessary is still unfixed.
+5. ~~An independent flatten switch (§3)~~ — **built and deployed**; its close
+   path has never run against a real position.
+
+**Every §2 engineering blocker is now closed.** What stands between here and a
+live dollar is no longer code:
+
+- Credentials have not been rotated since the §2.1 exposure.
+- Stage 0 of §6 — the live path has never placed an order, in any account.
+- §4 is untouched: PDT confirmed with Alpaca *in writing*, cash vs margin
+  chosen deliberately, an accountant on wash sales at this trade frequency.
+- The flatten switch's close path and the account assertion are both proven
+  only against fakes.
+- §7 is unchanged: expectancy is −0.0421R over 790 closes. "Ready" here means
+  the machinery will handle real orders correctly, not that the account will
+  go up. Those are independent claims and only the first is now true.
 
 **Then:** the rest of ops resilience (§3), broker/tax mechanics (§4), and the
 ramp (§6).
