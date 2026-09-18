@@ -67,3 +67,23 @@ Thin/dead book = fail even if single-name scalp is green.
 - Re-enabling overtake chase
 - Raising daily loss / position ceiling as a capacity hack
 - Premarket Phase B scope creep (own lane; score separately)
+
+---
+
+## 7. EXH arm: require dual-%R tight (SMCI yes / RKLB no) — locked 2026-09-18
+
+**Operator rule:** Buy when both %R lines are elevated and close (OB + tight). Do **not** arm on fast-only heating with a wide gap.
+
+| | SMCI (buy) | RKLB (refuse) |
+|--|------------|---------------|
+| Picture | Both lines up top, together, red-box | Fast climbing alone, slow lags |
+| Live example | fast≈−13 · slow≈−4 · gap≈9 · ob+tight | fast≈−39 · slow≈−64 · gap≈25 · not tight |
+| Heat | ~87% with confluence | ~61% from fast alone |
+
+**Change (after close — not mid-session):**
+- Bind `last_heating` / arm pass so it requires `tight` (gap ≤ `rte_confluence_max`, default 15) **or** refuse when `gap > 15` / `pctr_tight=false`.
+- Keep slow line in the gate (`pctr_slow` present); heat % may stay fast-only for display.
+- `ai_watch_tv_exh_rsi` is currently false — either enable the dual-line path for arms or teach `last_heating` the same tight check.
+- **Locked:** do not loosen RSI soft-cap / rising or EXH rising to compensate.
+
+**Done when:** SMCI-class still arms; RKLB-class `last_heating` refuses with a clear reason (`exh_not_tight` / wide gap).
