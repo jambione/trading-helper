@@ -1469,6 +1469,16 @@ def main() -> None:
                     print(f"[ai] manage_open_positions failed: {e}",
                           flush=True)
 
+                # Broker-confirmed fills → append-only audit ledger. Paces
+                # itself on ai_fill_ledger_poll_sec, so calling every tick is
+                # cheap. alpaca_trade_log.json records submissions only; this
+                # is the record that can be reconciled against the broker.
+                try:
+                    import fill_ledger
+                    fill_ledger.poll_fills(live_cfg)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[ai] fill_ledger poll failed: {e}", flush=True)
+
                 # Phase B premarket session (Hybrid C). Default OFF / dry —
                 # no broker orders when ai_phase_b_dry_run. Isolated from
                 # RTH Plan A; see docs/PHASE_B_PREMARKET.md.
