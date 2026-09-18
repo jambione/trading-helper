@@ -1953,7 +1953,34 @@ def _now_iso() -> str:
 
 def _log_action(action: str, ticker: str, price: float,
                 rsi: float, hist: float, **kwargs):
-    """Append one entry to alpaca_trade_log.json."""
+    """Append one entry to alpaca_trade_log.json.
+
+    Also mirrors any action carrying an ``order_id`` into ``fill_ledger`` as a
+    ``submit`` event. This is the chokepoint every one of the 21 submit_order
+    paths already funnels through, so instrumenting here covers a new order
+    path the day it is written rather than the day someone remembers it.
+
+    The legacy log stays as-is: it is capped at 1000 rolling rows and records
+    submissions only, so it cannot answer what filled. fill_ledger is the audit
+    record; this one remains the operator-facing action trail.
+    """
+    if kwargs.get("order_id"):
+        try:
+            import fill_ledger
+            fill_ledger.log_submit(
+                action=action,
+                symbol=ticker,
+                order_id=kwargs.get("order_id"),
+                order_status=kwargs.get("order_status"),
+                price=price,
+                qty=kwargs.get("qty"),
+                trader_mode=_mode,
+                trade_amount=_trade_amount,
+                note=kwargs.get("note"),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("[TRADER] fill_ledger.log_submit failed: %s", e)
+
     entry = {
         "action":       action,
         "ticker":       ticker,
