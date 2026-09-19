@@ -467,45 +467,51 @@ Paper trading hides all of this, and none of it depends on the P&L track.
   `SR-FINRA-2023-017 eff. May 28, 2024` — the T+2 → T+1 change. There is no
   T+0. Sale proceeds are unsettled until the next business day.
 
-- **Cash vs margin — DECIDED: MARGIN (2026-09-19).** The two findings above
-  point the same way.
+- **Account type — ALREADY MARGIN (verified 2026-09-19).** Checked against
+  the account itself rather than inferred: `multiplier = 4` (Alpaca: 1 = cash,
+  2 = Reg T margin, 4 = day-trading margin), `buying_power` = 4x equity,
+  `non_marginable_buying_power` = 1x equity, and `shorting_enabled = True` —
+  which cash accounts cannot do. **This is a margin account.**
 
-  *Why not cash.* In a cash account, daily buying is capped by **settled**
-  cash, so `round trips/day = settled cash ÷ position size`. On $2,395:
+  **Therefore T+1 settlement and good-faith violations do not apply.** Those
+  are cash-account-only rules. Sale proceeds are immediately reusable
+  intraday, which matches the operator's own experience of turning the same
+  $1,000 over all day with no warnings or notices. With PDT eliminated there
+  is no day-trade count limit either. Trade frequency is unconstrained.
 
-  | position | trips/day | desk actually does |
-  |---:|---:|---|
-  | $192 (8% cap) | 12.5 | 13 median, 40–82 recent |
-  | $479 (20% cap) | 5.0 | " |
-  | $958 (40% cap) | 2.5 | " |
+  *An earlier version of this section modelled a cash-account trade-frequency
+  ceiling of 2.5–12.5 round trips/day and recommended "choosing" margin. Both
+  were wrong: the premise came from taking the phrase "cash account" at face
+  value when `multiplier` was directly checkable. There is no decision to
+  make here — the account is already the right type.*
 
-  Every configuration is short — even the smallest position at the *median*
-  fill count overshoots settled cash by $96. Buying with unsettled proceeds and
-  selling before they settle is a good-faith violation; three in twelve months
-  restricts the account to settled cash for 90 days. With a 146-second median
-  hold, essentially every reuse of proceeds would be a violation.
+  **The $2,000 in FINRA 4210** governs extending *credit*, not reusing your
+  own proceeds. Below it Alpaca will likely restrict leverage (expect less
+  than 4x at $250), but the account remains a margin account with no
+  settlement constraint.
 
-  *Why margin is now free of its old cost.* The historic reason to prefer cash
-  was escaping PDT. PDT is gone. So a cash account would buy nothing and cost
-  an order of magnitude in trade frequency.
+  **On funding the live account, verify it the same way:** read `multiplier`
+  from the account object. `1` means it really is a cash account and the
+  settlement analysis would apply after all; `2` or `4` means it behaves as
+  the paper account does.
 
-  *The equity constraint is met in the sizer, not the account type.* The desk
-  sizes off `account_equity` (never buying power), computes
-  `free_equity = equity − open_notional` from **broker** positions, hard-clamps
-  at `free_cap = free // price`, and uses buying power only to *downsize*. At
-  2% risk the open-risk gate allows 2 concurrent positions — about 80% of
-  equity, entirely cash, no borrowing.
+  **The equity-only constraint is met in the sizer**, which is where it should
+  be: sizing runs off `account_equity` (never buying power), `free_equity`
+  comes from broker positions, `free_cap` hard-clamps at leftover cash, and
+  buying power only ever downsizes. At 2% risk the open-risk gate allows 2
+  concurrent positions. Margin is available but the sizer does not reach for
+  it.
 
-  **Open follow-ups from this decision:**
+  **Open follow-ups:**
   - `ensure_structure` defaults equity to **$100,000** when the account read
     fails (`ai_entry_watch.py:13994`). It feeds structure geometry, not order
     size, so it cannot oversize an order — but it is a fail-open on the most
-    important input, one call away from a path where it would matter.
+    important input.
   - `_buying_power()` returns `None` on failure and the clamp is then skipped.
-    Harmless on margin (equity still binds); it would have been the *only*
-    settlement protection on cash.
-  - The codebase has **no concept of settled cash** — zero references
-    anywhere. Not needed on margin. Required before any future cash account.
+    Harmless here since equity still binds.
+  - No settled-cash awareness anywhere in the codebase. Not needed on margin;
+    required only if the account type ever changes to a true cash account.
+
 - **Wash sales.** At 13–67 trades/session in a small repeating universe,
   adjustments will be extensive, and `ai_watch_max_entries_per_symbol_day = 0`
   (unlimited) makes it worse. You need per-lot records — which §2.3's ledger
