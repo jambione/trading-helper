@@ -524,6 +524,65 @@ Paper trading hides all of this, and none of it depends on the P&L track.
 
 ---
 
+## 4.1 Fractional shares — scoped 2026-09-19, not built
+
+**Why it matters at this size.** Whole-share rounding costs a third of the
+intended position on a $250 account: 1% of $250 is $2.50 of risk, at $0.852/sh
+that wants **2.93 shares**, and truncation gives **2** — $1.70 of risk, 0.68%
+of equity instead of 1.00%. Since 1R ≈ 1% of equity and the sizer reads live
+equity each trade, that haircut is a **32% slower compounding rate** at exactly
+the size where compounding matters most. It shrinks as equity grows (~6% at
+$1,000, negligible past $5k), so this is specifically a small-account lever.
+
+**Coverage.** 46 of the last 60 distinct traded symbols are fractionable —
+**77%**. The 23% that are not are the thin microcaps (DFDV, BIAF, CPOP, NAMI,
+AEHL…), which fall back to whole shares.
+
+**Why it is contained here.** Alpaca's fractional restrictions are real, and
+this desk has independently opted out of every one that would bite:
+
+| Alpaca restriction | this desk | impact |
+|---|---|---|
+| no fractional **stop** orders | `ai_broker_stop_enabled=false` | **none** — software stops |
+| no fractional **extended-hours** | RTH entries are `market` | none during RTH |
+| no fractional **bracket / OTO** | brackets off, `dual_tranche=false` | none |
+| market / limit **DAY** only | `ai_entry_order_style=market` | none |
+
+The broker-stop exemption is the big one: fractional plus broker stops is
+normally a blocker, and the software-stop design sidesteps it.
+
+**The work**
+
+1. **Asset gate** (`alpaca_trader`, small) — `symbol_fractionable()` beside the
+   existing `symbol_tradable()` asset cache, reading `asset.fractionable`.
+   Definitive answers cached, transient failures not. **Fails closed to whole
+   shares.**
+2. **Sizer returns a float** (`desk_risk.size_long_from_free_equity`, medium —
+   the real work) — eleven `int(... // ...)` truncations at lines 451–511 become
+   floats when fractional is permitted; the `min_share` / 1-share floor
+   re-expressed as a minimum notional (Alpaca's floor is $1). `FreeEquitySize.qty`
+   becomes `float`, so every consumer needs checking.
+3. **Order placement** (`alpaca_trader`, small) — `int(qty)` at 1384/1415 and
+   `int(amount // price)` at 552/650.
+4. **Exit paths** (small, mostly verification) — `close_position()` handles
+   fractional, and the local trail market-flattens, which is 73% of exits. **Gap:
+   ext-hours limit sells cannot be fractional**, so a fractional position
+   surviving past the close could not be exited until the next open. EOD
+   liquidate at 15:50 is inside RTH and covers the normal path.
+5. **Phase B** — gate fractional to RTH only; premarket is ext-hours limit
+   orders where fractional is not permitted. Costs nothing today (Phase B trades
+   zero, §3.1).
+6. **Ledger / outcomes** (small) — `total_qty` and R math assume ints in places.
+
+**Estimate:** about a day; step 2 is most of it.
+
+**Sequencing — deliberately second.** A 32% larger multiplier on −0.0421R loses
+32% faster. This is the right change to have ready for the moment expectancy
+turns, and the wrong one to spend a day on before it does. Build the source
+scorecard first.
+
+---
+
 ## 5. Measurement plumbing
 
 Not a go-live blocker, but it is the prerequisite for the P&L track, and the
