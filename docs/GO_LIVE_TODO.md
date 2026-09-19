@@ -32,6 +32,26 @@ Hard date we already locked; Stage dates are **earliest starts** assuming Phase 
 
 ---
 
+
+## Short-term north star (pinned 2026-09-19)
+
+**Goal:** $250 live book funds **Alpaca Algo Trader Plus / SIP (~$99/mo)** from trading profit.
+
+**Math check (do not paper over):**
+- Target ≈ **+$99** ≈ **+40%** on $250 in ~5 sessions.
+- At 1% risk, 1R ≈ **$2.50** → need on the order of **~40R net** in a week.
+- Paper expectancy is still ~**−0.04R** — this is a stretch north star, not a Stage 0/1 pass criterion.
+- Old manual clean days ~10%/day were aspirational; even that needs ~4 green days in a row without a −3R brake day wiping the month.
+
+**Compatible with the dated agenda (not instead of it):**
+1. **Mon 9/21** — Phase 1 paper (no live, no SIP buy required).
+2. **This week (parallel, $0 risk):** historical SIP square **replay** for Phase B admits (access already in hand per GO_LIVE §3.1). Decide buy/no-buy from that score — do **not** subscribe on hope.
+3. **SIP purchase:** only after (a) replay says premarket square is reachable, **and** (b) either outside capital covers $99 **or** live Stage 1+ has actually banked ≥$99 *without* putting the kill switch at risk. Prefer funding SIP outside the $250 trading stake so data cost doesn’t eat the experiment.
+4. **Do not** skip Stage 0 or arm live Mon–Fri next week just to chase the $99. Plumbing failures cost more than one month of SIP.
+
+**Success definition for “SIP from desk”:** first calendar month where live (or paper-proven then live) net P&L after the dollar kill buffer ≥ $99 *and* Phase B/RTH scoreboard still passes. Week-one is the *intent*, not the gate.
+
+
 ## Already done (do not re-open)
 
 - [x] §2.1 Unauthenticated remote config/credential write — fixed + deployed
