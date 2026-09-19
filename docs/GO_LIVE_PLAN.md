@@ -451,17 +451,61 @@ flat RSI no longer passes. `ai_phase_b_legacy_arm` rolls it back.
 
 Paper trading hides all of this, and none of it depends on the P&L track.
 
-- **PDT.** `TRADING_ENGINE.md` states FINRA's pattern-day-trader rule and the
-  $25k minimum were eliminated 2026-06-04 (Reg Notice 26-10), that Alpaca
-  implemented it that day, and that `ai_pdt_protect=off` is therefore fine under
-  $25k. **Verify directly with Alpaca against your actual live account before
-  relying on it** — the software gate was turned off on this reading, and a
-  sub-$25k account at 13–67 day trades per session is exactly the configuration
-  that rule governed. Get it in writing.
-- **Cash vs margin.** Margin brings day-trading buying power rules and
-  maintenance requirements; cash brings T+1 settlement and good-faith violations
-  at this frequency. Decide deliberately and make sure the sizing code knows
-  which.
+- **PDT — CONFIRMED ELIMINATED (2026-09-19).** Verified against FINRA's own
+  rulebook, not the repo's say-so. Rule 4210 as currently published is 163,119
+  characters and contains **zero** occurrences of "pattern", "day trad",
+  "25,000" or "(f)(8)" — which is exactly where the pattern-day-trader
+  designation, the $25k minimum and day-trading buying power used to sit. Most
+  recent amendment: `SR-FINRA-2025-017 eff. June 4, 2026`, matching the date in
+  `TRADING_ENGINE.md`. So `ai_pdt_protect=off` under $25k is not a legal
+  exposure. *Still worth one written line from Alpaca* on how they implement
+  it, but the rule question is closed.
+
+- **T+1 settlement — CONFIRMED CURRENT (2026-09-19).** FINRA Rule 11320(b)
+  "Regular Way": delivery "on, but not before, **the first business day
+  following the date of the transaction**." Amendment history ends at
+  `SR-FINRA-2023-017 eff. May 28, 2024` — the T+2 → T+1 change. There is no
+  T+0. Sale proceeds are unsettled until the next business day.
+
+- **Cash vs margin — DECIDED: MARGIN (2026-09-19).** The two findings above
+  point the same way.
+
+  *Why not cash.* In a cash account, daily buying is capped by **settled**
+  cash, so `round trips/day = settled cash ÷ position size`. On $2,395:
+
+  | position | trips/day | desk actually does |
+  |---:|---:|---|
+  | $192 (8% cap) | 12.5 | 13 median, 40–82 recent |
+  | $479 (20% cap) | 5.0 | " |
+  | $958 (40% cap) | 2.5 | " |
+
+  Every configuration is short — even the smallest position at the *median*
+  fill count overshoots settled cash by $96. Buying with unsettled proceeds and
+  selling before they settle is a good-faith violation; three in twelve months
+  restricts the account to settled cash for 90 days. With a 146-second median
+  hold, essentially every reuse of proceeds would be a violation.
+
+  *Why margin is now free of its old cost.* The historic reason to prefer cash
+  was escaping PDT. PDT is gone. So a cash account would buy nothing and cost
+  an order of magnitude in trade frequency.
+
+  *The equity constraint is met in the sizer, not the account type.* The desk
+  sizes off `account_equity` (never buying power), computes
+  `free_equity = equity − open_notional` from **broker** positions, hard-clamps
+  at `free_cap = free // price`, and uses buying power only to *downsize*. At
+  2% risk the open-risk gate allows 2 concurrent positions — about 80% of
+  equity, entirely cash, no borrowing.
+
+  **Open follow-ups from this decision:**
+  - `ensure_structure` defaults equity to **$100,000** when the account read
+    fails (`ai_entry_watch.py:13994`). It feeds structure geometry, not order
+    size, so it cannot oversize an order — but it is a fail-open on the most
+    important input, one call away from a path where it would matter.
+  - `_buying_power()` returns `None` on failure and the clamp is then skipped.
+    Harmless on margin (equity still binds); it would have been the *only*
+    settlement protection on cash.
+  - The codebase has **no concept of settled cash** — zero references
+    anywhere. Not needed on margin. Required before any future cash account.
 - **Wash sales.** At 13–67 trades/session in a small repeating universe,
   adjustments will be extensive, and `ai_watch_max_entries_per_symbol_day = 0`
   (unlimited) makes it worse. You need per-lot records — which §2.3's ledger
