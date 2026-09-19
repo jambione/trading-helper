@@ -14,8 +14,9 @@ Fri 2026-09-18 morning &lt;11 was the −6R hole while the book was thin later i
 | **09:30–11:00** | Seat **all** current momentum-flagged / mom-open / big-mover momentum names **and** **all** rows from Trader Bro research boards (Grok + AGY/Claude suggestions + live seed_rank watch-facing). Soft-seed / keep must not drop them for prefer-square or soft_seed_max. |
 | **11:00+** | Resume normal prefer-square admit bus + soft_seed caps (no all-day flood). |
 
+- **Price floor (hard):** every flooded name must be **> $2.00** (desk `ai_watch_min_price`, currently `2.0`). Sub-$2 / pennies never seat in the morning flood — same refuse as the rest of the book (`below_min_price`).
 - **Arms unchanged:** dual OB+tight square · RSI rising-only · trail backup. Soft-seated morning names still need the square to open.
-- **Not** this brief: loosening `heat_max`, raising `max_positions`, or arming on heating alone.
+- **Not** this brief: loosening `heat_max`, raising `max_positions`, arming on heating alone, or dropping the $2 floor.
 
 ## Current gaps
 
@@ -39,8 +40,8 @@ Optional: `ai_watch_morning_flood_include_pre: false` (keep false unless Jonatha
 
 ### B. While flood active (`_et_hour_decimal` in [start, end))
 
-1. **Momentum:** pull the full momentum desk list (flagged + open-seed path + big-mover helpers already used by soft-seed / open seed) with **no N truncate** (or N ≥ panel size, e.g. 50). Still skip levered ETPs / non-tradable.
-2. **Trader Bro:** `research_candidate_rows()` — seat **every** returned symbol (no `ai_watch_seed_research_n` slice). Boards: `grok_suggestions.json`, `agy`/`claude` suggestions, watch-facing `seed_rank_*`.
+1. **Momentum:** pull the full momentum desk list (flagged + open-seed path + big-mover helpers already used by soft-seed / open seed) with **no N truncate** (or N ≥ panel size, e.g. 50). Still skip levered ETPs / non-tradable / **price ≤ $2**.
+2. **Trader Bro:** `research_candidate_rows()` — seat **every** returned symbol (no `ai_watch_seed_research_n` slice) with **price > $2**. Boards: `grok_suggestions.json`, `agy`/`claude` suggestions, watch-facing `seed_rank_*`. Missing/unknown price → fail closed (do not seat).
 3. **soft_seed_max:** bypass or set effectively unlimited for momentum + research sources during flood (other sources may keep a modest cap).
 4. **Prefer-square / far eviction:** do **not** evict or refuse-keep a seat whose source is momentum* or research/xai/agy solely for `far` / prefer-square during flood. Still allow tape-dead / stale eviction.
 5. **arm_ready admit:** soft seats may stay without arm_ready; **opens** still require square + existing arm gates.
@@ -52,7 +53,8 @@ Restore prefer-square soft-seed, `soft_seed_max`, and source N caps. Existing fa
 
 ### D. Tests
 
-- 10:00 ET + 20 momentum + 15 research → all 35 attempt seat (minus levered/dupes); soft_seed_max does not clip them.
+- 10:00 ET + 20 momentum + 15 research all >$2 → all attempt seat (minus levered/dupes); soft_seed_max does not clip them.
+- Same batch with a $1.50 name → that symbol refused `below_min_price` / not seated.
 - 11:30 ET → soft_seed_max and N caps apply again.
 - Square arm still refuses non-OB+tight morning seats.
 - Flood off → behavior identical to today.
