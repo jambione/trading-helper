@@ -92,7 +92,7 @@
   "ai_reentry_cooldown_sec": 120.0,
   "ai_reentry_min_mfe_r": 0.1,
   "ai_require_agreement": false,
-  "ai_risk_pct": 2.0,
+  "ai_risk_pct": 1.0,
   "ai_runner_step_r": 0.1,
   "ai_runner_trail_r": 1.0,
   "ai_rvol_time_adjusted": true,
