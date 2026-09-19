@@ -284,6 +284,17 @@ def shutdown() -> None:
 # Definitive answers are cached; a transient API failure is not, so a network
 # blip cannot permanently blacklist a good symbol.
 _asset_ok: dict[str, bool] = {}
+_asset_fractionable: dict[str, bool] = {}
+
+
+def _cache_asset_flags(sym: str, asset: object) -> tuple[bool, bool]:
+    """Write definitive tradable + fractionable flags from one asset fetch."""
+    ok = bool(getattr(asset, "tradable", False)) and \
+        str(getattr(asset, "status", "")).upper().endswith("ACTIVE")
+    frac = bool(getattr(asset, "fractionable", False))
+    _asset_ok[sym] = ok
+    _asset_fractionable[sym] = frac
+    return ok, frac
 
 
 def symbol_tradable(ticker: str) -> bool:
@@ -317,19 +328,113 @@ def symbol_tradable(ticker: str) -> bool:
         err = str(e)
         if "not found" in err.lower() or "40410000" in err:
             _asset_ok[sym] = False          # definitive — cache it
+            _asset_fractionable[sym] = False
             log.warning("[TRADER] %s is not an Alpaca asset — buy blocked", sym)
             return False
         # Transient: do not cache, do not trade this pass.
         log.warning("[TRADER] %s tradability unknown (%s) — buy blocked",
                     sym, " ".join(err.split())[:120])
         return False
-    ok = bool(getattr(a, "tradable", False)) and \
-        str(getattr(a, "status", "")).upper().endswith("ACTIVE")
-    _asset_ok[sym] = ok
+    ok, _frac = _cache_asset_flags(sym, a)
     if not ok:
         log.warning("[TRADER] %s not tradable (status=%s) — buy blocked",
                     sym, getattr(a, "status", "?"))
     return ok
+
+
+def symbol_fractionable(ticker: str) -> bool:
+    """Whether Alpaca marks this asset fractionable.
+
+    Fails CLOSED to whole shares: miss / no client / transient API error →
+    False. Only definitive True/False answers are cached (same pattern as
+    ``symbol_tradable``). Never treat "unknown" as fractional.
+    """
+    sym = (ticker or "").strip().upper()
+    if not sym:
+        return False
+    if sym in _asset_fractionable:
+        return _asset_fractionable[sym]
+    if _client is None:
+        return False
+    try:
+        a = _client.get_asset(sym)
+    except Exception as e:                                 # noqa: BLE001
+        err = str(e)
+        if "not found" in err.lower() or "40410000" in err:
+            _asset_ok[sym] = False
+            _asset_fractionable[sym] = False
+            return False
+        log.warning(
+            "[TRADER] %s fractionable unknown (%s) — whole shares",
+            sym, " ".join(err.split())[:120],
+        )
+        return False
+    _ok, frac = _cache_asset_flags(sym, a)
+    return frac
+
+
+def _fractional_shares_enabled() -> bool:
+    """Config gate for RTH float qty. Default false (dark ship)."""
+    try:
+        from config import load_config
+        return bool(load_config().get("ai_fractional_shares_enabled", False))
+    except Exception:
+        return False
+
+
+def want_fractional(
+    ticker: str,
+    *,
+    extended_hours: bool = False,
+) -> bool:
+    """True only when config + asset allow float qty and order is not ext-hours.
+
+    Phase B / any ``extended_hours=True`` path must stay whole-share — Alpaca
+    forbids fractional extended-hours orders on this desk's limit path.
+    """
+    if extended_hours:
+        return False
+    if not _fractional_shares_enabled():
+        return False
+    return symbol_fractionable(ticker)
+
+
+def _order_qty(
+    qty: float | int,
+    *,
+    fractional: bool,
+    price: float | None = None,
+) -> float | int | None:
+    """Normalize submit qty. Fractional → positive float; else whole shares.
+
+    Returns None when the size is invalid / below Alpaca's ~$1 fractional
+    notional floor (when *price* is known) or below 1 share (whole path).
+    """
+    import math
+    try:
+        q = float(qty)
+    except (TypeError, ValueError):
+        return None
+    if q != q or q <= 0:
+        return None
+    if fractional:
+        from desk_risk import MIN_FRACTIONAL_NOTIONAL
+        # Floor to Alpaca's 9-dp share precision (never round up).
+        q = math.floor(q * 1_000_000_000 + 1e-15) / 1_000_000_000
+        if q <= 0:
+            return None
+        if price is not None:
+            try:
+                px = float(price)
+            except (TypeError, ValueError):
+                px = 0.0
+            if px > 0 and q * px + 1e-12 < MIN_FRACTIONAL_NOTIONAL:
+                return None
+        return q
+    whole = int(q)
+    if whole < 1:
+        return None
+    return whole
 
 
 def market_is_open() -> bool:
@@ -503,15 +608,20 @@ def buy_limit_at_price(
     limit_px: float,
     dollar_amount: Optional[float] = None,
     *,
+    qty: float | int | None = None,
     rsi: float = 0.0,
     hist: float = 0.0,
     note: str = "limit",
     extended_hours: bool | None = None,
 ) -> dict:
-    """Fixed-dollar BUY as whole-share DAY limit at an explicit price.
+    """BUY as a DAY limit at an explicit price.
 
-    Used by entry_pricing policy and by buy_limit_at_ask (ask+pad).
-    ``extended_hours`` None → ``ext_hours_now()``; Phase B passes True.
+    Pass ``qty`` for an exact share count (AI desk risk-sized path). Otherwise
+    sizes from ``dollar_amount`` (or module trade amount).
+
+    Fractional qty is allowed only when config + ``asset.fractionable`` say so
+    AND the order is not extended-hours (Phase B passes ``extended_hours=True``
+    → forced whole shares). Default / flag-off behaviour is whole shares.
     """
     amount = float(dollar_amount if dollar_amount is not None else _trade_amount)
     mode_tag = f"[{_mode.upper()}]"
@@ -549,25 +659,35 @@ def buy_limit_at_price(
         _log_action("BUY_SKIPPED", ticker, 0.0, rsi, hist, note="bad limit")
         return {"ok": False, "order_id": None, "status": "bad_limit", "note": "bad limit"}
 
-    qty = int(amount // limit_px)
-    if qty < 1:
+    ext = ext_hours_now() if extended_hours is None else bool(extended_hours)
+    # Hard gate: extended hours → whole shares even when the flag is on.
+    frac = want_fractional(ticker, extended_hours=ext)
+    if qty is not None:
+        submit_qty = _order_qty(qty, fractional=frac, price=limit_px)
+    else:
+        from desk_risk import shares_from_dollars
+        raw = shares_from_dollars(amount, limit_px, fractional=frac)
+        submit_qty = _order_qty(raw, fractional=frac, price=limit_px)
+    if submit_qty is None:
         n = f"limit ${limit_px:.2f} > ${amount:.0f} budget"
         _log_action("BUY_SKIPPED", ticker, limit_px, rsi, hist, note=n)
         return {"ok": False, "order_id": None, "status": "under_budget", "note": n}
 
+    frac_tag = "fractional=true" if frac else "fractional=false"
+    note_out = f"{note} {frac_tag}".strip() if note else frac_tag
     print(f"\n  [TRADER] {mode_tag} 🟢 BUY  {ticker}  "
-          f"{qty} sh @ limit ${limit_px:.2f}  (~${qty * limit_px:.0f} of ${amount:.0f})"
-          f"  [{note}]")
+          f"{submit_qty:g} sh @ limit ${limit_px:.2f}  "
+          f"(~${float(submit_qty) * limit_px:.0f} of ${amount:.0f})"
+          f"  [{note_out}]")
 
     try:
         from alpaca.trading.requests import LimitOrderRequest
         from alpaca.trading.enums import OrderSide, TimeInForce
 
-        ext = ext_hours_now() if extended_hours is None else bool(extended_hours)
         order = _client.submit_order(
             LimitOrderRequest(
                 symbol=ticker,
-                qty=qty,
+                qty=submit_qty,
                 side=OrderSide.BUY,
                 time_in_force=TimeInForce.DAY,
                 limit_price=limit_px,
@@ -578,10 +698,11 @@ def buy_limit_at_price(
         status = str(order.status)
         print(f"  [TRADER] ✓  BUY order submitted  id={order_id}  status={status}")
         _log_action("BUY", ticker, limit_px, rsi, hist,
-                    order_id=order_id, order_status=status, qty=qty, note=note)
+                    order_id=order_id, order_status=status, qty=submit_qty,
+                    note=note_out)
         return {"ok": True, "order_id": order_id, "status": status,
-                "note": None, "qty": qty, "limit_px": limit_px,
-                "extended_hours": ext}
+                "note": None, "qty": submit_qty, "limit_px": limit_px,
+                "extended_hours": ext, "fractional": frac}
     except Exception as e:
         print(f"  [TRADER] ❌  BUY order failed: {e}")
         _log_action("BUY_ERROR", ticker, limit_px, rsi, hist, error=str(e))
@@ -605,18 +726,24 @@ def buy_limit_at_ask(ticker: str, ask: float, dollar_amount: Optional[float] = N
         ticker, limit_px, dollar_amount, rsi=rsi, hist=hist, note="limit_ask")
 
 
-def buy_market_shares(ticker: str, price: float, dollar_amount: Optional[float] = None,
-                      rsi: float = 0.0, hist: float = 0.0) -> dict:
-    """
-    Fixed-dollar BUY sized to WHOLE shares, submitted as a market order.
+def buy_market_shares(
+    ticker: str,
+    price: float,
+    dollar_amount: Optional[float] = None,
+    rsi: float = 0.0,
+    hist: float = 0.0,
+    *,
+    qty: float | int | None = None,
+) -> dict:
+    """BUY submitted as a market order (RTH).
 
-    Whole shares only — never notional/fractional. RTH only: market orders are
-    rejected in extended hours (use buy_limit_at_ask() off-hours).
+    Pass ``qty`` for an exact share count (AI desk risk-sized path). Otherwise
+    sizes from ``dollar_amount``. Fractional qty when config + asset allow;
+    otherwise whole shares (byte-identical to the historical int path when
+    the flag is off).
 
-    price         : reference price for sizing (pass the ask to avoid overspend)
-    dollar_amount : budget (defaults to the module TRADE_AMOUNT)
-
-    Returns {"ok": bool, "order_id": str|None, "status": str|None, "note": str|None, "qty": int}.
+    RTH only: market orders are rejected in extended hours (use
+    ``buy_limit_at_ask`` / ``buy_limit_at_price`` off-hours).
     """
     amount   = float(dollar_amount if dollar_amount is not None else _trade_amount)
     mode_tag = f"[{_mode.upper()}]"
@@ -647,14 +774,23 @@ def buy_market_shares(ticker: str, price: float, dollar_amount: Optional[float] 
         _log_action("BUY_SKIPPED", ticker, 0.0, rsi, hist, note="no price")
         return {"ok": False, "order_id": None, "status": "no_price", "note": "no price"}
 
-    qty = int(amount // price)      # whole shares only
-    if qty < 1:
+    # Market orders are RTH-only here — never extended_hours.
+    frac = want_fractional(ticker, extended_hours=False)
+    if qty is not None:
+        submit_qty = _order_qty(qty, fractional=frac, price=price)
+    else:
+        from desk_risk import shares_from_dollars
+        raw = shares_from_dollars(amount, price, fractional=frac)
+        submit_qty = _order_qty(raw, fractional=frac, price=price)
+    if submit_qty is None:
         note = f"px ${price:.2f} > ${amount:.0f} budget"
         _log_action("BUY_SKIPPED", ticker, price, rsi, hist, note=note)
         return {"ok": False, "order_id": None, "status": "under_budget", "note": note}
 
+    frac_tag = "fractional=true" if frac else "fractional=false"
     print(f"\n  [TRADER] {mode_tag} 🟢 BUY  {ticker}  "
-          f"{qty} sh market  (~${qty * price:.0f} of ${amount:.0f})")
+          f"{submit_qty:g} sh market  (~${float(submit_qty) * price:.0f} of ${amount:.0f})"
+          f"  [{frac_tag}]")
 
     try:
         from alpaca.trading.requests import MarketOrderRequest
@@ -663,7 +799,7 @@ def buy_market_shares(ticker: str, price: float, dollar_amount: Optional[float] 
         order = _client.submit_order(
             MarketOrderRequest(
                 symbol        = ticker,
-                qty           = qty,          # integer qty — no notional/fractional
+                qty           = submit_qty,
                 side          = OrderSide.BUY,
                 time_in_force = TimeInForce.DAY,
             )
@@ -672,10 +808,10 @@ def buy_market_shares(ticker: str, price: float, dollar_amount: Optional[float] 
         status   = str(order.status)
         print(f"  [TRADER] ✓  BUY order submitted  id={order_id}  status={status}")
         _log_action("BUY", ticker, price, rsi, hist,
-                    order_id=order_id, order_status=status, qty=qty,
-                    note="market_shares")
+                    order_id=order_id, order_status=status, qty=submit_qty,
+                    note=f"market_shares {frac_tag}")
         return {"ok": True, "order_id": order_id, "status": status,
-                "note": None, "qty": qty}
+                "note": None, "qty": submit_qty, "fractional": frac}
 
     except Exception as e:
         print(f"  [TRADER] ❌  BUY order failed: {e}")
@@ -1224,18 +1360,31 @@ def get_positions_detail() -> Optional[dict]:
         return None
 
 
-def size_by_risk(equity: float, risk_pct: float, entry: float, stop: float) -> int:
-    """Whole shares such that a stop fill loses no more than risk_pct of equity.
+def size_by_risk(
+    equity: float,
+    risk_pct: float,
+    entry: float,
+    stop: float,
+    *,
+    fractional: bool = False,
+) -> float:
+    """Shares such that a stop fill loses no more than risk_pct of equity.
 
     ``entry`` and ``stop`` must bracket a real loss (entry > stop for a long);
     anything else has no defined risk to size against, so this returns 0
     rather than guessing a share count from a malformed price pair.
+
+    ``fractional=False`` (default) keeps historical whole-share truncation.
     """
     if equity <= 0 or entry <= 0 or stop <= 0 or stop >= entry:
-        return 0
+        return 0.0
     risk_dollars = equity * (max(0.0, risk_pct) / 100.0)
     per_share_risk = entry - stop
-    return max(0, int(risk_dollars // per_share_risk))
+    if not fractional:
+        return float(max(0, int(risk_dollars // per_share_risk)))
+    import math
+    raw = risk_dollars / per_share_risk
+    return max(0.0, math.floor(raw * 1_000_000_000 + 1e-15) / 1_000_000_000)
 
 
 def get_equity() -> float | None:
@@ -1703,7 +1852,7 @@ def place_limit_sell(
     except (TypeError, ValueError):
         return {"ok": False, "order_id": None, "status": "bad_params",
                 "error": "qty/limit"}
-    if qty < 1 or lim <= 0:
+    if qty <= 0 or lim <= 0:
         return {"ok": False, "order_id": None, "status": "bad_params",
                 "error": "qty/limit"}
     try:
@@ -1715,14 +1864,23 @@ def place_limit_sell(
             held = float(_client.get_open_position(ticker).qty)
         except Exception:
             held = 0.0
-        if held < 1:
+        if held <= 0:
             return {"ok": False, "order_id": None, "status": "no_qty",
                     "error": "no open position"}
-        sell_qty = int(min(qty, held))
-        if sell_qty < 1:
-            return {"ok": False, "order_id": None, "status": "no_qty",
-                    "error": "qty<1 after clamp"}
         ext = ext_hours_now() if extended_hours is None else bool(extended_hours)
+        # Ext-hours limits cannot be fractional on Alpaca — force whole shares.
+        raw = min(qty, held)
+        if ext:
+            sell_qty = int(raw)
+            if sell_qty < 1:
+                return {"ok": False, "order_id": None, "status": "no_qty",
+                        "error": "qty<1 after clamp (ext-hours whole shares)"}
+        else:
+            import math
+            sell_qty = math.floor(raw * 1_000_000_000 + 1e-15) / 1_000_000_000
+            if sell_qty <= 0:
+                return {"ok": False, "order_id": None, "status": "no_qty",
+                        "error": "qty<=0 after clamp"}
         order = _client.submit_order(
             LimitOrderRequest(
                 symbol=ticker,
@@ -1733,7 +1891,7 @@ def place_limit_sell(
                 extended_hours=ext,
             )
         )
-        print(f"  [TRADER] 🎯 limit SELL  {ticker}  qty={sell_qty}  "
+        print(f"  [TRADER] 🎯 limit SELL  {ticker}  qty={sell_qty:g}  "
               f"LMT=${lim:.2f}  id={order.id}")
         _log_action(
             "SELL_LIMIT", ticker, lim, 0.0, 0.0,
@@ -1821,7 +1979,11 @@ def working_sell_replace(
 
 
 def sell_qty_market(ticker: str, qty: float) -> dict:
-    """Market SELL an exact share count (partial scale-out)."""
+    """Market SELL an exact share count (partial scale-out / RTH flatten).
+
+    Preserves fractional qty so a float lot is not truncated to an int dust
+    remainder. Extended-hours limit sells stay whole-share elsewhere.
+    """
     if not _can_mutate():
         return {"ok": False, "order_id": None, "status": None, "error": "trader off"}
     ticker = ticker.upper()
@@ -1829,7 +1991,7 @@ def sell_qty_market(ticker: str, qty: float) -> dict:
         qty = float(qty)
     except (TypeError, ValueError):
         return {"ok": False, "order_id": None, "status": "bad_params"}
-    if qty < 1:
+    if qty <= 0:
         return {"ok": False, "order_id": None, "status": "bad_params"}
     try:
         from alpaca.trading.requests import MarketOrderRequest
@@ -1838,10 +2000,13 @@ def sell_qty_market(ticker: str, qty: float) -> dict:
             held = float(_client.get_open_position(ticker).qty)
         except Exception:
             held = 0.0
-        if held < 1:
+        if held <= 0:
             return {"ok": False, "order_id": None, "status": "no_qty"}
-        sell_qty = int(min(qty, held))
-        if sell_qty < 1:
+        sell_qty = min(qty, held)
+        # Floor to Alpaca 9-dp so we never oversell on float noise.
+        import math
+        sell_qty = math.floor(sell_qty * 1_000_000_000 + 1e-15) / 1_000_000_000
+        if sell_qty <= 0:
             return {"ok": False, "order_id": None, "status": "no_qty"}
         order = _client.submit_order(
             MarketOrderRequest(
@@ -1851,7 +2016,7 @@ def sell_qty_market(ticker: str, qty: float) -> dict:
                 time_in_force=TimeInForce.DAY,
             )
         )
-        print(f"  [TRADER] 🔴 market SELL  {ticker}  qty={sell_qty}  id={order.id}")
+        print(f"  [TRADER] 🔴 market SELL  {ticker}  qty={sell_qty:g}  id={order.id}")
         _log_action(
             "SELL_QTY", ticker, 0.0, 0.0, 0.0,
             qty=sell_qty, order_id=str(order.id),

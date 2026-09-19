@@ -109,11 +109,17 @@ def _permissive_tradability():
     """
     import alpaca_trader as _at
     orig = _at.symbol_tradable
+    orig_frac = getattr(_at, "symbol_fractionable", None)
     _at.symbol_tradable = lambda ticker: True
+    # Order-mechanics tests stay on the whole-share path unless they opt in.
+    if orig_frac is not None:
+        _at.symbol_fractionable = lambda ticker: False
     try:
         yield
     finally:
         _at.symbol_tradable = orig
+        if orig_frac is not None:
+            _at.symbol_fractionable = orig_frac
 
 
 @pytest.fixture(autouse=True)

@@ -1542,6 +1542,19 @@ def place_scaled_entry(
     else:
         size_free = bool(size_free)
 
+    # Fractional RTH sizing: config on + asset.fractionable + not Phase B.
+    # Ext-hours / Phase B always whole shares (Alpaca forbids fractional there).
+    frac_cfg = cfg.get("ai_fractional_shares_enabled", False)
+    if isinstance(frac_cfg, str):
+        frac_cfg = frac_cfg.strip().lower() in ("1", "true", "yes", "on")
+    else:
+        frac_cfg = bool(frac_cfg)
+    use_frac = bool(
+        frac_cfg
+        and not _phase_b
+        and alpaca_trader.symbol_fractionable(ticker)
+    )
+
     bp = _buying_power()
     if size_free:
         open_notional, open_count = _open_book_snapshot(skip_symbol=ticker)
@@ -1569,9 +1582,10 @@ def place_scaled_entry(
             cheap_pct=cheap_pct if cheap_name else 0.0,
             max_open_risk_pct=max_open_risk,
             buying_power=bp,
+            fractional=use_frac,
         )
         risk_qty = plan.risk_qty
-        total_qty = plan.qty
+        total_qty = float(plan.qty)
         log_event(
             "size_plan", symbol=ticker,
             free_equity=plan.free_equity,
@@ -1585,6 +1599,7 @@ def place_scaled_entry(
             open_count=plan.open_count,
             equity=round(float(account_equity), 2),
             max_positions=limits.max_positions,
+            fractional=use_frac,
         )
         if total_qty <= 0:
             if bp is not None and "buying_power" in (plan.capped_by or ""):
@@ -1605,19 +1620,22 @@ def place_scaled_entry(
             return {"ok": False, "error": err}
     else:
         risk_qty = alpaca_trader.size_by_risk(
-            account_equity, risk_pct, sizing_entry, stop_price)
-        total_qty = cap_long_qty(
+            account_equity, risk_pct, sizing_entry, stop_price,
+            fractional=use_frac)
+        total_qty = float(cap_long_qty(
             risk_qty,
             equity=account_equity,
             price=sizing_entry,
             max_position_pct=max_pos_pct,
-        )
+            fractional=use_frac,
+        ))
         if total_qty != risk_qty:
             log_event(
                 "size_capped", symbol=ticker, risk_qty=risk_qty,
                 capped_qty=total_qty, max_position_pct=max_pos_pct,
                 equity=round(float(account_equity), 2),
                 max_positions=limits.max_positions,
+                fractional=use_frac,
             )
         if total_qty <= 0:
             err = (
@@ -1656,21 +1674,25 @@ def place_scaled_entry(
         # Hold products: no T1 scale-out, no 0.10R shelf identity.
         dual = False
         scale_out_pct = 0.0
+    # Non-integer fractional lots cannot split cleanly across dual T1/runner
+    # bookkeeping (and broker OTO/brackets stay whole-share anyway).
+    frac_lot = bool(use_frac and abs(total_qty - round(total_qty)) > 1e-9)
     logical_dual = (
         dual
         and scale_out_pct < 99.0
         and total_qty >= 2
+        and not frac_lot
     )
     if logical_dual:
         qty_a = max(1, int(total_qty * scale_out_pct / 100.0))
         qty_b = int(total_qty) - qty_a
         if qty_b <= 0:
-            qty_a = int(total_qty)
+            qty_a = float(int(total_qty))
             qty_b = 0
             logical_dual = False
     else:
-        qty_a = int(total_qty)
-        qty_b = 0
+        qty_a = float(total_qty)
+        qty_b = 0.0
 
     entry_limit = _entry_limit_price(
         current_ask, entry_high, entry_low, cap_at_zone=not skip_zone,
@@ -1696,16 +1718,19 @@ def place_scaled_entry(
     # Protective shape: stop-MARKET by default (gap through the trigger
     # still fills). stop-LIMIT is opt-in via ai_stop_use_market=False.
     use_stop_mkt = bool(cfg.get("ai_stop_use_market", True))
-    parent_qty = int(total_qty)
+    # Keep float parent qty when fractional; whole-share path stays int-valued.
+    parent_qty = float(total_qty) if use_frac else float(int(total_qty))
     broker_stop = bool(cfg.get("ai_broker_stop_enabled", True))
     # Phase B: no broker stop outside RTH — software hard stop + working sell.
+    # Also force whole shares (ext-hours limits cannot be fractional).
     if _phase_b:
         broker_stop = False
         place_target = None
         t1_attach_pending = False
         logical_dual = False
-        qty_a = int(total_qty)
-        qty_b = 0
+        parent_qty = float(int(total_qty))
+        qty_a = parent_qty
+        qty_b = 0.0
 
     # Local-stop desk parent shape:
     # - Plan A RTH + ai_entry_order_style=market → true Alpaca MARKET buy.
@@ -1729,9 +1754,11 @@ def place_scaled_entry(
                 ref = float(current_ask or sizing_entry or 0)
                 if ref <= 0:
                     return {"ok": False, "status": "no_price"}
+                # Exact share count — do not re-derive via dollar//price (that
+                # re-truncates fractionals). +0.01 cushion kept only as a
+                # dollar_amount fallback when qty is omitted.
                 out = alpaca_trader.buy_market_shares(
-                    ticker, ref,
-                    dollar_amount=float(parent_qty) * ref + 0.01,
+                    ticker, ref, qty=parent_qty,
                 ) or {}
                 if out.get("ok"):
                     out["buy_order_id"] = out.get("order_id")
@@ -1745,13 +1772,11 @@ def place_scaled_entry(
             note = "phase_b_ext" if _phase_b else "local_stop_only"
             # Phase B forces extended_hours=True (DAY limit) regardless of
             # desk-wide _extended_hours policy / RTH clock.
-            kw = {}
+            kw: dict = {"qty": parent_qty}
             if _phase_b:
                 kw["extended_hours"] = True
             out = alpaca_trader.buy_limit_at_price(
-                ticker, float(lim),
-                dollar_amount=float(parent_qty) * float(lim) + 0.01,
-                note=note, **kw) or {}
+                ticker, float(lim), note=note, **kw) or {}
             if out.get("ok"):
                 out["buy_order_id"] = out.get("order_id")
                 out["stop_order_id"] = None
@@ -4715,18 +4740,24 @@ def _adopt_unmanaged(
                       entry=entry)
             continue
         target = _num((ok or {}).get("target_1")) if ok else None
-        qty_a_ev = int((ok or {}).get("qty_a") or 0) if ok else 0
-        qty_b_ev = int((ok or {}).get("qty_b") or 0) if ok else 0
+        try:
+            qty_a_ev = float((ok or {}).get("qty_a") or 0) if ok else 0.0
+        except (TypeError, ValueError):
+            qty_a_ev = 0.0
+        try:
+            qty_b_ev = float((ok or {}).get("qty_b") or 0) if ok else 0.0
+        except (TypeError, ValueError):
+            qty_b_ev = 0.0
         if qty_a_ev > 0 and qty_b_ev > 0:
             qty_a, qty_b = qty_a_ev, qty_b_ev
             scaled = qty <= qty_b + 1 and qty < (qty_a + qty_b)
         else:
-            qty_a, qty_b = int(qty), 0
+            qty_a, qty_b = float(qty), 0.0
             scaled = False
         state[s] = {
             "qty_a": qty_a,
             "qty_b": qty_b,
-            "total_qty": int(qty_a + qty_b) if qty_b else int(qty),
+            "total_qty": float(qty_a + qty_b) if qty_b else float(qty),
             "entry_price": entry,
             "stop_price": stop,
             "entry_stop_price": stop,
