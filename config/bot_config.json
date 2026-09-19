@@ -302,6 +302,7 @@
   "movers_screener_enabled": true,
   "obv_length": 20,
   "paper": true,
+  "ai_live_trading_enabled": false,
   "push_vapid_public_key": "BBBpLEr4aZrwHQ_w1EKvalTAhbAo9QhVJaJB72BHAvYHjG2Jgf0spxW9ebWHOBnDWNrrpsUEQJJkDfscD5dfh9g",
   "require_protective_exit": true,
   "rs_backfill_calendar_days": 400,

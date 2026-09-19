@@ -755,14 +755,11 @@ live dollar is no longer code.
 from the public internet with the Alpaca and Finnhub keys behind it. The fix
 closed the door; it did not un-ring the bell. Cheapest thing on this list.
 
-**B. Put the daily loss brake back, or decide not to.** `f8437af` moved
-`ai_daily_loss_limit_r` from **3.0 → 999.0** on 2026-09-18, inside a commit
-described as baking in trail/slip/flatten/stale knobs. It is committed and
-live. That brake ended the three worst sessions on record — 09-01 (−3.04R),
-09-16 (−3.19R), 09-17 (−3.08R) — all of which stopped *because of it*. The
-first session without it closed at **−5.26R**, the worst yet. This contradicts
-a standing rule in §6 ("the daily brake stays on"). Not reverted here because
-it may be deliberate, but it should not stand by accident.
+**B. Put the daily loss brake back — DONE 2026-09-19.** `1ec6fca` restored
+`ai_daily_loss_limit_r` from **999.0 → 3.0**. The 999 window had already
+produced a **−5.26R** session (worst on record); the three prior worst days
+(09-01 / 09-16 / 09-17) had all stopped *because of* the 3.0 brake. Standing
+§6 rule holds again.
 
 **C. Stage 0 (§6).** The live path has never placed an order in any account.
 The account assertion is proven against fakes, not against a real mismatched

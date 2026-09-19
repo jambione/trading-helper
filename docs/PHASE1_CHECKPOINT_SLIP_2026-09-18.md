@@ -12,4 +12,4 @@ Mid-session product changes contaminated the day: EXH square/triangle mode, RSI 
 - Do **not** loosen dual OB+tight or raise max_positions to “fix” capacity
 
 **Standing product entering the checkpoint**
-Square enter (OB+tight) · triangle exit (`left_overbought`) · RSI rising-only (max 100) · trail backup (give 0.35, arm ≥0.25R, decay off) · prefer-square admit bus.
+Square enter (OB+tight) · triangle exit (`left_overbought`) · RSI rising-only (max 100) · trail backup (give 0.35, arm 0.15R, decay off) · prefer-square admit bus.
