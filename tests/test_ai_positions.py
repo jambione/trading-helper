@@ -2408,7 +2408,16 @@ def test_left_overbought_does_not_flatten_a_dual_book(tmp_path, monkeypatch):
             return (-25.0, 20.0, False, True)
 
         @staticmethod
-        def exhaustion_exit_now(probe, cfg):
+        def apply_live_exhaustion(rec, price, cfg, now):
+            ind = rec.setdefault("indicator", {})
+            ind["pctr"] = -25.0
+            ind["pctr_slow"] = -22.0
+            ind["pctr_ob"] = False
+            ind["pctr_falling"] = True
+            return True
+
+        @staticmethod
+        def exhaustion_exit_now(probe, cfg, now=None):
             return True, "left_overbought"
 
     import sys

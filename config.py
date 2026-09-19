@@ -774,6 +774,12 @@ DEFAULT_CONFIG = {
     # Square mode ships this ON so leave dual-OB flattens; trail is backup only.
     # None/absent → follow edge mode (on only for exhaustion_scalp).
     "ai_exit_left_overbought": True,
+    # Dual leave-OB must persist this long before flatten (APLD flicker guard).
+    # Cap enforced in code at 15s — must stay ≪ 30s (MARA-class lag).
+    "ai_exit_left_overbought_confirm_sec": 3.0,
+    # If slow %R cannot refresh and is older than this while fast has left OB
+    # (and we already latched dual OB), fire triangle rather than wait on trail.
+    "ai_exit_dual_slow_max_age_sec": 45.0,
     # Exhaustion / %R is a *direction* filter, not a heat floor.
     # BUY: %R rising, or already overbought and not falling.
     # Refuse cooling / rolling-over OB. Missing %R still passes when
@@ -1610,6 +1616,9 @@ def validate_ai_config(cfg: dict) -> list[str]:
 # "hybrid arm"); this is the resolved set the process is actually running.
 _EFFECTIVE_KEYS = (
     "ai_watch_exh_square_arm",
+    "ai_exit_left_overbought",
+    "ai_exit_left_overbought_confirm_sec",
+    "ai_exit_dual_slow_max_age_sec",
     "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",
     "ai_watch_max_far_exh_seats",
@@ -1907,6 +1916,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_armable_zone_kinds",
     "ai_edge_mode",
     "ai_exit_left_overbought",
+    "ai_exit_left_overbought_confirm_sec",
+    "ai_exit_dual_slow_max_age_sec",
     "ai_watch_exh_square_arm",
     "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",

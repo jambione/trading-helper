@@ -5087,6 +5087,8 @@ def test_square_left_overbought_triangle_exit():
         "rte_threshold": 20,
         "rte_confluence_max": 15.0,
         "ai_watch_tv_exh_rsi": False,
+        # Immediate fire for the basic latch test; confirm covered below.
+        "ai_exit_left_overbought_confirm_sec": 0.0,
     }
     # Still in the square.
     hold = {
@@ -5112,7 +5114,7 @@ def test_square_left_overbought_triangle_exit():
             "pctr_ob": False,
         },
     }
-    hit, why = ew.exhaustion_exit_now(leave, cfg)
+    hit, why = ew.exhaustion_exit_now(leave, cfg, now=1_000.0)
     assert hit is True and why == "left_overbought"
 
     # Never latched → no exit.
@@ -5125,6 +5127,162 @@ def test_square_left_overbought_triangle_exit():
     }
     hit, why = ew.exhaustion_exit_now(never, cfg)
     assert hit is False and why == "never_overbought"
+
+
+def test_dual_r_ob_ignores_sticky_pctr_ob_cache():
+    """Sticky pctr_ob=True must not keep both_ob when live lines left OB."""
+    import ai_entry_watch as ew
+
+    cfg = {"rte_threshold": 20, "rte_confluence_max": 15.0}
+    rec = {
+        "indicator": {
+            "pctr": -40.0, "pctr_slow": -35.0, "pctr_ob": True,
+        },
+    }
+    both_ob, _tight, err = ew.dual_r_ob_tight(rec, cfg)
+    assert err is None
+    assert both_ob is False
+    assert rec["indicator"]["pctr_ob"] is False
+
+
+def test_left_overbought_confirm_and_flicker_cancel():
+    """Leave must persist confirm_sec; dual OB returning cancels pending (APLD)."""
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_watch_exh_square_arm": True,
+        "ai_exit_left_overbought": True,
+        "ai_watch_exhaustion_rules": True,
+        "rte_threshold": 20,
+        "ai_exit_left_overbought_confirm_sec": 3.0,
+        "ai_watch_tv_exh_rsi": False,
+    }
+    leave_ind = {
+        "pctr": -40.0, "pctr_slow": -30.0, "pctr_ob": False,
+    }
+    hold_ind = {
+        "pctr": -10.0, "pctr_slow": -8.0, "pctr_ob": True,
+    }
+    rec = {
+        "symbol": "APLD",
+        "exh_was_overbought": True,
+        "indicator": dict(leave_ind),
+    }
+    t0 = 1_000.0
+    hit, why = ew.exhaustion_exit_now(rec, cfg, now=t0)
+    assert hit is False and why == "left_overbought_pending"
+    assert rec.get("left_ob_since") == t0
+
+    # Still left at t0+1 → still pending.
+    hit, why = ew.exhaustion_exit_now(rec, cfg, now=t0 + 1.0)
+    assert hit is False and why == "left_overbought_pending"
+
+    # Squares back on inside confirm → cancel pending, hold.
+    rec["indicator"] = dict(hold_ind)
+    hit, why = ew.exhaustion_exit_now(rec, cfg, now=t0 + 1.5)
+    assert hit is False and why == "overbought_hold"
+    assert rec.get("left_ob_since") is None
+
+    # Leave again and wait out confirm → fire.
+    rec["indicator"] = dict(leave_ind)
+    hit, why = ew.exhaustion_exit_now(rec, cfg, now=t0 + 2.0)
+    assert hit is False and why == "left_overbought_pending"
+    since = rec["left_ob_since"]
+    hit, why = ew.exhaustion_exit_now(rec, cfg, now=since + 3.0)
+    assert hit is True and why == "left_overbought"
+
+
+def test_fast_leaves_slow_still_ob_breaks_square():
+    """Fast left OB while slow still OB → square broken → triangle (not hold).
+
+    ``both_ob`` is AND; one line leaving is the ▼. Sticky ``pctr_ob`` must
+    not keep hold (covered separately).
+    """
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_watch_exh_square_arm": True,
+        "ai_exit_left_overbought": True,
+        "ai_watch_exhaustion_rules": True,
+        "rte_threshold": 20,
+        "ai_exit_left_overbought_confirm_sec": 0.0,
+        "ai_watch_tv_exh_rsi": False,
+    }
+    rec = {
+        "exh_was_overbought": True,
+        "indicator": {"pctr": -40.0, "pctr_slow": -10.0, "pctr_ob": True},
+    }
+    hit, why = ew.exhaustion_exit_now(rec, cfg, now=1_000.0)
+    assert hit is True and why == "left_overbought"
+    assert rec["indicator"]["pctr_ob"] is False
+
+
+def test_both_lines_still_ob_holds_despite_false_cache():
+    """Live both-OB holds even if a stale cache said pctr_ob=False."""
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_watch_exh_square_arm": True,
+        "ai_exit_left_overbought": True,
+        "ai_watch_exhaustion_rules": True,
+        "rte_threshold": 20,
+        "ai_exit_left_overbought_confirm_sec": 0.0,
+        "ai_watch_tv_exh_rsi": False,
+    }
+    rec = {
+        "exh_was_overbought": True,
+        "indicator": {"pctr": -10.0, "pctr_slow": -8.0, "pctr_ob": False},
+    }
+    hit, why = ew.exhaustion_exit_now(rec, cfg, now=1_000.0)
+    assert hit is False and why == "overbought_hold"
+    assert rec["indicator"]["pctr_ob"] is True
+
+
+def test_fast_leaves_slow_stale_past_max_age_exits():
+    """MARA-class: was OB, fast left, slow missing/stale → triangle after confirm."""
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_watch_exh_square_arm": True,
+        "ai_exit_left_overbought": True,
+        "ai_watch_exhaustion_rules": True,
+        "rte_threshold": 20,
+        "ai_exit_left_overbought_confirm_sec": 0.0,
+        "ai_exit_dual_slow_max_age_sec": 45.0,
+        "ai_watch_tv_exh_rsi": False,
+    }
+    t = 2_000.0
+    rec = {
+        "exh_was_overbought": True,
+        "pctr_slow_live_ts": t - 60.0,  # older than max_age
+        "indicator": {
+            "pctr": -40.0,  # left OB
+            "pctr_slow": None,
+            "pctr_ts": t - 60.0,
+        },
+    }
+    hit, why = ew.exhaustion_exit_now(rec, cfg, now=t)
+    assert hit is True and why == "left_overbought"
+
+
+def test_square_off_legacy_fast_band_unchanged():
+    """Square mode off → fast-band path; confirm knobs do not apply."""
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_watch_exh_square_arm": False,
+        "ai_watch_tv_exh_rsi": False,
+        "ai_exit_left_overbought": True,
+        "ai_watch_exhaustion_rules": True,
+        "rte_threshold": 20,
+        "ai_exit_left_overbought_confirm_sec": 3.0,
+    }
+    left = {
+        "exh_was_overbought": True,
+        "indicator": {"pctr": -40.0},  # EXH 60 < band 80
+    }
+    hit, why = ew.exhaustion_exit_now(left, cfg, now=1_000.0)
+    assert hit is True and why == "left_overbought"
 
 
 def test_tv_exh_rsi_requires_both_lines_then_rsi():
