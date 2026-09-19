@@ -257,6 +257,10 @@ DEFAULT_CONFIG = {
     # still comes from ai_position_slot_equity / ai_max_positions. False
     # restores the old risk-then-cap_long_qty path.
     "ai_size_from_free_equity":  True,
+    # RTH float qty when Alpaca asset.fractionable. Default false (dark ship);
+    # enable deliberately on paper after suite green. Fail-closed to whole
+    # shares on lookup miss / Phase B / extended_hours. See GO_LIVE_PLAN §4.1.
+    "ai_fractional_shares_enabled": False,
     "ai_trade_style": "Day scalp",
     # Must be <= ai_watch_synth_rr or every synthetic zone self-blocks on the
     # reward_risk gate in should_arm_buy. Day scalp uses sub-1R first targets.
@@ -1624,6 +1628,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_cheap_price",
     "ai_risk_pct",
     "ai_size_from_free_equity",
+    "ai_fractional_shares_enabled",
     "require_protective_exit",
     "ai_broker_stop_enabled",
     "ai_heal_unprotected",
@@ -1795,6 +1800,7 @@ SAFE_CONFIG_KEYS = [
     "ai_max_sells_per_poll",
     "ai_risk_pct",
     "ai_size_from_free_equity",
+    "ai_fractional_shares_enabled",
     "ai_trade_style",
     "desk_product",
     "ai_h4_paper",
@@ -2256,6 +2262,7 @@ PROTECTED_CONFIG_KEYS = frozenset({
     "ai_max_position_pct",
     "ai_max_position_pct_cheap",
     "ai_position_slot_equity",
+    "ai_fractional_shares_enabled",
     "ai_min_reward_risk",
     # Kill switches and protective machinery
     "ai_daily_loss_limit_r",

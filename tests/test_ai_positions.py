@@ -286,34 +286,52 @@ class _StubBroker:
     def get_open_positions(self):
         return self.broker_positions
 
-    def size_by_risk(self, equity, risk_pct, entry, stop):
-        return alpaca_trader.size_by_risk(equity, risk_pct, entry, stop)
+    def size_by_risk(self, equity, risk_pct, entry, stop, **kwargs):
+        return alpaca_trader.size_by_risk(
+            equity, risk_pct, entry, stop, **kwargs)
+
+    def symbol_fractionable(self, ticker):
+        return False
 
     def buy_market_shares(self, ticker, price, dollar_amount=None, **kwargs):
         oid = f"mkt_{self._next_id}"
         self._next_id += 1
-        qty = int(float(dollar_amount) / float(price)) if price and dollar_amount else 0
+        qty_kw = kwargs.get("qty")
+        if qty_kw is not None:
+            qty = float(qty_kw)
+        else:
+            qty = (
+                int(float(dollar_amount) / float(price))
+                if price and dollar_amount else 0
+            )
         self.market_calls.append({
             "ticker": ticker, "price": price, "dollar_amount": dollar_amount,
-            "kind": "market",
+            "qty": qty_kw, "kind": "market",
         })
         self.calls.append({
             "ticker": ticker, "qty": qty, "naked": True, "kind": "market",
         })
         return {"ok": True, "order_id": oid, "status": "accepted", "qty": qty}
 
-    def buy_limit_at_price(self, ticker, price, dollar_amount, **kwargs):
+    def buy_limit_at_price(self, ticker, price, dollar_amount=None, **kwargs):
         oid = f"naked_{self._next_id}"
         self._next_id += 1
-        qty = int(float(dollar_amount) / float(price)) if price else 0
+        qty_kw = kwargs.get("qty")
+        if qty_kw is not None:
+            qty = float(qty_kw)
+        elif price and dollar_amount is not None:
+            qty = int(float(dollar_amount) / float(price))
+        else:
+            qty = 0
         self.limit_calls.append({
             "ticker": ticker, "price": price, "dollar_amount": dollar_amount,
+            "qty": qty_kw,
             "kind": "naked_limit",
             "extended_hours": kwargs.get("extended_hours"),
             "note": kwargs.get("note"),
         })
         self.calls.append({"ticker": ticker, "qty": qty, "naked": True})
-        return {"ok": True, "order_id": oid, "status": "accepted"}
+        return {"ok": True, "order_id": oid, "status": "accepted", "qty": qty}
 
     def buy_limit_bracket(self, ticker, qty, limit_price, stop_price,
                           target_price=None, **kwargs):

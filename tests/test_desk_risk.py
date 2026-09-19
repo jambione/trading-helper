@@ -10,13 +10,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "momentum-monitor"))
 
 from desk_risk import (  # noqa: E402
+    MIN_FRACTIONAL_NOTIONAL,
     cap_long_qty,
     equity_book_limits,
     limits_from_cfg,
+    min_qty_for_price,
     next_phase,
     open_book_notional,
     plan_long,
     position_notional,
+    shares_from_dollars,
     size_long_from_free_equity,
     stop_for_phase,
     trade_r,
@@ -430,4 +433,111 @@ def test_free_equity_wide_stop_hits_open_risk_ceiling_not_account_blowup():
     assert plan.notional_qty == 3
     assert plan.qty == 2
     assert "open_risk" in plan.capped_by
+
+
+# ── Fractional shares (GO_LIVE_PLAN §4.1) ─────────────────────────────────────
+
+def test_shares_from_dollars_whole_vs_fractional():
+    assert shares_from_dollars(2.50, 0.852, fractional=False) == 2.0
+    got = shares_from_dollars(2.50, 0.852, fractional=True)
+    # 2.50/0.852 ≈ 2.934… — floor, never round up past affordable notional.
+    assert got == pytest.approx(2.9342723, abs=1e-6)
+    assert got > 2.0
+    assert got * 0.852 <= 2.50 + 1e-9
+
+
+def test_min_qty_notional_floor():
+    assert min_qty_for_price(20.0, fractional=False) == 1.0
+    assert MIN_FRACTIONAL_NOTIONAL == 1.0
+    assert min_qty_for_price(0.852, fractional=True) == pytest.approx(
+        1.0 / 0.852, abs=1e-6)
+
+
+def test_fractional_risk_qty_keeps_intended_1pct():
+    """$250 · 1% risk · $0.852 with near-full R → ~2.93 sh, not 2."""
+    # Nearly full book occupied so free-equity notional ≈ risk dollars;
+    # risk_qty and final qty both land near 2.93 when fractional=True.
+    kwargs = dict(
+        account_equity=250.0,
+        price=0.852,
+        stop=0.001,  # per-share R ≈ 0.851
+        risk_pct=1.0,
+        open_notional=247.5,
+        open_count=7,
+        max_positions=8,
+        slot_equity=250.0,
+        max_position_pct=100.0,
+        max_open_risk_pct=5.0,
+    )
+    whole = size_long_from_free_equity(**kwargs, fractional=False)
+    frac = size_long_from_free_equity(**kwargs, fractional=True)
+    assert whole.qty == 2
+    assert whole.risk_qty == 2
+    assert frac.qty == pytest.approx(2.93, abs=0.02)
+    assert frac.risk_qty == pytest.approx(2.93, abs=0.02)
+    assert frac.qty > whole.qty
+    # Effective risk ≈ 1.0% of equity, not the 0.68% whole-share haircut.
+    per_share = 0.852 - 0.001
+    eff_pct = 100.0 * frac.qty * per_share / 250.0
+    assert eff_pct == pytest.approx(1.0, abs=0.02)
+
+
+def test_fractional_flag_off_matches_int_fixtures():
+    """fractional=False must stay byte-identical to pre-change whole shares."""
+    plan = size_long_from_free_equity(
+        account_equity=238.0,
+        price=26.0,
+        stop=25.0,
+        risk_pct=1.0,
+        open_notional=0.0,
+        open_count=0,
+        max_positions=3,
+        slot_equity=60.0,
+        max_position_pct=8.0,
+        max_open_risk_pct=5.0,
+        fractional=False,
+    )
+    assert plan.qty == 3
+    assert plan.risk_qty == 2
+    assert plan.notional_qty == 3
+    assert isinstance(plan.qty, float)
+    assert plan.qty == int(plan.qty)
+
+
+def test_cap_long_qty_fractional_min_notional():
+    # Risk rounded to 0; $1 notional at $0.50 → 2.0 sh when fractional.
+    assert cap_long_qty(
+        0, equity=250.0, price=0.50, max_position_pct=100.0, fractional=True,
+    ) == pytest.approx(2.0)
+    # Whole path still promotes to 1 share.
+    assert cap_long_qty(
+        0, equity=250.0, price=20.0, max_position_pct=100.0, fractional=False,
+    ) == 1.0
+
+
+def test_cap_long_qty_concentration_binds_fractional():
+    # 8% of $10k = $800 / $10 = 80; ask for 200 → 80.
+    assert cap_long_qty(
+        200.5, equity=10_000.0, price=10.0, max_position_pct=8.0,
+        fractional=True,
+    ) == 80.0
+
+
+def test_free_equity_fractional_buying_power_clamp():
+    plan = size_long_from_free_equity(
+        account_equity=238.0,
+        price=26.0,
+        stop=25.0,
+        risk_pct=1.0,
+        open_notional=0.0,
+        open_count=0,
+        max_positions=3,
+        slot_equity=60.0,
+        max_position_pct=8.0,
+        buying_power=40.0,
+        fractional=True,
+    )
+    # 40/26 ≈ 1.538 — BP binds below the 3-share slot.
+    assert plan.qty == pytest.approx(40.0 / 26.0, abs=1e-6)
+    assert "buying_power" in plan.capped_by
 

@@ -4,8 +4,45 @@ Pure helpers (no broker I/O). Used by monitor desk bracket path.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from typing import Any
+
+# Alpaca fractional qty accepts up to 9 decimal places; floor (never round up).
+_FRAC_QTY_DECIMALS = 9
+_FRAC_QTY_SCALE = 10 ** _FRAC_QTY_DECIMALS
+# Alpaca minimum notional for fractional orders (~$1).
+MIN_FRACTIONAL_NOTIONAL = 1.0
+
+
+def shares_from_dollars(
+    dollars: float,
+    price: float,
+    *,
+    fractional: bool = False,
+) -> float:
+    """Floor dollars/price to whole shares, or to Alpaca fractional precision."""
+    try:
+        d = float(dollars)
+        px = float(price)
+    except (TypeError, ValueError):
+        return 0.0
+    if d <= 0 or px <= 0:
+        return 0.0
+    if not fractional:
+        return float(int(d // px))
+    raw = d / px
+    return math.floor(raw * _FRAC_QTY_SCALE + 1e-15) / _FRAC_QTY_SCALE
+
+
+def min_qty_for_price(price: float, *, fractional: bool = False) -> float:
+    """Smallest legal buy size at *price*: 1 share, or ~$1 notional if fractional."""
+    px = _f(price, 0.0)
+    if px <= 0:
+        return 0.0
+    if not fractional:
+        return 1.0
+    return shares_from_dollars(MIN_FRACTIONAL_NOTIONAL, px, fractional=True)
 
 
 @dataclass(frozen=True)
@@ -272,34 +309,41 @@ def limits_from_cfg(equity: float, cfg: dict[str, Any] | None = None) -> EquityB
 
 
 def cap_long_qty(
-    qty: int,
+    qty: float | int,
     *,
     equity: float,
     price: float,
     max_position_pct: float,
-) -> int:
-    """Apply the notional cap; allow 1 share when risk-sizing rounded to 0.
+    fractional: bool = False,
+) -> float:
+    """Apply the notional cap; allow a min ticket when risk-sizing rounded to 0.
 
     Dollar size still comes from risk-sizing (grows with equity). This only
     stops a tight stop from buying more than ``max_position_pct`` of the book,
     and keeps a $250 account from dying on ``qty rounded to 0``.
+
+    When ``fractional`` is False (default), behaviour matches the historical
+    int path (1-share floor). When True, the floor is Alpaca's ~$1 notional.
     """
     try:
-        q = int(qty)
+        q = float(qty)
     except (TypeError, ValueError):
-        q = 0
-    if q < 0:
-        q = 0
+        q = 0.0
+    if q != q or q < 0:  # NaN or negative
+        q = 0.0
+    if not fractional:
+        q = float(int(q))
     eq = _f(equity, 0.0)
     px = _f(price, 0.0)
     pct = _f(max_position_pct, 0.0)
     if eq <= 0 or px <= 0 or pct <= 0:
-        return max(0, q)
-    cap_qty = int((eq * pct / 100.0) // px)
-    if q == 0 and cap_qty >= 1:
-        return 1
+        return max(0.0, q)
+    cap_qty = shares_from_dollars(eq * pct / 100.0, px, fractional=fractional)
+    min_q = min_qty_for_price(px, fractional=fractional)
+    if q <= 0 and cap_qty + 1e-15 >= min_q and min_q > 0:
+        return min_q if fractional else 1.0
     if cap_qty < q:
-        return max(0, cap_qty)
+        return max(0.0, cap_qty)
     return q
 
 
@@ -307,14 +351,15 @@ def cap_long_qty(
 class FreeEquitySize:
     """Result of sizing one long off leftover (unoccupied) equity.
 
-    ``qty`` is whole shares. The other fields are for logs / tests.
-    ``capped_by`` is a comma-joined list of clamps that reduced qty
-    (empty when the raw max(slot, risk) ticket stood).
+    ``qty`` is shares (whole when fractional=False; float when permitted).
+    The other fields are for logs / tests. ``capped_by`` is a comma-joined
+    list of clamps that reduced qty (empty when the raw max(slot, risk)
+    ticket stood).
     """
 
-    qty: int
-    risk_qty: int
-    notional_qty: int
+    qty: float
+    risk_qty: float
+    notional_qty: float
     free_equity: float
     open_notional: float
     open_count: int
@@ -400,6 +445,7 @@ def size_long_from_free_equity(
     cheap_pct: float = 0.0,
     max_open_risk_pct: float = 5.0,
     buying_power: float | None = None,
+    fractional: bool = False,
 ) -> FreeEquitySize:
     """Size a long from leftover equity across remaining slots.
 
@@ -417,7 +463,7 @@ def size_long_from_free_equity(
       - never more than leftover cash (can't spend occupied capital)
       - on a *small* book (configured % of equity still below one
         ``slot_equity``) never more than the slot notional, except a
-        1-share floor when one share fits in free equity
+        min-ticket floor when leftover cash covers it
       - on a *large* book, configured ``max_position_pct`` of account
         equity (the 8% name cap)
       - cheap names: ``cheap_pct`` of account equity
@@ -426,10 +472,15 @@ def size_long_from_free_equity(
         stay well under this)
       - buying power: downsize rather than hard-fail when BP is known
 
+    ``fractional=False`` (default) keeps historical int truncation and a
+    1-share floor. ``fractional=True`` floors to Alpaca's 9-dp share
+    precision and uses a ~$1 minimum notional instead of 1 share.
+
     ``max_position_pct`` is the *configured* cap (8%), not the inflated
     ``limits.max_position_pct`` that equity_book_limits uses as a $slot
     affordability floor on tiny accounts.
     """
+    frac = bool(fractional)
     eq = max(0.0, _f(account_equity, 0.0))
     px = _f(price, 0.0)
     stp = _f(stop, 0.0)
@@ -442,23 +493,32 @@ def size_long_from_free_equity(
 
     if px <= 0:
         return FreeEquitySize(
-            qty=0, risk_qty=0, notional_qty=0,
+            qty=0.0, risk_qty=0.0, notional_qty=0.0,
             free_equity=round(free, 4), open_notional=round(open_n, 4),
             open_count=open_c, remaining_slots=remaining,
             target_notional=round(target, 4), capped_by="bad_price",
         )
 
-    notional_qty = int(target // px) if target > 0 else 0
+    notional_qty = shares_from_dollars(target, px, fractional=frac) if target > 0 else 0.0
     per_share = px - stp
     if eq > 0 and per_share > 0:
-        risk_qty = max(0, int((eq * max(0.0, _f(risk_pct, 0.0)) / 100.0) // per_share))
+        risk_dollars = eq * max(0.0, _f(risk_pct, 0.0)) / 100.0
+        # Risk dollars ÷ dollars-of-R per share (not ÷ price).
+        if frac:
+            risk_qty = max(
+                0.0,
+                math.floor(risk_dollars / per_share * _FRAC_QTY_SCALE + 1e-15)
+                / _FRAC_QTY_SCALE,
+            )
+        else:
+            risk_qty = float(max(0, int(risk_dollars // per_share)))
     else:
-        risk_qty = 0
+        risk_qty = 0.0
 
     qty = max(notional_qty, risk_qty)
     clamps: list[str] = []
 
-    free_cap = int(free // px) if free > 0 else 0
+    free_cap = shares_from_dollars(free, px, fractional=frac) if free > 0 else 0.0
     if qty > free_cap:
         qty = free_cap
         clamps.append("free_equity")
@@ -470,53 +530,73 @@ def size_long_from_free_equity(
         cfg_cap_dollars > 0
         and (slot_eq <= 0 or cfg_cap_dollars + 1e-9 >= slot_eq)
     )
+    min_q = min_qty_for_price(px, fractional=frac)
     if large_account:
-        conc_qty = int(cfg_cap_dollars // px)
+        conc_qty = shares_from_dollars(cfg_cap_dollars, px, fractional=frac)
         if qty > conc_qty:
-            qty = max(0, conc_qty)
+            qty = max(0.0, conc_qty)
             clamps.append("concentration")
     else:
         # Small book: slot notional is the size. Risk may not inflate past
         # one slot (a $100 name with 1% risk of $238 would otherwise take
-        # 2 shares ≈ 84% of the book). Keep a 1-share floor so a name
+        # 2 shares ≈ 84% of the book). Keep a min-ticket floor so a name
         # dearer than one slot can still be bought when leftover cash
         # covers it — same idea as cap_long_qty promoting 0 → 1.
         slot_max = notional_qty
-        if slot_max < 1 and free_cap >= 1:
-            slot_max = 1
+        if slot_max + 1e-15 < min_q and free_cap + 1e-15 >= min_q:
+            slot_max = min_q
         if slot_max >= 0 and qty > slot_max:
             qty = slot_max
             clamps.append("slot_notional")
 
+    cheap_cap = 0.0
     if cheap and cheap_pct > 0 and eq > 0:
-        cheap_qty = int((eq * _f(cheap_pct, 0.0) / 100.0) // px)
-        if qty > cheap_qty:
-            qty = max(0, cheap_qty)
+        cheap_cap = shares_from_dollars(
+            eq * _f(cheap_pct, 0.0) / 100.0, px, fractional=frac)
+        if qty > cheap_cap:
+            qty = max(0.0, cheap_cap)
             clamps.append("cheap")
 
     max_open = _f(max_open_risk_pct, 0.0)
     if max_open > 0 and per_share > 0 and eq > 0:
-        risk_ceil = int((eq * max_open / 100.0) // per_share)
+        risk_ceil_dollars = eq * max_open / 100.0
+        if frac:
+            risk_ceil = max(
+                0.0,
+                math.floor(risk_ceil_dollars / per_share * _FRAC_QTY_SCALE + 1e-15)
+                / _FRAC_QTY_SCALE,
+            )
+        else:
+            risk_ceil = float(int(risk_ceil_dollars // per_share))
         if qty > risk_ceil:
-            qty = max(0, risk_ceil)
+            qty = max(0.0, risk_ceil)
             clamps.append("open_risk")
 
-    if qty == 0 and free_cap >= 1 and not (cheap and cheap_pct > 0 and int((eq * _f(cheap_pct, 0.0) / 100.0) // px) < 1):
-        qty = 1
-        clamps.append("min_share")
+    # Min ticket: 1 share (whole) or ~$1 notional (fractional).
+    cheap_blocks_min = (
+        cheap and cheap_pct > 0 and cheap_cap + 1e-15 < min_q
+    )
+    if qty <= 0 and free_cap + 1e-15 >= min_q and min_q > 0 and not cheap_blocks_min:
+        qty = min_q
+        clamps.append("min_notional" if frac else "min_share")
 
     if buying_power is not None:
         bp = _f(buying_power, 0.0)
         if bp >= 0:
-            bp_qty = int(bp // px) if bp > 0 else 0
+            bp_qty = shares_from_dollars(bp, px, fractional=frac) if bp > 0 else 0.0
             if qty > bp_qty:
-                qty = max(0, bp_qty)
+                qty = max(0.0, bp_qty)
                 clamps.append("buying_power")
 
+    if not frac:
+        qty = float(int(qty))
+        risk_qty = float(int(risk_qty))
+        notional_qty = float(int(notional_qty))
+
     return FreeEquitySize(
-        qty=int(qty),
-        risk_qty=int(risk_qty),
-        notional_qty=int(notional_qty),
+        qty=qty,
+        risk_qty=risk_qty,
+        notional_qty=notional_qty,
         free_equity=round(free, 4),
         open_notional=round(open_n, 4),
         open_count=open_c,

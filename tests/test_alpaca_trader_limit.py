@@ -170,6 +170,65 @@ def test_market_shares_under_budget_skips():
     fake.submit_order.assert_not_called()
 
 
+def test_market_shares_fractional_exact_qty(monkeypatch):
+    """Flag on + fractionable asset → float qty submitted, not re-truncated."""
+    fake = MagicMock()
+    fake.submit_order.return_value = SimpleNamespace(id="m-f", status="accepted")
+    _arm_trader(fake, amount=1000.0, market_open=True)
+    monkeypatch.setattr(tr, "_fractional_shares_enabled", lambda: True)
+    monkeypatch.setattr(tr, "symbol_fractionable", lambda t: True)
+
+    with patch.object(tr, "_log_action") as log:
+        out = tr.buy_market_shares("AAPL", price=0.852, qty=2.93)
+
+    assert out["ok"] is True
+    assert out["qty"] == pytest.approx(2.93)
+    assert out.get("fractional") is True
+    req = fake.submit_order.call_args[0][0]
+    assert float(req.qty) == pytest.approx(2.93)
+    note = log.call_args.kwargs.get("note") or ""
+    if not note and log.call_args.args:
+        # _log_action(action, ticker, ..., note=...)
+        note = str(log.call_args)
+    assert "fractional=true" in str(log.call_args)
+
+
+def test_market_shares_flag_off_stays_whole(monkeypatch):
+    fake = MagicMock()
+    fake.submit_order.return_value = SimpleNamespace(id="m-w", status="accepted")
+    _arm_trader(fake, amount=1000.0)
+    monkeypatch.setattr(tr, "_fractional_shares_enabled", lambda: False)
+    monkeypatch.setattr(tr, "symbol_fractionable", lambda t: True)
+
+    with patch.object(tr, "_log_action"):
+        out = tr.buy_market_shares("AAPL", price=0.852, dollar_amount=2.50)
+
+    assert out["ok"] is True
+    assert out["qty"] == 2
+    assert isinstance(out["qty"], int)
+
+
+def test_limit_ext_hours_forces_whole_shares(monkeypatch):
+    """Phase B / extended_hours=True never submits fractional qty."""
+    fake = MagicMock()
+    fake.submit_order.return_value = SimpleNamespace(id="l-ext", status="accepted")
+    _arm_trader(fake, extended=True, amount=1000.0, market_open=False)
+    monkeypatch.setattr(tr, "_fractional_shares_enabled", lambda: True)
+    monkeypatch.setattr(tr, "symbol_fractionable", lambda t: True)
+
+    with patch.object(tr, "_log_action"):
+        out = tr.buy_limit_at_price(
+            "AAPL", 0.852, qty=2.93, extended_hours=True, note="phase_b_ext")
+
+    assert out["ok"] is True
+    assert out["qty"] == 2
+    assert out.get("fractional") is False
+    assert out.get("extended_hours") is True
+    req = fake.submit_order.call_args[0][0]
+    assert float(req.qty) == 2.0
+    assert float(req.qty).is_integer()
+
+
 # ── TradingView chart-title → symbol parsing ──────────────────────────────────
 
 def test_tv_symbol_leading_token():

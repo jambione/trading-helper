@@ -524,7 +524,7 @@ Paper trading hides all of this, and none of it depends on the P&L track.
 
 ---
 
-## 4.1 Fractional shares — scoped 2026-09-19, not built
+## 4.1 Fractional shares — scoped 2026-09-19, built (flag default off)
 
 **Why it matters at this size.** Whole-share rounding costs a third of the
 intended position on a $250 account: 1% of $250 is $2.50 of risk, at $0.852/sh

@@ -37,7 +37,7 @@
 - [ ] Get **one written line from Alpaca** on PDT under $25k (FINRA PDT gone; broker policy still matters)
 - [ ] Pre-commit a **dollar kill** that ends the experiment and returns to paper (write it down before Stage 1)
 - [ ] Accountant touch on wash sales if staying high-frequency
-- [ ] *(Optional but high leverage at $250)* Ship fractional shares (§4.1) — scoped, not built
+- [x] *(Optional but high leverage at $250)* Ship fractional shares (§4.1) — built; `ai_fractional_shares_enabled` default **false** (dark ship; flip on paper deliberately)
 
 ### Ramp (§6) — config frozen inside each stage
 - [ ] **Stage 0 — Shadow live (~2 weeks)**  
