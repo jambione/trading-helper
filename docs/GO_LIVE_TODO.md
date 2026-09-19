@@ -5,6 +5,31 @@
 
 **Account intent:** $250 Alpaca account for first live dollars. Prefer **margin** (or confirm `multiplier` ≥ 2). Pure cash fights this desk’s turnover (T+1 / good-faith).
 
+
+---
+
+## Dated agenda (pinned 2026-09-19)
+
+Hard date we already locked; Stage dates are **earliest starts** assuming Phase 1 is clean and ops A/D/F get done the same week. A failed stage or mid-stage config change **slips the calendar**.
+
+| When | What | Notes |
+|------|------|--------|
+| **Mon 2026-09-21** | **Paper Phase 1** fed-book checkpoint | Occupancy / watch mix / thin-book. **No live. No fractional flag flip before open.** Leave-OB lag fix OK if shipped + restarted **before** open. |
+| **Mon 9/21 after close → Tue 9/22** | **Paper fractional smoke** | Flip `ai_fractional_shares_enabled=true` on mini, restart, confirm float qty on fractionable names in fill ledger. One paper session is enough. |
+| **Week of 9/22** (parallel, not live) | Ops: key rotation · flatten drill · fill-reconcile cron · write $ kill · confirm $250 `multiplier` | Can overlap fractional paper smoke. |
+| **Wed 9/23+** (after Phase 1 read) | Paper edge window / Phase 2 baseline if Phase 1 green | Frozen knobs. Live still off. |
+| **Earliest Stage 0 start: Mon 2026-09-28** | Shadow live (~2 weeks) | Live keys on $250 acct, desk still **paper**, prove assert, **$0** risk. Only if Phase 1 OK + keys rotated + flatten drilled. |
+| **Stage 0 end target: Fri 2026-10-10** | Stage 0 pass/fail | Wrong-account assert demo + zero live orders. |
+| **Earliest Stage 1: Mon 2026-10-13** | Min size, `ai_max_positions=1` (~4 weeks) | First real dollars. Fractionals **on** for this stage (small-account sizing). Pre-commit dollar kill written. |
+| **Stage 1 end target: Fri 2026-11-07** | Slippage + reconcile green | Abort on ledger mismatch / unmanaged open. |
+| **Earliest Stage 2: Mon 2026-11-10** | Quarter size (~4 weeks) | Concurrency back; daily brake + EOD exercised. |
+| **Earliest Stage 3: Mon 2026-12-08** | Half size (~4 weeks) | Runbook interruption test. |
+| **Earliest Stage 4: Mon 2027-01-05** | Target size | Only after Stages 1–3 all pass. |
+
+**Premarket (Phase B):** parallel track — print-path fix → paper score → maybe SIP. **Not** on the Stage 1 critical path; decide in/out of ramp before Stage 1 starts.
+
+**Fractional testing fit:** unit tests ✅ (PR #29) · paper smoke **after Monday close / Tuesday** · live only from **Stage 1** onward (not Stage 0).
+
 ---
 
 ## Already done (do not re-open)
