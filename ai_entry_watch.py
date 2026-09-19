@@ -10159,6 +10159,10 @@ def dual_r_ob_tight(
     ``both_ob`` / ``tight`` are None when lines are missing.
     ``refuse_reason`` is set when the square cannot be evaluated or fails
     a hard presence check (``no_exhaustion_data``).
+
+    ``both_ob`` is live math only (fast ≥ −thr AND slow ≥ −thr). A sticky
+    ``pctr_ob`` cache must not keep hold after the lines have left OB —
+    that OR-latch was the MARA 2026-09-18 multi-minute triangle lag.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
@@ -10167,12 +10171,14 @@ def dual_r_ob_tight(
     if fast is None or slow is None:
         return None, None, "no_exhaustion_data"
     thr = _rte_threshold(cfg)
-    both_ob = bool(ind.get("pctr_ob")) or (
-        float(fast) >= -thr and float(slow) >= -thr
-    )
+    both_ob = float(fast) >= -thr and float(slow) >= -thr
+    # Keep cache honest when callers pass a mutable indicator dict.
+    ind["pctr_ob"] = bool(both_ob)
     tight_max = _rte_confluence_max(cfg)
     gap = abs(float(fast) - float(slow))
-    tight = bool(ind.get("pctr_tight")) or gap <= tight_max + 1e-9
+    tight = gap <= tight_max + 1e-9
+    ind["pctr_tight"] = bool(tight and both_ob)
+    ind["pctr_gap"] = round(gap, 2)
     return bool(both_ob), bool(tight), None
 
 
@@ -10240,10 +10246,10 @@ def classify_exh_seat(
     thr = _rte_threshold(cfg)
     pre = exh_pre_thr(cfg)
     tight_max = _rte_confluence_max(cfg)
-    tight = bool(src.get("pctr_tight")) or gap <= tight_max + 1e-9
-    both_ob = bool(src.get("pctr_ob")) or (
-        float(fast) >= -thr and float(slow) >= -thr
-    )
+    tight = gap <= tight_max + 1e-9
+    # Live math only — do not trust a sticky pctr_ob cache (same rule as
+    # dual_r_ob_tight / left_overbought exit).
+    both_ob = float(fast) >= -thr and float(slow) >= -thr
     if both_ob and tight:
         return "square", gap
     both_pre = float(fast) >= -pre and float(slow) >= -pre
@@ -11204,38 +11210,118 @@ def _macd_is_armed(record: dict) -> bool:
     return bool(ind.get("macd_gap_rising"))
 
 
-def exhaustion_exit_now(record: dict, cfg: dict) -> tuple[bool, str]:
+def _left_ob_confirm_sec(cfg: dict) -> float:
+    """Seconds dual leave-OB must persist before flatten (APLD flicker guard).
+
+    Default 3s. Capped well under 30s so MARA-class multi-minute lag cannot
+    return via an oversized confirm.
+    """
+    try:
+        sec = float(cfg.get("ai_exit_left_overbought_confirm_sec", 3.0) or 0.0)
+    except (TypeError, ValueError):
+        sec = 3.0
+    return max(0.0, min(15.0, sec))
+
+
+def _dual_slow_max_age_sec(cfg: dict) -> float:
+    """Max age of a usable slow %R for dual hold. Past this + fast left → exit."""
+    try:
+        sec = float(cfg.get("ai_exit_dual_slow_max_age_sec", 45.0) or 0.0)
+    except (TypeError, ValueError):
+        sec = 45.0
+    return max(0.0, sec)
+
+
+def exhaustion_exit_now(
+    record: dict,
+    cfg: dict,
+    now: float | None = None,
+) -> tuple[bool, str]:
     """Sell when %R leaves the overbought band (triangle ▼ / left_overbought).
 
     Square mode / dual-%R: latch and exit on **both-line** OB edge
     (``ob_reversal``: was dual-OB, now not) — not fast-only heat drop.
 
+    Leave must persist ``ai_exit_left_overbought_confirm_sec`` (default 3s)
+    before flatten; dual OB returning inside the window cancels the pending
+    exit (APLD flicker). If slow is missing/stale past
+    ``ai_exit_dual_slow_max_age_sec`` while fast has left OB and we already
+    latched dual OB, treat as leave (triangle-first, not trail-first).
+
     Legacy (square off): fast-line band only.
 
     Disabled when ``left_overbought_exit_enabled`` is false.
 
-    Returns (exit_now, reason).
+    Returns (exit_now, reason). Mutates ``record`` for latch / confirm state
+    (``exh_was_overbought``, ``left_ob_since``) — caller should persist those
+    onto the open position.
     """
     if not left_overbought_exit_enabled(cfg):
         return False, "left_overbought_off"
     if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
         return False, "exhaustion_off"
 
+    t = float(now if now is not None else time.time())
     use_dual = bool(
         exh_square_arm_enabled(cfg) or tv_exh_rsi_enabled(cfg)
     )
     if use_dual:
+        ind = (
+            record.get("indicator")
+            if isinstance(record.get("indicator"), dict) else {}
+        )
+        fast = _f_or_none(ind.get("pctr"))
+        slow = _f_or_none(ind.get("pctr_slow"))
+        thr = _rte_threshold(cfg)
         both_ob, _tight, err = dual_r_ob_tight(record, cfg)
-        if err == "no_exhaustion_data" and both_ob is None:
-            # Missing slow: do not latch or fire on incomplete dual read.
-            return False, "no_exhaustion_data"
+
+        # Stale/missing slow after a dual-OB latch: if fast has left OB,
+        # prefer triangle exit over waiting on trail (MARA-class).
+        if err == "no_exhaustion_data" or both_ob is None:
+            slow_ts = record.get("pctr_slow_live_ts")
+            if slow_ts is None:
+                slow_ts = ind.get("pctr_ts")
+            max_age = _dual_slow_max_age_sec(cfg)
+            try:
+                age = (
+                    t - float(slow_ts)
+                    if slow_ts is not None else float("inf")
+                )
+            except (TypeError, ValueError):
+                age = float("inf")
+            slow_stale = slow is None or (max_age > 0 and age > max_age)
+            fast_left = fast is not None and float(fast) < -thr
+            if (
+                record.get("exh_was_overbought")
+                and slow_stale
+                and fast_left
+            ):
+                both_ob = False
+            else:
+                record["left_ob_since"] = None
+                return False, "no_exhaustion_data"
+
         if both_ob:
             record["exh_was_overbought"] = True
+            record["left_ob_since"] = None  # squares back on → cancel pending
             return False, "overbought_hold"
         if not record.get("exh_was_overbought"):
+            record["left_ob_since"] = None
             return False, "never_overbought"
+
+        confirm = _left_ob_confirm_sec(cfg)
+        if confirm <= 0:
+            record["left_ob_since"] = None
+            return True, "left_overbought"
+        since = record.get("left_ob_since")
+        if not isinstance(since, (int, float)) or float(since) <= 0:
+            record["left_ob_since"] = t
+            return False, "left_overbought_pending"
+        if (t - float(since)) < confirm:
+            return False, "left_overbought_pending"
         return True, "left_overbought"
 
+    record["left_ob_since"] = None
     ex = exhaustion_pct(record)
     if ex is None:
         return False, "no_exhaustion_data"

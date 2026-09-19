@@ -6199,28 +6199,32 @@ def manage_open_positions(
         # trail, dead_trade, or stop. See ai_entry_watch.left_overbought_exit_enabled.
         if _cfg_flag("ai_watch_exhaustion_rules", True) and pos.get("entry_confirmed"):
             sig = dict(indicators.get(ticker) or {})
-            # Recompute %R against the live price before judging the fade. The
-            # engine's copy is 60-120s old and carries no timestamp, so a stale
-            # falling flag would otherwise be re-read every 5s and counted as
-            # fresh confirmation of a fade that may already have reversed.
+            # Fresh DUAL %R (fast+slow) against the live price before judging
+            # the triangle. Fast-only refresh left stale pctr_slow / sticky
+            # pctr_ob in place — MARA 2026-09-18 held until 15:39 while TV ▼
+            # had already printed (exit still showed fast pctr=-17.86 OB).
             live_px = _num(pos.get("last_seen_price"))
             if live_px:
                 try:
                     import ai_entry_watch as _ew
-                    got = _ew.live_exhaustion(ticker, live_px, _cfg_all(), now)
-                    if got:
-                        pctr_l, _ex, _ris, fall_l = got
-                        sig["pctr"] = round(pctr_l, 2)
-                        sig["pctr_falling"] = bool(fall_l)
+                    probe_rec = {"symbol": ticker, "indicator": sig}
+                    if _ew.apply_live_exhaustion(
+                            probe_rec, live_px, _cfg_all(), now):
+                        sig = dict(probe_rec.get("indicator") or sig)
+                        if sig.get("pctr_slow") is not None:
+                            pos["pctr_slow_live_ts"] = float(now)
+                            changed = True
                 except Exception:
                     pass
             if sig.get("pctr") is not None:
-                # Level crossing, evaluated on every position tick (5s) against
-                # a live-price %R. No persistence window: the operator wants
-                # the sell when the name leaves overbought, not two minutes
-                # after it left.
-                probe = {"symbol": ticker, "indicator": sig,
-                         "exh_was_overbought": bool(pos.get("exh_was_overbought"))}
+                # Dual leave-OB with a short confirm (APLD flicker guard).
+                probe = {
+                    "symbol": ticker,
+                    "indicator": sig,
+                    "exh_was_overbought": bool(pos.get("exh_was_overbought")),
+                    "left_ob_since": pos.get("left_ob_since"),
+                    "pctr_slow_live_ts": pos.get("pctr_slow_live_ts"),
+                }
                 try:
                     import ai_entry_watch as _ew2
                     cfg_exh = _cfg_all()
@@ -6234,54 +6238,89 @@ def manage_open_positions(
                         # broker stop alone (dead_trade cannot catch it once
                         # MFE clears ai_dead_trade_mfe_r). Keep the flatten.
                         cfg_exh = {**cfg_exh, "ai_exit_left_overbought": True}
-                    hit, why = _ew2.exhaustion_exit_now(probe, cfg_exh)
+                    hit, why = _ew2.exhaustion_exit_now(
+                        probe, cfg_exh, now=now)
                 except Exception:
                     hit, why = False, "error"
+                # Persist latch + confirm clock onto the open row.
+                if probe.get("exh_was_overbought") and not pos.get(
+                        "exh_was_overbought"):
+                    pos["exh_was_overbought"] = True
+                    changed = True
+                new_since = probe.get("left_ob_since")
+                if new_since != pos.get("left_ob_since"):
+                    pos["left_ob_since"] = new_since
+                    changed = True
                 # An indicator opinion is a discretionary exit; hold it back
                 # with the shelf so the forward test measures one rule, not a
                 # shelf delay that left_overbought quietly steps around.
+                # Log remaining sec so a long min_hold cannot silently eat ▼.
                 if hit and soft_exit_held_back(pos, now):
+                    try:
+                        need = float(_cfg_all().get(
+                            "ai_exit_min_hold_sec", 0) or 0)
+                        age = float(now) - float(pos.get("entry_time") or now)
+                        left = max(0.0, need - age)
+                    except (TypeError, ValueError):
+                        left = None
                     hit, why = False, "min_hold"
                     _note_min_hold(pos, "left_overbought", now)
+                    log_event(
+                        "left_overbought_deferred", symbol=ticker,
+                        reason="min_hold",
+                        remaining_sec=None if left is None else round(left, 1),
+                        pctr=sig.get("pctr"),
+                        pctr_slow=sig.get("pctr_slow"),
+                    )
+                    exit_why[ticker] = "left_overbought_deferred"
                 if pos.get("last_exhaustion") != _num(sig.get("pctr")):
                     pctr_v = _num(sig.get("pctr"))
                     pos["last_exhaustion"] = (
                         None if pctr_v is None else round(100.0 + pctr_v, 1))
                     changed = True
-                if probe.get("exh_was_overbought") and not pos.get("exh_was_overbought"):
-                    pos["exh_was_overbought"] = True
-                    changed = True
                 dual = (
-                    int(pos.get("qty_a") or 0) > 0
-                    and int(pos.get("qty_b") or 0) > 0
+                    float(pos.get("qty_a") or 0) > 0
+                    and float(pos.get("qty_b") or 0) > 0
                 )
                 if hit and dual:
                     # Dual book banks via T1 + runner ratchet. Flattening here
                     # was 13/19 closes on 2026-08-12 and killed the raise.
                     log_event(
                         "left_overbought_deferred", symbol=ticker,
+                        reason="dual_tranche",
                         pctr=sig.get("pctr"),
+                        pctr_slow=sig.get("pctr_slow"),
                         tranche_a_filled=bool(pos.get("tranche_a_filled")),
                     )
                     events.append({
                         "ticker": ticker, "event": "left_overbought_deferred",
                         "pctr": sig.get("pctr"),
+                        "pctr_slow": sig.get("pctr_slow"),
                     })
                     exit_why[ticker] = "left_overbought_deferred"
                     hit = False
+                if why == "left_overbought_pending" and not hit:
+                    exit_why[ticker] = "left_overbought_pending"
                 if hit:
                     alpaca_trader.cancel_open_orders(ticker)
                     out = alpaca_trader.close_out(ticker) or {}
                     if isinstance(out, dict) and out.get("order_id"):
                         pos["close_order_id"] = str(out["order_id"])
                     pos["closing_reason"] = "left_overbought"
+                    pos["left_ob_since"] = None
                     exit_why[ticker] = "left_overbought"
                     events.append({
                         "ticker": ticker, "event": "left_overbought",
                         "pctr": sig.get("pctr"),
+                        "pctr_slow": sig.get("pctr_slow"),
+                        "pctr_ob": sig.get("pctr_ob"),
                     })
-                    log_event("left_overbought", symbol=ticker,
-                              pctr=sig.get("pctr"))
+                    log_event(
+                        "left_overbought", symbol=ticker,
+                        pctr=sig.get("pctr"),
+                        pctr_slow=sig.get("pctr_slow"),
+                        pctr_ob=sig.get("pctr_ob"),
+                    )
                     changed = True
                     continue
 
