@@ -23,6 +23,8 @@ Related: `docs/PHASE_B_PREMARKET.md`, `docs/PHASE_B_PREMARKET_TODO.md`, `docs/SI
 
 ### WP1 — Admit universe for SIP-computable names (no purchase)
 
+**Status 2026-09-20:** Dig on mini replay — movers clear **70%**, momentum **43%**; miss median SIP bars **24** vs clear **250**. Prior-day $-vol ≥ **$2M** counterfactual → **60.3%** clear (38/63), median on clear **252**, IEX still 0% → hits go bars without retuning. Live knobs: `ai_phase_b_min_prior_dollar_vol=2e6`, `ai_phase_b_sources_allow=momentum,movers`. Rescore: `tools/phase_b_sip_replay.py --rescore-dir … --min-prior-dollar-vol 2000000`.
+
 **Goal:** Raise historical SIP `clear_112` on the Phase B admit set from ~46% to **≥60%** (Gate 1 go bar), without paying for live SIP.
 
 1. From `ai_reports/phase_b_sip_replay/` day JSONs, list admits that **failed** clear-112 (thin: TNMG/SBUX-class) vs **passed** (CRWV/RKLB/NFLX-class).

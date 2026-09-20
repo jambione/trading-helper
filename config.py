@@ -406,6 +406,13 @@ DEFAULT_CONFIG = {
     "ai_phase_b_max_seats":               6,
     "ai_phase_b_max_open":                2,
     "ai_phase_b_min_price":               None,  # null → ai_watch_min_price (~2.0)
+    # Liquidity floor for SIP-computable admits (Gate 1 WP1). Prior RTH-day
+    # close×volume; ≤0 disables. 2e6 raised historical SIP clear-112 from
+    # 45.9% → ~60% on 2026-09-17/18 admits (counterfactual). Fail closed when
+    # unknown. Research/seed_rank stay off via phase_b.SOURCE_OFF_V1.
+    "ai_phase_b_min_prior_dollar_vol":    2_000_000.0,
+    # Comma list; empty = SOURCE_PRIORITY defaults. WP1 locks momentum+movers.
+    "ai_phase_b_sources_allow":           "momentum,movers",
     "ai_phase_b_entry_limit_ttl_sec":     45.0,
     "ai_phase_b_entry_limit_pad_pct":     0.15,
     "ai_phase_b_entry_limit_pad_max_px":  0.05,
@@ -1873,6 +1880,8 @@ SAFE_CONFIG_KEYS = [
     "ai_phase_b_max_seats",
     "ai_phase_b_max_open",
     "ai_phase_b_min_price",
+    "ai_phase_b_min_prior_dollar_vol",
+    "ai_phase_b_sources_allow",
     "ai_phase_b_entry_limit_ttl_sec",
     "ai_phase_b_entry_limit_pad_pct",
     "ai_phase_b_entry_limit_pad_max_px",

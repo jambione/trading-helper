@@ -41,10 +41,12 @@ Without fresh premarket **prints**, nothing else matters.
 
 ### 3. Product / capacity (only after data works)
 - [ ] Keep 4–6 Phase B seats, max 1–2 concurrent opens
-- [ ] Universe priority: momentum → movers → mention → trending (research/seed_rank off v1)
-- [ ] Price floor = desk min (~$2); do not skip sub-$5 just to feel safer
+- [x] Universe: momentum+movers allow-list + **$2M prior-day $-vol** floor (WP1) — research/seed_rank off v1
+- [x] Price floor = desk min (~$2); do not skip sub-$5 just to feel safer
 - [ ] Confirm square OB+tight (not legacy 40–70 band) is what arms in logs
 - [ ] Optional: `ai_phase_b_legacy_arm` only as rollback
+- [ ] Re-run Gate 1 on mini after WP1 merge:
+  `phase_b_sip_replay.py --rescore-dir ai_reports/phase_b_sip_replay --min-prior-dollar-vol 2000000 --out ai_reports/phase_b_sip_replay_liq2m/`
 
 ### 4. Ops before any *live* premarket dollars
 - [ ] Phase B stays **paper** until RTH Stage 0/1 path is healthy

@@ -245,6 +245,62 @@ def test_seat_and_priority_replace():
     assert "TREND" not in book
 
 
+def test_wp1_sources_allow_drops_trending():
+    cfg = dict(CFG_ON, ai_phase_b_sources_allow="momentum,movers")
+    ordered = pb.sort_candidates(
+        [
+            {"symbol": "TREND", "source": "trending", "score": 99, "price": 3.0},
+            {"symbol": "MOM", "source": "momentum", "score": 10, "price": 3.0},
+            {"symbol": "MOV", "source": "movers", "score": 5, "price": 3.0},
+        ],
+        cfg,
+    )
+    assert [r["symbol"] for r in ordered] == ["MOM", "MOV"]
+    ok, why = pb.admit_candidate(
+        {"symbol": "TREND", "source": "trending", "price": 3.0},
+        {}, cfg=cfg, now=_ts(8, 0),
+    )
+    assert ok is False
+    assert why == "phase_b_source_off"
+
+
+def test_liquidity_floor_fail_closed_and_pass():
+    cfg = dict(CFG_ON, ai_phase_b_min_prior_dollar_vol=2_000_000.0)
+    ok, why = pb.liquidity_ok(
+        {"symbol": "THIN", "price": 3.0},
+        cfg,
+        dollar_vol=500_000.0,
+    )
+    assert ok is False
+    assert why == "phase_b_liquidity"
+    ok2, why2 = pb.liquidity_ok(
+        {"symbol": "THIN", "price": 3.0},
+        cfg,
+        dollar_vol=None,
+    )
+    assert ok2 is False
+    assert why2 == "phase_b_liquidity_unknown"
+    ok3, why3 = pb.liquidity_ok(
+        {"symbol": "FAT", "price": 3.0, "prior_dollar_vol": 5_000_000},
+        cfg,
+    )
+    assert ok3 is True
+    assert why3 == "ok"
+    ok4, why4 = pb.admit_candidate(
+        {"symbol": "THIN", "source": "momentum", "price": 3.0, "dollar_volume": 100_000},
+        {}, cfg=cfg, now=_ts(8, 0),
+    )
+    assert ok4 is False
+    assert why4 == "phase_b_liquidity"
+
+
+def test_liquidity_floor_disabled_when_zero():
+    cfg = dict(CFG_ON, ai_phase_b_min_prior_dollar_vol=0)
+    ok, why = pb.liquidity_ok({"symbol": "X", "price": 3.0}, cfg, dollar_vol=None)
+    assert ok is True
+    assert why == "ok"
+
+
 # ── Part 5: arm strip ────────────────────────────────────────────────────
 
 def _rec(exh, exh_rising, rsi, rsi_rising):
