@@ -26,6 +26,10 @@ _FINGERPRINT_KEYS = (
     "ai_h4_paper",
     "ai_h3_paper",
     "ai_exit_left_overbought",
+    # Shipped in d7d05b5 with the dual leave-OB triangle: the confirm delay
+    # and the slow-lag ceiling both decide whether leave-OB fires at all.
+    "ai_exit_left_overbought_confirm_sec",
+    "ai_exit_dual_slow_max_age_sec",
     "ai_exit_macd_liquidate",
     "ai_exit_macd_hard_sell_sep",
     "ai_exit_macd_confirm_ticks",
@@ -182,6 +186,36 @@ _FINGERPRINT_KEYS = (
     "ai_phase_b_sources_allow",
     "ai_phase_b_enabled",
     "ai_phase_b_dry_run",
+    # Phase B arm thesis — exh band, the rising/RSI conditions and the
+    # confirm count are what "armed" means premarket. exh_min/exh_max is
+    # the legacy 40-70 band; legacy_arm selects it over the RTH square.
+    "ai_phase_b_exh_min",
+    "ai_phase_b_exh_max",
+    "ai_phase_b_require_exh_rising",
+    "ai_phase_b_rsi_block_falling_above",
+    "ai_phase_b_arm_confirm_ticks",
+    "ai_phase_b_legacy_arm",
+    # Print staleness decides whether a name can arm at all.
+    "ai_phase_b_print_max_age_sec",
+    # Capacity and seat turnover — change which names get a seat.
+    "ai_phase_b_max_seats",
+    "ai_phase_b_max_open",
+    "ai_phase_b_seat_stale_sec",
+    # Session windows decide which minutes can enter and when the lane is
+    # force-flattened, so two settings are two different books.
+    "ai_phase_b_start_time",
+    "ai_phase_b_entry_cutoff",
+    "ai_phase_b_flatten_start",
+    "ai_phase_b_flat_deadline",
+    # Exit shape.
+    "ai_phase_b_hard_stop_pct",
+    "ai_phase_b_max_exit_slip_r",
+    # Entry limit pricing decides whether a fill happens and at what price.
+    "ai_phase_b_entry_limit_ttl_sec",
+    "ai_phase_b_entry_limit_pad_pct",
+    "ai_phase_b_entry_limit_pad_max_px",
+    # A premarket lot that survives into RTH is a different trade.
+    "ai_phase_b_no_rth_handoff",
 )
 
 _fp_cache: tuple[float, str] | None = None  # (mtime, hex)

@@ -6334,7 +6334,10 @@ def _live_quote_map() -> tuple[dict[str, dict], dict[str, dict]]:
     return desk_rows, tr_by
 
 
-def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
+def desk_candidate_rows(
+    cfg: dict | None = None,
+    now: float | None = None,
+) -> list[dict]:
     """Momentum + trending + research + Trader Bro candidates for AI Watch.
 
     Rules (operator):
@@ -6348,6 +6351,11 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
     Each seed is a *shortlist*, not an admission. passes_inclusion() is
     conjunctive and still has to clear every name, and the structure poller
     still defines zone/stop before arming a buy.
+
+    ``now`` (unix seconds) is the clock the morning-flood window is judged
+    against. Default ``None`` reads the wall clock, which is what the live
+    desk does; tests and replay pass it so a run is reproducible instead of
+    depending on what time of day it happens to execute.
 
     Order matters: seeds run strongest-claim first and `seen` makes the first
     one to name a symbol own its row. Momentum and trending come first because
@@ -6382,7 +6390,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
     except (TypeError, ValueError):
         min_rvol = 2.0
 
-    flood = morning_flood_active(cfg)
+    flood = morning_flood_active(cfg, now)
 
     if cfg.get("ai_watch_seed_momentum", True):
         try:

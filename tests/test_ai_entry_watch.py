@@ -2,9 +2,17 @@
 import json
 import os, sys
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from config import DEFAULT_CONFIG, load_config
+
+_ET = ZoneInfo("America/New_York")
+# 09:00 ET Friday 2026-09-18 — before the 09:30 morning-flood window. Seeds
+# that assert the normal (capped, non-flood) shortlist pin this so the result
+# does not depend on what time of day the suite runs.
+PRE_FLOOD_TS = datetime(2026, 9, 18, 9, 0, tzinfo=_ET).timestamp()
 
 def test_watch_config_defaults_present():
     for key in (
@@ -312,7 +320,8 @@ def test_research_seed_puts_board_names_on_the_shortlist(tmp_path, monkeypatch):
          "rvol": 2.2, "day_vol": 1_000_000},
     ])
 
-    rows = ew.desk_candidate_rows(_seed_cfg(ai_watch_seed_research=True))
+    rows = ew.desk_candidate_rows(
+        _seed_cfg(ai_watch_seed_research=True), PRE_FLOOD_TS)
     by = {r["symbol"]: r for r in rows}
 
     assert by["THESIS"]["source"] == "xai"
@@ -336,9 +345,10 @@ def test_research_seed_respects_cap_and_flag(tmp_path, monkeypatch):
     }), encoding="utf-8")
     monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [])
 
-    assert ew.desk_candidate_rows(_seed_cfg()) == []          # flag off
+    assert ew.desk_candidate_rows(_seed_cfg(), PRE_FLOOD_TS) == []   # flag off
     rows = ew.desk_candidate_rows(
-        _seed_cfg(ai_watch_seed_research=True, ai_watch_seed_research_n=2))
+        _seed_cfg(ai_watch_seed_research=True, ai_watch_seed_research_n=2),
+        PRE_FLOOD_TS)
     assert len(rows) == 2
 
 

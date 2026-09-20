@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -17,6 +19,11 @@ sys.path.insert(0, str(_ROOT))
 
 import ai_entry_watch as ew  # noqa: E402
 from config import DEFAULT_CONFIG  # noqa: E402
+
+_ET = ZoneInfo("America/New_York")
+# 09:00 ET Friday 2026-09-18 — before the 09:30 morning-flood window, so
+# the open-seed cap under test is the normal one and not the flood bypass.
+PRE_FLOOD_TS = datetime(2026, 9, 18, 9, 0, tzinfo=_ET).timestamp()
 
 
 def test_extreme_move_pct_default():
@@ -157,7 +164,7 @@ def test_mom_open_shortlist_cap_logs_extreme(monkeypatch):
         "ai_max_price": 100.0,
         "ai_watch_min_rvol": 2.0,
         "ai_watch_hot_move_rvol_waive_pct": 20.0,
-    })
+    }, PRE_FLOOD_TS)
     assert len(rows) == 1
     drops = ew.seed_drop_snapshot()
     # Truncated extremes should be named shortlist_cap (or shortlist_miss via audit).

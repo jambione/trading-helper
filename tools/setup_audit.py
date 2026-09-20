@@ -52,6 +52,12 @@ REGIME_PATTERNS = (
 FINGERPRINT_EXEMPT = {
     "ai_local_trail_enabled", "ai_exit_left_overbought_deferred",
     "ai_watch_min_price", "ai_watch_min_stop_pct",
+    # Phase B machinery: logging, order-placement mechanics, and the direct
+    # analogue of the already-exempt ai_watch_min_price. None of these change
+    # which names arm or when — fingerprinting them would churn config_fp
+    # (and reset every measurement pool) on a logging or latency tweak.
+    "ai_phase_b_ledger_enabled", "ai_phase_b_working_sell",
+    "ai_phase_b_chase_step_sec", "ai_phase_b_min_price",
 }
 
 # Fields the screens join on. (file, field, floor%) — floor is the coverage
