@@ -20,6 +20,11 @@ What it does, every `--interval` seconds:
   • After the cash session (default 16:05 ET), runs tools/daily_learn.py once
     so the hybrid forward-test ledger always gets a line. daily_learn then
     runs tools/replay_ab.py on that day's tape and records the overlay ranking.
+  • Immediately after that, runs tools/fill_reconcile.py for the same day and
+    shouts on a nonzero rc. The fill ledger is the audit trail live trading is
+    graded on (GO_LIVE_PLAN §2.3, Stage 1 pass criterion), so a disagreement
+    with the broker is a same-evening alarm rather than something noticed the
+    first time real money is on it.
 
 The dashboard is checked over HTTP rather than by process liveness: a hung
 uvicorn still has a PID, and to the OCR source a hang and a crash are the same
@@ -604,6 +609,28 @@ def main() -> int:
                     rc = run_learn_job(py, "daily_learn.py", "--day", day_key)
                     last_eod_day = day_key
                     log(f"daily_learn rc={rc} day={day_key}")
+                    # Fill ledger vs the broker's own record. Stage 1's pass
+                    # criterion is that every fill reconciles, so this runs
+                    # ahead of the screens: a ledger with a hole invalidates
+                    # everything built on top of it. fill_reconcile exits 1 on
+                    # ANY finding, so nonzero here is load-bearing, not noise.
+                    # Reads only — it never writes the ledger or touches an
+                    # order, so it cannot make a bad day worse.
+                    rc_fr = run_learn_job(py, "fill_reconcile.py",
+                                          "--day", day_key)
+                    log(f"fill_reconcile rc={rc_fr} day={day_key}")
+                    if rc_fr:
+                        log("!" * 60)
+                        log(f"fill_reconcile NONZERO — the fill ledger and "
+                            f"the broker disagree for {day_key}.")
+                        log("BROKER_ONLY means the broker filled something "
+                            "this box never recorded: a position exists that "
+                            "nothing here is managing.")
+                        log("Do not route live orders on a ledger with a "
+                            "hole. see logs/learn.log; re-run:")
+                        log(f"  .venv/bin/python tools/fill_reconcile.py "
+                            f"--day {day_key}")
+                        log("!" * 60)
                     rc_e = run_learn_job(py, "eod.py", "--days", "10")
                     rc_v = run_learn_job(py, "harvest_screen.py", "--days", "10")
                     log(f"eod rc={rc_e}; harvest rc={rc_v}")
