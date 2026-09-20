@@ -74,7 +74,7 @@ When banked ≥$99 past kill           Subscribe Algo Trader Plus
 - [ ] Frozen-config stretch with **non-negative** expectancy (don’t arm live on −0.04R hope)
 
 ### Gate 1 — SIP evidence ($0) — Track B
-- [ ] Replay dual-%R square on **historical SIP** premarket bars for Phase B admits (need ~112 slow bars by 09:20 on most seats)
+- [ ] Replay dual-%R square on **historical SIP** premarket bars for Phase B admits (need ~112 slow bars by 09:20 on most seats) — brief: [`docs/SIP_HISTORICAL_REPLAY_CLI_BRIEF.md`](SIP_HISTORICAL_REPLAY_CLI_BRIEF.md)
 - [ ] Written go/no-go: “SIP unlocks Phase B seats” vs “still no edge / wrong universe”
 - [ ] Do **not** buy SIP on missing-print pain alone without this replay
 
