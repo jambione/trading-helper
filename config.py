@@ -695,6 +695,14 @@ DEFAULT_CONFIG = {
     "ai_watch_soft_seed_momentum": True,
     "ai_watch_soft_seed_research": True,
     "ai_watch_soft_seed_max": 12,
+    # Morning flood (09:30–11:00 ET): seat every momentum + Trader Bro /
+    # research name (soft_seed_max + source N caps bypassed for those
+    # sources only). Prefer-square / far eviction does not boot them.
+    # Arms unchanged — flooded seats still need dual OB+tight to open.
+    "ai_watch_morning_flood_enabled": True,
+    "ai_watch_morning_flood_start": "09:30",
+    "ai_watch_morning_flood_end": "11:00",
+    "ai_watch_morning_flood_include_pre": False,
     # Warming-seat quota: pre-heat scouts (EXH ~15–45 or unknown EXH + tape).
     # Admission still ≠ arm. 0 disables quota / preheat steal.
     # Canonical scout quota for preheat_steal; ai_watch_scout_seats mirrors it.
@@ -1679,6 +1687,10 @@ _EFFECTIVE_KEYS = (
     "ai_watch_soft_seed_enabled",
     "ai_watch_soft_seed_momentum",
     "ai_watch_soft_seed_research",
+    "ai_watch_morning_flood_enabled",
+    "ai_watch_morning_flood_start",
+    "ai_watch_morning_flood_end",
+    "ai_watch_morning_flood_include_pre",
     "ai_watch_admit_require_arm_ready",
     "ai_watch_admit_arm_ready_rth_only",
     "ai_watch_unarmable_evict_sec",
@@ -2138,6 +2150,10 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_soft_seed_momentum",
     "ai_watch_soft_seed_research",
     "ai_watch_soft_seed_max",
+    "ai_watch_morning_flood_enabled",
+    "ai_watch_morning_flood_start",
+    "ai_watch_morning_flood_end",
+    "ai_watch_morning_flood_include_pre",
     "ai_watch_warming_seats",
     "ai_watch_warming_exh_min",
     "ai_watch_warming_exh_max",

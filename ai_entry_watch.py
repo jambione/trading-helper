@@ -1887,16 +1887,24 @@ def _soft_seed_max_price(cfg: dict) -> Any:
         return cfg.get("ai_max_price", cfg.get("claude_max_price"))
 
 
-def _soft_seed_source_rows(cfg: dict) -> list[dict]:
+def _soft_seed_source_rows(
+    cfg: dict,
+    *,
+    now: float | None = None,
+) -> list[dict]:
     """Lightweight soft-seed shortlist from all enabled scout sources.
 
     Order (first claim wins within the soft-seed batch): trending → movers →
     momentum → research. Does **not** call ``desk_candidate_rows`` / clear
     seed-drop tallies. Inclusion still gates every row later.
+
+    During morning flood, momentum + research are not N-truncated (full desk
+    / board lists) and rows are stamped ``morning_flood=1``.
     """
     rows: list[dict] = []
     seen: set[str] = set()
     cfg = cfg if isinstance(cfg, dict) else {}
+    flood = morning_flood_active(cfg, now)
 
     def _add(sym: str, payload: dict) -> None:
         s = str(sym or "").upper().strip()
@@ -2052,7 +2060,9 @@ def _soft_seed_source_rows(cfg: dict) -> list[dict]:
                     "criteria": ["mom_open"],
                 }))
             scored.sort(key=lambda t: t[0], reverse=True)
-            for _, r in scored[:40]:
+            # Morning flood: take the full momentum desk list (no N truncate).
+            mom_cap = len(scored) if flood else 40
+            for _, r in scored[: max(0, mom_cap)]:
                 s = str(r.get("symbol") or "").upper().strip()
                 if not s:
                     continue
@@ -2062,6 +2072,8 @@ def _soft_seed_source_rows(cfg: dict) -> list[dict]:
                     f"soft_seed momentum {row.get('reason') or ''}".strip()[:80]
                 )
                 row["criteria"] = ["soft_seed", "momentum"]
+                if flood:
+                    row["morning_flood"] = 1
                 _add(s, row)
         except Exception:
             pass
@@ -2073,8 +2085,9 @@ def _soft_seed_source_rows(cfg: dict) -> list[dict]:
             max_price = _soft_seed_max_price(cfg)
             desk_rows, tr_by = _live_quote_map()
             added = 0
+            research_cap = 10_000 if flood else 40
             for r in research_candidate_rows():
-                if added >= 40:
+                if added >= research_cap:
                     break
                 s = str(r.get("symbol") or "").upper().strip()
                 if not s:
@@ -2102,6 +2115,9 @@ def _soft_seed_source_rows(cfg: dict) -> list[dict]:
                     px = float(px_src) if px_src is not None else None
                 except (TypeError, ValueError):
                     px = None
+                # Morning flood: missing price fail-closed (do not seat).
+                if flood and px is None:
+                    continue
                 pct_f = _pct_change_value(pct_src)
                 try:
                     dvol = (
@@ -2132,6 +2148,8 @@ def _soft_seed_source_rows(cfg: dict) -> list[dict]:
                     "criteria": ["soft_seed", "research"],
                     "score": score_f,
                 })
+                if flood:
+                    row["morning_flood"] = 1
                 before = len(rows)
                 _add(s, row)
                 if len(rows) > before:
@@ -2185,7 +2203,10 @@ def maybe_soft_seed_rows(
         max_n = max(0, int(cfg.get("ai_watch_soft_seed_max", 12) or 0))
     except (TypeError, ValueError):
         max_n = 12
-    if max_n <= 0:
+    flood = morning_flood_active(cfg, t0)
+    # Flood still needs a positive soft_seed_max for non-flood sources; flood
+    # momentum/research bypass the cap entirely below.
+    if max_n <= 0 and not flood:
         return [], False
 
     seen = set(seen or set())
@@ -2204,7 +2225,12 @@ def maybe_soft_seed_rows(
     far_cap = max_far_exh_seats(cfg)
 
     ranked: list[tuple[float, dict]] = []
-    for r in _soft_seed_source_rows(cfg):
+    try:
+        _src_rows = _soft_seed_source_rows(cfg, now=t0)
+    except TypeError:
+        # Tests / older monkeypatches may still use the one-arg signature.
+        _src_rows = _soft_seed_source_rows(cfg)
+    for r in _src_rows:
         sym = str(r.get("symbol") or "").upper().strip()
         if not sym or sym in seen:
             continue
@@ -2241,21 +2267,57 @@ def maybe_soft_seed_rows(
         return n
 
     picked: list[dict] = []
+
+    # Morning flood: seat every momentum + research/xai/agy name first
+    # (no soft_seed_max clip, no prefer-square/far refuse). Price floor hard.
+    if flood:
+        for _sc, row in ranked:
+            if not is_morning_flood_source(row):
+                continue
+            if not _morning_flood_price_ok(row, cfg):
+                continue
+            out = dict(row)
+            out["morning_flood"] = 1
+            out["scout_only"] = False
+            out["soft_seed"] = True
+            picked.append(out)
+        flood_syms = {
+            str(r.get("symbol") or "").upper().strip() for r in picked
+        }
+    else:
+        flood_syms = set()
+
     if not require_ready and not prefer_sq:
         for sc, row in ranked:
-            if len(picked) >= max_n:
+            sym = str(row.get("symbol") or "").upper().strip()
+            if sym in flood_syms:
+                continue
+            # Non-flood sources still honor soft_seed_max.
+            other_n = sum(
+                1 for r in picked
+                if str(r.get("symbol") or "").upper() not in flood_syms
+            )
+            if max_n > 0 and other_n >= max_n:
                 break
-            if sc < 0 and any(s >= 20 for s, _ in ranked[: max(1, max_n)]):
+            if sc < 0 and any(s >= 20 for s, _ in ranked[: max(1, max_n or 1)]):
                 continue
             picked.append(row)
         _SOFT_SEED_LAST_TS = t0
         return picked, True
 
     # Pass 1: square / pre_square keeps (arm-ready when required).
+    # Flood momentum/research already seated above; skip them here.
     for sc, row in ranked:
-        if len(picked) >= max_n:
+        sym = str(row.get("symbol") or "").upper().strip()
+        if sym in flood_syms:
+            continue
+        other_n = sum(
+            1 for r in picked
+            if str(r.get("symbol") or "").upper() not in flood_syms
+        )
+        if max_n > 0 and other_n >= max_n:
             break
-        if sc < 0 and any(s >= 20 for s, _ in ranked[: max(1, max_n)]):
+        if sc < 0 and any(s >= 20 for s, _ in ranked[: max(1, max_n or 1)]):
             continue
         cls = str(row.get("exh_seat_class") or "")
         if prefer_sq and cls not in ("square", "pre_square"):
@@ -2280,11 +2342,20 @@ def maybe_soft_seed_rows(
         row["scout_only"] = False
         picked.append(row)
 
+    def _other_keep_n() -> int:
+        return sum(
+            1 for r in picked
+            if str(r.get("symbol") or "").upper() not in flood_syms
+        )
+
     # Pass 1b: limited far keeps only when under far_cap and no prefer_square
     # hard refuse — when prefer_square, far never takes keep seats here.
-    if not prefer_sq and len(picked) < max_n:
+    if not prefer_sq and (max_n <= 0 or _other_keep_n() < max_n):
         for sc, row in ranked:
-            if len(picked) >= max_n:
+            sym = str(row.get("symbol") or "").upper().strip()
+            if sym in flood_syms:
+                continue
+            if max_n > 0 and _other_keep_n() >= max_n:
                 break
             if str(row.get("exh_seat_class") or "") != "far":
                 continue
@@ -2296,15 +2367,15 @@ def maybe_soft_seed_rows(
             picked.append(row)
 
     # Pass 2: scout-only warming / unknown (short TTL) — not far keeps.
-    if len(picked) < max_n:
+    if max_n <= 0 or _other_keep_n() < max_n:
         picked_syms = {
             str(r.get("symbol") or "").upper() for r in picked
         }
         for sc, row in ranked:
-            if len(picked) >= max_n:
+            if max_n > 0 and _other_keep_n() >= max_n:
                 break
             sym = str(row.get("symbol") or "").upper().strip()
-            if not sym or sym in picked_syms:
+            if not sym or sym in picked_syms or sym in flood_syms:
                 continue
             cls = str(row.get("exh_seat_class") or "")
             if prefer_sq and cls == "far":
@@ -3129,17 +3200,23 @@ def _is_unarmable_stale_watching(
             return False
         return (float(now) - float(since)) >= limit
     # Far dual-%R seats (square bus): stealable past far_exh grace — including
-    # pins so the book does not freeze on lagging names.
+    # pins so the book does not freeze on lagging names. Morning flood protects
+    # momentum/research seats from far-only steals (tape-dead still steals).
     if admit_prefer_square(cfg):
         cls = str(rec.get("exh_seat_class") or "")
         if not cls:
             cls, _ = classify_exh_seat(rec, cfg)
         if cls == "far":
-            limit = far_exh_evict_sec(cfg)
-            if limit > 0:
-                since = _f_or_none(rec.get("far_exh_since"))
-                if since is not None and (float(now) - float(since)) >= limit:
-                    return True
+            flood_hold = (
+                morning_flood_active(cfg, now)
+                and is_morning_flood_source(rec)
+            )
+            if not flood_hold:
+                limit = far_exh_evict_sec(cfg)
+                if limit > 0:
+                    since = _f_or_none(rec.get("far_exh_since"))
+                    if since is not None and (float(now) - float(since)) >= limit:
+                        return True
     if _is_stream_ready_seat(rec, cfg, now=now):
         return False
     src = str(
@@ -3335,6 +3412,9 @@ def _maybe_far_exh_evict(
 
     Pins are eligible (book must not freeze on HOOD/ONON-class lag). Promote
     instead of drop when the seat has become pre_square/square.
+
+    Morning flood: do not evict momentum / research seats solely for far /
+    prefer-square — keep them watched until 11:00. Tape-dead paths still drop.
     """
     if not admit_prefer_square(cfg):
         return False
@@ -3348,6 +3428,8 @@ def _maybe_far_exh_evict(
         return False
     _track_far_exh_seat(rec, cfg, now=now)
     if str(rec.get("exh_seat_class") or "") != "far":
+        return False
+    if morning_flood_active(cfg, now) and is_morning_flood_source(rec):
         return False
     since = _f_or_none(rec.get("far_exh_since"))
     if since is None or since <= 0:
@@ -3478,12 +3560,17 @@ def _preferential_unarmable_steal(
         if not isinstance(rec, dict):
             continue
         # Pins protected unless far dual-%R (square bus — don't freeze on lag).
+        # Morning flood still holds momentum/research far seats.
         pin_prot = _is_protected_pin_seat(rec, cfg, now=now)
         if pin_prot:
             cls = str(rec.get("exh_seat_class") or "")
             if not cls:
                 cls, _ = classify_exh_seat(rec, cfg)
-            if cls != "far" or not admit_prefer_square(cfg):
+            flood_hold = (
+                morning_flood_active(cfg, now)
+                and is_morning_flood_source(rec)
+            )
+            if cls != "far" or not admit_prefer_square(cfg) or flood_hold:
                 continue
         if _is_protected_warming_seat(rec, cfg, now=now):
             continue
@@ -5442,6 +5529,72 @@ def _et_hour_decimal(now: float | None = None) -> float | None:
         return None
 
 
+def _hhmm_to_hour_decimal(raw: Any, default: tuple[int, int]) -> float:
+    """Parse ``HH:MM`` to ET hour decimal (9.5 == 09:30)."""
+    h, m = _parse_hhmm(str(raw or ""), default)
+    return float(h) + float(m) / 60.0
+
+
+# Momentum + Trader Bro / research sources protected by the morning flood.
+_MORNING_FLOOD_RESEARCH_SOURCES = frozenset({
+    "research", "xai", "agy", "grok", "claude", "anthropic", "gemini", "google",
+})
+
+
+def is_morning_flood_source(row_or_src: Any) -> bool:
+    """True for momentum* or research/xai/agy seats (morning flood set)."""
+    if isinstance(row_or_src, dict):
+        src = str(row_or_src.get("source") or "").lower().strip()
+        crit = {str(c).lower() for c in (row_or_src.get("criteria") or [])}
+        if src.startswith("momentum") or "momentum" in crit or "mom_open" in crit:
+            return True
+        if src in _MORNING_FLOOD_RESEARCH_SOURCES or "research" in crit:
+            return True
+        return False
+    src = str(row_or_src or "").lower().strip()
+    return src.startswith("momentum") or src in _MORNING_FLOOD_RESEARCH_SOURCES
+
+
+def morning_flood_active(
+    cfg: dict | None = None,
+    now: float | None = None,
+) -> bool:
+    """True during the RTH morning flood window (default 09:30–11:00 ET).
+
+    When active: seat every momentum + Trader Bro/research name (bypass
+    soft_seed_max and source N caps for those sources); do not far-evict
+    them for prefer-square alone. Arms unchanged.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get("ai_watch_morning_flood_enabled", True)):
+        return False
+    hour = _et_hour_decimal(now)
+    if hour is None:
+        return False
+    start = _hhmm_to_hour_decimal(
+        cfg.get("ai_watch_morning_flood_start", "09:30"), (9, 30))
+    end = _hhmm_to_hour_decimal(
+        cfg.get("ai_watch_morning_flood_end", "11:00"), (11, 0))
+    if bool(cfg.get("ai_watch_morning_flood_include_pre", False)):
+        start = min(start, 9.0)
+    return float(start) <= float(hour) < float(end)
+
+
+def _morning_flood_price_ok(row: dict, cfg: dict | None = None) -> bool:
+    """Hard price floor for morning flood seats. Missing price → fail closed."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    px = _f_or_none(row.get("price") if isinstance(row, dict) else None)
+    if px is None:
+        return False
+    try:
+        min_px = float(cfg.get("ai_watch_min_price", 2.0) or 0.0)
+    except (TypeError, ValueError):
+        min_px = 2.0
+    if min_px <= 0:
+        return True
+    return float(px) + 1e-12 >= float(min_px)
+
+
 def past_eod_liquidate_time(cfg: dict | None, now: float | None = None) -> bool:
     """True on weekdays at/after ``ai_eod_liquidate_time`` ET (default 15:50).
 
@@ -6229,6 +6382,8 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
     except (TypeError, ValueError):
         min_rvol = 2.0
 
+    flood = morning_flood_active(cfg)
+
     if cfg.get("ai_watch_seed_momentum", True):
         try:
             n = int(cfg.get("ai_watch_seed_momentum_n", 12) or 12)
@@ -6241,11 +6396,17 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     continue
                 scored.append((sc, r))
             scored.sort(key=lambda t: t[0], reverse=True)
+            # Morning flood: no N truncate — seat the full flagged/big-mover set.
+            if flood:
+                n = max(n, len(scored))
             for _, r in scored[:n]:
                 if r["symbol"] in seen:
                     _note_proposal_overlap("momentum", r["symbol"], row=r)
                     continue
                 seen.add(r["symbol"])
+                if flood:
+                    r = dict(r)
+                    r["morning_flood"] = 1
                 rows.append(r)
         except Exception:
             pass
@@ -6257,6 +6418,9 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
         try:
             n = int(cfg.get("ai_watch_seed_momentum_open_n", 10) or 10)
             n = max(1, n)
+            if flood:
+                # Take the whole desk panel during flood (still price/RVOL gated).
+                n = max(n, 50)
             # Prefer names also on Stocktwits trending (heat overlap), then the
             # rest of the momentum panel so the book fills from the desk.
             tr_rank: dict[str, float] = {}
@@ -6426,6 +6590,9 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     _note_proposal_overlap("momentum", r["symbol"], row=r)
                     continue
                 seen.add(r["symbol"])
+                if flood:
+                    r = dict(r)
+                    r["morning_flood"] = 1
                 rows.append(r)
                 added += 1
         except Exception:
@@ -6748,6 +6915,9 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
     if cfg.get("ai_watch_seed_research", True):
         try:
             n = max(1, int(cfg.get("ai_watch_seed_research_n", 12) or 12))
+            # Morning flood: seat every Trader Bro / research board row.
+            if flood:
+                n = max(n, 10_000)
             # Shared with the movers seed — one implementation, so the two
             # cannot drift into two different ideas of "the live price".
             desk_rows, tr_by = _live_quote_map()
@@ -6776,6 +6946,9 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     px = float(px_src) if px_src is not None else None
                 except (TypeError, ValueError):
                     px = None
+                # Morning flood: missing price fail-closed (do not seat).
+                if flood and px is None:
+                    continue
                 pct_f = _pct_change_value(pct_src)
                 # Direction is decided ONCE, by ai_watch_require_uptrend in
                 # the inclusion gate — not here as well.
@@ -6840,6 +7013,8 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     "dollar_volume": (dvol * px) if (dvol and px) else None,
                     "criteria": ["research"],
                 })
+                if flood:
+                    row["morning_flood"] = 1
                 rows.append(row)
         except Exception:
             pass

@@ -29,6 +29,8 @@ def _cfg(**over):
         "ai_watch_scout_ttl_sec": 120.0,
         "ai_watch_warming_exh_min": 15.0,
         "ai_watch_warming_exh_max": 45.0,
+        # Isolate from wall-clock morning flood (09:30–11 ET).
+        "ai_watch_morning_flood_enabled": False,
     }
     c.update(over)
     return c
