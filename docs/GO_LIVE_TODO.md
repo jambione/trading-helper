@@ -71,8 +71,9 @@ Hard date we already locked; Stage dates are **earliest starts** assuming Phase 
 
 ### Ops / safety
 - [ ] **A. Rotate Alpaca + Finnhub credentials** (old §2.1 hole was public)
-- [ ] **D. Flatten drill** — open a small *paper* position, run `tools/flatten.py --yes`, confirm broker flat
-- [ ] **F. Fill-reconcile cron** — wire `tools/fill_reconcile.py` post-close; alert on nonzero exit
+- [~] **D. Flatten drill** — **cancel path PASSED 2026-09-20** on paper `PA3VCF6H9RXG`: resting SPY limit placed, `tools/flatten.py --yes` found `0 position(s) … 1 open order(s)`, cancelled, verified flat, exit 0. Confirmed independently at the broker (`CANCELED`, `filled_qty=0`, 0 orders / 0 positions) rather than trusting the tool's own "✓ Flat".
+  **Still owed: the position-close half.** Market was closed, so nothing could fill and the sell path was never exercised. Run with a real fill on **Tue 2026-09-22**, alongside the fractional smoke — not Monday, which is the Phase 1 scoring session.
+- [x] **F. Fill-reconcile cron** — wired into `tools/watchdog.py` after `daily_learn`, shouts on nonzero rc (`08fee09`). The tool could not have worked unattended before: `reconcile_day()` reads the broker via `alpaca_trader`, which is only `is_active()` after the **desk** calls `init()`, so every cron run returned `trader_off`. It now connects for itself via `flatten.resolve_credentials()`. **Needs a watchdog restart on the mini to take effect.**
 - [ ] Heartbeat / desk-dead alert when positions open
 - [ ] Written runbook (crash with positions, API down, Finnhub dead, mini unreachable)
 - [ ] UPS on mini; no auto OS updates during RTH
@@ -96,6 +97,13 @@ Hard date we already locked; Stage dates are **earliest starts** assuming Phase 
 - [ ] **Stage 2 — Quarter size** — concurrency back; daily brake + EOD liquidate exercised
 - [ ] **Stage 3 — Half size** — unplanned interruption handled per runbook
 - [ ] **Stage 4 — Target size** — only after three consecutive stages pass
+
+### Measurement integrity (found 2026-09-20 by the new reconcile)
+
+- [x] 2026-09-17 reconciles clean: ledger=134 broker=134 matched=134
+- [x] 2026-09-18 reconciles clean: ledger=164 broker=164 matched=164
+- [x] 2026-09-19 broker confirms ledger=0 broker=0 — Friday's no-op was real, not a logging failure (cause: `d7d05b5` tightened entry; fixed in `5820c0c`)
+- [ ] **2026-09-16 has a ledger hole: ledger=49 broker=80, 31 `BROKER_ONLY`** (FPS/RETO/LUXE/RUM). The fill ledger shipped 2026-09-18 and that day was backfilled incompletely. **Do not score 2026-09-16** — any expectancy or source-scorecard run covering it is reading ~60% of the fills. Decide: backfill it properly or exclude the day by policy.
 
 ### Edge gate (independent of plumbing)
 - [ ] Paper Phase 1 fed-book checkpoint green (Mon 2026-09-21+)
