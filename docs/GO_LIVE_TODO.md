@@ -1,6 +1,6 @@
 # Go-Live To-Do — $250 account path
 
-**Last updated:** 2026-09-19  
+**Last updated:** 2026-09-20  
 **Rule:** Monday 2026-09-21 is **paper Phase 1**, not live. Do not arm live until Stage 0 passes and paper edge is green.
 
 **Account intent:** $250 Alpaca account for first live dollars. Prefer **margin** (or confirm `multiplier` ≥ 2). Pure cash fights this desk’s turnover (T+1 / good-faith).
@@ -50,6 +50,8 @@ Hard date we already locked; Stage dates are **earliest starts** assuming Phase 
 4. **Do not** skip Stage 0 or arm live Mon–Fri next week just to chase the $99. Plumbing failures cost more than one month of SIP.
 
 **Success definition for “SIP from desk”:** first calendar month where live (or paper-proven then live) net P&L after the dollar kill buffer ≥ $99 *and* Phase B/RTH scoreboard still passes. Week-one is the *intent*, not the gate.
+
+**Full plan:** [`docs/SIP_FROM_250_PLAN.md`](SIP_FROM_250_PLAN.md) — dual track (live ramp + SIP replay), gates 0–5, funding rule, Phase B unlock.
 
 
 ## Already done (do not re-open)
