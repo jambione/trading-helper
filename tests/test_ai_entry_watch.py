@@ -5155,6 +5155,86 @@ def test_dual_r_ob_ignores_sticky_pctr_ob_cache():
     assert rec["indicator"]["pctr_ob"] is False
 
 
+def _left_ob_rec():
+    """A name whose live %R lines have faded out of OB, cache still latched."""
+    return {
+        "symbol": "MARA",
+        "indicator": {
+            "pctr": -40.0, "pctr_slow": -35.0,
+            "pctr_ob": True, "pctr_tight": True,
+        },
+    }
+
+
+def test_entry_square_keeps_the_friday_or_latch():
+    """Entry arms on cached-OR-live; that is the 2026-09-18 close behaviour.
+
+    d7d05b5 made the square live-math-only to kill a multi-minute leave-OB
+    lag on MARA. That was an *exit* bug, so the fix stays on the exit path
+    and entry keeps the latch it had at Friday's close.
+    """
+    import ai_entry_watch as ew
+
+    cfg = {"rte_threshold": 20, "rte_confluence_max": 15.0}
+    both_ob, tight, err = ew.dual_r_ob_tight(_left_ob_rec(), cfg, sticky=True)
+    assert err is None
+    assert both_ob is True
+    assert tight is True
+
+
+def test_exit_square_still_drops_the_latch():
+    """The MARA fix: the exit path reads live math, never the cache."""
+    import ai_entry_watch as ew
+
+    cfg = {"rte_threshold": 20, "rte_confluence_max": 15.0}
+    both_ob, _tight, err = ew.dual_r_ob_tight(_left_ob_rec(), cfg)
+    assert err is None
+    assert both_ob is False
+
+
+def test_sticky_square_never_writes_the_cache():
+    """A sticky read must leave the latch for the next caller."""
+    import ai_entry_watch as ew
+
+    cfg = {"rte_threshold": 20, "rte_confluence_max": 15.0}
+    rec = _left_ob_rec()
+    ew.dual_r_ob_tight(rec, cfg, sticky=True)
+    assert rec["indicator"]["pctr_ob"] is True
+    assert rec["indicator"]["pctr_tight"] is True
+
+
+def test_is_overbought_short_circuits_on_the_latch():
+    """should_arm_buy calls is_overbought before the entry square.
+
+    It returns True straight off a latched ``pctr_ob`` without reaching
+    dual_r_ob_tight, so it can never overwrite the latch the entry path
+    reads later in the same poll. That ordering is what makes the entry
+    latch safe without a write guard.
+    """
+    import ai_entry_watch as ew
+
+    cfg = {"rte_threshold": 20, "rte_confluence_max": 15.0}
+    rec = _left_ob_rec()
+    assert ew.is_overbought(rec, cfg) is True
+    assert rec["indicator"]["pctr_ob"] is True       # latch survives
+    both_ob, _tight, _err = ew.dual_r_ob_tight(rec, cfg, sticky=True)
+    assert both_ob is True
+
+
+def test_live_both_ob_holds_for_entry_despite_false_cache():
+    """A stale False cache must not block an entry the live lines allow."""
+    import ai_entry_watch as ew
+
+    cfg = {"rte_threshold": 20, "rte_confluence_max": 15.0}
+    rec = {"indicator": {
+        "pctr": -10.0, "pctr_slow": -8.0, "pctr_ob": False, "pctr_tight": False,
+    }}
+    both_ob, tight, err = ew.dual_r_ob_tight(rec, cfg, sticky=True)
+    assert err is None
+    assert both_ob is True
+    assert tight is True
+
+
 def test_left_overbought_confirm_and_flicker_cancel():
     """Leave must persist confirm_sec; dual OB returning cancels pending (APLD)."""
     import ai_entry_watch as ew

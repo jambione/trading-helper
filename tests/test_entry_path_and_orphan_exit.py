@@ -42,6 +42,11 @@ def test_adopted_orphans_keep_left_overbought_when_edge_mode_disables_it():
         "ai_exit_left_overbought": False,
         "ai_watch_exhaustion_rules": True,
         "rte_threshold": 20,
+        # This test is about which config *enables* the exit, not about the
+        # leave debounce d7d05b5 added. Confirm is exercised on its own in
+        # test_left_overbought_confirm_and_flicker_cancel; at the shipped 3s
+        # default a single call here only ever answers left_overbought_pending.
+        "ai_exit_left_overbought_confirm_sec": 0.0,
     }
     # Globally the exit is off.
     assert ew.left_overbought_exit_enabled(hybrid) is False

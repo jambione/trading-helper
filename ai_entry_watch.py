@@ -10336,6 +10336,8 @@ def _rte_confluence_max(cfg: dict | None) -> float:
 def dual_r_ob_tight(
     record: dict,
     cfg: dict | None = None,
+    *,
+    sticky: bool = False,
 ) -> tuple[bool | None, bool | None, str | None]:
     """Dual-%R square read: ``(both_ob, tight, refuse_reason)``.
 
@@ -10343,9 +10345,15 @@ def dual_r_ob_tight(
     ``refuse_reason`` is set when the square cannot be evaluated or fails
     a hard presence check (``no_exhaustion_data``).
 
-    ``both_ob`` is live math only (fast ≥ −thr AND slow ≥ −thr). A sticky
-    ``pctr_ob`` cache must not keep hold after the lines have left OB —
-    that OR-latch was the MARA 2026-09-18 multi-minute triangle lag.
+    ``sticky`` restores the pre-d7d05b5 OR-latch (cached ``pctr_ob`` /
+    ``pctr_tight`` OR live math) and never writes the cache. Only the entry
+    path uses it — see ``_square_exh_allows_buy``. Every other caller reads
+    live math and refreshes the cache, which is the MARA leave-OB fix.
+
+    By default ``both_ob`` is live math only (fast ≥ −thr AND slow ≥ −thr).
+    On the exit path a sticky ``pctr_ob`` cache must not keep hold after the
+    lines have left OB — that OR-latch was the MARA 2026-09-18 multi-minute
+    triangle lag.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
@@ -10354,12 +10362,22 @@ def dual_r_ob_tight(
     if fast is None or slow is None:
         return None, None, "no_exhaustion_data"
     thr = _rte_threshold(cfg)
-    both_ob = float(fast) >= -thr and float(slow) >= -thr
-    # Keep cache honest when callers pass a mutable indicator dict.
-    ind["pctr_ob"] = bool(both_ob)
     tight_max = _rte_confluence_max(cfg)
     gap = abs(float(fast) - float(slow))
-    tight = gap <= tight_max + 1e-9
+    live_ob = float(fast) >= -thr and float(slow) >= -thr
+    live_tight = gap <= tight_max + 1e-9
+    if sticky:
+        # Friday (pre-d7d05b5) entry semantics: a cached hold still counts.
+        # Never writes, so a live-math caller earlier in the same poll
+        # cannot silently defeat the latch.
+        both_ob = bool(ind.get("pctr_ob")) or live_ob
+        tight = bool(ind.get("pctr_tight")) or live_tight
+        ind["pctr_gap"] = round(gap, 2)
+        return bool(both_ob), bool(tight), None
+    both_ob = live_ob
+    tight = live_tight
+    # Keep cache honest when callers pass a mutable indicator dict.
+    ind["pctr_ob"] = bool(both_ob)
     ind["pctr_tight"] = bool(tight and both_ob)
     ind["pctr_gap"] = round(gap, 2)
     return bool(both_ob), bool(tight), None
@@ -11284,7 +11302,8 @@ def _square_exh_allows_buy(
     the square (dual OB+tight) may arm even if flat (pinned at highs).
     """
     ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
-    both_ob, tight, err = dual_r_ob_tight(record, cfg)
+    # Entry keeps Friday's OR-latch; the exit path stays live math.
+    both_ob, tight, err = dual_r_ob_tight(record, cfg, sticky=True)
     if err:
         if require_rising and (
             ind.get("pctr_falling") or exhaustion_state(record, cfg) == "cooling"
