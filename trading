@@ -152,7 +152,7 @@ cmd_start() {
         # code change: it stopped and never came back.
         if ! _running "tools/watchdog.py"; then
             echo "Watchdog was down — restarting it"
-            nohup "$PY" -u tools/watchdog.py >>"$LOGDIR/watchdog.log" 2>&1 &
+            nohup "$PY" -u tools/watchdog.py >>"$LOGDIR/watchdog.log" 2>&1 </dev/null &
             echo "$!" >> "$PIDFILE"
         fi
         cmd_status
@@ -175,7 +175,7 @@ cmd_start() {
     if [ "$dash_up" = 0 ]; then
         echo "Starting dashboard → $URL"
         : > "$LOGDIR/dashboard.log"
-        nohup "$PY" -u dashboard.py >"$LOGDIR/dashboard.log" 2>&1 &
+        nohup "$PY" -u dashboard.py >"$LOGDIR/dashboard.log" 2>&1 </dev/null &
         echo "$!" >> "$PIDFILE"
 
         # Wait for the dashboard to bind the port before launching the engine,
@@ -199,13 +199,13 @@ cmd_start() {
 
     if [ "$eng_up" = 0 ]; then
         echo "Starting signal engine"
-        nohup "$PY" -u signal_engine.py  >"$LOGDIR/engine.log" 2>&1 &
+        nohup "$PY" -u signal_engine.py  >"$LOGDIR/engine.log" 2>&1 </dev/null &
         echo "$!" >> "$PIDFILE"
     fi
 
     if [ "$disc_up" = 0 ]; then
         echo "Starting Discord OCR source"
-        nohup "$PY" -u discord_source.py >"$LOGDIR/discord.log" 2>&1 &
+        nohup "$PY" -u discord_source.py >"$LOGDIR/discord.log" 2>&1 </dev/null &
         echo "$!" >> "$PIDFILE"
     fi
 
@@ -214,19 +214,19 @@ cmd_start() {
     # /api/state — without them those panels stay empty.
     if [ "$trend_up" = 0 ]; then
         echo "Starting trending screener"
-        nohup "$PY" -u trending_screener.py >"$LOGDIR/trending.log" 2>&1 &
+        nohup "$PY" -u trending_screener.py >"$LOGDIR/trending.log" 2>&1 </dev/null &
         echo "$!" >> "$PIDFILE"
     fi
 
     if [ "$movers_up" = 0 ]; then
         echo "Starting movers screener"
-        nohup "$PY" -u movers_screener.py >"$LOGDIR/movers.log" 2>&1 &
+        nohup "$PY" -u movers_screener.py >"$LOGDIR/movers.log" 2>&1 </dev/null &
         echo "$!" >> "$PIDFILE"
     fi
 
     if [ "$claude_up" = 0 ]; then
         echo "Starting AI trader (Claude + Grok research desk)"
-        nohup "$PY" -u ai_trader.py >"$LOGDIR/ai_trader.log" 2>&1 &
+        nohup "$PY" -u ai_trader.py >"$LOGDIR/ai_trader.log" 2>&1 </dev/null &
         echo "$!" >> "$PIDFILE"
     fi
 
@@ -234,9 +234,22 @@ cmd_start() {
 
     # Watchdog last: it restarts whatever is down, so starting it before the
     # others would have it racing this function to launch the same processes.
+    #
+    # Being last is also why it is the one that dies when the stack is started
+    # by com.jambi.trading-desk: that job is `bash -lc './trading restart'`,
+    # which exits the moment this function returns. nohup detaches from SIGHUP
+    # but does NOT replace fd 0, so every service here inherits the launching
+    # shell's stdin; when that shell goes away fd 0 becomes invalid and Python
+    # dies in init_sys_streams ("[Errno 9] Bad file descriptor") before it can
+    # write a line to its own log. The services started earlier are usually
+    # past that point in time; the watchdog, started last, loses the race.
+    # Observed 2026-09-20: launchctl kickstart left every service up and the
+    # watchdog dead, with logs/watchdog.log not even truncated.
+    # `</dev/null` is the same fix run_learn_job already applies to its own
+    # children, and for the same reason.
     if ! _running "tools/watchdog.py"; then
         echo "Starting watchdog (restarts the stack if a process drops)"
-        nohup "$PY" -u tools/watchdog.py >"$LOGDIR/watchdog.log" 2>&1 &
+        nohup "$PY" -u tools/watchdog.py >"$LOGDIR/watchdog.log" 2>&1 </dev/null &
         echo "$!" >> "$PIDFILE"
     fi
 
