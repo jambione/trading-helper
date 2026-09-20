@@ -55,13 +55,14 @@ RTH is a fixed ~6.5h ceiling. Phase B adds ~04:00–09:30 ET of *tradable* time 
 **Sources (priority):**
 1. **Momentum seed — primary** (most valuable premarket)
 2. Movers
-3. Mention burst
-4. Trending
-5. **Off v1:** research / seed_rank
+3. Mention burst / trending — **off WP1 allow-list** (`ai_phase_b_sources_allow=momentum,movers`); set `all` to restore
+4. **Off v1:** research / seed_rank (RTH morning flood stays separate)
 
 **Size:** 4–6 Phase B seats; **max 1–2 concurrent opens**; isolated from RTH elite pins.
 
-**Price:** **do not skip sub-$5** — floor = desk `ai_watch_min_price` (~$2). Thin-tape risk managed by print-age, TTL, and small size — not by cutting momentum names.
+**Price:** floor = desk `ai_watch_min_price` (~$2) via `ai_phase_b_min_price` (null → watch min). Sub-$5 still allowed.
+
+**Liquidity (WP1, 2026-09-20):** `ai_phase_b_min_prior_dollar_vol` default **$2M** (prior RTH-day close×volume, delayed SIP daily). Fail closed when unknown. Counterfactual on Gate 1 admits (9/17–9/18): SIP clear-112 **45.9% → ~60.3%** without buying live SIP. Set `0` to disable. Does **not** retune Gate 1 go/no-go bars.
 
 **Drop:** no fresh last ~60–90s after seat → demote; drain-only after 09:25.
 

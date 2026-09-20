@@ -127,3 +127,28 @@ def test_score_symbol_day_offline_dfs():
     assert rec["iex_clear_112"] is False
     assert rec["square_minutes"] > 0
     assert rec["sip_bars_0415_0920"] >= 112
+
+
+def test_filter_pairs_by_prior_dollar_vol_annotated():
+    pairs = [
+        {"day": "2026-09-17", "symbol": "FAT", "universe": "phase_b_admit",
+         "prior_dollar_vol": 5_000_000, "sip_clear_112": True,
+         "sip_bars_0415_0920": 200, "iex_bars_0415_0920": 0,
+         "iex_clear_112": False, "square_minutes": 1, "pre_square_minutes": 2},
+        {"day": "2026-09-17", "symbol": "THIN", "universe": "phase_b_admit",
+         "prior_dollar_vol": 100_000, "sip_clear_112": False,
+         "sip_bars_0415_0920": 20, "iex_bars_0415_0920": 0,
+         "iex_clear_112": False, "square_minutes": 0, "pre_square_minutes": 0},
+        {"day": "2026-09-17", "symbol": "UNK", "universe": "phase_b_admit",
+         "sip_clear_112": False, "sip_bars_0415_0920": 10,
+         "iex_bars_0415_0920": 0, "iex_clear_112": False,
+         "square_minutes": 0, "pre_square_minutes": 0},
+    ]
+    kept, dig = sip.filter_pairs_by_prior_dollar_vol(
+        pairs, 2_000_000, fetch=False,
+    )
+    assert [r["symbol"] for r in kept] == ["FAT"]
+    assert dig["n_dropped_below"] == 1
+    assert dig["n_dropped_unknown"] == 1
+    summary = sip.summarize_pairs(kept)
+    assert summary["verdict"]["decision"] == "go"

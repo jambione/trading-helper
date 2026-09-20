@@ -26,14 +26,19 @@ SOURCE_PRIORITY = (
     "burst",
     "trending",
 )
-# Explicitly off for v1 Phase B book.
+# Explicitly off for v1 Phase B book (RTH morning flood stays separate).
 SOURCE_OFF_V1 = frozenset({"research", "seed_rank"})
+# WP1 default allow-list when ai_phase_b_sources_allow is unset/empty in older
+# configs — momentum+movers only (SIP-computable preference).
+SOURCES_ALLOW_V1_DEFAULT = ("momentum", "movers")
 
 _BOOK_LOCK = threading.Lock()
 _BOOK_OVERRIDE: Path | None = None
 _BOOK: dict[str, dict[str, Any]] = {}
 # ET day → max concurrent Phase B opens observed this process.
 _PEAK_OPENS_BY_DAY: dict[str, int] = {}
+# (symbol, prior_day) → dollar volume or None (negative cache).
+_PRIOR_DVOL_CACHE: dict[tuple[str, str], float | None] = {}
 
 
 def _cfg(cfg: dict | None = None) -> dict:
@@ -113,6 +118,176 @@ def min_price(cfg: dict | None = None) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return 2.0
+
+
+def min_prior_dollar_vol(cfg: dict | None = None) -> float:
+    """Prior RTH-day close×volume floor. ≤0 disables the liquidity gate."""
+    try:
+        return float(_cfg(cfg).get("ai_phase_b_min_prior_dollar_vol", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def sources_allow(cfg: dict | None = None) -> frozenset[str] | None:
+    """Allowed admit sources, or None when unrestricted (full SOURCE_PRIORITY).
+
+    ``DEFAULT_CONFIG`` sets ``momentum,movers`` (WP1). Explicit empty / ``*`` /
+    ``all`` restores mention/trending. Key absent on a partial cfg → None so
+    unit tests that omit the knob keep legacy priority behavior.
+    Research/seed_rank stay off via SOURCE_OFF_V1 either way.
+    """
+    c = _cfg(cfg)
+    if "ai_phase_b_sources_allow" not in c:
+        return None
+    raw = c.get("ai_phase_b_sources_allow")
+    if raw is None:
+        return frozenset(SOURCES_ALLOW_V1_DEFAULT)
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        parts = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        s = str(raw).strip().lower()
+        if not s or s in ("*", "all", "any"):
+            return None
+        parts = [p.strip() for p in s.split(",") if p.strip()]
+    if not parts:
+        return None
+    return frozenset(parts)
+
+
+def source_allowed(source: str | None, cfg: dict | None = None) -> bool:
+    src = str(source or "").strip().lower()
+    if not src or src in SOURCE_OFF_V1:
+        return False
+    allow = sources_allow(cfg)
+    if allow is None:
+        return True
+    if src in allow:
+        return True
+    # Soft-seed tags sometimes embed the board name ("soft_seed_momentum").
+    return any(a in src or src.endswith(a) for a in allow)
+
+
+def _prior_weekday(day: str) -> str:
+    from datetime import timedelta
+    d = datetime.fromisoformat(day).date()
+    d = d - timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d.isoformat()
+
+
+def prior_day_dollar_vol(
+    symbol: str,
+    *,
+    day: str | None = None,
+    now: float | None = None,
+    client=None,
+) -> float | None:
+    """Prior RTH weekday close × volume via delayed SIP daily bars (research).
+
+    Returns None when unknown (caller fail-closes when floor > 0). Cached per
+    (symbol, prior_day) for the process lifetime.
+    """
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return None
+    if day is None:
+        day = _et_dt(now).strftime("%Y-%m-%d")
+    prior = _prior_weekday(day)
+    key = (sym, prior)
+    if key in _PRIOR_DVOL_CACHE:
+        return _PRIOR_DVOL_CACHE[key]
+
+    dvol: float | None = None
+    try:
+        from datetime import timedelta, timezone
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+        from alpaca.data.enums import DataFeed
+
+        if client is None:
+            try:
+                import sys
+                tools = str(Path(__file__).resolve().parent / "tools")
+                if tools not in sys.path:
+                    sys.path.insert(0, tools)
+                import bars as _bars
+                client = _bars.client()
+            except Exception:
+                client = None
+        if client is None:
+            _PRIOR_DVOL_CACHE[key] = None
+            return None
+
+        start = datetime.fromisoformat(prior).replace(
+            hour=0, minute=0, second=0, microsecond=0, tzinfo=ET,
+        )
+        end = start + timedelta(days=1)
+        df = client.get_stock_bars(StockBarsRequest(
+            symbol_or_symbols=sym,
+            timeframe=TimeFrame.Day,
+            start=start.astimezone(timezone.utc),
+            end=end.astimezone(timezone.utc),
+            limit=5,
+            feed=DataFeed.SIP,
+        )).df
+        if df is not None and not getattr(df, "empty", True):
+            if getattr(df.index, "nlevels", 1) > 1:
+                df = df.xs(sym, level="symbol")
+            row = df.iloc[-1]
+            dvol = float(row["close"]) * float(row["volume"])
+            if dvol < 0 or dvol != dvol:  # NaN
+                dvol = None
+    except Exception:
+        dvol = None
+    _PRIOR_DVOL_CACHE[key] = dvol
+    return dvol
+
+
+def clear_prior_dvol_cache() -> None:
+    _PRIOR_DVOL_CACHE.clear()
+
+
+def liquidity_ok(
+    row: dict | None = None,
+    cfg: dict | None = None,
+    *,
+    symbol: str | None = None,
+    dollar_vol: float | None = None,
+    day: str | None = None,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    """Price floor + prior-day dollar-volume floor. Fail closed on unknown dvol."""
+    c = _cfg(cfg)
+    row = row if isinstance(row, dict) else {}
+    sym = str(symbol or row.get("symbol") or "").upper().strip()
+    px = row.get("price")
+    if not price_ok_for_book(px, c):
+        return False, "phase_b_min_price"
+
+    floor = min_prior_dollar_vol(c)
+    if floor <= 0:
+        return True, "ok"
+
+    dvol = dollar_vol
+    if dvol is None and row.get("prior_dollar_vol") is not None:
+        try:
+            dvol = float(row.get("prior_dollar_vol"))
+        except (TypeError, ValueError):
+            dvol = None
+    if dvol is None and row.get("dollar_volume") is not None:
+        try:
+            dvol = float(row.get("dollar_volume"))
+        except (TypeError, ValueError):
+            dvol = None
+    if dvol is None and sym:
+        dvol = prior_day_dollar_vol(sym, day=day, now=now)
+
+    if dvol is None:
+        return False, "phase_b_liquidity_unknown"
+    if float(dvol) < float(floor):
+        return False, "phase_b_liquidity"
+    return True, "ok"
 
 
 def max_seats(cfg: dict | None = None) -> int:
@@ -528,14 +703,19 @@ def price_ok_for_book(price: float | None, cfg: dict | None = None) -> bool:
 
 
 def sort_candidates(rows: list[dict], cfg: dict | None = None) -> list[dict]:
-    """Momentum → movers → mention burst → trending; drop research/seed_rank."""
+    """Momentum → movers (WP1 allow-list); drop research/seed_rank.
+
+    Prior-day $-vol is enforced in ``admit_candidate`` (may hit the daily-bar
+    cache). Sort only applies cheap source + price filters so soft-seed scans
+    stay free of per-row REST calls.
+    """
     c = _cfg(cfg)
     out: list[dict] = []
     for r in rows:
         if not isinstance(r, dict):
             continue
         src = str(r.get("source") or "").strip().lower()
-        if src in SOURCE_OFF_V1:
+        if not source_allowed(src, c):
             continue
         if not price_ok_for_book(r.get("price"), c):
             continue
@@ -569,10 +749,11 @@ def admit_candidate(
     if not sym:
         return False, "no_symbol"
     src = str(row.get("source") or "").strip().lower()
-    if src in SOURCE_OFF_V1:
+    if src in SOURCE_OFF_V1 or not source_allowed(src, c):
         return False, "phase_b_source_off"
-    if not price_ok_for_book(row.get("price"), c):
-        return False, "phase_b_min_price"
+    ok_liq, why_liq = liquidity_ok(row, c, symbol=sym, now=now)
+    if not ok_liq:
+        return False, why_liq
     if sym in book:
         return False, "already_seated"
     seats = max_seats(c)
@@ -1110,6 +1291,9 @@ def gather_candidates(cfg: dict | None = None) -> list[dict]:
                     if "momentum" not in src and "mover" not in src:
                         r = dict(r)
                         r["source"] = "mention_burst"
+                # WP1 allow-list drops mention/trending before sort when locked.
+                if not source_allowed(r.get("source"), c):
+                    continue
                 rows.append(r)
     except Exception:
         pass
@@ -1198,6 +1382,7 @@ def _config_fingerprint(cfg: dict | None = None) -> dict[str, Any]:
         "ai_phase_b_max_open", "ai_phase_b_entry_limit_ttl_sec",
         "ai_phase_b_print_max_age_sec", "ai_phase_b_hard_stop_pct",
         "ai_phase_b_no_rth_handoff", "ai_phase_b_working_sell",
+        "ai_phase_b_min_prior_dollar_vol", "ai_phase_b_sources_allow",
     )
     return {k: c.get(k) for k in keys}
 

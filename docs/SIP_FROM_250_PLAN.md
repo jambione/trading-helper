@@ -75,7 +75,8 @@ When banked ≥$99 past kill           Subscribe Algo Trader Plus
 
 ### Gate 1 — SIP evidence ($0) — Track B
 - [x] Replay tool shipped: [`tools/phase_b_sip_replay.py`](../tools/phase_b_sip_replay.py) (PR #32 / `de3d64f`); brief [`docs/SIP_HISTORICAL_REPLAY_CLI_BRIEF.md`](SIP_HISTORICAL_REPLAY_CLI_BRIEF.md)
-- [x] Mini run **2026-09-20** → verdict **LATER**: SIP clear-112 **45.9%** (39/85 pairs, days 9/17–9/18); IEX clear **0%**; median SIP bars on clear **250**. Below go (60%), above no-go (40%). Feed choke confirmed; **do not subscribe yet**. Re-run when more Phase B ledger days exist.
+- [x] Mini run **2026-09-20** → verdict **LATER**: SIP clear-112 **45.9%** (39/85 pairs, days 9/17–9/18); IEX clear **0%**; median SIP bars on clear **250**. Below go (60%), above no-go (40%). Feed choke confirmed; **do not subscribe yet**.
+- [ ] WP1 admit liquidity floor (`ai_phase_b_min_prior_dollar_vol=2e6`, sources `momentum,movers`): counterfactual on same pairs → ~**60.3%** clear (go bar). Confirm with `--rescore-dir` on mini after merge; subscribe still unchecked until funding gate.
 - [ ] Do **not** buy SIP on missing-print pain alone without a **go** verdict
 ### Gate 2 — Live plumbing (earliest ~Sep 28)
 - [ ] Cash account: read `multiplier`; convert to **margin** if `1` (T+1 fights this desk)

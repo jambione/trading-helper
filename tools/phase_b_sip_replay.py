@@ -27,6 +27,13 @@ Offline summary from precomputed day JSONs::
     .venv/bin/python tools/phase_b_sip_replay.py \\
       --fixture-dir tests/fixtures/phase_b_sip_replay/summary_go \\
       --out /tmp/phase_b_sip_replay_go
+
+WP1 counterfactual (re-filter an existing replay with prior-day $-vol)::
+
+    .venv/bin/python tools/phase_b_sip_replay.py \\
+      --rescore-dir ai_reports/phase_b_sip_replay \\
+      --min-prior-dollar-vol 2000000 \\
+      --out ai_reports/phase_b_sip_replay_liq2m/
 """
 from __future__ import annotations
 
@@ -721,6 +728,67 @@ def load_fixture_day_results(fixture_dir: Path) -> list[dict[str, Any]]:
     return pairs
 
 
+def filter_pairs_by_prior_dollar_vol(
+    pairs: list[dict[str, Any]],
+    min_prior_dollar_vol: float,
+    *,
+    sleep_s: float = 0.05,
+    fetch: bool = True,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Keep pairs whose prior RTH-day close×volume ≥ floor (fail closed on None).
+
+    Uses ``phase_b.prior_day_dollar_vol`` (delayed SIP daily bars) when
+    ``fetch`` and the row lacks ``prior_dollar_vol``. Annotates kept rows.
+    Returns (kept, dig_stats).
+    """
+    floor = float(min_prior_dollar_vol or 0.0)
+    if floor <= 0:
+        return list(pairs), {"min_prior_dollar_vol": 0, "n_in": len(pairs), "n_out": len(pairs)}
+
+    pb = None
+    if fetch:
+        import phase_b as pb  # noqa: F811
+
+    kept: list[dict[str, Any]] = []
+    n_unknown = 0
+    n_below = 0
+    for row in pairs:
+        if str(row.get("universe") or "phase_b_admit") != "phase_b_admit":
+            kept.append(row)
+            continue
+        sym = str(row.get("symbol") or "").upper().strip()
+        day = str(row.get("day") or "")
+        dvol = row.get("prior_dollar_vol")
+        if dvol is None and row.get("dollar_volume") is not None:
+            dvol = row.get("dollar_volume")
+        if dvol is None and fetch and pb is not None:
+            dvol = pb.prior_day_dollar_vol(sym, day=day)
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+        try:
+            dvol_f = float(dvol) if dvol is not None else None
+        except (TypeError, ValueError):
+            dvol_f = None
+        if dvol_f is None:
+            n_unknown += 1
+            continue
+        if dvol_f < floor:
+            n_below += 1
+            continue
+        rec = dict(row)
+        rec["prior_dollar_vol"] = round(dvol_f, 2)
+        kept.append(rec)
+
+    dig = {
+        "min_prior_dollar_vol": floor,
+        "n_in": len(pairs),
+        "n_out": len(kept),
+        "n_dropped_unknown": n_unknown,
+        "n_dropped_below": n_below,
+    }
+    return kept, dig
+
+
 def write_outputs(
     out_dir: Path,
     by_day: dict[str, list[dict]],
@@ -757,6 +825,7 @@ def run_replay(
     cfg: dict | None = None,
     client=None,
     sleep_s: float = 0.15,
+    min_prior_dollar_vol: float = 0.0,
 ) -> dict[str, Any]:
     report_dir = report_dir or (ROOT / "ai_reports")
     c = rte_cfg(cfg)
@@ -808,9 +877,20 @@ def run_replay(
             flush=True,
         )
 
+    dig = None
+    if float(min_prior_dollar_vol or 0.0) > 0:
+        all_pairs, dig = filter_pairs_by_prior_dollar_vol(
+            all_pairs, float(min_prior_dollar_vol), sleep_s=sleep_s, fetch=True,
+        )
+        by_day = {}
+        for p in all_pairs:
+            by_day.setdefault(str(p.get("day")), []).append(p)
+
     summary = summarize_pairs(all_pairs)
     summary["feeds"] = {"sip": feed_sip, "iex": feed_iex}
     summary["admit_kinds"] = sorted(ADMIT_KINDS)
+    if dig:
+        summary["liquidity_filter"] = dig
     write_outputs(out_dir, by_day, summary)
     return summary
 
@@ -853,6 +933,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip Alpaca: load precomputed day JSONs and write summary only",
     )
     ap.add_argument(
+        "--rescore-dir",
+        default="",
+        help="Re-filter an existing phase_b_sip_replay day-JSON dir (WP1 counterfactual)",
+    )
+    ap.add_argument(
+        "--min-prior-dollar-vol",
+        type=float,
+        default=0.0,
+        help="Liquidity floor for admit pairs (prior RTH-day close×volume). "
+             "0=off. WP1 default live knob is 2e6.",
+    )
+    ap.add_argument(
         "--report-dir",
         default=str(ROOT / "ai_reports"),
         help="ai_reports root for seed_rank / movers fallback",
@@ -861,18 +953,40 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     out_dir = Path(args.out)
+    min_dvol = float(args.min_prior_dollar_vol or 0.0)
 
-    if args.fixture_dir:
-        pairs = load_fixture_day_results(Path(args.fixture_dir))
+    if args.fixture_dir or args.rescore_dir:
+        src = Path(args.rescore_dir or args.fixture_dir)
+        pairs = load_fixture_day_results(src)
+        dig = None
+        if min_dvol > 0:
+            # fixture-dir: annotated vols only (no network). rescore-dir: fetch.
+            pairs, dig = filter_pairs_by_prior_dollar_vol(
+                pairs,
+                min_dvol,
+                sleep_s=0.0 if args.fixture_dir else float(args.sleep),
+                fetch=bool(args.rescore_dir),
+            )
         by_day: dict[str, list[dict]] = {}
         for p in pairs:
             by_day.setdefault(str(p.get("day")), []).append(p)
         summary = summarize_pairs(pairs)
         summary["feeds"] = {"sip": args.feed_sip, "iex": args.feed_iex}
         summary["admit_kinds"] = sorted(ADMIT_KINDS)
-        summary["fixture_dir"] = str(args.fixture_dir)
+        if args.fixture_dir:
+            summary["fixture_dir"] = str(args.fixture_dir)
+        if args.rescore_dir:
+            summary["rescore_dir"] = str(args.rescore_dir)
+        if dig:
+            summary["liquidity_filter"] = dig
         write_outputs(out_dir, by_day, summary)
         print(render_summary_md(summary))
+        if dig:
+            print(
+                f"[liq] in={dig['n_in']} out={dig['n_out']} "
+                f"below={dig['n_dropped_below']} unknown={dig['n_dropped_unknown']}",
+                flush=True,
+            )
         decision = (summary.get("verdict") or {}).get("decision")
         return 0 if decision == "go" else 1
 
@@ -900,6 +1014,7 @@ def main(argv: list[str] | None = None) -> int:
         report_dir=Path(args.report_dir),
         cfg=cfg,
         sleep_s=float(args.sleep),
+        min_prior_dollar_vol=min_dvol,
     )
     print(render_summary_md(summary))
     print(f"Wrote {out_dir / 'summary.md'}", flush=True)
