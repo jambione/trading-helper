@@ -102,7 +102,7 @@ Hard date we already locked; Stage dates are **earliest starts** assuming Phase 
 
 - [x] 2026-09-17 reconciles clean: ledger=134 broker=134 matched=134
 - [x] 2026-09-18 reconciles clean: ledger=164 broker=164 matched=164
-- [x] 2026-09-19 broker confirms ledger=0 broker=0 — Friday's no-op was real, not a logging failure (cause: `d7d05b5` tightened entry; fixed in `5820c0c`)
+- [x] **2026-09-19 is a SATURDAY** — ledger=0 broker=0 is correct, not an outage. An earlier note in this file called it a no-op Friday and blamed `d7d05b5`; that was a calendar error. Friday was **2026-09-18** (79 buy fills, reconciles exactly). `d7d05b5` tightens entry from 9/18's close onward, so it has never traded a session — `5820c0c` pre-empts it before Monday rather than repairing a loss.
 - [ ] **2026-09-16 has a ledger hole: ledger=49 broker=80, 31 `BROKER_ONLY`** (FPS/RETO/LUXE/RUM). The fill ledger shipped 2026-09-18 and that day was backfilled incompletely. **Do not score 2026-09-16** — any expectancy or source-scorecard run covering it is reading ~60% of the fills. Decide: backfill it properly or exclude the day by policy.
 
 ### Edge gate (independent of plumbing)

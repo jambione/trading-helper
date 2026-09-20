@@ -85,8 +85,8 @@ should move rather than grind.
   ledger=49 against broker=80 (31 `BROKER_ONLY`) — the day was backfilled
   incompletely when the ledger shipped on 9/18. Proposal-ledger views are
   unaffected; `--retro-fills` is not.
-- 2026-09-19 has no data at all (desk admitted nothing; cause `d7d05b5`, fixed
-  in `5820c0c`). Not a scored session.
+- 2026-09-19 is a **Saturday**. No data is correct, not an outage. (An earlier
+  draft of this file called it a lost Friday — calendar error, corrected.)
 
 ## Log
 
