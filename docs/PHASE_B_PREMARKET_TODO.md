@@ -1,6 +1,8 @@
 # Premarket (Phase B) To-Do
 
-**Last updated:** 2026-09-19  
+**Last updated:** 2026-09-20
+
+**Work without buying SIP:** [`docs/PHASE_B_WITHOUT_SIP_CLI_BRIEF.md`](PHASE_B_WITHOUT_SIP_CLI_BRIEF.md) — admit tighten, Finnhub prints, ledger hygiene, scoreboard; no Algo Trader Plus.  
 **Goal:** Actually trade ~04:00–09:28 ET as an isolated lane (Hybrid C), then score it — without contaminating RTH Phase 1/2.
 
 **Current truth:** Lane is **enabled** (`ai_phase_b_enabled=true`, `ai_phase_b_dry_run=false`) and arm thesis was aligned to RTH square (`d9132fc`), but it has produced **~zero trades**. Dominant refuse: **`phase_b_missing_print`** — free IEX has almost no premarket prints before ~08:00, so the print gate never passes.

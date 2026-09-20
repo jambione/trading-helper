@@ -127,4 +127,6 @@ SIP is **necessary but not sufficient** for Phase B profit. It removes the data 
 - **Monday 8am** open checklist: Phase 1 / desk health
 - After each gate: one line in this file dated pass/fail + SHA
 
+**Phase B work before paying:** [`docs/PHASE_B_WITHOUT_SIP_CLI_BRIEF.md`](PHASE_B_WITHOUT_SIP_CLI_BRIEF.md)
+
 **Success one-liner:** *$250 live path funds SIP; SIP turns Phase B from blind to scoreable; Plan A stays the profit engine until Phase B passes its own bars.*
