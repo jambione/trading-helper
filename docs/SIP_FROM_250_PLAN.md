@@ -74,9 +74,10 @@ When banked ≥$99 past kill           Subscribe Algo Trader Plus
 - [ ] Frozen-config stretch with **non-negative** expectancy (don’t arm live on −0.04R hope)
 
 ### Gate 1 — SIP evidence ($0) — Track B
-- [ ] Replay dual-%R square on **historical SIP** premarket bars for Phase B admits (need ~112 slow bars by 09:20 on most seats) — brief: [`docs/SIP_HISTORICAL_REPLAY_CLI_BRIEF.md`](SIP_HISTORICAL_REPLAY_CLI_BRIEF.md)
+- [ ] Replay dual-%R square on **historical SIP** premarket bars for Phase B admits (need ~112 slow bars by 09:20 on most seats) — brief: [`docs/SIP_HISTORICAL_REPLAY_CLI_BRIEF.md`](SIP_HISTORICAL_REPLAY_CLI_BRIEF.md); tool: [`tools/phase_b_sip_replay.py`](../tools/phase_b_sip_replay.py) → `ai_reports/phase_b_sip_replay/summary.md`
 - [ ] Written go/no-go: “SIP unlocks Phase B seats” vs “still no edge / wrong universe”
 - [ ] Do **not** buy SIP on missing-print pain alone without this replay
+- [ ] **Run on mini** after merge (keys + ledgers live there): `.venv/bin/python tools/phase_b_sip_replay.py --ledger-dir ai_reports/phase_b_ledger --days 15 --out ai_reports/phase_b_sip_replay/` — paste `summary.md` verdict here; do **not** subscribe in the same PR
 
 ### Gate 2 — Live plumbing (earliest ~Sep 28)
 - [ ] Cash account: read `multiplier`; convert to **margin** if `1` (T+1 fights this desk)

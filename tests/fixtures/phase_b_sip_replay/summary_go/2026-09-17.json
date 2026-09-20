@@ -1,0 +1,105 @@
+{
+  "day": "2026-09-17",
+  "symbols": [
+    {
+      "symbol": "GO0",
+      "universe": "phase_b_admit",
+      "sip_bars_0415_0920": 180,
+      "iex_bars_0415_0920": 5,
+      "sip_clear_112": true,
+      "iex_clear_112": false,
+      "square_minutes": 3,
+      "pre_square_minutes": 10
+    },
+    {
+      "symbol": "GO1",
+      "universe": "phase_b_admit",
+      "sip_bars_0415_0920": 200,
+      "iex_bars_0415_0920": 5,
+      "sip_clear_112": true,
+      "iex_clear_112": false,
+      "square_minutes": 3,
+      "pre_square_minutes": 10
+    },
+    {
+      "symbol": "GO2",
+      "universe": "phase_b_admit",
+      "sip_bars_0415_0920": 160,
+      "iex_bars_0415_0920": 5,
+      "sip_clear_112": true,
+      "iex_clear_112": false,
+      "square_minutes": 0,
+      "pre_square_minutes": 10
+    },
+    {
+      "symbol": "GO3",
+      "universe": "phase_b_admit",
+      "sip_bars_0415_0920": 150,
+      "iex_bars_0415_0920": 5,
+      "sip_clear_112": true,
+      "iex_clear_112": false,
+      "square_minutes": 0,
+      "pre_square_minutes": 10
+    },
+    {
+      "symbol": "GO4",
+      "universe": "phase_b_admit",
+      "sip_bars_0415_0920": 220,
+      "iex_bars_0415_0920": 5,
+      "sip_clear_112": true,
+      "iex_clear_112": false,
+      "square_minutes": 0,
+      "pre_square_minutes": 10
+    },
+    {
+      "symbol": "GO5",
+      "universe": "phase_b_admit",
+      "sip_bars_0415_0920": 190,
+      "iex_bars_0415_0920": 5,
+      "sip_clear_112": true,
+      "iex_clear_112": false,
+      "square_minutes": 0,
+      "pre_square_minutes": 10
+    },
+    {
+      "symbol": "GO6",
+      "universe": "phase_b_admit",
+      "sip_bars_0415_0920": 170,
+      "iex_bars_0415_0920": 5,
+      "sip_clear_112": true,
+      "iex_clear_112": false,
+      "square_minutes": 0,
+      "pre_square_minutes": 10
+    },
+    {
+      "symbol": "MISS0",
+      "universe": "phase_b_admit",
+      "sip_bars_0415_0920": 40,
+      "iex_bars_0415_0920": 120,
+      "sip_clear_112": false,
+      "iex_clear_112": true,
+      "square_minutes": 0,
+      "pre_square_minutes": 0
+    },
+    {
+      "symbol": "MISS1",
+      "universe": "phase_b_admit",
+      "sip_bars_0415_0920": 80,
+      "iex_bars_0415_0920": 10,
+      "sip_clear_112": false,
+      "iex_clear_112": false,
+      "square_minutes": 0,
+      "pre_square_minutes": 0
+    },
+    {
+      "symbol": "MISS2",
+      "universe": "phase_b_admit",
+      "sip_bars_0415_0920": 100,
+      "iex_bars_0415_0920": 10,
+      "sip_clear_112": false,
+      "iex_clear_112": false,
+      "square_minutes": 0,
+      "pre_square_minutes": 0
+    }
+  ]
+}
