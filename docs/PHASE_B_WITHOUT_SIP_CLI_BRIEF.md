@@ -23,7 +23,7 @@ Related: `docs/PHASE_B_PREMARKET.md`, `docs/PHASE_B_PREMARKET_TODO.md`, `docs/SI
 
 ### WP1 — Admit universe for SIP-computable names (no purchase)
 
-**Status 2026-09-20:** Dig on mini replay — movers clear **70%**, momentum **43%**; miss median SIP bars **24** vs clear **250**. Prior-day $-vol ≥ **$2M** counterfactual → **60.3%** clear (38/63), median on clear **252**, IEX still 0% → hits go bars without retuning. Live knobs: `ai_phase_b_min_prior_dollar_vol=2e6`, `ai_phase_b_sources_allow=momentum,movers`. Rescore: `tools/phase_b_sip_replay.py --rescore-dir … --min-prior-dollar-vol 2000000`.
+**Status 2026-09-20 (updated):** Dig on mini replay — movers clear **70%**, momentum **43%**; miss median SIP bars **24** vs clear **250**. Prior-day $-vol ≥ **$2M** counterfactual → **60.3%** clear (38/63) — **in-sample only (2 sessions)**. Claude review: do **not** ship fitted 2e6 as default. Live knobs now: `ai_phase_b_min_prior_dollar_vol=0.0` (disabled), `ai_phase_b_sources_allow=momentum,movers`. Verdict is **THIN** until ≥5 sessions / ≥50 pairs; OOS re-run ~Wed 2026-09-23+. Mechanism still available via `--min-prior-dollar-vol` on rescore.
 
 **Goal:** Raise historical SIP `clear_112` on the Phase B admit set from ~46% to **≥60%** (Gate 1 go bar), without paying for live SIP.
 
@@ -87,10 +87,10 @@ Related: `docs/PHASE_B_PREMARKET.md`, `docs/PHASE_B_PREMARKET_TODO.md`, `docs/SI
 
 ## Done when (overall, still without paying)
 
-1. Gate 1 replay is **go** on an tightened admit set **or** Finnhub path proven viable for prints with a written SIP decision still deferred.
+1. Gate 1 OOS (≥5 sessions) is **go** on a tightened admit set **or** Finnhub path proven viable for prints with a written SIP decision still deferred. In-sample / THIN ≠ subscribe.
 2. `missing_print` understood and reduced where Finnhub has data.
 3. Scoreboard + ledger hygiene ready for the first printable week.
-4. `docs/SIP_FROM_250_PLAN.md` Gate 1 updated — subscribe still unchecked until funding gate.
+4. `docs/SIP_FROM_250_PLAN.md` Gate 1 marked THIN / OOS pending — subscribe still unchecked until OOS GO + funding gate.
 
 ## Suggested commit titles (per WP)
 

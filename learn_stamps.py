@@ -176,6 +176,12 @@ _FINGERPRINT_KEYS = (
     "ai_max_position_pct_cheap",
     "ai_watch_min_adx",
     "ai_watch_min_proximity",
+    # Phase B admit universe — changes which premarket names seat;
+    # must not pool floor-on vs floor-off ledgers into one mean.
+    "ai_phase_b_min_prior_dollar_vol",
+    "ai_phase_b_sources_allow",
+    "ai_phase_b_enabled",
+    "ai_phase_b_dry_run",
 )
 
 _fp_cache: tuple[float, str] | None = None  # (mtime, hex)

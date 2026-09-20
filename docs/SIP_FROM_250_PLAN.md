@@ -74,9 +74,11 @@ When banked ≥$99 past kill           Subscribe Algo Trader Plus
 - [ ] Frozen-config stretch with **non-negative** expectancy (don’t arm live on −0.04R hope)
 
 ### Gate 1 — SIP evidence ($0) — Track B
-- [x] Replay tool + **WP1 liquidity floor** shipped (PR #32 / #33, `c5e8743`)
-- [x] Mini rescore **2026-09-20** with `--min-prior-dollar-vol 2000000` → verdict **GO**: SIP clear-112 **60.3%** (38/63), median on clear **252**, IEX **0%**. Filtered 85→63 (12 below floor, 10 unknown fail-closed).
-- [ ] **Subscribe only after funding gate** (outside stake or Stage 1+ surplus) — Gate 1 go ≠ buy today
+- [x] Replay tool + **WP1 liquidity floor mechanism** shipped (PR #32 / #33)
+- [x] Mini in-sample rescore **2026-09-20** at `$2M` prior $vol: SIP clear-112 **60.3%** (38/63), median **252**, IEX **0%** — **rates only; sample too thin for subscribe** (2 sessions)
+- [x] Hardening **2026-09-20**: default floor **disabled** (`0.0`); verdict **THIN** when &lt;5 sessions or &lt;50 pairs; provenance in `summary.json`; `^ai_phase_b_` in regime fingerprint
+- [ ] **OOS Gate 1** (~Wed **2026-09-23+**, ≥5 sessions): re-run with plateau candidates ~2.5–3e6; only then may decision be GO/NO-GO/LATER
+- [ ] **Subscribe only after** OOS GO **and** funding gate — never from 2-day in-sample
 - [ ] Point live feed to SIP after subscribe; then Phase B paper scoreboard
 ### Gate 2 — Live plumbing (earliest ~Sep 28)
 - [ ] Cash account: read `multiplier`; convert to **margin** if `1` (T+1 fights this desk)
@@ -115,7 +117,7 @@ SIP is **necessary but not sufficient** for Phase B profit. It removes the data 
 ## Explicit non-goals
 
 - Skipping Stage 0 to “earn SIP this week”
-- Buying SIP before Gate 1 replay
+- Buying SIP before Gate 1 **OOS** GO (in-sample / THIN is not enough)
 - Loosening square arms / raising position ceiling to force $99
 - Conflating Plan B burst with Phase B trading
 - Paying SIP by draining the $250 below the pre-committed kill

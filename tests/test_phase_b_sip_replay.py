@@ -68,42 +68,83 @@ def test_collect_admits_dedupes_and_skips_refuse():
     assert got[0]["universe"] == "phase_b_admit"
 
 
-def test_summary_go_fixture_is_go(tmp_path):
+def test_summary_go_fixture_is_thin_without_sample_floor(tmp_path):
+    """1-day / 10-pair fixture rates look like GO but must not subscribe."""
     out = tmp_path / "out"
     code = sip.main([
         "--fixture-dir", str(FIX / "summary_go"),
         "--out", str(out),
     ])
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
-    assert summary["verdict"]["decision"] == "go"
+    assert summary["verdict"]["decision"] == "thin"
     assert summary["admit"]["sip_clear_rate"] == pytest.approx(0.7)
-    assert summary["admit"]["median_sip_bars_on_clear"] >= 150
-    md = (out / "summary.md").read_text(encoding="utf-8")
-    assert "GO" in md
-    assert code == 0
+    assert "provenance" in summary
+    assert summary["provenance"].get("git_sha")
+    assert code == 1
 
 
-def test_summary_nogo_fixture_is_nogo(tmp_path):
+def test_verdict_go_when_sample_sufficient():
+    m = {
+        "n_pairs": 60,
+        "n_days": 5,
+        "sip_clear_rate": 0.70,
+        "iex_clear_rate": 0.0,
+        "median_sip_bars_on_clear": 250.0,
+    }
+    v = sip.verdict_from_metrics(m)
+    assert v["decision"] == "go"
+
+
+def test_verdict_thin_when_days_short():
+    m = {
+        "n_pairs": 60,
+        "n_days": 2,
+        "sip_clear_rate": 0.70,
+        "iex_clear_rate": 0.0,
+        "median_sip_bars_on_clear": 250.0,
+    }
+    v = sip.verdict_from_metrics(m)
+    assert v["decision"] == "thin"
+
+
+def test_summary_nogo_fixture_is_thin_then_unit_nogo(tmp_path):
     out = tmp_path / "out"
     code = sip.main([
         "--fixture-dir", str(FIX / "summary_nogo"),
         "--out", str(out),
     ])
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
-    assert summary["verdict"]["decision"] == "no-go"
+    # Fixture is 1 day — sample floor wins before rate bars.
+    assert summary["verdict"]["decision"] == "thin"
     assert summary["admit"]["sip_clear_rate"] == pytest.approx(0.2)
     assert code == 1
+    v = sip.verdict_from_metrics({
+        "n_pairs": 60,
+        "n_days": 5,
+        "sip_clear_rate": 0.2,
+        "iex_clear_rate": 0.0,
+        "median_sip_bars_on_clear": 80.0,
+    })
+    assert v["decision"] == "no-go"
 
 
-def test_summary_later_when_sip_approx_iex(tmp_path):
+def test_summary_later_fixture_thin_then_unit_later(tmp_path):
     out = tmp_path / "out"
     code = sip.main([
         "--fixture-dir", str(FIX / "summary_later_iex"),
         "--out", str(out),
     ])
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
-    assert summary["verdict"]["decision"] == "later"
+    assert summary["verdict"]["decision"] == "thin"
     assert code == 1
+    v = sip.verdict_from_metrics({
+        "n_pairs": 60,
+        "n_days": 5,
+        "sip_clear_rate": 0.55,
+        "iex_clear_rate": 0.50,
+        "median_sip_bars_on_clear": 200.0,
+    })
+    assert v["decision"] == "later"
 
 
 def test_verdict_frozen_constants_documented():
@@ -111,6 +152,8 @@ def test_verdict_frozen_constants_documented():
     assert "GO_SIP_CLEAR_MIN = 0.60" in src
     assert "GO_MEDIAN_BARS_ON_CLEAR = 150" in src
     assert "NOGO_SIP_CLEAR_MAX = 0.40" in src
+    assert "MIN_SESSIONS_FOR_VERDICT = 5" in src
+    assert "MIN_PAIRS_FOR_VERDICT = 50" in src
     assert "do not retune" in src.lower()
 
 
@@ -151,4 +194,6 @@ def test_filter_pairs_by_prior_dollar_vol_annotated():
     assert dig["n_dropped_below"] == 1
     assert dig["n_dropped_unknown"] == 1
     summary = sip.summarize_pairs(kept)
-    assert summary["verdict"]["decision"] == "go"
+    # 1 day / 1 pair — rates can look GO; sample floor must refuse subscribe.
+    assert summary["verdict"]["decision"] == "thin"
+    assert summary["admit"]["sip_clear_rate"] == 1.0

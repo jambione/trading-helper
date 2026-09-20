@@ -448,6 +448,6 @@
   "ai_watch_morning_flood_start": "09:30",
   "ai_watch_morning_flood_end": "11:00",
   "ai_watch_morning_flood_include_pre": false,
-  "ai_phase_b_min_prior_dollar_vol": 2000000.0,
+  "ai_phase_b_min_prior_dollar_vol": 0.0,
   "ai_phase_b_sources_allow": "momentum,movers"
 }

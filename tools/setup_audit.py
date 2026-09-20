@@ -46,6 +46,7 @@ REGIME_PATTERNS = (
     r"^ai_local_trail_", r"^ai_exit_", r"^ai_watch_min_", r"^ai_watch_open_seed",
     r"^ai_risk_", r"^ai_max_position", r"^ai_daily_loss", r"^desk_product$",
     r"^ai_h[34]_paper$", r"^ai_dead_trade_", r"^ai_max_spread_r$",
+    r"^ai_phase_b_",
 )
 # Read by machinery, not strategy — absent from the fingerprint on purpose.
 FINGERPRINT_EXEMPT = {

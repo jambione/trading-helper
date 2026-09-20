@@ -407,10 +407,12 @@ DEFAULT_CONFIG = {
     "ai_phase_b_max_open":                2,
     "ai_phase_b_min_price":               None,  # null → ai_watch_min_price (~2.0)
     # Liquidity floor for SIP-computable admits (Gate 1 WP1). Prior RTH-day
-    # close×volume; ≤0 disables. 2e6 raised historical SIP clear-112 from
-    # 45.9% → ~60% on 2026-09-17/18 admits (counterfactual). Fail closed when
-    # unknown. Research/seed_rank stay off via phase_b.SOURCE_OFF_V1.
-    "ai_phase_b_min_prior_dollar_vol":    2_000_000.0,
+    # close×volume; ≤0 disables. Shipped DISABLED (0.0): 2e6 was selected
+    # in-sample on 2026-09-17/18 only (clear 45.9%→~60%) — do not treat that
+    # as Gate 1 GO. Plateau candidates ~2.5–3e6 after ≥5 OOS sessions
+    # (target Wed 2026-09-23+). Fail closed when unknown. Research/seed_rank
+    # stay off via phase_b.SOURCE_OFF_V1.
+    "ai_phase_b_min_prior_dollar_vol":    0.0,
     # Comma list; empty = SOURCE_PRIORITY defaults. WP1 locks momentum+movers.
     "ai_phase_b_sources_allow":           "momentum,movers",
     "ai_phase_b_entry_limit_ttl_sec":     45.0,

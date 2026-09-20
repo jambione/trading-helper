@@ -68,6 +68,11 @@ GO_IEX_SIP_RATIO_MAX = 0.50   # IEX clear / SIP clear must be ≪ 1
 NOGO_SIP_CLEAR_MAX = 0.40
 NOGO_IEX_NEAR_SIP_RATIO = 0.80  # SIP ≈ IEX → choke is not the feed
 
+# Sample floor — below this, rates are noise (Claude review 2026-09-20).
+# Two in-sample days must not drive a $99 subscribe decision.
+MIN_SESSIONS_FOR_VERDICT = 5
+MIN_PAIRS_FOR_VERDICT = 50
+
 ADMIT_KINDS = frozenset({"admit", "dry_armed", "dry_shadow", "seed"})
 
 # Desk defaults when config is unavailable (match config.DEFAULT_CONFIG).
@@ -447,6 +452,8 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
 
     admit_m = _rates(admits)
     fb_m = _rates(fallbacks)
+    n_days = len({p.get("day") for p in admits if p.get("day")})
+    admit_m["n_days"] = n_days
     verdict = verdict_from_metrics(admit_m)
     return {
         "frozen_bars": {
@@ -455,26 +462,39 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             "go_iex_sip_ratio_max": GO_IEX_SIP_RATIO_MAX,
             "nogo_sip_clear_max": NOGO_SIP_CLEAR_MAX,
             "nogo_iex_near_sip_ratio": NOGO_IEX_NEAR_SIP_RATIO,
+            "min_sessions": MIN_SESSIONS_FOR_VERDICT,
+            "min_pairs": MIN_PAIRS_FOR_VERDICT,
             "slow_len": SLOW_LEN_DEFAULT,
             "window_et": "[04:00, 09:20)",
         },
         "admit": admit_m,
         "fallback": fb_m,
         "verdict": verdict,
-        "n_days": len({p.get("day") for p in admits if p.get("day")}),
+        "n_days": n_days,
         "days": sorted({p.get("day") for p in admits if p.get("day")}),
     }
 
 
 def verdict_from_metrics(m: dict[str, Any]) -> dict[str, Any]:
-    """Written go / no-go / later against frozen bars. Deterministic."""
+    """Written go / no-go / later / thin against frozen bars. Deterministic."""
     n = int(m.get("n_pairs") or 0)
+    n_days = int(m.get("n_days") or 0)
     reasons: list[str] = []
     if n <= 0:
         return {
             "decision": "later",
             "label": "NO DECISION",
             "reasons": ["no_admit_pairs"],
+        }
+    if n_days < MIN_SESSIONS_FOR_VERDICT or n < MIN_PAIRS_FOR_VERDICT:
+        return {
+            "decision": "thin",
+            "label": "THIN — NO DECISION",
+            "reasons": [
+                f"sample too small for a subscribe call: "
+                f"n_days={n_days} (need ≥{MIN_SESSIONS_FOR_VERDICT}), "
+                f"n_pairs={n} (need ≥{MIN_PAIRS_FOR_VERDICT})"
+            ],
         }
 
     sip_rate = m.get("sip_clear_rate")
@@ -554,6 +574,8 @@ def render_summary_md(summary: dict[str, Any]) -> str:
         f"IEX/SIP clear ratio < {fb.get('go_iex_sip_ratio_max')}",
         f"- No-go: SIP clear < {fb.get('nogo_sip_clear_max'):.0%} "
         f"or IEX/SIP ≥ {fb.get('nogo_iex_near_sip_ratio')} (≈)",
+        f"- Sample floor: ≥{fb.get('min_sessions', MIN_SESSIONS_FOR_VERDICT)} sessions "
+        f"and ≥{fb.get('min_pairs', MIN_PAIRS_FOR_VERDICT)} pairs (else THIN)",
         "",
         "## Admit set",
         f"- Days: {', '.join(summary.get('days') or []) or '(none)'}",
@@ -789,6 +811,45 @@ def filter_pairs_by_prior_dollar_vol(
     return kept, dig
 
 
+def stamp_provenance(summary: dict[str, Any], *, out_dir: Path | None = None) -> dict[str, Any]:
+    """Make a capped smoke indistinguishable from a real Gate 1 run."""
+    import subprocess
+    sha = "unknown"
+    try:
+        sha = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True
+            ).strip()
+            or "unknown"
+        )
+    except Exception:
+        pass
+    config_fp = None
+    try:
+        import learn_stamps as ls
+        config_fp = ls.config_fingerprint()
+    except Exception:
+        config_fp = None
+    liq = summary.get("liquidity_filter") or {}
+    cap = None
+    if isinstance(liq, dict) and liq.get("min_prior_dollar_vol") is not None:
+        try:
+            cap = float(liq["min_prior_dollar_vol"])
+        except (TypeError, ValueError):
+            cap = None
+    summary["provenance"] = {
+        "git_sha": sha,
+        "generated_at": datetime.now(tz=ET).isoformat(),
+        "config_fp": config_fp,
+        "min_prior_dollar_vol_cap": cap,
+        "n_days": summary.get("n_days"),
+        "n_pairs": (summary.get("admit") or {}).get("n_pairs"),
+        "out_dir": str(out_dir) if out_dir else None,
+        "verdict_decision": (summary.get("verdict") or {}).get("decision"),
+    }
+    return summary
+
+
 def write_outputs(
     out_dir: Path,
     by_day: dict[str, list[dict]],
@@ -804,6 +865,7 @@ def write_outputs(
         (out_dir / f"{day}.json").write_text(
             json.dumps(payload, indent=2) + "\n", encoding="utf-8",
         )
+    stamp_provenance(summary, out_dir=out_dir)
     (out_dir / "summary.json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8",
     )
@@ -942,7 +1004,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=0.0,
         help="Liquidity floor for admit pairs (prior RTH-day close×volume). "
-             "0=off. WP1 default live knob is 2e6.",
+             "0=off (shipped default until out-of-sample Gate 1). 2e6 was an in-sample fit on 2026-09-17/18 only — do not treat as GO.",
     )
     ap.add_argument(
         "--report-dir",
