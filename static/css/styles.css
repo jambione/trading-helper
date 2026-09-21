@@ -2413,8 +2413,6 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .ai-book-table-header .th-last,
 .panel-ai-watch .ai-book-table-header .th-entry,
 .panel-ai-watch .ai-book-table-header .th-stop,
-.panel-ai-watch .ai-book-table-header .th-rsi,
-.panel-ai-watch .ai-book-table-header .th-exh,
 .panel-ai-watch .ai-book-table-header .th-pl { text-align: right; }
 
 /* Entry rules, under the book. Values come from the live config at render
@@ -2548,23 +2546,23 @@ body.mobile [data-tv-toggle-btn] {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Chg | Entry | Stop | RSI | EXH | P&L
-     RSI + EXH are the live arm levers. MACD column removed — not an arm
-     gate anymore (exit engine still uses MACD off-screen). Hold stays gone:
+  /* Ticker | State | Last | Chg | Entry | Stop | P&L
+     RSI and EXH removed with the exhaustion arm gate they displayed — the
+     entry signal they encoded was falsified (look-ahead), so the columns were
+     reporting on a lever that no longer decides anything. MACD went the same
+     way earlier (exit engine still uses MACD off-screen). Hold stays gone:
      the Stop cell shows the min-hold countdown while it runs and the stop
      price after. Qty is display:none and must not occupy a track.
      Chg is its own track: as a chip inside Last, a wide price and a wide
      percent shared one cell and the PRICE was what got ellipsed. */
   grid-template-columns:
-    minmax(48px, 0.75fr)
-    minmax(4.6rem, 0.95fr)
-    minmax(52px, 0.7fr)
-    minmax(44px, 0.55fr)
-    minmax(48px, 0.62fr)
-    minmax(56px, 0.75fr)
-    minmax(50px, 0.7fr)
-    minmax(56px, 0.75fr)
-    minmax(50px, 0.7fr);
+    minmax(48px, 0.85fr)
+    minmax(4.6rem, 1.05fr)
+    minmax(52px, 0.8fr)
+    minmax(44px, 0.65fr)
+    minmax(48px, 0.72fr)
+    minmax(56px, 0.85fr)
+    minmax(50px, 0.8fr);
   width: 100%;
   box-sizing: border-box;
 }
@@ -2621,15 +2619,13 @@ body.mobile [data-tv-toggle-btn] {
   font-weight: 600;
 }
 /* Every numeric cell right-aligns, and each one must match its own header
-   (.th is right by default). cell-exh was the odd one out: restored with the
-   EXH column, never added here, so it rendered left inside a right-aligned
-   track and the values sat a column-width away from the word EXH. */
+   (.th is right by default). Any cell added to the grid has to be listed
+   here too: EXH once was not, so it rendered left inside a right-aligned
+   track and its values sat a column-width from their header. */
 .panel-ai-watch .feed-cols--ai-book .cell-price,
 .panel-ai-watch .feed-cols--ai-book .cell-chg,
 .panel-ai-watch .feed-cols--ai-book .cell-entry,
 .panel-ai-watch .feed-cols--ai-book .cell-hold,
-.panel-ai-watch .feed-cols--ai-book .cell-rsi,
-.panel-ai-watch .feed-cols--ai-book .cell-exh,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
 
@@ -2657,19 +2653,10 @@ body.mobile [data-tv-toggle-btn] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* Drawn on REST fallback bars rather than the live Finnhub tape. Same
-   treatment as a non-live %R: dimmed and dashed, so a reading the desk should
-   not act on cannot be mistaken for one it should. */
-.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--stale {
-  color: #6b7280;
-  font-style: italic;
-  font-weight: 400;
-  text-decoration: underline dotted rgba(148, 163, 184, 0.55);
-}
 
 /* Mobile Book: two lines per row so every field fits without horizontal scroll.
    Line 1 — identity + money: Ticker | State | Last | Entry | P&L
-   Line 2 — exit / signals:   Stop   | RSI   | EXH
+   Line 2 — exit:             Stop (RSI and EXH retired with their gate)
    Qty stays desk-col-extra (hidden). State stays visible (no squeeze hide). */
 body.mobile .panel-ai-watch .feed-cols--ai-book {
   grid-template-columns:
@@ -2681,13 +2668,11 @@ body.mobile .panel-ai-watch .feed-cols--ai-book {
     minmax(0, 0.9fr);
   grid-template-areas:
     "ticker state last chg entry pl"
-    "stop   rsi   exh  exh exh   exh";
+    "stop   stop  .    .   .     .";
   row-gap: 5px;
   column-gap: 8px;
   align-items: center;
 }
-body.mobile .panel-ai-watch .feed-cols--ai-book > .th-exh,
-body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-ticker,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-state,
@@ -2700,8 +2685,6 @@ body.mobile .panel-ai-watch .feed-cols--ai-book > .th-entry,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-entry { grid-area: entry; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-stop,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-trail { grid-area: stop; }
-body.mobile .panel-ai-watch .feed-cols--ai-book > .th-rsi,
-body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-rsi { grid-area: rsi; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-pl,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-pl { grid-area: pl; }
 body.mobile .panel-ai-watch .ai-book-table-header .feed-cols--ai-book {
@@ -2727,8 +2710,7 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-chg,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-entry,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-trail,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-hold,
-body.mobile .panel-ai-watch .feed-cols--ai-book .cell-rsi,
-body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-hold {
   font-size: 12px;
 }
 @media (max-width: 700px) {
@@ -2742,15 +2724,13 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
       minmax(0, 0.9fr);
     grid-template-areas:
       "ticker state last chg entry pl"
-      "stop   rsi   exh  exh exh   exh";
+      "stop   stop  .    .   .     .";
     row-gap: 5px;
     column-gap: 8px;
     align-items: center;
   }
   .panel-ai-watch .feed-cols--ai-book > .th-ticker,
   .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
-  .panel-ai-watch .feed-cols--ai-book > .th-exh,
-  .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
   .panel-ai-watch .feed-cols--ai-book > .th-state,
   .panel-ai-watch .feed-cols--ai-book > .ai-book-status { grid-area: state; }
   .panel-ai-watch .feed-cols--ai-book > .th-last,
@@ -2761,8 +2741,6 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
   .panel-ai-watch .feed-cols--ai-book > .cell-entry { grid-area: entry; }
   .panel-ai-watch .feed-cols--ai-book > .th-stop,
   .panel-ai-watch .feed-cols--ai-book > .cell-trail { grid-area: stop; }
-  .panel-ai-watch .feed-cols--ai-book > .th-rsi,
-  .panel-ai-watch .feed-cols--ai-book > .cell-rsi { grid-area: rsi; }
   .panel-ai-watch .feed-cols--ai-book > .th-pl,
   .panel-ai-watch .feed-cols--ai-book > .cell-pl { grid-area: pl; }
   .panel-ai-watch .ai-book-table-header .feed-cols--ai-book {
@@ -2788,8 +2766,7 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
   .panel-ai-watch .feed-cols--ai-book .cell-entry,
   .panel-ai-watch .feed-cols--ai-book .cell-trail,
   .panel-ai-watch .feed-cols--ai-book .cell-hold,
-  .panel-ai-watch .feed-cols--ai-book .cell-exh,
-  .panel-ai-watch .feed-cols--ai-book .cell-rsi {
+  .panel-ai-watch .feed-cols--ai-book .cell-hold {
     font-size: 12px;
   }
 }
@@ -4621,35 +4598,5 @@ body.engine-visible .engine-bar                         { display: none !importa
 
 /* Exhaustion: level + direction. Colour carries the direction so the column
    reads at a glance; the number carries how far along it is. */
-.cell-exh {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim, #8a8f98);
-}
-.cell-exh.exh--ob   { color: var(--buy); font-weight: 600; }
-.cell-exh.exh--up   { color: var(--buy); }
-.cell-exh.exh--down { color: var(--danger); }
 
 
-/* ── Book RSI cell ─────────────────────────────────────────────────────────
-   CM RSI-2 with its direction arrow. The states say what the reading means
-   for arming, not just what it is: .rsi--arm is a reading that satisfies the
-   arm condition on its own, green/low are the engine's band flags, and
-   .rsi--stale marks a value NOT drawn on the live tape — dimmed rather than
-   hidden, because absence and "from the REST fallback" are different facts
-   and blending them is how a lever ends up trusted more than it deserves. */
-.panel-ai-watch .feed-cols--ai-book .cell-rsi {
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim, #8a97a8);
-}
-.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--green { color: #3fb27f; }
-.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--low   { color: #e0a93b; }
-.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--arm {
-  color: #3fb27f;
-  font-weight: 600;
-}
-.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--stale {
-  opacity: .45;
-  font-style: italic;
-}

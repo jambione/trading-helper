@@ -531,10 +531,6 @@ const _PHASE_RANK = { open: 0, ready: 1, submitted: 2, filled: 2, watching: 3 };
  *  text: "$16.95", "99.2% OB" and "+0.007 (1.1×)" do not sort as numbers, and
  *  a column that sorted by its own label would put $9 after $10. */
 function _bookSortVal(r, col) {
-  if (col === 'rsi') {
-    const v = r && r.cm_rsi != null ? Number(r.cm_rsi) : null;
-    return Number.isFinite(v) ? v : null;
-  }
   const num = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null);
   switch (col) {
     case 'last':
@@ -548,12 +544,6 @@ function _bookSortVal(r, col) {
       return num(_bookPct(r));
     case 'stop':
       return num(_bookStopPx(r));
-    case 'exh': {
-      const ex = num(r.exhaustion);
-      if (ex != null) return ex;
-      const p = num(r.pctr);
-      return p == null ? null : Math.max(0, Math.min(100, 100 + p));
-    }
     case 'macd':
       return num(r.macd_gap) ?? num(r.macd_hist);
     case 'pl':
@@ -613,12 +603,20 @@ const _bookSort = { col: null, dir: -1 };
 
 const _BOOK_SORT_LS = 'aiBookSort';
 
+/** Columns the book can still sort by. A pin left in localStorage for a
+ *  column that no longer exists — RSI and EXH were retired with their arm
+ *  gate — makes _bookSortVal return null for every row, so the book comes
+ *  back apparently shuffled with no header arrow to explain it. Anyone who
+ *  had one of those columns pinned falls back to the default ordering. */
+const _BOOK_SORT_COLS = new Set(
+  ['ticker', 'state', 'last', 'chg', 'entry', 'stop', 'pl']);
+
 (function _restoreBookSort() {
   try {
     const raw = localStorage.getItem(_BOOK_SORT_LS);
     if (!raw) return;
     const v = JSON.parse(raw);
-    if (v && typeof v.col === 'string') {
+    if (v && typeof v.col === 'string' && _BOOK_SORT_COLS.has(v.col)) {
       _bookSort.col = v.col;
       _bookSort.dir = v.dir < 0 ? -1 : 1;
     }
@@ -1511,20 +1509,6 @@ function _updateBookRow(el, r) {
     bookChgEl.classList.toggle('chg-pos', chgMod === 'chg-pos');
     bookChgEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
   }
-  const rsiEl = el.querySelector('.cell-rsi');
-  if (rsiEl) {
-    _setText(rsiEl, _bookRsiText(r));
-    rsiEl.className = `cell-rsi${_rsiPairClass(r)}${crit.rsi === true ? ' crit--pass' : ''}`;
-    const rsiTip = _fmtRsiTitle(r);
-    if (rsiTip) rsiEl.title = rsiTip;
-  }
-  const exhEl = el.querySelector('.cell-exh');
-  if (exhEl) {
-    _setText(exhEl, _bookExhText(r));
-    exhEl.className = `cell-exh${_bookExhClass(r)}${crit.exh === true ? ' crit--pass' : ''}`;
-    const exhTip = _fmtExhTitle(r);
-    if (exhTip) exhEl.title = exhTip;
-  }
   _setText(el.querySelector('.cell-qty'), qty);
   const plEl = el.querySelector('.cell-pl');
   if (plEl) {
@@ -1575,8 +1559,6 @@ function _bookRowHtml(r) {
     + `<div class="cell-chg${chgMod ? ` ${chgMod}` : ''}">${_esc(chgTxt || '\u2014')}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
-    + `<div class="cell-rsi${_rsiPairClass(r)}${crit.rsi === true ? ' crit--pass' : ''}"${_fmtRsiTitle(r) ? ` title="${_esc(_fmtRsiTitle(r))}"` : ''}>${_esc(_bookRsiText(r))}</div>`
-    + `<div class="cell-exh${_bookExhClass(r)}${crit.exh === true ? ' crit--pass' : ''}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
@@ -1801,21 +1783,6 @@ function _bookSourceLabel(source) {
   return s.slice(0, 4);
 }
 
-/** Exhaustion as "72%↑" — level and direction together, because the level
- *  alone cannot tell "pinned at the highs and rolling over" from "climbing
- *  into them". OB marks the overbought band. */
-function _fmtExh(v, state, src) {
-  if (src === 'sparse_window' && (v == null || !Number.isFinite(Number(v)))) {
-    return 'thin';
-  }
-  const n = Number(v);
-  if (v == null || !Number.isFinite(n)) return '—';
-  const mark = state === 'overbought' ? ' OB'
-    : state === 'heating' ? '\u2191'
-    : state === 'cooling' ? '\u2193' : '';
-  return `${n.toFixed(1)}%${mark}`;
-}
-
 function _fmtPr(v) {
   const n = Number(v);
   if (v == null || !Number.isFinite(n)) return '—';
@@ -1823,64 +1790,6 @@ function _fmtPr(v) {
 }
 
 /** TradingView-style pair: fast / slow on the %R scale (0 at the top). */
-/** The book's EXH cell: the 0-100 exhaustion the gate compares, with its
- *  direction — _fmtExh already renders exactly that, so this only picks the
- *  arguments off a book row and fills in the scale when the snapshot carried
- *  the raw line but not the derived percentage.
- *
- *  It used to print "fast / slow". The slow line is a 112-bar window and the
- *  book's names carry a few dozen bars — 0 of 14 live records had one at
- *  09:42 — so half the column was a permanent em dash, and the half that
- *  mattered was drawn on a scale (-6.5) that does not match the threshold the
- *  operator sets (40). Both raw lines stay in the hover.
- */
-function _bookExhText(r) {
-  if (!r) return '—';
-  let ex = r.exhaustion;
-  if ((ex == null || !Number.isFinite(Number(ex)))
-      && r.pctr != null && Number.isFinite(Number(r.pctr))) {
-    ex = Math.max(0, Math.min(100, 100 + Number(r.pctr)));
-  }
-  return _fmtExh(ex, r.exhaustion_state, r.pctr_src);
-}
-
-/** Colour for the EXH cell, off the same state the arrow comes from.
- *
- *  The styles (exh--ob / exh--up / exh--down) survived the column's removal
- *  in styles.css; only the function that selects them did not, so this
- *  restores the pairing rather than inventing a new one. `thin` gets no
- *  class: a reading the desk could not take should not be coloured as
- *  though it had an opinion. */
-function _bookExhClass(r) {
-  if (!r) return '';
-  if (r.pctr_src === 'sparse_window' && r.exhaustion == null) return '';
-  const state = String(r.exhaustion_state || '').toLowerCase();
-  if (state === 'overbought') return ' exh--ob';
-  if (state === 'heating') return ' exh--up';
-  if (state === 'cooling') return ' exh--down';
-  return '';
-}
-
-/** "live" means a rolling %R over a clock window, recomputed against the live
- *  print — the number on a chart. Anything else (clock_range, sparse_window)
- *  is position-in-range over whatever bars existed, which is a different
- *  measurement wearing the same column. Marked so it is obvious at a glance
- *  which readings the desk should be trusted to act on. */
-function _exhStale(r) {
-  if (!r) return false;
-  if (_bookTapeStale(r)) return true;
-  const src = String(r.pctr_src || '').toLowerCase().trim();
-  return src !== '' && src !== 'live';
-}
-
-function _exhPairClass(r) {
-  let cls = _exhClass(r && r.exhaustion_state);
-  if (r && r.pctr_ob) cls += ' exh--ob';
-  if (r && r.pctr_tight) cls += ' exh--tight';
-  if (_exhStale(r)) cls += ' exh--stale';
-  return cls;
-}
-
 function _bookMacdText(r) {
   if (!r) return '—';
   const gap = r.macd_gap ?? r.macd_hist;
@@ -1945,21 +1854,6 @@ function _fmtMacdTitle(r) {
   return bits.join(' · ');
 }
 
-function _fmtRsi(r) {
-  if (!r || r.cm_rsi == null || !Number.isFinite(Number(r.cm_rsi))) return '—';
-  return Number(r.cm_rsi).toFixed(1);
-}
-
-/** The book's RSI cell: CM RSI-2 with its direction, because the entry rule
- *  is a band AND a turn — "trending up from 0 to 50" — and a bare level
- *  answers only half of it. Arrow is the engine's cm_rsi_rising (RSI-2 now
- *  against RSI-2 trend_lookback bars back). */
-function _bookRsiText(r) {
-  const v = _fmtRsi(r);
-  if (v === '—') return v;
-  return `${v}${r && r.cm_rsi_rising ? '↑' : '↓'}`;
-}
-
 /** True when this reading satisfies the arm condition on its own: inside the
  *  0-50 band and turning up. Also paints when RSI is still falling but deeply
  *  washed out (<20) while EXH is heating toward overbought — matches
@@ -1970,109 +1864,6 @@ function _rsiArms(r) {
   if (v < 0 || v > 50) return false;
   if (r.cm_rsi_rising) return true;
   return v < 20 && String(r.exhaustion_state || '').toLowerCase() === 'heating';
-}
-
-/** The engine draws its bars from the Finnhub trade stream when the tape is
- *  covering a name and falls back to Alpaca REST when it is not — and it
- *  flips per ticker, mid-session. A reading off the fallback is not wrong,
- *  but it is not the live tape either, so it is marked rather than blended
- *  in with the ones that are. */
-function _rsiStale(r) {
-  if (!r) return false;
-  if (_bookTapeStale(r)) return true;
-  const src = String(r.cm_rsi_src || '').toLowerCase().trim();
-  return src !== '' && src !== 'realtime';
-}
-
-function _rsiClass(r) {
-  if (!r) return '';
-  if (_rsiArms(r)) return ' rsi--arm';
-  if (r.cm_rsi_green) return ' rsi--green';
-  if (r.cm_rsi_low) return ' rsi--low';
-  return '';
-}
-
-function _rsiPairClass(r) {
-  let cls = _rsiClass(r);
-  if (_rsiStale(r)) cls += ' rsi--stale';
-  return cls;
-}
-
-function _fmtRsiTitle(r) {
-  if (!r) return 'CM RSI-2';
-  const bits = ['CM RSI-2'];
-  if (r.cm_rsi != null && Number.isFinite(Number(r.cm_rsi))) {
-    bits.push(Number(r.cm_rsi).toFixed(1));
-  } else {
-    return 'CM RSI-2 — no reading';
-  }
-  bits.push(r.cm_rsi_rising ? 'rising' : 'not rising');
-  if (_rsiArms(r)) {
-    if (!r.cm_rsi_rising && Number(r.cm_rsi) < 20) {
-      bits.push('deep OS + EXH heating (falling RSI allowed)');
-    } else {
-      bits.push('in the 0-50 arm band');
-    }
-  } else {
-    bits.push('outside the arm band');
-  }
-  const src = String(r.cm_rsi_src || '').toLowerCase().trim();
-  if (src === 'realtime') {
-    bits.push('live Finnhub tape');
-  } else if (src) {
-    bits.push(`NOT the live tape (${src}) — REST fallback bars`);
-  } else {
-    bits.push('source unknown');
-  }
-  if (r.cm_rsi_age_sec != null && Number.isFinite(Number(r.cm_rsi_age_sec))) {
-    bits.push(`newest bar ${Number(r.cm_rsi_age_sec).toFixed(0)}s old`);
-  }
-  if (r.cm_rsi_green) bits.push('green');
-  else if (r.cm_rsi_low) bits.push('low');
-  return bits.join(' · ');
-}
-
-/** Hover: the raw %R lines behind the cell's 0-100 reading, plus the window.
- *  The slow line needs a 112-bar window, so on a name admitted today it is
- *  usually absent — the cell shows the fast-line exhaustion either way. */
-function _fmtExhTitle(r) {
-  if (!r) return '';
-  const bits = ['EXH = 100 + fast %R'];
-  if (r.pctr != null && Number.isFinite(Number(r.pctr))) {
-    bits.push(`fast ${Number(r.pctr).toFixed(1)}`);
-  }
-  if (r.pctr_slow != null && Number.isFinite(Number(r.pctr_slow))) {
-    bits.push(`slow ${Number(r.pctr_slow).toFixed(1)}`);
-  } else {
-    bits.push('slow n/a (needs 112 bars)');
-  }
-  const src = String(r.pctr_src || '').toLowerCase().trim();
-  if (src && src !== 'live') {
-    bits.push(`NOT LIVE (${src}) - range over the bars that existed`);
-  }
-  if (r.pctr_ob) bits.push('red boxes');
-  if (r.pctr_tight) bits.push('tight');
-  if (r.pctr_gap != null && Number.isFinite(Number(r.pctr_gap))) {
-    bits.push(`gap ${Number(r.pctr_gap).toFixed(1)}`);
-  }
-  if (r.exh_window_min != null && Number.isFinite(Number(r.exh_window_min))) {
-    bits.push(`window ${Number(r.exh_window_min).toFixed(1)}m`);
-  }
-  if (r.exh_bars != null) bits.push(`${r.exh_bars} bars`);
-  if (r.pctr_src === 'sparse_window') {
-    return 'No 1m %R — not enough prints in the clock window to trust a reading';
-  }
-  if (r.pctr_src === 'clock_range') {
-    bits[0] = 'Range %R on recent 1m prints (not a full 21/112 window)';
-  }
-  return bits.length > 1 ? bits.join(' · ') : '';
-}
-
-function _exhClass(state) {
-  if (state === 'overbought') return ' exh--ob';
-  if (state === 'heating')    return ' exh--up';
-  if (state === 'cooling')    return ' exh--down';
-  return '';
 }
 
 /** RVOL as "1.92×" — same shape the Research/Trending columns use. */

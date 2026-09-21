@@ -34,8 +34,6 @@ COLUMNS = [
     ("chg", "cell-chg"),
     ("entry", "cell-entry"),
     ("stop", "cell-trail"),
-    ("rsi", "cell-rsi"),
-    ("exh", "cell-exh"),
     ("pl", "cell-pl"),
 ]
 
@@ -105,7 +103,8 @@ def test_the_book_tracks_have_pixel_minimums():
     i = _CSS.index("\n.feed-cols--ai-book {")
     block = _CSS[i:_CSS.index("}", i)]
     tracks = re.findall(r"minmax\(([^,]+),", block)
-    assert len(tracks) == 9, f"expected 9 tracks, found {len(tracks)}"
+    assert len(tracks) == len(COLUMNS), (
+        f"expected one track per column ({len(COLUMNS)}), found {len(tracks)}")
     for t in tracks:
         t = t.strip()
         assert re.fullmatch(r"\d+(\.\d+)?(px|rem)", t), (
@@ -114,7 +113,7 @@ def test_the_book_tracks_have_pixel_minimums():
 
 # ── the headers are wired ────────────────────────────────────────────────
 
-def test_all_nine_columns_are_sortable():
+def test_every_remaining_column_is_sortable():
     block = _book_header_block()
     for col, _cell in COLUMNS:
         assert f'data-book-sort-col="{col}"' in block, f"{col} not sortable"
@@ -152,11 +151,10 @@ def test_sorting_reads_raw_fields_not_the_rendered_text():
     underlying numbers or every numeric column sorts wrong."""
     i = _JS.index("function _bookSortVal")
     body = _JS[i:_JS.index("\n}", i)]
-    for field in ("r.price", "r.avg_entry", "r.exhaustion", "r.macd_gap",
-                  "r.cm_rsi", "r.pl"):
+    for field in ("r.price", "r.avg_entry", "r.macd_gap", "r.pl"):
         assert field in body, f"{field} not read"
     assert "_bookStopPx(r)" in body, "stop must use the same shelf the cell shows"
-    assert "textContent" not in body and "_fmtExh" not in body
+    assert "textContent" not in body
 
 
 def test_unknown_values_sink_in_both_directions():
@@ -209,38 +207,38 @@ def test_the_sort_survives_a_reload_but_never_throws():
 
 # ── RSI column ───────────────────────────────────────────────────────────
 
-def test_the_rsi_cell_is_rendered_and_updated_in_place():
-    """Two paths, and both must exist.
+def test_rsi_and_exh_are_gone_from_the_book():
+    """Retired with the exhaustion arm gate they reported on.
 
-    The row template builds the cell on a full repaint; the updater moves the
-    value between repaints. A cell wired into only the template shows a
-    reading that freezes at whatever it was when the row was last rebuilt —
-    which looks like a live number and is not one.
+    EXH+RSI as an entry signal was falsified — the edge was look-ahead — so
+    the columns were describing a lever that no longer decides anything, and
+    a reading nobody acts on still costs a track in a nine-column grid.
+
+    Pinned in every place the pair was wired, because a column half-removed
+    is the failure this file already exists to catch: a header without a cell
+    (or the reverse) is a grid whose two subtrees no longer agree, and that is
+    what wrapped the P&L onto a second line the last time.
     """
-    assert "cell-rsi${_rsiPairClass(r)}" in _JS, "not in the row template"
-    i = _JS.index("const rsiEl = el.querySelector('.cell-rsi');")
-    body = _JS[i:i + 300]
-    assert "_setText(rsiEl, _bookRsiText(r))" in body
-    assert "_rsiPairClass(r)" in body, "class must be recomputed, not just text"
-
-
-def test_the_rsi_cell_marks_a_reading_that_is_not_from_the_live_tape():
-    """The operator asked for realtime specifically. The engine flips between
-    the Finnhub stream and REST fallback per ticker, mid-session, so a
-    reading has to say which one drew it — absence and "from the fallback"
-    are different facts and blending them is how a lever gets trusted more
-    than it has earned."""
-    assert "rsi--stale" in _CSS, "no styling for a non-realtime reading"
-    i = _JS.index("function _rsiStale")
-    body = _JS[i:_JS.index("\n}", i)]
-    assert "cm_rsi_src" in body
-    assert "'realtime'" in body
-
-
-def test_rsi_sorts_on_the_reading_not_the_arrow():
-    """The cell renders "42.1↑". Sorting that as text puts every rising name
-    above every falling one regardless of level."""
+    block = _book_header_block()
+    for col in ("rsi", "exh"):
+        assert f'data-book-sort-col="{col}"' not in block, f"{col} header remains"
+        assert f"th-{col}" not in _CSS, f"th-{col} styling remains"
+        assert f"cell-{col}" not in _CSS, f"cell-{col} styling remains"
+        assert f"cell-{col}" not in _JS, f"{col} cell still rendered"
     i = _JS.index("function _bookSortVal")
     body = _JS[i:_JS.index("\n}", i)]
-    assert "r.cm_rsi" in body
-    assert "_bookRsiText" not in body
+    assert "cm_rsi" not in body and "r.exhaustion" not in body
+
+
+def test_a_pin_on_a_retired_column_falls_back_to_the_default():
+    """Anyone who left the book sorted by RSI has that in localStorage. Without
+    a whitelist the restored column makes _bookSortVal return null for every
+    row — the book comes back apparently shuffled, with no header arrow to
+    explain why."""
+    i = _JS.index("_BOOK_SORT_COLS")
+    decl = _JS[i:_JS.index(")", i)]
+    for col in ("ticker", "state", "last", "chg", "entry", "stop", "pl"):
+        assert f"'{col}'" in decl, f"{col} missing from the whitelist"
+    assert "'rsi'" not in decl and "'exh'" not in decl
+    restore = _JS[_JS.index("function _restoreBookSort"):]
+    assert "_BOOK_SORT_COLS.has(v.col)" in restore[:400], "restore does not check it"
