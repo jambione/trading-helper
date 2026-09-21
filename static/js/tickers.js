@@ -526,6 +526,10 @@ function _updateRow(el, row) {
     const mod = _chgClass(row.pct_change ?? null);
     chgEl.classList.toggle('chg-pos', mod === 'chg-pos');
     chgEl.classList.toggle('chg-neg', mod === 'chg-neg');
+    const cd = _chgDeco(row);
+    chgEl.classList.toggle('cell-chg--alt-basis', cd.cls !== '');
+    if (cd.title) chgEl.title = cd.title;
+    else chgEl.removeAttribute('title');
   }
 
   const volEl = el.querySelector('[data-vol]');
@@ -805,6 +809,19 @@ function _ageText(age) {
   return `${Math.round(age / 86400)}d ago`;
 }
 
+/** What the percentage beside a price is measured against.
+ *  Premarket there is no open yet, so the server falls back to the prior
+ *  close — the same thing every quote screen means by a premarket %. The
+ *  column changes meaning at 09:30, so it has to say which one it is. */
+function _chgDeco(row) {
+  if (row.pct_change == null) return { cls: '', title: '' };
+  if (row.pct_change_basis === 'prev_close') {
+    return { cls: ' cell-chg--alt-basis', title: 'vs prior close \u2014 no open yet today' };
+  }
+  if (row.pct_change_basis === 'open') return { cls: '', title: "vs today's open" };
+  return { cls: '', title: '' };
+}
+
 function _staleTitle(age) {
   return `Last print ${_ageText(age)} \u2014 not a live quote`;
 }
@@ -826,6 +843,7 @@ function _snapTitle(age) {
 function _rowHTML(row) {
   const p      = _priceCell(row);
   const pDeco  = _priceDeco(p);
+  const cDeco  = _chgDeco(row);
   const chgCls = _chgClass(row.pct_change ?? null);
   const volCls = (row.rvol ?? 0) >= 1.5 ? ' vol-high' : '';
 
@@ -841,7 +859,7 @@ function _rowHTML(row) {
       ${_confluenceBadge(row.confluence)}
     </div>
     <div class="cell-price${pDeco.cls}" data-price="${row.ticker}"${pDeco.title ? ` title="${pDeco.title}"` : ''}>${p.txt}</div>
-    <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>
+    <div class="cell-chg ${chgCls}${cDeco.cls}" data-chg${cDeco.title ? ` title="${cDeco.title}"` : ''}>${_fmtChg(row.pct_change ?? null)}</div>
     <div class="cell-rvol${volCls}" data-rvol>${_fmtRvol(row.rvol)}</div>
     <div class="cell-vol${volCls}" data-vol>${_fmtVol(row.day_vol)}</div>
     <div class="cell-flags" data-flags>${_flagsHtml(row)}</div>

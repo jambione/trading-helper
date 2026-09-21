@@ -3227,6 +3227,14 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
    API). Dimmed rather than hidden: the last print is still the best estimate
    anyone has, it just is not a quote. The dotted rule marks it as hoverable —
    the tooltip carries the age. */
+/* A percentage measured against the prior close rather than today's open
+   (premarket, when no open exists yet). Same dotted rule as a stale price:
+   on this board that mark means "hover me, this number has a caveat". */
+.cell-chg--alt-basis {
+  text-decoration: underline dotted currentColor;
+  text-underline-offset: 3px;
+}
+
 .cell-price--stale {
   color: var(--text-dim, #8a8f98);
   text-decoration: underline dotted var(--text-dim, #8a8f98);

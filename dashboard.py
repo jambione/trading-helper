@@ -2418,6 +2418,40 @@ def price_is_stale(age_sec, ceiling: float = BOARD_PRICE_STALE_SEC) -> bool:
     return age > float(ceiling)
 
 
+def _et_day_str(now: float | None = None) -> str:
+    """Today's session date in ET, as the day_open stamp writes it."""
+    return datetime.fromtimestamp(
+        float(now if now is not None else time.time()), tz=ET).strftime("%Y-%m-%d")
+
+
+def pct_change_basis(row: dict, now: float | None = None) -> tuple[str, float | None]:
+    """(basis, reference price) for a row's percentage, or ("", None).
+
+    Intraday the reference is today's open. Before 09:30 ET there is no such
+    thing yet — and the quote feed keeps serving the previous session's open in
+    that same field — so the reference premarket is the prior close, which is
+    what a premarket percentage means on every quote screen anyway.
+
+    Driven by what can be proven rather than by the clock: an open is used only
+    when it was stamped with today's session. "The market is open" is not
+    evidence that the number in hand belongs to this session, and at 09:30:05
+    the feed has not necessarily caught up.
+    """
+    try:
+        open_px = float(row.get("day_open") or 0)
+    except (TypeError, ValueError):
+        open_px = 0.0
+    if open_px > 0 and str(row.get("day_open_day") or "") == _et_day_str(now):
+        return "open", open_px
+    try:
+        prev_close = float(row.get("prev_close") or 0)
+    except (TypeError, ValueError):
+        prev_close = 0.0
+    if prev_close > 0:
+        return "prev_close", prev_close
+    return "", None
+
+
 # Finnhub REST quote poll — fills prices outside RTH (or when WS is down).
 # Runs every 30s; only updates tickers not already covered by a live WebSocket price.
 _FINNHUB_REST_INTERVAL = 30   # seconds
@@ -2494,11 +2528,28 @@ def _finnhub_rest_poll_worker(api_key: str, tickers: list):
                     except (TypeError, ValueError):
                         q_ms = 0
                     FINNHUB_STATE.update_price(ticker, price, timestamp=q_ms)
+                    # NOT q["pc"]. Premarket Finnhub's whole /quote is the
+                    # last COMPLETED session: measured 2026-09-21 06:40 ET,
+                    # HOOD came back c=119.82 and o=113.34 (Friday's close and
+                    # open) with pc=109.81 — THURSDAY's close. Reading `pc` as
+                    # the prior close before 09:30 is off by a session, the
+                    # same class of error as reading `o` as today's open. The
+                    # prior close comes from dated daily bars in _vol_loop.
                     day_open = float(q.get("o", 0))
                     if day_open > 0:
                         with STATE.lock:
                             entry = STATE.tickers.setdefault(ticker, {})
                             entry["day_open"] = round(day_open, 4)
+                            # WHICH SESSION that open belongs to. Finnhub's `o`
+                            # still carries the PREVIOUS session's open before
+                            # 09:30, so treating it as today's is what
+                            # published a two-and-a-half-day move as this
+                            # morning's: 2026-09-21 06:35 ET the board read
+                            # HOOD +9.67%, measured from Friday's open of
+                            # 113.34, while its real premarket move was +4.2%.
+                            # Only an open seen during RTH is today's.
+                            entry["day_open_day"] = (
+                                _et_day_str() if _us_rth_now() else "")
                 time.sleep(0.1)
             except Exception as e:
                 fail_streak += 1
@@ -2784,6 +2835,59 @@ def _vol_avg_volumes(mf, client, tickers: list, cfg: dict, now_et) -> dict:
     return _VOL_AVG_CACHE
 
 
+_PREV_CLOSE_CACHE: dict = {}
+_PREV_CLOSE_DATE = ""
+
+
+def _publish_prior_closes(mf, client, tickers: list, cfg: dict, now_et) -> None:
+    """Write each ticker's prior SESSION close into STATE.tickers.
+
+    The premarket percentage needs a reference and the quote feed cannot give
+    one: before 09:30 Finnhub's `pc` is the close from two sessions back (see
+    the note in the REST poll). A daily bar is dated, so the prior close is
+    "the last bar before today" rather than whatever the feed currently means
+    by previous — the same rule, off the same fetch, that morning_funnel
+    measures its own gap with, so the board and the funnel cannot disagree.
+
+    Cached for the ET day: a settled close does not move. Misses are cached
+    too — the watchlist turns over all day and a fresh listing with no history
+    would otherwise be re-requested every 60s forever.
+    """
+    global _PREV_CLOSE_DATE
+    stamp = now_et.date().isoformat()
+    if _PREV_CLOSE_DATE != stamp:
+        _PREV_CLOSE_CACHE.clear()
+        _PREV_CLOSE_DATE = stamp
+
+    wanted = [t for t in tickers if t not in _PREV_CLOSE_CACHE]
+    if wanted:
+        import pandas as pd
+        daily = mf.fetch_daily(client, wanted, cfg) or {}
+        today = now_et.date()
+        for sym in wanted:
+            df = daily.get(sym)
+            got = (None, "")
+            try:
+                if df is not None and not df.empty:
+                    dates = pd.Series(mf._et_index(df).date, index=df.index)
+                    completed = df[dates < today]
+                    if len(completed):
+                        got = (float(completed["close"].iloc[-1]),
+                               str(dates[dates < today].iloc[-1]))
+            except Exception:                                   # noqa: BLE001
+                got = (None, "")
+            _PREV_CLOSE_CACHE[sym] = got
+
+    with STATE.lock:
+        for sym in tickers:
+            close, day = _PREV_CLOSE_CACHE.get(sym) or (None, "")
+            if not close or close <= 0:
+                continue
+            entry = STATE.tickers.setdefault(sym, {})
+            entry["prev_close"]     = round(float(close), 4)
+            entry["prev_close_day"] = day
+
+
 def _vol_loop():
     """Day volume + time-adjusted relative volume for watchlist tickers.
 
@@ -2822,6 +2926,12 @@ def _vol_loop():
             mins_open = (now_et.hour * 60 + now_et.minute) - mf.OPEN_MIN
 
             avg_by_sym = _vol_avg_volumes(mf, client, tickers, cfg, now_et)
+            # Same client, same cfg, same daily fetch the funnel uses. Cheap:
+            # one request per symbol per ET day, and nothing while cached.
+            try:
+                _publish_prior_closes(mf, client, tickers, cfg, now_et)
+            except Exception as e:                              # noqa: BLE001
+                log.debug("[VOL] prior close: %s", e)
             minutes = mf.fetch_minutes_today(client, tickers, cfg, now_et) or {}
 
             vol_data: dict = {}
@@ -2983,13 +3093,16 @@ def _snapshot() -> dict:
             if src_tag:
                 d["src"] = src_tag
             price    = d.get("price")
-            day_open = d.get("day_open")
             # Scanner snapshot age, so the UI can grey it out by staleness and
             # never mistake it for a live print.
             snap_ts = d.pop("scanner_price_ts", None)
             if d.get("scanner_price") is not None and snap_ts:
                 d["scanner_price_age_sec"] = round(max(0.0, now_ts - snap_ts), 1)
-            d["pct_change"] = round((price - day_open) / day_open * 100, 2) if (price and day_open and day_open > 0) else None
+            _basis, _ref = pct_change_basis(d, now_ts)
+            d["pct_change_basis"] = _basis or None
+            d["pct_change"] = (
+                round((price - _ref) / _ref * 100, 2)
+                if (price and _ref and _ref > 0) else None)
             # Mention counts — count in-window entries without rebuilding the list;
             # _track_mention() prunes at write time so this path stays read-only.
             window_count        = sum(1 for tm in STATE.mention_ts.get(t, []) if now_ts - tm <= m_window)
