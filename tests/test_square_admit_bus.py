@@ -14,8 +14,8 @@ def _cfg(**over):
         "ai_watch_admit_prefer_square": True,
         "ai_watch_exh_square_arm": True,
         "ai_watch_exh_pre_thr": 35.0,
-        "ai_watch_max_far_exh_seats": 2,
-        "ai_watch_far_exh_evict_sec": 90.0,
+        "ai_watch_max_far_exh_seats": 0,
+        "ai_watch_far_exh_evict_sec": 45.0,
         "rte_threshold": 20,
         "rte_confluence_max": 15.0,
         "ai_watch_soft_seed_enabled": True,
@@ -48,14 +48,28 @@ def test_classify_square_pre_far_unknown():
     cfg = _cfg()
     assert ew.classify_exh_seat(
         {"indicator": _ind(fast=-13, slow=-4)}, cfg)[0] == "square"
+    # Brief fixture: both −32, gap 8, rising → pre_square (pre_thr=35).
+    cls, gap = ew.classify_exh_seat(
+        {"indicator": _ind(fast=-32, slow=-32)}, cfg)
+    assert cls == "pre_square"
+    assert gap == pytest.approx(0.0)
     cls, gap = ew.classify_exh_seat(
         {"indicator": _ind(fast=-30, slow=-28)}, cfg)
     assert cls == "pre_square"
     assert gap == pytest.approx(2.0)
+    # Gap 25 → far even if both in approach band.
+    assert ew.classify_exh_seat(
+        {"indicator": _ind(fast=-20, slow=-45)}, cfg)[0] == "far"
     assert ew.classify_exh_seat(
         {"indicator": _ind(fast=-39, slow=-64)}, cfg)[0] == "far"
+    # Missing slow → unknown (not pre_square).
     assert ew.classify_exh_seat(
         {"indicator": {"pctr": -30.0}}, cfg)[0] == "unknown"
+    assert ew.is_warming_exh_profile(
+        None, True, cfg, allow_unknown=False,
+        row={"indicator": {"pctr": -30.0}},
+        ind={"pctr": -30.0},
+    ) is False
 
 
 def test_stamp_exh_seat_fields():
@@ -68,13 +82,16 @@ def test_stamp_exh_seat_fields():
 def test_default_config_bakes_square_bus_and_trail():
     assert DEFAULT_CONFIG["ai_watch_admit_prefer_square"] is True
     assert DEFAULT_CONFIG["ai_watch_exh_pre_thr"] == 35.0
-    assert DEFAULT_CONFIG["ai_watch_max_far_exh_seats"] == 2
-    assert DEFAULT_CONFIG["ai_watch_far_exh_evict_sec"] == 90.0
+    assert DEFAULT_CONFIG["ai_watch_max_far_exh_seats"] == 0
+    assert DEFAULT_CONFIG["ai_watch_far_exh_evict_sec"] == 45.0
     assert DEFAULT_CONFIG["ai_watch_arm_require_cm_rsi"] is False
     assert DEFAULT_CONFIG["ai_local_trail_time_decay_enabled"] is False
     assert DEFAULT_CONFIG["ai_local_trail_arm_r"] == 0.25
+    assert DEFAULT_CONFIG["ai_local_trail_ob_hold_mae_r"] == -1.0
     # Square arm math unchanged.
     assert DEFAULT_CONFIG["ai_watch_exh_square_arm"] is True
+    # Premarket flood stays off — pre_square farm ≠ include_pre.
+    assert DEFAULT_CONFIG.get("ai_watch_morning_flood_include_pre", False) is False
 
 
 # ── soft-seed prefer ───────────────────────────────────────────────────────
@@ -233,3 +250,75 @@ def test_square_arm_unchanged_smci_rklb():
     assert ok is True and why == "overbought"
     ok, why = ew.exhaustion_allows_buy(rklb, cfg)
     assert ok is False and why == "exh_not_tight"
+
+
+def test_far_exh_steal_for_pre_square(monkeypatch):
+    """Book full of far + waiting pre_square → steal with distinct reason."""
+    dropped = []
+    monkeypatch.setattr(ew, "drop_watch_symbols", lambda s: dropped.extend(s))
+    now = time.time()
+    state = {}
+    for i in range(6):
+        sym = f"FAR{i}"
+        state[sym] = {
+            "symbol": sym,
+            "status": "watching",
+            "admit_ts": now - 600.0,
+            "far_exh_since": now - 60.0,
+            "exh_seat_class": "far",
+            "indicator": _ind(fast=-39, slow=-64),
+            "seat_role": "pin" if i < 2 else None,
+            "admit_dollar_volume": 1e5 + i,
+        }
+    cands = [
+        {
+            "symbol": "PRE1",
+            "exh_seat_class": "pre_square",
+            "indicator": _ind(fast=-32, slow=-30),
+            "dollar_volume": 5e6,
+            "last_ask_src": "stream",
+            "last_ask_age_sec": 1.0,
+        },
+        {
+            "symbol": "SQ1",
+            "exh_seat_class": "square",
+            "indicator": _ind(fast=-13, slow=-4),
+            "dollar_volume": 6e6,
+            "last_ask_src": "stream",
+            "last_ask_age_sec": 1.0,
+        },
+    ]
+    events = []
+    got = ew._preferential_far_exh_steal(
+        state, cfg=_cfg(), now=now, events=events,
+        cp=_FakeCP(), gt=_FakeGT(), candidates=cands,
+    )
+    assert len(got) == 2
+    reasons = {e.get("reason") for e in events}
+    assert "far_exh_steal_for_square" in reasons
+    assert "far_exh_steal_for_pre_square" in reasons
+    assert set(dropped) == set(got)
+
+
+def test_exh_seat_class_counts():
+    state = {
+        "A": {"symbol": "A", "status": "watching", "exh_seat_class": "square"},
+        "B": {"symbol": "B", "status": "watching", "exh_seat_class": "pre_square"},
+        "C": {"symbol": "C", "status": "watching", "exh_seat_class": "far"},
+        "D": {"symbol": "D", "status": "watching", "exh_seat_class": "far"},
+        "_meta": "skip",
+    }
+    c = ew.exh_seat_class_counts(state)
+    assert c["n_square"] == 1
+    assert c["n_pre_square"] == 1
+    assert c["n_far"] == 2
+    assert c["n_seats"] == 4
+
+
+def test_soft_seed_score_far_never_outranks_pre_on_chg():
+    cfg = _cfg()
+    far = {"pct_change": 80.0, "dollar_volume": 5e7,
+           "indicator": _ind(fast=-39, slow=-64)}
+    pre = {"pct_change": 5.0, "dollar_volume": 1e5,
+           "indicator": _ind(fast=-32, slow=-30)}
+    assert ew.soft_seed_scout_score(pre, cfg) > ew.soft_seed_scout_score(far, cfg)
