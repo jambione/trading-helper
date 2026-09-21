@@ -237,3 +237,36 @@ def test_stale_square_gate_refuses_late_entry():
     cfg_off = _cfg(ai_watch_square_max_age_sec=0)
     ok_off, why_off = ew._square_exh_allows_buy(stale_rec, cfg_off, require_rising=False, now=now)
     assert ok_off is True and why_off == "overbought"
+
+
+def test_dual_tranche_triangle_exit_yields_trail_and_flattens():
+    """In square mode with ai_dual_tranche_triangle_exit=True:
+    1. trail_yields_to_triangle yields to triangle even for dual tranche.
+    2. confirmed leave-OB triangle does not get deferred by dual tranche.
+    """
+    import ai_entry_watch as ew
+
+    cfg = _cfg(
+        ai_dual_tranche_triangle_exit=True,
+        ai_exit_left_overbought_confirm_sec=0.0,
+    )
+    pos = _pos(
+        symbol="NUAI",
+        qty_a=10,
+        qty_b=10,
+        tranche_a_filled=True,  # scaled out at T1!
+        exh_was_overbought=True,
+        indicator={"pctr": -40.0, "pctr_slow": -25.0, "pctr_ob": False},
+        left_ob_since=100.0,
+    )
+
+    # 1. Trail yields to triangle
+    yield_now, why = ap.trail_yields_to_triangle(pos, cfg, now=100.0)
+    assert yield_now is True
+    assert why == "left_ob_pending"
+
+    # 2. When ai_dual_tranche_triangle_exit is False, legacy trail backup is chosen
+    cfg_legacy = _cfg(ai_dual_tranche_triangle_exit=False)
+    yield_legacy, why_legacy = ap.trail_yields_to_triangle(pos, cfg_legacy, now=100.0)
+    assert yield_legacy is False
+    assert why_legacy == "dual_tranche_trail_backup"

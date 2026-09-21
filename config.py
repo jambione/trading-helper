@@ -268,7 +268,7 @@ DEFAULT_CONFIG = {
     "ai_trade_style": "Day scalp",
     # Must be <= ai_watch_synth_rr or every synthetic zone self-blocks on the
     # reward_risk gate in should_arm_buy. Day scalp uses sub-1R first targets.
-    "ai_min_reward_risk":        0.5,
+    "ai_min_reward_risk":        0.30,
     "ai_positions_poll_sec":     5.0,
     "ai_prompt_file": "ai_prompt.txt",
     # Safety / desk quality knobs
@@ -1084,12 +1084,13 @@ DEFAULT_CONFIG = {
     "ai_watch_zone_width_pct":         4.0,  # zone depth below entry_high
     # Measured off the *fill*, not entry_low — see _decision_for_place.
     "ai_watch_synth_stop_pct":         5.0,  # stop under the fill price
-    # First bank at 1R. 0.6R was a scalp that cut continuation winners
-    # before the ratchet could lock them (30m+ holds were the only green
-    # bucket on 2026-08-11..18).
-    "ai_watch_synth_rr":               1.0,  # target at this R multiple
+    # First bank at 0.35R (calibrated for intraday small-cap square thrust).
+    # Replaces old 1.0R which had 0% hit rate across recent sessions.
+    "ai_watch_synth_rr":               0.35, # target at this R multiple
     # Scale-out / runner (synthetic dual tranche when ai_day_scalp_dual_tranche).
     "ai_watch_synth_scale_out_pct":   50.0,  # % of shares with T1 take-profit
+    # In square mode, runner flattens on leave-OB triangle (▼) rather than deferring ▼.
+    "ai_dual_tranche_triangle_exit":   True,
     # Runner trail after T1, in R — a percent trail is a different trade on
     # every name (2.5% is 2.5R behind a 1% stop, 0.5R behind a 5% one), which
     # let the runner lose more than tranche A had just banked. The stop is
@@ -1648,6 +1649,7 @@ _EFFECTIVE_KEYS = (
     "ai_exit_left_overbought_confirm_sec",
     "ai_exit_dual_slow_max_age_sec",
     "ai_exit_left_ob_exempt_min_hold",
+    "ai_dual_tranche_triangle_exit",
     "ai_watch_square_max_age_sec",
     "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",
@@ -1956,6 +1958,7 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_left_overbought_confirm_sec",
     "ai_exit_dual_slow_max_age_sec",
     "ai_exit_left_ob_exempt_min_hold",
+    "ai_dual_tranche_triangle_exit",
     "ai_watch_square_max_age_sec",
     "ai_watch_exh_square_arm",
     "ai_watch_admit_prefer_square",

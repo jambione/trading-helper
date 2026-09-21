@@ -2874,6 +2874,15 @@ def trail_yields_to_triangle(
     if mae_gate < 0 and mae is not None and float(mae) <= mae_gate + 1e-12:
         return False, "mae_escape"
 
+    # Legacy dual-tranche books defer ▼ forever — keep trail as backup there.
+    # When ai_dual_tranche_triangle_exit is True, triangle owns the exit.
+    dual = (
+        float(pos.get("qty_a") or 0) > 0
+        and float(pos.get("qty_b") or 0) > 0
+    )
+    if dual and not bool(cfg.get("ai_dual_tranche_triangle_exit", False)):
+        return False, "dual_tranche_trail_backup"
+
     # Pending leave-OB confirm → triangle owns the exit race.
     if pos.get("left_ob_since") is not None:
         try:
@@ -2927,13 +2936,6 @@ def trail_yields_to_triangle(
         return True, "still_dual_ob"
     # Live dual has left OB. Yield through confirm + a short race window so
     # the manage tick can fire left_overbought before the faster trail tick.
-    # Dual-tranche books defer ▼ forever — keep trail as backup there.
-    dual = (
-        float(pos.get("qty_a") or 0) > 0
-        and float(pos.get("qty_b") or 0) > 0
-    )
-    if dual:
-        return False, "dual_tranche_trail_backup"
     try:
         confirm = float(cfg.get("ai_exit_left_overbought_confirm_sec", 3.0) or 0.0)
     except (TypeError, ValueError):
@@ -6490,8 +6492,9 @@ def manage_open_positions(
                     float(pos.get("qty_a") or 0) > 0
                     and float(pos.get("qty_b") or 0) > 0
                 )
-                if hit and dual:
-                    # Dual book banks via T1 + runner ratchet. Flattening here
+                _dual_defers = dual and not bool(cfg_exh.get("ai_dual_tranche_triangle_exit", False))
+                if hit and _dual_defers:
+                    # Legacy dual book banks via T1 + runner ratchet. Flattening here
                     # was 13/19 closes on 2026-08-12 and killed the raise.
                     log_event(
                         "left_overbought_deferred", symbol=ticker,
