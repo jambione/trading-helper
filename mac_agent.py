@@ -429,6 +429,16 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
 
     print(f"  🌐 ADD_TV → {ticker}  [{browser}]")
 
+    # HARD STOP: never type tickers while Discord is frontmost. OCR keeps
+    # Discord visible; a focus race + Enter posts the symbol into chat.
+    front = _frontmost_app()
+    if "discord" in front.lower():
+        print(
+            f"  SKIP ADD_TV aborted -- Discord is frontmost ({front!r}); "
+            "refusing keystrokes so we do not post tickers into chat"
+        )
+        return False
+
     if not _focus_app(browser):
         print(f"  ❌ ADD_TV failed — could not focus {browser}")
         return False
@@ -472,6 +482,13 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     time.sleep(TV_SETTLE_SEC)
 
     # Type ticker — TradingView opens symbol search on first keypress
+    front2 = _frontmost_app()
+    if "discord" in front2.lower() or front2 != browser:
+        print(
+            f"  SKIP ADD_TV aborted before type — "
+            f"frontmost={front2!r} want={browser!r}"
+        )
+        return False
     _pag.write(ticker.lower(), interval=TV_TYPE_INTERVAL)
     _pag.press("enter")       # confirm symbol
 
