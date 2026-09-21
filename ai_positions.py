@@ -5414,6 +5414,52 @@ def mark_closing_reason(reason: str, *, except_symbols: set | None = None) -> in
     return n
 
 
+def _feat_get(pos: dict[str, Any], key: str, default: Any = None) -> Any:
+    """Position field, else features[key]. Used so outcome rows stay denormalized."""
+    if pos.get(key) is not None and pos.get(key) != "":
+        return pos.get(key)
+    feat = pos.get("features") if isinstance(pos.get("features"), dict) else {}
+    if feat.get(key) is not None and feat.get(key) != "":
+        return feat.get(key)
+    return default
+
+
+def _outcome_arm_why(pos: dict[str, Any]) -> str | None:
+    """Prefer stamped arm_why; backfill square from overbought exhaustion state."""
+    why = _feat_get(pos, "arm_why")
+    if why:
+        return str(why)
+    state = str(
+        pos.get("entry_exhaustion_state")
+        or _feat_get(pos, "entry_exhaustion_state")
+        or ""
+    ).strip().lower()
+    if state in ("overbought", "overbought_hot"):
+        return "square"
+    if state:
+        return state
+    return None
+
+
+def _outcome_extension_class(pos: dict[str, Any], *, now: float) -> str | None:
+    """late_into_square | dead_follow_through | extended — needs mfe_r at least."""
+    arm_r = float((_cfg_all().get("ai_local_trail_arm_r", 0.25) or 0.25))
+    sq_since = _num(pos.get("square_since")) or _num(_feat_get(pos, "square_since"))
+    entry_time = _num(pos.get("entry_time"))
+    if (
+        sq_since is not None
+        and entry_time is not None
+        and (float(entry_time) - float(sq_since)) >= 60.0
+    ):
+        return "late_into_square"
+    mfe = _num(pos.get("mfe_r"))
+    if mfe is None:
+        return None
+    if float(mfe) + 1e-12 < arm_r:
+        return "dead_follow_through"
+    return "extended"
+
+
 def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
                     close_reason: str, now: float) -> dict[str, Any]:
     entry_price = pos.get("entry_price") or 0
@@ -5433,6 +5479,13 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         realized_pl = (exit_price - entry_price) * total_qty
 
     entry_time = pos.get("entry_time", now)
+    arm_r = float((_cfg_all().get("ai_local_trail_arm_r", 0.25) or 0.25))
+    mfe = _num(pos.get("mfe_r"))
+    sq_since = _num(pos.get("square_since")) or _num(_feat_get(pos, "square_since"))
+    admit = _feat_get(pos, "exh_seat_class_admit") or _feat_get(pos, "exh_seat_class")
+    if str(admit or "").strip().lower() in ("", "unknown", "none"):
+        admit = _feat_get(pos, "exh_seat_class_fill") or _feat_get(pos, "exh_seat_class")
+    fill_cls = _feat_get(pos, "exh_seat_class_fill") or _feat_get(pos, "exh_seat_class")
     outcome = {
         "ts": now,
         "symbol": ticker,
@@ -5447,6 +5500,8 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         "realized_r_multiple": realized_r,
         "realized_pl_usd": realized_pl,
         "close_reason": close_reason,
+        # Alias — scorecards / humans often look for closing_reason.
+        "closing_reason": close_reason,
         "scaled_out": bool(pos.get("tranche_a_filled")),
         "entry_time": entry_time,
         "exit_time": now,
@@ -5471,74 +5526,28 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         "mfe_r": pos.get("mfe_r"),
         # No-extension scorecard (Phase 1): did MFE clear the live trail arm?
         "hit_trail_arm": (
-            bool(
-                _num(pos.get("mfe_r")) is not None
-                and _num(pos.get("mfe_r")) + 1e-12 >= float(
-                    (_cfg_all().get("ai_local_trail_arm_r", 0.25) or 0.25)
-                )
-            )
-            if _num(pos.get("mfe_r")) is not None else None
+            bool(mfe is not None and float(mfe) + 1e-12 >= arm_r)
+            if mfe is not None else None
         ),
-        "arm_why": pos.get("arm_why") or (
-            (pos.get("features") or {}).get("arm_why")
+        "arm_why": _outcome_arm_why(pos),
+        "exh_seat_class_admit": (
+            None if str(admit or "").strip().lower() in ("", "unknown", "none")
+            else admit
         ),
-        "exh_seat_class_admit": pos.get("exh_seat_class_admit") or (
-            (pos.get("features") or {}).get("exh_seat_class_admit")
-        ),
-        "exh_seat_class_fill": pos.get("exh_seat_class_fill") or (
-            (pos.get("features") or {}).get("exh_seat_class")
-        ),
-        "pctr": pos.get("pctr") if pos.get("pctr") is not None else (
-            (pos.get("features") or {}).get("pctr")
-        ),
-        "pctr_slow": pos.get("pctr_slow") if pos.get("pctr_slow") is not None else (
-            (pos.get("features") or {}).get("pctr_slow")
-        ),
-        "pctr_gap": pos.get("pctr_gap") if pos.get("pctr_gap") is not None else (
-            (pos.get("features") or {}).get("pctr_gap")
-        ),
-        "pctr_ob": pos.get("pctr_ob") if pos.get("pctr_ob") is not None else (
-            (pos.get("features") or {}).get("pctr_ob")
-        ),
-        "pctr_tight": (
-            pos.get("pctr_tight") if pos.get("pctr_tight") is not None
-            else (pos.get("features") or {}).get("pctr_tight")
-        ),
-        "sticky_used": bool(
-            pos.get("sticky_used")
-            if pos.get("sticky_used") is not None
-            else (pos.get("features") or {}).get("sticky_used", False)
-        ),
+        "exh_seat_class_fill": fill_cls,
+        "pctr": _feat_get(pos, "pctr"),
+        "pctr_slow": _feat_get(pos, "pctr_slow"),
+        "pctr_gap": _feat_get(pos, "pctr_gap"),
+        "pctr_ob": _feat_get(pos, "pctr_ob"),
+        "pctr_tight": _feat_get(pos, "pctr_tight"),
+        "sticky_used": bool(_feat_get(pos, "sticky_used", False)),
         "time_in_square_before_entry_sec": (
-            round(float(pos.get("entry_time") or now) - float(pos["square_since"]), 1)
-            if _num(pos.get("square_since")) is not None
-            and _num(pos.get("entry_time")) is not None
+            round(float(entry_time) - float(sq_since), 1)
+            if sq_since is not None and entry_time is not None
             else None
         ),
-        # late_into_square: already dual OB for ≥60s before fill.
-        # dead_follow_through: entered early square (or pre), never hit arm_r.
-        "extension_class": (
-            "late_into_square"
-            if (
-                _num(pos.get("square_since")) is not None
-                and _num(pos.get("entry_time")) is not None
-                and (float(pos.get("entry_time")) - float(pos["square_since"])) >= 60.0
-            )
-            else (
-                "dead_follow_through"
-                if (
-                    _num(pos.get("mfe_r")) is not None
-                    and float(pos.get("mfe_r")) + 1e-12 < float(
-                        (_cfg_all().get("ai_local_trail_arm_r", 0.25) or 0.25)
-                    )
-                )
-                else (
-                    "extended"
-                    if _num(pos.get("mfe_r")) is not None
-                    else None
-                )
-            )
-        ),
+        # late_into_square | dead_follow_through | extended
+        "extension_class": _outcome_extension_class(pos, now=now),
         # Cost of crossing on the way in, in R. None until a fill is observed
         # against a limit — never estimated from a quote.
         "entry_slippage_r": pos.get("entry_slippage_r"),

@@ -1234,6 +1234,54 @@ def test_realized_r_is_measured_against_the_entry_stop_not_the_moved_one(
     assert out["realized_pl_usd"] == pytest.approx(250.0)
 
 
+def test_outcome_phase1_journal_lifts_features_and_aliases_close_reason(
+        tmp_path, monkeypatch):
+    """Phase 1 scorecard fields must land even when only features carried them.
+
+    Morning 2026-09-21 closes had close_reason always, but arm_why / dual-%R /
+    extension_class were missing on rows opened before those stamps existed.
+    Lift from features; alias closing_reason; backfill arm_why from OB state.
+    """
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {"ai_local_trail_arm_r": 0.15})
+    pos = {
+        "entry_price": 28.63,
+        "stop_price": 27.208,
+        "risk_per_share": 1.422,
+        "total_qty": 10,
+        "entry_time": 1_000_000.0,
+        "entry_exhaustion_state": "overbought",
+        "mfe_r": 0.0,
+        "mae_r": -0.03,
+        "square_since": 1_000_000.0 - 30.0,
+        "features": {
+            "pctr": -18.6,
+            "pctr_slow": -9.4,
+            "pctr_gap": 9.2,
+            "pctr_ob": True,
+            "pctr_tight": True,
+            "exh_seat_class": "square",
+            "exh_seat_class_admit": "unknown",
+            "sticky_used": False,
+            "square_since": 1_000_000.0 - 30.0,
+        },
+    }
+    out = cp._record_outcome("APLD", pos, 28.59, "left_overbought", 1_000_120.0)
+    assert out["close_reason"] == "left_overbought"
+    assert out["closing_reason"] == "left_overbought"
+    assert out["arm_why"] == "square"  # backfill from overbought
+    assert out["pctr"] == -18.6
+    assert out["pctr_slow"] == -9.4
+    assert out["pctr_gap"] == pytest.approx(9.2)
+    assert out["sticky_used"] is False
+    assert out["extension_class"] == "dead_follow_through"
+    assert out["hit_trail_arm"] is False
+    assert out["time_in_square_before_entry_sec"] == pytest.approx(30.0)
+    # unknown admit must not stick when fill class is known
+    assert out["exh_seat_class_admit"] == "square"
+    assert out["exh_seat_class_fill"] == "square"
+
+
 def test_a_deliberate_zero_survives_config_read():
     """float(x or default) cannot express 0 — which is how a configured
     'no trail' came back as 2.5%."""
