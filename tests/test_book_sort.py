@@ -34,6 +34,7 @@ COLUMNS = [
     ("chg", "cell-chg"),
     ("entry", "cell-entry"),
     ("stop", "cell-trail"),
+    ("exh", "cell-exh"),
     ("pl", "cell-pl"),
 ]
 
@@ -151,10 +152,10 @@ def test_sorting_reads_raw_fields_not_the_rendered_text():
     underlying numbers or every numeric column sorts wrong."""
     i = _JS.index("function _bookSortVal")
     body = _JS[i:_JS.index("\n}", i)]
-    for field in ("r.price", "r.avg_entry", "r.macd_gap", "r.pl"):
+    for field in ("r.price", "r.avg_entry", "r.exhaustion", "r.macd_gap", "r.pl"):
         assert field in body, f"{field} not read"
     assert "_bookStopPx(r)" in body, "stop must use the same shelf the cell shows"
-    assert "textContent" not in body
+    assert "textContent" not in body and "_fmtExh" not in body
 
 
 def test_unknown_values_sink_in_both_directions():
@@ -205,29 +206,29 @@ def test_the_sort_survives_a_reload_but_never_throws():
     assert "catch" in _JS[j:j + 300]
 
 
-# ── RSI column ───────────────────────────────────────────────────────────
+# ── EXH column (RSI stays retired) ───────────────────────────────────────
 
-def test_rsi_and_exh_are_gone_from_the_book():
-    """Retired with the exhaustion arm gate they reported on.
+def test_the_exh_cell_is_rendered_and_updated_in_place():
+    """Row template + in-place updater both must exist, or the reading freezes
+    at whatever it was when the row was last rebuilt."""
+    assert "cell-exh${_bookExhClass(r)}" in _JS, "not in the row template"
+    i = _JS.index("const exhEl = el.querySelector('.cell-exh');")
+    body = _JS[i:i + 300]
+    assert "_setText(exhEl, _bookExhText(r))" in body
+    assert "_bookExhClass(r)" in body, "class must be recomputed, not just text"
 
-    EXH+RSI as an entry signal was falsified — the edge was look-ahead — so
-    the columns were describing a lever that no longer decides anything, and
-    a reading nobody acts on still costs a track in a nine-column grid.
 
-    Pinned in every place the pair was wired, because a column half-removed
-    is the failure this file already exists to catch: a header without a cell
-    (or the reverse) is a grid whose two subtrees no longer agree, and that is
-    what wrapped the P&L onto a second line the last time.
-    """
+def test_rsi_stays_gone_from_the_book():
+    """RSI column stays retired; EXH is back for the square arm reading."""
     block = _book_header_block()
-    for col in ("rsi", "exh"):
-        assert f'data-book-sort-col="{col}"' not in block, f"{col} header remains"
-        assert f"th-{col}" not in _CSS, f"th-{col} styling remains"
-        assert f"cell-{col}" not in _CSS, f"cell-{col} styling remains"
-        assert f"cell-{col}" not in _JS, f"{col} cell still rendered"
+    assert 'data-book-sort-col="rsi"' not in block
+    assert "th-rsi" not in _CSS
+    assert "cell-rsi" not in _CSS
+    assert "cell-rsi" not in _JS
     i = _JS.index("function _bookSortVal")
     body = _JS[i:_JS.index("\n}", i)]
-    assert "cm_rsi" not in body and "r.exhaustion" not in body
+    assert "cm_rsi" not in body
+    assert "r.exhaustion" in body
 
 
 def test_a_pin_on_a_retired_column_falls_back_to_the_default():
@@ -237,8 +238,8 @@ def test_a_pin_on_a_retired_column_falls_back_to_the_default():
     explain why."""
     i = _JS.index("_BOOK_SORT_COLS")
     decl = _JS[i:_JS.index(")", i)]
-    for col in ("ticker", "state", "last", "chg", "entry", "stop", "pl"):
+    for col in ("ticker", "state", "last", "chg", "entry", "stop", "exh", "pl"):
         assert f"'{col}'" in decl, f"{col} missing from the whitelist"
-    assert "'rsi'" not in decl and "'exh'" not in decl
+    assert "'rsi'" not in decl
     restore = _JS[_JS.index("function _restoreBookSort"):]
     assert "_BOOK_SORT_COLS.has(v.col)" in restore[:400], "restore does not check it"

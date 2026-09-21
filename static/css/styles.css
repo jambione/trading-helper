@@ -2413,6 +2413,7 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .ai-book-table-header .th-last,
 .panel-ai-watch .ai-book-table-header .th-entry,
 .panel-ai-watch .ai-book-table-header .th-stop,
+.panel-ai-watch .ai-book-table-header .th-exh,
 .panel-ai-watch .ai-book-table-header .th-pl { text-align: right; }
 
 /* Entry rules, under the book. Values come from the live config at render
@@ -2546,23 +2547,22 @@ body.mobile [data-tv-toggle-btn] {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Chg | Entry | Stop | P&L
-     RSI and EXH removed with the exhaustion arm gate they displayed — the
-     entry signal they encoded was falsified (look-ahead), so the columns were
-     reporting on a lever that no longer decides anything. MACD went the same
-     way earlier (exit engine still uses MACD off-screen). Hold stays gone:
+  /* Ticker | State | Last | Chg | Entry | Stop | EXH | P&L
+     EXH is the square-arm live reading (100 + fast %R). RSI stays retired.
+     MACD went earlier (exit engine still uses it off-screen). Hold stays gone:
      the Stop cell shows the min-hold countdown while it runs and the stop
      price after. Qty is display:none and must not occupy a track.
      Chg is its own track: as a chip inside Last, a wide price and a wide
      percent shared one cell and the PRICE was what got ellipsed. */
   grid-template-columns:
-    minmax(48px, 0.85fr)
-    minmax(4.6rem, 1.05fr)
-    minmax(52px, 0.8fr)
-    minmax(44px, 0.65fr)
-    minmax(48px, 0.72fr)
-    minmax(56px, 0.85fr)
-    minmax(50px, 0.8fr);
+    minmax(48px, 0.8fr)
+    minmax(4.6rem, 1.0fr)
+    minmax(52px, 0.75fr)
+    minmax(44px, 0.6fr)
+    minmax(48px, 0.68fr)
+    minmax(56px, 0.8fr)
+    minmax(56px, 0.75fr)
+    minmax(50px, 0.75fr);
   width: 100%;
   box-sizing: border-box;
 }
@@ -2626,6 +2626,7 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .feed-cols--ai-book .cell-chg,
 .panel-ai-watch .feed-cols--ai-book .cell-entry,
 .panel-ai-watch .feed-cols--ai-book .cell-hold,
+.panel-ai-watch .feed-cols--ai-book .cell-exh,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
 
@@ -2656,7 +2657,7 @@ body.mobile [data-tv-toggle-btn] {
 
 /* Mobile Book: two lines per row so every field fits without horizontal scroll.
    Line 1 — identity + money: Ticker | State | Last | Entry | P&L
-   Line 2 — exit:             Stop (RSI and EXH retired with their gate)
+   Line 2 — exit / square:    Stop | EXH
    Qty stays desk-col-extra (hidden). State stays visible (no squeeze hide). */
 body.mobile .panel-ai-watch .feed-cols--ai-book {
   grid-template-columns:
@@ -2668,11 +2669,13 @@ body.mobile .panel-ai-watch .feed-cols--ai-book {
     minmax(0, 0.9fr);
   grid-template-areas:
     "ticker state last chg entry pl"
-    "stop   stop  .    .   .     .";
+    "stop   exh   exh  .   .     .";
   row-gap: 5px;
   column-gap: 8px;
   align-items: center;
 }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-exh,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-ticker,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-state,
@@ -2710,7 +2713,7 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-chg,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-entry,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-trail,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-hold,
-body.mobile .panel-ai-watch .feed-cols--ai-book .cell-hold {
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
   font-size: 12px;
 }
 @media (max-width: 700px) {
@@ -2724,11 +2727,13 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-hold {
       minmax(0, 0.9fr);
     grid-template-areas:
       "ticker state last chg entry pl"
-      "stop   stop  .    .   .     .";
+      "stop   exh   exh  .   .     .";
     row-gap: 5px;
     column-gap: 8px;
     align-items: center;
   }
+  .panel-ai-watch .feed-cols--ai-book > .th-exh,
+  .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
   .panel-ai-watch .feed-cols--ai-book > .th-ticker,
   .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
   .panel-ai-watch .feed-cols--ai-book > .th-state,
@@ -2766,7 +2771,7 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-hold {
   .panel-ai-watch .feed-cols--ai-book .cell-entry,
   .panel-ai-watch .feed-cols--ai-book .cell-trail,
   .panel-ai-watch .feed-cols--ai-book .cell-hold,
-  .panel-ai-watch .feed-cols--ai-book .cell-hold {
+  .panel-ai-watch .feed-cols--ai-book .cell-exh {
     font-size: 12px;
   }
 }
@@ -4598,5 +4603,14 @@ body.engine-visible .engine-bar                         { display: none !importa
 
 /* Exhaustion: level + direction. Colour carries the direction so the column
    reads at a glance; the number carries how far along it is. */
+.cell-exh {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim, #8a8f98);
+}
+.cell-exh.exh--ob   { color: var(--buy); font-weight: 600; }
+.cell-exh.exh--up   { color: var(--buy); }
+.cell-exh.exh--down { color: var(--danger); }
 
 

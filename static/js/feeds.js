@@ -544,6 +544,12 @@ function _bookSortVal(r, col) {
       return num(_bookPct(r));
     case 'stop':
       return num(_bookStopPx(r));
+    case 'exh': {
+      const ex = num(r.exhaustion);
+      if (ex != null) return ex;
+      const p = num(r.pctr);
+      return p == null ? null : Math.max(0, Math.min(100, 100 + p));
+    }
     case 'macd':
       return num(r.macd_gap) ?? num(r.macd_hist);
     case 'pl':
@@ -604,12 +610,11 @@ const _bookSort = { col: null, dir: -1 };
 const _BOOK_SORT_LS = 'aiBookSort';
 
 /** Columns the book can still sort by. A pin left in localStorage for a
- *  column that no longer exists — RSI and EXH were retired with their arm
- *  gate — makes _bookSortVal return null for every row, so the book comes
- *  back apparently shuffled with no header arrow to explain it. Anyone who
- *  had one of those columns pinned falls back to the default ordering. */
+ *  retired column (RSI) makes _bookSortVal return null for every row, so the
+ *  book comes back apparently shuffled with no header arrow to explain it.
+ *  Anyone who had RSI pinned falls back to the default ordering. */
 const _BOOK_SORT_COLS = new Set(
-  ['ticker', 'state', 'last', 'chg', 'entry', 'stop', 'pl']);
+  ['ticker', 'state', 'last', 'chg', 'entry', 'stop', 'exh', 'pl']);
 
 (function _restoreBookSort() {
   try {
@@ -1509,6 +1514,13 @@ function _updateBookRow(el, r) {
     bookChgEl.classList.toggle('chg-pos', chgMod === 'chg-pos');
     bookChgEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
   }
+  const exhEl = el.querySelector('.cell-exh');
+  if (exhEl) {
+    _setText(exhEl, _bookExhText(r));
+    exhEl.className = `cell-exh${_bookExhClass(r)}${crit.exh === true ? ' crit--pass' : ''}`;
+    const exhTip = _fmtExhTitle(r);
+    if (exhTip) exhEl.title = exhTip;
+  }
   _setText(el.querySelector('.cell-qty'), qty);
   const plEl = el.querySelector('.cell-pl');
   if (plEl) {
@@ -1559,6 +1571,7 @@ function _bookRowHtml(r) {
     + `<div class="cell-chg${chgMod ? ` ${chgMod}` : ''}">${_esc(chgTxt || '\u2014')}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
+    + `<div class="cell-exh${_bookExhClass(r)}${crit.exh === true ? ' crit--pass' : ''}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
@@ -1783,10 +1796,82 @@ function _bookSourceLabel(source) {
   return s.slice(0, 4);
 }
 
+/** Exhaustion as "72%↑" — level and direction together, because the level
+ *  alone cannot tell "pinned at the highs and rolling over" from "climbing
+ *  into them". OB marks the overbought band. */
+function _fmtExh(v, state, src) {
+  if (src === 'sparse_window' && (v == null || !Number.isFinite(Number(v)))) {
+    return 'thin';
+  }
+  const n = Number(v);
+  if (v == null || !Number.isFinite(n)) return '—';
+  const mark = state === 'overbought' ? ' OB'
+    : state === 'heating' ? '\u2191'
+    : state === 'cooling' ? '\u2193' : '';
+  return `${n.toFixed(1)}%${mark}`;
+}
+
 function _fmtPr(v) {
   const n = Number(v);
   if (v == null || !Number.isFinite(n)) return '—';
   return n.toFixed(1);
+}
+
+/** The book's EXH cell: the 0-100 exhaustion the square arm compares, with
+ *  its direction. Slow %R stays in the hover (needs 112 bars). */
+function _bookExhText(r) {
+  if (!r) return '—';
+  let ex = r.exhaustion;
+  if ((ex == null || !Number.isFinite(Number(ex)))
+      && r.pctr != null && Number.isFinite(Number(r.pctr))) {
+    ex = Math.max(0, Math.min(100, 100 + Number(r.pctr)));
+  }
+  return _fmtExh(ex, r.exhaustion_state, r.pctr_src);
+}
+
+/** Colour for the EXH cell, off the same state the arrow comes from. */
+function _bookExhClass(r) {
+  if (!r) return '';
+  if (r.pctr_src === 'sparse_window' && r.exhaustion == null) return '';
+  const state = String(r.exhaustion_state || '').toLowerCase();
+  if (state === 'overbought') return ' exh--ob';
+  if (state === 'heating') return ' exh--up';
+  if (state === 'cooling') return ' exh--down';
+  return '';
+}
+
+/** Hover: raw %R lines behind the cell's 0-100 reading, plus the window. */
+function _fmtExhTitle(r) {
+  if (!r) return '';
+  const bits = ['EXH = 100 + fast %R'];
+  if (r.pctr != null && Number.isFinite(Number(r.pctr))) {
+    bits.push(`fast ${Number(r.pctr).toFixed(1)}`);
+  }
+  if (r.pctr_slow != null && Number.isFinite(Number(r.pctr_slow))) {
+    bits.push(`slow ${Number(r.pctr_slow).toFixed(1)}`);
+  } else {
+    bits.push('slow n/a (needs 112 bars)');
+  }
+  const src = String(r.pctr_src || '').toLowerCase().trim();
+  if (src && src !== 'live') {
+    bits.push(`NOT LIVE (${src}) - range over the bars that existed`);
+  }
+  if (r.pctr_ob) bits.push('red boxes');
+  if (r.pctr_tight) bits.push('tight');
+  if (r.pctr_gap != null && Number.isFinite(Number(r.pctr_gap))) {
+    bits.push(`gap ${Number(r.pctr_gap).toFixed(1)}`);
+  }
+  if (r.exh_window_min != null && Number.isFinite(Number(r.exh_window_min))) {
+    bits.push(`window ${Number(r.exh_window_min).toFixed(1)}m`);
+  }
+  if (r.exh_bars != null) bits.push(`${r.exh_bars} bars`);
+  if (r.pctr_src === 'sparse_window') {
+    return 'No 1m %R — not enough prints in the clock window to trust a reading';
+  }
+  if (r.pctr_src === 'clock_range') {
+    bits[0] = 'Range %R on recent 1m prints (not a full 21/112 window)';
+  }
+  return bits.length > 1 ? bits.join(' · ') : '';
 }
 
 /** TradingView-style pair: fast / slow on the %R scale (0 at the top). */

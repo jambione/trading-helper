@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=169" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=170" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -390,6 +390,7 @@
                         <div class="th th-chg" data-book-sort-col="chg" title="Day change % — its own column. Last and Chg are two readings; sharing one cell truncated the price on any name where both were wide.">Chg</div>
                         <div class="th th-entry" data-book-sort-col="entry" title="Average fill price. Open positions only.">Entry</div>
                         <div class="th th-stop" data-book-sort-col="stop" title="Open longs only. Raise-only shelf; flatten if last prints through. While min-hold runs this cell shows the countdown instead — the shelf still raises, only the SALE is muzzled — and the stop price returns at 0:00.">Stop</div>
+                        <div class="th th-exh" data-book-sort-col="exh" title="%R Trend Exhaustion: how far the move is toward overbought (100 + fast %R), with its direction. OB marks the overbought band — the square arm's live reading.">EXH</div>
                         <div class="th th-qty desk-col-extra">Qty</div>
                         <div class="th th-pl" data-book-sort-col="pl">P&amp;L</div>
                     </div>
@@ -823,7 +824,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=189"></script>
+        <script type="module" src="/static/js/app.js?v=190"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>
