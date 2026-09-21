@@ -1082,6 +1082,8 @@ def _entry_limit_price(
     *,
     cap_at_zone: bool = True,
     current_bid: float | None = None,
+    current_last: float | None = None,
+    symbol: str | None = None,
 ) -> float | None:
     """Marketable limit for the entry, capped at the zone top. None = market.
 
@@ -1109,33 +1111,51 @@ def _entry_limit_price(
     except (TypeError, ValueError):
         pad = 0.0015
     top = max(float(entry_high or 0), float(entry_low or 0))
-    # Where the limit is anchored. "ask" (default) is marketable and pays the
-    # whole book on the way in, which is why every fill opens showing a loss
-    # the size of the spread before the market has done anything: FCX filled
-    # 76.26 against a 76.22 print, TGTX 56.21 against 56.17.
-    #
-    # Crossing buys immediacy, and immediacy is worth its price only when the
-    # signal actually continues. On this tape it does not — every entry rule
-    # screened at chance — so the desk has been paying the spread for a
-    # certainty it gains nothing from. Median spread is 0.058R against a median
-    # MFE-minus-spread of -0.038R, so "mid" recovers roughly three quarters of
-    # the shortfall on its own, and "bid" pays nothing but only fills when
-    # someone comes to it.
-    #
-    # Sizing is unaffected either way: the caller still sizes off current_ask,
-    # so a passive anchor can only fill BETTER than the contract assumed.
+    # Where the limit is anchored:
+    # "last" anchors at the current traded price (min(last, ask)), entering at
+    # the live tape rather than paying the spread.
+    # "mid" anchors halfway between bid and ask: (ask + bid) / 2.0.
+    # "bid" joins the resting bid passively.
+    # "ask" crosses the book with pad (marketable limit).
     anchor = str(cfg.get("ai_entry_limit_anchor", "ask") or "ask").lower().strip()
     try:
         bid = float(current_bid or 0)
     except (TypeError, ValueError):
         bid = 0.0
-    if anchor in ("mid", "bid") and bid > 0 and bid < ask:
-        # No pad here. The pad exists to make an ask-anchored order marketable;
-        # adding it to a passive anchor walks the price straight back to the
-        # ask and buys nothing. A passive order is supposed to wait.
-        px = (ask + bid) / 2.0 if anchor == "mid" else bid
-    else:
+    try:
+        last = float(current_last or 0)
+    except (TypeError, ValueError):
+        last = 0.0
+    if last <= 0 and symbol:
+        tape = _live_tape_px(symbol)
+        if tape and tape > 0:
+            last = float(tape)
+
+    if anchor == "last":
+        if last > 0:
+            if bid > 0 and bid < ask:
+                px = max(bid, min(last, ask))
+            else:
+                px = min(last, ask)
+        elif bid > 0 and bid < ask:
+            px = (ask + bid) / 2.0
+        else:
+            px = ask * (1.0 + pad)
+    elif anchor == "mid":
+        if bid > 0 and bid < ask:
+            px = (ask + bid) / 2.0
+        elif last > 0:
+            px = min(last, ask)
+        else:
+            px = ask * (1.0 + pad)
+    elif anchor == "bid":
+        if bid > 0 and bid < ask:
+            px = bid
+        else:
+            px = ask * (1.0 + pad)
+    else:  # "ask"
         px = ask * (1.0 + pad)
+
     if cap_at_zone and top > 0:
         px = min(px, top)
     px = round(px, 2)
@@ -1146,6 +1166,10 @@ def _entry_limit_price(
 def _marketable_local_limit(
     current_ask: float | None,
     cfg: dict[str, Any] | None = None,
+    *,
+    current_bid: float | None = None,
+    current_last: float | None = None,
+    symbol: str | None = None,
 ) -> float | None:
     """Marketable DAY limit for local-stop + *limit*-style (and Phase B) entries.
 
@@ -1166,13 +1190,42 @@ def _marketable_local_limit(
         pad = max(0.0, float(cfg.get("ai_entry_limit_pad_pct", 0.15) or 0.0)) / 100.0
     except (TypeError, ValueError):
         pad = 0.0015
-    px = ask * (1.0 + pad)
+    anchor = str(cfg.get("ai_entry_limit_anchor", "ask") or "ask").lower().strip()
     try:
-        cap = float(cfg.get("ai_entry_marketable_pad_max_px", 0.05) or 0.0)
+        bid = float(current_bid or 0)
     except (TypeError, ValueError):
-        cap = 0.05
-    if cap > 0:
-        px = min(px, ask + cap)
+        bid = 0.0
+    try:
+        last = float(current_last or 0)
+    except (TypeError, ValueError):
+        last = 0.0
+    if last <= 0 and symbol:
+        tape = _live_tape_px(symbol)
+        if tape and tape > 0:
+            last = float(tape)
+
+    if anchor == "last":
+        if last > 0:
+            if bid > 0 and bid < ask:
+                px = max(bid, min(last, ask))
+            else:
+                px = min(last, ask)
+        elif bid > 0 and bid < ask:
+            px = (ask + bid) / 2.0
+        else:
+            px = ask * (1.0 + pad)
+    elif anchor == "mid" and bid > 0 and bid < ask:
+        px = (ask + bid) / 2.0
+    elif anchor == "bid" and bid > 0 and bid < ask:
+        px = bid
+    else:
+        px = ask * (1.0 + pad)
+        try:
+            cap = float(cfg.get("ai_entry_marketable_pad_max_px", 0.05) or 0.0)
+        except (TypeError, ValueError):
+            cap = 0.05
+        if cap > 0:
+            px = min(px, ask + cap)
     px = round(px, 2)
     return px if px > 0 else None
 
@@ -1289,6 +1342,7 @@ def desk_click(symbol: str) -> dict[str, Any]:
         sym, decision, equity,
         risk_pct=risk_pct,
         current_ask=ask,
+        current_last=float(px or rec.get("last_trade") or 0) or None,
         duel_source=str(decision.get("source") or "") or None,
     )
     if isinstance(result, dict) and result.get("ok"):
@@ -1324,6 +1378,7 @@ def place_scaled_entry(
     risk_pct: float = DEFAULT_RISK_PCT,
     current_ask: float | None = None,
     current_bid: float | None = None,
+    current_last: float | None = None,
     duel_source: str | None = None,
 ) -> dict[str, Any]:
     """Execute a qualifying BUY with stop (+ dual scale-out bookkeeping).
@@ -1694,9 +1749,19 @@ def place_scaled_entry(
         qty_a = float(total_qty)
         qty_b = 0.0
 
+    ref_last = (
+        current_last
+        or decision.get("last_trade")
+        or decision.get("arm_last")
+        or decision.get("last_price")
+        or _live_tape_px(ticker)
+    )
     entry_limit = _entry_limit_price(
         current_ask, entry_high, entry_low, cap_at_zone=not skip_zone,
-        current_bid=current_bid)
+        current_bid=current_bid,
+        current_last=ref_last,
+        symbol=ticker,
+    )
     # Phase B: always stream-last + pad (never IEX ask anchor / never brackets).
     if _phase_b:
         try:
@@ -1742,7 +1807,11 @@ def place_scaled_entry(
     use_market_entry = bool(not broker_stop and not _phase_b and style == "market")
     placed_entry_limit = entry_limit
     if not broker_stop and not use_market_entry and placed_entry_limit is None:
-        placed_entry_limit = _marketable_local_limit(current_ask, cfg)
+        placed_entry_limit = _marketable_local_limit(
+            current_ask, cfg, current_bid=current_bid,
+            current_last=ref_last,
+            symbol=ticker,
+        )
     entry_order_type = (
         "MARKET" if use_market_entry
         else ("LIMIT" if (placed_entry_limit or entry_limit) else "MARKET")

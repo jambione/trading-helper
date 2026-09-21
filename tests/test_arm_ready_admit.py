@@ -480,7 +480,7 @@ def test_default_config_bakes_mid_session_knobs():
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_sec"] == 180.0
     assert DEFAULT_CONFIG["ai_watch_max_stale_tape_seats"] == 3
     assert DEFAULT_CONFIG["ai_watch_no_trade_reseed_sec"] == 120.0
-    assert DEFAULT_CONFIG["ai_max_spread_r"] == 2.0
+    assert DEFAULT_CONFIG["ai_max_spread_r"] == 0.08
     assert DEFAULT_CONFIG["ai_fill_abort_r"] == 5.0
     assert DEFAULT_CONFIG["ai_exh_falling_flatten_enabled"] is False
     assert DEFAULT_CONFIG["ai_no_progress_flatten_enabled"] is False

@@ -289,7 +289,7 @@ DEFAULT_CONFIG = {
     # buy (local-stop desk included). Limit style → marketable DAY limit
     # (pad, zone-capped when broker stops on). Phase B / extended hours always
     # uses limits — Alpaca rejects market orders outside RTH.
-    "ai_entry_order_style":    "market",
+    "ai_entry_order_style":    "limit",
     # Marketable pad above the ask for limit-style / Phase B entries.
     # Limit + broker stops: then hard-capped at zone top.
     # Local-stop + limit: same pad, optionally dollar-capped via
@@ -352,8 +352,8 @@ DEFAULT_CONFIG = {
     # default — the live path reads IEX quotes, which are a few percent of the
     # tape and always look wide, so this would block good fills. Turn it on
     # once outcomes.jsonl has real entry_slippage_r to calibrate against.
-    # Mid-session 2026-09-18: round-trip spread cap in R (was 0=off).
-    "ai_max_spread_r":              2.0,
+    # Mid-session 2026-09-18: round-trip spread cap in R (was 0=off). Tightened to 0.08R.
+    "ai_max_spread_r":              0.08,
     # Above this, a logged spread_r is the IEX quote being wrong rather than a
     # wide book, and it stops sizing the trail. Measured against SIP on the
     # 2026-08-28 fills: the artifacts run 30-170x, every real reading 1.3-6x.
@@ -1166,7 +1166,7 @@ DEFAULT_CONFIG = {
     # the derived stop ABOVE the live price and inflated every spread reading
     # taken from it. Percent of tape. 0 disables.
     "ai_decision_ask_max_dev_pct":      5.0,
-    "ai_entry_limit_anchor":           "ask",
+    "ai_entry_limit_anchor":           "last",
     # Discretionary exits (shelf, dead-trade, left-overbought) stay holstered
     # for this many seconds after the fill. The 1R disaster stop and the 15:50
     # flatten are never gated. 0 = shipped. See ai_positions.soft_exit_held_back.

@@ -4520,6 +4520,53 @@ def test_anchor_falls_back_to_ask_when_the_book_is_unusable(monkeypatch):
     assert _anchor(monkeypatch, "bid", bid=0.0) == pytest.approx(76.37, abs=0.005)
 
 
+def test_last_anchor_enters_at_current_price(monkeypatch):
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_entry_order_style": "limit", "ai_entry_limit_pad_pct": 0.15,
+        "ai_entry_limit_anchor": "last"})
+    # Within bid-ask: limit matches last print exactly (no upward pad into loss).
+    got = cp._entry_limit_price(76.26, 0, 0, cap_at_zone=False, current_bid=76.16, current_last=76.20)
+    assert got == 76.20
+
+    # Last print at or above ask: caps at ask.
+    got_cap = cp._entry_limit_price(76.26, 0, 0, cap_at_zone=False, current_bid=76.16, current_last=76.30)
+    assert got_cap == 76.26
+
+    # Last print below bid: joins the best bid rather than resting hopelessly below.
+    got_bid = cp._entry_limit_price(76.26, 0, 0, cap_at_zone=False, current_bid=76.16, current_last=76.10)
+    assert got_bid == 76.16
+
+    # When last is omitted: falls back to mid (76.21).
+    got_mid = cp._entry_limit_price(76.26, 0, 0, cap_at_zone=False, current_bid=76.16)
+    assert got_mid == 76.21
+
+
+def test_spread_r_gate_refuses_wide_spread():
+    # RKLB case: ask=69.78, bid=69.38, spread=0.40, stop=66.29, risk=3.49 -> round_trip_r = 0.229 > 0.08
+    ok, why = cp.pre_entry_gate(
+        "RKLB",
+        ask=69.78,
+        account_equity=10000.0,
+        bid=69.38,
+        stop_price=66.29,
+        max_spread_r=0.08,
+    )
+    assert not ok
+    assert "spread_r_0.23>0.08" in why
+
+    # Tight spread case: ask=69.50, bid=69.45, spread=0.05, stop=66.02, risk=3.48 -> round_trip_r = 0.029 <= 0.08
+    ok_tight, why_tight = cp.pre_entry_gate(
+        "RKLB",
+        ask=69.50,
+        account_equity=10000.0,
+        bid=69.45,
+        stop_price=66.02,
+        max_spread_r=0.08,
+    )
+    assert ok_tight
+    assert why_tight == ""
+
+
 # ── Package A: true MARKET on local-stop when style=market ───────────────────
 
 def test_marketable_local_limit_pads_and_dollar_caps(monkeypatch):

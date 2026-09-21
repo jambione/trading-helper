@@ -16182,6 +16182,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 # bid2_f is the same quote should_arm_buy was given, so a
                 # passive anchor prices off the book the gate actually saw.
                 current_bid=bid2_f,
+                current_last=float(rec.get("last_trade") or ask_f or 0) or None,
                 duel_source=str(
                     rec.get("duel_source") or rec.get("source") or ""
                 ) or None,
