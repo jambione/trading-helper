@@ -9,7 +9,8 @@
  * Empty string → same origin (local dev).  Set string → remote backend.
  */
 
-import { getToken, getBackendUrl, clearToken, getQueryUser, isAuthenticated } from './auth.js?v=133';
+import { getToken, getBackendUrl, clearToken, getQueryUser, isAuthenticated,
+         redirectBudgetSpent } from './auth.js?v=134';
 
 const _handlers = /** @type {Map<string, Function[]>} */ (new Map());
 
@@ -76,7 +77,7 @@ export function connect() {
     if (e.code === 4001) {
       // Server rejected the token
       clearToken();
-      window.location.href = '/login';
+      if (!redirectBudgetSpent()) window.location.href = '/login';
       return;
     }
     _reconnectTimer = setTimeout(() => {
@@ -107,7 +108,10 @@ async function request(method, path, body, extraHeaders) {
   const res = await fetch(_apiUrl(path), opts);
   if (res.status === 401) {
     clearToken();
-    window.location.href = '/login';
+    // A 401 is not always something the login page can fix: the cookie the
+    // server reads can verify while the account behind it is deactivated, and
+    // then /login sends us straight back. Stop after a few round trips.
+    if (!redirectBudgetSpent()) window.location.href = '/login';
     return;
   }
   if (!res.ok) {

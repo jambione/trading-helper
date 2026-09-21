@@ -5,7 +5,7 @@
  * Buttons are always re-enabled in finally blocks regardless of outcome.
  */
 
-import { api } from './api.js?v=182';
+import { api } from './api.js?v=183';
 import { get, selectTicker } from './store.js?v=134';
 import { clearCopiedTickers } from './tickers.js?v=147';
 

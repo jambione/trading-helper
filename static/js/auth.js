@@ -41,6 +41,38 @@ export function isAuthenticated() {
   }
 }
 
+// ── Redirect-loop guard ───────────────────────────────────────
+
+const BOUNCE_KEY = 'ss:login-bounce';
+const BOUNCE_MAX = 3;
+
+/**
+ * Charge this tab for one trip to the login page and report whether it has
+ * spent them all.
+ *
+ * The two halves of the session are read by different parties: the server's
+ * gate on "/" reads the HttpOnly cookie, this code reads the token in
+ * localStorage. When they disagree — a browser that drops the cookie, a
+ * rotated signing secret, a deactivated account — each side hands the browser
+ * back to the other and the page flashes instead of loading. Past the ceiling
+ * we stay put and let the user see a page with a Sign In button on it.
+ * login.html keeps the same count under the same key.
+ */
+export function redirectBudgetSpent() {
+  try {
+    const n = (parseInt(sessionStorage.getItem(BOUNCE_KEY) || '0', 10) || 0) + 1;
+    sessionStorage.setItem(BOUNCE_KEY, String(n));
+    return n > BOUNCE_MAX;
+  } catch {
+    return false;   // no sessionStorage (private window) — never block
+  }
+}
+
+/** Called once the dashboard is past the auth gate: the trip worked. */
+export function clearRedirectBudget() {
+  try { sessionStorage.removeItem(BOUNCE_KEY); } catch { /* no storage */ }
+}
+
 // ── Backend URL ───────────────────────────────────────────────
 
 /**

@@ -51,8 +51,11 @@
 
 <script>
 (function () {
-  const TOKEN_KEY = 'ss:token';
+  const TOKEN_KEY  = 'ss:token';
+  const BOUNCE_KEY = 'ss:login-bounce';
+  const BOUNCE_MAX = 3;
 
+  const wrap      = document.querySelector('.login-wrap');
   const userInput = document.getElementById('login-user');
   const passInput = document.getElementById('login-pass');
   const btn       = document.getElementById('login-btn');
@@ -72,13 +75,72 @@
     }
   }
 
-  if (tokenStillGood(localStorage.getItem(TOKEN_KEY) || '')) {
-    window.location.href = '/';
-  }
-
   function showError(msg) {
     errEl.textContent   = msg;
     errEl.style.display = 'block';
+  }
+
+  // Trips this tab has made to the login page and back. The gate on "/" reads
+  // the HttpOnly cookie and this page reads the token in localStorage; when
+  // those two disagree each side hands the browser straight back to the other
+  // and the page does nothing but flash. Three trips is more than a real
+  // sign-in ever needs, so past that we stop and say what is wrong.
+  function countBounce() {
+    try {
+      const n = (parseInt(sessionStorage.getItem(BOUNCE_KEY) || '0', 10) || 0) + 1;
+      sessionStorage.setItem(BOUNCE_KEY, String(n));
+      return n;
+    } catch {
+      return 1;   // no sessionStorage (private window) — never block
+    }
+  }
+
+  // A token in localStorage is not proof the server will take it: a navigation
+  // to "/" carries only the cookie, and this page cannot check a signature.
+  // /api/meta gives the server's own verdict, and when it accepts the token it
+  // re-issues the session cookie — which repairs the case that caused the loop.
+  async function sessionIsLive(token) {
+    try {
+      const res = await fetch('/api/meta', {
+        credentials: 'include',
+        headers: { 'Authorization': 'Bearer ' + token },
+      });
+      if (!res.ok) return false;
+      const meta = await res.json();
+      if (meta.token) localStorage.setItem(TOKEN_KEY, meta.token);
+      return !!meta.username || meta.auth_required === false;
+    } catch {
+      return false;   // backend unreachable — show the form, don't bounce
+    }
+  }
+
+  async function resumeSession() {
+    const token = localStorage.getItem(TOKEN_KEY) || '';
+    if (!token) return;
+    if (!tokenStillGood(token)) {
+      localStorage.removeItem(TOKEN_KEY);
+      return;
+    }
+
+    if (countBounce() > BOUNCE_MAX) {
+      localStorage.removeItem(TOKEN_KEY);
+      showError('Signed in, but this browser is not keeping the session cookie, '
+              + 'so the dashboard sends you straight back here. Allow cookies '
+              + 'for this site, then sign in again.');
+      return;
+    }
+
+    // Hide the form for the round trip so a returning visitor sees one load,
+    // not a form that appears and is immediately replaced.
+    if (wrap) wrap.style.visibility = 'hidden';
+    if (await sessionIsLive(token)) {
+      window.location.href = '/';
+      return;
+    }
+    // The server rejected it — an old signing secret, a revoked account.
+    // Dropping it here is what stops the next load from trying again.
+    localStorage.removeItem(TOKEN_KEY);
+    if (wrap) wrap.style.visibility = '';
   }
 
   async function login() {
@@ -91,7 +153,7 @@
     if (!password) { showError('Password is required'); return; }
 
     btn.disabled    = true;
-    btn.textContent = 'Signing in…';
+    btn.textContent = 'Signing in\u2026';
 
     try {
       const res  = await fetch('/auth/login', {
@@ -122,6 +184,8 @@
   [userInput, passInput].forEach(el =>
     el.addEventListener('keydown', e => { if (e.key === 'Enter') login(); })
   );
+
+  resumeSession();
 })();
 </script>
 

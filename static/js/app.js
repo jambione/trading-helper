@@ -5,7 +5,7 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=182';
+import { connect, on, api }                      from './api.js?v=183';
 import { subscribe, set, selectTicker }          from './store.js?v=134';
 import { init as initFeeds }                     from './feeds.js?v=183';
 import { init as initTickers }                   from './tickers.js?v=147';
@@ -14,7 +14,8 @@ import { init as initConfig, open as openConfig, updateFeedbackBadge } from './c
 import { init as initResizer }                   from './resizer.js?v=133';
 import * as controls                             from './controls.js?v=139';
 import * as notifications                        from './notifications.js?v=135';
-import { isAuthenticated, logout, getQueryUser, setToken } from './auth.js?v=133';
+import { isAuthenticated, logout, getQueryUser, setToken,
+         redirectBudgetSpent, clearRedirectBudget } from './auth.js?v=134';
 import { init as initNews }                      from './news.js?v=134';
 import { init as initLeaderboard }               from './leaderboard.js?v=134';
 import { init as initPriceSpikes }               from './priceSpikes.js?v=134';
@@ -182,8 +183,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (authRequired && !isAuthenticated()) {
-    window.location.href = '/login';
-    return;
+    // Only while the login page can still do something with us. When it keeps
+    // handing us back — a browser that drops the session cookie, a backend
+    // that will not answer /api/meta — render the shell with its Sign In
+    // button instead of flashing between the two pages.
+    if (!redirectBudgetSpent()) {
+      window.location.href = '/login';
+      return;
+    }
+  } else {
+    clearRedirectBudget();   // through the gate: the round trip worked
   }
 
   // Confirm admin status from the server (the inline script already set user-jmb
