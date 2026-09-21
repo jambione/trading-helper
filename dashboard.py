@@ -2387,6 +2387,37 @@ def _alpaca_fallback_worker(client, tickers: list, cfg: dict):
         _alpaca_fallback_running = False
 
 
+# How old a print may be before the BOARD stops calling it a quote. Matches
+# the engine's own realtime_tape max_stale_sec, so both sides of the desk mean
+# the same thing by "fresh". Not _PRICE_STALE_SEC above: that one decides when
+# to poll Alpaca as well as Finnhub, and 20s there would grey out a cell for
+# any name that simply did not trade for half a minute.
+BOARD_PRICE_STALE_SEC = 120.0
+
+
+def price_is_stale(age_sec, ceiling: float = BOARD_PRICE_STALE_SEC) -> bool:
+    """True when a price's own print clock proves it is not current.
+
+    ``price_age_sec`` is seconds since the PRINT (stamped in the merge in
+    _price_loop from the trade's own timestamp), which makes it the only field
+    that can answer this. It is None whenever the winning source could not date
+    its quote — the Finnhub REST path cannot — and unknown must not read as
+    stale any more than it reads as fresh: the board would grey out half a
+    normal session and bury the case this exists to show.
+
+    That case, 2026-09-21 06:00 ET: IEX latest-trade keeps answering with the
+    last trade IEX saw, which premarket is Friday's close for anything thin.
+    Eleven of sixteen names carried prints 62 hours old and the board rendered
+    every one of them as a live quote, because the price cell asked whether a
+    price existed and never what time it was.
+    """
+    try:
+        age = float(age_sec)
+    except (TypeError, ValueError):
+        return False
+    return age > float(ceiling)
+
+
 # Finnhub REST quote poll — fills prices outside RTH (or when WS is down).
 # Runs every 30s; only updates tickers not already covered by a live WebSocket price.
 _FINNHUB_REST_INTERVAL = 30   # seconds
@@ -2994,6 +3025,20 @@ def _snapshot() -> dict:
                 d["mentioned"] = t in mention_rank
                 rows.append(d)
                 present.add(t)
+
+        # One staleness verdict per row, after every builder has contributed,
+        # so a book-only row and a watchlist row cannot disagree about the
+        # same number. The UI renders this rather than deciding for itself.
+        for r in rows:
+            r["price_stale"] = (
+                r.get("price") is not None
+                and price_is_stale(r.get("price_age_sec"))
+            )
+            # A percentage off a price that is provably not current compares
+            # Friday's close against today's open and prints it as this
+            # morning's move. Drop it: no number beats a plausible wrong one.
+            if r["price_stale"]:
+                r["pct_change"] = None
 
         # Morning-funnel overlay — attach the compact per-symbol score to any
         # watchlist row the funnel also ranked, so the badge reads inline.

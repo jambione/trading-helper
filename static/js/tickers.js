@@ -513,8 +513,10 @@ function _updateRow(el, row) {
   const priceEl2 = el.querySelector('[data-price]');
   _setText(priceEl2, p.txt);
   if (priceEl2) {
+    const deco = _priceDeco(p);
     priceEl2.classList.toggle('cell-price--snapshot', p.snap);
-    if (p.snap) priceEl2.title = _snapTitle(p.age);
+    priceEl2.classList.toggle('cell-price--stale', p.stale);
+    if (deco.title) priceEl2.title = deco.title;
     else priceEl2.removeAttribute('title');
   }
 
@@ -773,12 +775,45 @@ function _flagsHtml(row) {
 // scanner surfaces. Marked and titled with its age so a snapshot from alert
 // time is never mistaken for a live print.
 function _priceCell(row) {
-  if (row.price != null) return { txt: `$${row.price.toFixed(2)}`, snap: false, age: null };
+  // A price is not the same thing as a live price. This used to return on the
+  // first branch the moment `price` was non-null, which meant the staleness
+  // marker below could only ever describe the case where there was NO price —
+  // a missing quote got flagged and a two-day-old one did not. The server
+  // stamps `price_stale` off the print's own clock (dashboard.price_is_stale);
+  // all this does is render its verdict.
+  if (row.price != null) {
+    return { txt: `$${row.price.toFixed(2)}`, snap: false,
+             stale: row.price_stale === true,
+             age: row.price_age_sec ?? null };
+  }
   if (row.scanner_price != null) {
-    return { txt: `$${row.scanner_price.toFixed(2)}`, snap: true,
+    return { txt: `$${row.scanner_price.toFixed(2)}`, snap: true, stale: false,
              age: row.scanner_price_age_sec };
   }
-  return { txt: '\u2014', snap: false, age: null };
+  return { txt: '\u2014', snap: false, stale: false, age: null };
+}
+
+/** Coarse age, readable at a glance: 45s / 12m / 3h / 62h / 5d.
+ *  Hours run all the way to three days on purpose — a Friday print read on
+ *  Monday morning is 62 hours old, and "62h ago" says which session it came
+ *  from in a way that a rounded "3d ago" does not. */
+function _ageText(age) {
+  if (age == null)    return 'unknown age';
+  if (age <  90)      return `${Math.round(age)}s ago`;
+  if (age <  5400)    return `${Math.round(age / 60)}m ago`;
+  if (age <  259200)  return `${Math.round(age / 3600)}h ago`;
+  return `${Math.round(age / 86400)}d ago`;
+}
+
+function _staleTitle(age) {
+  return `Last print ${_ageText(age)} \u2014 not a live quote`;
+}
+
+/** Class + tooltip for a price cell, from whichever verdict applies. */
+function _priceDeco(p) {
+  if (p.snap)  return { cls: ' cell-price--snapshot', title: _snapTitle(p.age) };
+  if (p.stale) return { cls: ' cell-price--stale',    title: _staleTitle(p.age) };
+  return { cls: '', title: '' };
 }
 
 function _snapTitle(age) {
@@ -790,6 +825,7 @@ function _snapTitle(age) {
 
 function _rowHTML(row) {
   const p      = _priceCell(row);
+  const pDeco  = _priceDeco(p);
   const chgCls = _chgClass(row.pct_change ?? null);
   const volCls = (row.rvol ?? 0) >= 1.5 ? ' vol-high' : '';
 
@@ -804,7 +840,7 @@ function _rowHTML(row) {
       ${_aiPosBadge(row.ticker)}
       ${_confluenceBadge(row.confluence)}
     </div>
-    <div class="cell-price${p.snap ? ' cell-price--snapshot' : ''}" data-price="${row.ticker}"${p.snap ? ` title="${_snapTitle(p.age)}"` : ''}>${p.txt}</div>
+    <div class="cell-price${pDeco.cls}" data-price="${row.ticker}"${pDeco.title ? ` title="${pDeco.title}"` : ''}>${p.txt}</div>
     <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>
     <div class="cell-rvol${volCls}" data-rvol>${_fmtRvol(row.rvol)}</div>
     <div class="cell-vol${volCls}" data-vol>${_fmtVol(row.day_vol)}</div>

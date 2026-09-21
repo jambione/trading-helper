@@ -3223,6 +3223,16 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
   font-weight: 400;
 }
 
+/* A price whose own print clock says it is not current (price_stale from the
+   API). Dimmed rather than hidden: the last print is still the best estimate
+   anyone has, it just is not a quote. The dotted rule marks it as hoverable —
+   the tooltip carries the age. */
+.cell-price--stale {
+  color: var(--text-dim, #8a8f98);
+  text-decoration: underline dotted var(--text-dim, #8a8f98);
+  text-underline-offset: 3px;
+}
+
 .cell-chg {
   font-family: var(--font-mono);
   font-size: 11px;
