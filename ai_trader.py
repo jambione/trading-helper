@@ -480,6 +480,21 @@ def _positions_payload(
     )
     n_open = sum(1 for r in entry_book if r.get("phase") == "open" or r.get("is_position"))
     n_ready = sum(1 for r in entry_book if r.get("phase") == "ready" or r.get("ready"))
+    n_square = sum(
+        1 for r in entry_book
+        if str(r.get("exh_seat_class") or "").lower() == "square"
+        and not (r.get("phase") == "open" or r.get("is_position"))
+    )
+    n_pre_square = sum(
+        1 for r in entry_book
+        if str(r.get("exh_seat_class") or "").lower() == "pre_square"
+        and not (r.get("phase") == "open" or r.get("is_position"))
+    )
+    n_far = sum(
+        1 for r in entry_book
+        if str(r.get("exh_seat_class") or "").lower() == "far"
+        and not (r.get("phase") == "open" or r.get("is_position"))
+    )
 
     poll_sec = watch_poll_sec
     if poll_sec is None:
@@ -532,6 +547,10 @@ def _positions_payload(
             "n_research": n_res,
             "n_open": n_open,
             "n_ready": n_ready,
+            # Dual-%R seat mix for pre-square farm scoreboard.
+            "n_square": n_square,
+            "n_pre_square": n_pre_square,
+            "n_far": n_far,
             "day_pl": day_pl,
             "day_pl_pct": day_pl_pct,
             "equity": (account or {}).get("equity") if isinstance(account, dict) else None,

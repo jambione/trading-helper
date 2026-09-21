@@ -1957,6 +1957,18 @@ def place_scaled_entry(
         # 55% and rising" average into one number and the heat floor stays a guess.
         "entry_exhaustion": decision.get("entry_exhaustion"),
         "entry_exhaustion_state": decision.get("entry_exhaustion_state"),
+        "arm_why": decision.get("arm_why") or (
+            (decision.get("features") or {}).get("arm_why")
+        ),
+        "exh_seat_class_admit": decision.get("exh_seat_class_admit") or (
+            (decision.get("features") or {}).get("exh_seat_class_admit")
+        ),
+        "exh_seat_class_fill": decision.get("exh_seat_class") or (
+            (decision.get("features") or {}).get("exh_seat_class")
+        ),
+        "square_since": _num(decision.get("square_since")) or _num(
+            (decision.get("features") or {}).get("square_since")
+        ),
         # Which desk opened this. ai_entry_watch runs the exhaustion gate;
         # ai_suggest does not (it has its own pre-entry / reward-risk stack)
         # and stamps no %R. Both land in one outcomes.jsonl, where they were
@@ -2815,6 +2827,127 @@ def no_progress_due(
     except (TypeError, ValueError):
         return False
     return age + 1e-9 >= t_sec
+
+
+def trail_yields_to_triangle(
+    pos: dict[str, Any] | None,
+    cfg: dict[str, Any] | None = None,
+    *,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    """True when local_trail flatten must yield to leave-OB triangle.
+
+    Product: ▼ (``left_overbought``) is primary; trail is backup leash only.
+    Monday 2026-09-21: 8/11 ``local_trail`` closes still showed exit_exh≥80
+    (still-OB scale) while leave-OB logged 76 min_hold deferrals — trail/BE
+    flattened into square hold.
+
+    Yield while ``exh_was_overbought`` and either:
+      - live dual still both-OB, or
+      - leave-OB confirm pending (``left_ob_since`` set),
+    unless MAE ≤ ``ai_local_trail_ob_hold_mae_r`` (catastrophic escape).
+
+    Square mode off / latch never set → trail unchanged (legacy path).
+    """
+    if not isinstance(pos, dict):
+        return False, ""
+    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
+    try:
+        import ai_entry_watch as ew
+    except Exception:
+        return False, ""
+    if not ew.left_overbought_exit_enabled(cfg):
+        return False, ""
+    if not (
+        ew.exh_square_arm_enabled(cfg) or ew.tv_exh_rsi_enabled(cfg)
+    ):
+        return False, ""
+    if not pos.get("exh_was_overbought"):
+        return False, ""
+
+    # Catastrophic MAE escape — trail may still flatten.
+    try:
+        mae_gate = float(cfg.get("ai_local_trail_ob_hold_mae_r", -1.0) or 0.0)
+    except (TypeError, ValueError):
+        mae_gate = -1.0
+    mae = _num(pos.get("mae_r"))
+    if mae_gate < 0 and mae is not None and float(mae) <= mae_gate + 1e-12:
+        return False, "mae_escape"
+
+    # Pending leave-OB confirm → triangle owns the exit race.
+    if pos.get("left_ob_since") is not None:
+        try:
+            since = float(pos.get("left_ob_since") or 0)
+        except (TypeError, ValueError):
+            since = 0.0
+        if since > 0:
+            return True, "left_ob_pending"
+
+    # Fresh dual read against last print (same path as manage leave-OB).
+    t0 = float(now if now is not None else time.time())
+    sig = {}
+    live_px = _num(pos.get("last_seen_price"))
+    ticker = str(pos.get("symbol") or pos.get("ticker") or "").upper().strip()
+    if live_px and ticker:
+        try:
+            probe = {"symbol": ticker, "indicator": dict(sig)}
+            if ew.apply_live_exhaustion(probe, live_px, cfg, t0):
+                sig = dict(probe.get("indicator") or {})
+        except Exception:
+            sig = {}
+    if not sig:
+        # Fall back to any indicator stamped on the position.
+        ind = pos.get("indicator") if isinstance(pos.get("indicator"), dict) else {}
+        sig = dict(ind)
+
+    if not sig:
+        # No dual read — do not invent a hold; trail stays backup.
+        return False, "no_dual_read"
+
+    probe = {
+        "symbol": ticker or "?",
+        "indicator": sig,
+        "exh_was_overbought": True,
+        "left_ob_since": pos.get("left_ob_since"),
+        "pctr_slow_live_ts": pos.get("pctr_slow_live_ts"),
+    }
+    try:
+        both_ob, _tight, err = ew.dual_r_ob_tight(probe, cfg)
+    except Exception:
+        return False, "dual_err"
+    if err == "no_exhaustion_data" or both_ob is None:
+        # Stale/missing slow with fast still OB → hold trail (thesis unknown).
+        # If fast has left OB, allow trail (triangle path may also fire).
+        thr = float(cfg.get("rte_threshold", 20) or 20)
+        fast = _num(sig.get("pctr"))
+        if fast is not None and float(fast) >= -thr:
+            return True, "dual_unknown_still_fast_ob"
+        return False, "dual_unknown_fast_left"
+    if both_ob:
+        return True, "still_dual_ob"
+    # Live dual has left OB. Yield through confirm + a short race window so
+    # the manage tick can fire left_overbought before the faster trail tick.
+    # Dual-tranche books defer ▼ forever — keep trail as backup there.
+    dual = (
+        float(pos.get("qty_a") or 0) > 0
+        and float(pos.get("qty_b") or 0) > 0
+    )
+    if dual:
+        return False, "dual_tranche_trail_backup"
+    try:
+        confirm = float(cfg.get("ai_exit_left_overbought_confirm_sec", 3.0) or 0.0)
+    except (TypeError, ValueError):
+        confirm = 3.0
+    since = _num(pos.get("left_ob_since"))
+    t_now = float(now if now is not None else time.time())
+    if since is not None and since > 0:
+        # confirm window + 2s manage-race grace
+        if (t_now - float(since)) < (max(0.0, confirm) + 2.0):
+            return True, "left_ob_race"
+    else:
+        # First sighting of leave on the trail tick — start race, don't sell.
+        return True, "left_ob_first_sight"
+    return False, "left_ob_past_race"
 
 
 def soft_exit_held_back(pos: dict[str, Any] | None,
@@ -3712,6 +3845,23 @@ def apply_local_trail(
     _trail_held = _trail_hit and soft_exit_held_back(pos)
     if _trail_held:
         _note_min_hold(pos, "local_trail")
+    # Triangle-first: while dual OB thesis holds, trail/BE is backup only.
+    _tri_yield = False
+    _tri_why = ""
+    if _trail_hit and not _trail_held:
+        _tri_yield, _tri_why = trail_yields_to_triangle(pos, _cfg_all())
+        if _tri_yield:
+            log_event(
+                "local_trail_deferred_dual_ob", symbol=ticker,
+                reason=_tri_why,
+                last=trigger, stop=loc,
+                mfe_r=pos.get("mfe_r"), mae_r=pos.get("mae_r"),
+                exh_was_overbought=bool(pos.get("exh_was_overbought")),
+                left_ob_since=pos.get("left_ob_since"),
+            )
+            exit_why[ticker] = f"local_trail_deferred:{_tri_why}"
+            # Keep raising the shelf; only the flatten yields.
+            _trail_hit = False
     if _trail_hit and not _trail_held:
         last = trigger
         if _premarket_working_sell_on():
@@ -5223,6 +5373,55 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         "exit_exhaustion": pos.get("last_exhaustion"),
         "mae_r": pos.get("mae_r"),
         "mfe_r": pos.get("mfe_r"),
+        # No-extension scorecard (Phase 1): did MFE clear the live trail arm?
+        "hit_trail_arm": (
+            bool(
+                _num(pos.get("mfe_r")) is not None
+                and _num(pos.get("mfe_r")) + 1e-12 >= float(
+                    (_cfg_all().get("ai_local_trail_arm_r", 0.25) or 0.25)
+                )
+            )
+            if _num(pos.get("mfe_r")) is not None else None
+        ),
+        "arm_why": pos.get("arm_why") or (
+            (pos.get("features") or {}).get("arm_why")
+        ),
+        "exh_seat_class_admit": pos.get("exh_seat_class_admit") or (
+            (pos.get("features") or {}).get("exh_seat_class_admit")
+        ),
+        "exh_seat_class_fill": pos.get("exh_seat_class_fill") or (
+            (pos.get("features") or {}).get("exh_seat_class")
+        ),
+        "time_in_square_before_entry_sec": (
+            round(float(pos.get("entry_time") or now) - float(pos["square_since"]), 1)
+            if _num(pos.get("square_since")) is not None
+            and _num(pos.get("entry_time")) is not None
+            else None
+        ),
+        # late_into_square: already dual OB for ≥60s before fill.
+        # dead_follow_through: entered early square (or pre), never hit arm_r.
+        "extension_class": (
+            "late_into_square"
+            if (
+                _num(pos.get("square_since")) is not None
+                and _num(pos.get("entry_time")) is not None
+                and (float(pos.get("entry_time")) - float(pos["square_since"])) >= 60.0
+            )
+            else (
+                "dead_follow_through"
+                if (
+                    _num(pos.get("mfe_r")) is not None
+                    and float(pos.get("mfe_r")) + 1e-12 < float(
+                        (_cfg_all().get("ai_local_trail_arm_r", 0.25) or 0.25)
+                    )
+                )
+                else (
+                    "extended"
+                    if _num(pos.get("mfe_r")) is not None
+                    else None
+                )
+            )
+        ),
         # Cost of crossing on the way in, in R. None until a fill is observed
         # against a limit — never estimated from a quote.
         "entry_slippage_r": pos.get("entry_slippage_r"),

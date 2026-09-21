@@ -47,8 +47,10 @@ DEFAULT_CONFIG = {
     # Square-aligned admit bus: prefer pre_square/square seats; evict far.
     "ai_watch_admit_prefer_square": True,
     "ai_watch_exh_pre_thr": 35.0,          # both lines ≥ −pre_thr = approach
-    "ai_watch_max_far_exh_seats": 2,       # soft-seed far keep cap
-    "ai_watch_far_exh_evict_sec": 90.0,    # far seat TTL before drop/steal
+    # Aggressive pre-square farm (2026-09-21): starve far keeps; faster bus.
+    # 0 = refuse new far soft-seed keeps (flood may still spray, then steal).
+    "ai_watch_max_far_exh_seats": 0,       # soft-seed far keep cap
+    "ai_watch_far_exh_evict_sec": 45.0,    # far seat TTL before drop/steal
 
     # Live bar tape. iex is the free Alpaca feed. sip needs Algo Trader Plus
     # and is what matches TradingView highs/lows on thin names.
@@ -1096,7 +1098,12 @@ DEFAULT_CONFIG = {
     # ai_broker_stop_enabled is False — broker buys may sit naked.
     "ai_local_trail_enabled":         True,
     # Mid-session 2026-09-18 square desk: arm trail only after +0.25R MFE.
+    # Live mini fingerprint 2026-09-21: bot_config overrides to 0.15 (with
+    # be_at_r=0.15). Trail is backup leash only under square leave-OB.
     "ai_local_trail_arm_r":            0.25,
+    # While dual OB thesis holds, trail/BE must not flatten unless MAE ≤ this
+    # (R). 0 disables the catastrophic escape (still-OB hold is absolute).
+    "ai_local_trail_ob_hold_mae_r":    -1.0,
     # ...or this much percent of price, whichever comes first. Same reason
     # as be_at_pct: 1R is ~5% of price here, so an R-only arm freezes the
     # shelf through moves that are plainly real.
@@ -1672,6 +1679,7 @@ _EFFECTIVE_KEYS = (
     "ai_h3_paper",
     "ai_late_hold_paper",
     "ai_local_trail_arm_r",
+    "ai_local_trail_ob_hold_mae_r",
     "ai_watch_arm_mode",
     "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_require_exh_rising",
@@ -2033,6 +2041,7 @@ SAFE_CONFIG_KEYS = [
     "ai_runner_trail_r",
     "ai_local_trail_enabled",
     "ai_local_trail_arm_r",
+    "ai_local_trail_ob_hold_mae_r",
     "ai_local_trail_give_r",
     "ai_local_trail_initial_give_r",
     "ai_local_trail_give_open_r",

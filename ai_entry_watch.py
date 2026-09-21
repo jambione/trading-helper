@@ -265,6 +265,9 @@ _BLOCKER_LABELS: dict[str, str] = {
     "stale_tape_cap": "stale seat cap",
     "unarmable_steal": "unarmable steal",
     "preheat_steal": "preheat steal",
+    "far_exh_steal_for_pre_square": "far→pre_square steal",
+    "far_exh_steal_for_square": "far→square steal",
+    "far_exh": "far exh evict",
     "never_armable": "never armable",
     "far_exh": "far EXH",
     "never_square": "far EXH",
@@ -1812,14 +1815,16 @@ def soft_seed_scout_score(
     cls = stamp_exh_seat_fields(row, cfg, ind=ind) if isinstance(row, dict) else "unknown"
     score = 0.0
     if admit_prefer_square(cfg):
+        # Aggressive farm: square ≫ pre_square ≫ everything; far never
+        # outranks a true pre_square on CHG alone (floor well below).
         if cls == "square":
-            score += 80.0
+            score += 120.0
         elif cls == "pre_square":
-            score += 55.0
+            score += 80.0
         elif cls == "unknown":
-            score += 15.0  # scout-only candidate
+            score += 10.0  # scout-only candidate (missing slow ≠ pre_square)
         else:  # far
-            score -= 60.0
+            score -= 120.0
     else:
         exh = _exh_from_row_or_ind(row, ind)
         rising = _exh_rising_hint(row, ind)
@@ -3200,23 +3205,18 @@ def _is_unarmable_stale_watching(
             return False
         return (float(now) - float(since)) >= limit
     # Far dual-%R seats (square bus): stealable past far_exh grace — including
-    # pins so the book does not freeze on lagging names. Morning flood protects
-    # momentum/research seats from far-only steals (tape-dead still steals).
+    # pins AND morning-flood sources so a far-only flood spray cannot freeze
+    # the book. Tape-dead grace (_within_stale_restream_grace) still holds.
     if admit_prefer_square(cfg):
         cls = str(rec.get("exh_seat_class") or "")
         if not cls:
             cls, _ = classify_exh_seat(rec, cfg)
         if cls == "far":
-            flood_hold = (
-                morning_flood_active(cfg, now)
-                and is_morning_flood_source(rec)
-            )
-            if not flood_hold:
-                limit = far_exh_evict_sec(cfg)
-                if limit > 0:
-                    since = _f_or_none(rec.get("far_exh_since"))
-                    if since is not None and (float(now) - float(since)) >= limit:
-                        return True
+            limit = far_exh_evict_sec(cfg)
+            if limit > 0:
+                since = _f_or_none(rec.get("far_exh_since"))
+                if since is not None and (float(now) - float(since)) >= limit:
+                    return True
     if _is_stream_ready_seat(rec, cfg, now=now):
         return False
     src = str(
@@ -3387,7 +3387,11 @@ def _maybe_never_armable_evict(
 
 
 def _track_far_exh_seat(rec: dict, cfg: dict | None, *, now: float) -> None:
-    """Start/clear ``far_exh_since`` from dual-%R seat class."""
+    """Start/clear ``far_exh_since`` from dual-%R seat class.
+
+    Also stamps ``square_since`` when the seat first reaches dual OB square
+    (for late-into-square vs dead-follow-through journaling).
+    """
     if not isinstance(rec, dict):
         return
     cls = stamp_exh_seat_fields(rec, cfg)
@@ -3396,6 +3400,12 @@ def _track_far_exh_seat(rec: dict, cfg: dict | None, *, now: float) -> None:
             rec["far_exh_since"] = float(now)
     else:
         rec.pop("far_exh_since", None)
+    if cls == "square":
+        if _f_or_none(rec.get("square_since")) is None:
+            rec["square_since"] = float(now)
+    elif cls in ("far", "unknown"):
+        rec.pop("square_since", None)
+    # pre_square: keep any prior square_since (flicker out of OB).
 
 
 def _maybe_far_exh_evict(
@@ -3413,8 +3423,9 @@ def _maybe_far_exh_evict(
     Pins are eligible (book must not freeze on HOOD/ONON-class lag). Promote
     instead of drop when the seat has become pre_square/square.
 
-    Morning flood: do not evict momentum / research seats solely for far /
-    prefer-square — keep them watched until 11:00. Tape-dead paths still drop.
+    Morning flood far seats are **stealable** (see ``_preferential_far_exh_steal``)
+    but are not blind-evicted into vacuum here — flood occupancy still matters
+    until a pre_square/square admittee is waiting.
     """
     if not admit_prefer_square(cfg):
         return False
@@ -3429,6 +3440,7 @@ def _maybe_far_exh_evict(
     _track_far_exh_seat(rec, cfg, now=now)
     if str(rec.get("exh_seat_class") or "") != "far":
         return False
+    # Flood far: do not blind-drop; dedicated steal yields to pre_square/square.
     if morning_flood_active(cfg, now) and is_morning_flood_source(rec):
         return False
     since = _f_or_none(rec.get("far_exh_since"))
@@ -3560,17 +3572,13 @@ def _preferential_unarmable_steal(
         if not isinstance(rec, dict):
             continue
         # Pins protected unless far dual-%R (square bus — don't freeze on lag).
-        # Morning flood still holds momentum/research far seats.
+        # Flood far seats are also stealable past TTL (aggressive pre-square farm).
         pin_prot = _is_protected_pin_seat(rec, cfg, now=now)
         if pin_prot:
             cls = str(rec.get("exh_seat_class") or "")
             if not cls:
                 cls, _ = classify_exh_seat(rec, cfg)
-            flood_hold = (
-                morning_flood_active(cfg, now)
-                and is_morning_flood_source(rec)
-            )
-            if cls != "far" or not admit_prefer_square(cfg) or flood_hold:
+            if cls != "far" or not admit_prefer_square(cfg):
                 continue
         if _is_protected_warming_seat(rec, cfg, now=now):
             continue
@@ -3761,6 +3769,149 @@ def _preferential_preheat_steal(
                 "kind": "watch_drop", "symbol": sym,
                 "reason": "preheat_steal",
                 "admittee": admit_sym,
+            })
+        dropped.append(sym)
+    if dropped:
+        drop_watch_symbols(dropped)
+    return dropped
+
+
+def _preferential_far_exh_steal(
+    state: dict,
+    *,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    gt,
+    candidates: list | None = None,
+) -> list[str]:
+    """Steal far dual-%R seats for waiting ``pre_square`` / ``square`` admittees.
+
+    Aggressive pre-square farm: far (including flood/pin past TTL) yields as
+    soon as a true approach/OB candidate is waiting. Distinct drop reasons:
+    ``far_exh_steal_for_pre_square`` / ``far_exh_steal_for_square``.
+    """
+    if not isinstance(state, dict) or not admit_prefer_square(cfg):
+        return []
+    limit = far_exh_evict_sec(cfg)
+    if limit <= 0:
+        return []
+
+    on_book = {
+        str(rec.get("symbol") or key or "").upper().strip()
+        for key, rec in state.items()
+        if isinstance(rec, dict)
+    }
+    admittees: list[tuple[str, str, float, float]] = []
+    for cand in candidates or []:
+        if not isinstance(cand, dict):
+            continue
+        sym = str(cand.get("symbol") or "").upper().strip()
+        if not sym or sym in on_book:
+            continue
+        cls = str(cand.get("exh_seat_class") or "").strip().lower()
+        if not cls:
+            cls, _ = classify_exh_seat(cand, cfg)
+        if cls not in ("pre_square", "square"):
+            continue
+        age = _candidate_young_stream_age(cand, cfg, now=now)
+        # Class-ranked hunt may lack a live stream stamp yet — still allow
+        # steal so soft-seed can claim the seat next cycle.
+        age_f = float(age) if age is not None else 9e8
+        dvol = _f_or_none(cand.get("admit_dollar_volume"))
+        if dvol is None:
+            dvol = _f_or_none(cand.get("dollar_volume")) or 0.0
+        admittees.append((sym, cls, float(dvol), age_f))
+    if not admittees:
+        return []
+    # square before pre_square, then $vol, then younger tape.
+    rank = {"square": 0, "pre_square": 1}
+    admittees.sort(key=lambda t: (rank.get(t[1], 9), -t[2], t[3], t[0]))
+
+    victims: list[tuple[str, dict, float, float]] = []
+    for key, rec in state.items():
+        if not isinstance(rec, dict):
+            continue
+        status = str(rec.get("status") or "").lower().strip()
+        if status != "watching":
+            continue
+        if _within_subscribe_grace(rec, cfg, now):
+            continue
+        cls = str(rec.get("exh_seat_class") or "")
+        if not cls:
+            cls, _ = classify_exh_seat(rec, cfg)
+        if cls != "far":
+            continue
+        since = _f_or_none(rec.get("far_exh_since"))
+        if since is None or (float(now) - float(since)) < limit:
+            # Flood far: mark stealable immediately (TTL 0-hold for farm).
+            flood_far = (
+                morning_flood_active(cfg, now)
+                and is_morning_flood_source(rec)
+            )
+            if not flood_far:
+                continue
+            if since is None:
+                rec["far_exh_since"] = float(now)
+                since = float(now)
+            # Flood far steals after half TTL (or immediately if TTL tiny).
+            if (float(now) - float(since)) < min(limit, 15.0):
+                continue
+        sym = str(rec.get("symbol") or key or "").upper().strip()
+        if not sym:
+            continue
+        if _within_stale_restream_grace(sym, now, cfg):
+            continue
+        try:
+            if gt is not None and gt.has_open_position(sym):
+                continue
+        except Exception:
+            pass
+        # Warming pre_square seats are never victims here.
+        if str(rec.get("seat_role") or "").lower() == "warming":
+            wcls = str(rec.get("exh_seat_class") or "")
+            if wcls in ("pre_square", "square"):
+                continue
+        dvol = _f_or_none(rec.get("admit_dollar_volume")) or 0.0
+        age = row_quote_age_sec(rec, now=now)
+        if age is None:
+            age = _f_or_none(rec.get("last_ask_age_sec"))
+        age_f = float(age) if age is not None else 1e9
+        victims.append((sym, rec, float(dvol), age_f))
+    if not victims:
+        return []
+    victims.sort(key=lambda t: (t[2], -t[3], t[0]))
+
+    n = min(len(victims), len(admittees))
+    if n <= 0:
+        return []
+    dropped: list[str] = []
+    for i in range(n):
+        sym, rec, dvol, age_f = victims[i]
+        admit_sym, admit_cls, _advol, _aage = admittees[i]
+        reason = (
+            "far_exh_steal_for_square"
+            if admit_cls == "square"
+            else "far_exh_steal_for_pre_square"
+        )
+        try:
+            events.append(cp.log_event(
+                "watch_drop", symbol=sym, reason=reason,
+                admittee=admit_sym,
+                admittee_class=admit_cls,
+                exh_seat_class="far",
+                exh_seat_class_at_steal="far",
+                age_sec=round(age_f, 1) if age_f < 1e8 else None,
+                dollar_volume=round(dvol, 0) if dvol else None,
+                morning_flood=bool(rec.get("morning_flood")),
+                seat_role=str(rec.get("seat_role") or "") or None,
+            ))
+        except Exception:  # noqa: BLE001
+            events.append({
+                "kind": "watch_drop", "symbol": sym, "reason": reason,
+                "admittee": admit_sym, "admittee_class": admit_cls,
+                "exh_seat_class": "far",
             })
         dropped.append(sym)
     if dropped:
@@ -4528,6 +4679,9 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "rvol": _f_or_none(rec.get("admit_rvol")),
         "exhaustion": _f_or_none(exhaustion_pct(rec)),
         "exhaustion_state": exhaustion_state(rec, _push_cfg()),
+        "exh_seat_class": (
+            str(rec.get("exh_seat_class") or "").strip().lower() or None
+        ),
         **_exhaustion_wire_fields(rec),
         **_macd_wire_fields(rec),
         **_rsi_wire_fields(rec),
@@ -5021,6 +5175,12 @@ def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
             str(row.get("exh_seat_class") or "")
             or str(prev.get("exh_seat_class") or "")
             or None),
+        # Freeze class at first seat for farm / late-vs-dead scorecards.
+        "exh_seat_class_admit": (
+            str(prev.get("exh_seat_class_admit") or "")
+            or str(row.get("exh_seat_class") or "")
+            or str(prev.get("exh_seat_class") or "")
+            or None),
         "pctr_gap": (
             _f_or_none(row.get("pctr_gap"))
             if row.get("pctr_gap") is not None
@@ -5029,6 +5189,10 @@ def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
             _f_or_none(row.get("far_exh_since"))
             if row.get("far_exh_since") is not None
             else _f_or_none(prev.get("far_exh_since"))),
+        "square_since": (
+            _f_or_none(row.get("square_since"))
+            if row.get("square_since") is not None
+            else _f_or_none(prev.get("square_since"))),
     }
 
 
@@ -9033,7 +9197,8 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             "seat_role", "pin_stream_ready_sec", "pin_dead_since",
             "unarmable_since", "scout_until", "scout_only",
             "arm_ready", "arm_ready_reason", "admit_chg_band",
-            "exh_seat_class", "pctr_gap", "far_exh_since",
+            "exh_seat_class", "exh_seat_class_admit", "pctr_gap",
+            "far_exh_since", "square_since",
         ):
             if prev.get(k) is not None:
                 rec[k] = prev[k]
@@ -9042,6 +9207,9 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
                   "scout_only", "scout_until", "exh_seat_class", "pctr_gap"):
             if row.get(k) is not None:
                 rec[k] = row[k]
+        # Admit class freezes on first seat; do not overwrite with later class.
+        if not rec.get("exh_seat_class_admit") and rec.get("exh_seat_class"):
+            rec["exh_seat_class_admit"] = rec["exh_seat_class"]
         # Seat roles: pin wins over warming; warming scout prefers fresh tag.
         prev_role = str(prev.get("seat_role") or "").strip().lower()
         row_role = str(row.get("seat_role") or "").strip().lower()
@@ -10399,21 +10567,50 @@ def admit_prefer_square(cfg: dict | None = None) -> bool:
 
 
 def max_far_exh_seats(cfg: dict | None = None) -> int:
-    """Cap on far dual-%R keep seats. <0 disables. Default 2."""
+    """Cap on far dual-%R keep seats. <0 disables. Default 0 (starve far)."""
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
-        return int(cfg.get("ai_watch_max_far_exh_seats", 2))
+        return int(cfg.get("ai_watch_max_far_exh_seats", 0))
     except (TypeError, ValueError):
-        return 2
+        return 0
 
 
 def far_exh_evict_sec(cfg: dict | None = None) -> float:
     """Seconds a far seat may stick before eviction. 0 disables."""
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
-        return max(0.0, float(cfg.get("ai_watch_far_exh_evict_sec", 90.0) or 0.0))
+        return max(0.0, float(cfg.get("ai_watch_far_exh_evict_sec", 45.0) or 0.0))
     except (TypeError, ValueError):
-        return 90.0
+        return 45.0
+
+
+def exh_seat_class_counts(state: dict | None) -> dict[str, int]:
+    """Count ``square`` / ``pre_square`` / ``far`` / ``unknown`` on the watch book."""
+    out = {"n_square": 0, "n_pre_square": 0, "n_far": 0, "n_unknown": 0, "n_seats": 0}
+    if not isinstance(state, dict):
+        return out
+    for key, rec in state.items():
+        if not isinstance(rec, dict):
+            continue
+        sym = str(rec.get("symbol") or key or "").upper().strip()
+        if not sym or sym.startswith("_"):
+            continue
+        status = str(rec.get("status") or "").lower().strip()
+        if status in ("closed", "expired", "cancelled", "dropped"):
+            continue
+        out["n_seats"] += 1
+        cls = str(rec.get("exh_seat_class") or "").strip().lower()
+        if not cls:
+            cls, _ = classify_exh_seat(rec, None)
+        if cls == "square":
+            out["n_square"] += 1
+        elif cls == "pre_square":
+            out["n_pre_square"] += 1
+        elif cls == "far":
+            out["n_far"] += 1
+        else:
+            out["n_unknown"] += 1
+    return out
 
 
 def classify_exh_seat(
@@ -13034,6 +13231,15 @@ def _entry_features(rec: dict, *, ask: float | None = None,
         # the 15:50 flatten are different trades with the same signal.
         "entry_hour_et": _et_hour_decimal(now),
         "dwell_sec": round(now - admitted, 1) if admitted else None,
+        # Seat class / arm class for late-vs-dead + farm scoring (not seed text).
+        "exh_seat_class": (
+            str(rec.get("exh_seat_class") or "").strip().lower() or None
+        ),
+        "exh_seat_class_admit": (
+            str(rec.get("exh_seat_class_admit") or rec.get("exh_seat_class")
+                or "").strip().lower() or None
+        ),
+        "square_since": _f_or_none(rec.get("square_since")),
         "ask": _f_or_none(ask),
         # What crossing cost on THIS fill. The shadow log prices candidates,
         # but until now nothing priced consequences: ai_max_spread_r sits at 0
@@ -15917,6 +16123,22 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # _decision_for_place, which sees the structure but not the record.
         place_decision["entry_exhaustion"] = exhaustion_pct(rec)
         place_decision["entry_exhaustion_state"] = exhaustion_state(rec, cfg)
+        # Arm class (square vs heating) — stop logging only seed text.
+        _arm_why = str(why2 or "")
+        if exh_square_arm_enabled(cfg) and _arm_why in (
+                "overbought", "last_overbought"):
+            _arm_why = "square"
+        elif not _arm_why:
+            _arm_why = str(
+                place_decision.get("entry_exhaustion_state") or "unknown")
+        place_decision["arm_why"] = _arm_why
+        stamp_exh_seat_fields(rec, cfg)
+        place_decision["exh_seat_class"] = str(
+            rec.get("exh_seat_class") or "") or None
+        place_decision["exh_seat_class_admit"] = str(
+            rec.get("exh_seat_class_admit") or rec.get("exh_seat_class") or ""
+        ) or None
+        place_decision["square_since"] = _f_or_none(rec.get("square_since"))
         # This desk runs the exhaustion gate; ai_suggest's does not. Name the
         # path on the row so the two never average together again.
         place_decision["entry_path"] = (
@@ -15931,6 +16153,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             place_decision["features"] = _entry_features(
                 rec, ask=ask_f, bid=bid2_f,
                 stop=place_decision.get("stop_price"))
+            if isinstance(place_decision["features"], dict):
+                place_decision["features"]["arm_why"] = _arm_why
         rec["status"] = "armed"
         set_block_reason(rec, "placing", now=t0)
         try:
@@ -16056,6 +16280,30 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             candidates=_steal_cands)
         for _s in _preheat_dropped:
             touched.pop(_s, None)
+            _cap_state.pop(_s, None)
+        # Active pre-square farm: pull square/pre_square from the same
+        # soft-seed universe and steal far seats (incl. flood) for them.
+        _farm_cands: list[dict] = list(_steal_cands)
+        try:
+            for _row in _soft_seed_source_rows(cfg, now=t0):
+                if not isinstance(_row, dict):
+                    continue
+                _sym = str(_row.get("symbol") or "").upper().strip()
+                if not _sym or _sym in _cap_state:
+                    continue
+                _out = dict(_row)
+                stamp_exh_seat_fields(_out, cfg)
+                if str(_out.get("exh_seat_class") or "") in (
+                        "pre_square", "square"):
+                    _farm_cands.append(_out)
+        except Exception:
+            pass
+        _far_dropped = _preferential_far_exh_steal(
+            _cap_state, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
+            candidates=_farm_cands)
+        for _s in _far_dropped:
+            touched.pop(_s, None)
+            _cap_state.pop(_s, None)
     except Exception:
         pass
 

@@ -1189,11 +1189,18 @@ function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
     if (stampEl.textContent !== stampTxt) stampEl.textContent = stampTxt;
     stampEl.classList.toggle('feed-stamp--live', live);
     stampEl.classList.toggle('feed-stamp--stale', !live);
+    const nSq = meta.n_square != null ? Number(meta.n_square) : null;
+    const nPre = meta.n_pre_square != null ? Number(meta.n_pre_square) : null;
+    const nFar = meta.n_far != null ? Number(meta.n_far) : null;
+    const seatMix = (nSq != null || nPre != null || nFar != null)
+      ? `■${nSq || 0}/pre${nPre || 0}/far${nFar || 0}`
+      : null;
     const detail = [
       ageBucket != null ? `updated ${ageBucket}` : null,
       `recheck ~${Math.round(pollSec)}s`,
       nMom ? `${nMom} Mom` : null,
       nSt ? `${nSt} ST` : null,
+      seatMix,
       owner,
       mode || null,
     ].filter(Boolean).join(' · ');
