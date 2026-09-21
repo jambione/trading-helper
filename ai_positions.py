@@ -2038,6 +2038,31 @@ def place_scaled_entry(
         "square_since": _num(decision.get("square_since")) or _num(
             (decision.get("features") or {}).get("square_since")
         ),
+        # Dual-%R proof at fill (TV ■ audit). sticky_used must stay false.
+        "pctr": _num(decision.get("pctr")) or _num(
+            (decision.get("features") or {}).get("pctr")
+        ),
+        "pctr_slow": _num(decision.get("pctr_slow")) or _num(
+            (decision.get("features") or {}).get("pctr_slow")
+        ),
+        "pctr_gap": _num(decision.get("pctr_gap")) or _num(
+            (decision.get("features") or {}).get("pctr_gap")
+        ),
+        "pctr_ob": (
+            decision.get("pctr_ob")
+            if decision.get("pctr_ob") is not None
+            else (decision.get("features") or {}).get("pctr_ob")
+        ),
+        "pctr_tight": (
+            decision.get("pctr_tight")
+            if decision.get("pctr_tight") is not None
+            else (decision.get("features") or {}).get("pctr_tight")
+        ),
+        "sticky_used": bool(
+            decision.get("sticky_used")
+            if decision.get("sticky_used") is not None
+            else (decision.get("features") or {}).get("sticky_used", False)
+        ),
         # Which desk opened this. ai_entry_watch runs the exhaustion gate;
         # ai_suggest does not (it has its own pre-entry / reward-risk stack)
         # and stamps no %R. Both land in one outcomes.jsonl, where they were
@@ -5462,6 +5487,27 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         ),
         "exh_seat_class_fill": pos.get("exh_seat_class_fill") or (
             (pos.get("features") or {}).get("exh_seat_class")
+        ),
+        "pctr": pos.get("pctr") if pos.get("pctr") is not None else (
+            (pos.get("features") or {}).get("pctr")
+        ),
+        "pctr_slow": pos.get("pctr_slow") if pos.get("pctr_slow") is not None else (
+            (pos.get("features") or {}).get("pctr_slow")
+        ),
+        "pctr_gap": pos.get("pctr_gap") if pos.get("pctr_gap") is not None else (
+            (pos.get("features") or {}).get("pctr_gap")
+        ),
+        "pctr_ob": pos.get("pctr_ob") if pos.get("pctr_ob") is not None else (
+            (pos.get("features") or {}).get("pctr_ob")
+        ),
+        "pctr_tight": (
+            pos.get("pctr_tight") if pos.get("pctr_tight") is not None
+            else (pos.get("features") or {}).get("pctr_tight")
+        ),
+        "sticky_used": bool(
+            pos.get("sticky_used")
+            if pos.get("sticky_used") is not None
+            else (pos.get("features") or {}).get("sticky_used", False)
         ),
         "time_in_square_before_entry_sec": (
             round(float(pos.get("entry_time") or now) - float(pos["square_since"]), 1)

@@ -5166,20 +5166,85 @@ def _left_ob_rec():
     }
 
 
-def test_entry_square_keeps_the_friday_or_latch():
-    """Entry arms on cached-OR-live; that is the 2026-09-18 close behaviour.
-
-    d7d05b5 made the square live-math-only to kill a multi-minute leave-OB
-    lag on MARA. That was an *exit* bug, so the fix stays on the exit path
-    and entry keeps the latch it had at Friday's close.
-    """
+def test_entry_square_refuses_sticky_cache_after_live_left_ob():
+    """PSKY 2026-09-21: cached pctr_ob must not arm after TV left ■."""
     import ai_entry_watch as ew
 
-    cfg = {"rte_threshold": 20, "rte_confluence_max": 15.0}
-    both_ob, tight, err = ew.dual_r_ob_tight(_left_ob_rec(), cfg, sticky=True)
-    assert err is None
-    assert both_ob is True
-    assert tight is True
+    cfg = {
+        "ai_watch_exh_square_arm": True,
+        "rte_threshold": 20,
+        "rte_confluence_max": 15.0,
+        "ai_watch_require_exhaustion_data": True,
+        "ai_watch_ob_allow_hot": True,
+    }
+    rec = _left_ob_rec()  # live −40/−35, cache still OB+tight
+    ok, why = ew._square_exh_allows_buy(rec, cfg, require_rising=False)
+    assert ok is False
+    assert why in ("wait_exh", "exh_not_tight", "exh_falling")
+    assert ew.is_overbought(rec, cfg) is False
+
+
+def test_entry_square_allows_live_dual_ob_tight():
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_watch_exh_square_arm": True,
+        "rte_threshold": 20,
+        "rte_confluence_max": 15.0,
+        "ai_watch_require_exhaustion_data": True,
+        "ai_watch_ob_allow_hot": True,
+        "ai_watch_square_max_age_sec": 0,
+    }
+    rec = {
+        "symbol": "SMCI",
+        "indicator": {
+            "pctr": -10.0, "pctr_slow": -8.0,
+            "pctr_ob": False, "pctr_tight": False,  # stale false cache
+            "pctr_rising": True, "pctr_falling": False,
+        },
+    }
+    ok, why = ew._square_exh_allows_buy(rec, cfg, require_rising=False)
+    assert ok is True and why == "overbought"
+
+
+def test_entry_square_refuses_wide_gap():
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_watch_exh_square_arm": True,
+        "rte_threshold": 20,
+        "rte_confluence_max": 15.0,
+        "ai_watch_require_exhaustion_data": True,
+    }
+    rec = {
+        "symbol": "RKLB",
+        "indicator": {
+            "pctr": -10.0, "pctr_slow": -40.0,  # gap 30 > 15
+            "pctr_rising": True, "pctr_falling": False,
+        },
+    }
+    ok, why = ew._square_exh_allows_buy(rec, cfg, require_rising=False)
+    assert ok is False and why == "exh_not_tight"
+
+
+def test_entry_square_refuses_missing_slow():
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_watch_exh_square_arm": True,
+        "rte_threshold": 20,
+        "rte_confluence_max": 15.0,
+        "ai_watch_require_exhaustion_data": True,
+    }
+    rec = {
+        "symbol": "PSKY",
+        "indicator": {
+            "pctr": -15.0, "pctr_slow": None,
+            "pctr_ob": True, "pctr_tight": True,
+        },
+    }
+    ok, why = ew._square_exh_allows_buy(rec, cfg, require_rising=False)
+    assert ok is False and why == "no_exhaustion_data"
 
 
 def test_exit_square_still_drops_the_latch():
@@ -5192,33 +5257,16 @@ def test_exit_square_still_drops_the_latch():
     assert both_ob is False
 
 
-def test_sticky_square_never_writes_the_cache():
-    """A sticky read must leave the latch for the next caller."""
+def test_sticky_flag_still_or_latches_for_legacy_callers():
+    """sticky=True remains for explicit legacy/tests; entry does not use it."""
     import ai_entry_watch as ew
 
     cfg = {"rte_threshold": 20, "rte_confluence_max": 15.0}
     rec = _left_ob_rec()
-    ew.dual_r_ob_tight(rec, cfg, sticky=True)
-    assert rec["indicator"]["pctr_ob"] is True
-    assert rec["indicator"]["pctr_tight"] is True
-
-
-def test_is_overbought_short_circuits_on_the_latch():
-    """should_arm_buy calls is_overbought before the entry square.
-
-    It returns True straight off a latched ``pctr_ob`` without reaching
-    dual_r_ob_tight, so it can never overwrite the latch the entry path
-    reads later in the same poll. That ordering is what makes the entry
-    latch safe without a write guard.
-    """
-    import ai_entry_watch as ew
-
-    cfg = {"rte_threshold": 20, "rte_confluence_max": 15.0}
-    rec = _left_ob_rec()
-    assert ew.is_overbought(rec, cfg) is True
-    assert rec["indicator"]["pctr_ob"] is True       # latch survives
-    both_ob, _tight, _err = ew.dual_r_ob_tight(rec, cfg, sticky=True)
-    assert both_ob is True
+    both_ob, tight, err = ew.dual_r_ob_tight(rec, cfg, sticky=True)
+    assert err is None
+    assert both_ob is True and tight is True
+    assert rec["indicator"]["pctr_ob"] is True  # sticky never writes
 
 
 def test_live_both_ob_holds_for_entry_despite_false_cache():
@@ -5229,7 +5277,7 @@ def test_live_both_ob_holds_for_entry_despite_false_cache():
     rec = {"indicator": {
         "pctr": -10.0, "pctr_slow": -8.0, "pctr_ob": False, "pctr_tight": False,
     }}
-    both_ob, tight, err = ew.dual_r_ob_tight(rec, cfg, sticky=True)
+    both_ob, tight, err = ew.dual_r_ob_tight(rec, cfg, sticky=False)
     assert err is None
     assert both_ob is True
     assert tight is True

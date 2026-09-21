@@ -214,11 +214,14 @@ def test_stale_square_gate_refuses_late_entry():
     cfg = _cfg(ai_watch_square_max_age_sec=60.0)
     now = 1_000.0
 
-    # Young square (10s old) -> passes
+    # Young square (10s old) -> passes (live dual OB+tight; cache irrelevant)
     young_rec = {
         "symbol": "SMCI",
         "square_since": now - 10.0,
-        "indicator": {"pctr": -10.0, "pctr_slow": -8.0, "pctr_ob": True},
+        "indicator": {
+            "pctr": -10.0, "pctr_slow": -8.0, "pctr_ob": True,
+            "pctr_rising": True, "pctr_falling": False,
+        },
     }
     ok, why = ew._square_exh_allows_buy(young_rec, cfg, require_rising=False, now=now)
     assert ok is True and why == "overbought"

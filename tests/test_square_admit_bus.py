@@ -137,6 +137,53 @@ def test_soft_seed_prefers_pre_square_over_far(monkeypatch):
     assert picked[0]["exh_seat_class"] == "square"  # ranked first
 
 
+def test_pre_square_keeps_when_arm_ready_required_but_false(monkeypatch):
+    """Prefer-square: approach seats keep without full arm_ready (open still gated)."""
+    monkeypatch.setattr(ew, "trading_hours_active", lambda *a, **k: True)
+    monkeypatch.setattr(
+        ew, "evaluate_arm_ready", lambda *a, **k: (False, "rsi_not_rising"))
+
+    def _rows(cfg):
+        return [
+            {
+                "symbol": "PREK", "source": "trending", "pct_change": 12.0,
+                "dollar_volume": 3e6, "price": 11.0,
+                "criteria": ["soft_seed", "trending"],
+                "last_ask_src": "stream", "last_ask_age_sec": 1.0,
+                "indicator": {
+                    **_ind(fast=-30, slow=-28),
+                    "cm_rsi": 55.0, "cm_rsi_rising": False,
+                },
+            },
+            {
+                "symbol": "FARX", "source": "movers", "pct_change": 22.0,
+                "dollar_volume": 5e6, "price": 10.0,
+                "criteria": ["soft_seed", "movers"],
+                "last_ask_src": "stream", "last_ask_age_sec": 1.0,
+                "indicator": {
+                    **_ind(fast=-39, slow=-64),
+                    "cm_rsi": 40.0, "cm_rsi_rising": True,
+                },
+            },
+        ]
+
+    monkeypatch.setattr(ew, "_soft_seed_source_rows", _rows)
+    cfg = _cfg(
+        ai_watch_admit_require_arm_ready=True,
+        ai_watch_admit_arm_ready_rth_only=False,
+        ai_watch_admit_prefer_square=True,
+    )
+    picked, fired = ew.maybe_soft_seed_rows(cfg, now=time.time(), indicators={})
+    assert fired is True
+    syms = [r["symbol"] for r in picked]
+    assert "PREK" in syms
+    pre = next(r for r in picked if r["symbol"] == "PREK")
+    assert pre.get("scout_only") is False
+    assert pre.get("exh_seat_class") == "pre_square"
+    assert pre.get("arm_ready") is False
+    assert "FARX" not in syms
+
+
 def test_soft_seed_score_ranks_square_highest():
     cfg = _cfg()
     far = {"pct_change": 25.0, "dollar_volume": 1e7,

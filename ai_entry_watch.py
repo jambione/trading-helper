@@ -2329,9 +2329,9 @@ def maybe_soft_seed_rows(
         if prefer_sq and cls not in ("square", "pre_square"):
             continue
         if require_ready and not bool(row.get("arm_ready")):
-            # Square/pre-square without full arm-ready still keep if square
-            # class — arm gates may need stream that arrives after seed.
-            if cls != "square":
+            # Prefer-square: pre_square and square keep seats without full
+            # arm_ready — arm_ready gates the OPEN, not the approach seat.
+            if cls not in ("square", "pre_square"):
                 continue
         pct = _pct_change_value(row.get("pct_change"))
         if pct is None:
@@ -10515,14 +10515,14 @@ def dual_r_ob_tight(
     a hard presence check (``no_exhaustion_data``).
 
     ``sticky`` restores the pre-d7d05b5 OR-latch (cached ``pctr_ob`` /
-    ``pctr_tight`` OR live math) and never writes the cache. Only the entry
-    path uses it — see ``_square_exh_allows_buy``. Every other caller reads
-    live math and refreshes the cache, which is the MARA leave-OB fix.
+    ``pctr_tight`` OR live math) and never writes the cache. Entry no longer
+    uses it — ``_square_exh_allows_buy`` is live dual only (PSKY 2026-09-21
+    false-■). Keep the flag for explicit tests / legacy callers.
 
     By default ``both_ob`` is live math only (fast ≥ −thr AND slow ≥ −thr).
-    On the exit path a sticky ``pctr_ob`` cache must not keep hold after the
-    lines have left OB — that OR-latch was the MARA 2026-09-18 multi-minute
-    triangle lag.
+    A sticky ``pctr_ob`` cache must not keep hold (or arm) after the lines
+    have left OB — that OR-latch was the MARA 2026-09-18 exit lag and the
+    PSKY 2026-09-21 entry false-■.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
@@ -10689,7 +10689,10 @@ def is_overbought(record: dict, cfg: dict) -> bool | None:
         ind = record.get("indicator") if isinstance(record, dict) else None
         if not isinstance(ind, dict):
             return None
-        if ind.get("pctr_ob") is True:
+        # Square arm: live dual only — sticky pctr_ob must not label ■ after
+        # TV has left OB+tight (PSKY 2026-09-21). TV-exh-rsi keeps the cache
+        # short-circuit for its own path.
+        if ind.get("pctr_ob") is True and not exh_square_arm_enabled(cfg):
             return True
         both_ob, _tight, err = dual_r_ob_tight(record, cfg)
         if err == "no_exhaustion_data":
@@ -11503,8 +11506,8 @@ def _square_exh_allows_buy(
     the square (dual OB+tight) may arm even if flat (pinned at highs).
     """
     ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
-    # Entry keeps Friday's OR-latch; the exit path stays live math.
-    both_ob, tight, err = dual_r_ob_tight(record, cfg, sticky=True)
+    # Live dual only — sticky OR-latch armed false ■ after TV left (PSKY).
+    both_ob, tight, err = dual_r_ob_tight(record, cfg, sticky=False)
     if err:
         if require_rising and (
             ind.get("pctr_falling") or exhaustion_state(record, cfg) == "cooling"
@@ -13229,6 +13232,17 @@ def _entry_features(rec: dict, *, ask: float | None = None,
         "macd_ok": bool(sig.get("macd_ok")),
         "cm_rsi": _f_or_none(sig.get("cm_rsi")),
         "pctr": _f_or_none(sig.get("pctr")),
+        "pctr_slow": _f_or_none(sig.get("pctr_slow")),
+        "pctr_gap": _f_or_none(sig.get("pctr_gap")),
+        "pctr_ob": (
+            bool(sig.get("pctr_ob")) if sig.get("pctr_ob") is not None else None
+        ),
+        "pctr_tight": (
+            bool(sig.get("pctr_tight")) if sig.get("pctr_tight") is not None
+            else None
+        ),
+        # Entry square is live dual only; pin false so a false-■ cannot hide.
+        "sticky_used": False,
         # Which tape the levers were on at arm. Gate 1 (min-hold) is only
         # evidence about the realtime product when these are live/realtime.
         "pctr_src": str(sig.get("pctr_src") or "").strip() or None,
@@ -16154,6 +16168,19 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             rec.get("exh_seat_class_admit") or rec.get("exh_seat_class") or ""
         ) or None
         place_decision["square_since"] = _f_or_none(rec.get("square_since"))
+        # Dual-%R proof at fill — auditable against TV ■ (no sticky).
+        _ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
+        place_decision["pctr"] = _f_or_none(_ind.get("pctr"))
+        place_decision["pctr_slow"] = _f_or_none(_ind.get("pctr_slow"))
+        place_decision["pctr_gap"] = _f_or_none(_ind.get("pctr_gap"))
+        place_decision["pctr_ob"] = (
+            bool(_ind.get("pctr_ob")) if _ind.get("pctr_ob") is not None else None
+        )
+        place_decision["pctr_tight"] = (
+            bool(_ind.get("pctr_tight")) if _ind.get("pctr_tight") is not None
+            else None
+        )
+        place_decision["sticky_used"] = False
         # This desk runs the exhaustion gate; ai_suggest's does not. Name the
         # path on the row so the two never average together again.
         place_decision["entry_path"] = (
@@ -16170,6 +16197,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 stop=place_decision.get("stop_price"))
             if isinstance(place_decision["features"], dict):
                 place_decision["features"]["arm_why"] = _arm_why
+                place_decision["features"]["sticky_used"] = False
         rec["status"] = "armed"
         set_block_reason(rec, "placing", now=t0)
         try:
