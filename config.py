@@ -51,6 +51,8 @@ DEFAULT_CONFIG = {
     # 0 = refuse new far soft-seed keeps (flood may still spray, then steal).
     "ai_watch_max_far_exh_seats": 0,       # soft-seed far keep cap
     "ai_watch_far_exh_evict_sec": 45.0,    # far seat TTL before drop/steal
+    # Refuse entry if dual-OB square is older than this (prevents climax chases).
+    "ai_watch_square_max_age_sec": 60.0,
 
     # Live bar tape. iex is the free Alpaca feed. sip needs Algo Trader Plus
     # and is what matches TradingView highs/lows on thin names.
@@ -799,6 +801,8 @@ DEFAULT_CONFIG = {
     # If slow %R cannot refresh and is older than this while fast has left OB
     # (and we already latched dual OB), fire triangle rather than wait on trail.
     "ai_exit_dual_slow_max_age_sec": 45.0,
+    # In square mode, confirmed leave-OB triangle exits without min_hold deferral.
+    "ai_exit_left_ob_exempt_min_hold": True,
     # Exhaustion / %R is a *direction* filter, not a heat floor.
     # BUY: %R rising, or already overbought and not falling.
     # Refuse cooling / rolling-over OB. Missing %R still passes when
@@ -1643,6 +1647,8 @@ _EFFECTIVE_KEYS = (
     "ai_exit_left_overbought",
     "ai_exit_left_overbought_confirm_sec",
     "ai_exit_dual_slow_max_age_sec",
+    "ai_exit_left_ob_exempt_min_hold",
+    "ai_watch_square_max_age_sec",
     "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",
     "ai_watch_max_far_exh_seats",
@@ -1949,6 +1955,8 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_left_overbought",
     "ai_exit_left_overbought_confirm_sec",
     "ai_exit_dual_slow_max_age_sec",
+    "ai_exit_left_ob_exempt_min_hold",
+    "ai_watch_square_max_age_sec",
     "ai_watch_exh_square_arm",
     "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",

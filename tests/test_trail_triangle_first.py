@@ -178,3 +178,62 @@ def test_leave_ob_still_wins_when_confirmed():
     }
     hit, why = ew.exhaustion_exit_now(leave, cfg, now=1_000.0)
     assert hit is True and why == "left_overbought"
+
+
+def test_leave_ob_exempt_from_min_hold(monkeypatch):
+    """In square mode, leave-OB triangle is exempt from 90s min-hold deferral."""
+    import ai_entry_watch as ew
+
+    cfg = _cfg(
+        ai_exit_min_hold_sec=90.0,
+        ai_exit_left_overbought_confirm_sec=0.0,
+        ai_exit_left_ob_exempt_min_hold=True,
+    )
+    monkeypatch.setattr(ap, "_cfg_all", lambda: cfg)
+
+    now = 1_000.0
+    pos = _pos(
+        symbol="SMCI",
+        entry_time=now - 20.0,  # 20s old < 90s min_hold
+        exh_was_overbought=True,
+        indicator={"pctr": -40.0, "pctr_slow": -25.0, "pctr_ob": False},
+    )
+
+    # Directly verify soft_exit_held_back is True (min_hold active)
+    assert ap.soft_exit_held_back(pos, now, cfg) is True
+
+    # But exhaustion_exit_now fires leave_overbought
+    hit, why = ew.exhaustion_exit_now(pos, cfg, now=now)
+    assert hit is True and why == "left_overbought"
+
+
+def test_stale_square_gate_refuses_late_entry():
+    """Age-of-square gate blocks entering a climax after square ran >= max_age."""
+    import ai_entry_watch as ew
+
+    cfg = _cfg(ai_watch_square_max_age_sec=60.0)
+    now = 1_000.0
+
+    # Young square (10s old) -> passes
+    young_rec = {
+        "symbol": "SMCI",
+        "square_since": now - 10.0,
+        "indicator": {"pctr": -10.0, "pctr_slow": -8.0, "pctr_ob": True},
+    }
+    ok, why = ew._square_exh_allows_buy(young_rec, cfg, require_rising=False, now=now)
+    assert ok is True and why == "overbought"
+
+    # Stale square (75s old >= 60s) -> refused
+    stale_rec = {
+        "symbol": "SMCI",
+        "square_since": now - 75.0,
+        "indicator": {"pctr": -10.0, "pctr_slow": -8.0, "pctr_ob": True},
+    }
+    ok, why = ew._square_exh_allows_buy(stale_rec, cfg, require_rising=False, now=now)
+    assert ok is False and why == "stale_square"
+    assert "square age 75s >= 60s" in stale_rec.get("block_detail", "")
+
+    # Disabled gate (0) -> passes
+    cfg_off = _cfg(ai_watch_square_max_age_sec=0)
+    ok_off, why_off = ew._square_exh_allows_buy(stale_rec, cfg_off, require_rising=False, now=now)
+    assert ok_off is True and why_off == "overbought"

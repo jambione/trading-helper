@@ -6453,8 +6453,17 @@ def manage_open_positions(
                 # An indicator opinion is a discretionary exit; hold it back
                 # with the shelf so the forward test measures one rule, not a
                 # shelf delay that left_overbought quietly steps around.
-                # Log remaining sec so a long min_hold cannot silently eat ▼.
-                if hit and soft_exit_held_back(pos, now):
+                # In square/triangle mode, leave-OB (▼) is the primary structural
+                # thesis exit. When exempt (default in square mode), min_hold does
+                # not defer a confirmed triangle.
+                _left_ob_held = hit and soft_exit_held_back(pos, now)
+                if _left_ob_held and (
+                    bool(cfg_exh.get("ai_exit_left_ob_exempt_min_hold", True))
+                    if (_ew2.exh_square_arm_enabled(cfg_exh) or pos.get("exh_was_overbought"))
+                    else False
+                ):
+                    _left_ob_held = False
+                if _left_ob_held:
                     try:
                         need = float(_cfg_all().get(
                             "ai_exit_min_hold_sec", 0) or 0)

@@ -218,6 +218,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "wait_exh": "wait EXH",
     "wait_rsi": "wait RSI",
     "exh_not_tight": "EXH wide",
+    "stale_square": "stale ■",
     "exh_rsi": "ready",
     "last_exh_rsi": "ready",
     "in_zone_fade_ok": "in zone",
@@ -11351,7 +11352,9 @@ def mistimed_heat_blocks_buy(
     return None
 
 
-def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
+def exhaustion_allows_buy(
+    record: dict, cfg: dict, *, now: float | None = None
+) -> tuple[bool, str]:
     """Buy side of the exhaustion / momentum gate.
 
     TV desk mode: both %R lines in the overbought band (red boxes),
@@ -11396,7 +11399,7 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     # Square mode (TV red ■): enter only on dual-OB + tight. Replaces
     # last_heating / fast-only OB as the arm story when enabled.
     if exh_square_arm_enabled(cfg):
-        return _square_exh_allows_buy(record, cfg, require_rising=require_rising)
+        return _square_exh_allows_buy(record, cfg, require_rising=require_rising, now=now)
     state = exhaustion_state(record, cfg)
     if state == "unknown":
         # Gaining-EXH rule needs a reading. Fallback used to arm blind when
@@ -11492,6 +11495,7 @@ def _square_exh_allows_buy(
     cfg: dict,
     *,
     require_rising: bool,
+    now: float | None = None,
 ) -> tuple[bool, str]:
     """Enter only on TV red-square: both %R OB and tight.
 
@@ -11532,6 +11536,17 @@ def _square_exh_allows_buy(
             record["block_detail"] = (
                 f"exh gap {gap:.1f}>{_rte_confluence_max(cfg):g}")
         return False, "exh_not_tight"
+    # Staleness gate: refuse entries if the square has already been running too long.
+    # Entering late into a square buys the climax rather than the breakout.
+    max_sq_age = _f_or_none(cfg.get("ai_watch_square_max_age_sec", 60.0))
+    if max_sq_age is not None and max_sq_age > 0:
+        sq_since = _f_or_none(record.get("square_since"))
+        if sq_since is not None:
+            now_ts = float(now if now is not None else time.time())
+            sq_age = max(0.0, now_ts - sq_since)
+            if sq_age >= max_sq_age:
+                record["block_detail"] = f"square age {sq_age:.0f}s >= {max_sq_age:.0f}s"
+                return False, "stale_square"
     # In the square. Rising preferred; flat while both OB is still a square.
     if require_rising and not ind.get("pctr_rising") and not both_ob:
         return False, "exh_not_rising"
