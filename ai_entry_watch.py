@@ -2286,6 +2286,11 @@ def maybe_soft_seed_rows(
             out["morning_flood"] = 1
             out["scout_only"] = False
             out["soft_seed"] = True
+            # Stamp dual-%R class at flood seat so admit is not born unknown.
+            try:
+                stamp_exh_seat_fields(out, cfg)
+            except Exception:
+                pass
             picked.append(out)
         flood_syms = {
             str(r.get("symbol") or "").upper().strip() for r in picked
@@ -5176,11 +5181,26 @@ def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
             str(row.get("exh_seat_class") or "")
             or str(prev.get("exh_seat_class") or "")
             or None),
-        # Freeze class at first seat for farm / late-vs-dead scorecards.
+        # Freeze first *known* class only — never lock in "unknown".
         "exh_seat_class_admit": (
-            str(prev.get("exh_seat_class_admit") or "")
-            or str(row.get("exh_seat_class") or "")
-            or str(prev.get("exh_seat_class") or "")
+            (
+                str(prev.get("exh_seat_class_admit") or "").strip().lower()
+                if str(prev.get("exh_seat_class_admit") or "").strip().lower()
+                in _KNOWN_EXH_SEAT_CLASSES
+                else ""
+            )
+            or (
+                str(row.get("exh_seat_class") or "").strip().lower()
+                if str(row.get("exh_seat_class") or "").strip().lower()
+                in _KNOWN_EXH_SEAT_CLASSES
+                else ""
+            )
+            or (
+                str(prev.get("exh_seat_class") or "").strip().lower()
+                if str(prev.get("exh_seat_class") or "").strip().lower()
+                in _KNOWN_EXH_SEAT_CLASSES
+                else ""
+            )
             or None),
         "pctr_gap": (
             _f_or_none(row.get("pctr_gap"))
@@ -9208,9 +9228,8 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
                   "scout_only", "scout_until", "exh_seat_class", "pctr_gap"):
             if row.get(k) is not None:
                 rec[k] = row[k]
-        # Admit class freezes on first seat; do not overwrite with later class.
-        if not rec.get("exh_seat_class_admit") and rec.get("exh_seat_class"):
-            rec["exh_seat_class_admit"] = rec["exh_seat_class"]
+        # Admit class freezes on first *known* seat; unknown may upgrade.
+        maybe_freeze_exh_seat_class_admit(rec)
         # Seat roles: pin wins over warming; warming scout prefers fresh tag.
         prev_role = str(prev.get("seat_role") or "").strip().lower()
         row_role = str(row.get("seat_role") or "").strip().lower()
@@ -10662,6 +10681,31 @@ def classify_exh_seat(
     return "far", gap
 
 
+_KNOWN_EXH_SEAT_CLASSES = frozenset({"square", "pre_square", "far"})
+
+
+def maybe_freeze_exh_seat_class_admit(rec: dict | None) -> str | None:
+    """Freeze the first *known* dual-%R seat class for farm scorecards.
+
+    ``unknown`` means dual lines were not ready yet — do **not** freeze it.
+    Freezing unknown left every research/flood seat that later armed as
+    square journaling ``exh_seat_class_admit=unknown`` (APLD 2026-09-21).
+    """
+    if not isinstance(rec, dict):
+        return None
+    cls = str(rec.get("exh_seat_class") or "").strip().lower()
+    admit = str(rec.get("exh_seat_class_admit") or "").strip().lower()
+    if admit in _KNOWN_EXH_SEAT_CLASSES:
+        return admit
+    if admit in ("unknown", "none"):
+        rec.pop("exh_seat_class_admit", None)
+        admit = ""
+    if cls in _KNOWN_EXH_SEAT_CLASSES:
+        rec["exh_seat_class_admit"] = cls
+        return cls
+    return None
+
+
 def stamp_exh_seat_fields(
     row: dict,
     cfg: dict | None = None,
@@ -10676,6 +10720,7 @@ def stamp_exh_seat_fields(
             row["pctr_gap"] = round(float(gap), 2)
         elif "pctr_gap" not in row:
             row["pctr_gap"] = None
+        maybe_freeze_exh_seat_class_admit(row)
     return cls
 
 
@@ -16162,11 +16207,15 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 place_decision.get("entry_exhaustion_state") or "unknown")
         place_decision["arm_why"] = _arm_why
         stamp_exh_seat_fields(rec, cfg)
+        maybe_freeze_exh_seat_class_admit(rec)
         place_decision["exh_seat_class"] = str(
             rec.get("exh_seat_class") or "") or None
-        place_decision["exh_seat_class_admit"] = str(
-            rec.get("exh_seat_class_admit") or rec.get("exh_seat_class") or ""
-        ) or None
+        _admit_cls = str(rec.get("exh_seat_class_admit") or "").strip().lower()
+        if _admit_cls not in _KNOWN_EXH_SEAT_CLASSES:
+            _admit_cls = str(rec.get("exh_seat_class") or "").strip().lower()
+        place_decision["exh_seat_class_admit"] = (
+            _admit_cls if _admit_cls in _KNOWN_EXH_SEAT_CLASSES else None
+        )
         place_decision["square_since"] = _f_or_none(rec.get("square_since"))
         # Dual-%R proof at fill — auditable against TV ■ (no sticky).
         _ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}

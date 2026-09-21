@@ -77,6 +77,41 @@ def test_stamp_exh_seat_fields():
     assert ew.stamp_exh_seat_fields(row, _cfg()) == "pre_square"
     assert row["exh_seat_class"] == "pre_square"
     assert row["pctr_gap"] == pytest.approx(2.0)
+    assert row["exh_seat_class_admit"] == "pre_square"
+
+
+def test_admit_class_does_not_freeze_unknown():
+    """APLD 2026-09-21: seat before dual-%R must not lock admit=unknown forever."""
+    rec = {
+        "symbol": "APLD",
+        "exh_seat_class": "unknown",
+        "exh_seat_class_admit": "unknown",
+        "indicator": {"pctr": -18.6},  # slow missing
+    }
+    assert ew.maybe_freeze_exh_seat_class_admit(rec) is None
+    assert rec.get("exh_seat_class_admit") in (None, "")
+    # Dual lines arrive → square; admit upgrades from unset/unknown.
+    rec["indicator"] = _ind(fast=-18.6, slow=-9.4)
+    assert ew.stamp_exh_seat_fields(rec, _cfg()) == "square"
+    assert rec["exh_seat_class_admit"] == "square"
+
+
+def test_admit_class_freezes_first_known_class():
+    """Once far/pre/square is stamped, later square does not rewrite admit."""
+    rec = {"symbol": "Y", "indicator": _ind(fast=-39, slow=-64)}
+    assert ew.stamp_exh_seat_fields(rec, _cfg()) == "far"
+    assert rec["exh_seat_class_admit"] == "far"
+    rec["indicator"] = _ind(fast=-13, slow=-4)
+    assert ew.stamp_exh_seat_fields(rec, _cfg()) == "square"
+    assert rec["exh_seat_class"] == "square"
+    assert rec["exh_seat_class_admit"] == "far"  # frozen at first known
+
+
+def test_admission_fields_skip_unknown_admit():
+    prev = {"exh_seat_class_admit": "unknown", "exh_seat_class": "unknown"}
+    row = {"exh_seat_class": "square", "pct_change": 12.0}
+    fields = ew._admission_fields(row, prev, time.time())
+    assert fields.get("exh_seat_class_admit") == "square"
 
 
 def test_default_config_bakes_square_bus_and_trail():

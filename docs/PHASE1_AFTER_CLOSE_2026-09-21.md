@@ -33,4 +33,4 @@ Living list. Add items during RTH; implement **after close** only (no mid-sessio
 
 - **OCR Screen Recording flake (10:17 ET):** DiscordOCR lost Screen Recording → silent fail; SSH/Terminal relaunch cannot grant TCC. Harden: document GUI-only restart; ensure DiscordOCR.app + Terminal/Ghostty stay enabled; optional watchdog that surfaces Screen Recording denial instead of quiet backoff.
 
-- **Square false-■ / admit gap (12:58 ET):** PSKY filled with engine `arm_why=square` while TV showed no ■; entry sticky OR-latch; book 7 far / 0 pre_square. Brief: `docs/SQUARE_ENTRY_STICKY_AND_PRESQUARE_KEEP_CLI_BRIEF.md`. **Code on branch `fix/square-entry-live-dual-presquare-keep`** (live dual entry, pre_square keep, journal proof) — merge + mini restart **after close**.
+- **Square false-■ / admit gap (12:58 ET):** PSKY sticky ■ — shipped `3278c75`. Follow-on: APLD 13:33 `admit=unknown` while fill=`square` — freeze was locking unknown before dual-%R arrived; fix `maybe_freeze_exh_seat_class_admit` (unknown may upgrade).
