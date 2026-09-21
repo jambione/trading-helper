@@ -2369,6 +2369,155 @@ def test_dead_trade_exits_flat_trade_after_timeout(tmp_path, monkeypatch):
     assert state["NVDA"]["closing_reason"] == "dead_trade"
 
 
+def test_leave_ob_exempt_min_hold_flattens_in_manage_loop(tmp_path, monkeypatch):
+    """Confirmed ▼ must close during min-hold when square-mode exempt is on.
+
+    soft_exit_held_back alone is not enough — manage_open_positions used to
+    rewrite hit→min_hold and log left_overbought_deferred. Pin the exemption
+    on the manage path itself.
+    """
+    now = 1_000_100.0
+    _seed_state(
+        tmp_path, monkeypatch,
+        qty_a=100, qty_b=0, total_qty=100,
+        entry_confirmed=True, tranche_a_filled=False,
+        last_seen_price=40.4, entry_price=40.5, stop_price=38.0,
+        entry_time=now - 20.0,  # 20s < 90s min_hold
+        exh_was_overbought=True,
+        t1_attach_pending=False,
+    )
+    cfg = {
+        "ai_position_shadow_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+        "ai_dead_trade_min": 0,
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_exh_square_arm": True,
+        "ai_exit_left_overbought": True,
+        "ai_exit_left_ob_exempt_min_hold": True,
+        "ai_exit_min_hold_sec": 90.0,
+        "ai_dual_tranche_triangle_exit": True,
+        "ai_edge_mode": "exhaustion_scalp",
+    }
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(
+        cp, "_cfg_flag",
+        lambda key, default=True: bool(cfg.get(key, default)),
+    )
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {
+        "NVDA": {"pctr": -40.0, "pctr_slow": -25.0, "pctr_ob": False},
+    })
+
+    class _EW:
+        @staticmethod
+        def exh_square_arm_enabled(c):
+            return bool(c.get("ai_watch_exh_square_arm", False))
+
+        @staticmethod
+        def live_exhaustion(*a, **k):
+            return (-40.0, 20.0, False, True)
+
+        @staticmethod
+        def apply_live_exhaustion(rec, price, cfg, now):
+            ind = rec.setdefault("indicator", {})
+            ind["pctr"] = -40.0
+            ind["pctr_slow"] = -25.0
+            ind["pctr_ob"] = False
+            ind["pctr_falling"] = True
+            return True
+
+        @staticmethod
+        def exhaustion_exit_now(probe, cfg, now=None):
+            return True, "left_overbought"
+
+    monkeypatch.setitem(sys.modules, "ai_entry_watch", _EW)
+    stub = _StubBrokerManage(current_price=40.4, live_qty=100)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=now)
+    assert stub.closed == ["NVDA"]
+    assert any(e.get("event") == "left_overbought" for e in events)
+    assert not any(e.get("event") == "left_overbought_deferred" for e in events)
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["closing_reason"] == "left_overbought"
+
+
+def test_leave_ob_min_hold_still_defers_when_exempt_off(tmp_path, monkeypatch):
+    """With exempt off, young fills still defer ▼ to min_hold."""
+    now = 1_000_100.0
+    _seed_state(
+        tmp_path, monkeypatch,
+        qty_a=100, qty_b=0, total_qty=100,
+        entry_confirmed=True, tranche_a_filled=False,
+        last_seen_price=40.4, entry_price=40.5, stop_price=38.0,
+        entry_time=now - 20.0,
+        exh_was_overbought=True,
+        t1_attach_pending=False,
+    )
+    cfg = {
+        "ai_position_shadow_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+        "ai_dead_trade_min": 0,
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_exh_square_arm": True,
+        "ai_exit_left_overbought": True,
+        "ai_exit_left_ob_exempt_min_hold": False,
+        "ai_exit_min_hold_sec": 90.0,
+        "ai_edge_mode": "exhaustion_scalp",
+    }
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(
+        cp, "_cfg_flag",
+        lambda key, default=True: bool(cfg.get(key, default)),
+    )
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {
+        "NVDA": {"pctr": -40.0, "pctr_slow": -25.0, "pctr_ob": False},
+    })
+    logged = []
+
+    class _EW:
+        @staticmethod
+        def exh_square_arm_enabled(c):
+            return bool(c.get("ai_watch_exh_square_arm", False))
+
+        @staticmethod
+        def live_exhaustion(*a, **k):
+            return (-40.0, 20.0, False, True)
+
+        @staticmethod
+        def apply_live_exhaustion(rec, price, cfg, now):
+            ind = rec.setdefault("indicator", {})
+            ind["pctr"] = -40.0
+            ind["pctr_slow"] = -25.0
+            ind["pctr_ob"] = False
+            return True
+
+        @staticmethod
+        def exhaustion_exit_now(probe, cfg, now=None):
+            return True, "left_overbought"
+
+    monkeypatch.setitem(sys.modules, "ai_entry_watch", _EW)
+    monkeypatch.setattr(
+        cp, "log_event",
+        lambda kind, **kw: logged.append((kind, kw)) or {},
+    )
+    stub = _StubBrokerManage(current_price=40.4, live_qty=100)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=now)
+    assert stub.closed == []
+    assert not any(e.get("event") == "left_overbought" for e in events)
+    assert any(
+        kind == "left_overbought_deferred" and kw.get("reason") == "min_hold"
+        for kind, kw in logged
+    )
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"].get("closing_reason") is None
+
+
 def test_left_overbought_does_not_flatten_a_dual_book(tmp_path, monkeypatch):
     """13/19 closes on 2026-08-12 were this path; T1/ratchet own the exit."""
     _seed_state(
@@ -2394,6 +2543,8 @@ def test_left_overbought_does_not_flatten_a_dual_book(tmp_path, monkeypatch):
     monkeypatch.setattr(cp, "_cfg_all", lambda: {
         "ai_watch_exhaustion_rules": True,
         "ai_exit_left_overbought": True,
+        # Legacy dual path: triangle defers forever; T1/ratchet own the exit.
+        "ai_dual_tranche_triangle_exit": False,
         "ai_edge_mode": "exhaustion_scalp",
     })
     monkeypatch.setattr(

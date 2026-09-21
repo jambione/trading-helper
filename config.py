@@ -268,7 +268,7 @@ DEFAULT_CONFIG = {
     "ai_trade_style": "Day scalp",
     # Must be <= ai_watch_synth_rr or every synthetic zone self-blocks on the
     # reward_risk gate in should_arm_buy. Day scalp uses sub-1R first targets.
-    "ai_min_reward_risk":        0.30,
+    "ai_min_reward_risk":        0.5,
     "ai_positions_poll_sec":     5.0,
     "ai_prompt_file": "ai_prompt.txt",
     # Safety / desk quality knobs
@@ -289,7 +289,7 @@ DEFAULT_CONFIG = {
     # buy (local-stop desk included). Limit style → marketable DAY limit
     # (pad, zone-capped when broker stops on). Phase B / extended hours always
     # uses limits — Alpaca rejects market orders outside RTH.
-    "ai_entry_order_style":    "limit",
+    "ai_entry_order_style":    "market",
     # Marketable pad above the ask for limit-style / Phase B entries.
     # Limit + broker stops: then hard-capped at zone top.
     # Local-stop + limit: same pad, optionally dollar-capped via
@@ -352,8 +352,8 @@ DEFAULT_CONFIG = {
     # default — the live path reads IEX quotes, which are a few percent of the
     # tape and always look wide, so this would block good fills. Turn it on
     # once outcomes.jsonl has real entry_slippage_r to calibrate against.
-    # Mid-session 2026-09-18: round-trip spread cap in R (was 0=off). Tightened to 0.08R.
-    "ai_max_spread_r":              0.08,
+    # Mid-session 2026-09-18: round-trip spread cap in R (was 0=off).
+    "ai_max_spread_r":              2.0,
     # Above this, a logged spread_r is the IEX quote being wrong rather than a
     # wide book, and it stops sizing the trail. Measured against SIP on the
     # 2026-08-28 fills: the artifacts run 30-170x, every real reading 1.3-6x.
@@ -1084,12 +1084,14 @@ DEFAULT_CONFIG = {
     "ai_watch_zone_width_pct":         4.0,  # zone depth below entry_high
     # Measured off the *fill*, not entry_low — see _decision_for_place.
     "ai_watch_synth_stop_pct":         5.0,  # stop under the fill price
-    # First bank at 0.35R (calibrated for intraday small-cap square thrust).
-    # Replaces old 1.0R which had 0% hit rate across recent sessions.
-    "ai_watch_synth_rr":               0.35, # target at this R multiple
+    # First bank at 1R. 0.6R was a scalp that cut continuation winners
+    # before the ratchet could lock them (30m+ holds were the only green
+    # bucket on 2026-08-11..18).
+    "ai_watch_synth_rr":               1.0,  # target at this R multiple
     # Scale-out / runner (synthetic dual tranche when ai_day_scalp_dual_tranche).
     "ai_watch_synth_scale_out_pct":   50.0,  # % of shares with T1 take-profit
     # In square mode, runner flattens on leave-OB triangle (▼) rather than deferring ▼.
+    # Live dual tranche stays off in bot_config; flag is ready when dual is enabled.
     "ai_dual_tranche_triangle_exit":   True,
     # Runner trail after T1, in R — a percent trail is a different trade on
     # every name (2.5% is 2.5R behind a 1% stop, 0.5R behind a 5% one), which
@@ -1157,16 +1159,15 @@ DEFAULT_CONFIG = {
     # shelf sat $0.06 behind price against an $0.08-0.18 book, so the quote
     # crossing its own spread tripped it without the market moving. Set from
     # the spread record, not guessed.
-    # Where the entry limit is anchored: "ask" (marketable, pays the whole
-    # book and opens every fill down by the spread), "mid" (half), or "bid"
-    # (pays nothing, fills only when someone comes to it). Crossing buys
-    # immediacy, which is worth its price only if the signal continues.
     # A REST ask further than this from the last print is disbelieved rather
     # than used: on thin names the quote ran 8-13% above the tape, which put
     # the derived stop ABOVE the live price and inflated every spread reading
     # taken from it. Percent of tape. 0 disables.
     "ai_decision_ask_max_dev_pct":      5.0,
-    "ai_entry_limit_anchor":           "last",
+    # Where the entry limit is anchored: "ask" (marketable), "mid", "bid", or
+    # "last" (min(last, ask), floored at bid). Live Plan A stays on ask;
+    # last/mid/bid are paper-trial knobs until fill/slip is scored.
+    "ai_entry_limit_anchor":           "ask",
     # Discretionary exits (shelf, dead-trade, left-overbought) stay holstered
     # for this many seconds after the fill. The 1R disaster stop and the 15:50
     # flatten are never gated. 0 = shipped. See ai_positions.soft_exit_held_back.
