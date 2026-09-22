@@ -5330,6 +5330,97 @@ def test_left_overbought_confirm_and_flicker_cancel():
     assert hit is True and why == "left_overbought"
 
 
+def _macd_fill_rec(**kw):
+    ind = {
+        "pctr": -40.0,
+        "pctr_slow": -55.0,
+        "macd_bull": True,
+        "macd_gap_rising": True,
+        "macd_gap": 0.03,
+        "cm_rsi": 52.0,
+        "cm_rsi_rising": True,
+    }
+    ind.update(kw.pop("ind", {}))
+    rec = {"symbol": "APLD", "indicator": ind, "cm_rsi": ind["cm_rsi"],
+           "cm_rsi_rising": ind["cm_rsi_rising"]}
+    rec.update(kw)
+    return rec
+
+
+def _macd_fill_cfg(**kw):
+    cfg = {
+        "ai_watch_macd_gap_arm": True,
+        "ai_watch_macd_gap_min_pct": 0.02,
+        "ai_watch_macd_gap_rsi_max": 60,
+        "ai_watch_exh_square_arm": True,
+        "rte_threshold": 20,
+        "rte_confluence_max": 15,
+    }
+    cfg.update(kw)
+    return cfg
+
+
+def test_macd_gap_fill_buys_the_scored_rule():
+    import ai_entry_watch as ew
+    # Price 10, gap 0.003 = 0.03% of price, RSI 52 rising, not in the square.
+    ok, why = ew.macd_gap_fill_allows_buy(
+        _macd_fill_rec(), _macd_fill_cfg(), price=10.0)
+    assert ok is True and why == "macd_gap"
+
+
+def test_macd_gap_fill_refuses_a_fresh_square():
+    import ai_entry_watch as ew
+    ok, why = ew.macd_gap_fill_allows_buy(
+        _macd_fill_rec(ind={"pctr": -5.0, "pctr_slow": -4.0}),
+        _macd_fill_cfg(), price=10.0)
+    assert ok is False and why == "in_square"
+
+
+def test_macd_gap_fill_refuses_hot_rsi_and_a_small_gap():
+    import ai_entry_watch as ew
+    ok, why = ew.macd_gap_fill_allows_buy(
+        _macd_fill_rec(ind={"cm_rsi": 74.0}), _macd_fill_cfg(), price=10.0)
+    assert ok is False and why == "macd_rsi_hot"
+    ok, why = ew.macd_gap_fill_allows_buy(
+        _macd_fill_rec(ind={"macd_gap": 0.001}), _macd_fill_cfg(), price=10.0)
+    assert ok is False and why == "macd_gap_too_small"
+
+
+def test_macd_gap_fill_off_by_default():
+    import ai_entry_watch as ew
+    ok, why = ew.macd_gap_fill_allows_buy(
+        _macd_fill_rec(), {"ai_watch_exh_square_arm": True}, price=10.0)
+    assert ok is False and why == "macd_gap_arm_off"
+
+
+def test_merge_triangle_indicator_engine_leave_beats_live_hold():
+    """Engine fast already left OB. A live read still in the square loses."""
+    import ai_entry_watch as ew
+
+    merged = ew.merge_triangle_indicator(
+        {"pctr": -26.0, "pctr_slow": -4.0},
+        {"pctr": -3.1, "pctr_slow": -0.1},
+        20.0,
+    )
+    assert merged["pctr"] == -26.0
+    assert merged["pctr_slow"] == -0.1
+
+    cfg = {
+        "ai_watch_exh_square_arm": True,
+        "ai_exit_left_overbought": True,
+        "ai_watch_exhaustion_rules": True,
+        "rte_threshold": 20,
+        "ai_exit_left_overbought_confirm_sec": 0.0,
+        "ai_watch_tv_exh_rsi": False,
+    }
+    rec = {
+        "exh_was_overbought": True,
+        "indicator": merged,
+    }
+    hit, why = ew.exhaustion_exit_now(rec, cfg, now=1_000.0)
+    assert hit is True and why == "left_overbought"
+
+
 def test_fast_leaves_slow_still_ob_breaks_square():
     """Fast left OB while slow still OB → square broken → triangle (not hold).
 

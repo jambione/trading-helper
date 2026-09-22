@@ -3566,6 +3566,61 @@ def green_catchup_raise(
     return round(raised, 2)
 
 
+def entry_catchup_stop(
+    pos: dict[str, Any],
+    cfg: dict | None,
+    last: float | None,
+    prev: float | None,
+    now: float | None,
+) -> float | None:
+    """30s after the fill, if the shelf has not moved, park it at last − 1¢.
+
+    The 0.15R arm used to skip the catch entirely, so a green trade that
+    never cleared the arm (PSKY, peak 0.13R) kept the seed stop. This jump
+    does not wait for that arm and does not wait for the 8s idle steps.
+    Raise-only. A shelf that has already moved above the seed is left to
+    the trail. Returns None when the jump does not apply.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if now is None or last is None or float(last) <= 0:
+        return None
+    try:
+        delay = float(cfg.get("ai_local_trail_entry_catchup_sec", 30.0) or 0.0)
+    except (TypeError, ValueError):
+        delay = 30.0
+    if delay <= 0:
+        return None
+    start = pos.get("entry_confirmed_at")
+    if start is None:
+        start = pos.get("entry_time")
+    if start is None:
+        return None
+    try:
+        age = float(now) - float(start)
+    except (TypeError, ValueError):
+        return None
+    # Remember the shelf we first saw. "Hasn't moved" means it is still
+    # that shelf, not that it still matches the formula seed. PSKY's
+    # working stop was $10.55, above the give formula, and never left it.
+    base = _num(pos.get("entry_shelf_price"))
+    if base is None and prev is not None:
+        pos["entry_shelf_price"] = float(prev)
+        base = float(prev)
+    if age + 1e-9 < delay:
+        return None
+    if (
+        prev is not None and base is not None
+        and float(prev) > float(base) + 0.015
+    ):
+        return None
+    parked = round(float(last) - 0.01, 2)
+    if parked >= float(last) - 1e-9:
+        return None
+    if prev is not None and parked <= float(prev) + 1e-9:
+        return None
+    return parked
+
+
 def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: float | None = None) -> float | None:
     """Trail just under the damped last: rises as price grows, never lowers.
 
@@ -3672,6 +3727,9 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: floa
         out = prev or seed or floor
         if be_floor is not None and out is not None:
             out = max(float(out), be_floor)
+        jump = entry_catchup_stop(pos, cfg, last, _num(out), now)
+        if jump is not None:
+            out = jump if out is None else max(float(out), jump)
         return out
     give_mfe = mfe
     if not _tight_give_clears_entry(last, entry, risk, cfg,
@@ -3701,6 +3759,11 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: floa
         if prev is not None:
             cand = max(cand, float(prev))
         cand = math.ceil(round(cand * 100.0, 4)) / 100.0
+        if cand >= float(last):
+            cand = round(float(last) - 0.01, 2)
+    jump = entry_catchup_stop(pos, cfg, last, _num(cand), now)
+    if jump is not None:
+        cand = max(float(cand), float(jump))
         if cand >= float(last):
             cand = round(float(last) - 0.01, 2)
     return round(cand, 2)
@@ -3997,7 +4060,7 @@ def apply_local_trail(
         )
         return True, True
 
-    want = local_profit_stop(pos, _cfg_all())
+    want = local_profit_stop(pos, _cfg_all(), now=now)
     prev_local = _num(pos.get("local_stop_price"))
 
     # Why did the shelf not move? 2026-08-27: IOVA held 8.1537 for a quarter
@@ -6523,24 +6586,30 @@ def manage_open_positions(
         # path is off: hold through overbought and bank via broker T1, runner
         # trail, dead_trade, or stop. See ai_entry_watch.left_overbought_exit_enabled.
         if _cfg_flag("ai_watch_exhaustion_rules", True) and pos.get("entry_confirmed"):
-            sig = dict(indicators.get(ticker) or {})
+            engine_sig = dict(indicators.get(ticker) or {})
+            sig = dict(engine_sig)
             # Fresh DUAL %R (fast+slow) against the live price before judging
             # the triangle. Fast-only refresh left stale pctr_slow / sticky
             # pctr_ob in place — MARA 2026-09-18 held until 15:39 while TV ▼
             # had already printed (exit still showed fast pctr=-17.86 OB).
+            # The engine line still wins when a live recompute is blank or
+            # still inside the square: CLSK 2026-09-22 showed fast −26 on
+            # the book and stayed hold.
             live_px = _num(pos.get("last_seen_price"))
             if live_px:
                 try:
                     import ai_entry_watch as _ew
-                    probe_rec = {"symbol": ticker, "indicator": sig}
+                    probe_rec = {"symbol": ticker, "indicator": dict(engine_sig)}
                     if _ew.apply_live_exhaustion(
                             probe_rec, live_px, _cfg_all(), now):
                         sig = dict(probe_rec.get("indicator") or sig)
                         if sig.get("pctr_slow") is not None:
                             pos["pctr_slow_live_ts"] = float(now)
                             changed = True
+                    thr = float(_cfg_all().get("rte_threshold", 20) or 20)
+                    sig = _ew.merge_triangle_indicator(engine_sig, sig, thr)
                 except Exception:
-                    pass
+                    sig = dict(engine_sig)
             if sig.get("pctr") is not None:
                 # Dual leave-OB with a short confirm (APLD flicker guard).
                 probe = {

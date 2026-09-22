@@ -310,6 +310,13 @@ _BLOCKER_LABELS: dict[str, str] = {
     # EXH is at or past the threshold.
     "macd_exh_confluence": "ready (EXH)",
     "macd_bullish_gap": "ready",
+    "macd_gap_arm_off": "MACD fill off",
+    "macd_not_bull": "MACD not bull",
+    "macd_gap_not_rising": "MACD gap flat",
+    "macd_gap_too_small": "MACD gap small",
+    "macd_rsi_hot": "RSI too high",
+    "in_square": "in square",
+    "last_macd_gap": "MACD gap",
 }
 
 
@@ -2287,8 +2294,9 @@ def maybe_soft_seed_rows(
 
     picked: list[dict] = []
 
-    # Morning flood: seat every momentum + research/xai/agy name first
-    # (no soft_seed_max clip, no prefer-square/far refuse). Price floor hard.
+    # Morning flood: momentum + research still bypass soft_seed_max, but
+    # prefer-square keeps the approach ahead of far. A far flood name does
+    # not take a keep seat. Square / pre_square / oversold-square do.
     if flood:
         for _sc, row in ranked:
             if not is_morning_flood_source(row):
@@ -2304,6 +2312,10 @@ def maybe_soft_seed_rows(
                 stamp_exh_seat_fields(out, cfg)
             except Exception:
                 pass
+            if prefer_sq:
+                cls = str(out.get("exh_seat_class") or "")
+                if cls not in ("square", "pre_square", "os_square", "os_triangle"):
+                    continue
             picked.append(out)
         flood_syms = {
             str(r.get("symbol") or "").upper().strip() for r in picked
@@ -5763,9 +5775,9 @@ def morning_flood_active(
 ) -> bool:
     """True during the RTH morning flood window (default 09:30–11:00 ET).
 
-    When active: seat every momentum + Trader Bro/research name (bypass
-    soft_seed_max and source N caps for those sources); do not far-evict
-    them for prefer-square alone. Arms unchanged.
+    When active: momentum + Trader Bro/research names that are already
+    square or pre_square bypass soft_seed_max. Far names do not take a
+    keep seat while prefer-square is on. Arms unchanged.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if not bool(cfg.get("ai_watch_morning_flood_enabled", True)):
@@ -10986,6 +10998,64 @@ def macd_reading_is_live(ind: dict | None, cfg: dict | None = None) -> tuple[boo
     return True, ""
 
 
+def macd_gap_fill_allows_buy(
+    record: dict,
+    cfg: dict,
+    price: float | None = None,
+) -> tuple[bool, str]:
+    """Second arm: MACD gap while the name is not in an overbought square.
+
+    Square / leave-OB stays the main open. This fills a slot only when both
+    %R lines are not in a fresh square. The rule is the one Monday 9/21 and
+    Tuesday 9/22 shadow scored best at 15 minutes: MACD bullish, gap rising,
+    gap at least 0.02% of price, CM RSI rising and under 60.
+    n=15, median +0.20%, mean +0.15%, 60% winners. Wider gaps and hot RSI
+    did not beat it.
+    """
+    if not bool((cfg or {}).get("ai_watch_macd_gap_arm", False)):
+        return False, "macd_gap_arm_off"
+    both_ob, tight, _err = dual_r_ob_tight(record, cfg)
+    if both_ob and tight:
+        return False, "in_square"
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+    if ind.get("macd_bull") is not True:
+        return False, "macd_not_bull"
+    if ind.get("macd_gap_rising") is not True:
+        return False, "macd_gap_not_rising"
+    gap = _f_or_none(ind.get("macd_gap"))
+    if gap is None:
+        gap = _f_or_none(ind.get("macd_hist"))
+    px = _f_or_none(price)
+    if px is None and isinstance(record, dict):
+        px = _f_or_none(record.get("price"))
+    if gap is None or px is None or px <= 0:
+        return False, "no_macd_data"
+    try:
+        min_pct = float(cfg.get("ai_watch_macd_gap_min_pct", 0.02) or 0.0)
+    except (TypeError, ValueError):
+        min_pct = 0.02
+    if (gap / px) * 100.0 + 1e-12 < min_pct:
+        return False, "macd_gap_too_small"
+    rsi = _f_or_none(ind.get("cm_rsi"))
+    if rsi is None and isinstance(record, dict):
+        rsi = _f_or_none(record.get("cm_rsi"))
+    rising = ind.get("cm_rsi_rising")
+    if rising is None and isinstance(record, dict):
+        rising = record.get("cm_rsi_rising")
+    if rsi is None or rising is None:
+        return False, "no_rsi_data"
+    if rising is not True:
+        return False, "rsi_not_rising"
+    try:
+        rsi_max = float(cfg.get("ai_watch_macd_gap_rsi_max", 60) or 60)
+    except (TypeError, ValueError):
+        rsi_max = 60.0
+    if float(rsi) >= rsi_max:
+        return False, "macd_rsi_hot"
+    return True, "macd_gap"
+
+
 def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     """Buy side of the MACD momentum gate.
 
@@ -11882,6 +11952,46 @@ def _dual_slow_max_age_sec(cfg: dict) -> float:
     except (TypeError, ValueError):
         sec = 45.0
     return max(0.0, sec)
+
+
+def merge_triangle_indicator(
+    engine: dict | None,
+    live: dict | None,
+    thr: float,
+) -> dict:
+    """Indicator the triangle exit should judge.
+
+    The chart ▼ is the engine fast line. A live recompute that is still
+    inside the square, or a blank read, must not hide a leave the engine
+    has already printed. CLSK 2026-09-22: the book showed fast −26 while
+    the position stayed ``hold``.
+    """
+    eng = engine if isinstance(engine, dict) else {}
+    out = dict(live) if isinstance(live, dict) else {}
+    if not out:
+        out = dict(eng)
+
+    def _f(src: dict, key: str):
+        try:
+            v = src.get(key)
+            return None if v is None else float(v)
+        except (TypeError, ValueError):
+            return None
+
+    eng_fast = _f(eng, "pctr")
+    live_fast = _f(out, "pctr")
+    band = -float(thr)
+    engine_left = eng_fast is not None and eng_fast < band
+    live_left = live_fast is not None and live_fast < band
+    if engine_left and not live_left:
+        out["pctr"] = eng_fast
+        if out.get("pctr_slow") is None and eng.get("pctr_slow") is not None:
+            out["pctr_slow"] = eng.get("pctr_slow")
+    elif out.get("pctr") is None and eng_fast is not None:
+        out["pctr"] = eng_fast
+        if out.get("pctr_slow") is None and eng.get("pctr_slow") is not None:
+            out["pctr_slow"] = eng.get("pctr_slow")
+    return out
 
 
 def exhaustion_exit_now(
@@ -14351,9 +14461,13 @@ def should_arm_buy(
 
     if last_mode:
         # Last is the entry. Structure only supplies stop/target for R.
-        if not exh_ok:
-            return False, exh_why
-        return True, f"last_{exh_why}"
+        # Square first. MACD gap is only for a name that is not in ■.
+        if exh_ok:
+            return True, f"last_{exh_why}"
+        fill_ok, _fill_why = macd_gap_fill_allows_buy(record, cfg, price=a)
+        if fill_ok:
+            return True, "last_macd_gap"
+        return False, exh_why
 
     t_now = float(now if now is not None else time.time())
     if not in_zone:

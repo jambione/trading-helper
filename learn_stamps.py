@@ -171,6 +171,12 @@ _FINGERPRINT_KEYS = (
     # Where the green catch-up stop parks: last (legacy overtake) vs
     # last-$0.01 (e7fa69e). Different exit prices, so it must stamp.
     "ai_local_trail_decay_overtake",
+    # 30s after fill, unmoved shelf jumps to last−$0.01.
+    "ai_local_trail_entry_catchup_sec",
+    # Second arm. Changes who gets bought when the square is absent.
+    "ai_watch_macd_gap_arm",
+    "ai_watch_macd_gap_min_pct",
+    "ai_watch_macd_gap_rsi_max",
     # Dead-trade is a time-stop, so it decides holds the same way the
     # min-hold gate does — and the two now interact.
     "ai_dead_trade_min",

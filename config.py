@@ -1251,6 +1251,15 @@ DEFAULT_CONFIG = {
     # False = park at last−cushion and wait for a 1¢ dip.
     # Mid-session 2026-09-18: overtake off — park and wait for 1¢ dip.
     "ai_local_trail_decay_overtake":  False,
+    # 30s after the fill, if the shelf is still the seed, park it at
+    # last − $0.01. Does not wait for the 0.15R arm. 0 disables.
+    "ai_local_trail_entry_catchup_sec": 30.0,
+    # Second open: MACD gap when the name is not in an overbought square.
+    # Off in defaults so tests that omit the key stay on square only.
+    # Live bot_config turns it on. See macd_gap_fill_allows_buy.
+    "ai_watch_macd_gap_arm":           False,
+    "ai_watch_macd_gap_min_pct":       0.02,
+    "ai_watch_macd_gap_rsi_max":       60.0,
     # Abort a confirm when fill or tape is this far (R) through the limit/stop.
     # Mid-session 2026-09-18: 5.0 (was 0.15 — too tight for IEX noise).
     "ai_fill_abort_r":                 5.0,
@@ -1655,6 +1664,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_exh_square_arm",
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
+    "ai_watch_macd_gap_arm",
     "ai_exit_left_overbought",
     "ai_exit_left_overbought_confirm_sec",
     "ai_exit_dual_slow_max_age_sec",
@@ -1973,6 +1983,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exh_square_arm",
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
+    "ai_watch_macd_gap_arm",
     "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",
     "ai_watch_max_far_exh_seats",
@@ -2100,6 +2111,9 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_decay_step_r",
     "ai_local_trail_decay_max_mfe_r",
     "ai_local_trail_decay_overtake",
+    "ai_local_trail_entry_catchup_sec",
+    "ai_watch_macd_gap_min_pct",
+    "ai_watch_macd_gap_rsi_max",
     "ai_breakeven_offset_px",
     "ai_book_tick_sec",
     "ai_shelf_tick_sec",

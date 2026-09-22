@@ -1,8 +1,8 @@
-"""Morning flood: seat every momentum + Trader Bro name 09:30–11:00 ET.
+"""Morning flood: seat momentum + Trader Bro names 09:30–11:00 ET.
 
-Product (locked 2026-09-19): soft_seed_max and source N caps do not clip
-momentum/research during the window; prefer-square / far eviction does not
-boot them; $2 floor still refuses pennies; arms unchanged.
+soft_seed_max does not clip square / pre_square momentum during the window.
+Far names do not take a keep seat while prefer-square is on. $2 floor still
+refuses pennies. Arms unchanged.
 """
 from __future__ import annotations
 
@@ -107,45 +107,52 @@ def test_is_morning_flood_source():
     ) is False
 
 
-def test_flood_soft_seed_seats_all_momentum_and_research(monkeypatch):
-    """10:00 ET + 20 mom + 15 research all >$2 → all attempt seat; max does not clip."""
+def _pre_ind():
+    return {
+        "pctr": -28.0,
+        "pctr_slow": -30.0,
+        "pctr_rising": True,
+        "pctr_slow_rising": True,
+        "pctr_ob": False,
+        "pctr_tight": True,
+    }
+
+
+def test_flood_seats_pre_square_ahead_of_far(monkeypatch):
+    """Far momentum does not take a keep seat. Pre-square does, past max."""
     monkeypatch.setattr(ew, "trading_hours_active", lambda *a, **k: True)
     now = _et_ts(10, 0)
-
-    mom = [
+    far = [
         {
-            "symbol": f"M{i:02d}",
+            "symbol": f"F{i:02d}",
             "source": "momentum",
-            "price": 5.0 + i * 0.1,
-            "pct_change": 12.0,
+            "price": 5.0 + i,
+            "pct_change": 30.0,
             "dollar_volume": 5e6,
             "criteria": ["soft_seed", "momentum"],
             "indicator": _far_ind(),
         }
         for i in range(20)
     ]
-    res = [
+    pre = [
         {
-            "symbol": f"R{i:02d}",
-            "source": "xai" if i % 2 == 0 else "agy",
-            "price": 8.0 + i * 0.1,
-            "pct_change": 4.0,
-            "dollar_volume": 3e6,
-            "criteria": ["soft_seed", "research"],
-            "indicator": _far_ind(),
+            "symbol": f"P{i:02d}",
+            "source": "momentum",
+            "price": 8.0,
+            "pct_change": 6.0,
+            "dollar_volume": 2e6,
+            "criteria": ["soft_seed", "momentum"],
+            "indicator": _pre_ind(),
         }
-        for i in range(15)
+        for i in range(14)
     ]
-    monkeypatch.setattr(ew, "_soft_seed_source_rows", lambda cfg, now=None: mom + res)
-
+    monkeypatch.setattr(ew, "_soft_seed_source_rows", lambda cfg, now=None: far + pre)
     picked, fired = ew.maybe_soft_seed_rows(
         _cfg(ai_watch_soft_seed_max=12), now=now, seen=set())
     assert fired is True
-    syms = {r["symbol"] for r in picked}
-    assert len(syms) == 35
-    assert all(r.get("morning_flood") == 1 for r in picked)
-    # Far + prefer_square would normally refuse — flood keeps them.
-    assert all(r.get("scout_only") is False for r in picked)
+    syms = {r["symbol"] for r in picked if not r.get("scout_only")}
+    assert syms == {f"P{i:02d}" for i in range(14)}
+    assert all(r.get("morning_flood") == 1 for r in picked if not r.get("scout_only"))
 
 
 def test_flood_soft_seed_refuses_below_min_price(monkeypatch):
@@ -168,7 +175,7 @@ def test_flood_soft_seed_refuses_below_min_price(monkeypatch):
             "pct_change": 15.0,
             "dollar_volume": 2e6,
             "criteria": ["soft_seed", "momentum"],
-            "indicator": _far_ind(),
+            "indicator": _pre_ind(),
         },
         {
             "symbol": "NOPX",

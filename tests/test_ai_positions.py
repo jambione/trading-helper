@@ -3624,6 +3624,59 @@ def test_green_catchup_new_peak_no_overtake():
     assert not pos.get("trail_decay_overtake")
 
 
+def test_entry_catchup_parks_at_last_minus_cent_after_30s():
+    """Unmoved shelf, 30s after the fill, jumps to last − $0.01.
+
+    Does not wait for the 0.15R arm. PSKY peaked at 0.13R with the seed
+    still in place.
+    """
+    pos = {
+        "entry_price": 10.65,
+        "entry_stop_price": 10.10,
+        "risk_per_share": 0.55,
+        "last_seen_price": 10.69,
+        "mfe_r": 0.07,
+        "local_stop_price": 10.55,
+        "entry_confirmed_at": 1_000_000.0,
+    }
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_arm_r": 0.15,
+        "ai_local_trail_give_r": 0.35,
+        "ai_local_trail_min_give_px": 0.0,
+        "ai_local_trail_entry_catchup_sec": 30.0,
+        "ai_local_trail_time_decay_enabled": False,
+    }
+    # Under the arm and inside 30s: seed stays.
+    assert cp.local_profit_stop(pos, cfg, now=1_000_010.0) == pytest.approx(10.55)
+    # 30s, stop never left the seed: park one cent under last.
+    got = cp.local_profit_stop(pos, cfg, now=1_000_030.0)
+    assert got == pytest.approx(10.68)
+
+
+def test_entry_catchup_leaves_a_shelf_that_already_moved():
+    pos = {
+        "entry_price": 10.65,
+        "entry_stop_price": 10.10,
+        "risk_per_share": 0.55,
+        "last_seen_price": 10.69,
+        "mfe_r": 0.07,
+        "local_stop_price": 10.60,
+        "entry_shelf_price": 10.55,
+        "entry_confirmed_at": 1_000_000.0,
+    }
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_arm_r": 0.15,
+        "ai_local_trail_give_r": 0.35,
+        "ai_local_trail_min_give_px": 0.0,
+        "ai_local_trail_entry_catchup_sec": 30.0,
+        "ai_local_trail_time_decay_enabled": False,
+    }
+    # 10.60 is already above the seed (~10.46). Do not jump.
+    assert cp.local_profit_stop(pos, cfg, now=1_000_060.0) == pytest.approx(10.60)
+
+
 def test_green_catchup_disabled_flag_noops():
     pos = _green_catchup_pos()
     cfg = _green_catchup_cfg(ai_local_trail_time_decay_enabled=False)
