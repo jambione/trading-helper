@@ -1700,6 +1700,19 @@ def evaluate_arm_ready(
         if not bool(rising_rsi):
             return False, "rsi_not_rising"
 
+    if exh_oversold_triangle_arm_enabled(cfg):
+        cls, _ = classify_exh_seat(row, cfg, ind=ind)
+        if cls == "os_triangle":
+            rising_exh = _exh_rising_hint(row, ind)
+            falling = ind.get("pctr_falling") if ind else None
+            if falling is None and isinstance(row, dict):
+                falling = row.get("pctr_falling")
+            if falling is True or rising_exh is False:
+                return False, "exh_falling"
+            if bool(cfg.get("ai_watch_require_exh_rising", True)) and rising_exh is not True:
+                return False, "exh_falling"
+            return True, "ok"
+
     # EXH: rising and ≥ heat_min.
     exh = _exh_from_row_or_ind(row, ind)
     if exh is None and isinstance(row.get("indicator"), dict):
@@ -1782,7 +1795,7 @@ def is_warming_exh_profile(
     cfg = cfg if isinstance(cfg, dict) else {}
     if admit_prefer_square(cfg) and (row is not None or ind is not None):
         cls, _gap = classify_exh_seat(row if isinstance(row, dict) else {}, cfg, ind=ind)
-        if cls in ("pre_square", "square"):
+        if cls in ("pre_square", "square", "os_square", "os_triangle"):
             return True
         if cls == "unknown":
             return bool(allow_unknown)
@@ -1806,7 +1819,7 @@ def soft_seed_scout_score(
 ) -> float:
     """Higher = better soft-seed scout.
 
-    Primary (when prefer_square): square > pre_square ≫ far.
+    Primary (when prefer_square): square / os_triangle > pre_square / os_square ≫ far.
     Secondary: day CHG% soft band (~+8…+40). Deprioritize hot RSI.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -1816,11 +1829,11 @@ def soft_seed_scout_score(
     cls = stamp_exh_seat_fields(row, cfg, ind=ind) if isinstance(row, dict) else "unknown"
     score = 0.0
     if admit_prefer_square(cfg):
-        # Aggressive farm: square ≫ pre_square ≫ everything; far never
+        # Aggressive farm: square/os_triangle ≫ pre_square/os_square ≫ everything; far never
         # outranks a true pre_square on CHG alone (floor well below).
-        if cls == "square":
+        if cls in ("square", "os_triangle"):
             score += 120.0
-        elif cls == "pre_square":
+        elif cls in ("pre_square", "os_square"):
             score += 80.0
         elif cls == "unknown":
             score += 10.0  # scout-only candidate (missing slow ≠ pre_square)
@@ -2331,12 +2344,12 @@ def maybe_soft_seed_rows(
         if sc < 0 and any(s >= 20 for s, _ in ranked[: max(1, max_n or 1)]):
             continue
         cls = str(row.get("exh_seat_class") or "")
-        if prefer_sq and cls not in ("square", "pre_square"):
+        if prefer_sq and cls not in ("square", "pre_square", "os_square", "os_triangle"):
             continue
         if require_ready and not bool(row.get("arm_ready")):
-            # Prefer-square: pre_square and square keep seats without full
+            # Prefer-square: pre_square, square, os_square, os_triangle keep seats without full
             # arm_ready — arm_ready gates the OPEN, not the approach seat.
-            if cls not in ("square", "pre_square"):
+            if cls not in ("square", "pre_square", "os_square", "os_triangle"):
                 continue
         pct = _pct_change_value(row.get("pct_change"))
         if pct is None:
@@ -2391,7 +2404,7 @@ def maybe_soft_seed_rows(
             cls = str(row.get("exh_seat_class") or "")
             if prefer_sq and cls == "far":
                 continue  # far does not consume soft-seed seats
-            if cls in ("square", "pre_square") and not bool(row.get("scout_only")):
+            if cls in ("square", "pre_square", "os_square", "os_triangle") and not bool(row.get("scout_only")):
                 # Already eligible for keep; skip duplicate scout.
                 if any(
                     str(p.get("symbol") or "").upper() == sym for p in picked
@@ -3409,9 +3422,13 @@ def _track_far_exh_seat(rec: dict, cfg: dict | None, *, now: float) -> None:
     if cls == "square":
         if _f_or_none(rec.get("square_since")) is None:
             rec["square_since"] = float(now)
+    elif cls == "os_square":
+        if _f_or_none(rec.get("os_square_since")) is None:
+            rec["os_square_since"] = float(now)
     elif cls in ("far", "unknown"):
         rec.pop("square_since", None)
-    # pre_square: keep any prior square_since (flicker out of OB).
+        rec.pop("os_square_since", None)
+    # pre_square / os_triangle: keep any prior square_since / os_square_since.
 
 
 def _maybe_far_exh_evict(
@@ -3819,7 +3836,7 @@ def _preferential_far_exh_steal(
         cls = str(cand.get("exh_seat_class") or "").strip().lower()
         if not cls:
             cls, _ = classify_exh_seat(cand, cfg)
-        if cls not in ("pre_square", "square"):
+        if cls not in ("pre_square", "square", "os_square", "os_triangle"):
             continue
         age = _candidate_young_stream_age(cand, cfg, now=now)
         # Class-ranked hunt may lack a live stream stamp yet — still allow
@@ -3831,8 +3848,8 @@ def _preferential_far_exh_steal(
         admittees.append((sym, cls, float(dvol), age_f))
     if not admittees:
         return []
-    # square before pre_square, then $vol, then younger tape.
-    rank = {"square": 0, "pre_square": 1}
+    # square / os_triangle before pre_square / os_square, then $vol, then younger tape.
+    rank = {"square": 0, "os_triangle": 0, "pre_square": 1, "os_square": 1}
     admittees.sort(key=lambda t: (rank.get(t[1], 9), -t[2], t[3], t[0]))
 
     victims: list[tuple[str, dict, float, float]] = []
@@ -3877,7 +3894,7 @@ def _preferential_far_exh_steal(
         # Warming pre_square seats are never victims here.
         if str(rec.get("seat_role") or "").lower() == "warming":
             wcls = str(rec.get("exh_seat_class") or "")
-            if wcls in ("pre_square", "square"):
+            if wcls in ("pre_square", "square", "os_square", "os_triangle"):
                 continue
         dvol = _f_or_none(rec.get("admit_dollar_volume")) or 0.0
         age = row_quote_age_sec(rec, now=now)
@@ -3898,7 +3915,7 @@ def _preferential_far_exh_steal(
         admit_sym, admit_cls, _advol, _aage = admittees[i]
         reason = (
             "far_exh_steal_for_square"
-            if admit_cls == "square"
+            if admit_cls in ("square", "os_triangle")
             else "far_exh_steal_for_pre_square"
         )
         try:
@@ -9206,7 +9223,8 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             rec["indicator"] = dict(prev["indicator"])
         for k in (
             "block_code", "block_reason", "block_ts", "block_detail",
-            "exh_was_overbought", "pctr_fall_since", "last_trade", "last_ask_src",
+            "exh_was_overbought", "exh_was_oversold", "os_square_since", "left_os_since",
+            "pctr_fall_since", "last_trade", "last_ask_src",
             # Keep the quote clock across the 2s rebuild — dropping age/ts
             # left stale_tape rows with age=None while engine still had 3–14m
             # prints (AEHG/LABX), which made UI and drop logic disagree.
@@ -9244,6 +9262,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             if not is_warming_exh_profile(
                 exh, rising, cfg if isinstance(cfg, dict) else {},
                 allow_unknown=exh is None,
+                row=rec, ind=ind,
             ):
                 rec.pop("seat_role", None)
         # Attach a zone immediately on admission — do not wait up to 20s for
@@ -10507,6 +10526,12 @@ def exh_square_arm_enabled(cfg: dict | None) -> bool:
     return bool(cfg.get("ai_watch_exh_square_arm", True))
 
 
+def exh_oversold_triangle_arm_enabled(cfg: dict | None) -> bool:
+    """TV %R Trend Exhaustion oversold triangle arm. Default True."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return bool(cfg.get("ai_watch_exh_oversold_triangle_arm", True))
+
+
 def _rte_threshold(cfg: dict | None) -> float:
     try:
         return float((cfg or {}).get("rte_threshold", 20) or 20)
@@ -10571,6 +10596,36 @@ def dual_r_ob_tight(
     return bool(both_ob), bool(tight), None
 
 
+def dual_r_os_tight(
+    record: dict,
+    cfg: dict | None = None,
+) -> tuple[bool | None, bool | None, str | None]:
+    """Dual-%R oversold read: ``(both_os, tight, refuse_reason)``.
+
+    ``both_os`` / ``tight`` are None when lines are missing.
+    ``refuse_reason`` is set when %R lines are missing (``no_exhaustion_data``).
+
+    Live math: fast <= -100 + thr and slow <= -100 + thr (e.g. <= -80).
+    tight: gap <= rte_confluence_max (e.g. <= 15).
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    fast = _f_or_none(ind.get("pctr"))
+    slow = _f_or_none(ind.get("pctr_slow"))
+    if fast is None or slow is None:
+        return None, None, "no_exhaustion_data"
+    thr = _rte_threshold(cfg)
+    os_level = -100.0 + thr
+    tight_max = _rte_confluence_max(cfg)
+    gap = abs(float(fast) - float(slow))
+    live_os = float(fast) <= os_level and float(slow) <= os_level
+    live_tight = gap <= tight_max + 1e-9
+    ind["pctr_os"] = bool(live_os)
+    ind["pctr_os_tight"] = bool(live_os and live_tight)
+    ind["pctr_gap"] = round(gap, 2)
+    return bool(live_os), bool(live_tight), None
+
+
 def exh_pre_thr(cfg: dict | None = None) -> float:
     """Approach band for pre-square (both lines ≥ −pre_thr). Default 35."""
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -10605,8 +10660,16 @@ def far_exh_evict_sec(cfg: dict | None = None) -> float:
 
 
 def exh_seat_class_counts(state: dict | None) -> dict[str, int]:
-    """Count ``square`` / ``pre_square`` / ``far`` / ``unknown`` on the watch book."""
-    out = {"n_square": 0, "n_pre_square": 0, "n_far": 0, "n_unknown": 0, "n_seats": 0}
+    """Count ``square`` / ``pre_square`` / ``os_square`` / ``os_triangle`` / ``far`` / ``unknown`` on the watch book."""
+    out = {
+        "n_square": 0,
+        "n_pre_square": 0,
+        "n_os_square": 0,
+        "n_os_triangle": 0,
+        "n_far": 0,
+        "n_unknown": 0,
+        "n_seats": 0,
+    }
     if not isinstance(state, dict):
         return out
     for key, rec in state.items():
@@ -10626,6 +10689,10 @@ def exh_seat_class_counts(state: dict | None) -> dict[str, int]:
             out["n_square"] += 1
         elif cls == "pre_square":
             out["n_pre_square"] += 1
+        elif cls == "os_square":
+            out["n_os_square"] += 1
+        elif cls == "os_triangle":
+            out["n_os_triangle"] += 1
         elif cls == "far":
             out["n_far"] += 1
         else:
@@ -10678,10 +10745,23 @@ def classify_exh_seat(
     rising_ok = (rising is True) or (slow_rising is True)
     if both_pre and tight and rising_ok:
         return "pre_square", gap
+    if exh_oversold_triangle_arm_enabled(cfg):
+        os_level = -100.0 + thr
+        both_os = float(fast) <= os_level and float(slow) <= os_level
+        if both_os and tight:
+            if isinstance(row, dict):
+                row["exh_was_oversold"] = True
+            return "os_square", gap
+        was_os = bool(
+            (row and row.get("exh_was_oversold"))
+            or (isinstance(src, dict) and src.get("pctr_os"))
+        )
+        if was_os and float(fast) > os_level and float(fast) < -thr and tight and rising_ok:
+            return "os_triangle", gap
     return "far", gap
 
 
-_KNOWN_EXH_SEAT_CLASSES = frozenset({"square", "pre_square", "far"})
+_KNOWN_EXH_SEAT_CLASSES = frozenset({"square", "pre_square", "far", "os_square", "os_triangle"})
 
 
 def maybe_freeze_exh_seat_class_admit(rec: dict | None) -> str | None:
@@ -11444,10 +11524,24 @@ def exhaustion_allows_buy(
             return False, f"pctr_not_live_{src or 'missing'}"
     if tv_exh_rsi_enabled(cfg):
         return _tv_exh_rsi_allows_buy(record, cfg)
-    # Square mode (TV red ■): enter only on dual-OB + tight. Replaces
-    # last_heating / fast-only OB as the arm story when enabled.
+    # Square mode (TV red ■): enter on dual-OB + tight.
+    # Oversold triangle mode: enter on oversold squares -> oversold triangle + RSI rising.
+    sq_ok, sq_why = False, ""
     if exh_square_arm_enabled(cfg):
-        return _square_exh_allows_buy(record, cfg, require_rising=require_rising, now=now)
+        sq_ok, sq_why = _square_exh_allows_buy(record, cfg, require_rising=require_rising, now=now)
+        if sq_ok:
+            return True, sq_why
+    if exh_oversold_triangle_arm_enabled(cfg):
+        os_ok, os_why = _oversold_triangle_allows_buy(record, cfg, now=now)
+        if os_ok:
+            return True, os_why
+    if exh_square_arm_enabled(cfg):
+        if exh_oversold_triangle_arm_enabled(cfg) and (
+            bool(record.get("exh_was_oversold"))
+            or os_why in ("oversold_squares", "stale_oversold_triangle", "still_oversold", "rsi_not_rising")
+        ):
+            return False, os_why
+        return False, sq_why
     state = exhaustion_state(record, cfg)
     if state == "unknown":
         # Gaining-EXH rule needs a reading. Fallback used to arm blind when
@@ -11601,6 +11695,102 @@ def _square_exh_allows_buy(
     if bool(cfg.get("ai_watch_ob_allow_hot", True)) and _hot_ob_source(record):
         return True, "overbought_hot"
     return True, "overbought"
+
+
+def _oversold_triangle_allows_buy(
+    record: dict,
+    cfg: dict,
+    *,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    """Enter on TV oversold triangle: oversold squares confirmed, then leave-OS triangle.
+
+    Inverse of the overbought square/triangle thesis:
+      - Oversold squares: both %R in oversold band (<= -100 + rte_threshold) and tight.
+      - Oversold triangle: leaves oversold band (fast > -100 + rte_threshold) while rising.
+      - RSI directional indicator: cm_rsi_rising is True.
+    """
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    both_os, tight, err = dual_r_os_tight(record, cfg)
+    if err:
+        return False, err
+
+    t_now = float(now if now is not None else time.time())
+    thr = _rte_threshold(cfg)
+    os_level = -100.0 + thr
+
+    # In oversold squares: record latch and wait for triangle (do not enter in squares)
+    if both_os and tight:
+        if isinstance(record, dict):
+            record["exh_was_oversold"] = True
+            if _f_or_none(record.get("os_square_since")) is None:
+                record["os_square_since"] = t_now
+            record["left_os_since"] = None
+        return False, "oversold_squares"
+
+    # Must have had oversold squares (thesis requirement)
+    was_os = bool(record.get("exh_was_oversold")) if isinstance(record, dict) else False
+    if not was_os and bool(ind.get("pctr_os")):
+        was_os = True
+        if isinstance(record, dict):
+            record["exh_was_oversold"] = True
+    if not was_os:
+        return False, "never_oversold"
+
+    fast = _f_or_none(ind.get("pctr"))
+    if fast is None:
+        return False, "no_exhaustion_data"
+
+    # Fast %R must have left oversold band (> os_level)
+    if float(fast) <= os_level:
+        return False, "still_oversold"
+
+    # Must not be already extended into overbought
+    if float(fast) >= -thr:
+        return False, "already_extended"
+
+    # Confluence check: fast and slow should remain reasonably tight
+    if tight is False and bool(cfg.get("rte_require_tight", True)):
+        fast = _f_or_none(ind.get("pctr"))
+        slow = _f_or_none(ind.get("pctr_slow"))
+        if fast is not None and slow is not None and isinstance(record, dict):
+            gap = abs(float(fast) - float(slow))
+            record["block_detail"] = f"exh gap {gap:.1f}>{_rte_confluence_max(cfg):g}"
+        return False, "exh_not_tight"
+
+    # Fast line must be rising out of oversold, not falling
+    falling = ind.get("pctr_falling")
+    if falling is None and isinstance(record, dict):
+        falling = record.get("pctr_falling")
+    if falling or exhaustion_state(record, cfg) == "cooling":
+        return False, "exh_falling"
+
+    pctr_rising = ind.get("pctr_rising")
+    if pctr_rising is None and isinstance(record, dict):
+        pctr_rising = record.get("pctr_rising")
+    if not bool(pctr_rising):
+        return False, "exh_not_rising"
+
+    # RSI directional indicator: cm_rsi_rising must be True
+    rsi_rising = ind.get("cm_rsi_rising")
+    if rsi_rising is None and isinstance(record, dict):
+        rsi_rising = record.get("cm_rsi_rising")
+    if not bool(rsi_rising):
+        return False, "rsi_not_rising"
+
+    # Staleness gate: refuse entries if the triangle has been active too long
+    max_age = _f_or_none(cfg.get("ai_watch_os_triangle_max_age_sec", 60.0))
+    if max_age is not None and max_age > 0 and isinstance(record, dict):
+        since = _f_or_none(record.get("left_os_since"))
+        if since is None:
+            record["left_os_since"] = t_now
+        else:
+            age = max(0.0, t_now - since)
+            if age >= max_age:
+                record["block_detail"] = f"os triangle age {age:.0f}s >= {max_age:.0f}s"
+                return False, "stale_oversold_triangle"
+
+    return True, "oversold_triangle"
 
 
 def _heating_dual_r_allows(record: dict, cfg: dict) -> tuple[bool, str]:
@@ -16202,6 +16392,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if exh_square_arm_enabled(cfg) and _arm_why in (
                 "overbought", "last_overbought"):
             _arm_why = "square"
+        elif _arm_why in (
+                "oversold_triangle", "last_oversold_triangle", "zone_oversold_triangle"):
+            _arm_why = "oversold_triangle"
         elif not _arm_why:
             _arm_why = str(
                 place_decision.get("entry_exhaustion_state") or "unknown")
@@ -16217,6 +16410,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _admit_cls if _admit_cls in _KNOWN_EXH_SEAT_CLASSES else None
         )
         place_decision["square_since"] = _f_or_none(rec.get("square_since"))
+        place_decision["os_square_since"] = _f_or_none(rec.get("os_square_since"))
+        place_decision["left_os_since"] = _f_or_none(rec.get("left_os_since"))
         # Dual-%R proof at fill — auditable against TV ■ (no sticky).
         _ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
         place_decision["pctr"] = _f_or_none(_ind.get("pctr"))
@@ -16224,6 +16419,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         place_decision["pctr_gap"] = _f_or_none(_ind.get("pctr_gap"))
         place_decision["pctr_ob"] = (
             bool(_ind.get("pctr_ob")) if _ind.get("pctr_ob") is not None else None
+        )
+        place_decision["pctr_os"] = (
+            bool(_ind.get("pctr_os")) if _ind.get("pctr_os") is not None else None
         )
         place_decision["pctr_tight"] = (
             bool(_ind.get("pctr_tight")) if _ind.get("pctr_tight") is not None
@@ -16387,7 +16585,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 _out = dict(_row)
                 stamp_exh_seat_fields(_out, cfg)
                 if str(_out.get("exh_seat_class") or "") in (
-                        "pre_square", "square"):
+                        "pre_square", "square", "os_square", "os_triangle"):
                     _farm_cands.append(_out)
         except Exception:
             pass

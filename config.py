@@ -53,6 +53,12 @@ DEFAULT_CONFIG = {
     "ai_watch_far_exh_evict_sec": 45.0,    # far seat TTL before drop/steal
     # Refuse entry if dual-OB square is older than this (prevents climax chases).
     "ai_watch_square_max_age_sec": 60.0,
+    # TV %R Trend Exhaustion oversold triangle arm: inverse of square/triangle for OB.
+    # Arm when both %R lines were in oversold squares (<= -100 + rte_threshold, tight),
+    # and we hit an oversold triangle (leaves oversold / turns up) with RSI directional
+    # indicator (cm_rsi_rising).
+    "ai_watch_exh_oversold_triangle_arm": True,
+    "ai_watch_os_triangle_max_age_sec": 60.0,
 
     # Live bar tape. iex is the free Alpaca feed. sip needs Algo Trader Plus
     # and is what matches TradingView highs/lows on thin names.
@@ -1225,7 +1231,7 @@ DEFAULT_CONFIG = {
     # round trips. 0 = off. be_at_pct alone armed on a third of the spread
     # and pinned the shelf a cent over entry on 45% of raises.
     "ai_local_trail_be_at_spread_k":   0.0,
-    "ai_local_trail_min_give_px":      0.06,
+    "ai_local_trail_min_give_px":      0.0,
     # Dollar floor may not exceed this many R. $0.06 on a $3 last-mode
     # name is 0.4R; cap keeps the 0.10R identity.
     "ai_local_trail_min_give_max_r":   0.20,
@@ -1234,8 +1240,9 @@ DEFAULT_CONFIG = {
     # last−cushion (~$0.01 when min_give_px=0) unless
     # ai_local_trail_decay_overtake=True (legacy stop>=last, no dip).
     # Raise-only overlay on give_r.
-    # Mid-session 2026-09-18: time-decay off — trail is backup leash only.
-    "ai_local_trail_time_decay_enabled": False,
+    # Stop chase enabled: ratchets stop up toward current price while green;
+    # Run up -.01: parks at last - $0.01 (overtake off, min_give_px=0).
+    "ai_local_trail_time_decay_enabled": True,
     "ai_local_trail_decay_idle_sec":  8.0,
     "ai_local_trail_decay_step_r":    0.05,
     # Optional MFE ceiling for decay; 0 = off (green gate alone).
@@ -1646,6 +1653,8 @@ def validate_ai_config(cfg: dict) -> list[str]:
 # "hybrid arm"); this is the resolved set the process is actually running.
 _EFFECTIVE_KEYS = (
     "ai_watch_exh_square_arm",
+    "ai_watch_exh_oversold_triangle_arm",
+    "ai_watch_os_triangle_max_age_sec",
     "ai_exit_left_overbought",
     "ai_exit_left_overbought_confirm_sec",
     "ai_exit_dual_slow_max_age_sec",
@@ -1962,6 +1971,8 @@ SAFE_CONFIG_KEYS = [
     "ai_dual_tranche_triangle_exit",
     "ai_watch_square_max_age_sec",
     "ai_watch_exh_square_arm",
+    "ai_watch_exh_oversold_triangle_arm",
+    "ai_watch_os_triangle_max_age_sec",
     "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",
     "ai_watch_max_far_exh_seats",

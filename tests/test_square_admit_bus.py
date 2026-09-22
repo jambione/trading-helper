@@ -120,7 +120,7 @@ def test_default_config_bakes_square_bus_and_trail():
     assert DEFAULT_CONFIG["ai_watch_max_far_exh_seats"] == 0
     assert DEFAULT_CONFIG["ai_watch_far_exh_evict_sec"] == 45.0
     assert DEFAULT_CONFIG["ai_watch_arm_require_cm_rsi"] is False
-    assert DEFAULT_CONFIG["ai_local_trail_time_decay_enabled"] is False
+    assert DEFAULT_CONFIG["ai_local_trail_time_decay_enabled"] is True
     assert DEFAULT_CONFIG["ai_local_trail_arm_r"] == 0.25
     assert DEFAULT_CONFIG["ai_local_trail_ob_hold_mae_r"] == -1.0
     # Square arm math unchanged.

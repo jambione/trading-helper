@@ -24,7 +24,7 @@ _last_429_warn_mono = 0.0
 _429_WARN_GAP_S = 5.0
 
 
-def parse_retry_after(headers: Mapping[str, Any] | None) -> Optional[float]:
+def parse_retry_after(headers: Optional[Mapping[str, Any]]) -> Optional[float]:
     """Seconds from a Retry-After header, or None if absent/unusable."""
     if not headers:
         return None

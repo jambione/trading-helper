@@ -121,8 +121,8 @@ DEFAULT_LOCAL_TRAIL_MIN_GIVE_MAX_R = 0.20
 DEFAULT_LOCAL_TRAIL_TIME_DECAY_ENABLED = True
 DEFAULT_LOCAL_TRAIL_DECAY_IDLE_SEC = 8.0
 DEFAULT_LOCAL_TRAIL_DECAY_STEP_R = 0.05
-# True = overtake stop>=last at ceiling; False = park at last−cushion.
-DEFAULT_LOCAL_TRAIL_DECAY_OVERTAKE = True
+# True = overtake stop>=last at ceiling; False = park at last−cushion (~$0.01).
+DEFAULT_LOCAL_TRAIL_DECAY_OVERTAKE = False
 # Optional: only decay while mfe_r is under this. 0 = off (green gate alone).
 DEFAULT_LOCAL_TRAIL_DECAY_MAX_MFE_R = 0.0
 # Runner (tranche B) trail distance, in R — NOT percent. A fixed percent trail
