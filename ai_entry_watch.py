@@ -14081,6 +14081,51 @@ def _desk_rvol(symbol: str) -> float | None:
     return None
 
 
+def arm_sources_allow(cfg: dict | None) -> frozenset[str] | None:
+    """RTH buy allow-list. None means every source may arm.
+
+    ``*`` / empty / ``all`` / ``any`` leave the book unchanged. A comma
+    list (or a list) is the only restrictive form. Missing key is open,
+    so partial test configs keep today's behavior.
+    """
+    if not isinstance(cfg, dict) or "ai_watch_arm_sources" not in cfg:
+        return None
+    raw = cfg.get("ai_watch_arm_sources")
+    if raw is None:
+        return None
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        parts = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        text = str(raw).strip().lower()
+        if not text or text in ("*", "all", "any"):
+            return None
+        parts = [p.strip() for p in text.split(",") if p.strip()]
+    if not parts:
+        return None
+    return frozenset(parts)
+
+
+def arm_source_allows_buy(record: dict | None, cfg: dict | None) -> tuple[bool, str]:
+    """True when this record's source may open a buy.
+
+    Seats are untouched. A restrictive list blocks a missing source and
+    any name that is not an allowed token (exact, or a ``_`` / ``-``
+    piece such as ``soft_seed_momentum``).
+    """
+    allow = arm_sources_allow(cfg)
+    if allow is None:
+        return True, "sources_open"
+    src = str((record or {}).get("source") or "").strip().lower()
+    if not src:
+        return False, "source_blocked"
+    if src in allow:
+        return True, "source_ok"
+    pieces = {p for p in src.replace("-", "_").split("_") if p}
+    if pieces & allow:
+        return True, "source_ok"
+    return False, "source_blocked"
+
+
 def should_arm_buy(
     record: dict,
     *,
@@ -14181,6 +14226,9 @@ def should_arm_buy(
     late_why = _lh.arm_why(cfg, t_arm, record.get("admit_ts"))
     if late_why:
         return False, late_why
+    src_ok, src_why = arm_source_allows_buy(record, cfg)
+    if not src_ok:
+        return False, src_why
     if _lh.enabled(cfg) and arm_at_last(cfg):
         return True, "last_late_hold"
 

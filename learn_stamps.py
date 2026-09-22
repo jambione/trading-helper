@@ -177,6 +177,8 @@ _FINGERPRINT_KEYS = (
     "ai_watch_macd_gap_arm",
     "ai_watch_macd_gap_min_pct",
     "ai_watch_macd_gap_rsi_max",
+    # Who may buy. "*" and "momentum,movers" are different regimes.
+    "ai_watch_arm_sources",
     # Dead-trade is a time-stop, so it decides holds the same way the
     # min-hold gate does — and the two now interact.
     "ai_dead_trade_min",

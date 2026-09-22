@@ -5386,6 +5386,98 @@ def test_macd_gap_fill_refuses_hot_rsi_and_a_small_gap():
     assert ok is False and why == "macd_gap_too_small"
 
 
+def test_arm_sources_default_open_and_list_blocks_the_buy():
+    """* keeps every source. momentum,movers blocks trending, xai, and a blank source.
+
+    Seats are not this function. A soft_seed_momentum tag still counts as momentum.
+    """
+    import ai_entry_watch as ew
+    from config import DEFAULT_CONFIG
+
+    assert DEFAULT_CONFIG["ai_watch_arm_sources"] == "*"
+    assert ew.arm_sources_allow({}) is None
+    assert ew.arm_sources_allow({"ai_watch_arm_sources": "*"}) is None
+    assert ew.arm_sources_allow({"ai_watch_arm_sources": ""}) is None
+
+    rec = _armable_rec()
+    rec["source"] = "trending"
+    open_cfg = _arm_cfg(ai_watch_arm_sources="*")
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=open_cfg)
+    assert ok and why.startswith("zone")
+
+    tight = _arm_cfg(ai_watch_arm_sources="momentum,movers")
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=tight)
+    assert not ok and why == "source_blocked"
+    rec["source"] = "xai"
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=tight)
+    assert not ok and why == "source_blocked"
+    rec.pop("source")
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=tight)
+    assert not ok and why == "source_blocked"
+    rec["source"] = "soft_seed_momentum"
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=tight)
+    assert ok and why.startswith("zone")
+    rec["source"] = "movers"
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=tight)
+    assert ok and why.startswith("zone")
+
+
+def test_arm_sources_block_trending_macd_gap_before_the_fill():
+    """MACD-gap is a buy. A blocked source never reaches last_macd_gap."""
+    import ai_entry_watch as ew
+
+    rec = {
+        "symbol": "APLD",
+        "status": "watching",
+        "source": "trending",
+        "structure": {
+            "decision": "WAIT", "wait_kind": "wait_for_zone",
+            "entry_low": 9.0, "entry_high": 11.0,
+            "stop_price": 8.0, "target_1": 14.0, "reward_risk": 2.0,
+            "zone_kind": "at_last",
+        },
+        "indicator": {
+            "pctr": -40.0, "pctr_slow": -55.0,
+            "pctr_rising": True, "pctr_falling": False,
+            "macd_bull": True, "macd_gap_rising": True, "macd_gap": 0.03,
+            "cm_rsi": 52.0, "cm_rsi_rising": True,
+        },
+        "cm_rsi": 52.0,
+        "cm_rsi_rising": True,
+    }
+    cfg = {
+        "desk_product": "scalp_legacy",
+        "ai_watch_arm_mode": "last",
+        "ai_watch_arm_sources": "momentum,movers",
+        "ai_watch_macd_gap_arm": True,
+        "ai_watch_macd_gap_min_pct": 0.02,
+        "ai_watch_macd_gap_rsi_max": 60,
+        "ai_watch_exh_square_arm": True,
+        "ai_watch_exh_oversold_triangle_arm": False,
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_require_exh_rising": False,
+        "rte_threshold": 20,
+        "rte_confluence_max": 15,
+        "ai_min_reward_risk": 0,
+        "ai_watch_min_stop_pct": 0,
+        "ai_watch_cheap_price": 0,
+        "ai_watch_arm_require_cm_rsi": False,
+        "ai_watch_arm_require_indicators": False,
+        "ai_watch_mistimed_heat_enabled": False,
+        "ai_watch_soft_ob_enabled": False,
+        "ai_watch_arm_require_macd": False,
+        "ai_watch_macd_block_bearish": False,
+        "ai_watch_macd_block_narrowing": False,
+        # Live window. At 0 a square miss returns before the MACD-gap arm.
+        "ai_watch_zone_exh_window_sec": 20.0,
+    }
+    ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.95, cfg=cfg)
+    assert not ok and why == "source_blocked"
+    rec["source"] = "momentum"
+    ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.95, cfg=cfg)
+    assert ok and why == "last_macd_gap"
+
+
 def test_macd_gap_fill_off_by_default():
     import ai_entry_watch as ew
     ok, why = ew.macd_gap_fill_allows_buy(

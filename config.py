@@ -1260,6 +1260,10 @@ DEFAULT_CONFIG = {
     "ai_watch_macd_gap_arm":           False,
     "ai_watch_macd_gap_min_pct":       0.02,
     "ai_watch_macd_gap_rsi_max":       60.0,
+    # RTH buy allow-list. "*" / empty / all = every source (current book).
+    # A comma list (momentum,movers) refuses the buy only — seats stay.
+    # Stays "*" until tools/extension_by_source.py prints PASS.
+    "ai_watch_arm_sources":            "*",
     # Abort a confirm when fill or tape is this far (R) through the limit/stop.
     # Mid-session 2026-09-18: 5.0 (was 0.15 — too tight for IEX noise).
     "ai_fill_abort_r":                 5.0,
@@ -1665,6 +1669,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
     "ai_watch_macd_gap_arm",
+    "ai_watch_arm_sources",
     "ai_exit_left_overbought",
     "ai_exit_left_overbought_confirm_sec",
     "ai_exit_dual_slow_max_age_sec",
@@ -1984,6 +1989,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
     "ai_watch_macd_gap_arm",
+    "ai_watch_arm_sources",
     "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",
     "ai_watch_max_far_exh_seats",
