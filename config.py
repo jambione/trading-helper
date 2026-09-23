@@ -1287,6 +1287,9 @@ DEFAULT_CONFIG = {
     "ai_watch_exh_mid_rise_arm":       False,
     "ai_watch_mid_rise_level":         -50.0,
     "ai_watch_mid_rise_max_age_sec":   60.0,
+    # Refuse to arm when signal_state.json is older than this (engine hung
+    # or down). 0 = off. Live config sets 60.
+    "ai_watch_engine_stale_max_sec":   0.0,
     # Second open: MACD gap when the name is not in an overbought square.
     # Off in defaults so tests that omit the key stay on square only.
     # Live bot_config turns it on. See macd_gap_fill_allows_buy.
@@ -1707,6 +1710,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_exh_mid_rise_arm",
     "ai_watch_mid_rise_level",
     "ai_watch_mid_rise_max_age_sec",
+    "ai_watch_engine_stale_max_sec",
     "ai_local_trail_peak_give_pct",
     "ai_exit_limit_collar_pct",
     "ai_exit_limit_collar_wait_sec",
@@ -2173,6 +2177,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exh_mid_rise_arm",
     "ai_watch_mid_rise_level",
     "ai_watch_mid_rise_max_age_sec",
+    "ai_watch_engine_stale_max_sec",
     "ai_watch_macd_gap_min_pct",
     "ai_watch_macd_gap_rsi_max",
     "ai_breakeven_offset_px",

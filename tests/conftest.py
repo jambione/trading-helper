@@ -69,6 +69,17 @@ def column_cells(table, header):
         f"no column {header!r} in {[c.header for c in table.columns]}")
 
 
+_SESSION_KNOBS = (
+    "ai_watch_exh_mid_rise_arm", "ai_watch_exh_square_arm",
+    "ai_watch_exh_heating_with_square", "ai_watch_exh_oversold_triangle_arm",
+    "ai_watch_admit_prefer_square", "ai_watch_max_far_exh_seats",
+    "ai_watch_min_price", "ai_watch_movers_min_price", "ai_movers_min_price",
+    "ai_exit_limit_collar_pct", "ai_exit_limit_collar_wait_sec",
+    "ai_local_trail_peak_give_pct", "ai_watch_engine_stale_max_sec",
+    "ai_no_progress_flatten_enabled",
+)
+
+
 @pytest.fixture(autouse=True)
 def _test_book_keeps_scalp_geometry(monkeypatch, request):
     """Live bot_config is desk_product=observe. Tests of the old arm path
@@ -89,9 +100,28 @@ def _test_book_keeps_scalp_geometry(monkeypatch, request):
         if isinstance(c, dict) and c.get("desk_product") == "observe":
             c = dict(c)
             c["desk_product"] = "scalp_legacy"
+        if isinstance(c, dict):
+            # Session knobs that live bot_config flips for a trading day are
+            # pinned to their CODE defaults here, so the suite tests code
+            # behaviour rather than whatever tomorrow's config says. 2026-09-23:
+            # switching on the one arm / $20 floor / collar / engine guard in
+            # bot_config turned 9 passing tests red without a code change.
+            c = dict(c)
+            for k in _SESSION_KNOBS:
+                if k in cfg_mod.DEFAULT_CONFIG:
+                    c[k] = cfg_mod.DEFAULT_CONFIG[k]
+                else:
+                    c.pop(k, None)
         return c
 
     monkeypatch.setattr(cfg_mod, "load_config", _load)
+    # Modules that did `from config import load_config` hold their own
+    # binding (tools/sim_rstop_path); patch every module still holding orig.
+    import sys as _sys
+    for _mod in list(_sys.modules.values()):
+        if _mod is not None and _mod is not cfg_mod and getattr(
+                _mod, "load_config", None) is orig:
+            monkeypatch.setattr(_mod, "load_config", _load)
     yield
 
 

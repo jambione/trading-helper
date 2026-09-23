@@ -196,6 +196,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "wait_mid_rise": "wait -50 cross",
     "mid_rise_stale": "-50 cross stale",
     "mid_rise_lost": "back under -50",
+    "engine_stale": "engine stale",
     "last_in_zone_fade_ok": "ready",
     "last_late_hold": "late hold",
     "late_hold_closed": "late hold wait",
@@ -8618,6 +8619,22 @@ def _restamp_rsi_block(rec: dict, cfg: dict, now: float) -> None:
         rec["block_ts"] = float(now)
 
 
+ENGINE_HEARTBEAT = ROOT / "signal_state.json"
+
+
+def engine_heartbeat_age(now: float | None = None,
+                         path: Path | None = None) -> float | None:
+    """Seconds since the signal engine last wrote its state file, or None.
+
+    Same heartbeat tools/watchdog.py uses to restart a wedged engine.
+    """
+    try:
+        mtime = (path or ENGINE_HEARTBEAT).stat().st_mtime
+    except OSError:
+        return None
+    return max(0.0, float(now if now is not None else time.time()) - mtime)
+
+
 def _engine_indicator_map() -> dict[str, dict]:
     """symbol -> signal-engine indicator record, off the /api/state wire."""
     out: dict[str, dict] = {}
@@ -14772,6 +14789,18 @@ def should_arm_buy(
     ).strip().lower()
     if _src_arm in ("stale_tape", "none"):
         return False, "stale_quote"
+    # Engine heartbeat. The indicators every arm reads come from the signal
+    # engine; if it stops writing, they freeze. 2026-09-23 13:51-14:15 the
+    # engine sat on a lock and VKTX armed at 14:03 on 13:51 indicators.
+    # Missing heartbeat refuses too — no engine, no indicator, no entry.
+    try:
+        _eng_max = float(cfg.get("ai_watch_engine_stale_max_sec", 0) or 0)
+    except (TypeError, ValueError):
+        _eng_max = 0.0
+    if _eng_max > 0:
+        _eng_age = engine_heartbeat_age(now=now)
+        if _eng_age is None or _eng_age > _eng_max:
+            return False, "engine_stale"
 
     structure = record.get("structure")
     if not isinstance(structure, dict):
