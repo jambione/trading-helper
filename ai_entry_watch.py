@@ -3583,8 +3583,12 @@ def _maybe_far_exh_evict(
     """
     if not admit_prefer_square(cfg):
         return False
-    # Companion heating lane needs far seats to stay on the book all day.
-    if exh_heating_with_square(cfg):
+    # Rising-heat far seats stay. Falling / stale / no-RSI seats do not —
+    # they were filling the book with names that cannot open.
+    _dead_far = str((rec or {}).get("block_code") or "").strip().lower() in (
+        "exh_falling", "stale_quote", "no_rsi_data",
+    )
+    if exh_heating_with_square(cfg) and not _dead_far:
         return False
     limit = far_exh_evict_sec(cfg)
     if limit <= 0 or not isinstance(rec, dict):
@@ -3595,12 +3599,18 @@ def _maybe_far_exh_evict(
     if _within_subscribe_grace(rec, cfg, now):
         return False
     _track_far_exh_seat(rec, cfg, now=now)
-    if str(rec.get("exh_seat_class") or "") != "far":
+    _cls = str(rec.get("exh_seat_class") or "")
+    if _cls != "far" and not (
+        exh_heating_with_square(cfg) and _dead_far and _cls in ("unknown", "")
+    ):
         return False
     # Flood far: do not blind-drop; dedicated steal yields to pre_square/square.
     if morning_flood_active(cfg, now) and is_morning_flood_source(rec):
         return False
     since = _f_or_none(rec.get("far_exh_since"))
+    if since is None or since <= 0:
+        since = _f_or_none(rec.get("block_ts")) or _f_or_none(
+            rec.get("unarmable_since"))
     if since is None or since <= 0:
         return False
     if (float(now) - float(since)) < limit:

@@ -3654,16 +3654,18 @@ def test_entry_catchup_parks_at_last_minus_cent_after_30s():
     assert got == pytest.approx(10.68)
 
 
-def test_entry_catchup_leaves_a_shelf_that_already_moved():
+def test_entry_catchup_keeps_walking_after_the_shelf_has_moved():
+    """IONQ: 0.14R green, stop already off the seed, still chase last−1¢."""
     pos = {
-        "entry_price": 10.65,
-        "entry_stop_price": 10.10,
-        "risk_per_share": 0.55,
-        "last_seen_price": 10.69,
-        "mfe_r": 0.07,
-        "local_stop_price": 10.60,
-        "entry_shelf_price": 10.55,
+        "entry_price": 43.127,
+        "entry_stop_price": 40.97,
+        "risk_per_share": 2.15,
+        "last_seen_price": 43.32,
+        "mfe_r": 0.144,
+        "local_stop_price": 43.10,
+        "entry_shelf_price": 43.10,
         "entry_confirmed_at": 1_000_000.0,
+        "trail_prints": [43.31, 43.32],
     }
     cfg = {
         "ai_local_trail_enabled": True,
@@ -3673,8 +3675,8 @@ def test_entry_catchup_leaves_a_shelf_that_already_moved():
         "ai_local_trail_entry_catchup_sec": 30.0,
         "ai_local_trail_time_decay_enabled": False,
     }
-    # 10.60 is already above the seed (~10.46). Do not jump.
-    assert cp.local_profit_stop(pos, cfg, now=1_000_060.0) == pytest.approx(10.60)
+    got = cp.local_profit_stop(pos, cfg, now=1_000_060.0)
+    assert got == pytest.approx(43.31)
 
 
 def test_green_catchup_disabled_flag_noops():

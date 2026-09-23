@@ -3628,13 +3628,13 @@ def entry_catchup_stop(
     prev: float | None,
     now: float | None,
 ) -> float | None:
-    """30s after the fill, if the shelf has not moved, park it at last − 1¢.
+    """After 30s, keep parking the shelf at last − 1¢. Raise-only.
 
-    The 0.15R arm used to skip the catch entirely, so a green trade that
-    never cleared the arm (PSKY, peak 0.13R) kept the seed stop. This jump
-    does not wait for that arm and does not wait for the 8s idle steps.
-    Raise-only. A shelf that has already moved above the seed is left to
-    the trail. Returns None when the jump does not apply.
+    Does not wait for the 0.15R arm (IONQ 2026-09-23 sat at 0.144R with
+    the stop frozen on the seed while last was 20¢ higher). Not a one-shot:
+    a shelf that has already stepped still walks until it is 1¢ under last.
+    Works while red and while green. Returns None when the jump does not
+    apply.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if now is None or last is None or float(last) <= 0:
@@ -3663,11 +3663,10 @@ def entry_catchup_stop(
         base = float(prev)
     if age + 1e-9 < delay:
         return None
-    if (
-        prev is not None and base is not None
-        and float(prev) > float(base) + 0.015
-    ):
-        return None
+    # Stamp the first shelf for the journal. Do not stop chasing because
+    # it has already moved — that bail froze IONQ at $43.10.
+    if base is None and prev is not None:
+        pos["entry_shelf_price"] = float(prev)
     parked = round(float(last) - 0.01, 2)
     if parked >= float(last) - 1e-9:
         return None
@@ -4090,9 +4089,9 @@ def apply_local_trail(
     # still runs only when the shelf was actually hit.
     _trail_hit = (not raise_only and trigger is not None and loc is not None
                   and trigger <= loc + 1e-9)
-    _trail_held = _trail_hit and soft_exit_held_back(pos)
-    if _trail_held:
-        _note_min_hold(pos, "local_trail")
+    # A print through the working stop is not a discretionary exit.
+    # Min-hold must not leave the row open under its own stop (GRML).
+    _trail_held = False
     # Triangle-first: while dual OB thesis holds, trail/BE is backup only.
     _tri_yield = False
     _tri_why = ""

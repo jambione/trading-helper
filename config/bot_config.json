@@ -71,7 +71,7 @@
   "ai_local_trail_tighten_mfe_r": 0.25,
   "ai_local_trail_time_decay_enabled": true,
   "ai_local_trail_entry_catchup_sec": 30.0,
-  "ai_watch_macd_gap_arm": true,
+  "ai_watch_macd_gap_arm": false,
   "ai_watch_macd_gap_min_pct": 0.02,
   "ai_watch_macd_gap_rsi_max": 60.0,
   "ai_watch_arm_sources": "*",
