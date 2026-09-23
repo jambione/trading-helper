@@ -50,7 +50,7 @@
   "ai_late_hold_start": "14:00",
   "ai_late_hold_stop_pct": 2.0,
   "ai_local_trail_arm_pct": 0.0,
-  "ai_local_trail_arm_r": 0.15,
+  "ai_local_trail_arm_r": 0.06,
   "ai_local_trail_ob_hold_mae_r": -1.0,
   "ai_local_trail_be_at_pct": 0.0,
   "ai_local_trail_be_at_r": 0.15,
