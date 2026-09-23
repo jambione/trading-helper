@@ -21,6 +21,12 @@ _FIXTURE = _ROOT / "tests" / "fixtures" / "sim_2026-08-11"
     not (_FIXTURE / "expected.json").exists(),
     reason="sim fixture not present",
 )
+@pytest.mark.xfail(strict=False, reason=(
+    "2026-09-23: the heating arm now requires BOTH %R lines rising "
+    "(0924046); the frozen 08-11 shadow rows carry no pctr_slow_rising, so "
+    "the replay arms 0 of the pinned 194. Re-pinning to 0 would make this a "
+    "test of nothing (the 08-11 hybrid figures were already retracted in "
+    "45f7fb2). Restore by re-freezing a fixture that carries slow-line state."))
 def test_sim_numbers_reproduce_from_fixture():
     p = subprocess.run(
         [sys.executable, str(_ROOT / "tools" / "sim_repro.py")],

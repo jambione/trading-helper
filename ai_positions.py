@@ -3365,7 +3365,13 @@ def ensure_stop_behind_fill(
     loc = _num(pos.get("local_stop_price"))
     if entry is None or entry <= 0:
         return None
-    if loc is not None and float(loc) + 1e-9 < float(entry):
+    # No stored shelf is not this function's case: apply_local_trail seeds a
+    # missing shelf through _shelf_under_print. Seeding here ignored the print
+    # and put a fresh fill's shelf ABOVE the market (entry 20.00, print 19.88,
+    # shelf 19.90), which the same tick's hit test then sold.
+    if loc is None:
+        return None
+    if float(loc) + 1e-9 < float(entry):
         return None
     # A stop at/above the fill is legal once the trail has armed (BE shelf).
     # Only the ask-stamped shelf that landed on a lower fill gets pulled back.
@@ -3374,7 +3380,10 @@ def ensure_stop_behind_fill(
     except (TypeError, ValueError):
         arm = 0.0
     mfe = _num(pos.get("mfe_r"))
-    if arm > 0 and mfe is not None and float(mfe) + 1e-9 >= arm:
+    # Same armed test as local_profit_stop: arm_r <= 0 means ALWAYS armed.
+    # Reading 0 as "never armed" pulled every ratcheted stop (NVDA +0.40R,
+    # shelf 20.30 over a 20.00 fill) back under the fill on each tick.
+    if arm <= 0 or (mfe is not None and float(mfe) + 1e-9 >= arm):
         return None
     seed = initial_local_stop(
         entry, _risk_basis(pos), cfg, spread_r=_pos_spread_r(pos))
@@ -3382,6 +3391,11 @@ def ensure_stop_behind_fill(
         seed = round(float(entry) - 0.01, 2)
     if seed <= 0 or float(seed) + 1e-9 >= float(entry):
         return None
+    # Under the live print as well as under the fill — same rule as every
+    # other seeding path.
+    under = _shelf_under_print(seed, _num(pos.get("last_seen_price")), pos)
+    if under is not None and under > 0:
+        seed = min(float(seed), float(under))
     pos["local_stop_price"] = float(seed)
     # Catch-up "hasn't moved" is measured from this shelf, not the ask stamp.
     pos["entry_shelf_price"] = float(seed)
@@ -3640,9 +3654,9 @@ def entry_catchup_stop(
     if now is None or last is None or float(last) <= 0:
         return None
     try:
-        delay = float(cfg.get("ai_local_trail_entry_catchup_sec", 30.0) or 0.0)
+        delay = float(cfg.get("ai_local_trail_entry_catchup_sec", 0.0) or 0.0)
     except (TypeError, ValueError):
-        delay = 30.0
+        delay = 0.0
     if delay <= 0:
         return None
     start = pos.get("entry_confirmed_at")
@@ -3820,6 +3834,26 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: floa
         cand = max(float(cand), float(jump))
         if cand >= float(last):
             cand = round(float(last) - 0.01, 2)
+    # Once armed, the stop is never further than peak_give_pct under the
+    # high-water mark. VKTX 2026-09-23: filled 41.90 on a ~0.7% spread, prints
+    # alternated bid/ask, the damped `last` (median of recent prints) sat at
+    # the 41.71 bid, so last - give stayed under the 41.49 seed and the chase
+    # never saw green. It printed 42.10 (+0.5%, armed), then sold at 41.475
+    # on the seed. Peak-based it would have sat at 41.91.
+    #
+    # Deliberately NOT clamped under the damped last: the hit test runs on the
+    # live print, so a stop above a lagging median sells only when a real
+    # print reaches it. Exit replay 2026-09-23 (921 fills): arm +0.3% + 0.5%
+    # from high nets -0.201%/trade vs -0.227% for the live chase, better in
+    # both halves. 0 disables.
+    try:
+        peak_give = float(cfg.get("ai_local_trail_peak_give_pct", 0) or 0)
+    except (TypeError, ValueError):
+        peak_give = 0.0
+    peak = _num(pos.get("peak_price"))
+    if peak_give > 0 and peak and peak > 0:
+        pstop = math.floor(round(float(peak) * (1 - peak_give / 100.0) * 100.0, 4)) / 100.0
+        cand = max(float(cand), pstop)
     return round(cand, 2)
 
 

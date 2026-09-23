@@ -1271,8 +1271,18 @@ DEFAULT_CONFIG = {
     # Mid-session 2026-09-18: overtake off — park and wait for 1¢ dip.
     "ai_local_trail_decay_overtake":  False,
     # 30s after the fill, if the shelf is still the seed, park it at
-    # last − $0.01. Does not wait for the 0.15R arm. 0 disables.
-    "ai_local_trail_entry_catchup_sec": 30.0,
+    # last − $0.01. Does not wait for the 0.15R arm. 0 disables — the
+    # default since 2026-09-23: it sold red/flat fills on the first downtick
+    # (SECZ 12:36) and live config turned it off at 12:46.
+    "ai_local_trail_entry_catchup_sec": 0.0,
+    # Once armed, the stop is never further than this % under the peak.
+    # 0 = off. See ai_positions.local_profit_stop (VKTX 2026-09-23).
+    "ai_local_trail_peak_give_pct":    0.0,
+    # ONE arm: fast %R crosses up through the level with the slow line
+    # rising; replaces square / triangle / heating when on. Off by default.
+    "ai_watch_exh_mid_rise_arm":       False,
+    "ai_watch_mid_rise_level":         -50.0,
+    "ai_watch_mid_rise_max_age_sec":   60.0,
     # Second open: MACD gap when the name is not in an overbought square.
     # Off in defaults so tests that omit the key stay on square only.
     # Live bot_config turns it on. See macd_gap_fill_allows_buy.
@@ -1690,6 +1700,10 @@ _EFFECTIVE_KEYS = (
     "ai_watch_heating_min_rvol",
     "ai_watch_heating_admit_max_tape_age_sec",
     "ai_watch_dead_seat_evict_sec",
+    "ai_watch_exh_mid_rise_arm",
+    "ai_watch_mid_rise_level",
+    "ai_watch_mid_rise_max_age_sec",
+    "ai_local_trail_peak_give_pct",
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
     "ai_watch_macd_gap_arm",
@@ -2147,6 +2161,10 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_decay_max_mfe_r",
     "ai_local_trail_decay_overtake",
     "ai_local_trail_entry_catchup_sec",
+    "ai_local_trail_peak_give_pct",
+    "ai_watch_exh_mid_rise_arm",
+    "ai_watch_mid_rise_level",
+    "ai_watch_mid_rise_max_age_sec",
     "ai_watch_macd_gap_min_pct",
     "ai_watch_macd_gap_rsi_max",
     "ai_breakeven_offset_px",

@@ -179,6 +179,10 @@ _FINGERPRINT_KEYS = (
     "ai_local_trail_decay_overtake",
     # 30s after fill, unmoved shelf jumps to last−$0.01.
     "ai_local_trail_entry_catchup_sec",
+    "ai_local_trail_peak_give_pct",
+    "ai_watch_exh_mid_rise_arm",
+    "ai_watch_mid_rise_level",
+    "ai_watch_mid_rise_max_age_sec",
     # Second arm. Changes who gets bought when the square is absent.
     "ai_watch_macd_gap_arm",
     "ai_watch_macd_gap_min_pct",

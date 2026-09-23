@@ -191,6 +191,11 @@ _BLOCKER_LABELS: dict[str, str] = {
     "last_overbought_hot": "ready",
     "last_overbought": "ready",
     "last_heating": "ready",
+    "last_mid_rise": "ready",
+    "mid_rise": "ready",
+    "wait_mid_rise": "wait -50 cross",
+    "mid_rise_stale": "-50 cross stale",
+    "mid_rise_lost": "back under -50",
     "last_in_zone_fade_ok": "ready",
     "last_late_hold": "late hold",
     "late_hold_closed": "late hold wait",
@@ -10964,6 +10969,66 @@ def exh_heating_with_square(cfg: dict | None) -> bool:
     return bool(cfg.get("ai_watch_exh_heating_with_square", False))
 
 
+def exh_mid_rise_arm_enabled(cfg: dict | None) -> bool:
+    """ONE arm: fast %R crosses up through -50 with the slow line rising.
+
+    When on it is the only exhaustion lane — square, oversold triangle and
+    heating are not consulted. tools/entry_screen.py, 2026-09-14..22, events
+    after admission: random minute 51.5% +1%-before--1%, mid_rise 51.0%,
+    square 45.1% (z -2.6), live heating 45.0% (z -4.1). Default off.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return bool(cfg.get("ai_watch_exh_mid_rise_arm", False))
+
+
+# {symbol: (last fast %R seen, ts of the last upward -50 cross)}. Process
+# local on purpose: the watch record is rebuilt by sync, and a crossing is a
+# fact about two consecutive readings in this process, not about the book.
+_MID_RISE_STATE: dict[str, tuple[float, float | None]] = {}
+
+
+def _mid_rise_allows_buy(
+    record: dict,
+    cfg: dict,
+    *,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    """Arm for ai_watch_mid_rise_max_age_sec after fast %R crosses up through
+    ai_watch_mid_rise_level (-50) while the slow %R is rising.
+
+    The cross is detected between two consecutive readings of this symbol.
+    Falling back under the level, or fast %R turning down, cancels it.
+    """
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    sym = str(record.get("symbol") or "").upper()
+    fast = _f_or_none(ind.get("pctr"))
+    if fast is None or not sym:
+        return False, "no_exhaustion_data"
+    try:
+        level = float(cfg.get("ai_watch_mid_rise_level", -50.0))
+    except (TypeError, ValueError):
+        level = -50.0
+    try:
+        max_age = float(cfg.get("ai_watch_mid_rise_max_age_sec", 60.0) or 60.0)
+    except (TypeError, ValueError):
+        max_age = 60.0
+    t = float(now if now is not None else time.time())
+    prev, since = _MID_RISE_STATE.get(sym, (None, None))
+    if (prev is not None and prev <= level < float(fast)
+            and ind.get("pctr_slow_rising") is True):
+        since = t
+    _MID_RISE_STATE[sym] = (float(fast), since)
+    if since is None:
+        return False, "wait_mid_rise"
+    if t - since > max_age:
+        return False, "mid_rise_stale"
+    if float(fast) <= level:
+        return False, "mid_rise_lost"
+    if ind.get("pctr_falling"):
+        return False, "exh_falling"
+    return True, "mid_rise"
+
+
 def exh_oversold_triangle_arm_enabled(cfg: dict | None) -> bool:
     """TV %R Trend Exhaustion oversold triangle arm. Default True."""
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -12020,6 +12085,10 @@ def exhaustion_allows_buy(
             return False, f"pctr_not_live_{src or 'missing'}"
     if tv_exh_rsi_enabled(cfg):
         return _tv_exh_rsi_allows_buy(record, cfg)
+    # One arm (2026-09-23): the fast -50 cross replaces square, triangle and
+    # heating. Exclusive — the lanes below are not consulted when it is on.
+    if exh_mid_rise_arm_enabled(cfg):
+        return _mid_rise_allows_buy(record, cfg, now=now)
     # Square mode (TV red ■): enter on dual-OB + tight.
     # Oversold triangle mode: enter on oversold squares -> oversold triangle + RSI rising.
     sq_ok, sq_why = False, ""

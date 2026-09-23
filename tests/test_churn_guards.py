@@ -334,8 +334,9 @@ def test_the_label_is_registered():
 
 def test_seeding_refuses_a_capped_name():
     src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
-    i = src.index("candidates, rejected = apply_inclusion_gate(candidates, cfg)")
-    body = src[i:i + 1400]
+    # Anchor on the call, not its argument formatting (it was re-wrapped).
+    i = src.index("candidates, rejected = apply_inclusion_gate(")
+    body = src[i:i + 2400]
     assert "ai_watch_max_entries_per_symbol_day" in body, (
         "the cap must be applied where candidates are admitted")
     assert "_entries_today(sym)" in body
@@ -345,8 +346,9 @@ def test_seeding_refuses_a_capped_name():
 def test_a_zero_cap_admits_everything():
     """The knob is a switch: 0 must leave seeding exactly as it was."""
     src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
-    i = src.index("candidates, rejected = apply_inclusion_gate(candidates, cfg)")
-    body = src[i:i + 1400]
+    # Anchor on the call, not its argument formatting (it was re-wrapped).
+    i = src.index("candidates, rejected = apply_inclusion_gate(")
+    body = src[i:i + 2400]
     assert "if cap > 0:" in body
 
 

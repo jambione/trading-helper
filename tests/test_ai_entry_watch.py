@@ -2750,6 +2750,9 @@ def _armable_rec(cm=True, pctr=True, macd=False, sell=False, with_indicator=True
             "pctr": fast,
             "pctr_slow": fast - 3.0,  # tight with fast (gap 3 ≤ 15)
             "pctr_rising": bool(pctr),
+            # Heating needs BOTH lines rising since 0924046 (2026-09-23).
+            "pctr_slow_rising": bool(pctr),
+            "pctr_both_rising": bool(pctr),
             "pctr_falling": not pctr,
         }
     return rec
@@ -2828,6 +2831,7 @@ def test_zone_entry_opens_a_window_for_exh_to_arm():
     rec["indicator"]["pctr"] = -40.0
     rec["indicator"]["pctr_slow"] = -40.0
     rec["indicator"]["pctr_rising"] = True
+    rec["indicator"]["pctr_slow_rising"] = True
     rec["indicator"]["pctr_falling"] = False
     rec["indicator"]["pctr_ok"] = True
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=cfg, now=t0 + 10.0)
@@ -3392,7 +3396,7 @@ def test_cheap_pullback_band_overbought_is_refused():
         # 85 exhaustion: overbought, under the 90 heat_max so cheap_ob_band
         # (not already_extended) is the refusal we are testing.
         "pctr": -15.0, "pctr_slow": -15.0,
-        "pctr_rising": True, "pctr_falling": False,
+        "pctr_rising": True, "pctr_slow_rising": True, "pctr_both_rising": True, "pctr_falling": False,
     }
     cfg = _db_cfg(
         ai_watch_exhaustion_rules=True,
@@ -3420,6 +3424,7 @@ def test_cheap_pullback_band_overbought_is_refused():
     rec["indicator"]["pctr"] = -40.0
     rec["indicator"]["pctr_slow"] = -40.0
     rec["indicator"]["pctr_rising"] = True
+    rec["indicator"]["pctr_slow_rising"] = True
     rec["source"] = "momentum"
     ok5, why5 = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=cfg)
     assert ok5 and why5.startswith("zone")
@@ -3427,6 +3432,7 @@ def test_cheap_pullback_band_overbought_is_refused():
     rec["indicator"]["pctr"] = -15.0
     rec["indicator"]["pctr_slow"] = -15.0
     rec["indicator"]["pctr_rising"] = True
+    rec["indicator"]["pctr_slow_rising"] = True
     rec["indicator"]["pctr_falling"] = False
     last_cfg = dict(cfg)
     last_cfg["ai_watch_arm_mode"] = "last"
@@ -3447,7 +3453,7 @@ def test_cheap_name_already_extended_on_the_day_is_refused():
     rec["admit_pct_change"] = 64.94
     rec["indicator"] = {
         "pctr": -60.0, "pctr_slow": -60.0,
-        "pctr_rising": True, "pctr_falling": False,
+        "pctr_rising": True, "pctr_slow_rising": True, "pctr_both_rising": True, "pctr_falling": False,
     }
     cfg = _db_cfg(
         ai_watch_exhaustion_rules=True,
@@ -3824,7 +3830,7 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
         "symbol": "BBB",
         "indicator": {
             "pctr": -30.0, "pctr_slow": -33.0,
-            "pctr_rising": True, "pctr_falling": False,
+            "pctr_rising": True, "pctr_slow_rising": True, "pctr_both_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(heat, cfg)
@@ -3835,7 +3841,7 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
     ob_up = {
         "symbol": "AAA",
         "indicator": {
-            "pctr": -15.0, "pctr_rising": True, "pctr_falling": False,
+            "pctr": -15.0, "pctr_rising": True, "pctr_slow_rising": True, "pctr_both_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(ob_up, cfg)
@@ -3846,7 +3852,7 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
         "symbol": "HOT",
         "indicator": {
             "pctr": -5.0, "pctr_slow": -5.0,
-            "pctr_rising": True, "pctr_falling": False,
+            "pctr_rising": True, "pctr_slow_rising": True, "pctr_both_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(too_hot, cfg)
@@ -3889,7 +3895,7 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
         "symbol": "LOW",
         "indicator": {
             "pctr": -60.0, "pctr_slow": -60.0,
-            "pctr_rising": True, "pctr_falling": False,
+            "pctr_rising": True, "pctr_slow_rising": True, "pctr_both_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(heat_low, cfg)
@@ -3913,7 +3919,7 @@ def test_continuation_arms_heating_and_disables_left_overbought_exit():
         "symbol": "BBB",
         "indicator": {
             "pctr": -30.0, "pctr_slow": -33.0,
-            "pctr_rising": True, "pctr_falling": False,
+            "pctr_rising": True, "pctr_slow_rising": True, "pctr_both_rising": True, "pctr_falling": False,
         },
         "exh_was_overbought": True,
     }
@@ -3923,7 +3929,7 @@ def test_continuation_arms_heating_and_disables_left_overbought_exit():
     heat_low = {
         "symbol": "LOW",
         "indicator": {
-            "pctr": -60.0, "pctr_rising": True, "pctr_falling": False,
+            "pctr": -60.0, "pctr_rising": True, "pctr_slow_rising": True, "pctr_both_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(heat_low, cfg)
@@ -4708,7 +4714,7 @@ def test_heat_band_min50_no_upper_cap():
         "symbol": "MID",
         "indicator": {
             "pctr": -40.0, "pctr_slow": -40.0,
-            "pctr_rising": True, "pctr_falling": False,
+            "pctr_rising": True, "pctr_slow_rising": True, "pctr_both_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(mid, cfg)
@@ -4717,7 +4723,7 @@ def test_heat_band_min50_no_upper_cap():
     hot = {
         "symbol": "HOT",
         "indicator": {
-            "pctr": -5.0, "pctr_rising": True, "pctr_falling": False,
+            "pctr": -5.0, "pctr_rising": True, "pctr_slow_rising": True, "pctr_both_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(hot, cfg)
@@ -4726,7 +4732,7 @@ def test_heat_band_min50_no_upper_cap():
     low = {
         "symbol": "LOW",
         "indicator": {
-            "pctr": -60.0, "pctr_rising": True, "pctr_falling": False,
+            "pctr": -60.0, "pctr_rising": True, "pctr_slow_rising": True, "pctr_both_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(low, cfg)
@@ -5945,7 +5951,10 @@ def _exh_rec(src, ex_pct=70.0, rising=True):
     # provenance rather than line confluence.
     return {"symbol": "AAA",
             "indicator": {"pctr": ex_pct - 100.0, "pctr_slow": ex_pct - 100.0,
-                          "pctr_src": src, "pctr_rising": rising}}
+                          "pctr_src": src, "pctr_rising": rising,
+                          # heating needs both lines rising (0924046)
+                          "pctr_slow_rising": rising,
+                          "pctr_both_rising": rising}}
 
 
 # Legacy single-line %R rules — see the _arm_cfg note on ai_watch_exh_square_arm.
@@ -6309,7 +6318,7 @@ def test_arm_requires_both_exhaustion_and_rsi(monkeypatch):
 
     calls = {"exh": 0}
 
-    def fake_exh(record, cfg):
+    def fake_exh(record, cfg, now=None):
         calls["exh"] += 1
         return True, "heating"
 

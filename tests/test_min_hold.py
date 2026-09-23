@@ -62,8 +62,12 @@ def test_garbage_config_fails_open():
     assert cp.soft_exit_held_back(_pos(1), NOW, {"ai_exit_min_hold_sec": "soon"}) is False
 
 
-def test_it_gates_the_three_discretionary_exits():
-    """Shelf, dead-trade and left-overbought — the desk's opinions.
+def test_it_gates_the_two_discretionary_exits():
+    """Dead-trade and left-overbought — the desk's opinions.
+
+    The shelf (ratchet stop) is NOT gated since 59519dd (2026-09-23): a print
+    through the working stop is a market exit, not a wait. The operator's
+    rule is "when price dips to the stop, sell immediately".
 
     Asserted as a property rather than as three literal lines: the first
     version of this test pinned the exact one-line form of each condition
@@ -72,26 +76,28 @@ def test_it_gates_the_three_discretionary_exits():
     """
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "ai_positions.py"), encoding="utf-8").read()
-    # 5 mentions total: the definition, THREE gates, and one observational
+    # 4 mentions total: the definition, TWO gates, and one observational
     # read in the shadow logger. The logger reads the state and decides
     # nothing, which is the distinction worth pinning — if that count moves,
     # something new is either gating on the delay or has stopped recording it.
     #
     # MACD liquidate used to be a fourth gate. Both remaining reasons are
     # hard sells and skip the clock, so they must not appear here.
-    assert src.count("soft_exit_held_back(pos") == 5
+    assert src.count("soft_exit_held_back(pos") == 4
     assert src.count('"min_hold_active": soft_exit_held_back(pos, now)') == 1
     assert "_macd_held" not in src
-    for which in ("local_trail", "left_overbought", "dead_trade"):
+    for which in ("left_overbought", "dead_trade"):
         assert f'_note_min_hold(pos, "{which}"' in src, (
             f"{which} suppression must be counted or GATE 1 has no mechanism")
+    assert '_note_min_hold(pos, "local_trail"' not in src, (
+        "the ratchet stop must never wait on min-hold")
 
 
 def test_every_gated_exit_also_records_the_block():
     """A suppressed exit that logs nothing is an experiment with no readout."""
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "ai_positions.py"), encoding="utf-8").read()
-    assert src.count("_note_min_hold(") == 4      # 3 call sites + the def
+    assert src.count("_note_min_hold(") == 3      # 2 call sites + the def
     assert "_note_min_hold(pos, _macd_why, now)" not in src
 
 
@@ -131,8 +137,13 @@ def test_the_disaster_stop_is_never_gated():
             f"{forbidden} must stay outside the min-hold gate")
 
 
-def test_ratchet_sale_waits_for_min_hold(monkeypatch):
-    """LAST through the shelf must not flatten until min-hold is over."""
+def test_ratchet_sale_does_not_wait_for_min_hold(monkeypatch):
+    """LAST through the shelf sells at market at once, even on a young fill.
+
+    Inverted 2026-09-23 (59519dd): the operator wants the stop to liquidate
+    the moment price reaches it. min_hold still delays the discretionary
+    exits (left-overbought, dead-trade), never the stop.
+    """
     import sys
     import time
     import types
@@ -166,18 +177,10 @@ def test_ratchet_sale_waits_for_min_hold(monkeypatch):
         "risk_per_share": 0.5,
     }
     _ch, done = cp.apply_local_trail("AAA", young, 9.94, [], {})
-    assert done is False
-    assert young.get("closing_reason") is None
-    assert closed == []
-    assert young.get("min_hold_last") == "local_trail"
-    assert int(young.get("min_hold_blocks") or 0) >= 1
-
-    mature = dict(young, entry_time=now - 301, closing_reason=None,
-                  min_hold_blocks=0, min_hold_last=None)
-    _ch, done = cp.apply_local_trail("AAA", mature, 9.94, [], {})
     assert done is True
-    assert mature.get("closing_reason") == "local_trail"
+    assert young.get("closing_reason") == "local_trail"
     assert closed == ["AAA"]
+    assert not young.get("min_hold_blocks")
 
 
 # ── the shelf may raise on a stale print; it may not sell on one ────────────
@@ -207,8 +210,18 @@ def test_raise_only_banks_the_shelf_without_selling():
     assert cp._num(pos["local_stop_price"]) > 8.1537, "shelf must still raise"
 
 
-def test_the_same_trigger_does_sell_without_raise_only():
-    """The half that must not regress — raise_only is a mode, not a defusing."""
+def test_the_same_trigger_does_sell_without_raise_only(monkeypatch):
+    """The half that must not regress — raise_only is a mode, not a defusing.
+
+    Broker stubbed: since 2026-09-23 a sell with no order id does not count as
+    closed (the market sell did not land), so the real module — which has no
+    client under pytest — can no longer stand in for a filled order.
+    """
+    import sys
+    import types
+    monkeypatch.setitem(sys.modules, "alpaca_trader", types.SimpleNamespace(
+        cancel_open_orders=lambda *a, **k: None,
+        close_out=lambda t: {"ok": True, "order_id": "x"}))
     pos = {
         "entry_confirmed": True, "entry_price": 8.19,
         "risk_per_share": 0.409, "last_seen_price": 8.275,

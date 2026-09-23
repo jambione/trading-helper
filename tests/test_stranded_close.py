@@ -114,8 +114,17 @@ def test_it_cannot_sell_again_while_flagged(monkeypatch):
 
 
 def test_an_unflagged_position_still_sells(monkeypatch):
-    """The half that must not regress."""
+    """The half that must not regress.
+
+    Broker stubbed: a sell with no order id no longer counts as closed
+    (2026-09-23), and the real module has no client under pytest.
+    """
+    import sys
+    import types
     _cfg(monkeypatch)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", types.SimpleNamespace(
+        cancel_open_orders=lambda *a, **k: None,
+        close_out=lambda t: {"ok": True, "order_id": "x"}))
     p = _stranded(closing_reason=None)
     _ch, closed = cp.apply_local_trail("AAA", p, 1.00, [], {})
     assert closed is True
