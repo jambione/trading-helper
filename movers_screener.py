@@ -299,6 +299,106 @@ def universe_scan(cfg: dict, api: str, sec: str, lo: float, hi: float,
     return picked
 
 
+# ── Premarket scan (observe first) ──────────────────────────────────────────
+# The daytime scan starts at 09:35, so the book is built after the open. From
+# 08:00 this nominates gap-up, active, liquid names so their seats and streams
+# are warm at 09:30. Premarket IEX volume is too thin to rank on, so ranking
+# uses YESTERDAY's dollar volume (a stable liquidity measure that tracks tight
+# spreads). Observe mode (ai_movers_premarket_feed false) only writes
+# ai_reports/premarket_scan/<day>.jsonl so the picks can be graded against the
+# session before they are allowed to seat anything.
+PREMARKET_DIR = ROOT / "ai_reports" / "premarket_scan"
+_pm_last_ts: float = 0.0
+_pm_last: list[dict] = []
+
+
+def premarket_select(snaps: dict, *, now: float, lo: float, hi: float,
+                     min_gap: float, max_trade_age: float, min_prev_dollars: float,
+                     top: int) -> list[dict]:
+    """Pick from {sym: (last_px, last_trade_ts, prev_close, prev_volume)}."""
+    out = []
+    for sym, t in snaps.items():
+        try:
+            px, lts, pc, pv = (float(x) if x is not None else 0.0 for x in t)
+        except (TypeError, ValueError):
+            continue
+        if px <= 0 or pc <= 0 or not (lo <= px <= hi):
+            continue
+        if now - lts > max_trade_age:
+            continue
+        gap = (px / pc - 1) * 100
+        if gap < min_gap:
+            continue
+        prev_dollars = pc * pv
+        if prev_dollars < min_prev_dollars:
+            continue
+        out.append({"symbol": sym, "pm_gap": round(gap, 2), "price": round(px, 4),
+                    "prev_dollars_m": round(prev_dollars / 1e6, 1)})
+    out.sort(key=lambda r: -r["prev_dollars_m"])
+    return out[:max(0, top)]
+
+
+def _in_premarket(now: datetime | None = None) -> bool:
+    now = now or _et_now()
+    if now.weekday() >= 5:
+        return False
+    m = now.hour * 60 + now.minute
+    return 8 * 60 <= m < 9 * 60 + 30
+
+
+def premarket_scan(cfg: dict, api: str, sec: str) -> list[dict]:
+    """Nominees before the open; [] outside 08:00-09:30 or when off."""
+    global _pm_last_ts, _pm_last
+    if not bool(cfg.get("ai_movers_premarket_scan", False)) or not _in_premarket():
+        return []
+    every = float(cfg.get("ai_movers_scan_sec", 120.0) or 120.0)
+    if _pm_last_ts and time.time() - _pm_last_ts < every:
+        return _pm_last
+    syms = _load_scan_universe(api, sec)
+    if not syms:
+        return _pm_last
+    from alpaca.data.enums import DataFeed
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockSnapshotRequest
+    cl = StockHistoricalDataClient(api, sec)
+    snaps: dict = {}
+    for i in range(0, len(syms), 500):
+        try:
+            got = cl.get_stock_snapshot(StockSnapshotRequest(
+                symbol_or_symbols=syms[i:i + 500], feed=DataFeed.IEX))
+        except Exception as e:  # noqa: BLE001
+            print(f"[movers] premarket chunk failed: {str(e)[:100]}", flush=True)
+            time.sleep(1.0)
+            continue
+        for s, v in (got or {}).items():
+            try:
+                snaps[s] = (v.latest_trade.price, v.latest_trade.timestamp.timestamp(),
+                            v.previous_daily_bar.close, v.previous_daily_bar.volume)
+            except Exception:  # noqa: BLE001
+                continue
+        time.sleep(0.3)
+    lo = float(cfg.get("ai_movers_min_price", 2.0) or 2.0)
+    hi = float(cfg.get("ai_movers_max_price", 20.0) or 20.0)
+    picked = premarket_select(
+        snaps, now=time.time(), lo=lo, hi=hi,
+        min_gap=float(cfg.get("ai_movers_premarket_min_gap_pct", 1.5) or 0.0),
+        max_trade_age=float(cfg.get("ai_movers_premarket_max_trade_age_sec", 300.0) or 300.0),
+        min_prev_dollars=float(cfg.get("ai_movers_premarket_min_prev_dollars", 20e6) or 0.0),
+        top=int(cfg.get("ai_movers_scan_top", 25) or 25))
+    _pm_last_ts, _pm_last = time.time(), picked
+    try:
+        PREMARKET_DIR.mkdir(parents=True, exist_ok=True)
+        now, day = time.time(), _et_now().strftime("%Y-%m-%d")
+        with open(PREMARKET_DIR / f"{day}.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": now, "n_snaps": len(snaps),
+                                "picks": picked}) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+    print(f"[movers] premarket: {len(snaps)} snaps -> {len(picked)} picks "
+          f"{[r['symbol'] for r in picked][:10]}", flush=True)
+    return picked
+
+
 def fetch_rows(cfg: dict) -> list[dict]:
     """One pass: rank movers, drop what cannot be traded, enrich survivors."""
     api, sec = _keys()
@@ -352,6 +452,13 @@ def fetch_rows(cfg: dict) -> list[dict]:
         if r["symbol"] not in origin:
             cand.append((r["symbol"], None, None))
             origin[r["symbol"]] = "scan"
+    # Premarket picks are always logged; they seat only when feed is on.
+    pm = premarket_scan(cfg, api, sec)
+    if pm and bool(cfg.get("ai_movers_premarket_feed", False)):
+        for r in pm:
+            if r["symbol"] not in origin:
+                cand.append((r["symbol"], None, None))
+                origin[r["symbol"]] = "premarket"
 
     # Second feed, ranked by VOLUME rather than percent change. The gainers
     # list is capped at 50 by Alpaca and its weakest member was +15.0% on

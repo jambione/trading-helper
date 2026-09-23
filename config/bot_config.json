@@ -198,6 +198,8 @@
   "ai_movers_min_pct_change": 1.5,
   "ai_movers_actives_top": 100,
   "ai_movers_universe_scan": true,
+  "ai_movers_premarket_scan": true,
+  "ai_movers_premarket_feed": false,
   "ai_movers_scan_sec": 120.0,
   "ai_movers_scan_top": 25,
   "ai_movers_scan_min_rvol": 1.0,
