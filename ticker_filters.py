@@ -30,6 +30,16 @@ _LEVERED_DENY = frozenset({
     "CONL", "CONI",                   # COIN 2x
     "HODU", "CRCG", "CSEX",           # 2026-09-03 book
     "NVDL", "NVDX", "NVDU",           # NVDA 2x family
+    # Index / sector 3x bull-bear pairs and vol products. Most-actives rows
+    # arrive with no issuer name, so the name markers never see them, and a
+    # $10-$100 movers band admits them (SOXS 2026-09-23).
+    "SOXL", "SOXS", "TQQQ", "SQQQ", "SPXL", "SPXS", "SPXU", "UPRO", "SDS",
+    "SSO", "QLD", "QID", "TNA", "TZA", "LABU", "LABD", "FAS", "FAZ",
+    "TECL", "TECS", "FNGU", "FNGD", "YINN", "YANG", "NUGT", "DUST",
+    "JNUG", "JDST", "GUSH", "DRIP", "ERX", "ERY", "BOIL", "KOLD",
+    "UCO", "SCO", "TMF", "TMV", "UDOW", "SDOW", "URTY", "SRTY",
+    "SH", "PSQ", "DOG", "UVXY", "UVIX", "SVIX", "SVXY", "VXX", "VIXY",
+    "BITX", "BITI", "ETHU", "AMDL", "AAPU", "METU", "GGLL", "AMZU", "MSFU",
 })
 
 # Issuer-name tokens that mean "this is a leveraged / inverse product".
