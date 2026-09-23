@@ -3348,6 +3348,46 @@ def initial_local_stop(
     return round(want, 2)
 
 
+def ensure_stop_behind_fill(
+    pos: dict[str, Any],
+    cfg: dict | None = None,
+) -> float | None:
+    """Working stop must sit strictly under the fill.
+
+    GLND 2026-09-23: ask was $2.87 so the shelf stamped at $2.85, then the
+    market fill was $2.85 and the shelf was left on the fill. Raise-only
+    never pulled it back, so the first print at the entry sold.
+
+    Returns the new stop when it moved, else None.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    entry = _num(pos.get("entry_price"))
+    loc = _num(pos.get("local_stop_price"))
+    if entry is None or entry <= 0:
+        return None
+    if loc is not None and float(loc) + 1e-9 < float(entry):
+        return None
+    # A stop at/above the fill is legal once the trail has armed (BE shelf).
+    # Only the ask-stamped shelf that landed on a lower fill gets pulled back.
+    try:
+        arm = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
+    except (TypeError, ValueError):
+        arm = 0.0
+    mfe = _num(pos.get("mfe_r"))
+    if arm > 0 and mfe is not None and float(mfe) + 1e-9 >= arm:
+        return None
+    seed = initial_local_stop(
+        entry, _risk_basis(pos), cfg, spread_r=_pos_spread_r(pos))
+    if seed is None or float(seed) + 1e-9 >= float(entry):
+        seed = round(float(entry) - 0.01, 2)
+    if seed <= 0 or float(seed) + 1e-9 >= float(entry):
+        return None
+    pos["local_stop_price"] = float(seed)
+    # Catch-up "hasn't moved" is measured from this shelf, not the ask stamp.
+    pos["entry_shelf_price"] = float(seed)
+    return float(seed)
+
+
 def _median_px(xs: list[float]) -> float | None:
     ys = sorted(x for x in xs if x > 0)
     if not ys:
@@ -3993,6 +4033,17 @@ def apply_local_trail(
     seed = initial_local_stop(
         _num(pos.get("entry_price")), _risk_basis(pos), _cfg_all(),
         spread_r=_pos_spread_r(pos))
+    # Shelf stamped off the ask can sit on the fill. Pull it behind
+    # before the hit test, or the entry print is a stop-out.
+    _behind = ensure_stop_behind_fill(pos, _cfg_all())
+    if _behind is not None:
+        loc = _behind
+        seed = _behind
+        changed = True
+        log_event(
+            "stop_behind_fill", symbol=ticker,
+            entry=_num(pos.get("entry_price")), stop=_behind, last=last,
+        )
     if loc is None:
         # No stored shelf: a fresh fill, or a name adopted mid-move. Same
         # hazard as the stale-plan case below and it was missing the same
@@ -5976,6 +6027,14 @@ def manage_open_positions(
                     if want and want > 0 and risk and risk > 0:
                         pos["entry_slippage_r"] = round((fill - want) / risk, 4)
                     pos["entry_price"] = fill
+                    # Ask-priced shelf can land on the fill (GLND). Rebase
+                    # under the real basis before the first shelf tick.
+                    _rebased = ensure_stop_behind_fill(pos, _cfg_all())
+                    if _rebased is not None:
+                        log_event(
+                            "stop_behind_fill", symbol=ticker,
+                            entry=fill, stop=_rebased,
+                        )
                     tape = _num(live.get("current")) or fill
                     planned = _num(pos.get("entry_stop_price")) or _num(
                         pos.get("stop_price"))

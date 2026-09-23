@@ -108,6 +108,28 @@ def test_trail_yields_uses_entry_features_when_indicator_blank(monkeypatch):
     assert why == "still_dual_ob"
 
 
+def test_stop_rebased_behind_fill_when_ask_shelf_lands_on_fill():
+    """GLND: shelf stamped at the ask ($2.85) must drop under a $2.85 fill."""
+    cfg = _cfg(
+        ai_local_trail_give_r=0.35,
+        ai_local_trail_give_max_pct=1.0,
+        ai_local_trail_min_give_px=0.0,
+    )
+    pos = {
+        "entry_price": 2.85,
+        "local_stop_price": 2.85,
+        "risk_per_share": 0.143,
+        "stop_price": 2.727,
+    }
+    got = ap.ensure_stop_behind_fill(pos, cfg)
+    assert got is not None
+    assert got < 2.85
+    assert pos["local_stop_price"] == got
+    assert pos["entry_shelf_price"] == got
+    # Already behind: leave it.
+    assert ap.ensure_stop_behind_fill(pos, cfg) is None
+
+
 def test_apply_local_trail_entry_catchup_before_hit(monkeypatch):
     """30s unmoved shelf jumps to last−$0.01 before the stale seed can sell."""
     import time as _time
