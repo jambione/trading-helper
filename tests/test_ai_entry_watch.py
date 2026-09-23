@@ -5085,6 +5085,16 @@ def test_square_arm_smci_pass_rklb_refuse_no_heating():
     ok, why = ew.exhaustion_allows_buy(early, cfg)
     assert ok is False and why == "wait_exh"
 
+    # Same book with heating companion: square still arms, heat falls through.
+    both = dict(cfg)
+    both["ai_watch_exh_heating_with_square"] = True
+    ok, why = ew.exhaustion_allows_buy(smci, both)
+    assert ok is True and why == "overbought"
+    ok, why = ew.exhaustion_allows_buy(early, both)
+    assert ok is True and why == "heating"
+    ok, why = ew.exhaustion_allows_buy(rklb, both)
+    assert ok is False and why == "exh_not_tight"
+
 
 def test_square_left_overbought_triangle_exit():
     """Leave dual-OB (▼) → left_overbought; still both-OB → hold."""

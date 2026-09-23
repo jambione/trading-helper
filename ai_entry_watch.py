@@ -2499,9 +2499,11 @@ def maybe_soft_seed_rows(
             if str(r.get("symbol") or "").upper() not in flood_syms
         )
 
-    # Pass 1b: limited far keeps only when under far_cap and no prefer_square
-    # hard refuse — when prefer_square, far never takes keep seats here.
-    if not prefer_sq and (max_n <= 0 or _other_keep_n() < max_n):
+    # Pass 1b: limited far keeps. prefer_square alone starves far.
+    # Heating-with-square still prefers ■ seats, but far heaters need a
+    # keep or last_heating never sees them (Wed/Thu book).
+    heat_with_sq = exh_heating_with_square(cfg)
+    if (not prefer_sq or heat_with_sq) and (max_n <= 0 or _other_keep_n() < max_n):
         for sc, row in ranked:
             sym = str(row.get("symbol") or "").upper().strip()
             if sym in flood_syms:
@@ -3578,6 +3580,9 @@ def _maybe_far_exh_evict(
     until a pre_square/square admittee is waiting.
     """
     if not admit_prefer_square(cfg):
+        return False
+    # Companion heating lane needs far seats to stay on the book all day.
+    if exh_heating_with_square(cfg):
         return False
     limit = far_exh_evict_sec(cfg)
     if limit <= 0 or not isinstance(rec, dict):
@@ -10660,6 +10665,18 @@ def exh_square_arm_enabled(cfg: dict | None) -> bool:
     return bool(cfg.get("ai_watch_exh_square_arm", True))
 
 
+def exh_heating_with_square(cfg: dict | None) -> bool:
+    """Square ■ first, then last_heating on the same book.
+
+    Off (default): a square miss is a hard refuse — no heating fall-through.
+    On: square still arms when it matches; otherwise the legacy heat band
+    (rising + dual-tight) may arm. Wed/Thu 2026-09-16/17 occupancy was
+    last_heating; this keeps that lane without turning the square off.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return bool(cfg.get("ai_watch_exh_heating_with_square", False))
+
+
 def exh_oversold_triangle_arm_enabled(cfg: dict | None) -> bool:
     """TV %R Trend Exhaustion oversold triangle arm. Default True."""
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -11727,7 +11744,7 @@ def exhaustion_allows_buy(
         os_ok, os_why = _oversold_triangle_allows_buy(record, cfg, now=now)
         if os_ok:
             return True, os_why
-    if exh_square_arm_enabled(cfg):
+    if exh_square_arm_enabled(cfg) and not exh_heating_with_square(cfg):
         if exh_oversold_triangle_arm_enabled(cfg) and (
             bool(record.get("exh_was_oversold"))
             or os_why in ("oversold_squares", "stale_oversold_triangle", "still_oversold", "rsi_not_rising")

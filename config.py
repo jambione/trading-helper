@@ -40,10 +40,13 @@ DEFAULT_CONFIG = {
     "cm_rsi_prefer_green": True,  # Connors color is a strength flag, not a gate
     # Desk buy = MACD bullish cross with wide line separation (gap).
     "ai_watch_tv_exh_rsi": False,
-    # TV %R Trend Exhaustion square arm: enter only on dual-OB + tight
-    # (red ■). When true, last_heating / fast-only OB cannot arm. Rollback:
-    # set false to restore legacy heating path (still dual-tight gated).
+    # TV %R Trend Exhaustion square arm: enter on dual-OB + tight (red ■).
+    # Rollback: set false to restore legacy heating only.
     "ai_watch_exh_square_arm": True,
+    # When true with square arm: square still wins, else fall through to
+    # last_heating (heat band + rising + dual-tight). Square-only stays
+    # the default.
+    "ai_watch_exh_heating_with_square": False,
     # Square-aligned admit bus: prefer pre_square/square seats; evict far.
     "ai_watch_admit_prefer_square": True,
     "ai_watch_exh_pre_thr": 35.0,          # both lines ≥ −pre_thr = approach
@@ -1672,6 +1675,7 @@ def validate_ai_config(cfg: dict) -> list[str]:
 # "hybrid arm"); this is the resolved set the process is actually running.
 _EFFECTIVE_KEYS = (
     "ai_watch_exh_square_arm",
+    "ai_watch_exh_heating_with_square",
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
     "ai_watch_macd_gap_arm",
@@ -1992,6 +1996,7 @@ SAFE_CONFIG_KEYS = [
     "ai_dual_tranche_triangle_exit",
     "ai_watch_square_max_age_sec",
     "ai_watch_exh_square_arm",
+    "ai_watch_exh_heating_with_square",
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
     "ai_watch_macd_gap_arm",
