@@ -145,6 +145,160 @@ def _rth_minutes_in_window(window_min: int, now: datetime | None = None) -> int:
     return int((hi - lo).total_seconds() // 60)
 
 
+# ── Full-market scan ────────────────────────────────────────────────────────
+# Both Alpaca lists above are ranked contests: the top 50 gainers are small
+# caps and the top actives are cheap volume or flat megacaps. On 2026-09-23
+# (SPY -0.8%) they offered 3-5 names at $10-$100 while a snapshot of the whole
+# tradable universe held 51 that were up 1.5%+ on RVOL >= 1 (energy, CRWV,
+# IONQ, IR, KMX, ZM...). The book was thin for want of supply, not gates.
+#
+# The scan only nominates. Its numbers are IEX (snapshot latest trade vs prior
+# close; IEX day volume vs IEX prior-day volume, time-adjusted, one feed on
+# both sides), good enough to pick names worth measuring. Every nominee then
+# goes through the same SIP daily bars and filters as every other candidate.
+SCAN_LEDGER = ROOT / "ai_reports" / "scan_ledger.jsonl"
+_scan_universe: list[str] = []
+_scan_universe_day: str = ""
+_scan_last_ts: float = 0.0
+_scan_last: list[dict] = []
+
+
+def _bar_day(bar) -> str:
+    """ET calendar day of an Alpaca bar, '' when it has no usable timestamp."""
+    ts = getattr(bar, "timestamp", None)
+    try:
+        return ts.astimezone(ET).strftime("%Y-%m-%d")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _rth_fraction(now: datetime | None = None) -> float | None:
+    """Share of the regular session elapsed, or None outside 09:35-16:00."""
+    now = now or _et_now()
+    if now.weekday() >= 5:
+        return None
+    m = now.hour * 60 + now.minute
+    if m < 9 * 60 + 35 or m >= 16 * 60:
+        return None
+    return max(0.05, min(1.0, (m - 570) / 390.0))
+
+
+def scan_select(snaps: dict, *, lo: float, hi: float, min_pct: float,
+                min_rvol: float, min_iex_dollars: float, frac: float,
+                top: int) -> list[dict]:
+    """Pick green, liquid names from {sym: (price, prev_close, vol, prev_vol)}.
+
+    Pure so it can be tested without a network. Ranked by IEX dollar volume:
+    the scan exists to add names the book can actually trade.
+    """
+    out = []
+    for sym, t in snaps.items():
+        try:
+            px, pc, vol, pv = (float(x) if x is not None else 0.0 for x in t)
+        except (TypeError, ValueError):
+            continue
+        if px <= 0 or pc <= 0 or pv <= 0 or not (lo <= px <= hi):
+            continue
+        pct = (px / pc - 1.0) * 100.0
+        if pct < min_pct:
+            continue
+        rvol = (vol / pv) / max(frac, 0.05)
+        if rvol < min_rvol:
+            continue
+        iex_dollars = px * vol
+        if iex_dollars < min_iex_dollars:
+            continue
+        out.append({"symbol": sym, "iex_pct": round(pct, 2),
+                    "iex_rvol": round(rvol, 2), "price": round(px, 4),
+                    "iex_dollars": round(iex_dollars)})
+    out.sort(key=lambda r: -r["iex_dollars"])
+    return out[:max(0, top)]
+
+
+def _load_scan_universe(api: str, sec: str) -> list[str]:
+    """Tradable common-stock symbols, refreshed once per ET day."""
+    global _scan_universe, _scan_universe_day
+    day = _et_now().strftime("%Y-%m-%d")
+    if _scan_universe and _scan_universe_day == day:
+        return _scan_universe
+    from alpaca.trading.client import TradingClient
+    from alpaca.trading.enums import AssetClass, AssetStatus
+    from alpaca.trading.requests import GetAssetsRequest
+    assets = None
+    for paper in (True, False):
+        try:
+            assets = TradingClient(api, sec, paper=paper).get_all_assets(
+                GetAssetsRequest(asset_class=AssetClass.US_EQUITY,
+                                 status=AssetStatus.ACTIVE))
+            break
+        except Exception:  # noqa: BLE001
+            continue
+    if not assets:
+        return _scan_universe
+    ok_ex = {"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS"}
+    _scan_universe = sorted(
+        a.symbol for a in assets
+        if a.tradable and str(a.exchange).split(".")[-1] in ok_ex
+        and is_common(a.symbol) and not is_levered_etp(a.symbol, a.name or ""))
+    _scan_universe_day = day
+    print(f"[movers] scan universe: {len(_scan_universe)} symbols", flush=True)
+    return _scan_universe
+
+
+def universe_scan(cfg: dict, api: str, sec: str, lo: float, hi: float,
+                  min_pct: float) -> list[dict]:
+    """Nominees from a snapshot of the whole universe, cached between scans."""
+    global _scan_last_ts, _scan_last
+    if not bool(cfg.get("ai_movers_universe_scan", False)):
+        return []
+    frac = _rth_fraction()
+    if frac is None:
+        return []
+    every = float(cfg.get("ai_movers_scan_sec", 120.0) or 120.0)
+    if _scan_last_ts and time.time() - _scan_last_ts < every:
+        return _scan_last
+    syms = _load_scan_universe(api, sec)
+    if not syms:
+        return _scan_last
+    from alpaca.data.enums import DataFeed
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockSnapshotRequest
+    cl = StockHistoricalDataClient(api, sec)
+    snaps: dict = {}
+    for i in range(0, len(syms), 500):
+        try:
+            got = cl.get_stock_snapshot(StockSnapshotRequest(
+                symbol_or_symbols=syms[i:i + 500], feed=DataFeed.IEX))
+        except Exception as e:  # noqa: BLE001
+            print(f"[movers] scan chunk failed: {str(e)[:100]}", flush=True)
+            time.sleep(1.0)
+            continue
+        for s, v in (got or {}).items():
+            try:
+                snaps[s] = (v.latest_trade.price, v.previous_daily_bar.close,
+                            v.daily_bar.volume, v.previous_daily_bar.volume)
+            except Exception:  # noqa: BLE001
+                continue
+        time.sleep(0.3)  # the live engine shares these data keys
+    picked = scan_select(
+        snaps, lo=lo, hi=hi, min_pct=min_pct,
+        min_rvol=float(cfg.get("ai_movers_scan_min_rvol", 1.0) or 0.0),
+        min_iex_dollars=float(
+            cfg.get("ai_movers_scan_min_iex_dollars", 500_000) or 0.0),
+        frac=frac, top=int(cfg.get("ai_movers_scan_top", 25) or 25))
+    _scan_last_ts, _scan_last = time.time(), picked
+    try:
+        now, day = time.time(), _et_now().strftime("%Y-%m-%d")
+        with open(SCAN_LEDGER, "a", encoding="utf-8") as f:
+            f.writelines(json.dumps({"ts": now, "day": day, **r}) + "\n"
+                         for r in picked)
+    except Exception:  # noqa: BLE001
+        pass
+    print(f"[movers] scan: {len(snaps)} snaps -> {len(picked)} nominees "
+          f"{[r['symbol'] for r in picked][:10]}", flush=True)
+    return picked
+
+
 def fetch_rows(cfg: dict) -> list[dict]:
     """One pass: rank movers, drop what cannot be traded, enrich survivors."""
     api, sec = _keys()
@@ -188,6 +342,16 @@ def fetch_rows(cfg: dict) -> list[dict]:
                 or not (lo <= px <= hi)):
             continue
         cand.append((sym, pct, px))
+    origin: dict[str, str] = {s: "gainers" for s, _, _ in cand}
+
+    # Full-market scan nominees go BEFORE most-actives: the candidate list is
+    # truncated at want + max_session below, and 100 actives would push
+    # anything appended after them past the cut. Unpriced on purpose, so they
+    # are re-measured from the same SIP daily bars as every other name.
+    for r in universe_scan(cfg, api, sec, lo, hi, min_pct):
+        if r["symbol"] not in origin:
+            cand.append((r["symbol"], None, None))
+            origin[r["symbol"]] = "scan"
 
     # Second feed, ranked by VOLUME rather than percent change. The gainers
     # list is capped at 50 by Alpaca and its weakest member was +15.0% on
@@ -210,6 +374,7 @@ def fetch_rows(cfg: dict) -> list[dict]:
                         and not is_levered_etp(sym, name)):
                     cand.append((sym, None, None))
                     have.add(sym)
+                    origin.setdefault(sym, "actives")
         except Exception as e:  # noqa: BLE001
             print(f"[movers] most-actives failed: {e}", flush=True)
 
@@ -303,6 +468,11 @@ def fetch_rows(cfg: dict) -> list[dict]:
     except Exception:  # noqa: BLE001
         pass
 
+    time_adj = bool(cfg.get("rvol_time_adjusted", True))
+    today = _et_now().strftime("%Y-%m-%d")
+    _now_et = _et_now()
+    mins_open = (_now_et - _now_et.replace(
+        hour=9, minute=30, second=0, microsecond=0)).total_seconds() / 60.0
     rows = []
     for sym, pct, px in cand[:want + max_session]:
         seq = bars.get(sym) or []
@@ -329,7 +499,21 @@ def fetch_rows(cfg: dict) -> list[dict]:
         vol = float(getattr(seq[-1], "volume", 0) or 0) if seq else 0.0
         prior = [float(getattr(b, "volume", 0) or 0) for b in seq[:-1]][-20:]
         avg = (sum(prior) / len(prior)) if prior else 0.0
-        rvol = (vol / avg) if (avg > 0 and vol > 0) else None
+        rvol_raw = (vol / avg) if (avg > 0 and vol > 0) else None
+        rvol = rvol_raw
+        # Pace, not a full-day ratio. Today's partial SIP volume against a
+        # full-day average read CRWV at 0.75 at 12:57 on 2026-09-23 while its
+        # pace was ~3x, so every movers row was held to a stricter floor than
+        # trending (which time-adjusts) and scan nominees died as thin_rvol.
+        # Same helper as trending and the dashboard. Only when the latest bar
+        # is today's: before the open it is yesterday's completed total.
+        if (rvol_raw is not None and time_adj and seq
+                and _bar_day(seq[-1]) == today):
+            try:
+                import tools.morning_funnel as mf
+                rvol = mf.rvol_pair(vol, avg, mins_open, time_adjusted=True)[0]
+            except Exception:  # noqa: BLE001
+                rvol = rvol_raw
         dollar_vol = (vol * px) if vol else 0.0
         # Tradeable TODAY is the liquidity question. A tiny 20-day average is
         # what makes the ratio interesting, not what makes the name unsafe.
@@ -366,6 +550,7 @@ def fetch_rows(cfg: dict) -> list[dict]:
             "pct_change": pct,
             "price": px,
             "rvol": rvol,
+            "rvol_raw": rvol_raw,
             "float_m": fl,
             "avg_vol_20d": round(avg) if avg else None,
             # Share of the trailing window's minutes that actually traded.
@@ -374,6 +559,10 @@ def fetch_rows(cfg: dict) -> list[dict]:
             # False once the top-50 ranking has evicted it; the row survives
             # on its own numbers. Makes "why is this still here" answerable.
             "ranked": sym in ranked,
+            # Which feed nominated it: gainers | scan | actives | carry. The
+            # book relabels every row source=movers, so scan fills are
+            # separated later by joining on ai_reports/scan_ledger.jsonl.
+            "origin": origin.get(sym, "carry"),
             "dollar_volume": round(dollar_vol) if dollar_vol else None,
             "criteria": crit,
         })
@@ -399,8 +588,9 @@ def main() -> None:
                     "generated_et": _et_now().strftime("%Y-%m-%d %H:%M:%S"),
                     "rows": rows,
                 })
-                print(f"[movers] {len(rows)} row(s) "
-                      f"{[r['symbol'] for r in rows][:8]}", flush=True)
+                n_scan = sum(1 for r in rows if r.get("origin") == "scan")
+                print(f"[movers] {len(rows)} row(s) ({n_scan} from scan) "
+                      f"{[r['symbol'] for r in rows][:12]}", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"[movers] pass failed: {e}", flush=True)
         time.sleep(float(cfg.get("ai_movers_poll", fast) or fast)
