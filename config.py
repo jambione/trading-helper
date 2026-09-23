@@ -47,6 +47,9 @@ DEFAULT_CONFIG = {
     # last_heating (heat band + rising + dual-tight). Square-only stays
     # the default.
     "ai_watch_exh_heating_with_square": False,
+    # Heating may arm only when prints rose over this many seconds.
+    # 0 disables. Square ■ is not gated by this.
+    "ai_watch_heating_price_rise_sec": 0.0,
     # Square-aligned admit bus: prefer pre_square/square seats; evict far.
     "ai_watch_admit_prefer_square": True,
     "ai_watch_exh_pre_thr": 35.0,          # both lines ≥ −pre_thr = approach
@@ -1676,6 +1679,7 @@ def validate_ai_config(cfg: dict) -> list[str]:
 _EFFECTIVE_KEYS = (
     "ai_watch_exh_square_arm",
     "ai_watch_exh_heating_with_square",
+    "ai_watch_heating_price_rise_sec",
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
     "ai_watch_macd_gap_arm",
@@ -1997,6 +2001,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_square_max_age_sec",
     "ai_watch_exh_square_arm",
     "ai_watch_exh_heating_with_square",
+    "ai_watch_heating_price_rise_sec",
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
     "ai_watch_macd_gap_arm",

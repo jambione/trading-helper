@@ -5095,6 +5095,15 @@ def test_square_arm_smci_pass_rklb_refuse_no_heating():
     ok, why = ew.exhaustion_allows_buy(rklb, both)
     assert ok is False and why == "exh_not_tight"
 
+    # Heating companion refuses a falling tape even when %R is rising.
+    both["ai_watch_heating_price_rise_sec"] = 20.0
+    early["px_ring"] = [[1_000.0, 10.50], [1_020.0, 10.20]]
+    ok, why = ew.exhaustion_allows_buy(early, both, now=1_020.0)
+    assert ok is False and why == "price_falling"
+    early["px_ring"] = [[1_000.0, 10.00], [1_020.0, 10.20]]
+    ok, why = ew.exhaustion_allows_buy(early, both, now=1_020.0)
+    assert ok is True and why == "heating"
+
 
 def test_square_left_overbought_triangle_exit():
     """Leave dual-OB (▼) → left_overbought; still both-OB → hold."""

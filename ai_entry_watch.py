@@ -207,6 +207,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "pctr_not_live_no_trade_price": "no trade px",
     # Exhaustion / continuation arm refusals.
     "heating_too_low": "heat low",
+    "price_falling": "price falling",
+    "price_trend_unknown": "price trend ?",
     "already_extended": "extended",
     # Soft OB + elevated RSI (still <= hard RSI max). HPE-class chase.
     "late_heat": "late heat",
@@ -8091,6 +8093,7 @@ def apply_decision_price(rec: dict, cfg: dict | None, now: float) -> tuple[float
     px, src, age = decision_price(rec.get("symbol") or "", cfg, now)
     if px and px > 0:
         rec["last_ask"] = float(px)
+        note_px_ring(rec, float(px), now)
         rec["last_ask_src"] = src
         rec["last_ask_age_sec"] = age
         # The quote's OWN unix time, derived from the age we just measured
@@ -11838,6 +11841,11 @@ def exhaustion_allows_buy(
     tight_ok, tight_why = _heating_dual_r_allows(record, cfg)
     if not tight_ok:
         return False, tight_why
+    # %R can rise inside a downtrend (GLND/IONQ 2026-09-23 heating fills).
+    # Heating may arm only when the recent prints themselves are rising.
+    px_ok, px_why = heating_price_rising(record, cfg, now=now)
+    if not px_ok:
+        return False, px_why
     return True, "heating"
 
 
@@ -12000,6 +12008,77 @@ def _oversold_triangle_allows_buy(
                 return False, "stale_oversold_triangle"
 
     return True, "oversold_triangle"
+
+
+def note_px_ring(rec: dict, px: float | None, now: float | None) -> None:
+    """Keep a short (ts, price) ring so heating can see the tape slope."""
+    if not isinstance(rec, dict):
+        return
+    try:
+        p = float(px) if px is not None else 0.0
+        t = float(now) if now is not None else 0.0
+    except (TypeError, ValueError):
+        return
+    if p <= 0 or t <= 0:
+        return
+    ring = rec.get("px_ring")
+    if not isinstance(ring, list):
+        ring = []
+    clean: list[list[float]] = []
+    for item in ring:
+        try:
+            clean.append([float(item[0]), float(item[1])])
+        except (TypeError, ValueError, IndexError):
+            continue
+    if clean and t - clean[-1][0] < 1.0:
+        clean[-1] = [t, p]
+    else:
+        clean.append([t, p])
+    rec["px_ring"] = clean[-12:]
+
+
+def heating_price_rising(
+    record: dict,
+    cfg: dict | None,
+    *,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    """Heating lane: recent prints must be up, not merely %R.
+
+    ``ai_watch_heating_price_rise_sec`` 0 disables. Otherwise the newest
+    print in the window must be above the oldest, and the window must
+    actually span the lookback. Missing tape refuses (do not buy blind).
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        need = float(cfg.get("ai_watch_heating_price_rise_sec", 0) or 0)
+    except (TypeError, ValueError):
+        need = 0.0
+    if need <= 0:
+        return True, ""
+    ring = record.get("px_ring") if isinstance(record, dict) else None
+    if not isinstance(ring, list) or len(ring) < 2:
+        return False, "price_trend_unknown"
+    try:
+        t_now = float(now) if now is not None else float(ring[-1][0])
+    except (TypeError, ValueError, IndexError):
+        return False, "price_trend_unknown"
+    window: list[tuple[float, float]] = []
+    for item in ring:
+        try:
+            ts, px = float(item[0]), float(item[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if t_now - ts <= need + 1.0 and px > 0:
+            window.append((ts, px))
+    if len(window) < 2:
+        return False, "price_trend_unknown"
+    span = window[-1][0] - window[0][0]
+    if span + 1e-9 < min(8.0, need):
+        return False, "price_trend_unknown"
+    if window[-1][1] + 1e-9 <= window[0][1]:
+        return False, "price_falling"
+    return True, "price_rising"
 
 
 def _heating_dual_r_allows(record: dict, cfg: dict) -> tuple[bool, str]:
@@ -14425,7 +14504,7 @@ def should_arm_buy(
 
     # Exhaustion first so (a) missing %R is named correctly, and (b) the soft
     # sell_signal veto below can reference exh_why without UnboundLocalError.
-    exh_ok, exh_why = exhaustion_allows_buy(record, cfg)
+    exh_ok, exh_why = exhaustion_allows_buy(record, cfg, now=t_arm)
 
     # CM RSI-2 band + turn (checked when ai_watch_arm_require_cm_rsi is active)
     rsi_ok, rsi_why = cm_rsi_allows_buy(record, cfg)
@@ -15973,6 +16052,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                         and float(tape[0]) > 0):
                     _age_f = float(tape[1])
                     rec["last_ask"] = float(tape[0])
+                    note_px_ring(rec, float(tape[0]), t0)
                     rec["last_ask_age_sec"] = _age_f
                     # Keep the quote clock in the map (same as
                     # apply_decision_price). Far-path used to skip this, so
