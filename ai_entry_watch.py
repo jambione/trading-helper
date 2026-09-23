@@ -209,6 +209,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "heating_too_low": "heat low",
     "price_falling": "price falling",
     "price_trend_unknown": "price trend ?",
+    "slow_not_rising": "slow %R flat",
+    "not_both_rising": "lines not rising",
     "already_extended": "extended",
     # Soft OB + elevated RSI (still <= hard RSI max). HPE-class chase.
     "late_heat": "late heat",
@@ -11851,6 +11853,15 @@ def exhaustion_allows_buy(
     tight_ok, tight_why = _heating_dual_r_allows(record, cfg)
     if not tight_ok:
         return False, tight_why
+    # Both %R lines rising together is the heating tell — bigger than the
+    # heat level alone. Fast-only rising with a flat/falling slow is refuse.
+    if not ind.get("pctr_slow_rising"):
+        return False, "slow_not_rising"
+    if not (
+        ind.get("pctr_both_rising")
+        or (ind.get("pctr_rising") and ind.get("pctr_slow_rising"))
+    ):
+        return False, "not_both_rising"
     # %R can rise inside a downtrend (GLND/IONQ 2026-09-23 heating fills).
     # Heating may arm only when the recent prints themselves are rising.
     px_ok, px_why = heating_price_rising(record, cfg, now=now)

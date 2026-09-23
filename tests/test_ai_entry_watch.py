@@ -4375,13 +4375,22 @@ def test_arm_at_last_refuses_cooling_and_buys_rising_or_ob():
     assert ok is False and why in ("exh_falling", "not_rising_cooling")
 
     rec["indicator"]["pctr_rising"] = True
+    rec["indicator"]["pctr_slow_rising"] = True
+    rec["indicator"]["pctr_both_rising"] = True
     rec["indicator"]["pctr_falling"] = False
     ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
     assert ok and why == "last_heating"
+    # Fast rising alone is not enough for heating.
+    rec["indicator"]["pctr_slow_rising"] = False
+    rec["indicator"]["pctr_both_rising"] = False
+    ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
+    assert ok is False and why == "slow_not_rising"
 
     rec["indicator"]["pctr"] = -5.0
     rec["indicator"]["pctr_slow"] = -8.0
     rec["indicator"]["pctr_rising"] = False
+    rec["indicator"]["pctr_slow_rising"] = False
+    rec["indicator"]["pctr_both_rising"] = False
     rec["indicator"]["pctr_falling"] = True
     ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
     assert ok is False and why in ("exh_falling", "not_rising_overbought")
@@ -4421,6 +4430,8 @@ def _ob_rec(*, symbol, rsi, exh, source="trending", slow_gap: float = 3.0):
     # exercise exh_not_tight.
     rec["indicator"]["pctr_slow"] = fast - float(slow_gap)
     rec["indicator"]["pctr_rising"] = True
+    rec["indicator"]["pctr_slow_rising"] = True
+    rec["indicator"]["pctr_both_rising"] = True
     rec["indicator"]["pctr_falling"] = False
     rec["indicator"]["cm_rsi"] = rsi
     rec["indicator"]["cm_rsi_rising"] = True
@@ -5097,12 +5108,20 @@ def test_square_arm_smci_pass_rklb_refuse_no_heating():
 
     # Heating companion refuses a falling tape even when %R is rising.
     both["ai_watch_heating_price_rise_sec"] = 20.0
+    # Both %R lines must be rising for last_heating.
+    early["indicator"]["pctr_slow_rising"] = True
+    early["indicator"]["pctr_both_rising"] = True
     early["px_ring"] = [[1_000.0, 10.50], [1_020.0, 10.20]]
     ok, why = ew.exhaustion_allows_buy(early, both, now=1_020.0)
     assert ok is False and why == "price_falling"
     early["px_ring"] = [[1_000.0, 10.00], [1_020.0, 10.20]]
     ok, why = ew.exhaustion_allows_buy(early, both, now=1_020.0)
     assert ok is True and why == "heating"
+    # Fast rising, slow flat → refuse.
+    early["indicator"]["pctr_slow_rising"] = False
+    early["indicator"]["pctr_both_rising"] = False
+    ok, why = ew.exhaustion_allows_buy(early, both, now=1_020.0)
+    assert ok is False and why == "slow_not_rising"
 
 
 def test_square_left_overbought_triangle_exit():
