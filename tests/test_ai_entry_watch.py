@@ -5060,6 +5060,69 @@ def test_rising_heat_relieves_rvol_and_tape_age():
     assert "heating_rvol_relief" in met
 
 
+def test_heating_relief_reads_engine_map_not_only_the_row():
+    """%R on the indicators map (desk wire) relieves RVOL and tape age.
+
+    The seed row itself has no indicator dict — that was the funnel hole.
+    """
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_watch_min_rvol": 2.0,
+        "ai_watch_heating_min_rvol": 1.25,
+        "ai_watch_admit_max_tape_age_sec": 120.0,
+        "ai_watch_heating_admit_max_tape_age_sec": 300.0,
+        "ai_watch_exhaustion_heat_min_pct": 40.0,
+        "rte_confluence_max": 15.0,
+        "rte_threshold": 20,
+        "ai_watch_require_uptrend": False,
+        "ai_watch_require_indicators": False,
+        "ai_watch_min_price": 1.0,
+    }
+    wire = {
+        "pctr": -44.6, "pctr_slow": -40.9,
+        "pctr_rising": True, "pctr_slow_rising": True,
+        "pctr_both_rising": True,
+    }
+    row = {
+        "symbol": "BENF",
+        "source": "momentum",
+        "price": 8.0,
+        "pct_change": 8.0,
+        "rvol": 1.4,
+        "last_ask_age_sec": 180.0,
+        "price_age_sec": 180.0,
+    }
+    why, ind = ew.seed_rvol_gate(
+        "BENF", 1.4, 8.0, cfg, source="momentum",
+        row=row, indicators={"BENF": wire})
+    assert why is None
+    assert ind["pctr"] == -44.6
+    # Same reading via signal_proximity on the ticker, no map entry.
+    why2, _ind2 = ew.seed_rvol_gate(
+        "BENF", 1.4, 8.0, cfg, source="momentum",
+        row={**row, "signal_proximity": wire}, indicators={})
+    assert why2 is None
+    # Not both-rising: broad floor still refuses.
+    cold = dict(wire)
+    cold["pctr_slow_rising"] = False
+    cold["pctr_both_rising"] = False
+    why3, _ = ew.seed_rvol_gate(
+        "COLD", 1.4, 8.0, cfg, source="momentum",
+        row={"symbol": "COLD", "signal_proximity": cold}, indicators={})
+    assert why3 == "thin_rvol"
+
+    _lp = ew.live_print
+    ew.live_print = lambda s: None
+    try:
+        ok, met, why_inc = ew.passes_inclusion(
+            row, cfg, indicators={"BENF": wire})
+    finally:
+        ew.live_print = _lp
+    assert ok is True and why_inc == ""
+    assert "heating_rvol_relief" in met
+
+
 def test_square_arm_smci_pass_rklb_refuse_no_heating():
     """2026-09-18 TV square mode: SMCI (gap~9, both OB) arms; RKLB (gap 25) don't.
 

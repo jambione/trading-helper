@@ -177,6 +177,56 @@ def test_soft_seed_and_warming_helpers():
     sc_hot = ew.soft_seed_scout_score(
         row, {}, ind={"pctr": -20.0, "pctr_rising": True, "cm_rsi": 58.0})
     assert sc_warm > sc_hot
+
+
+def test_open_seed_keeps_wire_heater_and_drops_thin_non_heater(tmp_path, monkeypatch):
+    """BENF-class %R on signal_proximity survives thin_rvol; a cold line does not."""
+    wire = {
+        "pctr": -44.6, "pctr_slow": -40.9,
+        "pctr_rising": True, "pctr_slow_rising": True,
+        "pctr_both_rising": True,
+    }
+    cold_wire = dict(wire)
+    cold_wire["pctr_slow_rising"] = False
+    cold_wire["pctr_both_rising"] = False
+    tickers = [
+        {"ticker": "BENF", "price": 8.0, "pct_change": 8.0, "rvol": 1.4,
+         "signal_proximity": wire},
+        {"ticker": "COLD", "price": 8.0, "pct_change": 8.0, "rvol": 1.4,
+         "signal_proximity": cold_wire},
+    ]
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
+    monkeypatch.setattr(ew, "_dashboard_tickers", lambda: tickers)
+    monkeypatch.setattr(
+        ew, "dashboard_state",
+        lambda **_k: {"ai_positions": {"account": {"equity": 100000}},
+                      "tickers": tickers},
+    )
+    monkeypatch.setattr(ew, "research_candidate_rows", lambda: [])
+    rows = ew.desk_candidate_rows({
+        "ai_watch_seed_momentum": False,
+        "ai_watch_seed_momentum_open": True,
+        "ai_watch_seed_trending": False,
+        "ai_watch_seed_movers": False,
+        "ai_watch_seed_research": False,
+        "ai_watch_seed_bb_live": False,
+        "ai_watch_min_rvol": 2.0,
+        "ai_watch_heating_min_rvol": 1.25,
+        "ai_watch_exhaustion_heat_min_pct": 40.0,
+        "rte_confluence_max": 15.0,
+        "rte_require_tight": True,
+        "ai_watch_hot_move_rvol_waive_pct": 20.0,
+        "ai_watch_open_seed_min_pct": 0.0,
+        "ai_max_price": 100.0,
+        "ai_watch_morning_flood_enabled": False,
+    })
+    syms = {r["symbol"] for r in rows}
+    assert "BENF" in syms
+    assert "COLD" not in syms
+    benf = next(r for r in rows if r["symbol"] == "BENF")
+    assert benf["indicator"]["pctr"] == -44.6
+    drops = ew.seed_drop_snapshot()
+    assert drops["counts"].get("momentum", {}).get("thin_rvol", 0) >= 1
     # ai_watch_admit_prefer_square (on) grades a candidate row by dual-%R
     # seat class, not the single-line warming band: a fast-only -65 reading is
     # "unknown" (no slow line) and, once given one, "far" — the approach band

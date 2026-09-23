@@ -277,6 +277,114 @@ def test_far_exh_evict_after_ttl(monkeypatch):
     assert events[0]["reason"] == "far_exh"
 
 
+def test_dead_unknown_evicts_missing_pctr_inside_subscribe_grace(monkeypatch):
+    """WHLR-class: no %R, admitted 40s ago, still inside the 90s subscribe grace."""
+    dropped = []
+    monkeypatch.setattr(ew, "drop_watch_symbols", lambda s: dropped.extend(s))
+    now = time.time()
+    rec = {
+        "symbol": "WHLR",
+        "status": "watching",
+        "admit_ts": now - 40.0,
+        "exh_seat_class": "unknown",
+        "indicator": {},
+        "source": "momentum",
+        "morning_flood": 1,
+    }
+    cfg = _cfg(
+        ai_watch_dead_seat_evict_sec=30.0,
+        ai_watch_stream_subscribe_grace_sec=90.0,
+        ai_watch_morning_flood_enabled=True,
+    )
+    events = []
+    got = ew._maybe_dead_unknown_evict(
+        rec, sym="WHLR", cfg=cfg, now=now,
+        events=events, cp=_FakeCP(), gt=_FakeGT(),
+    )
+    assert got is True
+    assert dropped == ["WHLR"]
+    assert events[0]["reason"] == "dead_unknown"
+
+
+def test_dead_unknown_keeps_a_young_seat_and_a_rising_heater(monkeypatch):
+    dropped = []
+    monkeypatch.setattr(ew, "drop_watch_symbols", lambda s: dropped.extend(s))
+    now = time.time()
+    cfg = _cfg(ai_watch_dead_seat_evict_sec=30.0)
+    young = {
+        "symbol": "NEW",
+        "status": "watching",
+        "admit_ts": now - 10.0,
+        "exh_seat_class": "unknown",
+        "indicator": {},
+    }
+    assert ew._maybe_dead_unknown_evict(
+        young, sym="NEW", cfg=cfg, now=now,
+        events=[], cp=_FakeCP(), gt=_FakeGT(),
+    ) is False
+    assert dropped == []
+
+    heat = {
+        "symbol": "BENF",
+        "status": "watching",
+        "admit_ts": now - 400.0,
+        "exh_seat_class": "far",
+        "indicator": _ind(fast=-44.0, slow=-40.0),
+        "block_code": None,
+    }
+    assert ew._maybe_dead_unknown_evict(
+        heat, sym="BENF", cfg=cfg, now=now,
+        events=[], cp=_FakeCP(), gt=_FakeGT(),
+    ) is False
+
+    square = {
+        "symbol": "SQ",
+        "status": "watching",
+        "admit_ts": now - 400.0,
+        "indicator": _ind(fast=-13.0, slow=-4.0),
+    }
+    assert ew._maybe_dead_unknown_evict(
+        square, sym="SQ", cfg=cfg, now=now,
+        events=[], cp=_FakeCP(), gt=_FakeGT(),
+    ) is False
+    assert dropped == []
+
+
+def test_dead_unknown_evicts_stale_quote_after_its_own_clock(monkeypatch):
+    dropped = []
+    monkeypatch.setattr(ew, "drop_watch_symbols", lambda s: dropped.extend(s))
+    now = time.time()
+    cfg = _cfg(ai_watch_dead_seat_evict_sec=30.0)
+    rec = {
+        "symbol": "IPDN",
+        "status": "watching",
+        "admit_ts": now - 600.0,
+        "dead_unknown_since": now - 40.0,
+        "block_code": "stale_quote",
+        "block_ts": now - 1.0,  # poll restamps this every cycle
+        "exh_seat_class": "unknown",
+        "indicator": {},
+        "source": "momentum",
+        "morning_flood": 1,
+    }
+    events = []
+    got = ew._maybe_dead_unknown_evict(
+        rec, sym="IPDN", cfg=cfg, now=now,
+        events=events, cp=_FakeCP(), gt=_FakeGT(),
+    )
+    assert got is True
+    assert events[0]["reason"] == "dead_unknown"
+    assert events[0]["block"] == "stale_quote"
+
+    fresh = dict(rec)
+    fresh["symbol"] = "DCOY"
+    fresh["dead_unknown_since"] = now - 5.0
+    assert ew._maybe_dead_unknown_evict(
+        fresh, sym="DCOY", cfg=cfg, now=now,
+        events=[], cp=_FakeCP(), gt=_FakeGT(),
+    ) is False
+
+
 def test_far_exh_evict_respects_grace(monkeypatch):
     dropped = []
     monkeypatch.setattr(ew, "drop_watch_symbols", lambda s: dropped.extend(s))

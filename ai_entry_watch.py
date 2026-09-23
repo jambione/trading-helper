@@ -3570,6 +3570,103 @@ def _track_far_exh_seat(rec: dict, cfg: dict | None, *, now: float) -> None:
     # pre_square / os_triangle: keep any prior square_since / os_square_since.
 
 
+_DEAD_UNKNOWN_BLOCKS = frozenset({
+    "stale_quote", "stale_tape", "no_quote", "no_quote_age",
+    "no_rsi_data", "no_exhaustion_data", "exh_falling",
+})
+
+_PROTECTED_DEAD_CLASSES = frozenset({
+    "square", "pre_square", "os_square", "os_triangle",
+})
+
+
+def _maybe_dead_unknown_evict(
+    rec: dict,
+    *,
+    sym: str,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    gt,
+) -> bool:
+    """Drop seats that cannot arm and are past ``ai_watch_dead_seat_evict_sec``.
+
+    Unknown / missing-%R seats, and any seat whose block is stale tape,
+    no RSI, or falling heat. Subscribe grace (often 90s) and the morning
+    flood do not keep these: they occupy a slot and the 30s dead clock
+    never reached them on the far-only path. A live rising-heat seat
+    without one of those blocks stays. Square / pre-square stay until a
+    dead block is actually set.
+
+    The clock is ``dead_unknown_since``, not ``block_ts``. The poll
+    restamps ``block_ts`` every cycle, which would otherwise reset a
+    30s timer forever.
+    """
+    try:
+        limit = float(cfg.get("ai_watch_dead_seat_evict_sec", 30.0) or 0.0)
+    except (TypeError, ValueError):
+        limit = 30.0
+    if limit <= 0 or not isinstance(rec, dict):
+        return False
+    status = str(rec.get("status") or "").lower().strip()
+    if status != "watching":
+        return False
+    try:
+        if gt is not None and gt.has_open_position(sym):
+            return False
+    except Exception:
+        pass
+
+    code = str(rec.get("block_code") or "").strip().lower()
+    dead_block = code in _DEAD_UNKNOWN_BLOCKS
+    cls, _gap = classify_exh_seat(rec, cfg)
+    ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
+    fast = _f_or_none(ind.get("pctr")) if isinstance(ind, dict) else None
+    slow = _f_or_none(ind.get("pctr_slow")) if isinstance(ind, dict) else None
+    missing_pctr = fast is None or slow is None
+    missing_unknown = cls in ("unknown", "") and missing_pctr
+
+    if rising_heat_quality(rec, cfg) and not dead_block:
+        rec.pop("dead_unknown_since", None)
+        return False
+    if cls in _PROTECTED_DEAD_CLASSES and not dead_block:
+        rec.pop("dead_unknown_since", None)
+        return False
+    if not dead_block and not missing_unknown:
+        rec.pop("dead_unknown_since", None)
+        return False
+
+    since = _f_or_none(rec.get("dead_unknown_since"))
+    if since is None or since <= 0 or since > float(now):
+        # Never-painted %R: the seat has been dead since admit, so an
+        # old admit does not wait another full window.
+        if missing_unknown and not dead_block:
+            admitted = _f_or_none(rec.get("admit_ts"))
+            since = float(admitted) if admitted and admitted > 0 else float(now)
+        else:
+            since = float(now)
+        rec["dead_unknown_since"] = float(since)
+    if (float(now) - float(since)) < limit:
+        return False
+
+    try:
+        events.append(cp.log_event(
+            "watch_drop", symbol=sym, reason="dead_unknown",
+            block=code or ("missing_pctr" if missing_unknown else ""),
+            exh_seat_class=cls,
+            elapsed_sec=round(float(now) - float(since), 1),
+            seat_role=str(rec.get("seat_role") or "") or None,
+        ))
+    except Exception:  # noqa: BLE001
+        events.append({
+            "kind": "watch_drop", "symbol": sym, "reason": "dead_unknown",
+            "block": code, "exh_seat_class": cls,
+        })
+    drop_watch_symbols([sym])
+    return True
+
+
 def _maybe_far_exh_evict(
     rec: dict,
     *,
@@ -6752,6 +6849,12 @@ def desk_candidate_rows(
         min_rvol = float(cfg.get("ai_watch_min_rvol", 2.0) or 2.0)
     except (TypeError, ValueError):
         min_rvol = 2.0
+    # One map for every seed source. Heating RVOL relief needs %R that
+    # often lives on signal_proximity, not on the seed file row.
+    try:
+        _seed_inds = _engine_indicator_map()
+    except Exception:
+        _seed_inds = {}
 
     flood = morning_flood_active(cfg, now)
 
@@ -6845,8 +6948,10 @@ def desk_candidate_rows(
                     rv = float(r.get("rvol")) if r.get("rvol") is not None else None
                 except (TypeError, ValueError):
                     rv = None
-                if rvol_blocks_admit(
-                        rv, seed_pct, cfg, source="momentum") == "thin_rvol":
+                thin_why, seed_ind = seed_rvol_gate(
+                    s, rv, seed_pct, cfg, source="momentum",
+                    row=r, indicators=_seed_inds)
+                if thin_why == "thin_rvol":
                     _note_seed_drop("momentum", s, "thin_rvol",
                                     pct=seed_pct, rvol=rv)
                     continue
@@ -6924,7 +7029,7 @@ def desk_candidate_rows(
                 crit = ["mom_open", "mom_trending"] if on_tr else ["mom_open"]
                 if has_young_stream:
                     crit = list(crit) + ["mom_stream"]
-                open_scored.append((rank, {
+                mom_row = {
                     "symbol": s,
                     "trending_score": round(rank, 2),
                     "score": round(rank, 2),
@@ -6939,7 +7044,10 @@ def desk_candidate_rows(
                     "criteria": crit,
                     "bypass_inclusion": False,
                     "mom_open_soft": True,
-                }))
+                }
+                if isinstance(seed_ind, dict):
+                    mom_row["indicator"] = seed_ind
+                open_scored.append((rank, mom_row))
             open_scored.sort(key=lambda t: t[0], reverse=True)
             added = 0
             extreme_floor = extreme_move_pct(cfg)
@@ -7052,8 +7160,12 @@ def desk_candidate_rows(
                         # e.g. 150 meaning 150% → 1.5x
                         rvol = rvol / 100.0
                     # Known-thin: hot day-move waives (same helper as movers).
-                    if rvol_blocks_admit(
-                            rvol, pct, cfg, source="trending") == "thin_rvol":
+                    # Engine %R on the wire can relieve the floor before the
+                    # name is wiped for lacking an indicator on this file row.
+                    thin_why, seed_ind = seed_rvol_gate(
+                        s, rvol, pct, cfg, source="trending",
+                        row=r, indicators=_seed_inds)
+                    if thin_why == "thin_rvol":
                         _note_seed_drop("trending", s, "thin_rvol",
                                         pct=pct, rvol=rvol, score=score)
                         continue
@@ -7065,6 +7177,22 @@ def desk_candidate_rows(
                         and tr_min_rvol > 0
                         and rvol >= tr_min_rvol
                     )
+                    # Heating relief already cleared thin_rvol. Count that
+                    # as the rvol claim so no_claim does not undo it.
+                    if (
+                        not rvol_ok
+                        and rvol is not None
+                        and isinstance(seed_ind, dict)
+                        and rising_heat_quality(
+                            {"symbol": s, "indicator": seed_ind}, cfg)
+                    ):
+                        try:
+                            heat_floor = float(
+                                cfg.get("ai_watch_heating_min_rvol", 1.25) or 0.0)
+                        except (TypeError, ValueError):
+                            heat_floor = 1.25
+                        if heat_floor > 0 and float(rvol) + 1e-12 >= heat_floor:
+                            rvol_ok = True
                     # Long-only: refuse red days when we know the change.
                     if pct is not None and pct <= 0:
                         _note_seed_drop("trending", s, "red", pct=pct)
@@ -7096,7 +7224,7 @@ def desk_candidate_rows(
                     chg_s = f" chg {pct:+.1f}%" if pct is not None else ""
                     ext_s = " EXT" if look == "EXT" else ""
                     reason = f"trending{ext_s} score {score:.1f}{chg_s}"
-                    rows.append({
+                    tr_row = {
                         "symbol": s,
                         "trending_score": round(score, 2),
                         "score": round(score, 2),
@@ -7113,7 +7241,10 @@ def desk_candidate_rows(
                             else None
                         ),
                         "criteria": crit,
-                    })
+                    }
+                    if isinstance(seed_ind, dict):
+                        tr_row["indicator"] = seed_ind
+                    rows.append(tr_row)
                     if len([x for x in rows if x.get("source") == "trending"]) >= max(1, n):
                         break
         except Exception:
@@ -7229,8 +7360,10 @@ def desk_candidate_rows(
                     # Known-thin tape: movers use a lower floor than the desk
                     # general min_rvol, and a hot day-move waives it so
                     # BIAF/LABX-class +20% names reach the book (2026-09-04).
-                    if rvol_blocks_admit(
-                            rvol, pct, cfg, source="movers") == "thin_rvol":
+                    thin_why, seed_ind = seed_rvol_gate(
+                        s, rvol, pct, cfg, source="movers",
+                        row=r, indicators=_seed_inds)
+                    if thin_why == "thin_rvol":
                         _note_seed_drop("movers", s, "thin_rvol",
                                         pct=pct, rvol=rvol)
                         continue
@@ -7271,6 +7404,8 @@ def desk_candidate_rows(
                     row["quote_src"] = src_used
                     if dvol_f is not None:
                         row["dollar_volume"] = dvol_f
+                    if isinstance(seed_ind, dict):
+                        row["indicator"] = seed_ind
                     rows.append(row)
                     if len([x for x in rows
                             if x.get("source") == "movers"]) >= max(1, n):
@@ -7356,8 +7491,10 @@ def desk_candidate_rows(
                     rv = float(rvol_src) if rvol_src is not None else None
                 except (TypeError, ValueError):
                     rv = None
-                if rvol_blocks_admit(
-                        rv, pct_f, cfg, source="research") == "thin_rvol":
+                thin_why, seed_ind = seed_rvol_gate(
+                    s, rv, pct_f, cfg, source="research",
+                    row=live or tr, indicators=_seed_inds)
+                if thin_why == "thin_rvol":
                     _note_seed_drop("research", s, "thin_rvol",
                                     pct=pct_f, rvol=rv)
                     continue
@@ -7384,6 +7521,8 @@ def desk_candidate_rows(
                     "dollar_volume": (dvol * px) if (dvol and px) else None,
                     "criteria": ["research"],
                 })
+                if isinstance(seed_ind, dict):
+                    row["indicator"] = seed_ind
                 if flood:
                     row["morning_flood"] = 1
                 rows.append(row)
@@ -7684,7 +7823,9 @@ def _audit_extreme_desk_movers(
             rv = float(r.get("rvol")) if r.get("rvol") is not None else None
         except (TypeError, ValueError):
             rv = None
-        thin = rvol_blocks_admit(rv, pct, cfg, source="momentum")
+        thin, _ind = seed_rvol_gate(
+            s, rv, pct, cfg, source="momentum",
+            row=r, indicators=None)
         if thin:
             _note_seed_drop("momentum", s, thin, pct=pct, rvol=rv,
                             price=r.get("price"))
@@ -8525,6 +8666,64 @@ def _admit_min_rvol(source: str, cfg: dict) -> float:
         return 2.0
 
 
+def seed_indicator_record(
+    symbol: str,
+    row: dict | None = None,
+    indicators: dict | None = None,
+) -> dict:
+    """Copy *row* and attach the %R reading seed RVOL relief should see.
+
+    Seed loops used to call ``rvol_blocks_admit`` with no record. Heating
+    relief then only fired when the seed file already carried ``indicator``,
+    so a name whose %R lived on the desk wire (``signal_proximity``) was
+    dropped ``thin_rvol`` before inclusion could apply the softer floor or
+    the longer tape-age ceiling.
+    """
+    sym = str(symbol or "").upper().strip()
+    rec: dict = dict(row) if isinstance(row, dict) else {}
+    if sym:
+        rec["symbol"] = sym
+    ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else None
+    if ind is None:
+        sp = rec.get("signal_proximity")
+        if isinstance(sp, dict) and (
+            sp.get("pctr") is not None
+            or sp.get("pctr_slow") is not None
+            or sp.get("pctr_rising") is not None
+            or sp.get("pctr_slow_rising") is not None
+        ):
+            ind = sp
+    if ind is None and sym and isinstance(indicators, dict):
+        mapped = indicators.get(sym)
+        if isinstance(mapped, dict):
+            ind = mapped
+    if isinstance(ind, dict):
+        # Copy so a later stamp cannot mutate the dashboard payload.
+        rec["indicator"] = dict(ind)
+    return rec
+
+
+def seed_rvol_gate(
+    symbol: str,
+    rvol: float | None,
+    pct: float | None,
+    cfg: dict,
+    *,
+    source: str,
+    row: dict | None = None,
+    indicators: dict | None = None,
+) -> tuple[str | None, dict | None]:
+    """``(thin_rvol or None, indicator or None)`` for a seed row.
+
+    The indicator is the one relief was judged on, ready to stamp onto the
+    shortlist row so inclusion sees the same reading.
+    """
+    rec = seed_indicator_record(symbol, row, indicators)
+    why = rvol_blocks_admit(rvol, pct, cfg, source=source, record=rec)
+    ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else None
+    return why, ind
+
+
 def rvol_blocks_admit(
     rvol: float | None,
     pct: float | None,
@@ -9208,7 +9407,12 @@ def sync_watch_from_source_panels(
             str(r.get("symbol") or "").upper(): r
             for r in candidates if isinstance(r, dict)
         }
-        candidates, rejected = apply_inclusion_gate(candidates, cfg)
+        try:
+            _incl_inds = _engine_indicator_map()
+        except Exception:
+            _incl_inds = {}
+        candidates, rejected = apply_inclusion_gate(
+            candidates, cfg, indicators=_incl_inds)
         # Tag warming after inclusion (admit ≠ arm). Quota protects seats later.
         try:
             tag_warming_on_candidates(
@@ -16030,6 +16234,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             ):
                 continue
             if _maybe_never_armable_evict(
+                rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
+            ):
+                continue
+            if _maybe_dead_unknown_evict(
                 rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
             ):
                 continue
