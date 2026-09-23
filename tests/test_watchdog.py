@@ -247,3 +247,52 @@ def test_python_services_are_always_wanted():
 def test_python_service_command_uses_the_interpreter():
     svc = w.Service("dashboard", "dashboard.py", "dashboard.log")
     assert svc.command("/x/python") == ["/x/python", "-u", "dashboard.py"]
+
+
+# ── wedged: alive but not writing its heartbeat ─────────────────────────────
+
+def _svc(tmp_path, age_sec):
+    hb = tmp_path / "signal_state.json"
+    hb.write_text("{}")
+    t = hb.stat().st_mtime
+    os.utime(hb, (t - age_sec, t - age_sec))
+    return w.Service("engine", "signal_engine.py", "engine.log",
+                      stale_file=hb, stale_sec=120.0), t
+
+
+def test_wedged_when_heartbeat_stale_in_rth(tmp_path):
+    svc, now = _svc(tmp_path, 300)
+    age = svc.wedged(now, rth=lambda _t: True, proc_age=lambda _p: 3600.0)
+    assert age is not None and age >= 299
+
+
+def test_not_wedged_when_fresh(tmp_path):
+    svc, now = _svc(tmp_path, 10)
+    assert svc.wedged(now, rth=lambda _t: True, proc_age=lambda _p: 3600.0) is None
+
+
+def test_not_judged_outside_rth(tmp_path):
+    svc, now = _svc(tmp_path, 3000)
+    assert svc.wedged(now, rth=lambda _t: False, proc_age=lambda _p: 3600.0) is None
+
+
+def test_startup_grace_protects_a_fresh_engine(tmp_path):
+    svc, now = _svc(tmp_path, 3000)
+    assert svc.wedged(now, rth=lambda _t: True, proc_age=lambda _p: 60.0) is None
+
+
+def test_no_heartbeat_configured_is_never_wedged(tmp_path):
+    svc = w.Service("discord", "discord_source.py", "discord.log")
+    assert svc.wedged(0.0, rth=lambda _t: True, proc_age=lambda _p: 3600.0) is None
+
+
+def test_engine_service_carries_a_heartbeat():
+    eng = [s for s in w.default_services(8888) if s.name == "engine"][0]
+    assert eng.stale_file is not None and eng.stale_file.name == "signal_state.json"
+    assert eng.stale_sec == 120.0
+
+
+@pytest.mark.parametrize("raw,sec", [
+    ("51:26", 3086), ("01:12:24", 4344), ("05-06:56:25", 5 * 86400 + 6 * 3600 + 56 * 60 + 25), ("bad", None)])
+def test_parse_etime(raw, sec):
+    assert w.parse_etime(raw) == sec

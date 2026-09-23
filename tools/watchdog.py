@@ -148,6 +148,10 @@ class Service:
     failures:  int = 0                 # consecutive failed starts
     next_try:  float = 0.0             # epoch before which we do not retry
     pid:       int | None = None
+    # Alive is not working. When set, the process is WEDGED if this file has
+    # not been rewritten for stale_sec during RTH (see wedged()).
+    stale_file: Path | None = None
+    stale_sec:  float = 0.0
 
     def wanted(self) -> bool:
         """Whether this service is supposed to be up at all.
@@ -171,6 +175,28 @@ class Service:
             except (urllib.error.URLError, OSError, ValueError):
                 return False
         return process_running(self.pattern or self.script)
+
+    def wedged(self, now: float, *, rth=None, proc_age=None) -> float | None:
+        """Seconds since the heartbeat file was written, when that is too long.
+
+        None means "not wedged" (or not judged): no heartbeat configured,
+        outside RTH, the process is still inside its startup grace, or the
+        file is fresh. 2026-09-23: signal_engine sat alive at 0% CPU on a
+        lock from 13:51 to 14:15 while the book armed on its frozen
+        indicators; pgrep said healthy the whole time.
+        """
+        if self.stale_file is None or self.stale_sec <= 0:
+            return None
+        if not (rth or in_rth)(now):
+            return None
+        age_proc = (proc_age or process_age)(self.pattern or self.script)
+        if age_proc is None or age_proc < WEDGE_GRACE_SEC:
+            return None
+        try:
+            age = now - self.stale_file.stat().st_mtime
+        except OSError:
+            return None
+        return age if age > self.stale_sec else None
 
     def start(self, py: str) -> int | None:
         LOGDIR.mkdir(exist_ok=True)
@@ -207,6 +233,57 @@ def process_running(pattern: str) -> bool:
         return False
 
 
+WEDGE_GRACE_SEC = 180.0   # a fresh engine fetches first bars before writing
+
+
+def in_rth(now: float) -> bool:
+    """Weekday 09:30-16:00 ET — when a silent engine costs trades."""
+    dt = datetime.fromtimestamp(now, ET)
+    return dt.weekday() < 5 and dtime(9, 30) <= dt.time() < dtime(16, 0)
+
+
+def process_age(pattern: str) -> float | None:
+    """Seconds since the OLDEST process matching `pattern` started, or None."""
+    try:
+        pids = subprocess.run(["pgrep", "-f", pattern], capture_output=True,
+                              text=True).stdout.split()
+        if not pids:
+            return None
+        # macOS ps has no etimes; etime is [[dd-]hh:]mm:ss.
+        out = subprocess.run(["ps", "-o", "etime=", "-p", ",".join(pids)],
+                             capture_output=True, text=True).stdout.split()
+        ages = [a for a in (parse_etime(x) for x in out) if a is not None]
+        return max(ages) if ages else None
+    except (OSError, ValueError):
+        return None
+
+
+def parse_etime(raw: str) -> float | None:
+    """'05-06:56:25' / '01:12:24' / '51:26' -> seconds."""
+    try:
+        days, _, rest = raw.strip().rpartition("-")
+        parts = [int(p) for p in rest.split(":")]
+        while len(parts) < 3:
+            parts.insert(0, 0)
+        h, m, sec = parts[-3:]
+        return (int(days) if days else 0) * 86400 + h * 3600 + m * 60 + sec
+    except ValueError:
+        return None
+
+
+def kill_pattern(pattern: str, wait: float = 6.0) -> None:
+    """TERM every match, then KILL whatever is still there after `wait`."""
+    subprocess.run(["pkill", "-TERM", "-f", pattern],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.time() + wait
+    while time.time() < deadline and process_running(pattern):
+        time.sleep(0.5)
+    if process_running(pattern):
+        subprocess.run(["pkill", "-KILL", "-f", pattern],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1.0)
+
+
 def default_services(port: int) -> list[Service]:
     """The processes whose death silently costs data.
 
@@ -218,7 +295,8 @@ def default_services(port: int) -> list[Service]:
     return [
         Service("dashboard", "dashboard.py", "dashboard.log",
                 health_url=f"http://localhost:{port}/api/meta"),
-        Service("engine", "signal_engine.py", "engine.log"),
+        Service("engine", "signal_engine.py", "engine.log",
+                stale_file=ROOT / "signal_state.json", stale_sec=120.0),
         Service("discord", "discord_source.py", "discord.log"),
     ]
 
@@ -586,11 +664,20 @@ def main() -> int:
                     continue
 
                 if svc.healthy(py):
-                    if svc.failures:
-                        log(f"{svc.name}: healthy again after {svc.failures} "
-                            f"failed start(s)")
-                    svc.failures = 0
-                    continue
+                    stale = svc.wedged(now)
+                    if stale is None:
+                        if svc.failures:
+                            log(f"{svc.name}: healthy again after {svc.failures} "
+                                f"failed start(s)")
+                        svc.failures = 0
+                        continue
+                    log("!" * 60)
+                    log(f"{svc.name}: WEDGED — alive but {svc.stale_file.name} "
+                        f"is {stale:.0f}s old (limit {svc.stale_sec:.0f}s); "
+                        f"killing and restarting")
+                    log("!" * 60)
+                    kill_pattern(svc.pattern or svc.script)
+                    svc.next_try = 0.0
 
                 if now < svc.next_try:
                     continue
