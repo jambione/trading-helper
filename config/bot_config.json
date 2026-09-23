@@ -221,6 +221,7 @@
   "ai_watch_seed_momentum_open_n": 14,
   "ai_watch_seed_movers": true,
   "ai_watch_seed_movers_n": 25,
+  "ai_watch_engine_push_max": 48,
   "ai_watch_movers_min_pct_change": 1.5,
   "ai_watch_seed_research": true,
   "ai_watch_seed_research_n": 12,
