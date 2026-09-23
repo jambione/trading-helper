@@ -50,6 +50,13 @@ DEFAULT_CONFIG = {
     # Heating may arm only when prints rose over this many seconds.
     # 0 disables. Square ■ is not gated by this.
     "ai_watch_heating_price_rise_sec": 0.0,
+    # Rising-heat (both lines + tight + heat band) may clear this RVOL floor
+    # when the broad ai_watch_min_rvol would wipe them.
+    "ai_watch_heating_min_rvol": 1.25,
+    # Rising-heat may clear a longer admit tape-age (BENF-class heaters).
+    "ai_watch_heating_admit_max_tape_age_sec": 300.0,
+    # Sticky dead seats (falling / stale / no RSI) leave the book this fast.
+    "ai_watch_dead_seat_evict_sec": 30.0,
     # Square-aligned admit bus: prefer pre_square/square seats; evict far.
     "ai_watch_admit_prefer_square": True,
     "ai_watch_exh_pre_thr": 35.0,          # both lines ≥ −pre_thr = approach
@@ -1680,6 +1687,9 @@ _EFFECTIVE_KEYS = (
     "ai_watch_exh_square_arm",
     "ai_watch_exh_heating_with_square",
     "ai_watch_heating_price_rise_sec",
+    "ai_watch_heating_min_rvol",
+    "ai_watch_heating_admit_max_tape_age_sec",
+    "ai_watch_dead_seat_evict_sec",
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
     "ai_watch_macd_gap_arm",
@@ -2002,6 +2012,9 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exh_square_arm",
     "ai_watch_exh_heating_with_square",
     "ai_watch_heating_price_rise_sec",
+    "ai_watch_heating_min_rvol",
+    "ai_watch_heating_admit_max_tape_age_sec",
+    "ai_watch_dead_seat_evict_sec",
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
     "ai_watch_macd_gap_arm",

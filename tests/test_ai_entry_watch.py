@@ -5017,6 +5017,49 @@ def _tv_rec(*, fast=-6.0, slow=-3.0, rsi=8.0, tight=True):
     return rec
 
 
+def test_rising_heat_relieves_rvol_and_tape_age():
+    """BENF-class: both lines rising clears a softer RVOL / longer tape age."""
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_watch_min_rvol": 2.0,
+        "ai_watch_heating_min_rvol": 1.25,
+        "ai_watch_admit_max_tape_age_sec": 120.0,
+        "ai_watch_heating_admit_max_tape_age_sec": 300.0,
+        "ai_watch_exhaustion_heat_min_pct": 40.0,
+        "rte_confluence_max": 15.0,
+        "rte_threshold": 20,
+        "ai_watch_require_uptrend": False,
+        "ai_watch_require_indicators": False,
+        "ai_watch_min_price": 1.0,
+    }
+    heat = {
+        "symbol": "BENF",
+        "source": "momentum",
+        "price": 8.0,
+        "pct_change": 8.0,
+        "rvol": 1.4,
+        "last_ask_age_sec": 180.0,
+        "price_age_sec": 180.0,
+        "indicator": {
+            "pctr": -44.6, "pctr_slow": -40.9,
+            "pctr_rising": True, "pctr_slow_rising": True,
+            "pctr_both_rising": True,
+        },
+    }
+    assert ew.rising_heat_quality(heat, cfg) is True
+    assert ew.rvol_blocks_admit(
+        1.4, 8.0, cfg, source="momentum", record=heat) is None
+    _lp = ew.live_print
+    ew.live_print = lambda s: None
+    try:
+        ok, met, why = ew.passes_inclusion(heat, cfg)
+    finally:
+        ew.live_print = _lp
+    assert ok is True and why == ""
+    assert "heating_rvol_relief" in met
+
+
 def test_square_arm_smci_pass_rklb_refuse_no_heating():
     """2026-09-18 TV square mode: SMCI (gap~9, both OB) arms; RKLB (gap 25) don't.
 

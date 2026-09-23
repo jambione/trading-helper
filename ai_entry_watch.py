@@ -2504,8 +2504,8 @@ def maybe_soft_seed_rows(
         )
 
     # Pass 1b: limited far keeps. prefer_square alone starves far.
-    # Heating-with-square still prefers ■ seats, but far heaters need a
-    # keep or last_heating never sees them (Wed/Thu book).
+    # Heating-with-square: only rising-heat far seats (both lines rising,
+    # tight, heat band) — falling/stale far must not fill the book.
     heat_with_sq = exh_heating_with_square(cfg)
     if (not prefer_sq or heat_with_sq) and (max_n <= 0 or _other_keep_n() < max_n):
         for sc, row in ranked:
@@ -2518,9 +2518,15 @@ def maybe_soft_seed_rows(
                 continue
             if far_cap >= 0 and _far_keep_count(picked) >= far_cap:
                 break
-            if require_ready and not bool(row.get("arm_ready")):
+            if heat_with_sq and not rising_heat_quality(row, cfg):
                 continue
+            if require_ready and not bool(row.get("arm_ready")):
+                # Rising-heat approach seats may warm without full arm_ready
+                # (price-rise window still filling).
+                if not (heat_with_sq and rising_heat_quality(row, cfg)):
+                    continue
             row["scout_only"] = False
+            row["rising_heat_seat"] = True
             picked.append(row)
 
     # Pass 2: scout-only warming / unknown (short TTL) — not far keeps.
@@ -3591,8 +3597,17 @@ def _maybe_far_exh_evict(
         "exh_falling", "stale_quote", "no_rsi_data",
     )
     if exh_heating_with_square(cfg) and not _dead_far:
-        return False
+        # Quality heater still on the book — keep.
+        if rising_heat_quality(rec, cfg):
+            return False
+        # Not rising-heat and not a sticky dead code: still stealable as far.
+    try:
+        dead_limit = float(cfg.get("ai_watch_dead_seat_evict_sec", 30.0) or 0.0)
+    except (TypeError, ValueError):
+        dead_limit = 30.0
     limit = far_exh_evict_sec(cfg)
+    if _dead_far and dead_limit > 0:
+        limit = min(limit, dead_limit) if limit > 0 else dead_limit
     if limit <= 0 or not isinstance(rec, dict):
         return False
     status = str(rec.get("status") or "").lower().strip()
@@ -8516,13 +8531,22 @@ def rvol_blocks_admit(
     cfg: dict,
     *,
     source: str = "",
+    record: dict | None = None,
 ) -> str | None:
     """Return ``thin_rvol`` when known-thin RVOL should refuse, else None.
 
     Unknown (None) abstains. Hot day-move waives the floor so +20% movers
-    are not wiped by a 1.5x SIP ratio.
+    are not wiped by a 1.5x SIP ratio. Rising-heat quality (both lines
+    rising + tight + heat band) may use ``ai_watch_heating_min_rvol``.
     """
     min_rvol = _admit_min_rvol(source, cfg)
+    if record is not None and rising_heat_quality(record, cfg):
+        try:
+            heat_floor = float(cfg.get("ai_watch_heating_min_rvol", 1.25) or 0.0)
+        except (TypeError, ValueError):
+            heat_floor = 1.25
+        if heat_floor > 0:
+            min_rvol = min(float(min_rvol), heat_floor) if min_rvol > 0 else heat_floor
     if min_rvol <= 0 or rvol is None:
         return None
     try:
@@ -8593,13 +8617,33 @@ def passes_inclusion(
 
     source = str(row.get("source") or "").strip().lower()
     is_research = source in _RESEARCH_SOURCES
+    # Attach live indicators early so rising-heat quality can relieve
+    # tape-age / RVOL (BENF 2026-09-23: both lines rising, blocked stale).
+    _ind_early = None
+    if isinstance(indicators, dict) and sym:
+        _ind_early = indicators.get(sym)
+    if not isinstance(_ind_early, dict):
+        _ind_early = row.get("indicator") if isinstance(
+            row.get("indicator"), dict) else None
+    _rec_quality = dict(row)
+    if isinstance(_ind_early, dict):
+        _rec_quality["indicator"] = _ind_early
     # Prefer not admitting names with no / dead tape over filling the book
     # with permanent stale_quote rows (AEHG/AOUT/LABX-class after ba79b10).
     # Movers get a tighter ceiling so thin +20% names need a live print.
+    # Rising-heat quality may use a longer ceiling — the %R lines are live.
     tape_max = (
         movers_admit_max_tape_age_sec(cfg) if source == "movers"
         else admit_max_tape_age_sec(cfg)
     )
+    if rising_heat_quality(_rec_quality, cfg):
+        try:
+            heat_tape = float(
+                cfg.get("ai_watch_heating_admit_max_tape_age_sec", 300.0) or 0.0)
+        except (TypeError, ValueError):
+            heat_tape = 300.0
+        if heat_tape > 0:
+            tape_max = max(float(tape_max), heat_tape)
     if tape_max > 0 and sym:
         try:
             tape = live_print(sym)
@@ -8741,14 +8785,38 @@ def passes_inclusion(
         src_for_rvol = source or ("momentum" if mom_soft else "")
         rvol_f = _f_or_none(row.get("rvol"))
         pct_for_rvol = _pct_change_value(row.get("pct_change"))
+        ind_for_rvol = None
+        if isinstance(indicators, dict) and sym:
+            ind_for_rvol = indicators.get(sym)
+        if not isinstance(ind_for_rvol, dict):
+            ind_for_rvol = row.get("indicator") if isinstance(
+                row.get("indicator"), dict) else None
+        rec_for_rvol = dict(row)
+        if isinstance(ind_for_rvol, dict):
+            rec_for_rvol["indicator"] = ind_for_rvol
         thin = rvol_blocks_admit(
-            rvol_f, pct_for_rvol, cfg, source=src_for_rvol)
+            rvol_f, pct_for_rvol, cfg, source=src_for_rvol,
+            record=rec_for_rvol)
         if thin:
             return False, met, thin
         if rvol_f is not None:
             floor = _admit_min_rvol(src_for_rvol, cfg)
+            heat_relief = False
+            if rising_heat_quality(rec_for_rvol, cfg):
+                try:
+                    heat_floor = float(
+                        cfg.get("ai_watch_heating_min_rvol", 1.25) or 0.0)
+                except (TypeError, ValueError):
+                    heat_floor = 1.25
+                if heat_floor > 0:
+                    floor = (
+                        min(float(floor), heat_floor) if floor > 0 else heat_floor
+                    )
+                    heat_relief = True
             if floor > 0 and rvol_f + 1e-12 >= floor:
                 met.append("rvol")
+                if heat_relief:
+                    met.append("heating_rvol_relief")
             elif (
                 floor > 0
                 and hot_move_rvol_waive_pct(cfg) > 0
@@ -12056,6 +12124,37 @@ def note_px_ring(rec: dict, px: float | None, now: float | None) -> None:
     else:
         clean.append([t, p])
     rec["px_ring"] = clean[-12:]
+
+
+def rising_heat_quality(record: dict | None, cfg: dict | None = None) -> bool:
+    """True when both %R lines are rising, tight, and heat is in band.
+
+    Book seating and RVOL relief use this so quality heaters can sit even
+    when the broad min-RVOL floor would wipe them.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not isinstance(record, dict):
+        return False
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    src = ind or record
+    if not (src.get("pctr_rising") and src.get("pctr_slow_rising")):
+        if not src.get("pctr_both_rising"):
+            return False
+    try:
+        heat_min = float(cfg.get("ai_watch_exhaustion_heat_min_pct", 40.0) or 40.0)
+    except (TypeError, ValueError):
+        heat_min = 40.0
+    ex = exhaustion_pct(record)
+    if ex is None:
+        # Fall back to fast %R → heat.
+        fast = _f_or_none(src.get("pctr"))
+        if fast is None:
+            return False
+        ex = 100.0 + float(fast)
+    if float(ex) + 1e-9 < heat_min:
+        return False
+    tight_ok, _why = _heating_dual_r_allows(record, cfg)
+    return bool(tight_ok)
 
 
 def heating_price_rising(
