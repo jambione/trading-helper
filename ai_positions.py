@@ -4008,6 +4008,28 @@ def apply_local_trail(
         changed = True
     if trigger is None:
         trigger = last
+    # 30s entry catch-up BEFORE the hit test. IONQ 2026-09-23 sat on the
+    # seed ($42.46) the whole hold — manage crashed on now=, and even a
+    # healthy tick sold the stale shelf before last−$0.01 could land.
+    # Raise-only: unmoved shelf → last − $0.01. Does not wait for arm_r.
+    _catch_last = (
+        _trail_last_for_stop(pos)
+        or _num(pos.get("last_seen_price"))
+        or _num(trigger)
+    )
+    _jump = entry_catchup_stop(pos, _cfg_all(), _catch_last, loc, now)
+    if _jump is not None and (loc is None or float(_jump) > float(loc) + 1e-9):
+        log_event(
+            "entry_catchup", symbol=ticker,
+            from_stop=loc, to_stop=_jump, last=_catch_last,
+            age_sec=round(
+                float(now) - float(
+                    pos.get("entry_confirmed_at") or pos.get("entry_time") or now
+                ), 1),
+        )
+        pos["local_stop_price"] = float(_jump)
+        loc = float(_jump)
+        changed = True
     # Hit the *existing* board stop first. Raising on this tick's high
     # and then testing the low would skip a sale through the old shelf.
     # The shelf keeps RAISING while held back — only the sale waits, so a

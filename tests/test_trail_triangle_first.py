@@ -108,6 +108,59 @@ def test_trail_yields_uses_entry_features_when_indicator_blank(monkeypatch):
     assert why == "still_dual_ob"
 
 
+def test_apply_local_trail_entry_catchup_before_hit(monkeypatch):
+    """30s unmoved shelf jumps to last−$0.01 before the stale seed can sell."""
+    import time as _time
+    now = _time.time()
+    cfg = _cfg(ai_local_trail_entry_catchup_sec=30.0, ai_local_trail_give_r=0.35)
+    monkeypatch.setattr(ap, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(ap, "_cfg_flag", lambda k, d=False: bool(cfg.get(k, d)))
+    monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
+    monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
+    events_logged = []
+    monkeypatch.setattr(ap, "log_event", lambda *a, **k: events_logged.append((a, k)))
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "apply_live_exhaustion", lambda *a, **k: False)
+
+    closed_calls = []
+
+    class _Alp:
+        def cancel_open_orders(self, t):
+            return None
+
+        def close_out(self, t):
+            closed_calls.append(t)
+            return {"order_id": "x"}
+
+    import sys
+    monkeypatch.setitem(sys.modules, "alpaca_trader", _Alp())
+
+    # IONQ shape: seed well under last; print is above the seed so a
+    # pre-catchup hit test must NOT sell, and the shelf must jump.
+    pos = _pos(
+        symbol="IONQ",
+        entry_price=42.88,
+        entry_time=now - 40.0,
+        entry_confirmed_at=now - 40.0,
+        risk_per_share=2.144,
+        local_stop_price=42.46,
+        last_seen_price=42.60,
+        peak_price=42.60,
+        mfe_r=-0.13,
+        trail_prints=[42.59, 42.60],
+        indicator={},
+        features={},
+        exh_was_overbought=False,
+    )
+    events = []
+    exit_why = {}
+    _ch, closed = ap.apply_local_trail("IONQ", pos, 42.60, events, exit_why)
+    assert closed is False
+    assert closed_calls == []
+    assert pos["local_stop_price"] == pytest.approx(42.59)
+    assert any(a and a[0] == "entry_catchup" for a, _k in events_logged)
+
+
 def test_apply_local_trail_defers_when_dual_blank(monkeypatch):
     cfg = _cfg()
     monkeypatch.setattr(ap, "_cfg_all", lambda: cfg)
