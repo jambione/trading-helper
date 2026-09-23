@@ -30,6 +30,9 @@ _FINGERPRINT_KEYS = (
     # and the slow-lag ceiling both decide whether leave-OB fires at all.
     "ai_exit_left_overbought_confirm_sec",
     "ai_exit_dual_slow_max_age_sec",
+    # Min-hold exemption for leave-OB: True vs False changes whether triangle
+    # flatten can fire inside the hold window — two regimes, one ledger.
+    "ai_exit_left_ob_exempt_min_hold",
     "ai_exit_macd_liquidate",
     "ai_exit_macd_hard_sell_sep",
     "ai_exit_macd_confirm_ticks",
@@ -71,6 +74,9 @@ _FINGERPRINT_KEYS = (
     "ai_local_trail_arm_pct",
     "ai_local_trail_be_at_r",
     "ai_local_trail_be_at_pct",
+    # MAE floor that lets the trail fire while still OB during min-hold.
+    # Different floors truncate different left tails — must stamp.
+    "ai_local_trail_ob_hold_mae_r",
     "ai_local_trail_give_r",
     # Sets the shelf at fill independently of the trail. It changes which
     # trades survive their first minute, so two settings must not stamp

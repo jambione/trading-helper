@@ -75,6 +75,25 @@ def test_next_shot_countdown():
     assert shot(8, 0, day=11) is None            # Saturday
 
 
+def test_fetch_minutes_today_skips_before_extended_open(monkeypatch):
+    """Pre-04:00 ET must not call Alpaca (end < start)."""
+    called = {"n": 0}
+
+    class Boom:
+        def get_stock_bars(self, *_a, **_k):
+            called["n"] += 1
+            raise AssertionError("must not request bars before 04:00 ET")
+
+    monkeypatch.setattr(mf, "_get_feed_arg", lambda cfg: {})
+    pre = datetime(2026, 7, 10, 3, 59, tzinfo=ET)
+    assert mf.fetch_minutes_today(Boom(), ["AAAA"], {}, pre) == {}
+    assert called["n"] == 0
+    # At/after 04:00 the request path runs (empty client still errors → None).
+    open_et = datetime(2026, 7, 10, 4, 0, tzinfo=ET)
+    assert mf.fetch_minutes_today(Boom(), ["AAAA"], {}, open_et) is None
+    assert called["n"] == 1
+
+
 # ── volume curve ────────────────────────────────────────────────────────────
 def test_expected_fraction_monotonic_and_bounded():
     vals = [mf.expected_fraction(m) for m in range(-330, 391, 15)]

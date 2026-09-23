@@ -29,8 +29,28 @@ def test_exit_knobs_are_fingerprinted():
               "ai_local_trail_give_spread_k",
               "ai_local_trail_give_spread_max_r",
               "ai_local_trail_be_at_spread_k",
-              "ai_watch_open_seed_min_pct"):
+              "ai_watch_open_seed_min_pct",
+              "ai_exit_left_ob_exempt_min_hold",
+              "ai_local_trail_ob_hold_mae_r"):
         assert k in fp, f"{k} changes what the desk banks and must be stamped"
+
+
+def test_leave_ob_exempt_and_ob_hold_mae_are_not_critical(monkeypatch):
+    """setup_audit CRITICAL was paging every 30m on these two live knobs."""
+    import learn_stamps
+    monkeypatch.setattr(sa, "CRITICAL", [])
+    monkeypatch.setattr(sa, "WARN", [])
+    live = {
+        "ai_exit_left_ob_exempt_min_hold": True,
+        "ai_local_trail_ob_hold_mae_r": -1.0,
+    }
+    sa.audit_fingerprint(live)
+    assert not sa.CRITICAL, sa.CRITICAL
+    base = dict(live, paper=True)
+    flipped = dict(base, ai_exit_left_ob_exempt_min_hold=False)
+    assert learn_stamps.config_fingerprint(base) != learn_stamps.config_fingerprint(flipped)
+    mae_moved = dict(base, ai_local_trail_ob_hold_mae_r=-0.5)
+    assert learn_stamps.config_fingerprint(base) != learn_stamps.config_fingerprint(mae_moved)
 
 
 def test_green_catchup_trail_decay_is_fingerprinted(monkeypatch):

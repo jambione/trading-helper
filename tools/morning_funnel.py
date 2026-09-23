@@ -387,6 +387,10 @@ def fetch_minutes_today(client, tickers: list, cfg: dict, now_et: datetime) -> d
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
     start = now_et.replace(hour=4, minute=0, second=0, microsecond=0)
+    # Before 04:00 ET, Alpaca's implicit end (= now) is before start →
+    # "end should not be before start" spam every poll overnight.
+    if now_et < start:
+        return {}
     try:
         req = StockBarsRequest(
             symbol_or_symbols=tickers,

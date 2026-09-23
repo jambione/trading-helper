@@ -91,16 +91,28 @@ _stop_tunnel() {
 }
 
 _version() {
-    # Pull the build badge straight from the running dashboard.
-    curl -s --max-time 3 "$URL/api/state" 2>/dev/null | "$PY" -c '
-import sys, json
+    # Read local artifacts — /api/state is auth-gated (401 without
+    # X-Desk-Secret), so curling it always printed "engine off | strategy -"
+    # even when the engine was healthy.
+    "$PY" -c '
+import json
+from pathlib import Path
+root = Path(".").resolve()
+dash = "unknown"
 try:
-    v = json.load(sys.stdin).get("version", {}) or {}
-    print("   dashboard %s  |  engine %s  |  strategy %s" % (
-        v.get("dashboard"), v.get("engine") or "off", v.get("engine_strategy") or "-"))
+    from version import get_version
+    dash = get_version() or "unknown"
 except Exception:
-    print("   (dashboard not responding yet)")
-' 2>/dev/null || echo "   (dashboard not responding yet)"
+    pass
+eng, strat = "off", "-"
+try:
+    sig = json.loads((root / "signal_state.json").read_text(encoding="utf-8"))
+    eng = sig.get("version") or "off"
+    strat = sig.get("strategy") or "-"
+except Exception:
+    pass
+print("   dashboard %s  |  engine %s  |  strategy %s" % (dash, eng, strat))
+' 2>/dev/null || echo "   (version readout failed)"
 }
 
 # True when a boolean key in config/bot_config.json is enabled. Mirrors the
