@@ -13,6 +13,16 @@
 #   ./scripts/deploy_mini.sh              # push (if needed) + pull + restart stack
 #   ./scripts/deploy_mini.sh --no-push    # mini pull + restart only (already on GitHub)
 #   ./scripts/deploy_mini.sh --pull-only  # pull on mini, do not restart
+#   ./scripts/deploy_mini.sh --allow-dirty  # skip the dirty-tree guard (below)
+#
+# DIRTY-TREE GUARD. Every outcome is stamped with the git_version of the code
+# that traded it, and tools/runway_study.py --by git_version reads live
+# results per deploy off that stamp. A "+" (code differing from the commit)
+# makes the row unattributable, so the deploy refuses when:
+#   • the MINI has a modified tracked file or an untracked .py — it would
+#     keep running after the pull and every fill would read "+";
+#   • the MacBook has uncommitted .py — you would think you shipped it.
+# The rule is version.dirty_paths (untracked reports/benchmarks don't count).
 #
 # USE --pull-only FOR CONFIG-ONLY CHANGES. ai_trader calls load_config()
 # inside its own loop, so edits to config/bot_config.json take effect on the
@@ -46,6 +56,7 @@ DO_PUSH=1
 DO_RESTART=1
 FULL_SESSION=0
 STATUS_ONLY=0
+ALLOW_DIRTY=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -53,8 +64,9 @@ for arg in "$@"; do
     --pull-only) DO_RESTART=0 ;;
     --full)      FULL_SESSION=1; DO_RESTART=1 ;;
     --status)    STATUS_ONLY=1; DO_PUSH=0; DO_RESTART=0 ;;
+    --allow-dirty) ALLOW_DIRTY=1 ;;
     -h|--help)
-      sed -n '2,30p' "$0"
+      sed -n '2,41p' "$0"
       exit 0
       ;;
     *)
@@ -97,6 +109,34 @@ if [ -n "$(git status --porcelain)" ]; then
   git status -sb | head -n 20
   echo "   Commit first, or continue to deploy last committed revision only."
   echo ""
+fi
+
+# Same rule as version.dirty_paths. Inlined, not `python3 version.py --dirty`,
+# because on the mini this runs BEFORE the pull, against whatever version.py
+# the mini already has.
+dirty_filter() {
+  awk '/(signal_engine\.env|signal_state\.json)$/ {next}
+       /^\?\?/ && !/\.py$/ {next}
+       {print}'
+}
+
+if [ "$STATUS_ONLY" = 0 ] && [ "$ALLOW_DIRTY" = 0 ]; then
+  LOCAL_PY="$(git status --porcelain --untracked-files=all | dirty_filter | grep -E '\.py$' || true)"
+  if [ -n "$LOCAL_PY" ]; then
+    echo "❌ Uncommitted Python on this machine — it would NOT ship:"
+    echo "$LOCAL_PY" | sed 's/^/     /'
+    echo "   Commit it, stash it, or rerun with --allow-dirty."
+    exit 1
+  fi
+  MINI_DIRTY="$(ssh_mini "cd '$MINI_REPO' && git status --porcelain --untracked-files=all" | dirty_filter || true)"
+  if [ -n "$MINI_DIRTY" ]; then
+    echo "❌ The mini's tree is dirty — its fills would be stamped '+':"
+    echo "$MINI_DIRTY" | sed 's/^/     /'
+    echo "   On the mini: commit (see mini-cannot-push: fetch it from here),"
+    echo "   or discard with git checkout / rm. Or rerun with --allow-dirty."
+    exit 1
+  fi
+  echo "✓ Trees clean (no uncommitted code here or on the mini)"
 fi
 
 if [ "$STATUS_ONLY" = 1 ]; then
@@ -197,6 +237,8 @@ import sys,json
 try:
   v=(json.load(sys.stdin).get("version") or {})
   print("  version dashboard=%s engine=%s" % (v.get("dashboard"), v.get("engine")))
+  if any("+" in str(x or "") for x in v.values()):
+    print("  ✗ a process reports a dirty build (+) — its fills will not attribute to a commit")
 except Exception as e:
   print("  (no version yet)", e)
 ' 2>/dev/null
