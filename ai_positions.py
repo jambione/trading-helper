@@ -3002,10 +3002,22 @@ def trail_yields_to_triangle(
         # Fall back to any indicator stamped on the position.
         ind = pos.get("indicator") if isinstance(pos.get("indicator"), dict) else {}
         sig = dict(ind)
+    if not sig:
+        # Entry features carry the arm-time dual; better than empty on shelf tick.
+        feats = pos.get("features") if isinstance(pos.get("features"), dict) else {}
+        if feats.get("pctr") is not None or feats.get("pctr_slow") is not None:
+            sig = {
+                k: feats.get(k)
+                for k in ("pctr", "pctr_slow", "pctr_ob", "pctr_tight")
+                if feats.get(k) is not None
+            }
 
     if not sig:
-        # No dual read — do not invent a hold; trail stays backup.
-        return False, "no_dual_read"
+        # SNXX 2026-09-23: shelf tick often has no pos["indicator"] and live
+        # dual refresh can be blank at the open. Fail-open sold the BE shelf
+        # while exh_was_overbought with zero local_trail_deferred_* logs.
+        # Square product: missing dual ⇒ hold trail for triangle / MAE escape.
+        return True, "no_dual_read_hold"
 
     probe = {
         "symbol": ticker or "?",
@@ -3017,13 +3029,16 @@ def trail_yields_to_triangle(
     try:
         both_ob, _tight, err = ew.dual_r_ob_tight(probe, cfg)
     except Exception:
-        return False, "dual_err"
+        return True, "dual_err_hold"
     if err == "no_exhaustion_data" or both_ob is None:
         # Stale/missing slow with fast still OB → hold trail (thesis unknown).
         # If fast has left OB, allow trail (triangle path may also fire).
+        # Missing fast entirely → same as no_dual_read_hold (do not fail open).
         thr = float(cfg.get("rte_threshold", 20) or 20)
         fast = _num(sig.get("pctr"))
-        if fast is not None and float(fast) >= -thr:
+        if fast is None:
+            return True, "dual_unknown_no_fast"
+        if float(fast) >= -thr:
             return True, "dual_unknown_still_fast_ob"
         return False, "dual_unknown_fast_left"
     if both_ob:
@@ -3960,6 +3975,7 @@ def apply_local_trail(
             and _cfg_flag("ai_local_trail_enabled", True)):
         return False, False
 
+    now = time.time()
     changed = False
     if pos.get("closing_reason"):
         # A position on its way out must not SELL again from here — that is
@@ -6610,6 +6626,24 @@ def manage_open_positions(
                     sig = _ew.merge_triangle_indicator(engine_sig, sig, thr)
                 except Exception:
                     sig = dict(engine_sig)
+            # Persist dual onto the row so the faster shelf tick can yield to
+            # triangle without a blank no_dual_read (SNXX 2026-09-23).
+            if sig.get("pctr") is not None or sig.get("pctr_slow") is not None:
+                prev_ind = pos.get("indicator") if isinstance(
+                    pos.get("indicator"), dict) else {}
+                if (
+                    prev_ind.get("pctr") != sig.get("pctr")
+                    or prev_ind.get("pctr_slow") != sig.get("pctr_slow")
+                    or prev_ind.get("pctr_ob") != sig.get("pctr_ob")
+                ):
+                    pos["indicator"] = {
+                        **prev_ind,
+                        **{k: sig[k] for k in (
+                            "pctr", "pctr_slow", "pctr_ob", "pctr_tight",
+                            "pctr_rising", "pctr_falling",
+                        ) if k in sig},
+                    }
+                    changed = True
             if sig.get("pctr") is not None:
                 # Dual leave-OB with a short confirm (APLD flicker guard).
                 probe = {

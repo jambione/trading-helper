@@ -77,6 +77,70 @@ def test_trail_mae_escape_while_dual_ob(monkeypatch):
     assert why == "mae_escape"
 
 
+def test_trail_yields_when_dual_read_missing(monkeypatch):
+    """SNXX 2026-09-23: blank dual on shelf tick must not fail-open to trail."""
+    cfg = _cfg()
+    monkeypatch.setattr(ap, "_cfg_all", lambda: cfg)
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "apply_live_exhaustion", lambda *a, **k: False)
+
+    pos = _pos(indicator={}, features={})
+    yield_now, why = ap.trail_yields_to_triangle(pos, cfg)
+    assert yield_now is True
+    assert why == "no_dual_read_hold"
+
+
+def test_trail_yields_uses_entry_features_when_indicator_blank(monkeypatch):
+    cfg = _cfg()
+    monkeypatch.setattr(ap, "_cfg_all", lambda: cfg)
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "apply_live_exhaustion", lambda *a, **k: False)
+
+    pos = _pos(
+        indicator={},
+        features={
+            "pctr": -13.3, "pctr_slow": -11.9,
+            "pctr_ob": True, "pctr_tight": True,
+        },
+    )
+    yield_now, why = ap.trail_yields_to_triangle(pos, cfg)
+    assert yield_now is True
+    assert why == "still_dual_ob"
+
+
+def test_apply_local_trail_defers_when_dual_blank(monkeypatch):
+    cfg = _cfg()
+    monkeypatch.setattr(ap, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(ap, "_cfg_flag", lambda k, d=False: bool(cfg.get(k, d)))
+    monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
+    monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
+    monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "apply_live_exhaustion", lambda *a, **k: False)
+
+    closed_calls = []
+
+    class _Alp:
+        def cancel_open_orders(self, t):
+            return None
+
+        def close_out(self, t):
+            closed_calls.append(t)
+            return {"order_id": "x"}
+
+    import sys
+    monkeypatch.setitem(sys.modules, "alpaca_trader", _Alp())
+
+    pos = _pos(indicator={}, features={})
+    events = []
+    exit_why = {}
+    _ch, closed = ap.apply_local_trail(
+        "SNXX", pos, 10.04, events, exit_why)
+    assert closed is False
+    assert closed_calls == []
+    assert str(exit_why.get("SNXX") or "").startswith("local_trail_deferred")
+
+
 def test_trail_yields_during_leave_ob_race(monkeypatch):
     cfg = _cfg()
     monkeypatch.setattr(ap, "_cfg_all", lambda: cfg)
