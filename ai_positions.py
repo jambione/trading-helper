@@ -4089,27 +4089,12 @@ def apply_local_trail(
     # still runs only when the shelf was actually hit.
     _trail_hit = (not raise_only and trigger is not None and loc is not None
                   and trigger <= loc + 1e-9)
-    # A print through the working stop is not a discretionary exit.
-    # Min-hold must not leave the row open under its own stop (GRML).
-    _trail_held = False
-    # Triangle-first: while dual OB thesis holds, trail/BE is backup only.
-    _tri_yield = False
-    _tri_why = ""
-    if _trail_hit and not _trail_held:
-        _tri_yield, _tri_why = trail_yields_to_triangle(pos, _cfg_all())
-        if _tri_yield:
-            log_event(
-                "local_trail_deferred_dual_ob", symbol=ticker,
-                reason=_tri_why,
-                last=trigger, stop=loc,
-                mfe_r=pos.get("mfe_r"), mae_r=pos.get("mae_r"),
-                exh_was_overbought=bool(pos.get("exh_was_overbought")),
-                left_ob_since=pos.get("left_ob_since"),
-            )
-            exit_why[ticker] = f"local_trail_deferred:{_tri_why}"
-            # Keep raising the shelf; only the flatten yields.
-            _trail_hit = False
-    if _trail_hit and not _trail_held:
+    # A print through the working stop is a market exit, not a wait.
+    # VICR / PSKY 2026-09-23: last was under the shelf, State said
+    # "open · SELL", and triangle-first (still dual OB) deferred the
+    # flatten. Leave-OB can still close a name that has not tagged the
+    # shelf. Once LAST ≤ shelf, cancel resting orders and sell market.
+    if _trail_hit:
         last = trigger
         if _premarket_working_sell_on():
             bid = _premarket_bid(ticker)
@@ -4133,20 +4118,40 @@ def apply_local_trail(
             return True, False
         alpaca_trader.cancel_open_orders(ticker)
         out = alpaca_trader.close_out(ticker) or {}
+        oid = ""
         if isinstance(out, dict) and out.get("order_id"):
-            pos["close_order_id"] = str(out["order_id"])
-        pos["closing_reason"] = "local_trail"
-        exit_why[ticker] = "local_trail"
+            oid = str(out["order_id"])
+            pos["close_order_id"] = oid
+        if oid:
+            pos["closing_reason"] = "local_trail"
+            exit_why[ticker] = "local_trail"
+            events.append({
+                "ticker": ticker, "event": "local_trail",
+                "last": last, "stop": loc,
+                "peak": pos.get("peak_price"),
+                "order_id": oid,
+            })
+            log_event(
+                "local_trail", symbol=ticker,
+                last=last, stop=loc, peak=pos.get("peak_price"),
+                order_id=oid,
+            )
+            return True, True
+        # No order id means the market sell did not land. Do not latch
+        # closing_reason — that used to park the name for ai_stranded_close_sec
+        # while price sat through the shelf (VICR / PSKY).
+        exit_why[ticker] = "local_trail_retry"
         events.append({
-            "ticker": ticker, "event": "local_trail",
+            "ticker": ticker, "event": "local_trail_sell_failed",
             "last": last, "stop": loc,
-            "peak": pos.get("peak_price"),
+            "note": str((out or {}).get("note") or (out or {}).get("status") or "")[:160],
         })
         log_event(
-            "local_trail", symbol=ticker,
-            last=last, stop=loc, peak=pos.get("peak_price"),
+            "local_trail_sell_failed", symbol=ticker,
+            last=last, stop=loc,
+            note=str((out or {}).get("note") or (out or {}).get("status") or "")[:160],
         )
-        return True, True
+        return True, False
 
     want = local_profit_stop(pos, _cfg_all(), now=now)
     prev_local = _num(pos.get("local_stop_price"))

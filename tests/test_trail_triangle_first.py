@@ -183,13 +183,15 @@ def test_apply_local_trail_entry_catchup_before_hit(monkeypatch):
     assert any(a and a[0] == "entry_catchup" for a, _k in events_logged)
 
 
-def test_apply_local_trail_defers_when_dual_blank(monkeypatch):
+def test_apply_local_trail_sells_market_when_dual_blank(monkeypatch):
+    """A print through the shelf market-sells even with no dual %R read."""
     cfg = _cfg()
     monkeypatch.setattr(ap, "_cfg_all", lambda: cfg)
     monkeypatch.setattr(ap, "_cfg_flag", lambda k, d=False: bool(cfg.get(k, d)))
     monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
     monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
     monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda: False)
     import ai_entry_watch as ew
     monkeypatch.setattr(ew, "apply_live_exhaustion", lambda *a, **k: False)
 
@@ -201,7 +203,7 @@ def test_apply_local_trail_defers_when_dual_blank(monkeypatch):
 
         def close_out(self, t):
             closed_calls.append(t)
-            return {"order_id": "x"}
+            return {"order_id": "mkt-snxx"}
 
     import sys
     monkeypatch.setitem(sys.modules, "alpaca_trader", _Alp())
@@ -211,9 +213,10 @@ def test_apply_local_trail_defers_when_dual_blank(monkeypatch):
     exit_why = {}
     _ch, closed = ap.apply_local_trail(
         "SNXX", pos, 10.04, events, exit_why)
-    assert closed is False
-    assert closed_calls == []
-    assert str(exit_why.get("SNXX") or "").startswith("local_trail_deferred")
+    assert closed is True
+    assert closed_calls == ["SNXX"]
+    assert pos.get("closing_reason") == "local_trail"
+    assert exit_why.get("SNXX") == "local_trail"
 
 
 def test_trail_yields_during_leave_ob_race(monkeypatch):
@@ -235,13 +238,15 @@ def test_trail_yields_during_leave_ob_race(monkeypatch):
     assert why in ("left_ob_pending", "left_ob_race")
 
 
-def test_apply_local_trail_defers_while_dual_ob(monkeypatch):
+def test_shelf_hit_market_sells_while_still_overbought(monkeypatch):
+    """VICR / PSKY: last through the shelf while still OB → market sell now."""
     cfg = _cfg()
     monkeypatch.setattr(ap, "_cfg_all", lambda: cfg)
     monkeypatch.setattr(ap, "_cfg_flag", lambda k, d=False: bool(cfg.get(k, d)))
     monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
     monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
     monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda: False)
     import ai_entry_watch as ew
     monkeypatch.setattr(ew, "apply_live_exhaustion", lambda *a, **k: False)
 
@@ -253,21 +258,62 @@ def test_apply_local_trail_defers_while_dual_ob(monkeypatch):
 
         def close_out(self, t):
             closed_calls.append(t)
-            return {"order_id": "x"}
+            return {"order_id": "mkt-vicr"}
 
     import sys
     monkeypatch.setitem(sys.modules, "alpaca_trader", _Alp())
 
-    pos = _pos()
+    # VICR shape: entry 278.45, shelf 279.80, last 279.57, still OB.
+    pos = _pos(
+        symbol="VICR",
+        entry_price=278.45,
+        local_stop_price=279.80,
+        last_seen_price=279.57,
+        peak_price=281.10,
+        indicator={
+            "pctr": -3.6, "pctr_slow": -2.1,
+            "pctr_ob": True, "pctr_tight": True,
+        },
+    )
     events = []
     exit_why = {}
-    # trigger under shelf
     _ch, closed = ap.apply_local_trail(
-        "NUAI", pos, 10.04, events, exit_why)
-    assert closed is False
-    assert closed_calls == []
-    assert pos.get("closing_reason") is None
-    assert str(exit_why.get("NUAI") or "").startswith("local_trail_deferred")
+        "VICR", pos, 279.57, events, exit_why)
+    assert closed is True
+    assert closed_calls == ["VICR"]
+    assert pos.get("closing_reason") == "local_trail"
+    assert pos.get("close_order_id") == "mkt-vicr"
+    assert exit_why.get("VICR") == "local_trail"
+
+    # Same rule for PSKY, and a failed close must not latch the row.
+    failed = []
+
+    class _AlpFail:
+        def cancel_open_orders(self, t):
+            return None
+
+        def close_out(self, t):
+            failed.append(t)
+            return {"ok": False, "order_id": None, "status": "error"}
+
+    monkeypatch.setitem(sys.modules, "alpaca_trader", _AlpFail())
+    psky = _pos(
+        symbol="PSKY",
+        entry_price=18.40,
+        local_stop_price=18.62,
+        last_seen_price=18.55,
+        indicator={
+            "pctr": -8.0, "pctr_slow": -6.0,
+            "pctr_ob": True, "pctr_tight": True,
+        },
+    )
+    exit_why2 = {}
+    _ch2, closed2 = ap.apply_local_trail(
+        "PSKY", psky, 18.55, [], exit_why2)
+    assert closed2 is False
+    assert failed == ["PSKY"]
+    assert psky.get("closing_reason") is None
+    assert exit_why2.get("PSKY") == "local_trail_retry"
 
 
 def test_apply_local_trail_fires_when_square_mode_off(monkeypatch):
