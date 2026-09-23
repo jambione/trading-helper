@@ -110,3 +110,46 @@ def test_ensure_watch_stream_calls_subscribe(monkeypatch):
     assert "AEHG" in (calls["sub"] or [])
     assert "AOUT" in (calls["pri"] or [])
     assert "SMCI" in (calls["pri"] or [])  # merged, not wiped
+
+
+def test_panel_prewarm_includes_seed_drop_near_misses(tmp_path, monkeypatch):
+    """A1: red trending / cheap movers still get an early Finnhub seat."""
+    import json
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
+    (tmp_path / "trending_stocks.json").write_text(json.dumps({
+        "rows": [
+            {"symbol": "SMCI", "pct_change": -1.0, "trending_score": 40},
+            {"symbol": "NVDA", "pct_change": 5.0, "trending_score": 50},
+        ],
+    }), encoding="utf-8")
+    (tmp_path / "movers_stocks.json").write_text(json.dumps({
+        "ts": 1e12,
+        "rows": [
+            {"symbol": "CHEAP", "pct_change": 20.0, "price": 2.0},
+            {"symbol": "OKMV", "pct_change": 12.0, "price": 8.0},
+        ],
+    }), encoding="utf-8")
+    monkeypatch.setattr(ew, "research_universe_symbols", lambda: {"RKLB"})
+    monkeypatch.setattr(ew, "is_levered_etp", lambda s: False)
+    syms = ew.panel_stream_prewarm_symbols({"ai_watch_panel_prewarm_max": 48})
+    assert "SMCI" in syms  # red — seed-drop near miss
+    assert "CHEAP" in syms
+    assert "NVDA" in syms and "OKMV" in syms and "RKLB" in syms
+
+
+def test_maybe_prewarm_panel_streams_throttles(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ew, "panel_stream_prewarm_symbols", lambda cfg: ["AAAA", "BBBB"])
+    monkeypatch.setattr(
+        ew, "ensure_watch_stream",
+        lambda syms, cfg=None: calls.append(list(syms)) or {"requested": len(syms)})
+    ew._PANEL_PREWARM_LAST_TS = 0.0
+    cfg = {"ai_watch_panel_prewarm_interval_sec": 30.0}
+    out1 = ew.maybe_prewarm_panel_streams(cfg, now=1000.0)
+    out2 = ew.maybe_prewarm_panel_streams(cfg, now=1010.0)
+    assert out1.get("panel_prewarm") is True
+    assert out2.get("skipped") == "throttle"
+    assert len(calls) == 1
+    out3 = ew.maybe_prewarm_panel_streams(cfg, now=1040.0)
+    assert out3.get("panel_prewarm") is True
+    assert len(calls) == 2

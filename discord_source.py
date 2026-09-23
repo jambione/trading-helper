@@ -90,6 +90,15 @@ DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:8888").rstrip(
 DASHBOARD_USER = os.environ.get("DASHBOARD_USER", "")
 DASHBOARD_PASS = os.environ.get("DASHBOARD_PASS", "")
 _AUTH_TOKEN = ""
+# Watchdog + ops read this; Screen Recording denial must not stay silent.
+OCR_HEALTH_PATH = ROOT / "ai_reports" / "discord_ocr_health.json"
+_OCR_TCC_HINT = (
+    "Screen Recording denied for Discord OCR. SSH/agent relaunch cannot grant "
+    "TCC. On the mini GUI: System Settings → Privacy & Security → Screen & "
+    "System Audio Recording → enable DiscordOCR.app AND Ghostty/Terminal, "
+    "then double-click scripts/enable_ocr_capture.command and "
+    "./trading restart from that GUI terminal."
+)
 
 
 _dash_auth = desk_auth.for_process(
@@ -1118,6 +1127,50 @@ def _scanner_card_signature(card: dict) -> str:
 
 # ── OCR + delivery ────────────────────────────────────────────────────────────
 
+def _ocr_failure_kind(detail: str) -> str:
+    """Classify OCR process failure for health + watchdog."""
+    text = (detail or "").lower()
+    if (
+        "screen recording" in text
+        or "screencapture" in text
+        or "not granted" in text
+        or "capture access" in text
+    ):
+        return "screen_recording_denied"
+    if "no on-screen window" in text or "window not found" in text:
+        return "no_window"
+    if "timed out" in text or "timeout" in text:
+        return "timeout"
+    return "ocr_failed"
+
+
+def write_ocr_health(
+    *,
+    ok: bool,
+    kind: str = "ok",
+    detail: str = "",
+    fail_streak: int = 0,
+    backend: str = "",
+) -> None:
+    """Atomic-ish health stamp for the watchdog (never raises into the poller)."""
+    payload = {
+        "ts": time.time(),
+        "ok": bool(ok),
+        "kind": str(kind or ("ok" if ok else "ocr_failed")),
+        "detail": str(detail or "")[:240],
+        "fail_streak": int(fail_streak or 0),
+        "backend": str(backend or ""),
+        "ocr_binary": str(OCR_BINARY) if OCR_BINARY.exists() else "",
+    }
+    try:
+        OCR_HEALTH_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = OCR_HEALTH_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(OCR_HEALTH_PATH)
+    except Exception:
+        pass
+
+
 def _ocr_command(cfg: dict) -> list[str]:
     """Build OCR command. Prefer DiscordOCR.app; empty list = native PyObjC fallback."""
     owner = str(cfg.get("discord_window_owner") or "Discord")
@@ -1144,21 +1197,38 @@ def _ocr_command(cfg: dict) -> list[str]:
     raise SystemExit(1)
 
 
-def _run_ocr_native(cfg: dict) -> tuple[list[str], bool]:
-    """In-process capture + Vision OCR (fallback when DiscordOCR.app is absent)."""
+def _run_ocr_native(cfg: dict) -> tuple[list[str], bool, str, str]:
+    """In-process capture + Vision OCR (fallback when DiscordOCR.app is absent).
+
+    Returns (lines, ok, kind, detail).
+    """
     assert _native_ocr is not None
     owner = str(cfg.get("discord_window_owner") or "Discord")
     title = str(cfg.get("discord_window_title") or "").strip()
     try:
+        # Prefer an explicit preflight so TCC denial is not a vague capture miss.
+        try:
+            from Quartz import CGPreflightScreenCaptureAccess
+            if not CGPreflightScreenCaptureAccess():
+                detail = "Screen Recording not granted (native preflight)"
+                print(f"[discord] OCR failed (native): {detail}", flush=True)
+                return [], False, "screen_recording_denied", detail
+        except Exception:
+            pass
         lines = _native_ocr.capture_and_ocr(owner=owner, title=title, accurate=False)
-        return lines, True
+        return lines, True, "ok", ""
     except Exception as e:
+        detail = str(e)
+        kind = _ocr_failure_kind(detail)
         print(f"[discord] OCR failed (native): {e}", flush=True)
-        return [], False
+        return [], False, kind, detail
 
 
-def _run_ocr_binary(cmd: list[str]) -> tuple[list[str], bool]:
-    """Swift binary fallback. Own process group so hung children can be killed."""
+def _run_ocr_binary(cmd: list[str]) -> tuple[list[str], bool, str, str]:
+    """Swift binary fallback. Own process group so hung children can be killed.
+
+    Returns (lines, ok, kind, detail).
+    """
     try:
         out = subprocess.run(
             cmd,
@@ -1185,7 +1255,7 @@ def _run_ocr_binary(cmd: list[str]) -> tuple[list[str], bool]:
         except Exception:
             pass
         print("[discord] OCR timed out", flush=True)
-        return [], False
+        return [], False, "timeout", "OCR timed out"
     if out.returncode != 0:
         lines = [ln for ln in (out.stderr or "").strip().splitlines() if ln.strip()]
         if not lines:
@@ -1194,16 +1264,18 @@ def _run_ocr_binary(cmd: list[str]) -> tuple[list[str], bool]:
             detail = " | ".join(lines)
         else:
             detail = f"{lines[0]} | … | {lines[-1]}"
+        kind = _ocr_failure_kind(detail)
         print(f"[discord] OCR failed (rc={out.returncode}): {detail}", flush=True)
-        return [], False
-    return [ln for ln in out.stdout.splitlines() if ln.strip()], True
+        return [], False, kind, detail
+    return [ln for ln in out.stdout.splitlines() if ln.strip()], True, "ok", ""
 
 
-def _run_ocr(cmd: list[str], cfg: dict | None = None) -> tuple[list[str], bool]:
+def _run_ocr(cmd: list[str], cfg: dict | None = None) -> tuple[list[str], bool, str, str]:
     """Run one OCR pass. Prefers DiscordOCR.app binary; native PyObjC is fallback.
 
-    Returns (lines, ok). ok=False = process-level failure (no window, permission,
-    crash) — distinct from a successful capture with zero text lines.
+    Returns (lines, ok, kind, detail). ok=False = process-level failure
+    (no window, permission, crash) — distinct from a successful capture with
+    zero text lines.
     """
     if not cmd:
         return _run_ocr_native(cfg or _load_config())
@@ -1286,9 +1358,14 @@ def check() -> int:
     scriptable.  Run:  python discord_source.py --check"""
     cfg          = _load_config()
     cmd          = _ocr_command(cfg)
-    lines, ok    = _run_ocr(cmd, cfg)
+    lines, ok, kind, detail = _run_ocr(cmd, cfg)
+    backend = "native" if not cmd else "DiscordOCR.app"
+    write_ocr_health(ok=ok, kind=kind, detail=detail, fail_streak=0 if ok else 1,
+                     backend=backend)
     if not ok:
         print("[discord] VERDICT: ✗ OCR process failed — see error above.")
+        if kind == "screen_recording_denied":
+            print(f"[discord] CRITICAL: {_OCR_TCC_HINT}", flush=True)
         return 1
     alerts = []
     cards, _ = parse_scanner_cards(lines)
@@ -1361,6 +1438,8 @@ def main() -> None:
     # first scan, every genuinely new alert line is posted as it appears.
     primed      = False
     fail_streak = 0   # consecutive OCR process failures (window not found, crash)
+    backend = "native" if not cmd else "DiscordOCR.app"
+    last_tcc_shout = 0.0
 
     while True:
         t0 = time.time()
@@ -1370,15 +1449,24 @@ def main() -> None:
         for s in expired:
             del seen[s]
 
-        lines, ok = _run_ocr(cmd, cfg)
+        lines, ok, kind, detail = _run_ocr(cmd, cfg)
 
         if not ok:
             # Exponential backoff so we don't spam logs when Discord is closed.
             fail_streak += 1
+            write_ocr_health(
+                ok=False, kind=kind, detail=detail,
+                fail_streak=fail_streak, backend=backend)
+            if kind == "screen_recording_denied" and (t0 - last_tcc_shout) >= 60.0:
+                last_tcc_shout = t0
+                print(f"[discord] CRITICAL: {_OCR_TCC_HINT}", flush=True)
             backoff = min(poll_sec * (2 ** (fail_streak - 1)), _MAX_BACKOFF_SEC)
             time.sleep(backoff)
             continue
 
+        write_ocr_health(
+            ok=True, kind="ok", detail="",
+            fail_streak=0, backend=backend)
         fail_streak = 0
         new_alerts: list[dict] = []
         new_sentiment: list[SentimentEvent] = []

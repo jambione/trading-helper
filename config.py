@@ -678,6 +678,12 @@ DEFAULT_CONFIG = {
     # 0 disables. pins_only=true narrows hold to pin/warming seats.
     "ai_watch_stale_restream_grace_sec": 60.0,
     "ai_watch_stale_restream_pins_only": False,
+    # A1 panel prewarm: ensure_watch_stream on raw trending/movers/research
+    # symbols (including seed-drop near-misses) on a throttle, before
+    # inclusion. Does not loosen stale_tape_admit.
+    "ai_watch_panel_prewarm_enabled": True,
+    "ai_watch_panel_prewarm_interval_sec": 30.0,
+    "ai_watch_panel_prewarm_max": 48,
     # Refuse admit when live tape is missing or older than this (seconds).
     # Prefer an empty slot over a permanent stale_quote row. 0 disables.
     "ai_watch_admit_max_tape_age_sec": 120.0,

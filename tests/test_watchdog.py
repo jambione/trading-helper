@@ -23,6 +23,36 @@ import watchdog as w  # noqa: E402
 
 # ── Backoff ──────────────────────────────────────────────────────────────────
 
+def test_ocr_health_denied_is_distinct_from_missing(tmp_path):
+    """Screen Recording denial must page; a missing file must not."""
+    import json
+    import time
+    missing = tmp_path / "nope.json"
+    status, _ = w.check_discord_ocr_health(path=missing)
+    assert status == "missing"
+    p = tmp_path / "discord_ocr_health.json"
+    p.write_text(json.dumps({
+        "ts": time.time(),
+        "ok": False,
+        "kind": "screen_recording_denied",
+        "detail": "Screen Recording not granted",
+        "fail_streak": 3,
+    }), encoding="utf-8")
+    status, detail = w.check_discord_ocr_health(path=p)
+    assert status == "denied"
+    assert "Screen Recording" in detail
+
+
+def test_ocr_health_ok_when_fresh(tmp_path):
+    import json
+    import time
+    p = tmp_path / "discord_ocr_health.json"
+    p.write_text(json.dumps({
+        "ts": time.time(), "ok": True, "kind": "ok", "detail": "",
+    }), encoding="utf-8")
+    assert w.check_discord_ocr_health(path=p)[0] == "ok"
+
+
 def test_first_restart_is_immediate():
     """The common case is a one-off death; making the desk wait on it would be
     the very delay the watchdog exists to remove."""

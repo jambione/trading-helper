@@ -1,7 +1,12 @@
 #!/bin/bash
 # Double-click this in Finder (or run from Ghostty) to grant Screen Recording
 # for Discord OCR. Must run in a normal GUI terminal so macOS can show the
-# Allow dialog — agent/background shells often cannot.
+# Allow dialog — agent/background shells and SSH often cannot.
+#
+# GUI-only recovery (TCC): if OCR dies mid-session with
+# "Screen Recording not granted", do NOT restart from SSH. Enable
+# DiscordOCR.app + Ghostty/Terminal in System Settings, run THIS script from
+# the GUI, then ./trading restart from that same GUI terminal.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 clear
@@ -14,8 +19,11 @@ echo "Click  Allow  when asked."
 echo
 echo "Also enable in System Settings if listed:"
 echo "  Privacy & Security → Screen & System Audio Recording"
+echo "  • DiscordOCR.app   (preferred TCC identity)"
 echo "  • Ghostty (or Terminal / iTerm)"
-echo "  • Python  (the one that runs the stack)"
+echo "  • Python  (only if using native OCR fallback)"
+echo
+echo "SSH / agent relaunch cannot grant Screen Recording."
 echo
 
 open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" 2>/dev/null || true

@@ -42,6 +42,6 @@ Live on the mini after the close restart.
 
 ## Scratch (add below during session)
 
-- **OCR Screen Recording flake (10:17 ET):** DiscordOCR lost Screen Recording → silent fail; SSH/Terminal relaunch cannot grant TCC. Harden: document GUI-only restart; ensure DiscordOCR.app + Terminal/Ghostty stay enabled; optional watchdog that surfaces Screen Recording denial instead of quiet backoff.
+- **OCR Screen Recording flake (10:17 ET):** DiscordOCR lost Screen Recording → silent fail; SSH/Terminal relaunch cannot grant TCC. **Shipped:** `discord_ocr_health.json` + watchdog CRITICAL shout; GUI-only recovery in `scripts/enable_ocr_capture.command` + ONBOARDING troubleshooting. Keep DiscordOCR.app + Ghostty/Terminal enabled in Screen Recording.
 
 - **Square false-■ / admit gap (12:58 ET):** PSKY sticky ■ — shipped `3278c75`. Follow-on: APLD 13:33 `admit=unknown` while fill=`square` — freeze was locking unknown before dual-%R arrived; fix `maybe_freeze_exh_seat_class_admit` (unknown may upgrade).

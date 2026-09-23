@@ -1316,6 +1316,121 @@ def _within_subscribe_grace(rec: dict, cfg: dict | None, now: float) -> bool:
     return (float(now) - float(admitted)) < grace
 
 
+# Early Finnhub join for raw panel symbols (before seed filters / inclusion).
+# Dig 2026-09-14 + A1: candidates already ensure_watch_stream before
+# passes_inclusion; this warms names still sitting on trending/movers/research
+# boards so a flip to green does not start the subscribe clock from zero.
+_PANEL_PREWARM_LAST_TS: float = 0.0
+_PANEL_PREWARM_INTERVAL_DEFAULT_SEC = 30.0
+_PANEL_PREWARM_MAX_DEFAULT = 48
+
+
+def _symbols_from_panel_json(path: Path, *, limit: int = 40) -> list[str]:
+    """Cheap symbol list from a panel file — no seed filters (includes red)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except Exception:
+        return out
+    if not isinstance(raw, dict):
+        return out
+    rows = raw.get("rows") or raw.get("stocks") or raw.get("items") or []
+    if not isinstance(rows, list):
+        return out
+    for r in rows:
+        if len(out) >= limit:
+            break
+        if not isinstance(r, dict) or r.get("is_crypto") is True:
+            continue
+        s = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
+        if not s or not s.isalpha() or not (2 <= len(s) <= 5) or s in seen:
+            continue
+        if is_levered_etp(s):
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def panel_stream_prewarm_symbols(
+    cfg: dict | None = None,
+    *,
+    max_n: int | None = None,
+) -> list[str]:
+    """Union of trending / movers / research board symbols for early stream.
+
+    Intentionally broader than ``desk_candidate_rows``: seed drops (trending
+    red, movers below min price) still get a Finnhub seat so tape can warm
+    before the next sync promotes them.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        cap = int(
+            max_n
+            if max_n is not None
+            else (cfg.get("ai_watch_panel_prewarm_max") or _PANEL_PREWARM_MAX_DEFAULT)
+        )
+    except (TypeError, ValueError):
+        cap = _PANEL_PREWARM_MAX_DEFAULT
+    cap = max(0, min(cap, 80))
+    if cap <= 0:
+        return []
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(syms) -> None:
+        for s in syms or []:
+            if len(ordered) >= cap:
+                return
+            t = str(s or "").upper().strip()
+            if not t or t in seen:
+                continue
+            if not t.isalpha() or not (2 <= len(t) <= 5):
+                continue
+            if is_levered_etp(t):
+                continue
+            seen.add(t)
+            ordered.append(t)
+
+    _add(_symbols_from_panel_json(ROOT / "trending_stocks.json", limit=40))
+    _add(_symbols_from_panel_json(ROOT / "movers_stocks.json", limit=40))
+    try:
+        _add(research_universe_symbols())
+    except Exception:
+        pass
+    return ordered[:cap]
+
+
+def maybe_prewarm_panel_streams(
+    cfg: dict | None = None,
+    now: float | None = None,
+) -> dict:
+    """Throttle + ``ensure_watch_stream`` for the raw panel universe."""
+    global _PANEL_PREWARM_LAST_TS
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get("ai_watch_panel_prewarm_enabled", True)):
+        return {"skipped": "disabled", "requested": 0}
+    try:
+        interval = float(
+            cfg.get("ai_watch_panel_prewarm_interval_sec")
+            or _PANEL_PREWARM_INTERVAL_DEFAULT_SEC
+        )
+    except (TypeError, ValueError):
+        interval = _PANEL_PREWARM_INTERVAL_DEFAULT_SEC
+    t0 = float(now if now is not None else time.time())
+    if interval > 0 and _PANEL_PREWARM_LAST_TS > 0 and (
+            t0 - _PANEL_PREWARM_LAST_TS) < interval:
+        return {"skipped": "throttle", "requested": 0}
+    syms = panel_stream_prewarm_symbols(cfg)
+    _PANEL_PREWARM_LAST_TS = t0
+    if not syms:
+        return {"skipped": "empty", "requested": 0}
+    out = ensure_watch_stream(syms, cfg=cfg)
+    out["panel_prewarm"] = True
+    return out
+
+
 def ensure_watch_stream(symbols, *, cfg: dict | None = None) -> dict:
     """Force Finnhub priority + subscribe and engine book push for watch names.
 
@@ -8949,6 +9064,13 @@ def sync_watch_from_source_panels(
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     t0 = float(now if now is not None else time.time())
+
+    # A1: warm Finnhub for raw panel symbols (incl. seed-drop near-misses)
+    # before the filtered shortlist is built — subscribe clock starts early.
+    try:
+        maybe_prewarm_panel_streams(cfg, now=t0)
+    except Exception:
+        pass
 
     # Candidate rows come from the dashboard over HTTP (two GETs, 2s timeout
     # each) — do that *outside* the lock so a slow/absent dashboard cannot stall

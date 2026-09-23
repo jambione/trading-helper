@@ -353,6 +353,54 @@ AUDIT_INTERVAL_SEC = 1800.0
 NEWS_INTERVAL_SEC = 120.0
 NEWS_MAX_SYMBOLS = 120
 
+# Discord OCR Screen Recording (TCC). discord_source writes
+# ai_reports/discord_ocr_health.json; SSH relaunch cannot re-grant TCC, so
+# shout loudly instead of quiet backoff looking like a healthy process.
+OCR_HEALTH_PATH = ROOT / "ai_reports" / "discord_ocr_health.json"
+OCR_HEALTH_STALE_SEC = 120.0
+OCR_TCC_SHOUT_INTERVAL_SEC = 300.0
+_OCR_TCC_HINT = (
+    "Screen Recording denied for Discord OCR. Fix on the mini GUI only: "
+    "System Settings → Privacy & Security → Screen & System Audio Recording "
+    "→ enable DiscordOCR.app AND Ghostty/Terminal, then double-click "
+    "scripts/enable_ocr_capture.command and ./trading restart from that GUI "
+    "terminal. SSH/agent relaunch cannot grant TCC."
+)
+
+
+def check_discord_ocr_health(
+    now: float | None = None,
+    *,
+    path: Path | None = None,
+    stale_sec: float = OCR_HEALTH_STALE_SEC,
+) -> tuple[str, str]:
+    """Return (status, detail). status: ok | denied | failing | stale | missing."""
+    p = path or OCR_HEALTH_PATH
+    t0 = float(now if now is not None else time.time())
+    if not p.exists():
+        return "missing", "no discord_ocr_health.json yet"
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        return "missing", f"unreadable health file: {e}"
+    if not isinstance(raw, dict):
+        return "missing", "health file not an object"
+    try:
+        ts = float(raw.get("ts") or 0)
+    except (TypeError, ValueError):
+        ts = 0.0
+    age = t0 - ts if ts > 0 else 1e9
+    kind = str(raw.get("kind") or "")
+    detail = str(raw.get("detail") or "")[:160]
+    if kind == "screen_recording_denied" or (
+            not raw.get("ok") and "screen recording" in detail.lower()):
+        return "denied", detail or "screen_recording_denied"
+    if stale_sec > 0 and age > stale_sec:
+        return "stale", f"health age {age:.0f}s > {stale_sec:.0f}s"
+    if not raw.get("ok"):
+        return "failing", f"{kind or 'ocr_failed'}: {detail}".strip(": ")
+    return "ok", kind or "ok"
+
 
 def refresh_news_cache() -> int:
     """Warm the catalyst cache for whatever the desk is currently watching.
@@ -517,6 +565,7 @@ def main() -> int:
     # had none of its code, and only a freshness check caught it.
     audit_due = time.time() + AUDIT_SETTLE_SEC
     news_due = time.time()          # warm it immediately on start
+    last_ocr_tcc_shout = 0.0
     stopping = False
 
     def _stop(_sig, _frm):
@@ -573,6 +622,19 @@ def main() -> int:
                 n_news = refresh_news_cache()
                 if n_news:
                     log(f"news cache refreshed for {n_news} symbols")
+
+            # OCR TCC: process can look "healthy" while Screen Recording is
+            # denied and the poller is in quiet backoff. Never restart for
+            # this — relaunch from SSH cannot grant TCC — only shout.
+            if cfg.get("discord_ocr_enabled", False):
+                ocr_status, ocr_detail = check_discord_ocr_health(now)
+                if ocr_status == "denied" and (
+                        now - last_ocr_tcc_shout) >= OCR_TCC_SHOUT_INTERVAL_SEC:
+                    last_ocr_tcc_shout = now
+                    log("!" * 60)
+                    log(f"discord OCR CRITICAL — {ocr_detail}")
+                    log(_OCR_TCC_HINT)
+                    log("!" * 60)
 
             if not args.no_learn and now >= audit_due:
                 audit_due = now + AUDIT_INTERVAL_SEC

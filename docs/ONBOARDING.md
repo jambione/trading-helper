@@ -435,9 +435,23 @@ from the dashboard Settings drawer without restarting.
 Discord is closed, minimized, or on a different Space. Bring the Discord alert
 channel window to your main display.
 
+**`Screen Recording not granted` / watchdog OCR CRITICAL**
+TCC denial. The poller backs off quietly unless surfaced — watchdog now shouts
+when `ai_reports/discord_ocr_health.json` reports `screen_recording_denied`.
+
+Fix **on the mini GUI only** (SSH cannot grant Screen Recording):
+
+1. System Settings → Privacy & Security → Screen & System Audio Recording  
+   Enable **DiscordOCR.app** and **Ghostty** (or Terminal / iTerm).
+2. Double-click `scripts/enable_ocr_capture.command` from Finder / GUI terminal.
+3. From that same GUI terminal: `./trading restart`.
+
+Do not restart Discord OCR from an SSH session expecting TCC to heal.
+
 **Discord OCR source backing off / stops polling**
 Consecutive OCR failures trigger exponential backoff (up to 60 s). Once Discord
-is visible again it resumes automatically.
+is visible again it resumes automatically. If the cause is Screen Recording
+denial, see the TCC steps above — backoff alone will not fix it.
 
 **TradingView webhook returning 401**
 The secret in the webhook URL doesn't match `tv_webhook_secret` in
