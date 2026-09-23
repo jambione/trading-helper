@@ -197,6 +197,10 @@ _BLOCKER_LABELS: dict[str, str] = {
     "mid_rise_stale": "-50 cross stale",
     "mid_rise_lost": "back under -50",
     "engine_stale": "engine stale",
+    "spread_wide": "spread wide",
+    "spread_unknown": "spread ?",
+    "gapped_down": "gapped down",
+    "gap_unknown": "gap ?",
     "last_in_zone_fade_ok": "ready",
     "last_late_hold": "late hold",
     "late_hold_closed": "late hold wait",
@@ -8621,6 +8625,134 @@ def _restamp_rsi_block(rec: dict, cfg: dict, now: float) -> None:
 
 ENGINE_HEARTBEAT = ROOT / "signal_state.json"
 
+# ── name-level gates: SIP spread and the opening gap ────────────────────────
+# Cached per symbol so the arm path makes at most one data call per name per
+# TTL. Both fail CLOSED at the gate: a name we cannot price is not traded.
+_SIP_SPREAD_CACHE: dict[str, tuple[float | None, float]] = {}
+_GAP_CACHE: dict[str, tuple[float | None, float]] = {}
+_DATA_CLIENT = None
+
+
+def _data_client():
+    global _DATA_CLIENT
+    if _DATA_CLIENT is None:
+        from config import load_config
+        import alpaca_api as aa
+        full = load_config() or {}
+        _DATA_CLIENT = aa.connect_data_client({
+            "api_key": full.get("api_key"), "secret_key": full.get("secret_key")})
+    return _DATA_CLIENT
+
+
+def sip_spread_pct(sym: str, *, now: float | None = None, ttl: float = 180.0,
+                   delay_min: float = 16.0, fetch=None) -> float | None:
+    """Median SIP (ask-bid)/mid, %, over the minute ending delay_min ago.
+
+    Live SIP is not on this plan; historical SIP is, once 15 minutes old. A
+    name's spread 16 minutes back predicts the one we pay: for names at
+    <= 0.05% then, 99% were <= 0.10% at entry (2026-09-14..23, 673 entries).
+    """
+    sym = str(sym or "").upper()
+    t = float(now if now is not None else time.time())
+    hit = _SIP_SPREAD_CACHE.get(sym)
+    if hit is not None and t - hit[1] < ttl:
+        return hit[0]
+    val = None
+    try:
+        if fetch is not None:
+            quotes = fetch(sym, t - delay_min * 60)
+        else:
+            from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+            from alpaca.data.enums import DataFeed
+            from alpaca.data.requests import StockQuotesRequest
+            end = _dt.fromtimestamp(t - delay_min * 60, tz=_tz.utc)
+            q = _data_client().get_stock_quotes(StockQuotesRequest(
+                symbol_or_symbols=sym, start=end - _td(seconds=60), end=end,
+                feed=DataFeed.SIP, limit=5000))
+            quotes = [(float(r.bid_price), float(r.ask_price))
+                      for r in (q.data.get(sym) or [])]
+        spreads = sorted((a - b) / ((a + b) / 2) * 100 for b, a in quotes
+                         if b and a and a >= b)
+        if spreads:
+            val = spreads[len(spreads) // 2]
+    except Exception:
+        val = None
+    _SIP_SPREAD_CACHE[sym] = (val, t)
+    return val
+
+
+def open_gap_pct(sym: str, *, now: float | None = None, fetch=None) -> float | None:
+    """Today's official open vs yesterday's close, %.
+
+    SIP first: yesterday's daily close and today's 09:30 minute-bar open,
+    which the plan serves once 15 minutes old (from ~09:46). Before that the
+    live IEX snapshot stands in — its "open" is the first IEX print, which
+    ran 0.6% off the official open on ACMR 2026-09-23 (-1.01% vs -1.52%), so
+    only the SIP value is cached for the day; IEX is re-asked after 60s.
+    Names that gapped down > 1% went +1% before -1% only 46% of the time all
+    day (z -3.7, both halves, 2026-09-14..23).
+    """
+    sym = str(sym or "").upper()
+    t = float(now if now is not None else time.time())
+    day = time.strftime("%Y-%m-%d", time.localtime(t))
+    hit = _GAP_CACHE.get(sym)
+    if hit is not None and hit[0] is not None:
+        val, ts, src = hit if len(hit) == 3 else (hit[0], hit[1], "sip")
+        if time.strftime("%Y-%m-%d", time.localtime(ts)) == day and (
+                src == "sip" or t - ts < 60):
+            return val
+    val, src = None, "sip"
+    try:
+        if fetch is not None:
+            day_open, prev_close = fetch(sym)
+        else:
+            day_open, prev_close = _gap_inputs_sip(sym, t)
+            if day_open is None or prev_close is None:
+                src = "iex"
+                from alpaca.data.enums import DataFeed
+                from alpaca.data.requests import StockSnapshotRequest
+                snap = _data_client().get_stock_snapshot(StockSnapshotRequest(
+                    symbol_or_symbols=sym, feed=DataFeed.IEX)).get(sym)
+                day_open = float(snap.daily_bar.open)
+                prev_close = float(snap.previous_daily_bar.close)
+        if day_open and prev_close:
+            val = (float(day_open) / float(prev_close) - 1) * 100
+    except Exception:
+        val = None
+    _GAP_CACHE[sym] = (val, t, src)
+    return val
+
+
+def _gap_inputs_sip(sym: str, t: float) -> tuple[float | None, float | None]:
+    """(today's 09:30 SIP open, yesterday's SIP close) or Nones if not yet served."""
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    from zoneinfo import ZoneInfo
+    from alpaca.data.enums import DataFeed
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    et = ZoneInfo("America/New_York")
+    now_et = _dt.fromtimestamp(t, tz=et)
+    open_et = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    if now_et < open_et + _td(minutes=16):
+        return None, None
+    cl = _data_client()
+    mb = cl.get_stock_bars(StockBarsRequest(
+        symbol_or_symbols=sym, timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+        start=open_et.astimezone(_tz.utc), end=(open_et + _td(minutes=1)).astimezone(_tz.utc),
+        feed=DataFeed.SIP)).data.get(sym) or []
+    db = cl.get_stock_bars(StockBarsRequest(
+        symbol_or_symbols=sym, timeframe=TimeFrame.Day,
+        start=(open_et - _td(days=7)).astimezone(_tz.utc),
+        end=(open_et - _td(minutes=1)).astimezone(_tz.utc),
+        feed=DataFeed.SIP)).data.get(sym) or []
+    # Daily bars are stamped at 00:00 ET, so "end before 09:29" still returns
+    # TODAY's bar (with today's close). Take the last bar dated before today.
+    today = open_et.date()
+    prior = [b for b in db if b.timestamp.astimezone(et).date() < today]
+    if not mb or not prior:
+        return None, None
+    return float(mb[0].open), float(prior[-1].close)
+
 
 def engine_heartbeat_age(now: float | None = None,
                          path: Path | None = None) -> float | None:
@@ -14801,6 +14933,33 @@ def should_arm_buy(
         _eng_age = engine_heartbeat_age(now=now)
         if _eng_age is None or _eng_age > _eng_max:
             return False, "engine_stale"
+    _gate_sym = str(record.get("symbol") or "").upper()
+    # Spread gate: the whole trading cost is the spread (exec_report,
+    # 2026-09-23: fills at the touch, 0 excess). A <= 0.20% gate cut the
+    # one-arm cost 0.112% -> 0.071% and net -0.062% -> -0.011%, both halves.
+    try:
+        _sp_max = float(cfg.get("ai_watch_max_sip_spread_pct", 0) or 0)
+    except (TypeError, ValueError):
+        _sp_max = 0.0
+    if _sp_max > 0 and _gate_sym:
+        _sp = sip_spread_pct(_gate_sym, now=now)
+        if _sp is None:
+            return False, "spread_unknown"
+        if _sp > _sp_max:
+            record["block_detail"] = f"SIP spread {_sp:.2f}% > {_sp_max:g}%"
+            return False, "spread_wide"
+    # Gap-down exclusion: names that opened > pct under yesterday's close.
+    try:
+        _gap_max = float(cfg.get("ai_watch_gap_down_block_pct", 0) or 0)
+    except (TypeError, ValueError):
+        _gap_max = 0.0
+    if _gap_max > 0 and _gate_sym:
+        _gap = open_gap_pct(_gate_sym, now=now)
+        if _gap is None:
+            return False, "gap_unknown"
+        if _gap < -_gap_max:
+            record["block_detail"] = f"gapped {_gap:+.1f}%"
+            return False, "gapped_down"
 
     structure = record.get("structure")
     if not isinstance(structure, dict):

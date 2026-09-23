@@ -77,6 +77,7 @@ _SESSION_KNOBS = (
     "ai_exit_limit_collar_pct", "ai_exit_limit_collar_wait_sec",
     "ai_local_trail_peak_give_pct", "ai_watch_engine_stale_max_sec",
     "ai_no_progress_flatten_enabled",
+    "ai_watch_max_sip_spread_pct", "ai_watch_gap_down_block_pct",
 )
 
 
