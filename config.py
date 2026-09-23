@@ -1278,6 +1278,10 @@ DEFAULT_CONFIG = {
     # Once armed, the stop is never further than this % under the peak.
     # 0 = off. See ai_positions.local_profit_stop (VKTX 2026-09-23).
     "ai_local_trail_peak_give_pct":    0.0,
+    # Stop-hit sell as a marketable limit this % under the triggering print,
+    # then market for the remainder after the wait. 0 = plain market.
+    "ai_exit_limit_collar_pct":        0.0,
+    "ai_exit_limit_collar_wait_sec":   2.0,
     # ONE arm: fast %R crosses up through the level with the slow line
     # rising; replaces square / triangle / heating when on. Off by default.
     "ai_watch_exh_mid_rise_arm":       False,
@@ -1704,6 +1708,8 @@ _EFFECTIVE_KEYS = (
     "ai_watch_mid_rise_level",
     "ai_watch_mid_rise_max_age_sec",
     "ai_local_trail_peak_give_pct",
+    "ai_exit_limit_collar_pct",
+    "ai_exit_limit_collar_wait_sec",
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
     "ai_watch_macd_gap_arm",
@@ -2162,6 +2168,8 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_decay_overtake",
     "ai_local_trail_entry_catchup_sec",
     "ai_local_trail_peak_give_pct",
+    "ai_exit_limit_collar_pct",
+    "ai_exit_limit_collar_wait_sec",
     "ai_watch_exh_mid_rise_arm",
     "ai_watch_mid_rise_level",
     "ai_watch_mid_rise_max_age_sec",

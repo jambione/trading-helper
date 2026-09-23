@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import math
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -1111,7 +1112,57 @@ def liquidate_all(*, except_symbols: set | None = None) -> dict:
     }
 
 
-def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0.0) -> dict:
+def _collar_limit_px(ref: float, collar_pct: float) -> float:
+    """Sell limit collar_pct under ref, rounded DOWN to a valid tick."""
+    raw = float(ref) * (1.0 - float(collar_pct) / 100.0)
+    if raw >= 1.0:
+        return math.floor(round(raw * 100.0, 6)) / 100.0
+    return math.floor(round(raw * 10000.0, 6)) / 10000.0
+
+
+def _collared_sell(ticker: str, qty_held: float, ref: float, collar_pct: float,
+                   wait_sec: float) -> tuple[object, str]:
+    """Marketable sell limit with a floor, then market for whatever is left.
+
+    A sell limit priced under the market fills at once at the best bids down
+    to the limit — a market order that cannot walk past the floor. On 20% of
+    2026-08..09 exits the market sell printed under the exit minute's LOW;
+    exits cost 0.110%/trade against 0.058% for entries. Whatever has not
+    filled after wait_sec is cancelled and sold at market: the position
+    never waits on a price.
+    """
+    from alpaca.trading.requests import LimitOrderRequest
+    from alpaca.trading.enums import OrderSide, TimeInForce
+    limit_px = _collar_limit_px(ref, collar_pct)
+    order = _client.submit_order(LimitOrderRequest(
+        symbol=ticker, qty=qty_held, side=OrderSide.SELL,
+        time_in_force=TimeInForce.DAY, limit_price=limit_px))
+    deadline = time.time() + max(0.0, float(wait_sec))
+    status = str(getattr(order, "status", "") or "").lower()
+    while "filled" != status.split(".")[-1] and time.time() < deadline:
+        time.sleep(0.25)
+        try:
+            order = _client.get_order_by_id(order.id)
+            status = str(getattr(order, "status", "") or "").lower()
+        except Exception:
+            break
+    if status.split(".")[-1] == "filled":
+        return order, f"collar_limit {limit_px}"
+    try:
+        _client.cancel_order_by_id(order.id)
+    except Exception:
+        pass
+    try:
+        left = float(_client.get_open_position(ticker).qty)
+    except Exception:
+        left = 0.0
+    if left <= 0:
+        return order, f"collar_limit {limit_px} (filled on cancel)"
+    return _client.close_position(ticker), f"collar_limit {limit_px} -> market {left:g}"
+
+
+def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0.0,
+              *, collar_pct: float = 0.0, collar_wait_sec: float = 2.0) -> dict:
     """
     Desk EXIT: cancel any OPEN orders for the symbol, then close 100% of the position.
 
@@ -1146,7 +1197,11 @@ def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0
 
     # 3) Close 100%.
     try:
-        if market_is_open():
+        note = None
+        if market_is_open() and collar_pct and collar_pct > 0 and price and price > 0:
+            order, note = _collared_sell(ticker, qty_held, float(price),
+                                         float(collar_pct), float(collar_wait_sec))
+        elif market_is_open():
             order = _client.close_position(ticker)      # market, whole position
         else:
             from alpaca.trading.requests import LimitOrderRequest
@@ -1166,9 +1221,9 @@ def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0
               f"status={status}  (canceled {canceled})")
         _log_action("SELL", ticker, price, rsi, hist, qty=qty_held,
                     order_id=order_id, order_status=status, canceled=canceled,
-                    note="close_out")
+                    note=note or "close_out")
         return {"ok": True, "order_id": order_id, "status": status,
-                "note": None, "canceled": canceled}
+                "note": note, "canceled": canceled}
     except Exception as e:
         print(f"  [TRADER] ❌  CLOSE {ticker} failed: {e}")
         _log_action("SELL_ERROR", ticker, price, rsi, hist, error=str(e), canceled=canceled)

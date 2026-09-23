@@ -4151,7 +4151,21 @@ def apply_local_trail(
             )
             return True, False
         alpaca_trader.cancel_open_orders(ticker)
-        out = alpaca_trader.close_out(ticker) or {}
+        # Capped sell (ai_exit_limit_collar_pct, 0 = plain market): a
+        # marketable limit that cannot fill more than the collar under the
+        # print that hit the stop, then market for any remainder after
+        # ai_exit_limit_collar_wait_sec. The position never waits on a price.
+        try:
+            _collar = float(_cfg_all().get("ai_exit_limit_collar_pct", 0.0) or 0.0)
+            _cwait = float(_cfg_all().get("ai_exit_limit_collar_wait_sec", 2.0) or 2.0)
+        except (TypeError, ValueError):
+            _collar, _cwait = 0.0, 2.0
+        if _collar > 0 and trigger:
+            out = alpaca_trader.close_out(
+                ticker, price=float(trigger), collar_pct=_collar,
+                collar_wait_sec=_cwait) or {}
+        else:
+            out = alpaca_trader.close_out(ticker) or {}
         oid = ""
         if isinstance(out, dict) and out.get("order_id"):
             oid = str(out["order_id"])
