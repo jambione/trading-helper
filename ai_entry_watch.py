@@ -8700,7 +8700,18 @@ def sip_spread_pct(sym: str, *, now: float | None = None, ttl: float = 180.0,
     except Exception:
         val = None
     _SIP_SPREAD_CACHE[sym] = (val, t)
+    _record_input("sip_spread", sym, val, t)
     return val
+
+
+def _record_input(kind: str, sym: str, val, t: float, **extra) -> None:
+    """Session recorder: an external-data value the desk just computed, so an
+    off-hours replay reads what the desk saw instead of re-fetching it."""
+    try:
+        import session_recorder as _rec
+        _rec.record_input(kind, sym, val, ts=t, **extra)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 _RVOL_PACE_CACHE: dict[str, tuple[float | None, float]] = {}
@@ -8747,6 +8758,7 @@ def rvol_pace_sip(sym: str, *, now: float | None = None, ttl: float = 120.0,
     except Exception:
         val = None
     _RVOL_PACE_CACHE[sym] = (val, t)
+    _record_input("rvol_pace", sym, val, t)
     return val
 
 
@@ -8852,6 +8864,7 @@ def open_gap_pct(sym: str, *, now: float | None = None, fetch=None) -> float | N
     except Exception:
         val = None
     _GAP_CACHE[sym] = (val, t, src)
+    _record_input("open_gap", sym, val, t, src=src)
     return val
 
 

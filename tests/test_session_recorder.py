@@ -76,3 +76,16 @@ def test_appended_members_stay_readable(recdir):
         rec.flush(force=True)
     got = _read(recdir / "sessions" / "2026-09-25" / "prints.jsonl.gz")
     assert [r["price"] for r in got] == [30.0, 31.0, 32.0]
+
+
+def test_input_values_are_recorded_when_computed(recdir):
+    import ai_entry_watch as ew
+    ew._SIP_SPREAD_CACHE.pop("PFE", None)
+    t = _at(10, 30)
+    got = ew.sip_spread_pct("PFE", now=t, fetch=lambda s, when: [(28.60, 28.62)] * 3)
+    assert got is not None
+    ew.sip_spread_pct("PFE", now=t + 5, fetch=lambda s, when: [])  # cache hit: not re-recorded
+    rec.flush(force=True)
+    rows = _read(recdir / "sessions" / "2026-09-25" / "inputs.jsonl.gz")
+    assert [(r["kind"], r["symbol"]) for r in rows] == [("sip_spread", "PFE")]
+    assert abs(rows[0]["value"] - got) < 1e-12 and rows[0]["ts"] == t

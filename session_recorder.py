@@ -10,6 +10,8 @@ Streams:
                         the pct / rvol / price the row carried at that moment
   config.jsonl.gz       full bot_config (secrets stripped) + git SHA, written
                         at start and on every change
+  inputs.jsonl.gz       external-data values the desk computed (SIP spread,
+                        volume pace, open gap), so a replay needs no fetches
 
 Low overhead: buffered writes, fail-open, no extra API calls. Cap the symbol
 set to book ∪ sources ∪ positions when a filter is installed by the caller.
@@ -229,6 +231,17 @@ def record_source(
         except (TypeError, ValueError):
             pass
     _append("sources", obj)
+
+
+def record_input(kind: str, symbol: str, value, *, ts: float | None = None,
+                 **extra) -> None:
+    """One computed input (kind: sip_spread / rvol_pace / open_gap)."""
+    if not _allow_sym(symbol):
+        return
+    t = float(ts if ts is not None else time.time())
+    obj = {"ts": t, "kind": str(kind), "symbol": str(symbol).upper(), "value": value}
+    obj.update({k: v for k, v in extra.items() if v is not None})
+    _append("inputs", obj)
 
 
 def record_source_set(rows: list[dict], *, ts: float | None = None) -> None:
