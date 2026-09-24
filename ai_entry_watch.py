@@ -9778,6 +9778,18 @@ def sync_watch_from_source_panels(
     except Exception:
         pass
 
+    # Session recorder: who was nominated when, and the config in force, so a
+    # replay can rebuild the book. Transitions / changes only; fails open.
+    try:
+        import learn_stamps
+        import session_recorder as _rec
+        _rec.record_source_set(candidates, ts=t0)
+        _rec.record_config_snap(
+            cfg, git_sha=learn_stamps.git_version(),
+            fingerprint=learn_stamps.config_fingerprint(cfg))
+    except Exception:
+        pass
+
     # Make sure the engine is computing indicators for everything on the
     # shortlist, then admit only what clears the strict conjunctive gate.
     try:

@@ -2749,6 +2749,7 @@ def _price_loop():
 
                 merged = freshest_prices(cached_alpaca, fh_all, desk_prices)
 
+                _rec_rows = []
                 with STATE.lock:
                     for t, (p, obs, trade_ts) in merged.items():
                         if t not in quote_universe:
@@ -2767,16 +2768,32 @@ def _price_loop():
                         entry["price_age_sec"] = (
                             round(max(0.0, now - trade_ts), 1)
                             if trade_ts and trade_ts > 0 else None)
-                        try:
-                            import session_recorder as _rec
-                            age = entry.get("price_age_sec")
-                            src = "desk" if t in desk_prices else (
-                                "finnhub" if t in fh_all else "alpaca")
-                            _rec.record_print(
-                                t, p, src=src, ts=now, age_sec=age,
-                                trade_ts=trade_ts)
-                        except Exception:
-                            pass
+                        # Label the source that WON the merge (its tuple is
+                        # returned as-is), not every feed that had the name.
+                        _won = "unknown"
+                        for _name, _m in (("alpaca", cached_alpaca),
+                                          ("finnhub", fh_all),
+                                          ("desk", desk_prices)):
+                            _v = _m.get(t)
+                            try:
+                                if (_v is not None and float(_v[0]) == p
+                                        and float(_v[1]) == obs):
+                                    _won = _name
+                                    break
+                            except (TypeError, ValueError, IndexError):
+                                continue
+                        _rec_rows.append((
+                            t, p, entry.get("price_age_sec"), trade_ts, _won))
+                # Recorder outside STATE.lock: its flush compresses and takes a
+                # file lock, and /api/state waits on STATE.lock.
+                try:
+                    import session_recorder as _rec
+                    for t, p, age, trade_ts, src in _rec_rows:
+                        _rec.record_print(
+                            t, p, src=src, ts=now, age_sec=age,
+                            trade_ts=trade_ts)
+                except Exception:
+                    pass
 
             # Counterfactual track for Discord-side signals, off the prices
             # just merged above — no extra API call. Self-throttling per

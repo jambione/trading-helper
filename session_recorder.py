@@ -3,18 +3,22 @@
 Design: docs/SESSION_RECORDER_DESIGN.md. Files live under
 ``ai_reports/sessions/YYYY-MM-DD/`` (ai_reports is gitignored).
 
-Streams (night-1):
+Streams:
   prints.jsonl.gz       every published price update (source, symbol, price, ts)
   quotes_meta.jsonl.gz  Alpaca request batches / 429s / failures
-  sources.jsonl.gz      movers/trending/research nominations
-  config_snap.json      bot_config + git SHA fingerprint (rare)
+  sources.jsonl.gz      candidate-pool enter/leave per (symbol, source), with
+                        the pct / rvol / price the row carried at that moment
+  config.jsonl.gz       full bot_config (secrets stripped) + git SHA, written
+                        at start and on every change
 
 Low overhead: buffered writes, fail-open, no extra API calls. Cap the symbol
 set to book ∪ sources ∪ positions when a filter is installed by the caller.
 """
 from __future__ import annotations
 
+import fcntl
 import gzip
+import hashlib
 import json
 import logging
 import os
@@ -23,6 +27,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 log = logging.getLogger("session_recorder")
@@ -39,6 +44,8 @@ _FLUSH_EVERY_SEC = 5.0
 _last_flush_mono = 0.0
 _enabled = True
 _session_syms: set[str] | None = None  # None = record all
+_source_state: dict[str, Any] = {"day": None, "keys": {}}
+_config_state: dict[str, Any] = {"digest": None}
 
 
 def _day_et(ts: float | None = None) -> str:
@@ -48,8 +55,14 @@ def _day_et(ts: float | None = None) -> str:
 
 
 def session_dir(day: str | None = None) -> Path:
-    d = _DEFAULT_DIR / (day or _day_et())
-    return d
+    # Follow AI_REPORT_DIR like every other report writer, so a test run can
+    # not append fixture rows to the live day's recording.
+    try:
+        import ai_paths
+        base = ai_paths.resolve_report_dir() / "sessions"
+    except Exception:  # noqa: BLE001
+        base = _DEFAULT_DIR
+    return base / (day or _day_et())
 
 
 def set_enabled(flag: bool) -> None:
@@ -84,25 +97,26 @@ def _append(stream: str, obj: dict, *, day: str | None = None) -> None:
         buf = _buffers.setdefault(key, [])
         buf.append(line)
         _buf_bytes[key] = _buf_bytes.get(key, 0) + len(line)
-        need = _buf_bytes[key] >= _FLUSH_BYTES
+        need = (_buf_bytes[key] >= _FLUSH_BYTES
+                or time.monotonic() - _last_flush_mono >= _FLUSH_EVERY_SEC)
     if need:
-        flush(day=day)
+        flush()
 
 
 def flush(*, day: str | None = None, force: bool = False) -> None:
-    """Write buffered lines to gzip files. Safe to call from any thread."""
+    """Write buffered lines to gzip files. Safe to call from any thread.
+
+    Each write holds an exclusive flock on the file: several processes append
+    to quotes_meta, and two interleaved gzip members corrupt the file from
+    that point on.
+    """
     global _last_flush_mono
-    now_m = time.monotonic()
-    if not force and (now_m - _last_flush_mono) < _FLUSH_EVERY_SEC:
-        # Still flush if any buffer is large (caller already checked bytes).
-        pass
     with _lock:
-        items = list(_buffers.items())
-        if day is not None:
-            items = [((d, s), lines) for (d, s), lines in items if d == day]
-        _buffers.clear()
-        _buf_bytes.clear()
-        _last_flush_mono = now_m
+        keys = [k for k in _buffers if day is None or k[0] == day]
+        items = [(k, _buffers.pop(k)) for k in keys]
+        for k in keys:
+            _buf_bytes.pop(k, None)
+        _last_flush_mono = time.monotonic()
     for (d, stream), lines in items:
         if not lines:
             continue
@@ -110,9 +124,13 @@ def flush(*, day: str | None = None, force: bool = False) -> None:
             out_dir = session_dir(d)
             out_dir.mkdir(parents=True, exist_ok=True)
             path = out_dir / f"{stream}.jsonl.gz"
-            with gzip.open(path, "ab") as f:
-                for line in lines:
-                    f.write(line.encode("utf-8"))
+            payload = gzip.compress("".join(lines).encode("utf-8"))
+            with open(path, "ab") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                try:
+                    f.write(payload)
+                finally:
+                    fcntl.flock(f, fcntl.LOCK_UN)
         except Exception as e:  # noqa: BLE001
             log.debug("[RECORDER] flush %s/%s failed: %s", d, stream, e)
 
@@ -191,6 +209,7 @@ def record_source(
     pct: float | None = None,
     rvol: float | None = None,
     price: float | None = None,
+    event: str = "enter",
 ) -> None:
     if not _allow_sym(symbol):
         return
@@ -200,6 +219,7 @@ def record_source(
         "et": datetime.fromtimestamp(t, ET).strftime("%H:%M:%S"),
         "symbol": str(symbol).upper(),
         "source": str(source or ""),
+        "event": str(event),
     }
     for k, v in (("pct", pct), ("rvol", rvol), ("price", price)):
         if v is None:
@@ -211,27 +231,69 @@ def record_source(
     _append("sources", obj)
 
 
+def record_source_set(rows: list[dict], *, ts: float | None = None) -> None:
+    """Log (symbol, source) pairs entering and leaving the candidate pool.
+
+    Called every book rebuild (~2s); only transitions are written, so the
+    stream is small and a replay can rebuild who was nominated when. A
+    process restart re-logs the whole pool as ``enter``.
+    """
+    if not _enabled:
+        return
+    t = float(ts if ts is not None else time.time())
+    day = _day_et(t)
+    if _source_state["day"] != day:
+        _source_state["day"], _source_state["keys"] = day, {}
+    prev: dict[str, tuple[str, str]] = _source_state["keys"]
+    cur: dict[str, tuple[str, str]] = {}
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        sym = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
+        src = str(r.get("source") or r.get("src") or "").strip().lower()
+        if not sym:
+            continue
+        k = f"{sym}|{src}"
+        if k in cur:
+            continue
+        cur[k] = (sym, src)
+        if k not in prev:
+            pct = r.get("pct_change")
+            record_source(sym, src, ts=t, event="enter",
+                          pct=pct if pct is not None else r.get("pct"),
+                          rvol=r.get("rvol"), price=r.get("price"))
+    for k, (sym, src) in prev.items():
+        if k not in cur:
+            record_source(sym, src, ts=t, event="leave")
+    _source_state["keys"] = cur
+
+
 def record_config_snap(cfg: dict, *, git_sha: str = "", fingerprint: str = "") -> None:
-    """Write a one-shot config snapshot (not gzipped; rare)."""
+    """Append the config (secrets stripped) when it differs from the last one."""
     if not _enabled or not isinstance(cfg, dict):
         return
     try:
-        day = _day_et()
-        out_dir = session_dir(day)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        # Strip anything that looks like a secret.
         safe = {
             k: v for k, v in cfg.items()
-            if not any(s in str(k).lower() for s in ("secret", "key", "token", "password"))
+            if not any(s in str(k).lower() for s in (
+                "secret", "key", "token", "password", "webhook", "auth", "cred"))
         }
-        payload = {
-            "ts": time.time(),
+        digest = hashlib.sha256(
+            json.dumps(safe, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:12]
+        if digest == _config_state["digest"]:
+            return
+        _config_state["digest"] = digest
+        t = time.time()
+        _append("config", {
+            "ts": t,
+            "et": datetime.fromtimestamp(t, ET).strftime("%H:%M:%S"),
+            "process": f"{os.getpid()}:{os.path.basename(sys_argv0())}",
             "git_sha": git_sha,
             "fingerprint": fingerprint,
+            "digest": digest,
             "config": safe,
-        }
-        path = out_dir / "config_snap.json"
-        path.write_text(json.dumps(payload, indent=1, default=str) + "\n")
+        })
     except Exception as e:  # noqa: BLE001
         log.debug("[RECORDER] config_snap failed: %s", e)
 
