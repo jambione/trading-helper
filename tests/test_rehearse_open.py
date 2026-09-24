@@ -66,3 +66,22 @@ def test_replay_counts_book_blocks_and_trades(tmp_path):
     crit = dict((n, ok) for n, ok, _ in ro.criteria(res))
     assert crit["every arm reached an order"] is True
     assert crit["book >= 10 by 09:40"] is False
+
+
+def test_volume_clock_candidates_rescore_logged_rvol(tmp_path):
+    import rehearse_whatif as rw
+    rep = str(tmp_path)
+    _w(os.path.join(rep, "admit_ledger", "2026-09-24.jsonl"), [
+        # 09:52: logged 0.69 against the live 22 minutes -> fixed ~1.29, passes
+        {"ts": _ts("09:52"), "stage": "seed", "symbol": "PFE", "reason": "thin_rvol",
+         "kept": False, "source": "movers", "rvol": 0.69},
+        # 11:30: the lag barely matters late; 0.5 stays under 1.0
+        {"ts": _ts("11:30"), "stage": "seed", "symbol": "SLOW", "reason": "thin_rvol",
+         "kept": False, "source": "movers", "rvol": 0.5},
+        # trending rows are not affected by the movers clock
+        {"ts": _ts("09:52"), "stage": "seed", "symbol": "TRD", "reason": "thin_rvol",
+         "kept": False, "source": "trending", "rvol": 0.9},
+    ])
+    got = rw.volume_clock_candidates("2026-09-24", "09:30", "12:00", rep)
+    assert set(got) == {"PFE"}
+    assert 1.2 < got["PFE"][2] < 1.4

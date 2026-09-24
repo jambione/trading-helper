@@ -399,6 +399,26 @@ def premarket_scan(cfg: dict, api: str, sec: str) -> list[dict]:
     return picked
 
 
+def sip_data_mins_open(now_et: datetime, cfg: dict | None = None) -> float:
+    """Minutes of the session covered by the SIP daily bar, not by the clock.
+
+    The daily-bar request has no end, so the free plan serves SIP only up to
+    ~15 minutes ago; today's bar volume stops there. Pacing it against the
+    live minutes since 09:30 compared ~6 minutes of volume with 22 minutes of
+    expected volume at 09:52 on 2026-09-24 (rvol/rvol_raw was exactly 6.0 on
+    every scan row), so PFE (+1.7%, spread 0.03%) read 0.69 and was dropped
+    thin_rvol with the whole scan. Floor of 1 minute keeps the curve defined
+    at the open.
+    """
+    try:
+        delay = float((cfg or {}).get("ai_movers_sip_delay_min", 15.0) or 0.0)
+    except (TypeError, ValueError):
+        delay = 15.0
+    live = (now_et - now_et.replace(
+        hour=9, minute=30, second=0, microsecond=0)).total_seconds() / 60.0
+    return max(1.0, live - delay) if live > 0 else live
+
+
 def fetch_rows(cfg: dict) -> list[dict]:
     """One pass: rank movers, drop what cannot be traded, enrich survivors."""
     api, sec = _keys()
@@ -578,8 +598,7 @@ def fetch_rows(cfg: dict) -> list[dict]:
     time_adj = bool(cfg.get("rvol_time_adjusted", True))
     today = _et_now().strftime("%Y-%m-%d")
     _now_et = _et_now()
-    mins_open = (_now_et - _now_et.replace(
-        hour=9, minute=30, second=0, microsecond=0)).total_seconds() / 60.0
+    mins_open = sip_data_mins_open(_now_et, cfg)
     rows = []
     for sym, pct, px in cand[:want + max_session]:
         seq = bars.get(sym) or []
