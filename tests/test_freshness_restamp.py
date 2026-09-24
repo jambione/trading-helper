@@ -708,6 +708,10 @@ def test_overlay_wall_stamp_keeps_near_ceiling_young_print(monkeypatch):
     monkeypatch.setattr(d, "_live_quote_for", lambda sym, now=None: (51.59, 14.0))
     monkeypatch.setattr(
         "ai_entry_watch.decision_max_age_sec", lambda cfg=None: 15.0, raising=False)
+    # One-clock promote always consults live_print — pin it to the same
+    # dated print the overlay just applied so wall drift cannot rewrite age.
+    monkeypatch.setattr(
+        "ai_entry_watch.live_print", lambda sym: (51.59, 14.0), raising=False)
 
     early = time.time() - 2.5  # simulate ~2.5s of work before overlay finishes
     payload = {
@@ -731,6 +735,5 @@ def test_overlay_wall_stamp_keeps_near_ceiling_young_print(monkeypatch):
     assert float(row["last_ask_age_sec"]) == 14.0
     assert row.get("block_code") != "stale_quote"
     # Recomputed wall age must stay ≤ ceiling (the Class C failure mode).
-    import ai_entry_watch as ew
     age = ew.row_quote_age_sec(row)
     assert age is not None and age <= 15.0
