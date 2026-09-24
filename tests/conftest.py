@@ -81,6 +81,7 @@ _SESSION_KNOBS = (
     "ai_watch_rvol_pace_observe", "ai_watch_min_rvol_pace",
     "ai_watch_admit_arm_gates", "ai_movers_sip_delay_min",
     "ai_book_server_mode", "ai_book_server_max_seats",
+    "ai_watch_day_roster", "ai_watch_day_roster_max",
 )
 
 

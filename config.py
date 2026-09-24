@@ -1305,6 +1305,10 @@ DEFAULT_CONFIG = {
     # off | shadow (log would-have-done) | live (replaces soft-seed intake).
     "ai_book_server_mode":             "off",
     "ai_book_server_max_seats":        12,
+    # Day roster: today's Movers/Trending/Research nominations stay eligible
+    # after their list drops them (see ai_entry_watch.apply_day_roster).
+    "ai_watch_day_roster":             False,
+    "ai_watch_day_roster_max":         40,
     # Second open: MACD gap when the name is not in an overbought square.
     # Off in defaults so tests that omit the key stay on square only.
     # Live bot_config turns it on. See macd_gap_fill_allows_buy.
@@ -1735,6 +1739,8 @@ _EFFECTIVE_KEYS = (
     "ai_watch_min_rvol_pace",
     "ai_book_server_mode",
     "ai_book_server_max_seats",
+    "ai_watch_day_roster",
+    "ai_watch_day_roster_max",
     "ai_local_trail_peak_give_pct",
     "ai_exit_limit_collar_pct",
     "ai_exit_limit_collar_wait_sec",
@@ -2211,6 +2217,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_min_rvol_pace",
     "ai_book_server_mode",
     "ai_book_server_max_seats",
+    "ai_watch_day_roster",
+    "ai_watch_day_roster_max",
     "ai_watch_macd_gap_min_pct",
     "ai_watch_macd_gap_rsi_max",
     "ai_breakeven_offset_px",

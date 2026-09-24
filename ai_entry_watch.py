@@ -7642,7 +7642,83 @@ def desk_candidate_rows(
     except Exception:
         pass
 
+    try:
+        rows = apply_day_roster(rows, cfg)
+    except Exception:
+        pass
     return rows
+
+
+# Day roster: today's Movers / Trending / Research nominations, kept eligible
+# after the rotating top-N list drops them. On 2026-09-24 13:10-15:40, 79 of
+# 250 in-band -50 crosses (32%) were on names a source had named earlier that
+# day but no longer listed at the cross (30 had been seated); 6 crosses opened.
+# The book rebuilds from the current lists every 2 s, so it forgot them.
+_DAY_ROSTER: dict[str, dict] = {}
+_DAY_ROSTER_KEY = {"day": ""}
+_ROSTER_SOURCES = frozenset({"movers", "trending", "research", "agy", "xai", "grok"})
+
+
+def _roster_eligible(row: dict) -> bool:
+    src = str(row.get("source") or "").strip().lower()
+    return src in _ROSTER_SOURCES or "research" in (row.get("criteria") or [])
+
+
+def apply_day_roster(rows: list[dict], cfg: dict | None,
+                     now: float | None = None) -> list[dict]:
+    """Add today's earlier source nominations that the lists no longer carry.
+
+    ``ai_watch_day_roster`` (default off). A roster row is the name's last
+    seed row with a CURRENT quote from the desk / trending file; with no
+    current quote its price is None, so inclusion refuses it (no stale
+    price). Its old indicator is dropped so inclusion reads the live engine.
+    Every admission gate and the arm still apply. At most
+    ``ai_watch_day_roster_max`` roster rows, most recently listed first.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get("ai_watch_day_roster", False)):
+        return rows
+    t = float(now if now is not None else time.time())
+    day = _et_now(t).strftime("%Y-%m-%d")
+    if _DAY_ROSTER_KEY["day"] != day:
+        _DAY_ROSTER.clear()
+        _DAY_ROSTER_KEY["day"] = day
+    have = set()
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        s = str(r.get("symbol") or "").upper().strip()
+        if not s:
+            continue
+        have.add(s)
+        if _roster_eligible(r):
+            _DAY_ROSTER[s] = {"row": dict(r), "last": t}
+    try:
+        cap = int(cfg.get("ai_watch_day_roster_max", 40) or 0)
+    except (TypeError, ValueError):
+        cap = 40
+    extra = sorted(((v["last"], s, v["row"]) for s, v in _DAY_ROSTER.items()
+                    if s not in have), key=lambda x: x[0], reverse=True)[:max(0, cap)]
+    if not extra:
+        return rows
+    desk_rows, tr_by = _live_quote_map()
+    out = list(rows)
+    for last, s, old in extra:
+        row = dict(old)
+        live, tr = desk_rows.get(s) or {}, tr_by.get(s) or {}
+        px = live.get("price") if live.get("price") is not None else tr.get("price")
+        row["price"] = _f_or_none(px)
+        pct_src = live.get("pct_change") if live.get("pct_change") is not None else tr.get("pct_change")
+        pct = _pct_change_value(pct_src)
+        for k in ("pct_change", "pct"):
+            if k in row:
+                row[k] = pct
+        row.pop("indicator", None)
+        row["criteria"] = list(row.get("criteria") or []) + ["day_roster"]
+        row["day_roster"] = True
+        row["roster_last_listed"] = last
+        out.append(row)
+    return out
 
 
 # symbol -> consecutive qualifying polls, for admission dwell.
