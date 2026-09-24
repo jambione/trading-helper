@@ -7,7 +7,8 @@ Writes ai_reports/nightly/<day>.md with, in order:
   3. studies/counterfactual_today.py — the day replayed, with and without gates
   4. premarket_grade.py — were the premarket picks worth seating
   5. arm refusals from today's gates (engine_stale, spread, gap)
-  6. watchdog WEDGED restarts
+  6. volume-pace observe gate: today's fills split at pace 1.64
+  7. watchdog WEDGED restarts
 
 Every step runs as a subprocess with a timeout; a failed step is written into
 the report as a failure and the rest still run. Needs SIP data that is 15+
@@ -75,6 +76,36 @@ def gate_refusals(day: str) -> str:
                      for k, n in c.most_common())
 
 
+def rvol_pace_split(day: str, threshold: float = 1.64) -> str:
+    """Today's fills split by the observe-mode volume pace stamped at entry."""
+    groups: dict = {"pace >= %.2f" % threshold: [], "pace < %.2f" % threshold: [],
+                    "pace unknown": []}
+    for line in open(os.path.join(ROOT, "ai_reports", "outcomes.jsonl")):
+        try:
+            r = json.loads(line)
+        except Exception:  # noqa: BLE001
+            continue
+        et = r.get("entry_time")
+        if not isinstance(et, (int, float)) or bars.day_of(et) != day:
+            continue
+        pace = (r.get("features") or {}).get("rvol_pace_sip")
+        px, q, pl = r.get("entry_price"), r.get("total_qty"), r.get("realized_pl_usd")
+        if not px or not q or not isinstance(pl, (int, float)):
+            continue
+        key = ("pace unknown" if pace is None else
+               ("pace >= %.2f" % threshold if pace >= threshold else "pace < %.2f" % threshold))
+        groups[key].append((pl / (float(px) * float(q)) * 100, pl))
+    lines = [f"{'group':<16}{'fills':>6}{'win':>6}{'net/trade':>11}{'P/L':>10}"]
+    for k, v in groups.items():
+        if not v:
+            lines.append(f"{k:<16}{0:>6}")
+            continue
+        lines.append(f"{k:<16}{len(v):>6}{sum(a > 0 for a, _ in v) / len(v):>6.0%}"
+                     f"{sum(a for a, _ in v) / len(v):>+10.3f}%{sum(b for _, b in v):>+10.2f}")
+    return "\n".join(lines) + ("\n(observe mode: pace is stamped at the arm pass; "
+                               "nothing was refused on it)")
+
+
 def wedges(day: str) -> str:
     path = os.path.join(ROOT, "logs", "watchdog.log")
     if not os.path.exists(path):
@@ -109,6 +140,8 @@ def main():
         parts.append(f"## {title}\n\n`{' '.join(argv)}` — {status}\n\n```\n{out}\n```\n")
         print(f"[nightly] {title}: {status}", flush=True)
     parts.append(f"## Arm refusals from the gates\n\n```\n{gate_refusals(day)}\n```\n")
+    parts.append(f"## Volume-pace observe gate (would it have helped?)\n\n"
+                 f"```\n{rvol_pace_split(day)}\n```\n")
     parts.append(f"## Watchdog: hung-engine restarts\n\n```\n{wedges(day)}\n```\n")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(parts))

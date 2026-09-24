@@ -201,6 +201,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "spread_unknown": "spread ?",
     "gapped_down": "gapped down",
     "gap_unknown": "gap ?",
+    "rvol_pace_low": "volume pace low",
+    "rvol_pace_unknown": "volume pace ?",
     "last_in_zone_fade_ok": "ready",
     "last_late_hold": "late hold",
     "late_hold_closed": "late hold wait",
@@ -8681,6 +8683,116 @@ def sip_spread_pct(sym: str, *, now: float | None = None, ttl: float = 180.0,
     return val
 
 
+_RVOL_PACE_CACHE: dict[str, tuple[float | None, float]] = {}
+_AVG_VOL_CACHE: dict[str, tuple[float | None, str]] = {}
+_RVOL_OBS_LOGGED: dict[str, float] = {}
+
+
+def rvol_pace_sip(sym: str, *, now: float | None = None, ttl: float = 120.0,
+                  delay_min: float = 16.0, fetch=None) -> float | None:
+    """Today's SIP volume pace vs this stock's own 20-day normal, delayed 16 min.
+
+    pace = SIP volume 09:30 -> (now - 16 min)
+           / (20-day avg daily SIP volume x expected share of a day by then)
+    One feed on both sides (SIP; live IEX volume must not feed an SIP-built
+    ratio). The plan serves SIP once 15 minutes old, so this is None before
+    ~09:46. tools/studies/runway_target_study.py: pace >= 1.64 took +2%-before
+    --1% runway from 4% to 16% (z +13.8, both halves); vol_trail_book_study:
+    the one arm on those names only, +0.046%/trade in both halves (thin).
+    fetch(sym, t_end) -> (volume_so_far, avg_daily_volume) replaces the
+    network for tests.
+    """
+    sym = str(sym or "").upper()
+    t = float(now if now is not None else time.time())
+    hit = _RVOL_PACE_CACHE.get(sym)
+    if hit is not None and t - hit[1] < ttl:
+        return hit[0]
+    val = None
+    try:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+        t_end = t - delay_min * 60
+        end_et = _dt.fromtimestamp(t_end, tz=et)
+        mins = end_et.hour * 60 + end_et.minute - 570
+        if mins >= 1:
+            if fetch is not None:
+                so_far, avg = fetch(sym, t_end)
+            else:
+                so_far, avg = _rvol_pace_inputs(sym, t_end, end_et)
+            import tools.morning_funnel as _mf
+            frac = _mf.expected_fraction(mins)
+            if so_far and avg and frac > 0:
+                val = float(so_far) / (float(avg) * frac)
+    except Exception:
+        val = None
+    _RVOL_PACE_CACHE[sym] = (val, t)
+    return val
+
+
+def _rvol_pace_inputs(sym: str, t_end: float, end_et) -> tuple[float | None, float | None]:
+    from datetime import timedelta as _td, timezone as _tz
+    from alpaca.data.enums import DataFeed
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    cl = _data_client()
+    open_et = end_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    mb = cl.get_stock_bars(StockBarsRequest(
+        symbol_or_symbols=sym, timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+        start=open_et.astimezone(_tz.utc), end=end_et.astimezone(_tz.utc),
+        feed=DataFeed.SIP)).data.get(sym) or []
+    so_far = sum(float(b.volume) for b in mb)
+    day = open_et.strftime("%Y-%m-%d")
+    cached = _AVG_VOL_CACHE.get(sym)
+    if cached is not None and cached[1] == day:
+        avg = cached[0]
+    else:
+        db = cl.get_stock_bars(StockBarsRequest(
+            symbol_or_symbols=sym, timeframe=TimeFrame.Day,
+            start=(open_et - _td(days=45)).astimezone(_tz.utc),
+            end=(open_et - _td(minutes=1)).astimezone(_tz.utc),
+            feed=DataFeed.SIP)).data.get(sym) or []
+        prior = [float(b.volume) for b in db
+                 if b.timestamp.astimezone(end_et.tzinfo).date() < open_et.date()]
+        avg = sum(prior[-20:]) / 20 if len(prior) >= 20 else None
+        _AVG_VOL_CACHE[sym] = (avg, day)
+    return so_far, avg
+
+
+def _rvol_pace_gate(record: dict, cfg: dict, now: float | None) -> tuple[bool, str]:
+    """Observe (log + stamp) and/or enforce the volume-pace gate at the arm pass."""
+    observe = bool(cfg.get("ai_watch_rvol_pace_observe", False))
+    try:
+        need = float(cfg.get("ai_watch_min_rvol_pace", 0) or 0)
+    except (TypeError, ValueError):
+        need = 0.0
+    if not observe and need <= 0:
+        return True, ""
+    sym = str(record.get("symbol") or "").upper()
+    pace = rvol_pace_sip(sym, now=now) if sym else None
+    record["rvol_pace_sip"] = pace
+    if observe:
+        t = float(now if now is not None else time.time())
+        if t - _RVOL_OBS_LOGGED.get(sym, 0.0) >= 60:
+            _RVOL_OBS_LOGGED[sym] = t
+            try:
+                import ai_positions as cp
+                obs_min = float(cfg.get("ai_watch_rvol_pace_observe_min", 1.64) or 1.64)
+                cp.log_event("rvol_pace_observe", symbol=sym,
+                             rvol_pace=(round(pace, 3) if pace is not None else None),
+                             would_block=(pace is None or pace < obs_min),
+                             threshold=obs_min, enforced=need > 0)
+            except Exception:
+                pass
+    if need > 0:
+        if pace is None:
+            return False, "rvol_pace_unknown"
+        if pace < need:
+            record["block_detail"] = f"volume pace {pace:.2f}x < {need:g}x"
+            return False, "rvol_pace_low"
+    return True, ""
+
+
 def open_gap_pct(sym: str, *, now: float | None = None, fetch=None) -> float | None:
     """Today's official open vs yesterday's close, %.
 
@@ -14374,6 +14486,9 @@ def _entry_features(rec: dict, *, ask: float | None = None,
                 or "").strip().lower() or None
         ),
         "square_since": _f_or_none(rec.get("square_since")),
+        # Volume pace vs this stock's own normal (SIP, 16-min delayed) at the
+        # arm pass; None when the observe/enforce gate is off or not yet served.
+        "rvol_pace_sip": _f_or_none(rec.get("rvol_pace_sip")),
         "ask": _f_or_none(ask),
         # What crossing cost on THIS fill. The shadow log prices candidates,
         # but until now nothing priced consequences: ai_max_spread_r sits at 0
@@ -15310,9 +15425,15 @@ def should_arm_buy(
         # Last is the entry. Structure only supplies stop/target for R.
         # Square first. MACD gap is only for a name that is not in ■.
         if exh_ok:
+            pace_ok, pace_why = _rvol_pace_gate(record, cfg, now)
+            if not pace_ok:
+                return False, pace_why
             return True, f"last_{exh_why}"
         fill_ok, _fill_why = macd_gap_fill_allows_buy(record, cfg, price=a)
         if fill_ok:
+            pace_ok, pace_why = _rvol_pace_gate(record, cfg, now)
+            if not pace_ok:
+                return False, pace_why
             return True, "last_macd_gap"
         return False, exh_why
 

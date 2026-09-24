@@ -54,6 +54,8 @@
   "ai_local_trail_peak_give_pct": 0.35,
   "ai_watch_engine_stale_max_sec": 60.0,
   "ai_watch_gap_down_block_pct": 1.0,
+  "ai_watch_rvol_pace_observe": true,
+  "ai_watch_min_rvol_pace": 0.0,
   "ai_watch_max_sip_spread_pct": 0.2,
   "ai_exit_limit_collar_wait_sec": 2.0,
   "ai_exit_limit_collar_pct": 0.0,

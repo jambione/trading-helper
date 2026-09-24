@@ -1294,6 +1294,11 @@ DEFAULT_CONFIG = {
     "ai_watch_max_sip_spread_pct":     0.0,
     # Refuse names that opened more than this % under yesterday's close. 0 = off.
     "ai_watch_gap_down_block_pct":     0.0,
+    # Volume pace vs the stock's own 20d normal (SIP, 16-min delayed).
+    # observe: stamp + log at the arm pass, never refuse. min > 0 enforces.
+    "ai_watch_rvol_pace_observe":      False,
+    "ai_watch_rvol_pace_observe_min":  1.64,
+    "ai_watch_min_rvol_pace":          0.0,
     # Second open: MACD gap when the name is not in an overbought square.
     # Off in defaults so tests that omit the key stay on square only.
     # Live bot_config turns it on. See macd_gap_fill_allows_buy.
@@ -1717,6 +1722,9 @@ _EFFECTIVE_KEYS = (
     "ai_watch_engine_stale_max_sec",
     "ai_watch_max_sip_spread_pct",
     "ai_watch_gap_down_block_pct",
+    "ai_watch_rvol_pace_observe",
+    "ai_watch_rvol_pace_observe_min",
+    "ai_watch_min_rvol_pace",
     "ai_local_trail_peak_give_pct",
     "ai_exit_limit_collar_pct",
     "ai_exit_limit_collar_wait_sec",
@@ -2186,6 +2194,9 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_engine_stale_max_sec",
     "ai_watch_max_sip_spread_pct",
     "ai_watch_gap_down_block_pct",
+    "ai_watch_rvol_pace_observe",
+    "ai_watch_rvol_pace_observe_min",
+    "ai_watch_min_rvol_pace",
     "ai_watch_macd_gap_min_pct",
     "ai_watch_macd_gap_rsi_max",
     "ai_breakeven_offset_px",

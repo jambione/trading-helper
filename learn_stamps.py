@@ -188,6 +188,7 @@ _FINGERPRINT_KEYS = (
     "ai_watch_engine_stale_max_sec",
     "ai_watch_max_sip_spread_pct",
     "ai_watch_gap_down_block_pct",
+    "ai_watch_min_rvol_pace",
     # Second arm. Changes who gets bought when the square is absent.
     "ai_watch_macd_gap_arm",
     "ai_watch_macd_gap_min_pct",
