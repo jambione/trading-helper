@@ -3408,12 +3408,19 @@ def _is_unarmable_stale_watching(
     return tape_only or src in ("none", "")
 
 
-def _track_unarmable_block(rec: dict, *, now: float) -> None:
-    """Start/clear ``unarmable_since`` from sticky never-armable block codes."""
+def _track_unarmable_block(rec: dict, *, now: float, cfg: dict | None = None) -> None:
+    """Start/clear ``unarmable_since`` from sticky never-armable block codes.
+
+    With ai_watch_admit_arm_gates on, the arm's hard-gate codes (spread_wide,
+    gapped_down, price band) count too; otherwise their clock was cleared on
+    every poll and a gate-blocked seat could never age into an eviction.
+    """
     if not isinstance(rec, dict):
         return
     code = str(rec.get("block_code") or "").strip().lower()
-    if code in _NEVER_ARMABLE_BLOCK_CODES:
+    sticky = code in _NEVER_ARMABLE_BLOCK_CODES or (
+        admit_arm_gates_enabled(cfg) and code in _ADMIT_GATE_CODES)
+    if sticky:
         if _f_or_none(rec.get("unarmable_since")) is None:
             # Prefer block_ts so a long-stuck code does not get a fresh clock.
             bt = _f_or_none(rec.get("block_ts"))
@@ -3502,9 +3509,10 @@ def _maybe_never_armable_evict(
         return False
     if _within_subscribe_grace(rec, cfg, now):
         return False
-    _track_unarmable_block(rec, now=now)
+    _track_unarmable_block(rec, now=now, cfg=cfg)
     code = str(rec.get("block_code") or "").strip().lower()
-    if code not in _NEVER_ARMABLE_BLOCK_CODES:
+    gate_evict = admit_arm_gates_enabled(cfg) and code in _ADMIT_GATE_CODES
+    if code not in _NEVER_ARMABLE_BLOCK_CODES and not gate_evict:
         return False
     # Stale tape already has stale_timeout / no_stream_trade — avoid double drop
     # unless the code is RSI/EXH/above_max (the inventory that blocked opens).
@@ -3527,6 +3535,8 @@ def _maybe_never_armable_evict(
     # Re-check: if now arm-ready, clear clock instead of dropping.
     try:
         ready, why = evaluate_arm_ready(rec, cfg, now=now)
+        if ready and gate_evict:
+            ready, why = admit_arm_gates(rec, cfg, now=now)
         if ready:
             rec.pop("unarmable_since", None)
             rec["arm_ready"] = True
@@ -9026,6 +9036,77 @@ def rvol_blocks_admit(
     return "thin_rvol"
 
 
+_ADMIT_GATE_CODES = frozenset({"spread_wide", "gapped_down", "below_min_price",
+                                "above_max_price"})
+
+
+def admit_arm_gates_enabled(cfg: dict | None) -> bool:
+    return bool((cfg or {}).get("ai_watch_admit_arm_gates", False))
+
+
+def admit_arm_gates(row: dict, cfg: dict | None, *, now: float | None = None,
+                    spread_fn=None, gap_fn=None) -> tuple[bool, str]:
+    """The arm's hard gates, run at the door. ``(ok, reason)``.
+
+    2026-09-24: the book held QMCO (SIP spread 0.47%), TEM, NBIS ($240) and
+    CLF ($12.74), refused at the arm on every poll, while PFE and KR waited
+    outside. Seats only have value if the arm can fire on them.
+
+    Same numbers as the arm (sip_spread_pct, open_gap_pct and their caches),
+    so admit and arm cannot disagree. Two deliberate differences:
+      * unknown spread or gap ABSTAINS here (the arm still refuses it), so a
+        slow data read can not empty the book;
+      * the spread check sits out until the delayed SIP data covers the session
+        (09:30 + ai_movers_sip_delay_min): before that it would judge
+        premarket spreads, the 09:30-09:46 spread_wide wall.
+    Price band applies to every source, including research seeds, which skip
+    the arm-ready pre-check.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not admit_arm_gates_enabled(cfg) or not isinstance(row, dict):
+        return True, ""
+    sym = str(row.get("symbol") or "").upper().strip()
+    t = float(now if now is not None else time.time())
+    px = _f_or_none(row.get("price"))
+    if px is None:
+        px = _f_or_none(row.get("last_ask"))
+    if px is not None:
+        lo = _f_or_none(cfg.get("ai_watch_min_price")) or 0.0
+        hi = _f_or_none(cfg.get("ai_max_price")) or 0.0
+        if lo > 0 and px + 1e-12 < lo:
+            return False, "below_min_price"
+        if hi > 0 and px + 1e-12 >= hi:
+            return False, "above_max_price"
+    if not sym:
+        return True, ""
+    try:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _Z
+        et = _dt.fromtimestamp(t, _Z("America/New_York"))
+        mins_open = et.hour * 60 + et.minute - 570
+    except Exception:  # noqa: BLE001
+        mins_open = 999
+    delay = _f_or_none(cfg.get("ai_movers_sip_delay_min"))
+    delay = 15.0 if delay is None else delay
+    max_sp = _f_or_none(cfg.get("ai_watch_max_sip_spread_pct")) or 0.0
+    if max_sp > 0 and mins_open >= delay + 1:
+        try:
+            sp = (spread_fn or sip_spread_pct)(sym, now=t)
+        except Exception:  # noqa: BLE001
+            sp = None
+        if sp is not None and sp > max_sp:
+            return False, "spread_wide"
+    block = _f_or_none(cfg.get("ai_watch_gap_down_block_pct")) or 0.0
+    if block > 0:
+        try:
+            g = (gap_fn or open_gap_pct)(sym, now=t)
+        except Exception:  # noqa: BLE001
+            g = None
+        if g is not None and g < -block:
+            return False, "gapped_down"
+    return True, ""
+
+
 def passes_inclusion(
     row: dict,
     cfg: dict,
@@ -9067,6 +9148,9 @@ def passes_inclusion(
     # free until the next ET calendar day (A2 occupancy hygiene).
     if sym and _no_stream_strike_demoted(sym, time.time(), cfg):
         return False, met, "no_stream_strike_demote"
+    gate_ok, gate_why = admit_arm_gates(row, cfg)
+    if not gate_ok:
+        return False, met, gate_why
     # Admission range-position filter. Off by default (cap 0), so this only
     # writes down what it WOULD have refused until out-of-sample days say
     # whether the 2026-09-05 gradient holds. Fails open and swallows its own
