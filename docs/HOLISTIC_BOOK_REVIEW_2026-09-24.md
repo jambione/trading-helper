@@ -346,3 +346,217 @@ every arm reaches an order; **and** ≥1 open per 10 minutes across the session
 | Slow %R rising worth keeping | **Unproven** in today's ledger; recommend whatif |
 
 *Branch: `holistic-review` off `origin/replay-tool`. Not pushed. Mini tree untouched.*
+
+---
+
+## Audit of 09-23 / 09-24 changes
+
+Scope: every commit on `origin/master-mac` and `origin/replay-tool` since
+**2026-09-22 20:00 ET** (baseline `fa1e440`). Authors are Jonathan Brasfield
+(Claude-assisted). Live mini config == `HEAD` of `master-mac` (`a10b538`);
+afternoon temps are **committed**, not uncommitted drift. Mini is on
+`master-mac` (replay-tool commits not deployed).
+
+### Commit inventory (grouped)
+
+**BOOK / admit / seat / evict**
+| When ET | Hash | Summary |
+|---|---|---|
+| Wed 11:34–12:12 | `599e94e` `b935d6c` | Rising-heat seats; heating RVOL relief; dead-unknown eviction |
+| Wed 12:40–13:12 | `9da4311`…`caabdd9` | Movers band/rvol widen; full-market scan; seed floors |
+| Wed 05:40 | `f35c164` | Panel stream prewarm (A1) |
+| Thu AM temps | `84ee25e`…`0fcdc8b` | Movers rvol 1.0↔0.7↔0.85 churn |
+| Thu 10:31 | `d2e0928` | Shrink desk load under ~50 freeze |
+| *replay only* | `765ca8a` `22845f0` | Armable-only admit gates; SIP volume-clock fix |
+
+**ARMS**
+| When | Hash | Summary |
+|---|---|---|
+| Wed 10:24–11:21 | `43636d3` `1fe3a14` `0924046` | Square+heating path, then rising-print / dual-rise heating |
+| Wed 16:13 | `b242e72` | **One arm: fast %R −50 mid_rise** (+ peak ratchet) |
+| Wed 17:45–20:42 | `0280838` `32b8527` `eb83256` | Engine-stale refuse; SIP spread + gap-down; rvol_pace observe |
+
+**EXITS**
+| When | Hash | Summary |
+|---|---|---|
+| Wed 10:10–12:12 | trail fixes `65ec7d8`…`59519dd` | Catch-up, shelf under fill, market on shelf print |
+| Wed 12:46 / 16:20 | `553e6e0` `d28857b` | Never-green 60s **on then off**; peak give 0.35% |
+| Wed 13:33 / 16:30 | `dc5bcce` `110e3fa` | Trail arm_r 0.15→0.06; capped stop sell; collar |
+| Wed 18:50 | `32b8527` | Capped sell **off** again |
+
+**ENTRY**
+| When | Hash | Summary |
+|---|---|---|
+| Wed 16:30 | `110e3fa` | $20 floor in config |
+| Thu 03:31 | `29e38e1` | `ai_max_price` hard ceiling over equity float |
+| Thu 10:20 | `f8f6c56` | confirm slip **px 0.08→0** (keep 0.5% leg) |
+
+**FRESHNESS / data**
+| When | Hash | Summary |
+|---|---|---|
+| Thu 10:29–11:44 | `a61db23` `9a0acf0` `a10b538` | Finnhub cap 50→40→50; **RLock deadlock fix** |
+| Thu temps | decision 15→30→60; dead_seat 30→90; stale_data 15→60; spread 0.20→0.30 | Afternoon band-aids |
+
+**EFFICIENCY**
+| When | Hash | Summary |
+|---|---|---|
+| Wed 13:19–15:25 | `e2ea373` `b2cd962` | Engine push 32→48→44 |
+| Wed 15:30 | `512dce9` | Watchdog restarts wedged engine |
+
+**TOOLS / docs / studies**
+`live_check`, four-pillar scorecard, entry screen, exec report, runway /
+sector / vol-trail studies, nightly loop, premarket observe, pre-open docs,
+handoff, `rehearse_open` / `rehearse_whatif` (replay-tool).
+
+### Config drift vs 2026-09-22 20:00 (`fa1e440` → live)
+
+**Added (27 knobs)** — notable: `ai_watch_exh_mid_rise_arm`, SIP spread/gap,
+movers scan/premarket, `ai_local_trail_peak_give_pct`, engine_stale,
+heating tape ages, rvol_pace observe, dead_seat_evict, engine_push_max,
+exit collar knobs (collar pct now 0).
+
+**Changed (20)** — `$20` floors; RVOL 2→1; movers seed 8→25; mid_rise on /
+square & macd_gap **off**; confirm slip px→0; trail arm_r 0.15→0.06;
+**no_progress** thresholds tightened (90s/0.05R → 60s/0.001R) while flatten
+flag later set **False**; afternoon freshness temps (decision/dead/stale 60s,
+spread 0.30, movers rvol 0.85).
+
+**Live vs mini HEAD:** no uncommitted config drift (0 keys).
+
+### Verdict table (tight groups)
+
+| Change group | What it does | Goal | Evidence today | Verdict |
+|---|---|---|---|---|
+| Mid_rise one-arm (`b242e72`) | Only −50 fast %R cross arms | Quality entries + simplicity | All 6 closes `arm_why=last_mid_rise` | **KEEP** |
+| Square / macd_gap / heating-with-square off | Disables other arm lanes in config | Simplicity | Code still present; mid_rise exclusive when on | **KEEP off**; **SIMPLIFY** delete dead lanes later |
+| SIP spread + gap-down (`32b8527`) | Intended hard gates | Quality | spread_wide 1209 / gapped_down 1143 arm refuses | **KEEP**; fix premarket SIP timing via admit_arm_gates wait |
+| Engine-stale arm refuse (`0280838`) | No arm on frozen indicators | Safety | engine_stale 93 during freeze | **KEEP** |
+| Finnhub RLock (`9a0acf0`) + cap 50 | Unsticks WS | Fresh book | Freeze 10:20–10:47 ended after fix | **KEEP** |
+| Volume-clock + admit_arm_gates (replay) | Correct movers rvol; band/spread/gap at admit | Full quality book | whatif: +supply but book@09:40 still fail without freshness | **KEEP** merge; not enough alone |
+| Rising-heat seats / dead-unknown evict / heating RVOL relief | Extra admit path + faster kick | Book fill | CDNA dead_unknown storm; heat path ≠ 3 sources | **SIMPLIFY** into book-server; drop heat as supply |
+| Movers widen + universe scan | More movers names | Full book | 27 movers midday; 19 off book — intake not scan | **KEEP** movers as source; **SIMPLIFY** stop treating scan widen as the fix |
+| Engine push 32→48→44 + shrink load | Subscription budget thrash | Efficiency | Watchlist still 51 src=book; 429s | **SIMPLIFY** under seat-tied watchlist |
+| Afternoon freshness temps (60s / spread 0.30 / rvol 0.85) | Loosen plumbing pain | Opens | More afternoon opens; masks dual-clock | **REVERT** at 16:00; replace with one-clock |
+| confirm slip px→0 | Stop canceling favorable moves | Arm→order | CRWV killed pre-fix; ok after | **KEEP** (consider also pct=0 or favorable-exempt) |
+| Trail arm_r 0.06 + peak give 0.35% + shelf market | Earlier leash / peak give | Capture profit | 4/6 exits local_trail; poor MFE capture | **MEASURE-FIRST** / **SIMPLIFY** trail as backup only |
+| Never-green / no_progress (`553e6e0` then off) | Flatten if not green ~60s | — | Wed: **5** no_progress closes (−$4); Thu: **0**, flag **False** | **KEEP off** (`ai_no_progress_flatten_enabled=False`). Jonathan does not want it |
+| Capped stop sell on/off | Limit-collar exits | Capture | Collar pct 0 live | **KEEP off** until measured |
+| rvol_pace observe (`eb83256`) | Log pace; gate at 0 | Runway study | Observe only | **KEEP observe**; **do not** promote to gate |
+| Premarket scan observe | Log pre names | Research | feed False | **DEFER** |
+| Tools: rehearse_*, live_check, scorecards, studies | Measure | Evidence | rehearse reproduced morning FAIL | **KEEP** rehearse/live_check; studies not runtime |
+| `$20` floor + max_price ceiling | Band | Quality | INFQ/CLF still filled <$20 via research hole | **KEEP** floor; **need** admit_arm_gates deploy |
+| Panel prewarm / OCR alerts | Early Finnhub / Discord | Warmth | Discord≠3 sources | Prewarm **KEEP** idea; OCR supply **SIMPLIFY** out of admit |
+
+**Duplicate knobs / dead paths**
+- Many freshness ages (33) duplicate one decision age — collapse.
+- Square / triangle / macd_gap / last_heating code paths **dead at runtime** while mid_rise on — candidates to delete after tests green.
+- `ai_exit_limit_collar_*` present with pct 0 — dead config surface.
+- `ai_no_progress_*` thresholds still set while flatten disabled — dead.
+- Heating admit tape age 300s vs movers 60s vs admit 120s — three answers to one question.
+
+---
+
+## Exits
+
+### Jonathan's locked prefs
+- **No** `no_progress` flatten.
+- Trail = **backup leash**.
+- **left_overbought** exit on.
+- EOD flatten ~**15:50**.
+
+### Live flags (measured)
+`ai_no_progress_flatten_enabled=False`, `ai_exit_left_overbought=True`,
+`ai_local_trail_enabled=True`, `ai_eod_liquidate_time=15:50`,
+`ai_stale_data_flatten=True` (max age **60s** temp; was 15s).
+
+### Wed 09-23 (context)
+| Reason | n | $ |
+|---|---:|---:|
+| local_trail | 23 | −42.57 |
+| left_overbought | 9 | −15.16 |
+| **no_progress** | **5** | **−4.05** |
+
+Those 5 fired ~65–71s holds while never-green/no_progress was effectively on
+(`553e6e0`). Turned off later (`d28857b` / flatten flag False). **Do not
+re-enable.**
+
+### Thu 09-24 scorecard (6 closes in `outcomes.jsonl` by ~12:50 ET)
+
+| Symbol | Reason | class | $ | R | MFE_R | Hold | Notes |
+|---|---|---|---:|---:|---:|---:|---|
+| RKLB | **stale_data** | **plumbing** | −2.88 | −0.13 | +0.06 | 453s | Thin prints + 429; guard at 15s then raised |
+| VNOM | local_trail | intended leash | −4.10 | −0.19 | ~0 | 1057s | Never reached +0.3% arm; stop/shelf |
+| AR | local_trail | intended | −4.65 | −0.21 | +0.02 | 331s | Stop did its job into red candle |
+| INFQ | local_trail | intended | +2.24 | +0.10 | +0.09 | 57s | **<$20 research hole**; hit_trail_arm |
+| RKLB | local_trail | intended | +1.00 | +0.05 | +0.07 | 80s | Small capture |
+| CLF | left_overbought | intended | −2.04 | −0.09 | +0.03 | 729s | **<$20**; OB exit |
+
+| Reason | n | $ | mean R | mean MFE_R | mean hold |
+|---|---:|---:|---:|---:|---:|
+| stale_data | 1 | −2.88 | −0.13 | 0.06 | 453s |
+| local_trail | 4 | −5.51 | −0.07 | 0.05 | 381s |
+| left_overbought | 1 | −2.04 | −0.09 | 0.03 | 729s |
+| **Total** | **6** | **−10.43** | | | |
+
+MFE available was tiny on every name (≤0.09R). “Capture % of MFE” is
+misleading when realized is negative after a 0.02–0.06R peak — the trade
+never had runway; entry timing / name quality dominated, not exit math.
+
+**Simplest exit set (recommendation)**
+1. Initial stop (structure / local shelf).
+2. **left_overbought** (keep).
+3. Trail / peak-give as **backup leash only** (keep enabled; don't add more
+   flatten modes).
+4. EOD ~15:50 (keep).
+5. **stale_data flatten:** keep as safety but only after **one shared
+   freshness clock** so 429 ≠ “no data”; avoid 15s hair-trigger.
+6. **no_progress:** stay **off**.
+7. Collar / capped stop: stay **off** until a multi-day measure says otherwise.
+
+---
+
+## Arms — live lanes
+
+**Live path (measured):** `ai_watch_exh_mid_rise_arm=True` →
+`exhaustion_allows_buy` returns **only** `_mid_rise_allows_buy` (exclusive).
+All six Thu fills: `arm_why=last_mid_rise`.
+
+| Lane | Config | Runtime when mid_rise on | Verdict |
+|---|---|---|---|
+| mid_rise (−50 cross) | **on** | **active** | **KEEP** |
+| square | off | not consulted | keep off; delete later |
+| oversold triangle | off | not consulted | keep off; delete later |
+| last_heating / heating-with-square | off | not consulted | keep off; delete later |
+| macd_gap | off | returns macd_gap_arm_off if called | keep off; delete later |
+| CM RSI require rising | **False** | off | leave off |
+| slow %R rising at cross | baked into mid_rise | active | **MEASURE-FIRST** (whatif) before dropping |
+
+---
+
+## Consolidated tonight plan
+
+Merge of book-server design + audit verdicts. Market closed / after reverts.
+
+| # | Step | Why | Verify | Pass / risk |
+|---|---|---|---|---|
+| 0 | **Revert** afternoon temps after 16:00: decision/dead/stale ages, spread 0.30→0.20, movers rvol→1.0 (with volume-clock deploy) | Stop masking dual-clock with looser knobs | config diff on mini | Low |
+| 1 | **Watchlist leak:** `src=book` TTL/cap tied to seats; batch Alpaca quotes | Cut 429s; fresh tape for seats | 429/min ↓; list ≤~40 | Med — don't drop open positions |
+| 2 | **One price, one clock** for admit / arm / evict / flatten; 429 ≠ no data | Goal 1–2; CDNA-class | `rehearse_open`: data-blocked **<10%** | Med |
+| 3 | Merge **replay-tool**: volume-clock + `admit_arm_gates` + rehearse tools; set `ai_watch_admit_arm_gates=true` | Morning movers supply; research $20 hole | `rehearse_whatif` + open; no INFQ<$20 | Low–med |
+| 4 | **Book server slim (start):** admit supply = Movers+Trending+Research only; rank by distance-to-cross; warm on source sighting | Goals 1–2 + simplicity | book **≥10 by 09:40**, **≥6 armable**, **≥1 open / 10 min** | Med |
+| 5 | Confirm: keep slip px 0; exempt favorable moves if pct leg still bites | Every arm→order | arms==entries on rehearse | Low |
+| 6 | Exits: confirm `no_progress` **off**; leave left_OB + trail leash + EOD; stale_data uses shared clock | Capture profit prefs | Wed-style no_progress count = 0 | Low |
+| 7 | Optional same night: whatif mid_rise **with/without** slow-%R rising | RSI-direction question | +1%−before−1% study | Low |
+| 8 | Deploy + kickstart; `live_check`; multi-day rehearse 09-21..24 | Ship gate | All pass criteria below | — |
+
+**Do not tonight:** promote rvol_pace to a gate; re-enable no_progress;
+re-enable square/heating/macd arms; premarket feed on; more trail modes;
+raise max positions.
+
+**Ship / pass criteria**
+- book ≥ 10 by 09:40  
+- ≥ 6 armable after 09:40 (median)  
+- data-blocked share < 10%  
+- every arm reaches an order  
+- ≥ 1 open per 10 minutes across RTH (warm-up exception only first slot if documented)
+
