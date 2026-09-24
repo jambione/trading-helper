@@ -615,4 +615,13 @@ def dynamic_max_price(equity: float, cfg: dict[str, Any] | None = None) -> float
     """
     eq = max(250.0, float(equity if equity else 250.0))
     limits = limits_from_cfg(eq, cfg)
-    return max(10.0, limits.dollar_cap)
+    cap = max(10.0, limits.dollar_cap)
+    # ai_max_price is a hard ceiling on top of the equity float. Every caller
+    # (seeds, arm-ready, the buy, the trending panel) reads this function, so
+    # without the ceiling ai_max_price was dead: at $2.3k equity the float is
+    # ~$453, and 2026-09-14..23 bought 26 names over $100 (MSTR, COIN, VICR).
+    try:
+        ceiling = float((cfg or {}).get("ai_max_price") or 0.0)
+    except (TypeError, ValueError):
+        ceiling = 0.0
+    return min(cap, ceiling) if ceiling > 0 else cap
