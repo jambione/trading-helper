@@ -152,7 +152,12 @@ def register_trade_callback(fn):
 # Free-tier WebSocket ceiling. Dynamic (un)subscribe rotates under this;
 # overflowing silently means no trades / no forming bars for overflow names.
 # Override with FINNHUB_MAX_SUBSCRIPTIONS if the account tier changes.
-MAX_WS_SUBSCRIPTIONS = int(os.getenv("FINNHUB_MAX_SUBSCRIPTIONS", "50"))
+# Default 40, not the tier's 50: at 50 subscriptions the dashboard hung
+# (2026-09-23 13:51, 2026-09-24 10:20 and again within 40s of a restart).
+# At 42-43 it ran all morning. The env override is read at import, before
+# dashboard.py loads signal_engine.env, so setting it there does nothing;
+# the default is the value that actually binds.
+MAX_WS_SUBSCRIPTIONS = int(os.getenv("FINNHUB_MAX_SUBSCRIPTIONS", "40"))
 
 # Watch/book/seed symbols — never evict these for non-book rotation.
 # Updated by the engine/dashboard from the live entry_watch / entry_book set
