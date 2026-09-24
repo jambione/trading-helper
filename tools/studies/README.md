@@ -20,3 +20,4 @@ the mini (they need `config/secrets.json` and the SIP bar/quote caches):
 | `refusal_runway.py` | Do refused names run better than the ones we trade? | `thin_rvol` refusals are flat |
 | `signal_timing.py` | Where in the %R cycle to buy | Superseded by `tools/entry_screen.py` |
 | `sector_study.py` | Sector strength vs SPY | Sector leading SPY by >0.5%: 62.4% (z +3.9, both halves) |
+| `sector_book_study.py` | Does the sector filter survive the book? | No: +0.013% vs +0.008%/trade (±0.061), a third of the trades |
