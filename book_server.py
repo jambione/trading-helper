@@ -4,20 +4,30 @@ Replaces the soft-seed / momentum / Discord intake tangle when
 ``ai_book_server_mode`` is ``live``. Default is ``shadow``: builds its own
 ranked queue, logs would-have-done decisions, places no orders.
 
-Ranking (docs/RUNWAY_STUDY_2026-09-24.md + NAME_QUALITY_RERUN correction):
+Ranking (docs/RUNWAY_STUDY_2026-09-24.md + NAME_QUALITY_RERUN correction),
+using only inputs the live candidate rows actually carry:
 
-    runway_score ≈
-        1.5 * z(day_chg_pct)          # mild; no hard kink (symbol-day n thin)
-      + 1.0 * z(used_range_pct)
-      + 1.0 * z(ema9_slope)
-      + 1.0 * z(-dist_hod_pct)         # farther below HOD = better
-      + 0.5 * z(-dist_swing30_pct)
+    runway_score =
+        1.5 * tanh(day_chg_pct / 8)    # mild; no hard kink (symbol-day n thin)
       + 0.5 * (mins_open < 90)
       + 0.5 * (source == movers)
-      + pace_term(rvol_pace_sip)       # soft-cap ~4x; ignored before ~09:46
+      + pace_term(volume pace)         # soft-cap ~4x; ignored before ~09:46
 
-    seat_priority = runway_score + w * closeness_to_−50
+    seat_priority = runway_score + 2 * closeness_to_−50
 
+Rows with a known fast %R rank ahead of rows without one: the arm cannot fire
+on a name with no %R, and scoring its closeness as 0 would rank it on a number
+that does not exist.
+
+Dropped until a live source exists: the study's used range, EMA9 slope,
+distance below HOD and below the 30-minute swing high. No candidate row
+carries them and nothing live computes them (they need intraday bars per
+candidate); the first build scored them as 0 on every row.
+
+Volume pace is the study's measure (SIP volume so far vs the stock's own
+20-day SIP normal). It comes from ``rvol_pace_sip`` (stamped on seated
+records, cached per process) or, for movers rows, the screener's ``rvol``,
+which is the same statistic. Trending's rvol is an IEX ratio and is not used.
 Pace is a ranking input only (``ai_watch_min_rvol_pace`` stays 0).
 """
 from __future__ import annotations
@@ -25,7 +35,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -37,7 +46,7 @@ ET = ZoneInfo("America/New_York")
 _ROOT = Path(__file__).resolve().parent
 
 # Sources the server accepts. Everything else is retired as intake when live.
-SUPPLY_SOURCES = frozenset({"movers", "trending", "research", "agy", "grok"})
+SUPPLY_SOURCES = frozenset({"movers", "trending", "research", "agy", "xai", "grok"})
 
 # Settings the live book-server path retires (documented for the night report).
 RETIRED_WHEN_LIVE = (
@@ -58,6 +67,8 @@ _PACE_FLOOR = 1.64
 _CLOSENESS_W = 2.0
 _MORNING_MINS = 90
 _PACE_READY_MIN = 9 * 60 + 46  # ~09:46 ET — SIP pace not served earlier
+_SHADOW_HEARTBEAT_SEC = 60.0
+_last_shadow: dict[str, Any] = {"key": None, "ts": 0.0}
 
 
 def mode(cfg: dict | None) -> str:
@@ -83,6 +94,15 @@ def _f(x: Any, default: float | None = None) -> float | None:
     if not math.isfinite(v):
         return default
     return v
+
+
+def _first(row: dict, *keys: str) -> float | None:
+    """First key that holds a finite number. 0.0 is a value, not a miss."""
+    for k in keys:
+        v = _f(row.get(k))
+        if v is not None:
+            return v
+    return None
 
 
 def _mins_open(now: float | None = None) -> float:
@@ -135,10 +155,6 @@ def closeness_to_cross(fast_pctr: float | None, level: float = -50.0) -> float:
 def runway_score(
     *,
     day_chg_pct: float | None = None,
-    used_range_pct: float | None = None,
-    ema9_slope: float | None = None,
-    dist_hod_pct: float | None = None,
-    dist_swing30_pct: float | None = None,
     source: str = "",
     rvol_pace: float | None = None,
     now: float | None = None,
@@ -146,20 +162,10 @@ def runway_score(
 ) -> float:
     """Higher = more runway. No hard day-change kink (see name-quality correction)."""
     src = str(source or "").strip().lower()
-    mins = _mins_open(now)
     if include_pace is None:
         include_pace = _et_hhmm_min(now) >= _PACE_READY_MIN
-
-    score = 0.0
-    score += 1.5 * _tanh_z(day_chg_pct, 8.0)
-    score += 1.0 * _tanh_z(used_range_pct, 50.0)
-    score += 1.0 * _tanh_z(ema9_slope, 0.5)
-    # Farther below HOD / swing high = better (negative dist → positive).
-    if dist_hod_pct is not None:
-        score += 1.0 * _tanh_z(-float(dist_hod_pct), 5.0)
-    if dist_swing30_pct is not None:
-        score += 0.5 * _tanh_z(-float(dist_swing30_pct), 3.0)
-    if mins < _MORNING_MINS:
+    score = 1.5 * _tanh_z(day_chg_pct, 8.0)
+    if _mins_open(now) < _MORNING_MINS:
         score += 0.5
     if src == "movers":
         score += 0.5
@@ -168,34 +174,54 @@ def runway_score(
     return float(score)
 
 
+def _source(row: dict) -> str:
+    return str(row.get("source") or row.get("src") or "").strip().lower()
+
+
+def _symbol(row: dict) -> str:
+    return str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+
+
+def row_inputs(
+    row: dict,
+    *,
+    indicators: dict[str, dict] | None = None,
+    paces: dict[str, float] | None = None,
+) -> dict:
+    """The ranking inputs this row really has. Missing stays None."""
+    sym = _symbol(row)
+    ind = row.get("indicator") if isinstance(row.get("indicator"), dict) else None
+    if ind is None and indicators:
+        ind = indicators.get(sym) if isinstance(indicators.get(sym), dict) else None
+    pctr = _f(ind.get("pctr")) if ind else _f(row.get("pctr"))
+    pace, pace_src = _first(row, "rvol_pace_sip"), "pace_sip"
+    if pace is None and paces and sym in paces:
+        pace, pace_src = _f(paces.get(sym)), "pace_sip"
+    if pace is None and _source(row) == "movers":
+        # movers_screener's rvol: SIP day volume vs the name's own 20-day SIP
+        # average, time-adjusted to the delayed bar — the study's statistic.
+        pace, pace_src = _f(row.get("rvol")), "movers_sip"
+    return {
+        "chg": _first(row, "day_chg_pct", "pct_change", "pct", "change_pct"),
+        "pace": pace,
+        "pace_src": pace_src if pace is not None else None,
+        "pctr": pctr,
+    }
+
+
 def seat_priority(
     row: dict,
     *,
     now: float | None = None,
     mid_rise_level: float = -50.0,
     closeness_w: float = _CLOSENESS_W,
+    inputs: dict | None = None,
 ) -> float:
     """Combine runway with proximity to the −50 cross."""
-    src = str(row.get("source") or row.get("src") or "").strip().lower()
-    ind = row.get("indicator") if isinstance(row.get("indicator"), dict) else {}
-    fast = _f(ind.get("pctr") if ind else row.get("pctr"))
-    day_chg = _f(row.get("day_chg_pct") or row.get("pct") or row.get("change_pct"))
-    used = _f(row.get("used_range_pct") or row.get("range_pos_pct"))
-    slope = _f(row.get("ema9_slope") or (ind.get("ema9_slope") if ind else None))
-    dist_hod = _f(row.get("dist_hod_pct") or row.get("pct_from_hod"))
-    dist_sw = _f(row.get("dist_swing30_pct"))
-    pace = _f(row.get("rvol_pace_sip") or row.get("rvol_pace") or row.get("rvol"))
+    got = inputs if inputs is not None else row_inputs(row)
     rs = runway_score(
-        day_chg_pct=day_chg,
-        used_range_pct=used,
-        ema9_slope=slope,
-        dist_hod_pct=dist_hod,
-        dist_swing30_pct=dist_sw,
-        source=src,
-        rvol_pace=pace,
-        now=now,
-    )
-    return rs + float(closeness_w) * closeness_to_cross(fast, mid_rise_level)
+        day_chg_pct=got["chg"], source=_source(row), rvol_pace=got["pace"], now=now)
+    return rs + float(closeness_w) * closeness_to_cross(got["pctr"], mid_rise_level)
 
 
 def filter_supply(rows: list[dict]) -> list[dict]:
@@ -204,8 +230,7 @@ def filter_supply(rows: list[dict]) -> list[dict]:
     for r in rows:
         if not isinstance(r, dict):
             continue
-        src = str(r.get("source") or r.get("src") or "").strip().lower()
-        if src in SUPPLY_SOURCES or any(
+        if _source(r) in SUPPLY_SOURCES or any(
             c in SUPPLY_SOURCES for c in (r.get("criteria") or [])
             if isinstance(c, str)
         ):
@@ -219,35 +244,49 @@ def rank_candidates(
     cfg: dict | None = None,
     now: float | None = None,
     limit: int = 40,
+    indicators: dict[str, dict] | None = None,
+    paces: dict[str, float] | None = None,
 ) -> list[dict]:
-    """Return supply rows sorted by seat_priority (desc), capped."""
+    """Supply rows sorted by (fast %R known, seat_priority), capped.
+
+    Returns copies; the caller's rows are never mutated (they also feed the
+    live inclusion gate).
+    """
     cfg = cfg or {}
     try:
         level = float(cfg.get("ai_watch_mid_rise_level", -50.0) or -50.0)
     except (TypeError, ValueError):
         level = -50.0
     scored = []
+    seen: set[str] = set()
     for r in filter_supply(rows):
-        pri = seat_priority(r, now=now, mid_rise_level=level)
+        sym = _symbol(r)
+        if not sym or sym in seen:
+            continue
+        seen.add(sym)
+        got = row_inputs(r, indicators=indicators, paces=paces)
+        pri = seat_priority(r, now=now, mid_rise_level=level, inputs=got)
         out = dict(r)
         out["_book_server_priority"] = round(pri, 4)
         out["_book_server_runway"] = round(
-            pri - _CLOSENESS_W * closeness_to_cross(
-                _f((r.get("indicator") or {}).get("pctr") if isinstance(r.get("indicator"), dict)
-                   else r.get("pctr")),
-                level,
-            ),
-            4,
-        )
+            pri - _CLOSENESS_W * closeness_to_cross(got["pctr"], level), 4)
+        out["_book_server_inputs"] = got
         scored.append(out)
-    scored.sort(key=lambda x: float(x.get("_book_server_priority") or 0), reverse=True)
+    scored.sort(key=lambda x: (
+        x["_book_server_inputs"]["pctr"] is not None,
+        float(x.get("_book_server_priority") or 0),
+    ), reverse=True)
     return scored[: max(0, int(limit))]
 
 
 def _shadow_path(day: str | None = None) -> Path:
     if day is None:
         day = datetime.now(ET).strftime("%Y-%m-%d")
-    d = _ROOT / "ai_reports" / "book_server_shadow"
+    try:
+        import ai_paths
+        d = ai_paths.resolve_report_dir() / "book_server_shadow"
+    except Exception:  # noqa: BLE001
+        d = _ROOT / "ai_reports" / "book_server_shadow"
     d.mkdir(parents=True, exist_ok=True)
     return d / f"{day}.jsonl"
 
@@ -273,32 +312,49 @@ def shadow_tick(
     now: float | None = None,
     live_book: list[str] | None = None,
     max_seats: int = 12,
+    indicators: dict[str, dict] | None = None,
+    paces: dict[str, float] | None = None,
 ) -> list[dict]:
-    """Build a ranked would-be book and log the diff vs live. Returns ranked seats."""
+    """Build a ranked would-be book and log the diff vs live. Returns ranked seats.
+
+    Logs when the would-be or live set changes, else once a minute (the book
+    rebuilds every few seconds).
+    """
     cfg = cfg or {}
     now = float(now if now is not None else time.time())
-    ranked = rank_candidates(candidates, cfg=cfg, now=now, limit=max_seats * 2)
+    ranked = rank_candidates(candidates, cfg=cfg, now=now, limit=max_seats * 2,
+                             indicators=indicators, paces=paces)
     would_seat = ranked[:max_seats]
     live = {str(s).upper() for s in (live_book or [])}
-    would = {str(r.get("symbol") or r.get("ticker") or "").upper() for r in would_seat}
+    would = {_symbol(r) for r in would_seat}
     would.discard("")
+    key = (tuple(sorted(would)), tuple(sorted(live)))
+    if key == _last_shadow["key"] and now - float(_last_shadow["ts"]) < _SHADOW_HEARTBEAT_SEC:
+        return would_seat
+    _last_shadow["key"], _last_shadow["ts"] = key, now
+
+    def _n(field: str) -> int:
+        return sum(1 for r in ranked if r["_book_server_inputs"][field] is not None)
+
     log_shadow({
+        "ts": now,
         "kind": "shadow_book",
         "n_candidates": len(candidates),
         "n_ranked": len(ranked),
         "n_would_seat": len(would_seat),
+        # How much of the ranking stood on real numbers this tick.
+        "coverage": {"pctr": _n("pctr"), "pace": _n("pace"), "chg": _n("chg")},
         "would_symbols": sorted(would),
         "live_symbols": sorted(live),
         "add": sorted(would - live),
         "drop": sorted(live - would),
         "top": [
             {
-                "symbol": str(r.get("symbol") or r.get("ticker") or "").upper(),
+                "symbol": _symbol(r),
                 "source": r.get("source") or r.get("src"),
                 "priority": r.get("_book_server_priority"),
                 "runway": r.get("_book_server_runway"),
-                "pace": r.get("rvol_pace_sip") or r.get("rvol_pace") or r.get("rvol"),
-                "day_chg": r.get("day_chg_pct") or r.get("pct"),
+                **r["_book_server_inputs"],
             }
             for r in would_seat[:12]
         ],

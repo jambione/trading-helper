@@ -60,6 +60,7 @@ def test_rank_prefers_near_cross_with_pace():
 
 def test_shadow_tick_writes_log(tmp_path, monkeypatch):
     monkeypatch.setattr(bs, "_shadow_path", lambda day=None: tmp_path / "shadow.jsonl")
+    monkeypatch.setattr(bs, "_last_shadow", {"key": None, "ts": 0.0})
     rows = [
         {"symbol": "AAA", "source": "movers", "day_chg_pct": 4.0,
          "indicator": {"pctr": -55.0}, "rvol_pace_sip": 1.8},
@@ -75,3 +76,59 @@ def test_mode_defaults_off():
     assert bs.mode({}) == "off"
     assert bs.mode({"ai_book_server_mode": "shadow"}) == "shadow"
     assert bs.is_live({"ai_book_server_mode": "live"})
+
+
+def _at(hh, mm):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime(2026, 9, 24, hh, mm, tzinfo=ZoneInfo("America/New_York")).timestamp()
+
+
+def test_inputs_read_the_fields_live_rows_carry():
+    """Movers/research rows carry pct_change, not day_chg_pct (2026-09-24)."""
+    mv = bs.row_inputs({"symbol": "PFE", "source": "movers",
+                        "pct_change": 4.2, "rvol": 2.1})
+    assert mv["chg"] == 4.2
+    assert (mv["pace"], mv["pace_src"]) == (2.1, "movers_sip")
+    # Trending rvol is an IEX ratio, not the SIP pace statistic.
+    tr = bs.row_inputs({"symbol": "KR", "source": "trending", "pct": 0.0,
+                        "rvol": 3.0})
+    assert tr["chg"] == 0.0          # a flat day is a value, not a miss
+    assert tr["pace"] is None and tr["pace_src"] is None
+    assert tr["pctr"] is None
+
+
+def test_inputs_take_pctr_from_engine_map_and_pace_from_cache():
+    got = bs.row_inputs({"symbol": "kr", "source": "trending"},
+                        indicators={"KR": {"pctr": -58.0}}, paces={"KR": 1.9})
+    assert got["pctr"] == -58.0
+    assert (got["pace"], got["pace_src"]) == (1.9, "pace_sip")
+
+
+def test_rank_puts_unknown_pctr_last_and_does_not_mutate():
+    rows = [
+        {"symbol": "HOT", "source": "movers", "pct_change": 12.0, "rvol": 3.5},
+        {"symbol": "NEAR", "source": "trending", "pct": 1.0},
+    ]
+    before = [dict(r) for r in rows]
+    ranked = bs.rank_candidates(rows, now=_at(10, 30),
+                                indicators={"NEAR": {"pctr": -55.0}})
+    assert [r["symbol"] for r in ranked] == ["NEAR", "HOT"]
+    assert rows == before
+
+
+def test_shadow_logs_on_change_or_heartbeat(tmp_path, monkeypatch):
+    import json
+    path = tmp_path / "shadow.jsonl"
+    monkeypatch.setattr(bs, "_shadow_path", lambda day=None: path)
+    monkeypatch.setattr(bs, "_last_shadow", {"key": None, "ts": 0.0})
+    rows = [{"symbol": "AAA", "source": "movers", "pct_change": 3.0}]
+    t = _at(10, 30)
+    bs.shadow_tick(rows, now=t, live_book=["AAA"])
+    bs.shadow_tick(rows, now=t + 2, live_book=["AAA"])     # unchanged: quiet
+    bs.shadow_tick(rows, now=t + 4, live_book=["BBB"])     # live set moved
+    bs.shadow_tick(rows, now=t + 70, live_book=["BBB"])    # heartbeat
+    lines = [json.loads(x) for x in path.read_text().splitlines()]
+    assert len(lines) == 3
+    assert lines[0]["coverage"] == {"pctr": 0, "pace": 0, "chg": 1}
+    assert lines[0]["top"][0]["pctr"] is None

@@ -9731,9 +9731,9 @@ def sync_watch_from_source_panels(
             str(r.get("symbol") or "").upper().strip()
             for r in candidates if isinstance(r, dict)
         }
+        _inds = _engine_indicator_map()
         soft_rows, soft_fired = maybe_soft_seed_rows(
-            cfg, now=t0, seen=seen_syms,
-            indicators=_engine_indicator_map())
+            cfg, now=t0, seen=seen_syms, indicators=_inds)
         # Book server: shadow logs a ranked would-be book; live replaces
         # soft-seed intake with Movers+Trending+Research ranked seats.
         try:
@@ -9751,9 +9751,15 @@ def sync_watch_from_source_panels(
                     if isinstance(r, dict)
                     and str(r.get("status") or "") not in ("invalidated", "expired")
                 ]
+                # Pace only from what this process already measured for the
+                # arm (no new bars requests); movers rows carry their own.
+                _paces = {
+                    s: v for s, (v, ts) in list(_RVOL_PACE_CACHE.items())
+                    if v is not None and t0 - ts < 300.0
+                }
                 _would = _bs.shadow_tick(
                     _pool, cfg=cfg, now=t0, live_book=_live_syms,
-                    max_seats=_max_seats)
+                    max_seats=_max_seats, indicators=_inds, paces=_paces)
                 if _bs_mode == "live" and _would:
                     soft_rows = _would
                     soft_fired = True
