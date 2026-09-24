@@ -37,7 +37,13 @@ _HIST_MIN_GAP = 1.0
 
 class FinnhubState:
     def __init__(self):
-        self.lock       = threading.Lock()
+        # Re-entrant: _drain_pending logs the cap-hit WARN via add_log while
+        # holding this lock. With a plain Lock the finnhub-ws thread blocked
+        # on itself and every caller of request_subscribe hung behind it.
+        # That was the engine/dashboard freeze of 2026-09-23 13:51 and
+        # 2026-09-24 10:20-10:43, and it fired the moment subscriptions hit
+        # MAX_WS_SUBSCRIPTIONS (py-spy: add_log <- _drain_pending).
+        self.lock       = threading.RLock()
         self.prices     = {}           # ticker → {price, volume, timestamp, updated}
         self.subscribed = set()        # currently subscribed tickers
         self.connected  = False
