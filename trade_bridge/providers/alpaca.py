@@ -248,10 +248,27 @@ class AlpacaMarketData(MarketDataProvider):
             quotes = self.client.get_stock_latest_quote(
                 StockLatestQuoteRequest(
                     symbol_or_symbols=sorted(syms), **self._feed_kw))
+            try:
+                import alpaca_api as _aa
+                n_ok = len(quotes) if isinstance(quotes, dict) else 0
+                _aa.note_request(ok=n_ok, empty=max(0, len(syms) - n_ok),
+                                 n_symbols=len(syms), kind="l2_batch_quotes")
+            except Exception:
+                pass
         except Exception as e:
             # Batch failure is not per-symbol news; _fetch's own path reports.
+            err = str(e)
+            try:
+                import alpaca_api as _aa
+                if "429" in err or "rate" in err.lower():
+                    _aa.warn_429("l2_batch_quotes", 1.0, err)
+                else:
+                    _aa.note_request(fail=1, n_symbols=len(syms),
+                                     kind="l2_batch_quotes")
+            except Exception:
+                pass
             log.debug("[ALPACA] batch quote (%d syms) failed: %s",
-                      len(syms), str(e)[:160])
+                      len(syms), err[:160])
             return
         if not isinstance(quotes, dict):
             return
@@ -289,13 +306,17 @@ class AlpacaMarketData(MarketDataProvider):
     def _fetch(self, symbol: str) -> Optional[L2Book]:
         if self.known_bad(symbol):
             return None
-        # Shared batch first. Only when it has nothing fresh for this symbol do
-        # we fall through to the single-symbol request below — which still
-        # exists so an unsubscribed snapshot(), or a batch outage, is served.
+        # Shared batch first. Subscribed symbols stay on the batch path —
+        # per-symbol fallthrough was the 429 storm (one request per name per
+        # poll). Single-symbol remains only for an unsubscribed snapshot().
         sym_u = symbol.upper()
         self._refresh_batch(sym_u)
         book = self._last.get(sym_u)
         if book is not None and time.time() - book.ts < self._batch_ttl() + self.poll:
+            return book
+        if sym_u in self._subscribed:
+            # Batch had nothing fresh; hold last book if any, else empty.
+            # Do not open a per-symbol request for a subscribed name.
             return book
         try:
             from alpaca.data.requests import StockLatestQuoteRequest
@@ -329,6 +350,12 @@ class AlpacaMarketData(MarketDataProvider):
                 log.warning("[ALPACA] %s bad symbol — cooldown %.0fs: %s",
                             symbol, self._bad_ttl, err[:120])
                 return None
+            if "429" in err or "rate" in err.lower():
+                try:
+                    import alpaca_api as _aa
+                    _aa.warn_429(f"latest_quote({symbol})", 1.0, err)
+                except Exception:
+                    pass
             log.warning("[ALPACA] latest quote %s failed: %s", symbol, err[:200])
             return None
 
