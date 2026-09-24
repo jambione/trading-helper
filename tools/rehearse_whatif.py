@@ -193,6 +193,52 @@ def score(day: str, start: str, end: str, reports: str, cands: dict,
     return rows
 
 
+def project(obs: dict, rows: list[dict]) -> list[dict]:
+    """Per-slot projection for volume_clock + armable-only book.
+
+    armable_proj = observed armable seats + names the volume fix newly admits
+    that pass price/gap/spread and are eligible by that slot and were not
+    already seated. Gate-blocked seats are evicted (armable-only book), so
+    they count toward neither side: the book shown is the armable book plus
+    the data-blocked seats the freshness fix has not cleared yet.
+    """
+    add_at = sorted(r["eligible"] for r in rows
+                    if r.get("passes_gates") and not r["seated_live"])
+    out = []
+    for r in obs["rows"]:
+        extra = sum(1 for t in add_at if t <= r["t"])
+        out.append({"t": r["t"], "book_obs": r["book"], "armable_obs": r["armable"],
+                    "gate_evicted": r["gate"], "added": extra,
+                    "armable_proj": r["armable"] + extra,
+                    "book_proj": r["book"] - r["gate"] + extra,
+                    "data_blocked": r["data"]})
+    return out
+
+
+def render_projection(proj: list[dict]) -> str:
+    L = ["", "PROJECTION volume_clock + armable-only book (data-blocked seats unchanged)", "",
+         f"{'time':>5} {'book':>5} {'->':>2} {'proj':>4} {'armable':>7} {'->':>2} {'proj':>4} "
+         f"{'evicted':>7} {'added':>5} {'data':>4}"]
+    for p in proj:
+        L.append(f"{p['t']:>5} {p['book_obs']:>5} {'':>2} {p['book_proj']:>4} {p['armable_obs']:>7} "
+                 f"{'':>2} {p['armable_proj']:>4} {p['gate_evicted']:>7} {p['added']:>5} "
+                 f"{p['data_blocked']:>4}")
+    after = [p for p in proj if p["t"] >= "09:40"]
+    if after:
+        at = after[0]
+        med = sorted(p["armable_proj"] for p in after)[len(after) // 2]
+        dat = sum(p["data_blocked"] for p in after) / max(1, sum(p["book_proj"] for p in after))
+        L += ["", "Pass criteria (projected):",
+              f"  [{'PASS' if at['book_proj'] >= 10 else 'FAIL'}] book >= 10 by 09:40         "
+              f"{at['book_proj']} at {at['t']}",
+              f"  [{'PASS' if at['armable_proj'] >= 6 else 'FAIL'}] >= 6 armable at 09:40       "
+              f"{at['armable_proj']} at {at['t']}",
+              f"  [{'PASS' if med >= 6 else 'FAIL'}] median armable after 09:40  median {med}",
+              f"  [{'PASS' if dat < 0.10 else 'FAIL'}] data-blocked share < 10%     {dat:.0%}  "
+              f"(the freshness fix's job)"]
+    return "\n".join(L)
+
+
 def render(rows: list[dict], label: str) -> str:
     L = [f"WHAT-IF {label}: names the fix newly admits", ""]
     L.append(f"{'sym':<6} {'elig':>5} {'rv_log':>6} {'rv_fix':>6} {'live?':>5} {'px':>7} "
@@ -236,6 +282,8 @@ def main():
     print(f"movers thin_rvol refusals the fix would pass: {len(cands)} names", file=sys.stderr)
     rows = score(args.day, args.start, args.end, args.reports, cands)
     print(render(rows, f"{args.what} {args.day} {args.start}-{args.end}"))
+    obs = ro.replay(args.day, args.start, args.end, 5, args.reports)
+    print(render_projection(project(obs, rows)))
     if args.json:
         with open(args.json, "w") as f:
             json.dump(rows, f, indent=1)

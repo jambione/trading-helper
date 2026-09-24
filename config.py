@@ -1296,6 +1296,8 @@ DEFAULT_CONFIG = {
     "ai_watch_gap_down_block_pct":     0.0,
     # Volume pace vs the stock's own 20d normal (SIP, 16-min delayed).
     # observe: stamp + log at the arm pass, never refuse. min > 0 enforces.
+    "ai_watch_admit_arm_gates":         False,  # run the arm's hard gates at admission + evict
+    "ai_movers_sip_delay_min":          15.0,   # SIP served >= this many minutes late (free plan)
     "ai_watch_rvol_pace_observe":      False,
     "ai_watch_rvol_pace_observe_min":  1.64,
     "ai_watch_min_rvol_pace":          0.0,
@@ -1723,6 +1725,8 @@ _EFFECTIVE_KEYS = (
     "ai_watch_max_sip_spread_pct",
     "ai_watch_gap_down_block_pct",
     "ai_watch_rvol_pace_observe",
+    "ai_watch_admit_arm_gates",
+    "ai_movers_sip_delay_min",
     "ai_watch_rvol_pace_observe_min",
     "ai_watch_min_rvol_pace",
     "ai_local_trail_peak_give_pct",
@@ -2195,6 +2199,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_max_sip_spread_pct",
     "ai_watch_gap_down_block_pct",
     "ai_watch_rvol_pace_observe",
+    "ai_watch_admit_arm_gates",
+    "ai_movers_sip_delay_min",
     "ai_watch_rvol_pace_observe_min",
     "ai_watch_min_rvol_pace",
     "ai_watch_macd_gap_min_pct",
