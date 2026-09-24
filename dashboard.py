@@ -1728,14 +1728,13 @@ def load_tickers() -> list:
 
                 # src=book rows are data subscriptions the AI Watch shortlist
                 # pushed so Finnhub can print BEFORE inclusion (push_candidates
-                # → add-bulk). They stay only while the seat is still in
-                # _committed_symbols (held). Orphans after leave-seat used to
-                # keep _held=True forever via is_book and grew the list to 50+.
-                is_book = src_tag.strip().lower() == "book"
-                if is_book and t not in held:
-                    changed = True
-                    log.debug("[TICKER] Expired orphan src=book %s (left seat)", t)
-                    continue
+                # → add-bulk). They are not momentum candidates. They used to
+                # set _held=True forever when src=="book", which exempted
+                # orphans from the age purge and the cap after leave-seat
+                # (list → 50+). Cap/purge exemption is only for
+                # _committed_symbols (held). Fresh book pushes still survive
+                # the normal age window so Finnhub can warm before the seat
+                # lands; after leave-seat they age out like any candidate.
                 row = {"ticker": t, "added": added, "_ts": added_ts,
                        "_held": t in held}
                 if src_tag:

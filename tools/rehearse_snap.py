@@ -357,17 +357,12 @@ def replay_snapshots(
 
 
 def criteria_with_concurrency(res: dict) -> list[tuple[str, bool, str]]:
-    """Pass bars including concurrency headline metrics."""
-    out = list(ro.criteria(res))
-    c = res.get("concurrency") or {}
-    pct1, pct2 = c.get("pct_ge1"), c.get("pct_ge2")
-    if pct1 is not None:
-        out.append((">=1 open for >=80% of session", pct1 >= 0.80,
-                    f"{pct1:.0%} (avg {c.get('avg_open')} max {c.get('max_open')})"))
-    if pct2 is not None:
-        out.append((">=2 open for >=50% of session", pct2 >= 0.50,
-                    f"{pct2:.0%}"))
-    return out
+    """Pass bars including concurrency headline metrics.
+
+    ``rehearse_open.criteria`` already emits concurrency rows when
+    ``res["concurrency"]`` is present — just delegate.
+    """
+    return list(ro.criteria(res))
 
 
 def render(res: dict) -> str:
