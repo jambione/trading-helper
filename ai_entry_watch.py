@@ -537,50 +537,50 @@ def promote_stream_src_if_print_fresh(
         rec.get("last_ask_src") or rec.get("price_src") or ""
     ).strip().lower()
 
-    if src == "stream":
-        align_stream_clock_if_field_young(rec, cfg, now=tnow)
-        age = row_quote_age_sec(rec, now=tnow)
-        if age is None:
-            age = _stream_field_age_sec(rec)
-        try:
-            age_f = float(age) if age is not None else None
-        except (TypeError, ValueError):
-            age_f = None
-        return age_f is not None and age_f <= ceiling
-
-    # 1) live_print young wins (engine / dash) — same evidence as poller rescue.
+    # Always consult live_print first — including when src is already
+    # "stream". A lagging row clock beside a young engine print (CDNA) used
+    # to early-return on the stream branch and never refresh. Take the
+    # fresher of live_print vs the row stamp as the one price/one clock.
     try:
         lp = live_print(sym) if sym else None
     except Exception:
         lp = None
+    lp_px, lp_age = 0.0, None
     if lp is not None and lp[0] and lp[1] is not None:
         try:
-            epx, eage = float(lp[0]), float(lp[1])
+            lp_px, lp_age = float(lp[0]), float(lp[1])
         except (TypeError, ValueError):
-            epx, eage = 0.0, None
-        if epx > 0 and eage is not None and eage <= ceiling:
-            rec["last_ask"] = epx
-            rec["last_ask_src"] = "stream"
-            rec["price_src"] = "stream"
-            rec["last_ask_age_sec"] = float(eage)
-            rec["price_age_sec"] = float(eage)
-            rec["last_ask_ts"] = tnow - float(eage)
-            if sym:
-                _LAST_QUOTE_TS[sym] = tnow - float(eage)
-            return True
+            lp_px, lp_age = 0.0, None
 
-    # 2) Row already carries a young dated age under a false stale/empty label.
-    # Prefer the same clock authority as row_quote_age_sec: an explicit old
-    # last_ask_ts owns the age (honesty case — frozen young field is the lie).
-    # Only fall back to the field when no dated stamp proves the print is old.
+    if src == "stream":
+        align_stream_clock_if_field_young(rec, cfg, now=tnow)
+
     age = row_quote_age_sec(rec, now=tnow)
     if age is None:
         age = _stream_field_age_sec(rec)
     try:
-        age_f = float(age) if age is not None else None
+        row_age = float(age) if age is not None else None
     except (TypeError, ValueError):
-        age_f = None
-    if age_f is not None and age_f <= ceiling:
+        row_age = None
+
+    # Prefer the younger dated print. live_print wins on ties / when row
+    # age is unknown.
+    use_lp = (
+        lp_px > 0 and lp_age is not None and lp_age <= ceiling
+        and (row_age is None or lp_age <= row_age + 1e-9)
+    )
+    if use_lp:
+        rec["last_ask"] = lp_px
+        rec["last_ask_src"] = "stream"
+        rec["price_src"] = "stream"
+        rec["last_ask_age_sec"] = float(lp_age)
+        rec["price_age_sec"] = float(lp_age)
+        rec["last_ask_ts"] = tnow - float(lp_age)
+        if sym:
+            _LAST_QUOTE_TS[sym] = tnow - float(lp_age)
+        return True
+
+    if row_age is not None and row_age <= ceiling:
         try:
             px = float(rec.get("last_ask") or rec.get("price") or 0)
         except (TypeError, ValueError):
@@ -588,11 +588,11 @@ def promote_stream_src_if_print_fresh(
         if px > 0:
             rec["last_ask_src"] = "stream"
             rec["price_src"] = "stream"
-            rec["last_ask_age_sec"] = float(age_f)
-            rec["price_age_sec"] = float(age_f)
-            rec["last_ask_ts"] = tnow - float(age_f)
+            rec["last_ask_age_sec"] = float(row_age)
+            rec["price_age_sec"] = float(row_age)
+            rec["last_ask_ts"] = tnow - float(row_age)
             if sym:
-                _LAST_QUOTE_TS[sym] = tnow - float(age_f)
+                _LAST_QUOTE_TS[sym] = tnow - float(row_age)
             return True
     return False
 
@@ -3642,6 +3642,16 @@ def _maybe_dead_unknown_evict(
 
     code = str(rec.get("block_code") or "").strip().lower()
     dead_block = code in _DEAD_UNKNOWN_BLOCKS
+    # One price, one clock: a lagging row label beside a young live_print
+    # must not start the dead-seat timer (CDNA). Re-stamp before judging.
+    if dead_block and code in ("stale_quote", "stale_tape", "no_quote", "no_quote_age"):
+        try:
+            if promote_stream_src_if_print_fresh(rec, cfg, now=now):
+                clear_tape_data_block_if_stream_fresh(rec, cfg)
+                code = str(rec.get("block_code") or "").strip().lower()
+                dead_block = code in _DEAD_UNKNOWN_BLOCKS
+        except Exception:  # noqa: BLE001
+            pass
     cls, _gap = classify_exh_seat(rec, cfg)
     ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
     fast = _f_or_none(ind.get("pctr")) if isinstance(ind, dict) else None

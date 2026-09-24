@@ -4900,6 +4900,27 @@ def quote_is_live(symbol: str, cfg: dict | None = None) -> tuple[bool, str]:
                 live, why = True, "rest"
         except Exception:
             pass
+        # A 429 is not "no data". If REST just rate-limited and we still have
+        # a dated print inside the flatten ceiling, hold it (RKLB path).
+        if not live:
+            try:
+                import alpaca_api as _aa
+                max_age = float(cfg.get(
+                    "ai_stale_data_max_age_sec", DEFAULT_STALE_DATA_MAX_AGE_SEC)
+                    or DEFAULT_STALE_DATA_MAX_AGE_SEC)
+                if _aa.recently_rate_limited(within_sec=max(30.0, max_age)):
+                    # Prefer live_print age when decision_price went dark.
+                    try:
+                        import ai_entry_watch as ew
+                        lp = ew.live_print(symbol)
+                        if lp is not None and lp[1] is not None and float(lp[1]) <= max_age:
+                            live, why = True, "rate_limited_hold"
+                    except Exception:  # noqa: BLE001
+                        pass
+                    if not live and age is not None and float(age) <= max_age:
+                        live, why = True, "rate_limited_hold"
+            except Exception:  # noqa: BLE001
+                pass
     if live and _premarket_working_sell_on():
         bid, ask = _premarket_book(symbol)
         if bid is None or ask is None or ask < bid:

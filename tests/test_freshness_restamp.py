@@ -516,6 +516,46 @@ def test_promote_from_young_live_print_not_field(monkeypatch):
     assert rec.get("block_code") is None
 
 
+def test_promote_consults_live_print_when_src_already_stream(monkeypatch):
+    """CDNA: src=stream with lagging row clock must still take young live_print."""
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "live_print", lambda sym: (41.2, 2.5))
+    now = time.time()
+    rec = {
+        "symbol": "CDNA",
+        "last_ask": 40.0,
+        "last_ask_src": "stream",
+        "price_src": "stream",
+        "last_ask_age_sec": 40.0,
+        "last_ask_ts": now - 40.0,
+        "block_code": "stale_quote",
+    }
+    assert ew.promote_stream_src_if_print_fresh(rec, now=now) is True
+    assert rec["last_ask"] == 41.2
+    assert float(rec["last_ask_age_sec"]) == 2.5
+    assert rec["last_ask_src"] == "stream"
+
+
+def test_promote_eco_stale_tape_label_young_print(monkeypatch):
+    """ECO: print 9.4s old under stale_tape label promotes within 15s ceiling."""
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "live_print", lambda sym: (22.4, 9.4))
+    now = time.time()
+    rec = {
+        "symbol": "ECO",
+        "last_ask": 22.4,
+        "last_ask_src": "stale_tape",
+        "last_ask_age_sec": 9.4,
+        "last_ask_ts": now - 9.4,
+        "block_code": "stale_quote",
+    }
+    assert ew.promote_stream_src_if_print_fresh(rec, now=now) is True
+    assert rec["last_ask_src"] == "stream"
+    assert float(rec["last_ask_age_sec"]) == 9.4
+    assert ew.clear_tape_data_block_if_stream_fresh(rec) is True
+    assert rec.get("block_code") is None
+
+
 def test_no_promote_without_prints_keeps_thin_refusal(monkeypatch):
     """No young live_print and no young field → true thin stays refused."""
     monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
