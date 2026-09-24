@@ -159,7 +159,7 @@
   "ai_watch_db_require_price_above": true,
   "ai_watch_db_stop_below_pct": 2.0,
   "ai_watch_db_swing_bars": 2,
-  "ai_watch_decision_max_age_sec": 15.0,
+  "ai_watch_decision_max_age_sec": 30.0,
   "ai_watch_exhaustion_engine_only": true,
   "ai_watch_exhaustion_fallback": true,
   "ai_watch_exhaustion_heat_max_pct": 0.0,
