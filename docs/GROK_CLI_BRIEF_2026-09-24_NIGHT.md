@@ -20,7 +20,7 @@ You are implementing tonight's plan for the trading-helper paper desk. Work on t
 - The 16:02–16:05 config reverts are handled separately. Before you start, confirm on `origin/master-mac` that `ai_watch_max_sip_spread_pct=0.2`, `ai_watch_decision_max_age_sec=15`, `ai_stale_data_max_age_sec=15`, `ai_watch_dead_seat_evict_sec=30`. If not, do them first.
 
 ## Goals (the yardstick)
-A full, fresh book of quality names from Movers, Trending and Research that are ready to arm, seated before the −50 cross; at least one open per ~10 minutes, with multiple concurrent opens preferred; exits that capture profit; a simpler system than today. Simplicity is a requirement: new pieces REPLACE old ones, they are not stacked alongside.
+Positions open constantly through the day, several at the same time, producing a small, consistent profit. Everything else serves that: a full, fresh book of quality names (Movers, Trending, Research) that are ready to arm and seated before the fast %R −50 cross, at least one open per ~10 minutes, exits that capture profit, and a simple system (replace, don't stack). Simplicity is a requirement: new pieces REPLACE old ones, they are not stacked alongside. Judge every step by the pass bar below, concurrency first.
 
 ## Build, in order (one commit or small PR per step, each replay-verified)
 1. **Replay harness** on the snapshot archive `~/session_snapshots/2026-09-24/` on the mini (`state_snapshots.jsonl.gz`: records `{ts, file, mtime, sha, data}` for movers/trending/signal_state/wb_watchlist/entry_watch_state/admit_funnel/positions/bot_config, plus copied ledgers). Drive the book/admit/arm logic on a simulated clock with a fake broker filling from 1-min bars. Extend `tools/rehearse_open.py` / `rehearse_whatif.py` rather than starting over. Output the pass-bar metrics per 10-min slot.
@@ -34,12 +34,14 @@ A full, fresh book of quality names from Movers, Trending and Research that are 
 9. **Exits**: apply the ratchet study recommendation only if clear on both halves; otherwise leave exits unchanged and note why.
 10. **Deploy**: full test suite green; replay 2026-09-21..24 (ledgers) and the 09-24 snapshot archive against the pass bar, old vs new; commit, push, pull on mini, kickstart. Verify `agy_auth=ok` in `logs/ai_trader.log`, `[SNAP] rebuilt` lines in `logs/dashboard.log`, fresh `signal_state.json`, recorder writing, shadow logging, and run `tools/live_check.py`.
 
-## Pass bar
-Book >= 10 by 09:40 · >= 6 armable · data-blocked < 10% · every arm reaches an order · >= 1 open per 10 min.
-Also report on every replay: concurrency (avg and max positions open, % of session with >= 2 open) within the current max positions and free-equity sizing (do not raise the limit), and simplicity (count of bot_config settings and admit/seat paths before vs after; must not grow).
+## Pass bar (in priority order)
+1. **Concurrency (headline):** share of the session (09:40–15:50) with >= 1 position open and with >= 2 open; also avg and max open. Proposed targets: >= 1 open for >= 80% of the session, >= 2 open for >= 50%. Stay within the current max positions and free-equity sizing; never raise the limit to hit this.
+2. **Small, consistent profit:** per replay day net P/L >= 0; P/L per trade (R) must not get worse than baseline, so extra concurrency cannot come from worse trades; report worst day and worst hour.
+3. **Book health (supports 1 and 2):** book >= 10 by 09:40 · >= 6 armable · data-blocked < 10% · every arm reaches an order · >= 1 open per 10 min.
+4. **Simplicity:** settings count and admit/seat-path count must not grow; the book server retires the old intake paths it replaces.
 
 ## Out of scope tonight
 Arm changes (the live −50 cross arm stays as is), new hard gates, premarket scanner rebuild, paid data. Retiring the switched-off arms (step 8) is in scope only as a pure cleanup that leaves replay results identical.
 
 ## Report back
-Per step: commit SHA, what changed, replay numbers vs baseline (pass bar per slot), tests. Final: mini HEAD, live config diff, settings/paths count before vs after, concurrency numbers, what's live vs shadow for Friday, and anything you skipped and why.
+Per step: commit SHA, what changed, replay numbers vs baseline (pass bar per slot), tests. Final: mini HEAD, live config diff, concurrency (% of session with >= 1 and >= 2 open, avg/max) and per-day P/L old vs new, settings/paths count before vs after, what's live vs shadow for Friday, and anything you skipped and why.
