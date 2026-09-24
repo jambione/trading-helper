@@ -70,6 +70,9 @@ BACKOFF_CAP_SEC  = 120.0
 # Learning-loop schedules (ET). Pure helpers below are unit-tested.
 DEFAULT_INSTR_START = "04:00"   # match ai_watch_start_time when config missing
 DEFAULT_EOD_HHMM = "16:05"      # after cash close; outcomes settled
+# The nightly report prices orders against SIP bars/quotes, which the plan
+# serves only once 15 minutes old — 16:05 would still be inside the window.
+DEFAULT_NIGHTLY_HHMM = "16:30"
 
 
 def log(msg: str) -> None:
@@ -610,6 +613,8 @@ def main() -> int:
                     help="skip instrumentation / EOD daily_learn jobs")
     ap.add_argument("--eod-time", default=DEFAULT_EOD_HHMM,
                     help="ET HH:MM for daily_learn (default 16:05)")
+    ap.add_argument("--nightly-time", default=DEFAULT_NIGHTLY_HHMM,
+                    help="ET HH:MM for tools/nightly_report.py (default 16:30)")
     args = ap.parse_args()
 
     py = str(ROOT / ".venv" / "bin" / "python")
@@ -636,6 +641,7 @@ def main() -> int:
 
     last_instr_key: str | None = None
     last_eod_day: str | None = None
+    last_nightly_day: str | None = None
     # Setup audit. Staleness appears when code is deployed and nothing is
     # restarted, so a restart-triggered check would look at the one moment
     # the problem cannot exist. It has to be on a clock. 2026-08-22: the
@@ -818,6 +824,19 @@ def main() -> int:
                     rc_s = run_learn_job(
                         py, "replay_ab.py", "--search", "--days", "10")
                     log(f"desk_tape pack rc={rc_p}; replay_ab --search rc={rc_s}")
+
+                # The four-pillar loop: scorecard, execution cost vs SIP,
+                # counterfactual, premarket grade -> ai_reports/nightly/<day>.md
+                run_n, n_key = should_run_eod(
+                    now_et, eod_hhmm=args.nightly_time, last_day=last_nightly_day)
+                if run_n and now_et.weekday() >= 5:
+                    last_nightly_day = n_key          # no session, no report
+                elif run_n:
+                    rc_n = run_learn_job(py, "nightly_report.py", "--day", n_key,
+                                         timeout=3600.0)
+                    last_nightly_day = n_key
+                    log(f"nightly_report rc={rc_n} day={n_key} "
+                        f"-> ai_reports/nightly/{n_key}.md")
 
             if args.once:
                 break

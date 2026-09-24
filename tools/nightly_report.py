@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""nightly_report.py — the after-close loop, one command, one file.
+
+Writes ai_reports/nightly/<day>.md with, in order:
+  1. scorecard.py by day (last 10 sessions) and by config fingerprint
+  2. exec_report.py — every order vs the SIP bid/ask at submit
+  3. studies/counterfactual_today.py — the day replayed, with and without gates
+  4. premarket_grade.py — were the premarket picks worth seating
+  5. arm refusals from today's gates (engine_stale, spread, gap)
+  6. watchdog WEDGED restarts
+
+Every step runs as a subprocess with a timeout; a failed step is written into
+the report as a failure and the rest still run. Needs SIP data that is 15+
+minutes old, so it runs from 16:30 ET (tools/watchdog.py nightly slot).
+
+USAGE (on the mini)
+    .venv/bin/python tools/nightly_report.py                # today
+    .venv/bin/python tools/nightly_report.py --day 2026-09-24
+"""
+from __future__ import annotations
+
+import argparse
+import collections
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import bars  # noqa: E402
+
+GATE_REASONS = ("engine_stale", "spread_wide", "spread_unknown", "gapped_down", "gap_unknown")
+
+
+def run(args: list[str], timeout: float) -> tuple[str, str]:
+    """(status, output) of a tools script run with the repo's interpreter."""
+    t0 = time.time()
+    try:
+        p = subprocess.run([sys.executable, *args], cwd=ROOT, capture_output=True,
+                           text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        out = (p.stdout or "").rstrip()
+        status = f"ok ({time.time() - t0:.0f}s)" if p.returncode == 0 else \
+            f"FAILED rc={p.returncode}: {(p.stderr or '').strip()[-400:]}"
+        return status, out
+    except subprocess.TimeoutExpired:
+        return f"TIMED OUT after {timeout:.0f}s", ""
+
+
+def gate_refusals(day: str) -> str:
+    c: collections.Counter = collections.Counter()
+    syms: dict = collections.defaultdict(set)
+    t0 = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=bars.ET).timestamp()
+    for line in open(os.path.join(ROOT, "ai_reports", "events.jsonl")):
+        if not any(r in line for r in GATE_REASONS):
+            continue
+        try:
+            e = json.loads(line)
+        except Exception:  # noqa: BLE001
+            continue
+        if float(e.get("ts") or 0) < t0 or bars.day_of(e["ts"]) != day:
+            continue
+        for k in ("reason", "why", "block"):
+            v = e.get(k)
+            if v in GATE_REASONS:
+                c[v] += 1
+                if e.get("symbol"):
+                    syms[v].add(e["symbol"])
+                break
+    if not c:
+        return "no gate refusals logged"
+    return "\n".join(f"{k:<16}{n:>6}   {', '.join(sorted(syms[k]))[:200]}"
+                     for k, n in c.most_common())
+
+
+def wedges(day: str) -> str:
+    path = os.path.join(ROOT, "logs", "watchdog.log")
+    if not os.path.exists(path):
+        return "no watchdog log"
+    hits = [l.rstrip() for l in open(path, errors="replace") if "WEDGED" in l]
+    # watchdog lines carry only HH:MM:SS, so this is "recent", not strictly "today"
+    return "\n".join(hits[-10:]) or "no WEDGED restarts in logs/watchdog.log"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--day", default=datetime.now(bars.ET).strftime("%Y-%m-%d"))
+    args = ap.parse_args()
+    day = args.day
+    since = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=14)).strftime("%Y-%m-%d")
+    steps = [
+        ("Scorecard by day (last 2 weeks)", ["tools/scorecard.py", "--since", since], 1200),
+        ("Scorecard by config fingerprint (today)",
+         ["tools/scorecard.py", "--since", day, "--by", "config_fp"], 1200),
+        ("Execution cost vs the SIP bid/ask", ["tools/exec_report.py", "--day", day], 900),
+        ("Counterfactual: the day replayed",
+         ["tools/studies/counterfactual_today.py", day], 1800),
+        ("Premarket scan grade", ["tools/premarket_grade.py", "--day", day], 900),
+    ]
+    out_dir = os.path.join(ROOT, "ai_reports", "nightly")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"{day}.md")
+    parts = [f"# Nightly report — {day}\n",
+             f"Generated {datetime.now(bars.ET):%Y-%m-%d %H:%M} ET by tools/nightly_report.py\n"]
+    for title, argv, timeout in steps:
+        status, out = run(argv, timeout)
+        parts.append(f"## {title}\n\n`{' '.join(argv)}` — {status}\n\n```\n{out}\n```\n")
+        print(f"[nightly] {title}: {status}", flush=True)
+    parts.append(f"## Arm refusals from the gates\n\n```\n{gate_refusals(day)}\n```\n")
+    parts.append(f"## Watchdog: hung-engine restarts\n\n```\n{wedges(day)}\n```\n")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(parts))
+    print(f"[nightly] wrote {path}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
