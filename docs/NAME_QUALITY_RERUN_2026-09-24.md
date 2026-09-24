@@ -1,5 +1,20 @@
 # Name quality rerun + day-change fade check — 2026-09-24
 
+> **Correction (Claude review, 2026-09-24 evening).** The day-change tables count every −50 cross as a separate event, and one name can cross many times a day. Grouped by symbol-day (reproduced the train half exactly, 878 crosses; test half from a local cache ending partway through 9/23):
+>
+> | Bucket | Crosses | Symbol-days | Note |
+> |---|---:|---:|---|
+> | 15+ train | 6 | **1** | all SDGR 9/17 |
+> | 8–15 train | 21 | 6 | TEM 9/17 is 10 of them |
+> | 5–8 test | 58 | 16 | INOD 9/22 (3 crosses at ~+9%) is 27 of 40 summed return points; without INOD ret60 ≈ **+0.23%**, not +0.69% |
+>
+> - **Day change: no cap supported.** The "peak at 5–8%, fade at 15%+" shape is one or two names per bucket. 5–8% is *worse* than average on train (ret60 −0.23%, fade 59.2%); it only wins on the runner label, which rewards a quick spike. Keep day change as a mild input with no kink until a replay counted by symbol-day shows the shape.
+> - **Volume pace: soft-cap ~4×, not 2.5×.** 2.5–4× is positive on both halves; only 4×+ is negative, and only on test (train 4×+ is +0.11%/+0.06%). The 1.64–2.5× lift in both halves stands and agrees with runway_target_study.
+> - **Strength vs SPY: drop stands.**
+> - 9/24 was included while the market was open (bars ~16 min stale), so test-half late-day crosses are a partial sample.
+>
+> The original text below is kept as written; §3 is amended to match.
+
 **Market open; mini read-only** (study scripts via `/tmp` + `nice -n 15`). Bars from local SIP cache; today’s bars end ~16 min ago. No desk restart, no config edits.
 
 ## Plain English
@@ -119,8 +134,8 @@ No band with **both** strong runner lift **and** positive mean returns in both h
 
 | Feature | Call | Why |
 |---|---|---|
-| **Day change %** | **Bend / soft-cap** (rise into ~5–8%, flatten or fall by 15%+) | Both halves: higher day_chg → higher *runner*; test 15+ mean path **fades**. Linear `z(day_chg)` without a cap pushes the book toward that fade tail. Do **not** drop (5–8% and ≥5% still help). |
-| **Volume pace** | **Keep, bend above ~4** | Both halves improve into **1.64–2.5**; test **4+** mean returns negative. |
+| **Day change %** | ~~Bend / soft-cap~~ **Mild input, no cap** (see Correction) | Runner rate rises with day_chg on both halves, but the 5–8 peak and 15+ fade are 1–2 names per bucket by symbol-day. Measure the shape on replay by symbol-day before adding a kink. |
+| **Volume pace** | **Keep, soft-cap ~4×** (not 2.5×) | Both halves improve into **1.64–2.5**; test **4+** mean returns negative. |
 | **Strength vs SPY** | **Drop / no weight** | name_quality not stable; cross buckets no both-half sweet spot; collinear with day_chg. **No evidence** it earns its own term. |
 
 *Measured: tables above. Inferred: exact score kink points (~8% / ~4×). Branch `runway-study`; not pushed; mini repo untouched.*
