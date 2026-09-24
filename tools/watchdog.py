@@ -301,6 +301,10 @@ def default_services(port: int) -> list[Service]:
         Service("engine", "signal_engine.py", "engine.log",
                 stale_file=ROOT / "signal_state.json", stale_sec=120.0),
         Service("discord", "discord_source.py", "discord.log"),
+        # Session recorder for off-hours replay. A crash mid-session loses the
+        # rest of the day's recording; liveness only, since the file it writes
+        # changes name every day (and it is idle outside 08:00-16:05 ET).
+        Service("snapshot", "tools/session_snapshot.py", "snapshot.log"),
     ]
 
 

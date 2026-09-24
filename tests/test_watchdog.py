@@ -296,3 +296,12 @@ def test_engine_service_carries_a_heartbeat():
     ("51:26", 3086), ("01:12:24", 4344), ("05-06:56:25", 5 * 86400 + 6 * 3600 + 56 * 60 + 25), ("bad", None)])
 def test_parse_etime(raw, sec):
     assert w.parse_etime(raw) == sec
+
+
+def test_session_snapshot_is_supervised():
+    """A snapshotter that dies mid-session silently ends that day's recording."""
+    svcs = {s.name: s for s in w.enabled_services({"discord_ocr_enabled": False}, 8888,
+                                                  cloudflared=None)}
+    snap = svcs["snapshot"]
+    assert snap.command("/x/python") == ["/x/python", "-u", "tools/session_snapshot.py"]
+    assert snap.wanted() is True and snap.health_url is None
