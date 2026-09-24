@@ -83,3 +83,13 @@ def test_fake_broker_exits_after_the_hold():
     assert b.exits_due(1420.0, dash) == ["DHT"]
     assert abs(b.closed[0]["ret"] - (21.66 / 21.60 - 1)) < 1e-12
     assert b.last_exit["DHT"] == 1420.0
+
+
+def test_degraded_dashboard_carries_the_recorded_account(tmp_path):
+    rec = rp.Recording(_archive(tmp_path, [
+        {"ts": 100.0, "file": "ai_positions_state.json",
+         "data": {"account": {"equity": 2253.32}, "positions": {}}},
+    ]))
+    rec.advance(105.0)
+    st = rp.build_dashboard_state(rec, 105.0)
+    assert st["ai_positions"]["account"]["equity"] == 2253.32

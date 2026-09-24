@@ -250,7 +250,11 @@ def build_dashboard_state(rec: Recording, now: float) -> dict:
                      "signal_proximity": sp})
     _, mv = rec.get("movers_stocks.json")
     _, tr = rec.get("trending_stocks.json")
-    return {"tickers": rows, "movers": mv or {}, "trending": tr or {}}
+    # /api/state's ai_positions IS this file; the buy's price ceiling floats
+    # on its account equity (desk_risk.dynamic_max_price).
+    _, pos = rec.get("ai_positions_state.json")
+    return {"tickers": rows, "movers": mv or {}, "trending": tr or {},
+            "ai_positions": pos or {}}
 
 
 class JsonCache:
@@ -507,7 +511,8 @@ def run_inside(args) -> int:
     _, pos_rec = rec.get("ai_positions_state.json")
     equity = 100_000.0
     try:
-        equity = float(((pos_rec or {}).get("_account") or {}).get("equity") or equity)
+        acct = (pos_rec or {}).get("account") or (pos_rec or {}).get("_account") or {}
+        equity = float(acct.get("equity") or equity)
     except (TypeError, ValueError):
         pass
     cfg = load_config()
@@ -536,6 +541,10 @@ def run_inside(args) -> int:
         return broker.enter(s, px, clock.t, decision)
 
     cp.place_scaled_entry = place
+    # The live book loop flattens overnight leftovers at the open and records
+    # the day; entries wait for that (sod_liquidate_done). Same state here.
+    cp.SOD_LIQUIDATE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    cp.SOD_LIQUIDATE_STATE_PATH.write_text(json.dumps({"last_day": args.day}))
 
     # Historical inputs the arm reads. Pace and gap run through the live
     # functions (and their sim-clock caches) on bars fetched once per day;
