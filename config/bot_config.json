@@ -119,7 +119,7 @@
   "ai_shelf_trace_sec": 10.0,
   "ai_sod_liquidate_enabled": true,
   "ai_stale_data_flatten": true,
-  "ai_stale_data_max_age_sec": 15.0,
+  "ai_stale_data_max_age_sec": 60.0,
   "ai_stop_use_market": true,
   "ai_trade_amount": 1000.0,
   "ai_trade_style": "Day scalp",
