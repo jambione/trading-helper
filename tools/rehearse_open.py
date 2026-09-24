@@ -222,6 +222,22 @@ def criteria(res: dict) -> list[tuple[str, bool, str]]:
                 f"{arms} arm(s), {entries} entr(y/ies)"))
     out.append(("first buy by 09:45", bool(first_entry) and first_entry <= "09:45:59",
                 f"first entry {first_entry or 'none'}"))
+    # Concurrency headline (optional — present when res carries concurrency).
+    c = res.get("concurrency") or {}
+    pct1, pct2 = c.get("pct_ge1"), c.get("pct_ge2")
+    if pct1 is not None:
+        out.append((">=1 open for >=80% of session", pct1 >= 0.80,
+                    f"{pct1:.0%} (avg {c.get('avg_open')} max {c.get('max_open')})"))
+    if pct2 is not None:
+        out.append((">=2 open for >=50% of session", pct2 >= 0.50, f"{pct2:.0%}"))
+    # Opens cadence: >=1 entry_ok per 10 minutes across the scored window.
+    if after and res.get("events") is not None:
+        window_min = max(1, (int(res["end"][:2]) * 60 + int(res["end"][3:])
+                             - max(int(res["start"][:2]) * 60 + int(res["start"][3:]), 9 * 60 + 40)))
+        n_opens = sum(1 for e in res["events"] if e.get("kind") == "entry_ok")
+        per_10 = n_opens / max(1.0, window_min / 10.0)
+        out.append((">=1 open per 10 min", per_10 >= 1.0,
+                    f"{n_opens} opens / {window_min}m ({per_10:.2f}/10m)"))
     _ = by
     return out
 
