@@ -27,6 +27,7 @@ from pathlib import Path
 # =============================================================================
 
 _TICKER_CACHE_FILE = Path(__file__).parent.parent / "valid_tickers.txt"
+_TICKER_DEFAULT_FILE = Path(__file__).parent.parent / "valid_tickers.default.txt"
 _TICKER_CACHE_DAYS = 7
 
 
@@ -52,6 +53,18 @@ def _load_valid_tickers() -> set:
                 print(f"[TICKERS] Warning: could not fetch {url}: {e}", flush=True)
         return tickers
 
+    def _seed_from_default() -> set:
+        if not _TICKER_DEFAULT_FILE.exists():
+            return set()
+        syms = set(_TICKER_DEFAULT_FILE.read_text().split())
+        if syms:
+            try:
+                _TICKER_CACHE_FILE.write_text("\n".join(sorted(syms)) + "\n")
+            except Exception as e:
+                print(f"[TICKERS] Could not seed cache from default: {e}", flush=True)
+            print(f"[TICKERS] Seeded {len(syms):,} tickers from valid_tickers.default.txt.", flush=True)
+        return syms
+
     try:
         if _TICKER_CACHE_FILE.exists():
             age_days = (time.time() - _TICKER_CACHE_FILE.stat().st_mtime) / 86400
@@ -60,15 +73,19 @@ def _load_valid_tickers() -> set:
                 if syms:
                     print(f"[TICKERS] Loaded {len(syms):,} tickers from cache ({age_days:.1f}d old).", flush=True)
                     return syms
+        # Missing or stale cache: seed from the tracked default before hitting
+        # the network so a cold mini still validates OCR tickers offline.
+        seeded = _seed_from_default()
         print("[TICKERS] Downloading ticker list from NASDAQ Trader …", flush=True)
         tickers = _fetch()
         if tickers:
-            _TICKER_CACHE_FILE.write_text("\n".join(sorted(tickers)))
+            _TICKER_CACHE_FILE.write_text("\n".join(sorted(tickers)) + "\n")
             print(f"[TICKERS] Downloaded and cached {len(tickers):,} tickers.", flush=True)
-        return tickers
+            return tickers
+        return seeded
     except Exception as e:
         print(f"[TICKERS] Could not load ticker list: {e}", flush=True)
-        return set()
+        return _seed_from_default()
 
 
 _VALID_TICKERS: set = _load_valid_tickers()

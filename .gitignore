@@ -32,6 +32,8 @@ transcription/__pycache__/
 venv
 .venv/
 transcription/wb_watchlist.json
+# Runtime NASDAQ/NYSE universe cache (desk rewrites; seed is valid_tickers.default.txt)
+valid_tickers.txt
 # Signal engine runtime state (regenerated every few seconds)
 signal_state.json
 
