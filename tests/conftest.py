@@ -80,6 +80,7 @@ _SESSION_KNOBS = (
     "ai_watch_max_sip_spread_pct", "ai_watch_gap_down_block_pct",
     "ai_watch_rvol_pace_observe", "ai_watch_min_rvol_pace",
     "ai_watch_admit_arm_gates", "ai_movers_sip_delay_min",
+    "ai_book_server_mode", "ai_book_server_max_seats",
 )
 
 

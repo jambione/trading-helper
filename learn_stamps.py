@@ -191,6 +191,8 @@ _FINGERPRINT_KEYS = (
     "ai_watch_min_rvol_pace",
     "ai_watch_admit_arm_gates",
     "ai_movers_sip_delay_min",
+    "ai_book_server_mode",
+    "ai_book_server_max_seats",
     # Second arm. Changes who gets bought when the square is absent.
     "ai_watch_macd_gap_arm",
     "ai_watch_macd_gap_min_pct",

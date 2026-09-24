@@ -1301,6 +1301,10 @@ DEFAULT_CONFIG = {
     "ai_watch_rvol_pace_observe":      False,
     "ai_watch_rvol_pace_observe_min":  1.64,
     "ai_watch_min_rvol_pace":          0.0,
+    # Book server: ranked Movers+Trending+Research queue.
+    # off | shadow (log would-have-done) | live (replaces soft-seed intake).
+    "ai_book_server_mode":             "off",
+    "ai_book_server_max_seats":        12,
     # Second open: MACD gap when the name is not in an overbought square.
     # Off in defaults so tests that omit the key stay on square only.
     # Live bot_config turns it on. See macd_gap_fill_allows_buy.
@@ -1729,6 +1733,8 @@ _EFFECTIVE_KEYS = (
     "ai_movers_sip_delay_min",
     "ai_watch_rvol_pace_observe_min",
     "ai_watch_min_rvol_pace",
+    "ai_book_server_mode",
+    "ai_book_server_max_seats",
     "ai_local_trail_peak_give_pct",
     "ai_exit_limit_collar_pct",
     "ai_exit_limit_collar_wait_sec",
@@ -2203,6 +2209,8 @@ SAFE_CONFIG_KEYS = [
     "ai_movers_sip_delay_min",
     "ai_watch_rvol_pace_observe_min",
     "ai_watch_min_rvol_pace",
+    "ai_book_server_mode",
+    "ai_book_server_max_seats",
     "ai_watch_macd_gap_min_pct",
     "ai_watch_macd_gap_rsi_max",
     "ai_breakeven_offset_px",

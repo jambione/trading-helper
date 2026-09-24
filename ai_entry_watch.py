@@ -9734,6 +9734,35 @@ def sync_watch_from_source_panels(
         soft_rows, soft_fired = maybe_soft_seed_rows(
             cfg, now=t0, seen=seen_syms,
             indicators=_engine_indicator_map())
+        # Book server: shadow logs a ranked would-be book; live replaces
+        # soft-seed intake with Movers+Trending+Research ranked seats.
+        try:
+            import book_server as _bs
+            _bs_mode = _bs.mode(cfg)
+            if _bs_mode in ("shadow", "live"):
+                _pool = list(candidates) + list(soft_rows or [])
+                try:
+                    _max_seats = int(cfg.get("ai_book_server_max_seats", 12) or 12)
+                except (TypeError, ValueError):
+                    _max_seats = 12
+                _live_syms = [
+                    str(r.get("symbol") or "").upper()
+                    for r in (load_watch() or {}).values()
+                    if isinstance(r, dict)
+                    and str(r.get("status") or "") not in ("invalidated", "expired")
+                ]
+                _would = _bs.shadow_tick(
+                    _pool, cfg=cfg, now=t0, live_book=_live_syms,
+                    max_seats=_max_seats)
+                if _bs_mode == "live" and _would:
+                    soft_rows = _would
+                    soft_fired = True
+                    for _r in soft_rows:
+                        _r["criteria"] = list(_r.get("criteria") or []) + [
+                            "book_server"]
+                        _r["soft_seed"] = True
+        except Exception:
+            pass
         if soft_fired and soft_rows:
             candidates = list(candidates) + soft_rows
             try:
@@ -12442,6 +12471,8 @@ def exhaustion_allows_buy(
         return _tv_exh_rsi_allows_buy(record, cfg)
     # One arm (2026-09-23): the fast -50 cross replaces square, triangle and
     # heating. Exclusive — the lanes below are not consulted when it is on.
+    # See legacy_arms.py for the settings those lanes own; live mid_rise
+    # never imports that module.
     if exh_mid_rise_arm_enabled(cfg):
         return _mid_rise_allows_buy(record, cfg, now=now)
     # Square mode (TV red ■): enter on dual-OB + tight.
