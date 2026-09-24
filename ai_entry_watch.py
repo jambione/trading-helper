@@ -16640,6 +16640,12 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     except Exception:
         max_price = cfg.get("ai_max_price")
         max_price_f = float(max_price) if max_price is not None else None
+    # The band's floor, enforced where the order is placed. Admission abstains
+    # on an unpriced row, and research seeds arrive unpriced, so the door alone
+    # let CLF ($12.80, three fills) and INFQ ($14) trade on 2026-09-24.
+    min_price_f = _f_or_none(cfg.get("ai_watch_min_price"))
+    if min_price_f is not None and min_price_f <= 0:
+        min_price_f = None
 
     try:
         risk_pct = float(cfg.get("ai_risk_pct", 1.0) or 1.0)
@@ -17115,6 +17121,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
         if max_price_f is not None and ask_f >= max_price_f:
             _skip("above_max_price", max_price=max_price_f)
+            continue
+        if min_price_f is not None and ask_f + 1e-12 < min_price_f:
+            _skip("below_min_price", min_price=min_price_f)
             continue
 
         # Stale tape (unknown or old age, no REST). Show the print, do not arm.

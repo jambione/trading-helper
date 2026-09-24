@@ -1364,6 +1364,50 @@ def test_poll_once_buys_when_in_zone(tmp_path, monkeypatch):
     assert saved["SMCI"]["status"] in ("submitted", "filled")
 
 
+def test_poll_once_refuses_below_min_price_at_the_order(tmp_path, monkeypatch):
+    """The band floor binds where the order is placed, not only at the door.
+
+    CLF ($12.80) and INFQ ($14) arrived as unpriced research seeds on
+    2026-09-24, so the admission band abstained and they filled under $20.
+    """
+    import ai_entry_watch as ew
+    import ai_positions as cp
+    import ai_trading as gt
+
+    def _state():
+        return {
+            "SMCI": {
+                "symbol": "SMCI", "status": "watching", "agreement": True,
+                "reason": "test", "score": 8.0, "structure_ts": 1e12,
+                "source": "research",
+                "structure": {
+                    "decision": "WAIT", "wait_kind": "wait_for_zone",
+                    "entry_low": 27.0, "entry_high": 29.0,
+                    "stop_price": 25.0, "target_1": 36.0, "reward_risk": 3.5,
+                    "scale_out_pct": 40,
+                },
+            }
+        }
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._structure_call_ts.clear()
+    _patch_trading_ready(monkeypatch, gt)  # ask 28.00
+    placed = []
+    monkeypatch.setattr(
+        cp, "place_scaled_entry",
+        lambda sym, decision, equity, **kw: placed.append(sym) or {
+            "ok": True, "stop_price": 25.0, "target_1": 36.0})
+
+    ew.save_watch(_state())
+    ew.poll_once(cfg=_poll_cfg(ai_watch_min_price=30.0), now=1e12 + 10)
+    assert placed == []
+    assert ew.load_watch()["SMCI"]["block_code"] == "below_min_price"
+
+    ew.save_watch(_state())
+    ew.poll_once(cfg=_poll_cfg(ai_watch_min_price=20.0), now=1e12 + 10)
+    assert placed == ["SMCI"]
+
+
 def test_poll_once_in_zone_places_despite_wide_spread(tmp_path, monkeypatch):
     """UI READY = in zone; poll must place even when IEX spread is wide."""
     import ai_entry_watch as ew
