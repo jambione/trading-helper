@@ -52,11 +52,22 @@ The pasted night brief still said day-change cap ~8% and pace cap ~2.5×. Commit
 
 Headline targets: ≥1 open ≥80% of session, ≥2 open ≥50%, book≥10 by 09:40, ≥6 armable, data-blocked <10%, ≥1 open / 10 min, net P/L ≥0 per day without worse R/trade than baseline.
 
-## Verify after kickstart
+## Verify after kickstart (2026-09-24 ~16:23 ET)
 
-- `agy_auth=ok` in `logs/ai_trader.log`
-- `[SNAP] rebuilt` in `logs/dashboard.log`
-- Fresh `signal_state.json`
-- Recorder writing under `ai_reports/sessions/YYYY-MM-DD/`
-- Shadow log `ai_reports/book_server_shadow/YYYY-MM-DD.jsonl`
-- `tools/live_check.py`
+| Check | Result |
+|---|---|
+| Tip on mini | `846c333` |
+| Processes | dashboard, signal_engine, ai_trader, movers, trending, watchdog |
+| `agy_auth` | `ok method=session` |
+| `[SNAP] rebuilt` | yes (every ~10s) |
+| `signal_state.json` | age ~1–2s |
+| Recorder | `prints.jsonl.gz` 4015 lines, `quotes_meta.jsonl.gz` 294 lines |
+| Book server shadow | module OK (after-hours soft_seed quiet; smoke wrote `book_server_shadow/2026-09-24.jsonl`) |
+| Config | admit_arm_gates=true, movers_min_rvol=1.0, book_server_mode=shadow, freshness knobs reverted |
+| `live_check` | book 12; FLAG lines for INFQ/CLF are **today's pre-fix fills** (band hole closed going forward) |
+| Full pytest | **3620 passed, 1 xfailed** |
+| `valid_tickers` dirty | gone from porcelain (deploy_mini guard clear for that file) |
+
+### Replay baseline (observed 2026-09-24 — before tomorrow's live effect)
+
+Morning ledger still FAILs the pass bar (book 5 @09:40, data-blocked 30%, concurrency thin). Afternoon snapshot window (13:10–15:50): book/armable median PASS, data-blocked 15%→13% with `--simulate-one-clock`, concurrency ge1=59% / ge2=20% (still FAIL vs 80%/50%). Tomorrow scores the new code live.
