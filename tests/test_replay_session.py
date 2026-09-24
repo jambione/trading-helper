@@ -93,3 +93,22 @@ def test_degraded_dashboard_carries_the_recorded_account(tmp_path):
     rec.advance(105.0)
     st = rp.build_dashboard_state(rec, 105.0)
     assert st["ai_positions"]["account"]["equity"] == 2253.32
+
+
+def test_synthetic_engine_row_is_plain_json(tmp_path):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    o = datetime(2026, 9, 25, 9, 30, tzinfo=et).timestamp()
+    bars = {"ABC": {
+        "iex": [(o - 60 * (200 - k), 30.0, 30.2, 29.8, 30.0 + 0.01 * (k % 7), 1000.0)
+                for k in range(200)],
+        "s": [(o + 60 * k, 30.0, 30.3, 29.9, 30.0 + 0.02 * (k % 5), 5000.0) for k in range(60)],
+    }}
+    eng = rp.SynthEngine(bars, "2026-09-25", warmup=30, cap=50)
+    eng.request(["abc"], o + 600)
+    assert eng.rows(set(), o + 610) == []                  # still warming up
+    rows = eng.rows(set(), o + 60 * 30 + 5)
+    assert rows and rows[0]["synthetic"] and rows[0]["price_age_sec"] == 5.0
+    json.dumps(rows)                                       # numpy-free
+    assert eng.rows({"ABC"}, o + 60 * 30 + 5) == []        # live already watches it
