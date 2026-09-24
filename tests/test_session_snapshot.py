@@ -53,3 +53,16 @@ def test_finish_day_links_ledgers_and_recorder(tmp_path, monkeypatch):
     assert "done 1 records" in (day / "DONE").read_text()
     with gzip.open(day / "state_snapshots.jsonl.gz", "rt") as f:
         assert json.loads(f.readline())["file"] == "api/state"
+
+
+def test_close_out_starts_the_fidelity_replay_only_when_asked(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(ss, "ROOT", tmp_path / "repo")
+    monkeypatch.setattr(ss, "OUT_BASE", tmp_path / "snaps")
+    monkeypatch.setattr(ss.subprocess, "Popen", lambda cmd, **kw: calls.append(cmd))
+    ss.finish_day(ss.DayWriter("2026-09-25"))
+    assert calls == []
+    ss.finish_day(ss.DayWriter("2026-09-26"), fidelity=True)
+    assert len(calls) == 1
+    assert calls[0][-7:] == ["--day", "2026-09-26", "--start", "09:00",
+                             "--end", "15:50", "--fidelity"]

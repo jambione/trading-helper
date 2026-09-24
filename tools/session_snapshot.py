@@ -10,7 +10,9 @@ desk's state files, plus the dashboard's /api/state, to
 as records ``{ts, file, mtime, sha, data}`` (the format tools/rehearse_snap.py
 reads). At 16:05 it hard-links the day's ledgers and the session recorder's
 streams into the same folder and writes ``DONE``, so one directory holds
-everything a replay needs.
+everything a replay needs. It then starts tools/replay_session.py --fidelity
+in the background, which replays the code that ran and writes fidelity.json
+(set SESSION_SNAPSHOT_FIDELITY=0 to skip).
 
 What each source gives a replay:
   movers/trending/research boards   who the sources nominated, when
@@ -31,6 +33,7 @@ import hashlib
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -136,7 +139,26 @@ def _trim_api(data: dict) -> dict:
     return out
 
 
-def finish_day(w: DayWriter) -> None:
+def launch_fidelity(day: str, out_dir: Path) -> None:
+    """Replay the day with the code that ran and score it (tools/replay_session.py)."""
+    if os.getenv("SESSION_SNAPSHOT_FIDELITY", "1") == "0":
+        return
+    py = ROOT / ".venv" / "bin" / "python"
+    try:
+        log = open(out_dir / "fidelity.log", "ab")
+        subprocess.Popen(
+            [str(py if py.exists() else sys.executable), "-u",
+             str(ROOT / "tools" / "replay_session.py"), "--day", day,
+             "--start", "09:00", "--end", "15:50", "--fidelity"],
+            cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL, start_new_session=True,
+            env=dict(os.environ, REPLAY_REPO=str(ROOT)))
+        _log(f"{day} fidelity replay started -> {out_dir / 'fidelity.log'}")
+    except OSError as e:
+        _log(f"could not start fidelity replay: {e}")
+
+
+def finish_day(w: DayWriter, *, fidelity: bool = False) -> None:
     """Link the day's ledgers and recorder streams in, then mark it DONE."""
     w.flush(force=True)
     linked = []
@@ -160,6 +182,8 @@ def finish_day(w: DayWriter) -> None:
         linked.append(name)
     (w.dir / "DONE").write_text(f"done {w.n} records; linked {', '.join(linked)}\n")
     _log(f"{w.day} DONE: {w.n} records, linked {len(linked)} files")
+    if fidelity:
+        launch_fidelity(w.day, w.dir)
 
 
 def main() -> int:
@@ -181,14 +205,14 @@ def main() -> int:
 
         if writer is not None and (writer.day != day or mins >= END_MIN):
             if not (writer.dir / "DONE").exists():
-                finish_day(writer)
+                finish_day(writer, fidelity=True)
             writer = None
         if not active:
             # Down at 16:05 (restart, crash)? Close the day out on the way up.
             d = OUT_BASE / day
             if (et.weekday() < 5 and mins >= END_MIN and d.is_dir()
                     and not (d / "DONE").exists()):
-                finish_day(DayWriter(day))
+                finish_day(DayWriter(day), fidelity=True)
             time.sleep(15)
             continue
         if writer is None:
