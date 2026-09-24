@@ -41,6 +41,16 @@ CF_TUNNEL="trading-helper"
 PUBLIC_URL="https://trading.jbrasfield.com"
 
 _running() { pgrep -f "$1" >/dev/null 2>&1; }
+
+# Session recorder for off-hours replay (tools/session_snapshot.py). It only
+# writes on weekdays 08:00-16:05 ET, so starting it with the stack is enough.
+_start_snapshot() {
+    if ! _running "tools/session_snapshot.py"; then
+        echo "Starting session snapshot (~/session_snapshots/<day>/)"
+        nohup "$PY" -u tools/session_snapshot.py >>"$LOGDIR/snapshot.log" 2>&1 </dev/null &
+        echo "$!" >> "$PIDFILE"
+    fi
+}
 _tunnel_running() { pgrep -f "cloudflared.*$CF_TUNNEL" >/dev/null 2>&1; }
 
 # Desk reset closes Terminal and launches Discord/caffeinate. Never on the MacBook.
@@ -167,6 +177,7 @@ cmd_start() {
             nohup "$PY" -u tools/watchdog.py >>"$LOGDIR/watchdog.log" 2>&1 </dev/null &
             echo "$!" >> "$PIDFILE"
         fi
+        _start_snapshot
         cmd_status
         return 0
     fi
@@ -244,6 +255,8 @@ cmd_start() {
 
     [ "$want_tunnel" = 1 ] && _start_tunnel
 
+    _start_snapshot
+
     # Watchdog last: it restarts whatever is down, so starting it before the
     # others would have it racing this function to launch the same processes.
     #
@@ -295,6 +308,7 @@ cmd_stop() {
     pkill -TERM -f "trending_screener.py" 2>/dev/null || true
     pkill -TERM -f "movers_screener.py"   2>/dev/null || true
     pkill -TERM -f "ai_trader.py"     2>/dev/null || true
+    pkill -TERM -f "tools/session_snapshot.py" 2>/dev/null || true
     _stop_tunnel
     sleep 2
     # Force-kill anything still alive.
@@ -304,6 +318,7 @@ cmd_stop() {
     pkill -KILL -f "trending_screener.py" 2>/dev/null || true
     pkill -KILL -f "movers_screener.py"   2>/dev/null || true
     pkill -KILL -f "ai_trader.py"     2>/dev/null || true
+    pkill -KILL -f "tools/session_snapshot.py" 2>/dev/null || true
     rm -f "$PIDFILE"
     echo "✅ Stopped (incl. tunnel)."
 }
@@ -317,6 +332,7 @@ cmd_status() {
     mv=$(pgrep -f "movers_screener.py" | tr '\n' ' ' || true)
     c=$(pgrep -f "ai_trader.py"    | tr '\n' ' ' || true)
     w=$(pgrep -f "tools/watchdog.py"   | tr '\n' ' ' || true)
+    sn=$(pgrep -f "tools/session_snapshot.py" | tr '\n' ' ' || true)
     echo "dashboard : ${d:-not running}"
     echo "engine    : ${e:-not running}"
     echo "discord   : ${g:-not running}"
@@ -324,6 +340,7 @@ cmd_status() {
     echo "movers    : ${mv:-not running}"
     echo "ai_trader : ${c:-not running}"
     echo "watchdog  : ${w:-not running}"
+    echo "snapshot  : ${sn:-not running}"
     if _tunnel_running; then
         echo "tunnel    : up → $PUBLIC_URL"
     else
