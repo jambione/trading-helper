@@ -1728,12 +1728,16 @@ def load_tickers() -> list:
 
                 # src=book rows are data subscriptions the AI Watch shortlist
                 # pushed so Finnhub can print BEFORE inclusion (push_candidates
-                # → add-bulk). They are not momentum candidates. Counting them
-                # against TICKER_MAX_COUNT retired the shortlist under the
-                # 10-slot cap and starved admit with no_tape (2026-09-11).
+                # → add-bulk). They stay only while the seat is still in
+                # _committed_symbols (held). Orphans after leave-seat used to
+                # keep _held=True forever via is_book and grew the list to 50+.
                 is_book = src_tag.strip().lower() == "book"
+                if is_book and t not in held:
+                    changed = True
+                    log.debug("[TICKER] Expired orphan src=book %s (left seat)", t)
+                    continue
                 row = {"ticker": t, "added": added, "_ts": added_ts,
-                       "_held": (t in held) or is_book}
+                       "_held": t in held}
                 if src_tag:
                     row["src"] = src_tag
                 kept.append(row)
@@ -2764,6 +2768,16 @@ def _price_loop():
                         entry["price_age_sec"] = (
                             round(max(0.0, now - trade_ts), 1)
                             if trade_ts and trade_ts > 0 else None)
+                        try:
+                            import session_recorder as _rec
+                            age = entry.get("price_age_sec")
+                            src = "desk" if t in desk_prices else (
+                                "finnhub" if t in fh_all else "alpaca")
+                            _rec.record_print(
+                                t, p, src=src, ts=now, age_sec=age,
+                                trade_ts=trade_ts)
+                        except Exception:
+                            pass
 
             # Counterfactual track for Discord-side signals, off the prices
             # just merged above — no extra API call. Self-throttling per

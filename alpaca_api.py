@@ -23,6 +23,68 @@ _last_429_warn_key = ""
 _last_429_warn_mono = 0.0
 _429_WARN_GAP_S = 5.0
 
+# Per-process request counters (logged periodically; also feed session_recorder).
+_req_lock = threading.Lock()
+_req_counts = {"n": 0, "n_429": 0, "n_ok": 0, "n_empty": 0, "n_fail": 0}
+_req_last_log_mono = 0.0
+_REQ_LOG_EVERY_S = 60.0
+# Sticky: last call hit a rate limit (callers must not treat as "no data").
+_last_rate_limited = False
+_last_rate_limited_mono = 0.0
+
+
+def note_request(*, ok: int = 0, n_429: int = 0, empty: int = 0, fail: int = 0,
+                 n_symbols: int = 0, kind: str = "alpaca") -> None:
+    """Bump process counters and optionally emit a once-a-minute summary."""
+    global _req_last_log_mono, _last_rate_limited, _last_rate_limited_mono
+    with _req_lock:
+        _req_counts["n"] += 1
+        _req_counts["n_ok"] += int(ok)
+        _req_counts["n_429"] += int(n_429)
+        _req_counts["n_empty"] += int(empty)
+        _req_counts["n_fail"] += int(fail)
+        if n_429:
+            _last_rate_limited = True
+            _last_rate_limited_mono = time.monotonic()
+        snap = dict(_req_counts)
+        now_m = time.monotonic()
+        should_log = (now_m - _req_last_log_mono) >= _REQ_LOG_EVERY_S
+        if should_log:
+            _req_last_log_mono = now_m
+    if should_log:
+        proc = f"{os.getpid()}:{os.path.basename(sys_argv0())}"
+        logging.info(
+            "[ALPACA] reqs process=%s n=%d ok=%d 429=%d empty=%d fail=%d",
+            proc, snap["n"], snap["n_ok"], snap["n_429"], snap["n_empty"], snap["n_fail"],
+        )
+    try:
+        import session_recorder as _rec
+        _rec.record_quotes_meta(
+            kind=kind, n_symbols=n_symbols, ok=ok, n_429=n_429, empty=empty,
+        )
+    except Exception:
+        pass
+
+
+def recently_rate_limited(within_sec: float = 30.0) -> bool:
+    """True when this process saw a 429 within ``within_sec`` (sticky hold)."""
+    if not _last_rate_limited:
+        return False
+    return (time.monotonic() - _last_rate_limited_mono) <= float(within_sec)
+
+
+def sys_argv0() -> str:
+    try:
+        import sys
+        return sys.argv[0] or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def request_counts() -> dict:
+    with _req_lock:
+        return dict(_req_counts)
+
 
 def parse_retry_after(headers: Optional[Mapping[str, Any]]) -> Optional[float]:
     """Seconds from a Retry-After header, or None if absent/unusable."""
@@ -90,6 +152,7 @@ def warn_429(where: str, wait: float, detail: str = "") -> None:
         _last_429_warn_mono = now
     extra = f" — {detail[:120]}" if detail else ""
     logging.warning("[ALPACA] 429 %s; backing off %.1fs%s", where, wait, extra)
+    note_request(n_429=1, kind=f"429:{where}")
 
 
 def throttle_alpaca_request(min_interval: Optional[float] = None) -> float:
@@ -425,14 +488,57 @@ def get_latest_trade_quotes(data_client, tickers: list, cfg: dict = None) -> dic
         return results
 
     try:
-        return _fetch()
+        got = _fetch() or {}
+        empty = max(0, len(tickers) - len(got))
+        note_request(ok=len(got), empty=empty, n_symbols=len(tickers),
+                     kind="latest_trades")
+        return got
     except Exception as e:                                 # noqa: BLE001
         # Returning {} silently made a dead feed indistinguishable from a quiet
         # market: the panel kept showing whatever the other source last said,
         # with no error anywhere, so prices simply stopped moving and nothing
         # explained why. Same swallow that hid the minute-bar 401.
+        err = " ".join(str(e).split())[:200]
+        is_429 = "429" in err or "rate" in err.lower()
+        note_request(n_429=1 if is_429 else 0, fail=0 if is_429 else 1,
+                     n_symbols=len(tickers), kind="latest_trades")
         logging.warning("[ALPACA] latest trades failed for %d symbol(s): %s",
-                    len(tickers), " ".join(str(e).split())[:200])
+                    len(tickers), err)
+        return {}
+
+
+def get_latest_quotes(data_client, tickers: list, cfg: dict = None) -> dict:
+    """Batch latest quotes: {ticker: quote_obj}. Empty dict on failure.
+
+    Shared helper for the L2 trade_bridge path so subscribed symbols share one
+    request instead of falling through to per-symbol calls.
+    """
+    cfg = cfg or {}
+    if not tickers or data_client is None:
+        return {}
+
+    @retry_with_backoff(max_retries=3, base_wait=1.0)
+    def _fetch():
+        from alpaca.data.requests import StockLatestQuoteRequest
+        resp = data_client.get_stock_latest_quote(StockLatestQuoteRequest(
+            symbol_or_symbols=list(tickers),
+            **_get_feed_arg(cfg),
+        ))
+        return resp if isinstance(resp, dict) else {}
+
+    try:
+        got = _fetch() or {}
+        empty = max(0, len(tickers) - len(got))
+        note_request(ok=len(got), empty=empty, n_symbols=len(tickers),
+                     kind="latest_quotes")
+        return got
+    except Exception as e:  # noqa: BLE001
+        err = " ".join(str(e).split())[:200]
+        is_429 = "429" in err or "rate" in err.lower()
+        note_request(n_429=1 if is_429 else 0, fail=0 if is_429 else 1,
+                     n_symbols=len(tickers), kind="latest_quotes")
+        logging.warning("[ALPACA] latest quotes failed for %d symbol(s): %s",
+                        len(tickers), err)
         return {}
 
 
