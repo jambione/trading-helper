@@ -172,6 +172,15 @@ def main():
             if e.get(k) in GATES:
                 gate_c[e[k]] += 1
                 break
+    # Arm refusals live on the book record (block_code), not in events.jsonl.
+    blocks: collections.Counter = collections.Counter()
+    for s, r in book.items():
+        if not isinstance(r, dict) or not r.get("block_code"):
+            continue
+        if float(r.get("block_ts") or 0) >= win0:
+            blocks[r["block_code"]] += 1
+            if r["block_code"] in GATES:
+                gate_c[r["block_code"]] += 1
     unk = sum(gate_c[u] for u in UNKNOWN)
     tot = sum(gate_c.values())
     if rth and mins >= 9 * 60 + 50 and unk >= 20 and unk > 0.5 * tot:
@@ -190,7 +199,7 @@ def main():
     wins = sum(1 for r in closed if float(r.get("realized_pl_usd") or 0) > 0)
     print(f"[live_check {et:%H:%M} ET] book {n_book} | fills {len(closed)} closed + {len(open_pos)} open"
           f" | win {wins}/{len(closed)} | P/L ${pl:+.2f}"
-          f" | armed {armed} (green {green_armed}) | gates {dict(gate_c) or '{}'}"
+          f" | armed {armed} (green {green_armed}) | book blocks {dict(blocks) or '{}'}"
           f" | engine {('%.0fs' % eng_age) if eng_age is not None else '?'}")
     for n in notes:
         print(f"note: {n}")
