@@ -70,3 +70,15 @@ def test_roster_resets_each_day(monkeypatch):
     _reset(monkeypatch)
     ew.apply_day_roster([{"symbol": "A", "source": "movers"}], ON, now=_t(10, 0))
     assert ew.apply_day_roster([], ON, now=_t(10, 0, day=25)) == []
+
+
+def test_band_filter_frees_slots_only_with_the_roster_on(monkeypatch):
+    monkeypatch.setattr(ew, "_live_quote_map", lambda: (
+        {"LOW": {"price": 3.2}, "HIGH": {"price": 240.0}, "OK": {"price": 40.0},
+         "HELD": {"price": 150.0}}, {}))
+    monkeypatch.setattr(ew, "load_watch", lambda: {"HELD": {"status": "filled"}})
+    syms = ["LOW", "HIGH", "OK", "HELD", "NOPX"]
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {"ai_watch_min_price": 20, "ai_max_price": 100})
+    assert ew._push_band_filter(syms) == syms
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {**ON, "ai_watch_min_price": 20, "ai_max_price": 100})
+    assert ew._push_band_filter(syms) == ["OK", "HELD", "NOPX"]

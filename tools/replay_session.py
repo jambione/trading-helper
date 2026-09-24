@@ -286,6 +286,7 @@ class SynthEngine:
         self.bars, self.day = bars, day
         self.warmup, self.cap, self.enabled = warmup, cap, enabled
         self.requested: dict[str, float] = {}
+        self.last_req: dict[str, float] = {}
         self.used: set[str] = set()
         self._cache: dict[tuple[str, float], dict | None] = {}
         self._params = None
@@ -293,8 +294,15 @@ class SynthEngine:
     def request(self, syms, t: float) -> None:
         for s in syms or []:
             s = str(s or "").upper().strip()
-            if s and s not in self.requested:
-                self.requested[s] = t
+            if not s:
+                continue
+            self.requested.setdefault(s, t)
+            self.last_req[s] = t
+
+    def live_slots(self, have: set[str], now: float, keep_sec: float = 600.0) -> int:
+        """Recorded names the replayed code is still asking for: they hold slots.
+        Names it stopped pushing would have aged out of the ticker log live."""
+        return sum(1 for s in have if now - self.last_req.get(s, -1e18) <= keep_sec)
 
     def _p(self):
         if self._params is None:
@@ -340,7 +348,7 @@ class SynthEngine:
         if not self.enabled:
             return []
         out = []
-        room = self.cap - len(have)
+        room = self.cap - self.live_slots(have, now)
         for s, t0 in sorted(self.requested.items(), key=lambda kv: kv[1]):
             if room <= 0:
                 break
@@ -787,9 +795,13 @@ def run_inside(args) -> int:
     synth_box: dict = {}
 
     def push(symbols, *a, **k):
+        syms = [str(x or "").upper().strip() for x in symbols or []]
+        band = getattr(ew, "_push_band_filter", None)
+        if band is not None:
+            syms = band(syms)
         if "synth" in synth_box:
-            synth_box["synth"].request(symbols, clock.t)
-        return {"ok": True, "added": len(symbols or [])}
+            synth_box["synth"].request(syms, clock.t)
+        return {"ok": True, "added": len(syms)}
 
     ew.push_candidates_to_engine = push
     try:
@@ -906,7 +918,10 @@ def run_inside(args) -> int:
         return _gap(sym, now=t, **kw) if v is recorded.MISSING else v
 
     ew.sip_spread_pct, ew.rvol_pace_sip, ew.open_gap_pct = sip_spread, pace, gap
-    synth = SynthEngine(bars, args.day, args.synth_warmup, args.synth_cap,
+    # The binding limit is the engine's push cap when it is below Finnhub's 50.
+    push_max = int(cfg.get("ai_watch_engine_push_max", 0) or 0)
+    synth = SynthEngine(bars, args.day, args.synth_warmup,
+                        min(args.synth_cap, push_max) if push_max > 0 else args.synth_cap,
                         enabled=not args.no_synth)
     synth_box["synth"] = synth
 

@@ -8013,6 +8013,39 @@ def _push_cfg() -> dict:
         return {}
 
 
+def _push_band_filter(symbols: list[str]) -> list[str]:
+    """With the day roster on, spend engine / Finnhub slots on tradeable names.
+
+    2026-09-24 afternoon: the engine sat at its 44-name push cap and the
+    ticker log at 46-56 against Finnhub's 50, while ~10 of the 44 were
+    outside the $20-$100 band and could never be bought; roster names then
+    had no slot and no tape. Drops a name only when its current price is
+    KNOWN and out of band; seated names (incl. held) and unpriced names
+    (research seeds) are always kept.
+    """
+    cfg = _push_cfg()
+    if not bool(cfg.get("ai_watch_day_roster", False)):
+        return symbols
+    lo = _f_or_none(cfg.get("ai_watch_min_price")) or 0.0
+    hi = _f_or_none(cfg.get("ai_max_price")) or 0.0
+    try:
+        watch = load_watch() or {}
+    except Exception:  # noqa: BLE001
+        watch = {}
+    desk_rows, tr_by = _live_quote_map()
+    keep = []
+    for s in symbols:
+        if s in watch:
+            keep.append(s)
+            continue
+        r = desk_rows.get(s) or tr_by.get(s) or {}
+        px = _f_or_none(r.get("price"))
+        if px is not None and ((lo > 0 and px + 1e-12 < lo) or (hi > 0 and px >= hi)):
+            continue
+        keep.append(s)
+    return keep
+
+
 def push_candidates_to_engine(symbols: list[str]) -> dict:
     """Ask the signal engine to start computing indicators for *symbols*.
 
@@ -8039,6 +8072,7 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
             continue
         seen.add(t)
         wanted.append(t)
+    wanted = _push_band_filter(wanted)
     if not wanted:
         return {"pushed": 0, "known": 0}
     known = set(_engine_indicator_map())
