@@ -21,3 +21,4 @@ the mini (they need `config/secrets.json` and the SIP bar/quote caches):
 | `signal_timing.py` | Where in the %R cycle to buy | Superseded by `tools/entry_screen.py` |
 | `sector_study.py` | Sector strength vs SPY | Sector leading SPY by >0.5%: 62.4% (z +3.9, both halves) |
 | `sector_book_study.py` | Does the sector filter survive the book? | No: +0.013% vs +0.008%/trade (±0.061), a third of the trades |
+| `runway_target_study.py` | What predicts +2% before -1% within 60m? | Volume pace vs own normal: 4.0% -> 16.0% (z +13.8); volatility and gap up too. Held-out top third runs 2.4x, but net is unchanged with the 0.35% trail |
