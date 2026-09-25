@@ -92,6 +92,8 @@ def parse_args(argv=None):
     ap.add_argument("--synth-warmup", type=float, default=30.0)
     ap.add_argument("--synth-cap", type=int, default=50)
     ap.add_argument("--no-synth", action="store_true")
+    ap.add_argument("--no-paint", action="store_true",
+                    help="skip the trader's book paint (live runs it every publish)")
     ap.add_argument("--fidelity", action="store_true",
                     help="replay the code that ran and score against live")
     ap.add_argument("--step", type=float, default=2.0, help="book tick, sim seconds")
@@ -1003,6 +1005,17 @@ def run_inside(args) -> int:
             ew.sync_watch_from_source_panels(live, now=t)
         except Exception as e:  # noqa: BLE001
             print(f"[replay] sync failed at {datetime.fromtimestamp(t, ET):%H:%M:%S}: {e}")
+        # Live's book thread builds the dashboard payload on every publish
+        # (ai_trader._positions_payload -> book_table_rows -> apply_tape_blocker
+        # -> should_arm_buy), in the same process as the poll. Skipping it made
+        # the replay arm on crosses live never latched (2026-09-25 SMCI 12:00).
+        if not args.no_paint and hasattr(ew, "book_table_rows"):
+            try:
+                ew.book_table_rows(
+                    positions={s_: {"qty": 1} for s_ in broker.open},
+                    watch_rows=ew.public_snapshot())
+            except Exception as e:  # noqa: BLE001
+                print(f"[replay] paint failed at {datetime.fromtimestamp(t, ET):%H:%M:%S}: {e}")
         n_before = sum(broker.entries.values())
         if t - last_poll >= poll_sec:
             last_poll = t
