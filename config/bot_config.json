@@ -3,7 +3,7 @@
   "ai_avg_days": 10,
   "ai_book_tick_sec": 1.0,
   "ai_broker_stop_enabled": false,
-  "ai_daily_loss_limit_r": 3.0,
+  "ai_daily_loss_limit_r": 1000.0,
   "ai_day_scalp_dual_tranche": false,
   "ai_dual_tranche_triangle_exit": true,
   "ai_admit_ledger_enabled": true,
