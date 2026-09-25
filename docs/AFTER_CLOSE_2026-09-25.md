@@ -498,3 +498,29 @@ _LAST_QUOTE_TS, the price clock, from the paint
 _paint_trust_young_stream_field). The paint can change how fresh the poll
 thinks a price is. Measure on Monday's recording (with the latch fix live)
 whether poll tape_only refusals follow paint restamps, before touching it.
+
+## 22. 2a / 2b tonight: narrowed, instrumented, answers from Monday's session
+
+**2b pool flicker.** 97 bursts 09:36-15:43: ~12-16 names (AMD $633, COST, MSFT,
+MU, MCD, AKAM, ZTS, FISV, CMCSA...) enter the candidate pool and leave
+~11-20 s later; intervals mostly 121-125 s. Most are over the $100 cap: in
+the admission ledger AMD appears only 7 s after two bursts (inclusion
+above_max_price), i.e. normally it never reaches the pool at all. Ruled out:
+the trending file (prices present through the burst), the dashboard's own
+view (tickers/equity stable in the recorded /api/state), the dynamic cap at
+zero equity (it tightens, and has a $100 ceiling), seed_rank (no runs then).
+Remaining suspects: what the TRADER's dashboard read returned (HTTP) at
+those moments; another sync caller with a different cfg (research
+rebuild_watch_from_book / seed_rank pass their own cfg). Could not reproduce
+after hours (dashboard has 0 tickers).
+
+**2a price clock.** Nine paths write _LAST_QUOTE_TS (sync, poll, paint);
+effect on the poll's stale refusals needs a live session.
+
+**Instrumentation (recorder only, no trading change):**
+- sources stream: a `pool_note` row on every pool change with the builder's
+  thread + caller, dashboard ticker count, equity, price cap, flood flag and
+  a cfg hash. The first Monday burst names its own cause.
+- inputs stream: `clock_restamp` rows for every price-clock write that moves
+  it >= 2 s, with the writing function and thread. Pair with the decision
+  ledger's tape_only rows to see whether paint restamps drive refusals.

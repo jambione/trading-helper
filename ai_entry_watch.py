@@ -138,6 +138,28 @@ _STALE_RESTREAM_GRACE_DEFAULT_SEC = 60.0
 # bug this exists to prevent, not a feature.
 _LAST_QUOTE_TS: dict[str, float] = {}
 
+
+def _set_quote_ts(sym: str, ts: float) -> None:
+    """The one writer of the price clock the poll's freshness check reads.
+
+    Nine paths restamp it — the sync, the poll, and the book paint that runs
+    beside the poll every 2-3 s (2026-09-25 audit, after the paint was found
+    advancing the mid-rise latch). Jumps of 2 s or more are recorded with the
+    writer's name so a session shows which path moves the clock.
+    """
+    old = _LAST_QUOTE_TS.get(sym)
+    _LAST_QUOTE_TS[sym] = ts
+    try:
+        if old is None or abs(float(ts) - float(old)) >= 2.0:
+            import session_recorder as _rec
+            _rec.record_input(
+                "clock_restamp", sym,
+                None if old is None else round(float(ts) - float(old), 2),
+                ts=time.time(), fn=sys._getframe(1).f_code.co_name,
+                thread=threading.current_thread().name)
+    except Exception:  # noqa: BLE001
+        pass
+
 # Machine code → short operator label for the AI Watch "Blocker" column.
 _BLOCKER_LABELS: dict[str, str] = {
     "above_zone": "above zone",
@@ -469,7 +491,7 @@ def align_stream_clock_if_field_young(
     rec["price_age_sec"] = float(field)
     sym = str(rec.get("symbol") or "").upper().strip()
     if sym:
-        _LAST_QUOTE_TS[sym] = ts
+        _set_quote_ts(sym, ts)
     return True
 
 
@@ -507,7 +529,7 @@ def _paint_trust_young_stream_field(
     rec["price_age_sec"] = float(field)
     sym = str(rec.get("symbol") or "").upper().strip()
     if sym:
-        _LAST_QUOTE_TS[sym] = ts
+        _set_quote_ts(sym, ts)
     return True
 
 
@@ -577,7 +599,7 @@ def promote_stream_src_if_print_fresh(
         rec["price_age_sec"] = float(lp_age)
         rec["last_ask_ts"] = tnow - float(lp_age)
         if sym:
-            _LAST_QUOTE_TS[sym] = tnow - float(lp_age)
+            _set_quote_ts(sym, tnow - float(lp_age))
         return True
 
     if row_age is not None and row_age <= ceiling:
@@ -592,7 +614,7 @@ def promote_stream_src_if_print_fresh(
             rec["price_age_sec"] = float(row_age)
             rec["last_ask_ts"] = tnow - float(row_age)
             if sym:
-                _LAST_QUOTE_TS[sym] = tnow - float(row_age)
+                _set_quote_ts(sym, tnow - float(row_age))
             return True
     return False
 
@@ -4804,7 +4826,7 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
                 rec["price_src"] = "stream"
                 rec["last_ask_age_sec"] = _eage
                 rec["last_ask_ts"] = _now_al - _eage
-                _LAST_QUOTE_TS[sym] = _now_al - _eage
+                _set_quote_ts(sym, _now_al - _eage)
                 # Drop sticky stale_quote once paint has a young stream print.
                 clear_tape_data_block_if_stream_fresh(rec)
         except Exception:
@@ -5313,7 +5335,7 @@ def book_table_rows(
                     r["last_ask_ts"] = _now_bk - age_f
                     _sym_bk = str(r.get("symbol") or "").upper().strip()
                     if _sym_bk:
-                        _LAST_QUOTE_TS[_sym_bk] = _now_bk - age_f
+                        _set_quote_ts(_sym_bk, _now_bk - age_f)
                     max_age = decision_max_age_sec(_push_cfg())
                     if age_f <= max_age:
                         r["last_ask_src"] = "stream"
@@ -6829,6 +6851,19 @@ def _live_quote_map() -> tuple[dict[str, dict], dict[str, dict]]:
     return desk_rows, tr_by
 
 
+_LAST_POOL_CTX: dict = {}
+
+
+def _cfg_hash(cfg) -> str | None:
+    """Short digest of the config a pool was built with (a caller holding a
+    stale startup cfg shows up as a second hash)."""
+    try:
+        import hashlib
+        return hashlib.md5(json.dumps(cfg, sort_keys=True, default=str).encode()).hexdigest()[:8]
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def desk_candidate_rows(
     cfg: dict | None = None,
     now: float | None = None,
@@ -6862,12 +6897,21 @@ def desk_candidate_rows(
     rows: list[dict] = []
     seen: set[str] = set()
     _clear_seed_drops()
+    _st: dict = {}
+    eq = None
     try:
         from desk_risk import dynamic_max_price
-        eq = float(dashboard_state().get("ai_positions", {}).get("account", {}).get("equity") or 0.0)
+        _st = dashboard_state() or {}
+        eq = float(_st.get("ai_positions", {}).get("account", {}).get("equity") or 0.0)
         max_price = dynamic_max_price(eq, cfg)
     except Exception:
         max_price = cfg.get("ai_max_price", cfg.get("claude_max_price"))
+    # What this build saw, for the recorder's pool note (the 2026-09-25 pool
+    # flicker: ~12 names over the price cap entered for ~11 s every ~2 min).
+    _LAST_POOL_CTX.clear()
+    _LAST_POOL_CTX.update({
+        "dash_n": len(_st.get("tickers") or []) if isinstance(_st, dict) else None,
+        "eq": eq, "max_price": max_price})
     try:
         min_pct = float(cfg.get("ai_watch_min_pct_change", 50.0) or 50.0)
     except (TypeError, ValueError):
@@ -6892,6 +6936,7 @@ def desk_candidate_rows(
         _seed_inds = {}
 
     flood = morning_flood_active(cfg, now)
+    _LAST_POOL_CTX["flood"] = bool(flood)
 
     if cfg.get("ai_watch_seed_momentum", True):
         try:
@@ -8513,7 +8558,7 @@ def apply_decision_price(rec: dict, cfg: dict | None, now: float) -> tuple[float
         if age is not None:
             rec["last_ask_ts"] = float(now) - float(age)
             if _sym_k:
-                _LAST_QUOTE_TS[_sym_k] = float(now) - float(age)
+                _set_quote_ts(_sym_k, float(now) - float(age))
         else:
             rec.pop("last_ask_ts", None)
             if _sym_k:
@@ -10069,7 +10114,11 @@ def sync_watch_from_source_panels(
     try:
         import learn_stamps
         import session_recorder as _rec
-        _rec.record_source_set(candidates, ts=t0)
+        _f = sys._getframe(1)
+        _rec.record_source_set(candidates, ts=t0, note={
+            **_LAST_POOL_CTX, "thread": threading.current_thread().name,
+            "caller": f"{_f.f_code.co_name}<{_f.f_back.f_code.co_name if _f.f_back else ''}",
+            "cfg_hash": _cfg_hash(cfg)})
         _rec.record_config_snap(
             cfg, git_sha=learn_stamps.git_version(),
             fingerprint=learn_stamps.config_fingerprint(cfg))
@@ -10405,8 +10454,8 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
                 # book_table_rows). Sync used to leave a stale _LAST_QUOTE_TS
                 # beside a fresh stream print → book paint restamped stale.
                 rec["last_ask_ts"] = float(t0) - float(tape[1])
-                _LAST_QUOTE_TS[str(sym).upper().strip()] = (
-                    float(t0) - float(tape[1]))
+                _set_quote_ts(str(sym).upper().strip(),
+                              float(t0) - float(tape[1]))
                 # Sync copies block_code from prev then may stamp stream —
                 # clear sticky stale_quote here or the file keeps both.
                 clear_tape_data_block_if_stream_fresh(rec, cfg_z)
@@ -17205,8 +17254,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                     # public_snapshot recomputed age from an older map ts
                     # while last_ask_src stayed stream → stream+stale_quote.
                     rec["last_ask_ts"] = float(t0) - _age_f
-                    _LAST_QUOTE_TS[str(sym).upper().strip()] = (
-                        float(t0) - _age_f)
+                    _set_quote_ts(str(sym).upper().strip(),
+                                  float(t0) - _age_f)
                     # PPBT Sep2 honesty: age-gate the stream label (same as
                     # 2s paint). Old print → stale_tape, never stream+stale.
                     if _age_f <= decision_max_age_sec(cfg):

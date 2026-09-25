@@ -101,3 +101,36 @@ def test_discord_alerts_are_recorded_with_price(recdir):
     assert got == [{"ts": t, "et": "07:41:00", "symbol": "JAGX",
                     "line": "JAGX  Squeeze Potential Alert", "burst": True,
                     "card_brand": "find_it_first", "price": 3.12, "age_sec": 1.4}]
+
+
+def test_a_pool_change_says_who_built_it_and_what_it_saw(recdir):
+    """2026-09-25 flicker: ~12 names over the cap entered for ~11 s every ~2 min;
+    nothing recorded which caller built that pool or what its inputs were."""
+    t = _at(9, 36)
+    note = {"thread": "ai-book-maintenance", "caller": "_publish_book<_book_maintenance_loop",
+            "dash_n": 32, "eq": 2252.64, "max_price": 100.0, "flood": False,
+            "cfg_hash": "ab12cd34", "junk": {"not": "scalar"}}
+    rec.record_source_set([{"symbol": "PFE", "source": "movers"}], ts=t, note=note)
+    rec.record_source_set([{"symbol": "PFE", "source": "movers"}], ts=t + 2, note=note)  # no change
+    rec.flush(force=True)
+    got = _read(recdir / "sessions" / "2026-09-25" / "sources.jsonl.gz")
+    notes = [r for r in got if r.get("event") == "pool_note"]
+    assert len(notes) == 1
+    n = notes[0]
+    assert n["n_enter"] == 1 and n["n_leave"] == 0 and n["pool_n"] == 1
+    assert n["caller"].startswith("_publish_book") and n["dash_n"] == 32 and "junk" not in n
+
+
+def test_price_clock_writes_record_the_writer(recdir):
+    import ai_entry_watch as ew
+    ew._LAST_QUOTE_TS.pop("ZZZT", None)
+    ew._set_quote_ts("ZZZT", 1000.0)        # first stamp: recorded
+    ew._set_quote_ts("ZZZT", 1000.5)        # sub-2 s nudge: not recorded
+    ew._set_quote_ts("ZZZT", 990.0)         # -10.5 s restamp: recorded
+    ew._LAST_QUOTE_TS.pop("ZZZT", None)
+    rec.flush(force=True)
+    day_dirs = list((recdir / "sessions").iterdir())
+    got = [r for d in day_dirs for r in _read(d / "inputs.jsonl.gz")
+           if r.get("kind") == "clock_restamp" and r.get("symbol") == "ZZZT"]
+    assert [r.get("value") for r in got] == [None, -10.5]
+    assert all(r.get("fn") == "test_price_clock_writes_record_the_writer" for r in got)

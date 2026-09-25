@@ -264,7 +264,8 @@ def record_discord(symbol: str, line: str, *, alert: dict | None = None,
     _append("discord", obj)
 
 
-def record_source_set(rows: list[dict], *, ts: float | None = None) -> None:
+def record_source_set(rows: list[dict], *, ts: float | None = None,
+                      note: dict | None = None) -> None:
     """Log (symbol, source) pairs entering and leaving the candidate pool.
 
     Called every book rebuild (~2s); only transitions are written, so the
@@ -279,6 +280,7 @@ def record_source_set(rows: list[dict], *, ts: float | None = None) -> None:
         _source_state["day"], _source_state["keys"] = day, {}
     prev: dict[str, tuple[str, str]] = _source_state["keys"]
     cur: dict[str, tuple[str, str]] = {}
+    n_in = n_out = 0
     for r in rows or []:
         if not isinstance(r, dict):
             continue
@@ -291,13 +293,23 @@ def record_source_set(rows: list[dict], *, ts: float | None = None) -> None:
             continue
         cur[k] = (sym, src)
         if k not in prev:
+            n_in += 1
             pct = r.get("pct_change")
             record_source(sym, src, ts=t, event="enter",
                           pct=pct if pct is not None else r.get("pct"),
                           rvol=r.get("rvol"), price=r.get("price"))
     for k, (sym, src) in prev.items():
         if k not in cur:
+            n_out += 1
             record_source(sym, src, ts=t, event="leave")
+    if note and (n_in or n_out):
+        # Who built this pool and what it saw, whenever the pool changes.
+        _append("sources", {
+            "ts": t, "et": datetime.fromtimestamp(t, ET).strftime("%H:%M:%S"),
+            "event": "pool_note", "n_enter": n_in, "n_leave": n_out,
+            "pool_n": len(cur),
+            **{k: v for k, v in note.items() if isinstance(v, (str, int, float, bool)) or v is None}},
+            day=day)
     _source_state["keys"] = cur
 
 
