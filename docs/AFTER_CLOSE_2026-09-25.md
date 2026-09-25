@@ -31,6 +31,7 @@ close. Newest at the bottom. Replay/recording for today lands in
 | 10:39 | Dashboard: no self-HTTP, cache-only gates (fixes post-restart freeze) | 55e7ced |
 | 11:28 | Trader + dashboard gate inputs non-blocking (`ai_watch_async_gates`); movers keeps last list on a failed bars call. Restart with FFBC open (user OK); trader up in 27 s (was ~3 min) | bb58ab4, 73b6622 |
 | 11:41 | Held-quote REST refresh off the book thread (background, single-flight, 3 s floor). Desk flat at restart; trader up in 18 s; book 41 writes/90 s, max gap 7.0 s (was 20.5 s) | b96999c |
+| 11:51 | Removed the Mobile Trader L2 bridge from the dashboard (~50 Alpaca req/min in RTH). Desk flat at restart | b739543 |
 
 ## 2. Post-restart freeze: dashboard self-deadlock (FIXED 10:39, 55e7ced)
 
@@ -156,3 +157,21 @@ measurement should split by time of day.
 - 11:41 quick fix shipped (b96999c): held-quote refresh runs in a background
   thread. First read taken while flat, so the held path was not exercised;
   re-measure with positions open. Remaining 7 s gaps: find the cause.
+
+## 11. Book server (shadow) findings, 11:46
+
+- Ran all day (910 rows 04:00-11:46, survived restarts). Would seat 12 every RTH
+  hour; live seated 7-10; only ~5 in common. Supply for a full book exists.
+- ~40% of its ranking stands on missing inputs (pctr/pace known for ~12 of ~21).
+- It ranks names the live gates refuse (GME 6th while -5.7% on the day). Before
+  it seats live: skip gate-refused names; replay whether its extra names
+  crossed -50 today (would a fuller book have opened more?).
+
+## 12. The door refuses most of the supply (11:50)
+
+- 70 distinct names refused admission in 10 min (5 seated): thin_rvol 35,
+  below_min_price 7, above_max_price 6, not_uptrend 5, spread_wide 4, pct_low 4,
+  stale_tape_admit 3, float_too_big 2 (CVS, PYPL), gapped_down 1, red 1.
+- By source: movers 32, trending 24, agy 5, xai 4, momentum 4. The seeds are
+  curated; the door second-guesses them. thin_rvol is the big one: measure
+  tonight whether refused thin_rvol names crossed -50 and how they did.
