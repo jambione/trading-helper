@@ -5,6 +5,15 @@
 open at once, 3-8 min holds, stacking to max 5, all day. Judge every fix
 against both.
 
+**FIRST TONIGHT — cross funnel on today's recording.** For every -50 cross
+on a seed name (RTH): was it seated with fresh data, refused at the door
+(which gate), dropped from the book earlier, or not yet listed (and how long
+from first listed to seated)? This splits "wider" vs "keep seated" vs
+"faster". Then replay today with the top fix and count added opens vs the
+1-per-10 bar. Context (12:19): the book was healthy (14 seated, 8 armable,
+79% fresh) but the whole book sat at fast %R -7..-26 in a broad up-leg — no
+dips, no crosses. More seated names = more chances that something is dipping.
+
 Running list of things seen during the session, to work through after the
 close. Newest at the bottom. Replay/recording for today lands in
 `~/session_snapshots/2026-09-25/` on the mini at 16:05.
