@@ -8042,6 +8042,24 @@ def _min_price_for(source, cfg: dict | None, default: float = 1.0) -> float:
         return default
 
 
+def _spread_gate_max(source, cfg: dict | None) -> float:
+    """SIP spread ceiling for this source (0 = no spread gate).
+
+    ai_watch_momentum_spread_exempt: the $1-5 Discord momentum names cannot
+    pass a 0.20% gate on tick size alone (1 cent on $3 is 0.33%); exempt
+    them for the momentum test so their real cost can be measured. User
+    request 2026-09-25. Other sources keep the gate.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if (str(source or "").strip().lower().startswith("momentum")
+            and bool(cfg.get("ai_watch_momentum_spread_exempt", False))):
+        return 0.0
+    try:
+        return float(cfg.get("ai_watch_max_sip_spread_pct", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _push_band_filter(symbols: list[str]) -> list[str]:
     """With the day roster on, spend engine / Finnhub slots on tradeable names.
 
@@ -8096,7 +8114,7 @@ def _slot_unseatable(sym: str, cfg: dict) -> bool:
     hit = _GAP_CACHE.get(sym)
     if block > 0 and hit and hit[0] is not None and float(hit[0]) < -block:
         return True
-    max_sp = _f_or_none(cfg.get("ai_watch_max_sip_spread_pct")) or 0.0
+    max_sp = _spread_gate_max("momentum" if sym in _MOMENTUM_SYMS else "", cfg)
     hit = _SIP_SPREAD_CACHE.get(sym)
     if max_sp > 0 and hit and hit[0] is not None and float(hit[0]) > max_sp:
         return True
@@ -9284,7 +9302,7 @@ def admit_arm_gates(row: dict, cfg: dict | None, *, now: float | None = None,
         mins_open = 999
     delay = _f_or_none(cfg.get("ai_movers_sip_delay_min"))
     delay = 15.0 if delay is None else delay
-    max_sp = _f_or_none(cfg.get("ai_watch_max_sip_spread_pct")) or 0.0
+    max_sp = _spread_gate_max(row.get("source"), cfg)
     if max_sp > 0 and mins_open >= delay + 1:
         try:
             sp = (spread_fn or sip_spread_pct)(sym, now=t)
@@ -15388,10 +15406,7 @@ def should_arm_buy(
     # Spread gate: the whole trading cost is the spread (exec_report,
     # 2026-09-23: fills at the touch, 0 excess). A <= 0.20% gate cut the
     # one-arm cost 0.112% -> 0.071% and net -0.062% -> -0.011%, both halves.
-    try:
-        _sp_max = float(cfg.get("ai_watch_max_sip_spread_pct", 0) or 0)
-    except (TypeError, ValueError):
-        _sp_max = 0.0
+    _sp_max = _spread_gate_max(record.get("source"), cfg)
     if _sp_max > 0 and _gate_sym:
         _sp = sip_spread_pct(_gate_sym, now=now)
         if _sp is None:

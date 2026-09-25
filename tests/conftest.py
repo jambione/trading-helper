@@ -84,6 +84,7 @@ _SESSION_KNOBS = (
     "ai_watch_day_roster", "ai_watch_day_roster_max",
     "ai_watch_slot_priority",
     "ai_watch_momentum_min_price",
+    "ai_watch_momentum_spread_exempt",
 )
 
 

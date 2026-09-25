@@ -27,3 +27,14 @@ def test_push_filter_keeps_cheap_momentum_names(monkeypatch):
     monkeypatch.setattr(ew, "_MOMENTUM_SYMS", {"JAGX"})
     monkeypatch.setattr(ew, "_push_cfg", lambda: {**MOM, "ai_watch_slot_priority": True})
     assert ew._push_band_filter(["JAGX", "CLF"]) == ["JAGX"]
+
+
+def test_momentum_spread_exemption_is_per_source():
+    cfg = {**MOM, "ai_watch_max_sip_spread_pct": 0.2, "ai_watch_momentum_spread_exempt": True}
+    assert ew._spread_gate_max("momentum", cfg) == 0.0
+    assert ew._spread_gate_max("movers", cfg) == 0.2
+    assert ew._spread_gate_max("momentum", {**cfg, "ai_watch_momentum_spread_exempt": False}) == 0.2
+    gate = lambda row: ew.admit_arm_gates(row, cfg, now=1790346000.0,  # 10:20 ET 9/25
+                                          spread_fn=lambda *a, **k: 0.6, gap_fn=lambda *a, **k: None)
+    assert gate({"symbol": "JAGX", "price": 3.1, "source": "momentum"}) == (True, "")
+    assert gate({"symbol": "PFE", "price": 28.6, "source": "movers"}) == (False, "spread_wide")
