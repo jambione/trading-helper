@@ -106,42 +106,86 @@ def parse_args(argv=None):
 
 # ── stage 1: export the code and re-exec inside it ─────────────────────────
 
-def live_code_sha(day: str, snap_dir: Path) -> tuple[str | None, bool]:
-    """The commit the live desk ran most of the day, and whether its tree was dirty."""
+def live_code_sha(day: str, snap_dir: Path, start: str = "09:30",
+                  end: str = "16:00") -> tuple[str | None, bool, float | None]:
+    """The commit that ran longest inside [start, end], its dirty flag, and when it went live.
+
+    Weighted by time, not by record count: config records are written on
+    change, so a morning of restarts and edits (2026-09-25: seven records on
+    c1b54b0 in 40 minutes) outnumbered the build that ran 11:52-16:00.
+    """
     from collections import Counter
-    seen: Counter = Counter()
+    rows: list[tuple[float, str]] = []
     for p in (snap_dir / "recorder_config.jsonl.gz",
               HERE / "ai_reports" / "sessions" / day / "config.jsonl.gz"):
         if p.exists():
             with gzip.open(p, "rt") as f:
                 for line in f:
                     try:
-                        seen[str(json.loads(line).get("git_sha") or "")] += 1
+                        r = json.loads(line)
                     except ValueError:
-                        pass
+                        continue
+                    sha = str(r.get("git_sha") or "")
+                    if sha and sha != "unknown":
+                        rows.append((float(r.get("ts") or 0), sha))
             break
-    if not seen and (snap_dir / "fills.jsonl").exists():
+    if not rows and (snap_dir / "fills.jsonl").exists():
+        seen: Counter = Counter()
         for line in open(snap_dir / "fills.jsonl"):
             try:
                 seen[str(json.loads(line).get("git_version") or "")] += 1
             except ValueError:
                 pass
-    seen.pop("", None)
-    seen.pop("unknown", None)
-    if not seen:
-        return None, False
-    sha = seen.most_common(1)[0][0]
-    return sha.rstrip("+"), sha.endswith("+")
+        seen.pop("", None)
+        seen.pop("unknown", None)
+        if not seen:
+            return None, False, None
+        sha = seen.most_common(1)[0][0]
+        return sha.rstrip("+"), sha.endswith("+"), None
+    if not rows:
+        return None, False, None
+    rows.sort()
+    d = datetime.strptime(day, "%Y-%m-%d")
+
+    def _t(hhmm: str) -> float:
+        h, m = map(int, hhmm.split(":"))
+        return d.replace(hour=h, minute=m, tzinfo=ET).timestamp()
+
+    w0, w1 = _t(start), _t(end)
+    best: tuple[float, str, float] | None = None       # (seconds, sha, went live)
+    seg_sha, seg_t0 = None, None
+    for i, (ts, sha) in enumerate(rows + [(w1, "")]):
+        if sha != seg_sha:
+            if seg_sha is not None:
+                a, b = max(seg_t0, w0), min(ts, w1)
+                if b > a and (best is None or b - a > best[0]):
+                    best = (b - a, seg_sha, seg_t0)
+            seg_sha, seg_t0 = sha, ts
+    if best is None:
+        sha = rows[-1][1]
+        return sha.rstrip("+"), sha.endswith("+"), None
+    return best[1].rstrip("+"), best[1].endswith("+"), best[2]
 
 
 def export_and_reexec(args) -> int:
     ref = args.sha
     if args.fidelity and ref == "HEAD":
         snap_dir = Path(args.snapshots) if args.snapshots else SNAP_BASE / args.day
-        found, dirty = live_code_sha(args.day, snap_dir)
+        found, dirty, since = live_code_sha(args.day, snap_dir, args.start, args.end)
         if found:
             ref = found
             print(f"[replay] fidelity: live ran {found}{' (tree was dirty)' if dirty else ''}")
+            # Only score the window that build was actually live.
+            if since is not None:
+                live_from = datetime.fromtimestamp(since + 59, ET).strftime("%H:%M")
+                if live_from > args.start:
+                    argv = sys.argv[1:]
+                    if "--start" in argv:
+                        argv[argv.index("--start") + 1] = live_from
+                    else:
+                        argv += ["--start", live_from]
+                    sys.argv = [sys.argv[0]] + argv
+                    print(f"[replay] fidelity: {found} went live {live_from}; replaying from then")
         else:
             print("[replay] fidelity: live commit unknown; replaying HEAD")
     sha = subprocess.check_output(
@@ -581,6 +625,15 @@ def day_bars(day: str, syms: set[str], client) -> dict:
             have = {}
     need = sorted(s for s in syms if s not in have)
     if need:
+        # SIP is served once 15 min old; a 16:05 nightly launch asked for bars
+        # to 16:00 and died ("subscription does not permit querying recent
+        # SIP data", 2026-09-25). Wait instead.
+        close = datetime.strptime(day, "%Y-%m-%d").replace(
+            hour=16, minute=0, tzinfo=ET).timestamp()
+        wait = close + 16 * 60 - _real_time.time()
+        if 0 < wait < 3600:
+            print(f"[replay] waiting {wait / 60:.0f} min for SIP to serve the close", flush=True)
+            _real_time.sleep(wait)
         from datetime import timedelta, timezone
         from alpaca.data.enums import DataFeed
         from alpaca.data.requests import StockBarsRequest

@@ -112,3 +112,22 @@ def test_synthetic_engine_row_is_plain_json(tmp_path):
     assert rows and rows[0]["synthetic"] and rows[0]["price_age_sec"] == 5.0
     json.dumps(rows)                                       # numpy-free
     assert eng.rows({"ABC"}, o + 60 * 30 + 5) == []        # live already watches it
+
+
+def test_fidelity_picks_the_build_that_ran_longest_not_the_most_records(tmp_path):
+    """2026-09-25: seven config records on c1b54b0 in 40 min outnumbered the
+    build that ran 11:52-16:00; the replay must pick the latter and its start."""
+    from datetime import datetime
+    day = "2026-09-25"
+
+    def ts(h, m):
+        return datetime(2026, 9, 25, h, m, tzinfo=rp.ET).timestamp()
+    recs = [(ts(9, 59), "c1b54b0"), (ts(10, 3), "c1b54b0"), (ts(10, 12), "c1b54b0"),
+            (ts(10, 14), "c1b54b0"), (ts(10, 15), "c1b54b0"), (ts(10, 27), "b5e12cf"),
+            (ts(10, 39), "55e7ced"), (ts(11, 52), "b739543")]
+    with gzip.open(tmp_path / "recorder_config.jsonl.gz", "wt") as f:
+        for t, sha in recs:
+            f.write(json.dumps({"ts": t, "git_sha": sha}) + "\n")
+    sha, dirty, since = rp.live_code_sha(day, tmp_path, "09:00", "15:50")
+    assert sha == "b739543" and dirty is False
+    assert since == ts(11, 52)
