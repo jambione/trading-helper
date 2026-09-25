@@ -524,3 +524,21 @@ effect on the poll's stale refusals needs a live session.
 - inputs stream: `clock_restamp` rows for every price-clock write that moves
   it >= 2 s, with the writing function and thread. Pair with the decision
   ledger's tape_only rows to see whether paint restamps drive refusals.
+
+## 23. Short the fade? NO (tools/studies/short_fade_study.py)
+
+Shorted at admission (first shadow admit_ts per name-day, 428 name-days
+9/16-9/25; 2nd-bar open; cost by price tier): to close +0.51% mean, +0.12%
+median, 53% win, t +0.6. Train (<=9/18) +2.23%, test (>=9/21) -0.27%: does
+not hold out; 4 up / 4 down days. Squeeze tail to close: p90 +15%, p95 +32%,
+p99 +90%; 16% hit +10% against. Stops: +3% -0.46% (t -2.1), +5% -0.34%, +10%
+~0. The +30%-since-open bucket is a lottery (mean +8.1%, median -10.3%).
+Shorted at listing (1,946): -0.1% to -0.65% net. Borrow and SSR not modelled
+(would make it worse). The 8/24-9/4 fade (-1.81%) was mean-driven by a few
+collapses and does not reproduce on current gated admissions.
+
+Conclusion: neither side of this universe has a reliable edge on free
+price/volume data. Workflow optimisation can meet the opens standard, not
+profitability. Remaining edge sources: (1) a clean test of the curated
+Discord momentum seed; (2) earlier (premarket) information, which needs
+paid real-time SIP; (3) a different selection method/universe.
