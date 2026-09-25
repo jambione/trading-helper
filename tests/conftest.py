@@ -86,6 +86,7 @@ _SESSION_KNOBS = (
     "ai_watch_momentum_min_price",
     "ai_watch_momentum_spread_exempt",
     "ai_watch_async_gates",
+    "ai_watch_min_room_below_hod_pct",
 )
 
 

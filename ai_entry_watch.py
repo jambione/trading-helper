@@ -222,6 +222,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "spread_wide": "spread wide",
     "spread_unknown": "spread ?",
     "gapped_down": "gapped down",
+    "near_hod": "near day high",
+    "hod_unknown": "day high unknown",
     "gap_unknown": "gap ?",
     "rvol_pace_low": "volume pace low",
     "rvol_pace_unknown": "volume pace ?",
@@ -9107,6 +9109,70 @@ def open_gap_pct(sym: str, *, now: float | None = None, fetch=None) -> float | N
     return val
 
 
+_DAY_HIGH_CACHE: dict[str, tuple[float | None, float]] = {}
+
+
+def day_high_iex(sym: str, *, now: float | None = None, ttl: float = 120.0) -> float | None:
+    """Today's regular-session high so far from the desk's 1m IEX bars.
+
+    For the room-below-HOD arm gate: at the -50 cross, names >= ~2.6% below
+    their day high made +0.26% net per trade held out (t 3.0) vs +0.02% for
+    all crosses, and beat the baseline in both halves
+    (tools/studies/name_selection_study.py, 2026-09-25). IEX highs can sit a
+    little under the SIP high, which makes the gate stricter, not looser.
+    None when unknown (no bars since 09:30).
+    """
+    sym = str(sym or "").upper()
+    t = float(now if now is not None else time.time())
+    hit = _DAY_HIGH_CACHE.get(sym)
+    if hit is not None and t - hit[1] < ttl:
+        return hit[0]
+    val = None
+    try:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        import alpaca_api as aa
+        from config import load_config
+        et = ZoneInfo("America/New_York")
+        open_t = _dt.fromtimestamp(t, et).replace(hour=9, minute=30, second=0,
+                                                  microsecond=0).timestamp()
+        bar_cfg = {**(load_config() or {}), "bar_timeframe": "1Min", "bar_count": 420}
+        df = aa.fetch_bars(_data_client(), sym, bar_cfg)
+        if df is not None and len(df):
+            idx = [ts.timestamp() for ts in df.index]
+            highs = [float(h) for h, ts in zip(df["high"], idx) if open_t <= ts <= t - 60]
+            val = max(highs) if highs else None
+    except Exception:  # noqa: BLE001
+        val = None
+    _DAY_HIGH_CACHE[sym] = (val, t)
+    _record_input("day_high", sym, val, t)
+    return val
+
+
+def room_below_hod_refusal(record: dict, sym: str, ask, cfg: dict,
+                           *, now: float | None = None) -> str | None:
+    """'near_hod' / 'hod_unknown' when ai_watch_min_room_below_hod_pct is on
+    and price is not at least that far under today's high; None to allow."""
+    try:
+        need = float(cfg.get("ai_watch_min_room_below_hod_pct", 0) or 0)
+    except (TypeError, ValueError):
+        need = 0.0
+    if need <= 0 or not sym:
+        return None
+    hod = day_high_iex(sym, now=now)
+    try:
+        px = float(ask or 0)
+    except (TypeError, ValueError):
+        px = 0.0
+    if not hod or px <= 0:
+        return "hod_unknown"
+    room = (px / float(hod) - 1) * 100
+    if room > -need:
+        record["block_detail"] = f"{room:+.2f}% from day high (need <= -{need:g}%)"
+        return "near_hod"
+    return None
+
+
 _ASYNC_GATES_BOUND = False
 
 
@@ -9122,10 +9188,10 @@ def bind_async_gates(*, name: str = "ew-gate-warm", max_age: float = 600.0,
     the real function for names read in the last keep_sec, so refreshes keep
     the live TTLs. Idempotent; returns True when it bound.
     """
-    global sip_spread_pct, open_gap_pct, rvol_pace_sip, _ASYNC_GATES_BOUND
+    global sip_spread_pct, open_gap_pct, rvol_pace_sip, day_high_iex, _ASYNC_GATES_BOUND
     if _ASYNC_GATES_BOUND:
         return False
-    real = (sip_spread_pct, open_gap_pct, rvol_pace_sip)
+    real = (sip_spread_pct, open_gap_pct, rvol_pace_sip, day_high_iex)
     want: dict[str, float] = {}
     lock = threading.Lock()
 
@@ -9151,6 +9217,7 @@ def bind_async_gates(*, name: str = "ew-gate-warm", max_age: float = 600.0,
     sip_spread_pct = _cached(_SIP_SPREAD_CACHE, False)
     open_gap_pct = _cached(_GAP_CACHE, True)
     rvol_pace_sip = _cached(_RVOL_PACE_CACHE, False)
+    day_high_iex = _cached(_DAY_HIGH_CACHE, True)          # same-day values only
 
     last: dict[tuple[str, int], float] = {}
 
@@ -15848,6 +15915,11 @@ def should_arm_buy(
     # mask a real fade (not_rising_overbought) with late_heat, and after
     # the RSI hard-max so rsi_extended still wins above 60.
     if exh_ok:
+        # Room below the day's high (off at 0). Runs after the cross check so
+        # the mid-rise latch keeps seeing every reading while this refuses.
+        _hod_why = room_below_hod_refusal(record, _gate_sym, ask, cfg, now=now)
+        if _hod_why:
+            return False, _hod_why
         late = late_heat_blocks_buy(record, cfg)
         if late:
             return False, late

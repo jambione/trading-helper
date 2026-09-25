@@ -26,6 +26,7 @@ ALLOWED = {
     "_SIP_SPREAD_CACHE": "data cache",
     "_RVOL_PACE_CACHE": "data cache",
     "_AVG_VOL_CACHE": "data cache",
+    "_DAY_HIGH_CACHE": "data cache (day high from IEX bars)",
     "_RVOL_OBS_LOGGED": "log de-duplication",
 }
 

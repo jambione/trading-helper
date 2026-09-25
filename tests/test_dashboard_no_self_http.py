@@ -6,7 +6,7 @@ import dashboard as dash
 
 
 def _isolate(monkeypatch, started):
-    for name in ("dashboard_state", "sip_spread_pct", "open_gap_pct", "rvol_pace_sip",
+    for name in ("dashboard_state", "sip_spread_pct", "open_gap_pct", "rvol_pace_sip", "day_high_iex",
                  "_ASYNC_GATES_BOUND"):
         monkeypatch.setattr(ew, name, getattr(ew, name))
     monkeypatch.setattr(ew.threading, "Thread",
