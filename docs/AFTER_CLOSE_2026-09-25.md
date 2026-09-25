@@ -184,3 +184,26 @@ measurement should split by time of day.
 - By source: movers 32, trending 24, agy 5, xai 4, momentum 4. The seeds are
   curated; the door second-guesses them. thin_rvol is the big one: measure
   tonight whether refused thin_rvol names crossed -50 and how they did.
+
+## 13. Entry review at 12:56 (11 round trips; tool: scratchpad entry_review.py)
+
+- 8/11 winners, mean 0.00%. Holds 3-11 min (fits the 3-8 goal) except FFBC
+  11:06 dead_trade at 30 min. FLY -2.07% erased the other winners.
+- Quality: liquid names up 1-6% on the day, mostly Movers; momentum only 2
+  (TOST, KOPN) — the momentum test still has no sample.
+- Timing: 7/10 up at +5 min; by +30 min 5/9 below entry (KORU -2.6%,
+  FLY -2.1%). The entry catches a short pop and the universe fade takes over,
+  so short holds fit. Median MFE ~+0.4% vs 0.05-0.2% spread: thin margin.
+- 6/11 entries in the top 10% of the prior 30-min range (KORU 90, FLY 97,
+  FFBC 92/94, KOPN 100, CDNA 93): the -50 cross can fire on a shallow dip
+  inside a strong run.
+
+To do:
+1. Test the 30-min range position as an ARM gate (cap ~90) on today's
+   recording; admission-side evidence already showed a ~90 cap cuts the fade
+   (-1.81% -> -1.15%). Report opens lost vs loss avoided — it must not sink
+   the opens rate below the pass bar.
+2. FLY exit slippage: sold at -2.07% vs about -1.85% worst bar low (worked
+   shelf $24.07, filled $23.81 during the 10:24 freeze). Check whether the
+   freeze alone explains it (exits are later work).
+3. Rerun entry_review.py on the full day after 16:05 for the final numbers.
