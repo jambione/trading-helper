@@ -4495,10 +4495,13 @@ def _row_arm_refuse(row: dict, px: float) -> str | None:
             "pctr_falling": state == "cooling" or bool(row.get("pctr_falling")),
             **rsi_fields,
         }
+    _MID_RISE_PEEK.on = True          # display only: never advance the latch
     try:
         ok, why = should_arm_buy(rec, ask=float(px), bid=None, cfg=_push_cfg())
     except Exception:
         return None
+    finally:
+        _MID_RISE_PEEK.on = False
     if ok:
         return None
     return str(why or "").strip() or "blocked"
@@ -11670,6 +11673,13 @@ def exh_mid_rise_arm_enabled(cfg: dict | None) -> bool:
 # local on purpose: the watch record is rebuilt by sync, and a crossing is a
 # fact about two consecutive readings in this process, not about the book.
 _MID_RISE_STATE: dict[str, tuple[float, float | None]] = {}
+# Set on threads that only DISPLAY the arm (the book paint). They may read the
+# latch but must not advance it: the paint rebuilds its record from the book
+# row every publish (2-3 s), and advancing "last reading" from there consumed
+# crosses the poll never saw — prev moved above -50 without a latch, so the
+# poll read wait_mid_rise on SMCI 2026-09-25 12:00 while %R went -56.6 ->
+# -49.6 -> -45.1 with the slow line rising.
+_MID_RISE_PEEK = threading.local()
 
 
 def _mid_rise_allows_buy(
@@ -11702,7 +11712,8 @@ def _mid_rise_allows_buy(
     if (prev is not None and prev <= level < float(fast)
             and ind.get("pctr_slow_rising") is True):
         since = t
-    _MID_RISE_STATE[sym] = (float(fast), since)
+    if not getattr(_MID_RISE_PEEK, "on", False):
+        _MID_RISE_STATE[sym] = (float(fast), since)
     if since is None:
         return False, "wait_mid_rise"
     if t - since > max_age:

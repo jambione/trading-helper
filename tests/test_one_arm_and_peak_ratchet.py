@@ -116,3 +116,31 @@ def test_peak_give_never_lowers_the_stop():
     pos = _vktx(local_stop_price=42.00)
     got = cp.local_profit_stop(pos, {**CFG, "ai_local_trail_peak_give_pct": 0.5})
     assert got >= 42.00
+
+
+def test_a_display_read_cannot_consume_the_poll_cross():
+    """SMCI 2026-09-25 12:00: the book paint read the cross first (without the
+    slow flag), advanced 'last reading' above -50, and the poll never armed."""
+    ew._mid_rise_allows_buy(_rec(-56.6), ON, now=100)            # poll
+    ew._MID_RISE_PEEK.on = True
+    try:                                                          # paint
+        ew._mid_rise_allows_buy(_rec(-49.6, slow_rising=False), ON, now=102)
+    finally:
+        ew._MID_RISE_PEEK.on = False
+    assert ew._MID_RISE_STATE["ACME"] == (-56.6, None)            # untouched
+    assert ew._mid_rise_allows_buy(_rec(-45.1), ON, now=110) == (True, "mid_rise")
+
+
+def test_the_book_paint_never_advances_the_latch(monkeypatch):
+    ew._mid_rise_allows_buy(_rec(-56.6, sym="SMCI"), ON, now=100)
+    seen = []
+
+    def arm(rec, **kw):
+        seen.append(ew._mid_rise_allows_buy(_rec(-49.6, slow_rising=False, sym="SMCI"), ON, now=101))
+        return False, seen[-1][1]
+    monkeypatch.setattr(ew, "should_arm_buy", arm)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: ON)
+    ew._row_arm_refuse({"ticker": "SMCI", "pctr": -49.6}, 42.85)
+    assert seen, "paint must evaluate the arm"
+    assert ew._MID_RISE_STATE["SMCI"] == (-56.6, None)
+    assert not getattr(ew._MID_RISE_PEEK, "on", False)             # flag cleared
