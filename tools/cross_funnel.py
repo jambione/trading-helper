@@ -284,7 +284,14 @@ for t, sym, srcs, px in sorted(events):
         if rl:
             why = "on the raw " + "+".join(sorted(rl)) + " list, not in the desk pool"
         else:
-            why = "listed earlier, dropped off" if ever_listed_before(sym, t) else "never listed yet today"
+            if ever_listed_before(sym, t):
+                was = sorted({fam(src) for ts, src, on in member.get(sym, []) if on and ts <= t})
+                gone = t - max(ts for ts, src, on in member.get(sym, []) if not on and ts <= t) \
+                    if any(not on and ts <= t for ts, src, on in member.get(sym, [])) else 0
+                why = (f"dropped off (was {'+'.join(was)}; "
+                       f"{'<15m' if gone < 900 else '15-60m' if gone < 3600 else '>60m'} ago)")
+            else:
+                why = "never listed yet today"
         detail[k][why] += 1
     elif any(t - 30 <= ft <= t + 150 for ft in fills.get(sym, [])):
         k = "3 seated and OPENED"
