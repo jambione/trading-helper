@@ -74,3 +74,32 @@ close. Newest at the bottom. Replay/recording for today lands in
   the desk's pushes (Discord/momentum watchlist adds on top). Day roster 0 seats.
 - To do: make the whole data feed respect its capacity; see why seated names go
   stale and why the roster never seats.
+
+## 7. Attack plan: stale prices (main blocker to all-day opens)
+
+A seated name is "stale" when its last trade print is > 15 s old. Three causes,
+three different fixes, so measure first.
+
+**Measure (today's recording):** for every `tape_only` / stale refusal, classify
+the name at that moment using the prints stream (every price, source, true
+age) against SIP historical trades (ground truth for how often it traded):
+1. Coverage — not subscribed / no Finnhub prints at all.
+2. Thin trading — subscribed, but real trades > 15 s apart (price not moving,
+   the rule reads "no recent trade" as "no price"). Expect cheap momentum
+   names here.
+3. Lag — the trade happened but reached the desk late (engine -> dashboard ->
+   trader).
+Output: the split (e.g. 60/30/10) and which fix pays.
+
+**Fixes by cause:**
+| Cause | Fix |
+|---|---|
+| 1 Coverage | Whole data feed respects capacity, not just desk pushes: seated + held first, then armable by rank, then the Discord watchlist; no churn. Extend slot priority (4cf87ec) to the Finnhub subscription list. |
+| 2 Thin names | Seat names that trade constantly: add trades-per-minute to seat eligibility and rank. Consider the IEX quote clock as proof of a current price when the last trade is older. |
+| 3 Lag | Trader reads engine prints directly instead of the dashboard's merged view. |
+
+**Then:** replay today with the chosen fix and report how many more opens it
+would have produced, before anything goes live.
+
+Initial read (to confirm): mostly cause 1 (freshness fell as the watchlist grew;
+engine at 34-44 names vs 30), then cause 2.
