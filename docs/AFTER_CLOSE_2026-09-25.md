@@ -560,3 +560,11 @@ fixed from train/prior studies: A room below HOD (<= -2.74%), B not top of
   only raises the win rate.
 - Momentum seed: clean Discord callouts exist for 9/25 only (59 names);
   recorder keeps them now; test when 2-3 weeks accumulate.
+- Follow-up (user: "near the bottom of the Bollinger bands with a good path
+  up"): with room below HOD, low 5m %B (<0.3) lifts runner +3-10 pp but net60
+  flips (train -0.15% vs room-only -0.24%; test +0.02% vs +0.17%); high-band +
+  room was best held out (+0.34%). Low band WITHOUT room is the worst cell
+  (runner 32-34%). 1m low band + room almost never occurs at the cross (17 of
+  2,679 test crosses). The band adds nothing reliable; room is the signal.
+  Untested: a lower-band touch as its own entry trigger (prior: alternative
+  triggers have all been noise-equivalent).
