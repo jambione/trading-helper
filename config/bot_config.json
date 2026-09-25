@@ -486,5 +486,6 @@
   "ai_phase_b_sources_allow": "momentum,movers",
   "ai_watch_admit_arm_gates": true,
   "ai_book_server_mode": "shadow",
-  "ai_book_server_max_seats": 12
+  "ai_book_server_max_seats": 12,
+  "ai_watch_day_roster": true
 }
