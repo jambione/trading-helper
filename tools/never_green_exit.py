@@ -78,7 +78,7 @@ def main() -> None:
                 b = cl.get_stock_bars(StockBarsRequest(
                     symbol_or_symbols=s, timeframe=TimeFrame.Minute,
                     start=o.astimezone(timezone.utc),
-                    end=o.replace(hour=16).astimezone(timezone.utc), feed=DataFeed.SIP)).data.get(s) or []
+                    end=o.replace(hour=16, minute=0).astimezone(timezone.utc), feed=DataFeed.SIP)).data.get(s) or []
                 cache[key] = [(x.timestamp.timestamp(), float(x.high), float(x.close)) for x in b]
             rows.append((day, s, bt, bp, st, sp, cache[key]))
     cache_p.parent.mkdir(exist_ok=True)
