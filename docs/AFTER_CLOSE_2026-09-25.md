@@ -568,3 +568,20 @@ fixed from train/prior studies: A room below HOD (<= -2.74%), B not top of
   2,679 test crosses). The band adds nothing reliable; room is the signal.
   Untested: a lower-band touch as its own entry trigger (prior: alternative
   triggers have all been noise-equivalent).
+
+## 25. Replay A/B on today (fixed build 0d98b01, 09:30-15:50, $ after est. spread at $1k/trade)
+
+| Run | Trades | Avg net | Day total | Opens/10m | Avg open |
+|---|---|---|---|---|---|
+| A live config ($1 momentum floor) | 65 | -0.040% | -$26 | 1.74 | 3.1 |
+| B $20 momentum floor (now live) | 65 | -0.005% | -$3 | 1.69 | 3.1 |
+| C $20 floor + room gate 2.6% | 12 | +0.004% | $0 | 0.33 | 0.3 |
+(B and C are the other session's /tmp/eo batch; its live book-server run
+d25_bslive matched B: 65 trades, +9.3 bp gross.)
+- $20 floor: keep (saves ~$23 on the day; the 2 cheap trades cost $17).
+- Room GATE: off for Monday — no per-trade gain on the day and -80% opens
+  (below the pass bar); 12 trades is no sample. Next: room as a seat/slot
+  RANKING across several recorded days, not a gate.
+- With the latch fix + $20 floor the replay meets the opens standard at
+  about breakeven after spread (-$3 / 65 trades). Profit needs ~+0.1-0.2%
+  per trade more than the system has today.
