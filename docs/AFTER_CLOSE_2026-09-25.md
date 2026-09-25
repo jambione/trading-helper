@@ -30,6 +30,7 @@ close. Newest at the bottom. Replay/recording for today lands in
 | 09:56 | Momentum exempt from SIP spread gate (restart ~45 s) | c1b54b0 |
 | 10:39 | Dashboard: no self-HTTP, cache-only gates (fixes post-restart freeze) | 55e7ced |
 | 11:28 | Trader + dashboard gate inputs non-blocking (`ai_watch_async_gates`); movers keeps last list on a failed bars call. Restart with FFBC open (user OK); trader up in 27 s (was ~3 min) | bb58ab4, 73b6622 |
+| 11:41 | Held-quote REST refresh off the book thread (background, single-flight, 3 s floor). Desk flat at restart; trader up in 18 s; book 41 writes/90 s, max gap 7.0 s (was 20.5 s) | b96999c |
 
 ## 2. Post-restart freeze: dashboard self-deadlock (FIXED 10:39, 55e7ced)
 
@@ -152,3 +153,6 @@ measurement should split by time of day.
   same gate inputs (dedupe: one process fetches, the other reads); held-quote
   refresh should not run every 2-3 s tick on the book thread; alpaca clients
   on hot paths should not sleep-retry.
+- 11:41 quick fix shipped (b96999c): held-quote refresh runs in a background
+  thread. First read taken while flat, so the held path was not exercised;
+  re-measure with positions open. Remaining 7 s gaps: find the cause.
