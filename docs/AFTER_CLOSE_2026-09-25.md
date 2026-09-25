@@ -352,3 +352,45 @@ bigger sample of our own trades):
 4. Method: held-out days, symbol-day weighting, per-day consistency, no
    post-entry data (the BOLLINGER study method). Report opens lost vs edge
    gained; must stay above 1 open / 10 min.
+
+## 17. Final day numbers (15:50)
+
+| Measure | Today | Pass bar | Goal |
+|---|---|---|---|
+| Opens / 10 min | 0.53 (20) | 1 | ~5 |
+| 10-min windows with an open | 15/38 | all | several each |
+| Time with >=1 open | 45% | >=80% | constant |
+| Time with >=2 open | 15% | >=50% | 2-3 most of the day |
+| Avg open / peak | 0.60 / 2 | — | 2-3 / 5 |
+| Holds | median 9.2 min; 10/20 in 3-8 | — | 3-8 |
+| Trades | 10/20 winners, mean -0.15%; day -$13.01 (-0.58%) | — | small, consistent |
+
+By stretch: 09:30-11:00 ~0.27/10m (our own freezes/restarts); 11:00-14:00
+~0.5 (IEX staleness, up-leg with no dips); **14:00-15:00 1.0/10m (6 opens,
+pass-bar rate for a full hour)**; 15:00-15:40 none; 2 opens 15:44-15:46.
+
+Momentum: 5 opens (TOST, KOPN, AXTI, QMCO, FLY#2) mean -0.47%, worst source;
+tiny sample through gates that blocked most of it; source labels are mixed
+(FLY = movers 10:23, momentum 14:54). Not a verdict.
+
+## 18. Never-green trades carry the day's loss (exit work)
+
+| Trade | Hold | MFE | Result |
+|---|---|---|---|
+| FLY 10:23 | 7 min | +0.08% | -2.07% |
+| SMCI 14:14 | 24 min | 0.00% | -1.03% |
+| FLY 14:54 | 24 min | 0.00% | -1.00% |
+| AXTI 13:13 | 19 min | +0.19% | -1.05% |
+
+~-5.2% from these four vs ~+3.2% from the ten winners. Winners worked as
+intended (short pop, 3-10 min, trailed out). To do: replay a "not green by
+~+0.2% within ~5 min -> exit" rule on today's 20 trades (and the week's fills),
+report net effect after spread and how many winners it would have cut early.
+See memory: a tight ratchet cannot ensure profit (9/23: 5 never green).
+
+## 19. What made 14:00-15:00 work?
+
+The one hour at the pass-bar rate (6 opens). In the cross funnel, break this
+hour out: seated count, freshness, armable share, number of seed crosses,
+market dips vs up-leg, admission refusals. Whatever differed is the template
+for the whole day.
