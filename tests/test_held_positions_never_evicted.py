@@ -124,3 +124,21 @@ def test_committed_symbols_fails_open_on_a_missing_file(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_paths, "resolve_report_dir",
                         lambda: tmp_path / "does_not_exist")
     assert dash._committed_symbols() == frozenset()
+
+
+def test_book_pushes_do_not_evict_discord_names(monkeypatch, tmp_path):
+    """2026-09-25 pre-open: the desk's src=book pushes filled the 10 candidate
+    slots and retired every Discord alert, so the Momentum panel was empty."""
+    monkeypatch.setattr(dash, "TICKER_MAX_COUNT", 3)
+    monkeypatch.setattr(dash, "_SUB_BUDGET", 10)
+    monkeypatch.setattr(dash, "_passes_rvol_floor", lambda *a, **k: True)
+    discord = [{"ticker": t, "added": _iso(5)} for t in ("APUS", "AIRE", "NCT")]
+    book = [{"ticker": f"BK{c}", "added": _iso(1), "src": "book"} for c in "ABCDEFGH"]
+    _arm(monkeypatch, tmp_path, [{"ticker": "HELD", "added": _iso(9)}] + discord + book,
+         held={"HELD"})
+
+    out = dash.load_tickers()
+
+    assert {"APUS", "AIRE", "NCT"} <= set(out), "Discord names keep their own slots"
+    assert "HELD" in out
+    assert sum(1 for t in out if t.startswith("BK")) == 10 - 1 - 3   # rest of the budget

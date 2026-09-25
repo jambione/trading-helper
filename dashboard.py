@@ -1757,20 +1757,31 @@ def load_tickers() -> list:
             # REST-quoted — and the total is bounded below.
             # Exempt set: held/watch (_committed_symbols) AND src=book
             # shortlist pushes. Still hard-capped by _SUB_BUDGET.
-            kept.sort(key=lambda e: (e["_held"], e["_ts"]), reverse=True)
-            n_held = sum(1 for e in kept if e["_held"])
-            limit = min(n_held + TICKER_MAX_COUNT, _SUB_BUDGET)
-            limit = max(limit, n_held)   # never drop an exempt name
-            if len(kept) > limit:
-                dropped = kept[limit:]
-                kept = kept[:limit]
+            # Three budgets. Held names always stay. Discord / momentum
+            # candidates get TICKER_MAX_COUNT slots. src=book rows (the
+            # desk's pushes, bounded by ai_watch_engine_push_max) take what
+            # is left of the subscription budget and still age out above.
+            # One shared 10-slot cap (846c333) let the desk's pushes evict
+            # every Discord name — the Momentum panel went empty on
+            # 2026-09-25 while alerts were arriving — and churned the list.
+            newest = lambda rows: sorted(rows, key=lambda e: e["_ts"], reverse=True)  # noqa: E731
+            held_rows = [e for e in kept if e["_held"]]
+            book_rows = newest([e for e in kept if not e["_held"]
+                                and str(e.get("src") or "").lower() == "book"])
+            cand_rows = newest([e for e in kept if not e["_held"]
+                                and str(e.get("src") or "").lower() != "book"])
+            n_held = len(held_rows)
+            cand_keep = cand_rows[:TICKER_MAX_COUNT]
+            room = max(0, _SUB_BUDGET - n_held - len(cand_keep))
+            dropped = cand_rows[TICKER_MAX_COUNT:] + book_rows[room:]
+            kept = held_rows + cand_keep + book_rows[:room]
+            if dropped:
                 changed = True
-                if dropped:
-                    log.info(
-                        "[TICKER] Over cap (%d candidate slots + %d desk-covered,"
-                        " budget %d) — retired %d oldest: %s",
-                        TICKER_MAX_COUNT, n_held, _SUB_BUDGET, len(dropped),
-                        ", ".join(e["ticker"] for e in dropped))
+                log.info(
+                    "[TICKER] Over cap (%d candidate slots + %d desk-covered,"
+                    " budget %d) — retired %d oldest: %s",
+                    TICKER_MAX_COUNT, n_held, _SUB_BUDGET, len(dropped),
+                    ", ".join(e["ticker"] for e in dropped))
             # Re-admit a held name that is not on the list at all. Exempting
             # them from eviction is only half the rule: a position opened after
             # its symbol had already aged out would otherwise stay dark for as
