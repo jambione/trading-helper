@@ -451,3 +451,30 @@ other 2. The replay is optimistic on exactly the live blockers.
   the real print stream) and %R from the live IEX bars; rerun fidelity until
   recall and precision are both high. Only then run the retention and
   admission-gate replays. Nothing ships Monday on replay evidence.
+
+## 20. LIVE BUG: the book paint consumed mid-rise crosses (fix 24cc6bf, NOT deployed)
+
+- SMCI 12:00: live book %R -56.6 -> -49.6 -> -45.1 with slow rising and fresh
+  tape, yet the poll said wait_mid_rise through 12:03. The trader's book paint
+  (_positions_payload -> book_table_rows -> apply_tape_blocker ->
+  _row_arm_refuse -> should_arm_buy) runs every 2-3 s in the poll's process
+  and shared the process-local _MID_RISE_STATE. Rebuilt from the book row, it
+  could read the cross first without the slow flag and advance "last reading"
+  above -50 without latching; the poll then never saw prev <= -50.
+- Proof by replay (b739543, 11:53-15:50):
+  | Replay | Opens | Recall | Gross/trade |
+  |---|---|---|---|
+  | no paint | 56 | 0.62 | +1.9 bp |
+  | with live's paint | 19 | 0.08 | -12.3 bp |
+  | live | 13 | — | — |
+  | fix (24cc6bf) + paint | 56 (identical to no paint) | — | +1.9 bp |
+  The paint suppressed ~2/3 of arms, and which crosses survived depended on
+  thread timing (a race), which is why fidelity precision was 0.14.
+- Fix: thread-local _MID_RISE_PEEK; the paint reads the latch, only the poll
+  advances it. Tests fail without it; suite 3654 passed.
+- Expected live effect: afternoon opens ~0.5 -> ~2.3 / 10 min (above the pass
+  bar), avg 3.1 open. Quality unchanged and thin: +1.9 bp gross before a
+  5-20 bp spread. Needs the user's go to deploy before Monday's open.
+- Replay note: with the fix the replay and live run the same latch, so the
+  remaining fidelity gaps (tape_only 13, not seated live 12) can be chased on
+  Monday's recording.
