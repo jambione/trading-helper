@@ -8,7 +8,8 @@ asks whether the other side pays after costs — and what the squeeze tail costs
 
 Events (one per name-day per anchor, no look-ahead):
   listed    first admit-ledger row for the name that day (any stage)
-  admitted  first kept=True row
+  admitted  first admit_ts per name-day in shadow.jsonl (the admission
+            instant; the admit ledger logs only refusals)
 Anchor = max(event, 09:35 ET). Entry = open of the 2nd bar after the anchor
 minute (the obtainable fill, as the fade studies used). Short P&L % =
 (entry - exit) / entry * 100 - round-trip cost by price tier ($10+: 0.20%,
@@ -59,9 +60,9 @@ def cost(px: float) -> float:
     return 0.20 if px >= 10 else 0.40 if px >= 5 else 1.00
 
 
-def events_for(day: str) -> list[dict]:
+def listed_events(day: str) -> list[dict]:
     p = os.path.join(ROOT, "ai_reports", "admit_ledger", f"{day}.jsonl")
-    first, kept = {}, {}
+    first = {}
     with open(p) as f:
         for line in f:
             if '"symbol"' not in line:
@@ -71,18 +72,40 @@ def events_for(day: str) -> list[dict]:
             except ValueError:
                 continue
             s = str(r.get("symbol") or "").upper()
-            if not s or "." in s:
+            if s and "." not in s and s not in first:
+                first[s] = (float(r.get("ts") or 0), str(r.get("source") or ""))
+    return [{"day": day, "sym": s, "anchor": "listed", "t": ts, "src": src}
+            for s, (ts, src) in first.items()]
+
+
+def admitted_events(days: list[str]) -> list[dict]:
+    """First admit_ts per name-day from shadow.jsonl (streamed; 800 MB)."""
+    import re
+    t0 = at(days[0], 0, 0)
+    t1 = at(days[-1], 23, 59)
+    pat = re.compile(r'^\{"ts": ([0-9.]+)')
+    first: dict[tuple[str, str], tuple[float, str]] = {}
+    with open(os.path.join(ROOT, "ai_reports", "shadow.jsonl")) as f:
+        for line in f:
+            m = pat.match(line)
+            if not m or not (t0 <= float(m.group(1)) <= t1):
                 continue
-            ts = float(r.get("ts") or 0)
-            if s not in first:
-                first[s] = (ts, str(r.get("source") or ""))
-            if r.get("kept") is True and s not in kept:
-                kept[s] = (ts, str(r.get("source") or ""))
-    out = []
-    for anchor, m in (("listed", first), ("admitted", kept)):
-        for s, (ts, src) in m.items():
-            out.append({"day": day, "sym": s, "anchor": anchor, "t": ts, "src": src})
-    return out
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            s = str(r.get("symbol") or "").upper()
+            a = r.get("admit_ts")
+            if not s or "." in s or not isinstance(a, (int, float)):
+                continue
+            d = datetime.fromtimestamp(float(a), ET).strftime("%Y-%m-%d")
+            if d not in days:
+                continue
+            k = (s, d)
+            if k not in first or float(a) < first[k][0]:
+                first[k] = (float(a), str(r.get("source") or ""))
+    return [{"day": d, "sym": s, "anchor": "admitted", "t": ts, "src": src}
+            for (s, d), (ts, src) in first.items()]
 
 
 def load_bars(events: list[dict]) -> dict:
@@ -175,7 +198,7 @@ def line(rows, key, label):
 
 
 def main() -> None:
-    events = [e for d in DAYS for e in events_for(d)]
+    events = [e for d in DAYS for e in listed_events(d)] + admitted_events(DAYS)
     bars = load_bars(events)
     rows = [r for e in events if (B := bars.get((e["sym"], e["day"]))) and (r := score(e, B))]
     print(f"short-the-fade: {len(rows)} events over {len({r['day'] for r in rows})} days "
@@ -183,12 +206,17 @@ def main() -> None:
           f"{sum(r['anchor'] == 'admitted' for r in rows)} admitted)\n")
     for anchor in ("listed", "admitted"):
         R = [r for r in rows if r["anchor"] == anchor]
+        if not R:
+            print(f"=== {anchor.upper()}: no events ===\n")
+            continue
         print(f"=== {anchor.upper()} (short at the 2nd bar open after the anchor; net of cost) ===")
         for H in HORIZONS:
             print(line(R, f"r{H}", f"hold {H}"))
         print("  squeeze against the short (max high after entry):")
         for H in (60, "close"):
             v = [r[f"sq{H}"] for r in R]
+            if not v:
+                continue
             print(f"    to {H}: p50 {pct(v, .5):+.1f}%  p90 {pct(v, .9):+.1f}%  p95 {pct(v, .95):+.1f}%  "
                   f"p99 {pct(v, .99):+.1f}%  hit +5% {sum(x >= 5 for x in v) / len(v):.0%}  "
                   f"+10% {sum(x >= 10 for x in v) / len(v):.0%}  +20% {sum(x >= 20 for x in v) / len(v):.0%}")
