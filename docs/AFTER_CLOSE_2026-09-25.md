@@ -435,3 +435,19 @@ on 110 names (21 per 10 min).
 -0.279%, 102 winners): every "not +0.1-0.3% by 3-10 min" rule moves the total
 by -1.8% to +2.2% — noise. Today's +3.6% was four trades. Matches the memory
 note that early cuts do not move the mean. Closed.
+
+**Fidelity (b739543, 11:53-15:50, finished 16:30).** Live buys 13, replay opens
+56; matched within 90 s 8 (recall 0.62, up from 0.54 on 9/24; precision 0.14);
+book overlap 0.70. What live said at the 48 replay-only opens: wait_mid_rise 16
+(replay saw a cross live did not: two-clock), tape_only 13 (replay fresh where
+live IEX was stale), not seated live 12 (PYPL, CVS, VIAV, DB), mid_rise_stale 5,
+other 2. The replay is optimistic on exactly the live blockers.
+- As a ceiling: same code/names/day without the data problems = 2.33 opens /
+  10 min, avg 3.1 open, >=1 open 89%, >=2 open 78%; gross +1.9 bp/trade
+  (quality still below the spread).
+- Not trustworthy yet for A/B opens counts: a replay that thinks prices are
+  fresher than live will overstate retention/admission gains.
+- Next: replay freshness from the recorded live prints (the live 15 s rule on
+  the real print stream) and %R from the live IEX bars; rerun fidelity until
+  recall and precision are both high. Only then run the retention and
+  admission-gate replays. Nothing ships Monday on replay evidence.
