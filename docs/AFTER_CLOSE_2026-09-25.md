@@ -478,3 +478,22 @@ other 2. The replay is optimistic on exactly the live blockers.
 - Replay note: with the fix the replay and live run the same latch, so the
   remaining fidelity gaps (tape_only 13, not seated live 12) can be chased on
   Monday's recording.
+
+## 21. Guards against this class of bug (display paths changing decision state)
+
+Shipped (tests; nightly report runs from the watchdog — no desk restart needed):
+- tests/test_arm_path_state.py: (1) walks every function reachable from
+  should_arm_buy and fails on any module state write not in an approved list
+  with a reason; (2) the paint's per-row entry (apply_tape_blocker) must leave
+  the mid-rise latch unchanged — fails on the pre-fix code.
+- tools/nightly_report.py: "Replay fidelity" verdict at the top (OK / DRIFT
+  when recall or precision < 0.5 / MISSING), plus the cross funnel as a
+  nightly step.
+- tools/replay_session.py runs the live book paint every step (1dace77).
+
+Open question (same class, not changed): the arm path also restamps
+_LAST_QUOTE_TS, the price clock, from the paint
+(promote_stream_src_if_print_fresh, align_stream_clock_if_field_young,
+_paint_trust_young_stream_field). The paint can change how fresh the poll
+thinks a price is. Measure on Monday's recording (with the latch fix live)
+whether poll tape_only refusals follow paint restamps, before touching it.

@@ -9,6 +9,10 @@ Writes ai_reports/nightly/<day>.md with, in order:
   5. arm refusals from today's gates (engine_stale, spread, gap)
   6. volume-pace observe gate: today's fills split at pace 1.64
   7. watchdog WEDGED restarts
+  8. cross funnel — where every in-band -50 cross on a seed name died
+Plus, at the top, the replay fidelity verdict (does the replay still match
+live?). Every replay A/B leans on it: 2026-09-25 the replay skipped a live
+code path and opened 56 where live opened 13.
 
 Every step runs as a subprocess with a timeout; a failed step is written into
 the report as a failure and the rest still run. Needs SIP data that is 15+
@@ -115,6 +119,32 @@ def wedges(day: str) -> str:
     return "\n".join(hits[-10:]) or "no WEDGED restarts in logs/watchdog.log"
 
 
+def fidelity_verdict(day: str, wait_sec: float = 1800.0) -> str:
+    """OK / DRIFT / MISSING from ~/session_snapshots/<day>/fidelity.json."""
+    snap = os.path.join(os.path.expanduser("~"), "session_snapshots", day)
+    path = os.path.join(snap, "fidelity.json")
+    t0 = time.time()
+    while not os.path.exists(path) and time.time() - t0 < wait_sec:
+        time.sleep(30)                 # the replay starts 16:05 and waits for SIP
+    if not os.path.exists(path):
+        return (f"**MISSING** — no fidelity.json. The nightly replay failed or is still "
+                f"running; see {os.path.join(snap, 'fidelity.log')}. Do not trust replay "
+                f"A/Bs for this day until it lands.")
+    try:
+        f = json.load(open(path))
+    except ValueError as e:
+        return f"**MISSING** — unreadable fidelity.json: {e}"
+    rec, prec = f.get("recall"), f.get("precision")
+    ok = rec is not None and prec is not None and rec >= 0.5 and prec >= 0.5
+    head = "**OK**" if ok else ("**DRIFT** — the replay does not reproduce live; find out why "
+                                "before trusting any replay A/B (a skipped live code path, a "
+                                "different data clock, a new stateful gate)")
+    return (f"{head}\n\nwindow {f.get('window')} on {str(f.get('sha') or '')[:8]}: live buys "
+            f"{f.get('live_buys')}, replay opens {f.get('replay_opens')}, matched within 90 s "
+            f"{f.get('matched')} (recall {rec}, precision {prec}), book overlap "
+            f"{f.get('book_overlap')}; live-only {', '.join(f.get('live_only') or []) or '—'}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--day", default=datetime.now(bars.ET).strftime("%Y-%m-%d"))
@@ -129,6 +159,7 @@ def main():
         ("Counterfactual: the day replayed",
          ["tools/studies/counterfactual_today.py", day], 1800),
         ("Premarket scan grade", ["tools/premarket_grade.py", "--day", day], 900),
+        ("Cross funnel: where the -50 crosses died", ["tools/cross_funnel.py", "--day", day], 1800),
     ]
     out_dir = os.path.join(ROOT, "ai_reports", "nightly")
     os.makedirs(out_dir, exist_ok=True)
@@ -143,6 +174,7 @@ def main():
     parts.append(f"## Volume-pace observe gate (would it have helped?)\n\n"
                  f"```\n{rvol_pace_split(day)}\n```\n")
     parts.append(f"## Watchdog: hung-engine restarts\n\n```\n{wedges(day)}\n```\n")
+    parts.insert(2, f"## Replay fidelity\n\n{fidelity_verdict(day)}\n")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(parts))
     print(f"[nightly] wrote {path}", flush=True)
