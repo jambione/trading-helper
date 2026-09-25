@@ -327,3 +327,28 @@ To do:
    also drives live slot priority (ai_watch_slot_priority=true), so it must
    not cost opens below the 1-per-10 bar.
 3. Only then weight it in seat_priority.
+
+## 16. Next phase after the pass bar: a stacked quality score (not one "overwhelming" metric)
+
+- Evidence against a single decisive metric: entry setups noise-equivalent;
+  desk entries ~0 sigma vs same-instant controls (901 fills); the +0.86%
+  strength entry was look-ahead; 42 exit shapes ~0 gross; the universe fades
+  at every horizon. Real effects are small: room below HOD (~0.3-0.8% ret60),
+  gap-down >1% fades (gate shipped), above-50ma + news drifts up, cheap names
+  carry the loss. Anything that looks overwhelming should be checked first
+  for look-ahead.
+- The goal (~5 opens / 10 min, small consistent profit) is a many-trades,
+  small-edge design: ~150 trades/day at +0.1-0.2% net of spread is a very good
+  day. Target = a small, reliable per-trade edge after cost, on many opens.
+
+Plan (after opens reach the pass bar, so there is volume to filter and a
+bigger sample of our own trades):
+1. Stack small independent edges: room below HOD, above-50ma + news, no
+   gap-down, liquid price band.
+2. Cut cost: spread is the same size as the edge; per-name spread (10x range)
+   as a seat/rank input.
+3. Test the curated momentum seed cleanly (today's gates blocked it; items 5,
+   12) scored after real spread vs Movers/Trending.
+4. Method: held-out days, symbol-day weighting, per-day consistency, no
+   post-entry data (the BOLLINGER study method). Report opens lost vs edge
+   gained; must stay above 1 open / 10 min.
