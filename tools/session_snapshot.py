@@ -2,7 +2,7 @@
 """session_snapshot — record a trading session so it can be replayed off hours.
 
 Started by ``./trading start`` with the rest of the stack (so launchd owns it,
-never an ssh session). Weekdays 08:00-16:05 ET it writes every change to the
+never an ssh session). Weekdays 04:00-16:05 ET it writes every change to the
 desk's state files, plus the dashboard's /api/state, to
 
     ~/session_snapshots/YYYY-MM-DD/state_snapshots.jsonl.gz
@@ -45,7 +45,9 @@ sys.path.insert(0, str(ROOT))
 
 ET = ZoneInfo("America/New_York")
 OUT_BASE = Path(os.getenv("SESSION_SNAPSHOT_DIR") or Path.home() / "session_snapshots")
-START_MIN, END_MIN = 8 * 60, 16 * 60 + 5
+# 04:00: the Discord momentum seed runs from 4am, and its premarket state
+# (flags, prices, engine %R) is part of what the seed study needs.
+START_MIN, END_MIN = 4 * 60, 16 * 60 + 5
 FILE_POLL_SEC, API_POLL_SEC, FLUSH_SEC = 2.0, 3.0, 10.0
 
 FILES = (

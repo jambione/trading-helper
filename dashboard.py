@@ -1994,6 +1994,17 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None, drops=None,
         line   = str(a.get("line", "")).strip()
         if not ticker or not ticker.isalpha() or len(ticker) > 5:
             continue
+        # Session recorder: every alert as it arrived — the momentum seed's raw
+        # input was kept nowhere (only bb_live), so its after-hours study had
+        # nothing to join. Price is whatever the desk showed at that moment.
+        try:
+            import session_recorder as _rec
+            with STATE.lock:
+                _row = dict(STATE.tickers.get(ticker) or {})
+            _rec.record_discord(ticker, line, alert=a, price=_row.get("price"),
+                                age_sec=_row.get("price_age_sec"))
+        except Exception:
+            pass
         is_spike = _is_price_spike_alert(a)
         if is_spike and _price_spike_is_duplicate(ticker, a):
             continue

@@ -89,3 +89,14 @@ def test_input_values_are_recorded_when_computed(recdir):
     rows = _read(recdir / "sessions" / "2026-09-25" / "inputs.jsonl.gz")
     assert [(r["kind"], r["symbol"]) for r in rows] == [("sip_spread", "PFE")]
     assert abs(rows[0]["value"] - got) < 1e-12 and rows[0]["ts"] == t
+
+
+def test_discord_alerts_are_recorded_with_price(recdir):
+    t = _at(7, 41)
+    rec.record_discord("jagx", "JAGX  Squeeze Potential Alert", ts=t, price=3.12, age_sec=1.4,
+                       alert={"ticker": "JAGX", "burst": True, "card_brand": "find_it_first"})
+    rec.flush(force=True)
+    got = _read(recdir / "sessions" / "2026-09-25" / "discord.jsonl.gz")
+    assert got == [{"ts": t, "et": "07:41:00", "symbol": "JAGX",
+                    "line": "JAGX  Squeeze Potential Alert", "burst": True,
+                    "card_brand": "find_it_first", "price": 3.12, "age_sec": 1.4}]

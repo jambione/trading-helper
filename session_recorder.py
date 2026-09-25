@@ -12,6 +12,8 @@ Streams:
                         at start and on every change
   inputs.jsonl.gz       external-data values the desk computed (SIP spread,
                         volume pace, open gap), so a replay needs no fetches
+  discord.jsonl.gz      every Discord alert as it arrived (ticker, alert
+                        line, flags, the desk's price and its age then)
 
 Low overhead: buffered writes, fail-open, no extra API calls. Cap the symbol
 set to book ∪ sources ∪ positions when a filter is installed by the caller.
@@ -242,6 +244,24 @@ def record_input(kind: str, symbol: str, value, *, ts: float | None = None,
     obj = {"ts": t, "kind": str(kind), "symbol": str(symbol).upper(), "value": value}
     obj.update({k: v for k, v in extra.items() if v is not None})
     _append("inputs", obj)
+
+
+def record_discord(symbol: str, line: str, *, alert: dict | None = None,
+                   price=None, age_sec=None, ts: float | None = None) -> None:
+    """One Discord alert, at arrival (dashboard ingest)."""
+    t = float(ts if ts is not None else time.time())
+    obj = {"ts": t, "et": datetime.fromtimestamp(t, ET).strftime("%H:%M:%S"),
+           "symbol": str(symbol).upper(), "line": str(line or "")[:300]}
+    for k in ("burst", "card_brand", "header", "channel", "author", "kind"):
+        if isinstance(alert, dict) and alert.get(k) not in (None, ""):
+            obj[k] = alert.get(k)
+    for k, v in (("price", price), ("age_sec", age_sec)):
+        try:
+            if v is not None:
+                obj[k] = float(v)
+        except (TypeError, ValueError):
+            pass
+    _append("discord", obj)
 
 
 def record_source_set(rows: list[dict], *, ts: float | None = None) -> None:
