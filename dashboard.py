@@ -3847,9 +3847,72 @@ def _funnel_loop():
         time.sleep(refresh)
 
 
+def _bind_ai_entry_watch_in_process() -> None:
+    """Run ai_entry_watch's book-paint helpers without blocking the snapshot.
+
+    overlay_ai_book_live_prices -> ai_entry_watch.apply_tape_blocker runs inside
+    _snapshot for every book row. In this process two of its paths stalled
+    the FIRST snapshot after every restart (10:09-10:14 on 2026-09-25: "[SNAP]
+    rebuilt in 320.25s"), which froze /api/state, the trader's startup sync
+    and exit management with it:
+      * live_print -> dashboard_state() made an HTTP GET to THIS dashboard's
+        /api/state, i.e. to the snapshot being built, and waited out its 4 s
+        timeout per row (hot since d5d439b consults live_print on every row);
+      * should_arm_buy -> open_gap_pct / sip_spread_pct / rvol_pace_sip
+        fetched SIP bars and quotes per row on cold caches.
+    Here dashboard_state reads the cached snapshot in-process, and the gate
+    inputs are cache-only; a background thread fills those caches, so a
+    fresh dashboard paints "unknown" for a minute instead of freezing.
+    Only this process is changed — the trader still calls the real ones.
+    """
+    try:
+        import ai_entry_watch as _ew
+    except Exception as e:  # noqa: BLE001
+        log.warning("[STARTUP] ai_entry_watch bind skipped: %s", e)
+        return
+
+    def _state_in_process(*, force: bool = False) -> dict:
+        return _SNAP_CACHE[1] or {}
+
+    _ew.dashboard_state = _state_in_process
+    real = (_ew.sip_spread_pct, _ew.open_gap_pct, _ew.rvol_pace_sip)
+
+    def _cache_only(cache: dict, max_age: float):
+        def _read(sym, *args, **kwargs):
+            hit = cache.get(str(sym or "").upper())
+            if not hit or hit[0] is None:
+                return None
+            return hit[0] if time.time() - float(hit[1]) <= max_age else None
+        return _read
+
+    _ew.sip_spread_pct = _cache_only(_ew._SIP_SPREAD_CACHE, 600.0)
+    _ew.open_gap_pct = _cache_only(_ew._GAP_CACHE, 20 * 3600.0)
+    _ew.rvol_pace_sip = _cache_only(_ew._RVOL_PACE_CACHE, 600.0)
+
+    def _warm() -> None:
+        while True:
+            try:
+                for sym in sorted(set(_ai_book_symbols() or [])):
+                    for fn in real:
+                        try:
+                            fn(sym)
+                        except Exception:  # noqa: BLE001
+                            pass
+            except Exception as e:  # noqa: BLE001
+                log.debug("[STARTUP] gate warm pass failed: %s", e)
+            time.sleep(60)
+
+    threading.Thread(target=_warm, daemon=True, name="ew-gate-warm").start()
+    log.info("[STARTUP] ai_entry_watch bound in-process (no self-HTTP, cache-only gates)")
+
+
 @app.on_event("startup")
 async def _startup():
     loop = asyncio.get_running_loop()
+    # Live server only: tests that start the app must keep the real
+    # ai_entry_watch functions (they patch module attributes process-wide).
+    if "pytest" not in sys.modules:
+        _bind_ai_entry_watch_in_process()
 
     def _connect_alpaca():
         try:
