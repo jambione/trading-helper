@@ -3861,9 +3861,8 @@ def _bind_ai_entry_watch_in_process() -> None:
       * should_arm_buy -> open_gap_pct / sip_spread_pct / rvol_pace_sip
         fetched SIP bars and quotes per row on cold caches.
     Here dashboard_state reads the cached snapshot in-process, and the gate
-    inputs are cache-only; a background thread fills those caches, so a
-    fresh dashboard paints "unknown" for a minute instead of freezing.
-    Only this process is changed — the trader still calls the real ones.
+    inputs are non-blocking (ai_entry_watch.bind_async_gates), so a fresh
+    dashboard paints "unknown" for a few seconds instead of freezing.
     """
     try:
         import ai_entry_watch as _ew
@@ -3875,34 +3874,7 @@ def _bind_ai_entry_watch_in_process() -> None:
         return _SNAP_CACHE[1] or {}
 
     _ew.dashboard_state = _state_in_process
-    real = (_ew.sip_spread_pct, _ew.open_gap_pct, _ew.rvol_pace_sip)
-
-    def _cache_only(cache: dict, max_age: float):
-        def _read(sym, *args, **kwargs):
-            hit = cache.get(str(sym or "").upper())
-            if not hit or hit[0] is None:
-                return None
-            return hit[0] if time.time() - float(hit[1]) <= max_age else None
-        return _read
-
-    _ew.sip_spread_pct = _cache_only(_ew._SIP_SPREAD_CACHE, 600.0)
-    _ew.open_gap_pct = _cache_only(_ew._GAP_CACHE, 20 * 3600.0)
-    _ew.rvol_pace_sip = _cache_only(_ew._RVOL_PACE_CACHE, 600.0)
-
-    def _warm() -> None:
-        while True:
-            try:
-                for sym in sorted(set(_ai_book_symbols() or [])):
-                    for fn in real:
-                        try:
-                            fn(sym)
-                        except Exception:  # noqa: BLE001
-                            pass
-            except Exception as e:  # noqa: BLE001
-                log.debug("[STARTUP] gate warm pass failed: %s", e)
-            time.sleep(60)
-
-    threading.Thread(target=_warm, daemon=True, name="ew-gate-warm").start()
+    _ew.bind_async_gates()
     log.info("[STARTUP] ai_entry_watch bound in-process (no self-HTTP, cache-only gates)")
 
 

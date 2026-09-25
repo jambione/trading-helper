@@ -9059,6 +9059,78 @@ def open_gap_pct(sym: str, *, now: float | None = None, fetch=None) -> float | N
     return val
 
 
+_ASYNC_GATES_BOUND = False
+
+
+def bind_async_gates(*, name: str = "ew-gate-warm", max_age: float = 600.0,
+                     idle_sec: float = 2.0, keep_sec: float = 300.0) -> bool:
+    """Make sip_spread_pct / open_gap_pct / rvol_pace_sip non-blocking.
+
+    Each one blocks on Alpaca when its cache is cold or stale. On a book or
+    snapshot thread that stalled the book 6-16 s at a time (2026-09-25) and
+    aged every seated price past the 15 s rule. Bound, a read returns the
+    last value (<= max_age old, same day; None when cold, which the gates
+    already treat as unknown) and queues the name; one daemon thread calls
+    the real function for names read in the last keep_sec, so refreshes keep
+    the live TTLs. Idempotent; returns True when it bound.
+    """
+    global sip_spread_pct, open_gap_pct, rvol_pace_sip, _ASYNC_GATES_BOUND
+    if _ASYNC_GATES_BOUND:
+        return False
+    real = (sip_spread_pct, open_gap_pct, rvol_pace_sip)
+    want: dict[str, float] = {}
+    lock = threading.Lock()
+
+    def _cached(cache: dict, gap: bool):
+        def _read(sym, *args, **kwargs):
+            s = str(sym or "").upper()
+            if not s:
+                return None
+            t = time.time()
+            with lock:
+                want[s] = t
+            hit = cache.get(s)
+            if not hit or hit[0] is None:
+                return None
+            ts = float(hit[1])
+            if gap:
+                same = time.strftime("%Y-%m-%d", time.localtime(ts)) == \
+                    time.strftime("%Y-%m-%d", time.localtime(t))
+                return hit[0] if same else None
+            return hit[0] if t - ts <= max_age else None
+        return _read
+
+    sip_spread_pct = _cached(_SIP_SPREAD_CACHE, False)
+    open_gap_pct = _cached(_GAP_CACHE, True)
+    rvol_pace_sip = _cached(_RVOL_PACE_CACHE, False)
+
+    last: dict[tuple[str, int], float] = {}
+
+    def _warm() -> None:
+        while True:
+            t = time.time()
+            with lock:
+                for s in [s for s, at in want.items() if t - at > keep_sec]:
+                    want.pop(s, None)
+                syms = sorted(want)
+            for s in syms:
+                for i, fn in enumerate(real):
+                    # Each returns from its own cache when fresh; the floor stops
+                    # a name whose lookup keeps failing (gap None) re-asking every pass.
+                    if time.time() - last.get((s, i), 0.0) < 30.0:
+                        continue
+                    last[(s, i)] = time.time()
+                    try:
+                        fn(s)
+                    except Exception:
+                        pass
+            time.sleep(idle_sec)
+
+    threading.Thread(target=_warm, daemon=True, name=name).start()
+    _ASYNC_GATES_BOUND = True
+    return True
+
+
 def _gap_inputs_sip(sym: str, t: float) -> tuple[float | None, float | None]:
     """(today's 09:30 SIP open, yesterday's SIP close) or Nones if not yet served."""
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz

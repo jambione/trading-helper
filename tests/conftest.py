@@ -85,6 +85,7 @@ _SESSION_KNOBS = (
     "ai_watch_slot_priority",
     "ai_watch_momentum_min_price",
     "ai_watch_momentum_spread_exempt",
+    "ai_watch_async_gates",
 )
 
 

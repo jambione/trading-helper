@@ -1595,6 +1595,17 @@ def main() -> None:
             time.sleep(shelf_sec if 0 < shelf_sec < tick_sec else tick_sec)
 
     if trading:
+        # Gate inputs (SIP spread / open gap / volume pace) must not block the
+        # book thread: inline Alpaca lookups stalled book writes 6-16 s and the
+        # startup publish ~3 min (2026-09-25). Cold names read as unknown until
+        # the background thread fills them.
+        if bool(cfg.get("ai_watch_async_gates", False)) and "pytest" not in sys.modules:
+            try:
+                import ai_entry_watch as _ew
+                if _ew.bind_async_gates():
+                    print("[ai] gate inputs non-blocking (async warm)", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"[ai] async gate bind failed: {e}", flush=True)
         # Immediate publish + background book loop (independent of research).
         _publish_book(time.time())
         threading.Thread(

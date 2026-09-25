@@ -1315,6 +1315,7 @@ DEFAULT_CONFIG = {
     # Band floor for the Discord momentum source only (None = ai_watch_min_price).
     "ai_watch_momentum_min_price":     None,
     "ai_watch_momentum_spread_exempt": False,
+    "ai_watch_async_gates": False,
     # Second open: MACD gap when the name is not in an overbought square.
     # Off in defaults so tests that omit the key stay on square only.
     # Live bot_config turns it on. See macd_gap_fill_allows_buy.
@@ -1750,6 +1751,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_slot_priority",
     "ai_watch_momentum_min_price",
     "ai_watch_momentum_spread_exempt",
+    "ai_watch_async_gates",
     "ai_local_trail_peak_give_pct",
     "ai_exit_limit_collar_pct",
     "ai_exit_limit_collar_wait_sec",
@@ -2231,6 +2233,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_slot_priority",
     "ai_watch_momentum_min_price",
     "ai_watch_momentum_spread_exempt",
+    "ai_watch_async_gates",
     "ai_watch_macd_gap_min_pct",
     "ai_watch_macd_gap_rsi_max",
     "ai_breakeven_offset_px",

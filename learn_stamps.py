@@ -198,6 +198,7 @@ _FINGERPRINT_KEYS = (
     "ai_watch_slot_priority",
     "ai_watch_momentum_min_price",
     "ai_watch_momentum_spread_exempt",
+    "ai_watch_async_gates",
     # Second arm. Changes who gets bought when the square is absent.
     "ai_watch_macd_gap_arm",
     "ai_watch_macd_gap_min_pct",
