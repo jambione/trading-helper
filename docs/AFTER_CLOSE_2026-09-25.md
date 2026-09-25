@@ -542,3 +542,21 @@ price/volume data. Workflow optimisation can meet the opens standard, not
 profitability. Remaining edge sources: (1) a clean test of the curated
 Discord momentum seed; (2) earlier (premarket) information, which needs
 paid real-time SIP; (3) a different selection method/universe.
+
+## 24. Name selection: win rate yes, money barely (tools/studies/name_selection_study.py)
+
+3,073 in-band -50 crosses 9/1-9/24, train <= 9/17, test >= 9/18; conditions
+fixed from train/prior studies: A room below HOD (<= -2.74%), B not top of
+30-min range, C green day, D rvol_pace >= 1, E within 120 min of the open.
+- Runner (win) rate: all 46%/47%; score >= 4: 69% train / 63% test (65% per
+  sym-day). The 65-70% target is reachable on WIN RATE.
+- Net60 after spread: all -0.26%/+0.02%; score >= 4 +0.01%/-0.04%; score >= 3
+  -0.14%/+0.10% (t 1.6). The high-win names win smaller: mean ~unchanged.
+- Only A (room below HOD) lifts the mean in both halves vs baseline:
+  -0.18% vs -0.26% train, +0.26% (t 3.0, +0.51%/sym-day) vs +0.02% test.
+  Absolute level still follows the market.
+- Implication: seat/rank by room below HOD (item 15) — with the slot cap
+  binding it swaps weak trades for better ones. Do not ship a filter that
+  only raises the win rate.
+- Momentum seed: clean Discord callouts exist for 9/25 only (59 names);
+  recorder keeps them now; test when 2-3 weeks accumulate.
