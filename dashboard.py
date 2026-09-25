@@ -16,6 +16,15 @@ import re
 import signal
 import subprocess
 import sys
+
+# `kill -USR1 <pid>` dumps every thread's Python stack to this process's log.
+# macOS py-spy needs root; this does not. Added 2026-09-25 to catch the
+# multi-minute first-snapshot stall after restarts in the act.
+try:
+    import faulthandler as _faulthandler, signal as _signal
+    _faulthandler.register(_signal.SIGUSR1, all_threads=True, chain=False)
+except Exception:  # noqa: BLE001
+    pass
 import threading
 import time
 import zipfile
