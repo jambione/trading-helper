@@ -114,3 +114,17 @@ Finnhub connected (38 subs), engine on realtime for 29/33 names, but only 14/33
 names printed a trade in the last 15 s (median age 16.8 s). Late-morning lull
 points at cause 2 (thin trading vs the 15 s rule) more than cause 1. The
 measurement should split by time of day.
+
+## 8. Book lag: the trader's book thread stalls on Alpaca lookups
+
+- 11:12 measurement: book writes 6, 2, 3, 12, 4, 16, 4 s apart (should be
+  every 2-3 s); earlier a 21 s gap. Dashboard snapshots fine (0.01-0.04 s).
+- Cause: the book sync runs the admission gates, which fetch SIP spread / open
+  gap / volume pace from Alpaca per candidate, blocking, on the book thread
+  (25 lookups in that minute). While they run, the book and its price stamps
+  stop updating.
+- It feeds staleness (item 7): a 16 s stall ages every seated price past the
+  15 s limit. Split the staleness measurement into "our own stalls" vs market.
+- Same root as the dashboard freeze (fixed 55e7ced) and the trader's 3-min
+  startup (item 3). Fix: book thread reads gate inputs cache-only; a
+  background thread keeps the caches warm. Needs a restart -> after close.
