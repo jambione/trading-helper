@@ -489,5 +489,6 @@
   "ai_book_server_max_seats": 12,
   "ai_watch_day_roster": true,
   "ai_watch_slot_priority": true,
-  "ai_watch_momentum_min_price": 1.0
+  "ai_watch_momentum_min_price": 1.0,
+  "ai_watch_momentum_spread_exempt": true
 }
