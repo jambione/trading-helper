@@ -1,5 +1,10 @@
 # After-close log — Fri 2026-09-25
 
+**Standard:** pass bar = full fresh book (>=10 seated by 09:40, >=6 armable,
+<10% data-blocked) and >=1 open per 10 min; goal = ~5 opens per 10 min, 2-3
+open at once, 3-8 min holds, stacking to max 5, all day. Judge every fix
+against both.
+
 Running list of things seen during the session, to work through after the
 close. Newest at the bottom. Replay/recording for today lands in
 `~/session_snapshots/2026-09-25/` on the mini at 16:05.
