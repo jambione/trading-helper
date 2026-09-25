@@ -57,3 +57,20 @@ close. Newest at the bottom. Replay/recording for today lands in
 - Arm reasons 09:30-10:42: wait_mid_rise 587, tape_only 549 (stale price),
   spread_wide 199, pctr_not_live_alpaca 101, extended_cheap 95 (cheap momentum
   names judged extended), spread_unknown 77.
+
+## 5. Momentum cheap-name gates (after close, no restart today)
+
+- Even with the $1 floor (7f5bcac) and the spread exemption (c1b54b0), $1-5
+  momentum names get refused by two cheap-name gates: `extended_cheap`
+  (ai_entry_watch.py ~15773, 76+ refusals by 10:49) and `cheap_ob_band`
+  (~15765). Momentum test: 0 opens by 10:49.
+- To do: decide whether the momentum test exempts them; replay today's
+  recording with and without, scored after real spread.
+
+## 6. Book shrank mid-morning
+
+- 10:46: 13 seated / 6 armable. 10:49: 7 seated / 2 armable, 29% data-blocked,
+  only 4/7 seated names fresh. Engine 34 names vs 30 target; the 30 limits only
+  the desk's pushes (Discord/momentum watchlist adds on top). Day roster 0 seats.
+- To do: make the whole data feed respect its capacity; see why seated names go
+  stale and why the roster never seats.
