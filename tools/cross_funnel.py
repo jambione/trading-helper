@@ -74,8 +74,11 @@ def fam(src):
 
 
 # ── seed membership over time (recorder enter/leave stream)
-member = collections.defaultdict(list)       # sym -> [(ts, family, +1/-1)]
-first_listed = {}
+# A process restart re-logs the whole pool as "enter" at one instant and never
+# logs "leave" for names that dropped while it was down (session_recorder
+# record_source_set), so membership is a set per (symbol, source) and a
+# full re-log burst replaces the pool instead of adding to it.
+raw = []
 with gzip.open(f"{REC}/sources.jsonl.gz", "rt") as f:
     for line in f:
         try:
@@ -83,23 +86,46 @@ with gzip.open(f"{REC}/sources.jsonl.gz", "rt") as f:
         except ValueError:
             continue
         s = str(r.get("symbol") or "").upper()
-        ts = float(r["ts"])
-        member[s].append((ts, fam(r.get("source")), 1 if r.get("event") == "enter" else -1))
-        if r.get("event") == "enter":
+        if s:
+            raw.append((float(r["ts"]), s, str(r.get("source") or "").lower(), r.get("event")))
+raw.sort()
+member = collections.defaultdict(list)       # sym -> [(ts, raw source, True/False)]
+first_listed = {}
+active = set()                                # {(sym, src)}
+relogs = []
+i = 0
+while i < len(raw):
+    j = i
+    while j < len(raw) and raw[j][0] == raw[i][0]:
+        j += 1
+    grp = raw[i:j]
+    enters = {(s, src) for _, s, src, ev in grp if ev == "enter"}
+    leaves = {(s, src) for _, s, src, ev in grp if ev == "leave"}
+    if not leaves and len(enters) >= max(8, 0.6 * len(active)) and active:
+        for key in active - enters:           # restart re-log: the rest left
+            member[key[0]].append((grp[0][0], key[1], False))
+        relogs.append((grp[0][0], len(enters), len(active - enters)))
+        active = set(enters)
+    else:
+        active = (active | enters) - leaves
+    for ts, s, src, ev in grp:
+        member[s].append((ts, src, ev == "enter"))
+        if ev == "enter":
             first_listed.setdefault(s, ts)
+    i = j
 
 
 def sources_at(sym, t):
-    cur = collections.Counter()
-    for ts, fm, d in member.get(sym, []):
+    state = {}
+    for ts, src, on in member.get(sym, []):
         if ts > t:
             break
-        cur[fm] += d
-    return {k for k, v in cur.items() if v > 0}
+        state[src] = on
+    return {fam(k) for k, v in state.items() if v}
 
 
 def ever_listed_before(sym, t):
-    return any(ts <= t for ts, _, d in member.get(sym, []) if d > 0)
+    return any(ts <= t for ts, _, on in member.get(sym, []) if on)
 
 
 # ── seated sets over time (state archive)
@@ -259,6 +285,8 @@ if tape_ages:
     ta = sorted(tape_ages)
     print(f"\nseated+refused: tape age at the cross (min over +-90 s) median {ta[len(ta)//2]:.0f}s, "
           f">15 s in {sum(1 for a in ta if a > 15)}/{len(ta)}")
+print("\nrestart re-logs detected (time, pool size, names closed out): "
+      + ", ".join(f"{datetime.fromtimestamp(t, ET):%H:%M:%S} {n}/{d}" for t, n, d in relogs))
 print("\nby hour (0 not seed / 1 not seated / 2 arm refused / 3 opened):")
 for h in sorted(by_hour):
     c = by_hour[h]
