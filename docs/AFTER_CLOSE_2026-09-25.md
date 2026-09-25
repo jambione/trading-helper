@@ -585,3 +585,19 @@ d25_bslive matched B: 65 trades, +9.3 bp gross.)
 - With the latch fix + $20 floor the replay meets the opens standard at
   about breakeven after spread (-$3 / 65 trades). Profit needs ~+0.1-0.2%
   per trade more than the system has today.
+
+## 26. Ratchet catch-up + overtake: keep overtake OFF
+
+Replay 0d98b01, 09:30-15:50, $20 floor, $ after est. spread at $1k/trade.
+Catch-up (time-decay) is already on live; overtake sells at the price when the
+stop reaches it instead of parking 1c under.
+| Setting | Day | Avg net | Winners | Hold |
+|---|---|---|---|---|
+| overtake off (live) | -$3 | -0.005% | 31/65 | 13.0m |
+| on, 4 s idle | -$16 | -0.025% | 32/65 | 12.7m |
+| on, 8 s idle | -$10 | -0.015% | 32/65 | 12.8m |
+| on, 16 s idle | -$12 | -0.019% | 30/65 | 12.9m |
+| on, 30 s idle | -$14 | -0.022% | 30/65 | 13.1m |
+Each variant improves ~8-13 small trades and cuts 7-10 runners by 0.2-0.5%
+(FLY, KORU, BMNR, VIAV, OUST, EMBJ); runners carry the day. One day, small
+differences (~0.01-0.02%/trade), all the same sign. No config change.
