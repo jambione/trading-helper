@@ -7646,6 +7646,10 @@ def desk_candidate_rows(
         rows = apply_day_roster(rows, cfg)
     except Exception:
         pass
+    _MOMENTUM_SYMS.clear()
+    _MOMENTUM_SYMS.update(
+        str(r.get("symbol") or "").upper() for r in rows
+        if isinstance(r, dict) and str(r.get("source") or "").lower().startswith("momentum"))
     return rows
 
 
@@ -8013,6 +8017,31 @@ def _push_cfg() -> dict:
         return {}
 
 
+# Symbols the momentum seed is currently proposing (for the push filter,
+# which sees symbols only). Refreshed by desk_candidate_rows.
+_MOMENTUM_SYMS: set[str] = set()
+
+
+def _min_price_for(source, cfg: dict | None, default: float = 1.0) -> float:
+    """The band floor for this row's source.
+
+    ai_watch_momentum_min_price (unset = the shared ai_watch_min_price) lets
+    the curated Discord momentum names be tested from $1 while Movers,
+    Trending and Research keep the shared floor. 2026-09-25, user request.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    src = str(source or "").strip().lower()
+    if src.startswith("momentum") and cfg.get("ai_watch_momentum_min_price") is not None:
+        try:
+            return max(0.0, float(cfg.get("ai_watch_momentum_min_price")))
+        except (TypeError, ValueError):
+            pass
+    try:
+        return float(cfg.get("ai_watch_min_price", default) or 0.0)
+    except (TypeError, ValueError):
+        return default
+
+
 def _push_band_filter(symbols: list[str]) -> list[str]:
     """With the day roster on, spend engine / Finnhub slots on tradeable names.
 
@@ -8028,6 +8057,7 @@ def _push_band_filter(symbols: list[str]) -> list[str]:
     if not (bool(cfg.get("ai_watch_day_roster", False)) or slot_pri):
         return symbols
     lo = _f_or_none(cfg.get("ai_watch_min_price")) or 0.0
+    lo_mom = _min_price_for("momentum", cfg, default=lo)
     hi = _f_or_none(cfg.get("ai_max_price")) or 0.0
     try:
         watch = load_watch() or {}
@@ -8041,7 +8071,8 @@ def _push_band_filter(symbols: list[str]) -> list[str]:
             continue
         r = desk_rows.get(s) or tr_by.get(s) or {}
         px = _f_or_none(r.get("price"))
-        if px is not None and ((lo > 0 and px + 1e-12 < lo) or (hi > 0 and px >= hi)):
+        floor = lo_mom if s in _MOMENTUM_SYMS else lo
+        if px is not None and ((floor > 0 and px + 1e-12 < floor) or (hi > 0 and px >= hi)):
             continue
         if slot_pri and _slot_unseatable(s, cfg):
             continue
@@ -9236,7 +9267,7 @@ def admit_arm_gates(row: dict, cfg: dict | None, *, now: float | None = None,
     if px is None:
         px = _f_or_none(row.get("last_ask"))
     if px is not None:
-        lo = _f_or_none(cfg.get("ai_watch_min_price")) or 0.0
+        lo = _min_price_for(row.get("source"), cfg, default=0.0)
         hi = _f_or_none(cfg.get("ai_max_price")) or 0.0
         if lo > 0 and px + 1e-12 < lo:
             return False, "below_min_price"
@@ -9380,7 +9411,7 @@ def passes_inclusion(
         price_f = float(price) if price is not None else None
     except (TypeError, ValueError):
         price_f = None
-    min_price = float(cfg.get("ai_watch_min_price", 1.0) or 0.0)
+    min_price = _min_price_for(source, cfg, default=1.0)
     if source == "movers":
         try:
             mv_min_px = float(cfg.get("ai_watch_movers_min_price", 0.0) or 0.0)
@@ -17302,8 +17333,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if max_price_f is not None and ask_f >= max_price_f:
             _skip("above_max_price", max_price=max_price_f)
             continue
-        if min_price_f is not None and ask_f + 1e-12 < min_price_f:
-            _skip("below_min_price", min_price=min_price_f)
+        floor_f = _min_price_for(rec.get("source"), cfg, default=min_price_f or 0.0) \
+            if min_price_f is not None else None
+        if floor_f is not None and floor_f > 0 and ask_f + 1e-12 < floor_f:
+            _skip("below_min_price", min_price=floor_f)
             continue
 
         # Stale tape (unknown or old age, no REST). Show the print, do not arm.
