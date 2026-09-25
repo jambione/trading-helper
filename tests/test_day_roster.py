@@ -82,3 +82,17 @@ def test_band_filter_frees_slots_only_with_the_roster_on(monkeypatch):
     assert ew._push_band_filter(syms) == syms
     monkeypatch.setattr(ew, "_push_cfg", lambda: {**ON, "ai_watch_min_price": 20, "ai_max_price": 100})
     assert ew._push_band_filter(syms) == ["OK", "HELD", "NOPX"]
+
+
+def test_slot_priority_drops_known_unseatable_names_only(monkeypatch):
+    monkeypatch.setattr(ew, "_live_quote_map", lambda: ({}, {}))
+    monkeypatch.setattr(ew, "load_watch", lambda: {"SEAT": {"status": "watching"}})
+    monkeypatch.setattr(ew, "_GAP_CACHE", {"GAPD": (-2.4, 0.0), "SEAT": (-5.0, 0.0), "OKGAP": (-0.5, 0.0)})
+    monkeypatch.setattr(ew, "_SIP_SPREAD_CACHE", {"WIDE": (0.47, 0.0), "TIGHT": (0.05, 0.0)})
+    cfg = {"ai_watch_slot_priority": True, "ai_watch_gap_down_block_pct": 1.0,
+           "ai_watch_max_sip_spread_pct": 0.2}
+    monkeypatch.setattr(ew, "_push_cfg", lambda: cfg)
+    syms = ["GAPD", "SEAT", "OKGAP", "WIDE", "TIGHT", "UNKNOWN"]
+    assert ew._push_band_filter(syms) == ["SEAT", "OKGAP", "TIGHT", "UNKNOWN"]
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {**cfg, "ai_watch_slot_priority": False})
+    assert ew._push_band_filter(syms) == syms

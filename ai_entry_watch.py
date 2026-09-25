@@ -8024,7 +8024,8 @@ def _push_band_filter(symbols: list[str]) -> list[str]:
     (research seeds) are always kept.
     """
     cfg = _push_cfg()
-    if not bool(cfg.get("ai_watch_day_roster", False)):
+    slot_pri = bool(cfg.get("ai_watch_slot_priority", False))
+    if not (bool(cfg.get("ai_watch_day_roster", False)) or slot_pri):
         return symbols
     lo = _f_or_none(cfg.get("ai_watch_min_price")) or 0.0
     hi = _f_or_none(cfg.get("ai_max_price")) or 0.0
@@ -8042,8 +8043,33 @@ def _push_band_filter(symbols: list[str]) -> list[str]:
         px = _f_or_none(r.get("price"))
         if px is not None and ((lo > 0 and px + 1e-12 < lo) or (hi > 0 and px >= hi)):
             continue
+        if slot_pri and _slot_unseatable(s, cfg):
+            continue
         keep.append(s)
     return keep
+
+
+# Book-server rank per candidate, refreshed each book sync while
+# ai_watch_slot_priority is on; orders who gets the engine's free slots.
+_SLOT_RANK: dict[str, float] = {}
+
+
+def _slot_unseatable(sym: str, cfg: dict) -> bool:
+    """ai_watch_slot_priority: a KNOWN reason the door would refuse this name.
+
+    Cached values only (no requests on the push path); unknown never drops.
+    Gap below -ai_watch_gap_down_block_pct, or 16-min-old SIP spread above
+    ai_watch_max_sip_spread_pct — the same numbers admit_arm_gates uses.
+    """
+    block = _f_or_none(cfg.get("ai_watch_gap_down_block_pct")) or 0.0
+    hit = _GAP_CACHE.get(sym)
+    if block > 0 and hit and hit[0] is not None and float(hit[0]) < -block:
+        return True
+    max_sp = _f_or_none(cfg.get("ai_watch_max_sip_spread_pct")) or 0.0
+    hit = _SIP_SPREAD_CACHE.get(sym)
+    if max_sp > 0 and hit and hit[0] is not None and float(hit[0]) > max_sp:
+        return True
+    return False
 
 
 def push_candidates_to_engine(symbols: list[str]) -> dict:
@@ -8105,7 +8131,13 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
                 except (TypeError, ValueError):
                     return 0.0
 
-            missing = sorted(missing, key=_admit_ts, reverse=True)[:room]
+            if bool(_push_cfg().get("ai_watch_slot_priority", False)):
+                # Seated first (newest admit), then the book-server runway rank.
+                missing = sorted(missing, key=lambda s: (
+                    _admit_ts(s) > 0, _admit_ts(s), _SLOT_RANK.get(s, float("-inf"))),
+                    reverse=True)[:room]
+            else:
+                missing = sorted(missing, key=_admit_ts, reverse=True)[:room]
 
     # Debounce. Missing names: wait ~2 scan intervals (engine catch-up).
     # Already-known book names: re-assert every ~30s so a blip cannot leave
@@ -9883,6 +9915,13 @@ def sync_watch_from_source_panels(
                 _would = _bs.shadow_tick(
                     _pool, cfg=cfg, now=t0, live_book=_live_syms,
                     max_seats=_max_seats, indicators=_inds, paces=_paces)
+                if bool(cfg.get("ai_watch_slot_priority", False)):
+                    _SLOT_RANK.clear()
+                    _SLOT_RANK.update({
+                        str(r.get("symbol") or "").upper(): float(r["_book_server_priority"])
+                        for r in _bs.rank_candidates(
+                            _pool, cfg=cfg, now=t0, limit=10_000,
+                            indicators=_inds, paces=_paces)})
                 if _bs_mode == "live" and _would:
                     soft_rows = _would
                     soft_fired = True
