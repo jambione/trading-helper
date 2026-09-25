@@ -14,6 +14,45 @@ from first listed to seated)? This splits "wider" vs "keep seated" vs
 79% fresh) but the whole book sat at fast %R -7..-26 in a broad up-leg — no
 dips, no crosses. More seated names = more chances that something is dipping.
 
+## Scorecard vs the standard (13:51) and how the list gets us there
+
+| Measure | Today | Pass bar | Goal |
+|---|---|---|---|
+| Opens / 10 min | 0.46 (12) | 1 | ~5 |
+| 10-min windows with an open | 9/26 | all | several each |
+| Time with >=1 open | 38% | >=80% | constant |
+| Time with >=2 open | 8% | >=50% | 2-3 most of the day |
+| Avg positions open | 0.46 | — | 2-3 (max 5) |
+| Holds | median 9.2 min; 6/12 in 3-8 | — | 3-8 min |
+| Seated / armable | 13 / 5 | >=10 / >=6 | full |
+| Data-blocked | 54% | <10% | — |
+| Day P/L | -$4.17 (-0.19%) | not judged yet | small, consistent |
+
+Missed the pass bar on everything but seat count. Morning losses were our own
+faults (freezes, restarts, stalls, Movers wipe; ~30 of the first 75 min);
+after the fixes the book is healthy and the limit is IEX-slice staleness
+(item 7). (Tool: scratchpad goal_score.py.)
+
+Avg open = opens per min x hold, so 2-3 open with 3-8 min holds needs ~4-5
+opens / 10 min: the gap is opens. Funnel: seed -50 crosses -> seated -> fresh
+at the cross -> passes gates -> open. Seed crosses support ~5/10 min; 9/24
+converted ~2%.
+
+| Funnel stage | Items | What it does for opens | Size |
+|---|---|---|---|
+| Fresh at the cross | 7, 14 | Stop refusing liquid names as stale (IEX slice) | Largest; likely the pass bar alone |
+| Seated | 12, 11, 6 | More names seated so some are always dipping | Large; needed for the goal |
+| Feed capacity | 6/7 | Keep seated names fed as the book widens | Enabler |
+| Momentum | 5 | Open the curated momentum seed (1 open today) | Medium; edge test |
+| Plumbing | 2, 3, 8, 9, 10 | Stop losing whole stretches | Done |
+| Entry quality | 13, 15 | Remove opens to improve per-trade results | Negative for opens; later, only if still above the bar |
+| Hold time | exits (later) | Median 9.2 -> 3-8 | Small |
+
+Order tonight: (1) cross funnel; (2) freshness fix replay (opens gained and
+price error vs SIP); (3) wider book: thin_rvol, book server respects gates,
+feed capacity; (4) momentum gates scored separately; (5) quality filters.
+Freshness is the path to the pass bar; the goal needs the wider book on top.
+
 Running list of things seen during the session, to work through after the
 close. Newest at the bottom. Replay/recording for today lands in
 `~/session_snapshots/2026-09-25/` on the mini at 16:05.
@@ -63,9 +102,8 @@ close. Newest at the bottom. Replay/recording for today lands in
 - After 55e7ced the trader still took 3 min (10:39:35 -> 10:42:38) to start its
   book thread: `_publish_book()` runs on the main thread before the book thread
   and fetches SIP spread/gap/pace per candidate on cold caches. Exits are not
-  managed until it finishes. Fix after close: start the book thread first
-  and/or keep the startup sync cache-only. Rule until then: no mid-session
-  restarts.
+  managed until it finishes. Fixed by keeping gate inputs non-blocking
+  (bb58ab4); restarts now take ~20-30 s.
 
 ## 4. Morning opens and blockers (09:30-10:42)
 
