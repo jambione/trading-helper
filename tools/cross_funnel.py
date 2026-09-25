@@ -133,20 +133,52 @@ def ever_listed_before(sym, t):
     return any(ts <= t for ts, _, on in member.get(sym, []) if on)
 
 
-# ── seated sets over time (state archive)
+# ── seated sets over time, and the raw source files (state archive)
+RAW_FILES = {"movers_stocks.json": "movers", "trending_stocks.json": "trending",
+             "transcription/wb_watchlist.json": "momentum"}
 seat_t, seat_sets = [], []
+raw_t, raw_sets = [], []
+_cur_raw = {v: set() for v in RAW_FILES.values()}
+
+
+def _raw_syms(d):
+    rows = d.get("rows") if isinstance(d, dict) else d
+    if isinstance(d, dict) and rows is None:
+        rows = d.get("tickers")
+    out = set()
+    for x in rows or []:
+        if isinstance(x, dict):
+            out.add(str(x.get("symbol") or x.get("ticker") or "").upper())
+        elif isinstance(x, str):
+            out.add(x.upper())
+    return out
+
+
 with gzip.open(f"{SNAP}/state_snapshots.jsonl.gz", "rt") as f:
     for line in f:
-        if '"ai_reports/entry_watch_state.json"' not in line[:200]:
+        head = line[:200]
+        is_seat = '"ai_reports/entry_watch_state.json"' in head
+        raw_name = next((k for k in RAW_FILES if f'"{k}"' in head), None)
+        if not is_seat and not raw_name:
             continue
         try:
             r = json.loads(line)
         except ValueError:
             continue
         d = r.get("data")
-        if isinstance(d, dict):
-            seat_t.append(float(r.get("ts") or 0))
+        ts = float(r.get("ts") or 0)
+        if is_seat and isinstance(d, dict):
+            seat_t.append(ts)
             seat_sets.append({str(k).upper() for k, v in d.items() if isinstance(v, dict)})
+        elif raw_name and d is not None:
+            _cur_raw[RAW_FILES[raw_name]] = _raw_syms(d)
+            raw_t.append(ts)
+            raw_sets.append({k: set(v) for k, v in _cur_raw.items()})
+
+
+def raw_lists_at(sym, t):
+    i = bisect.bisect_right(raw_t, t) - 1
+    return {k for k, v in raw_sets[i].items() if sym in v} if i >= 0 else set()
 first_seated = {}
 for ts, ss in zip(seat_t, seat_sets):
     for s in ss:
@@ -248,7 +280,12 @@ for t, sym, srcs, px in sorted(events):
     sfam = "+".join(sorted(srcs)) or "none"
     if not srcs:
         k = "0 not a seed name at the cross"
-        detail[k]["listed earlier, dropped off" if ever_listed_before(sym, t) else "never listed yet today"] += 1
+        rl = raw_lists_at(sym, t)
+        if rl:
+            why = "on the raw " + "+".join(sorted(rl)) + " list, not in the desk pool"
+        else:
+            why = "listed earlier, dropped off" if ever_listed_before(sym, t) else "never listed yet today"
+        detail[k][why] += 1
     elif any(t - 30 <= ft <= t + 150 for ft in fills.get(sym, [])):
         k = "3 seated and OPENED"
     elif not seated_at(sym, t):
