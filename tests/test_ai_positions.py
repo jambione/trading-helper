@@ -5014,3 +5014,4 @@ def test_market_entry_confirm_does_not_dead_on_limit_slip(
     assert pos.get("closing_reason") is None
     # Slip vs submit ask (40.50), not a phantom limit.
     assert pos.get("entry_slippage_r") == pytest.approx(0.12)
+

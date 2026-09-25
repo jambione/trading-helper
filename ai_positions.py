@@ -4930,13 +4930,21 @@ def quote_is_live(symbol: str, cfg: dict | None = None) -> tuple[bool, str]:
     return False, why
 
 
+_QUOTE_REFRESH_LOCK = threading.Lock()
+_QUOTE_REFRESH = {"busy": False, "last": 0.0, "want": set()}
+
+
 def refresh_open_position_quotes(symbols: list[str] | None = None) -> int:
-    """Force-fresh dashboard tape + NBBO for held names. Returns symbols primed.
+    """Refresh held names' REST quotes in the background; never blocks.
 
     Quiet tape alone is not blindness — CRE flatlined on ``stale_tape`` while
-    IEX still had an ask, because the book never busted the quote cache and
-    ``decision_price`` then refused the ask on ask/tape divergence. Call this
-    before the stale-data gate so open positions keep a live REST fallback.
+    IEX still had an ask, so open positions keep a live REST fallback. It ran
+    inline on the book thread every tick, and under a saturated Alpaca budget
+    alpaca-py sleeps 3 s per 429 retry (up to 12 s a call): the book stalled
+    10-20 s (2026-09-25 11:30). Now one daemon thread at a time fetches, at
+    most every 3 s; the quote lands for the next tick's check. No cache bust:
+    prime_quotes overwrites on success, so a slow fetch never leaves a hole.
+    Returns the number of names queued.
     """
     wanted = [
         str(s or "").upper().strip()
@@ -4945,16 +4953,33 @@ def refresh_open_position_quotes(symbols: list[str] | None = None) -> int:
     ]
     if not wanted:
         return 0
-    try:
-        import ai_entry_watch as ew
-        ew.dashboard_state(force=True)
-    except Exception:
-        pass
-    try:
-        import ai_trading as gt
-        return int(gt.refresh_quotes_now(wanted) or 0)
-    except Exception:
-        return 0
+    with _QUOTE_REFRESH_LOCK:
+        _QUOTE_REFRESH["want"].update(wanted)
+        if _QUOTE_REFRESH["busy"] or time.time() - _QUOTE_REFRESH["last"] < 3.0:
+            return len(wanted)
+        _QUOTE_REFRESH["busy"] = True
+        _QUOTE_REFRESH["last"] = time.time()
+        batch = sorted(_QUOTE_REFRESH["want"])
+        _QUOTE_REFRESH["want"].clear()
+
+    def _run() -> None:
+        try:
+            try:
+                import ai_entry_watch as ew
+                ew.dashboard_state(force=True)
+            except Exception:
+                pass
+            try:
+                import ai_trading as gt
+                gt.prime_quotes(batch)
+            except Exception:
+                pass
+        finally:
+            with _QUOTE_REFRESH_LOCK:
+                _QUOTE_REFRESH["busy"] = False
+
+    threading.Thread(target=_run, daemon=True, name="held-quote-refresh").start()
+    return len(wanted)
 
 
 def _infer_t1_fill(pos: dict[str, Any], live_qty: float | None) -> bool:
