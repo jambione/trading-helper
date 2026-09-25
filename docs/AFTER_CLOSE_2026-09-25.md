@@ -28,6 +28,8 @@ close. Newest at the bottom. Replay/recording for today lands in
 | Time | Change | Commit |
 |---|---|---|
 | 09:56 | Momentum exempt from SIP spread gate (restart ~45 s) | c1b54b0 |
+| 10:39 | Dashboard: no self-HTTP, cache-only gates (fixes post-restart freeze) | 55e7ced |
+| 11:28 | Trader + dashboard gate inputs non-blocking (`ai_watch_async_gates`); movers keeps last list on a failed bars call. Restart with FFBC open (user OK); trader up in 27 s (was ~3 min) | bb58ab4, 73b6622 |
 
 ## 2. Post-restart freeze: dashboard self-deadlock (FIXED 10:39, 55e7ced)
 
@@ -45,7 +47,7 @@ close. Newest at the bottom. Replay/recording for today lands in
 - KORU (09:56) sold at the broker in the same second as a restart; the desk
   showed it OPEN for 8 min until the trader reconciled. Broker was flat.
 
-## 3. Trader startup still ~3 min (OPEN)
+## 3. Trader startup still ~3 min (FIXED 11:28, bb58ab4: 27 s)
 
 - After 55e7ced the trader still took 3 min (10:39:35 -> 10:42:38) to start its
   book thread: `_publish_book()` runs on the main thread before the book thread
@@ -128,3 +130,25 @@ measurement should split by time of day.
 - Same root as the dashboard freeze (fixed 55e7ced) and the trader's 3-min
   startup (item 3). Fix: book thread reads gate inputs cache-only; a
   background thread keeps the caches warm. Needs a restart -> after close.
+- 11:28 shipped (bb58ab4). Book gaps after it: still 10.3, 10.5, 20.5 s. Different
+  cause, see item 10.
+
+## 9. Movers list wiped by a rate limit (FIXED 11:28, 73b6622)
+
+- 11:24 movers_stocks.json went to 0 rows: the daily-bars call got 429 "too many
+  requests", every candidate then failed measurement and the empty list was
+  written. Book fell to 6 seated / 1 armable. Now a failed bars call keeps
+  the last list (valid 15 min). Likely also the 10:49 shrink (item 6).
+
+## 10. The shared Alpaca budget is saturated; 429 retries freeze the book
+
+- faulthandler samples 11:30: 6/10 on the trader's book thread were inside
+  alpaca rest.py `time.sleep(retry_wait)`: refresh_open_position_quotes ->
+  get_stock_latest_quote, run every book tick for held names. alpaca-py
+  retries 429 3x with 3 s sleeps, so one call blocks up to 12 s.
+- 429s seen today in engine (19), dashboard (5), trader (2), movers (7).
+- To do: count requests/min by process (L2 panel ~106/min is the prime
+  suspect, see memory note); the dashboard and trader warmers both fetch the
+  same gate inputs (dedupe: one process fetches, the other reads); held-quote
+  refresh should not run every 2-3 s tick on the book thread; alpaca clients
+  on hot paths should not sleep-retry.
