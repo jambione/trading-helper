@@ -47,8 +47,9 @@ def test_source_set_logs_enter_and_leave_only(recdir):
 
 
 def test_config_snap_only_on_change_and_strips_secrets(recdir):
-    cfg = {"ai_watch_min_price": 20.0, "tv_webhook_secret": "s3cret",
-           "finnhub_key": "k", "discord_webhook_url": "https://x"}
+    # Fake values: the test proves these keys are stripped from the snapshot.
+    cfg = {"ai_watch_min_price": 20.0, "tv_webhook_secret": "s3cret",  # pragma: allowlist secret
+           "finnhub_key": "k", "discord_webhook_url": "https://x"}  # pragma: allowlist secret
     rec.record_config_snap(cfg, git_sha="abc", fingerprint="fp1")
     rec.record_config_snap(dict(cfg), git_sha="abc", fingerprint="fp1")
     rec.record_config_snap({**cfg, "ai_watch_min_price": 25.0}, git_sha="abc")
