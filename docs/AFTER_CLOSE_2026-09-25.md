@@ -224,3 +224,16 @@ To do:
    shelf $24.07, filled $23.81 during the 10:24 freeze). Check whether the
    freeze alone explains it (exits are later work).
 3. Rerun entry_review.py on the full day after 16:05 for the final numbers.
+
+## 14. Dashboard shows green "ready" rows labelled "stale quote" (13:15)
+
+- Green row = server phase "ready" (ai_entry_watch.py ~4972: price in zone and
+  not _poller_blocked). The label comes from feeds.js _bookTapeStale (last
+  TRADE print age). They disagree on thin names: EWJ/IONQ quote age 0 s but
+  last trade old; GFS 51 s, TEM 25 s, EMBJ 19 s.
+- The arm follows the trade print (tape_only), so the label is the truth; the
+  green is misleading. Fix: one clock for both (row colour must not say ready
+  while the arm would refuse on tape age).
+- Same evidence as item 7 cause 2 (thin trading): a live IEX quote with no
+  trade in 15 s is refused as "no price". Test "fresh quote counts as live"
+  in the replay.
