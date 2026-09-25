@@ -128,6 +128,31 @@ names printed a trade in the last 15 s (median age 16.8 s). Late-morning lull
 points at cause 2 (thin trading vs the 15 s rule) more than cause 1. The
 measurement should split by time of day.
 
+**Update 13:50 — the real cause is the feed slice, not the market.** Same
+5 min (13:27-13:32), SIP (all exchanges) vs IEX (our live feed):
+
+| Name | SIP trades / max gap | IEX trades / max gap | IEX time >15 s | SIP time >15 s |
+|---|---|---|---|---|
+| IONQ | 2241 / 2.9 s | 79 / 34 s | 21% | 0% |
+| SMCI | 2092 / 2.2 s | 115 / 22 s | 3% | 0% |
+| HIMS | 817 / 5.7 s | 70 / 26 s | 16% | 0% |
+| GFS | 607 / 9.1 s | 17 / 75 s | 60% | 0% |
+| MXL | 533 / 6.7 s | 21 / 108 s | 60% | 0% |
+| IONS | 254 / 22.4 s | 23 / 120 s | 63% | 2% |
+| PLNT | 391 / 8.6 s | 26 / 46 s | 39% | 0% |
+
+These names trade every few seconds; IEX carries ~3-15% of the trades, so a
+15 s last-trade rule marks liquid names stale 16-63% of the time. Not thin
+trading, not coverage, not lag: the rule assumes the full tape. (Tool:
+scratchpad feed_gaps.py.) No paid SIP (no-spend rule). Candidate fixes, all
+replayable against SIP ground truth (opens gained AND decision-price error vs
+the real SIP price at that instant):
+1. IEX quote clock (bid/ask updates) as the freshness proof.
+2. Per-name adaptive limit: stale only when the IEX gap is k x that name's
+   normal IEX gap.
+3. Recent engine 1m bar as current price.
+Same root as item 14 (green "ready" rows labelled "stale quote").
+
 ## 8. Book lag: the trader's book thread stalls on Alpaca lookups
 
 - 11:12 measurement: book writes 6, 2, 3, 12, 4, 16, 4 s apart (should be
