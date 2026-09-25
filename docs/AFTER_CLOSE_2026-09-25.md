@@ -237,3 +237,30 @@ To do:
 - Same evidence as item 7 cause 2 (thin trading): a live IEX quote with no
   trade in 15 s is refused as "no price". Test "fresh quote counts as live"
   in the replay.
+
+## 15. Room below the day's high back into the book-server ranking
+
+Source: docs/BOLLINGER_STUDY_2026-09-25.md (0d8f490), 3,073 in-band -50
+crosses, train <= 9/17 / test 9/18-9/24.
+- Bollinger %B / bandwidth: no evidence; do not add.
+- Room below HOD (`dist_hod_pct`): names nearest their high (>= -1.2%) did
+  worse than names >= 2.7% below it: ret60 T3-T1 -0.36% (t -3.8) test, -0.84%
+  (t -3.7) by symbol-day, 0/7 days the other way, holds within day_chg x pace.
+- Caveat: in the held-out linear rank it did NOT clearly improve the ranking
+  (Spearman +0.019 vs +0.040 baseline forward; SD-weighted top-bottom -0.06%
+  forward, +0.47% reverse). The tercile effect is solid; its value as a
+  ranking weight is unproven.
+- Same signal as item 13 (6/11 entries in the top 10% of the 30-min range)
+  and the memory note on admission range position (~90 cap cuts the fade).
+- It was dropped in the book-server rewrite only because nothing live
+  computed it (book_server.py header).
+
+To do:
+1. Engine tracks each name's running RTH high from the 1m bars it already
+   builds; expose it on the candidate row (remember the indicator whitelist:
+   the poll's indicator dict must carry the new field).
+2. Replay by symbol-day with room-below-HOD in the ranking (and, separately,
+   as a seat/arm filter) vs without. Count opens as well as ret60: the ranking
+   also drives live slot priority (ai_watch_slot_priority=true), so it must
+   not cost opens below the 1-per-10 bar.
+3. Only then weight it in seat_priority.
