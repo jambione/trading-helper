@@ -394,3 +394,44 @@ The one hour at the pass-bar rate (6 opens). In the cross funnel, break this
 hour out: seated count, freshness, armable share, number of seed crosses,
 market dips vs up-leg, admission refusals. Whatever differed is the template
 for the whole day.
+
+## After-close results (16:30)
+
+**Setup fixes.**
+- Tools added: tools/cross_funnel.py, tools/feed_gaps.py, tools/never_green_exit.py.
+- Recording: prints (3.9M rows), quotes and the state archive have no gaps >20 s
+  in RTH. Source/input event streams have gaps at the restarts/freezes (real:
+  the desk was not processing).
+- Nightly fidelity replay crashed at 16:05 (asked SIP for bars <15 min old) and
+  picked the wrong build (counted config records: c1b54b0; the build that ran
+  11:52-16:00 was b739543). Fixed in 023a3d0 (waits for SIP; picks the build
+  that ran longest and replays from when it went live). Relaunched 16:17:
+  b739543 from 11:53.
+
+**Cross funnel (tools/cross_funnel.py, full day).** 799 in-band -50 crosses
+on 110 names (21 per 10 min).
+| Stage | Crosses | ret30 after the cross | runner (+0.6% before -1%, 30m) |
+|---|---|---|---|
+| 0 not in the desk pool | 561 (70%) | +0.12% | 26% |
+|   dropped off every list (mostly >60 min earlier) | 333 | +0.08% | 23% |
+|   still on a raw movers/trending/momentum list, filtered before the pool | 125 | +0.11% | 29% |
+|   not listed yet | 79 | +0.33% | 33% |
+| 1 in the pool, not seated (no_tape 26, thin_rvol 24, spread 23, range 16, float 15…) | 143 (18%) | -0.05% | 33% |
+| 2 seated, refused at the arm (tape_only 32, wait_mid_rise 29, mid_rise_stale 12) | 84 (11%) | -0.33% | 22% |
+| 3 opened | 11 (1%) | -0.40% | 67% |
+
+- Correction to the 15:56 first pass: it counted restart re-logs as extra
+  "enters" and overstated "in the pool, not seated". Fixed.
+- Retention is the biggest pool of crosses (333), but those crosses are the
+  weakest (runner 23%, ret30 +0.08% before a 0.05-0.2% spread). Retaining
+  them buys opens, not quality. Seed-stage filtering (125) is the next pool.
+- New finding: the candidate pool flickers — the same ~12 movers/trending
+  names enter and leave ~11 s later every 2-4 min (e.g. 11:06:17 -> 11:06:32).
+  Find the cause (two callers with different pools? a freshness window?).
+- Two-clock caveat: only 11 of 20 real opens match a SIP-bar cross; the live
+  arm fires on IEX-bar %R. The replay must use the live bars.
+
+**Never-green exit (item 18): NO.** 321 real round trips 9/16-9/25 (mean
+-0.279%, 102 winners): every "not +0.1-0.3% by 3-10 min" rule moves the total
+by -1.8% to +2.2% — noise. Today's +3.6% was four trades. Matches the memory
+note that early cuts do not move the mean. Closed.
