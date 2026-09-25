@@ -176,6 +176,23 @@ measurement should split by time of day.
   it seats live: skip gate-refused names; replay whether its extra names
   crossed -50 today (would a fuller book have opened more?).
 
+Update 13:06:
+- Every one of the 11 opens so far was in its would-seat set within the 30 min
+  before the open; 7/11 at that exact moment. Its ranking contains the names
+  that trade.
+- Inputs improved after the async-gate + L2 fixes: 13:00 hour pctr 18/24, pace
+  23/24 (09:00 hour: 10/20, 9/20). Would-vs-live overlap 4.2 -> 6.9 of 12.
+- 13:06 it would add EMBJ/EWJ/DB (below -50, setting up) and drop RKLB (-79,
+  also set up): priority weighs runway + pace, not "about to cross".
+
+Before it seats live:
+1. Skip names the live gates refuse (CVS float_too_big, red names like HIMS
+   -0.9%, gap-down, band).
+2. Give weight to setup state (fast %R below -50 with slow rising) so it does
+   not drop names about to cross.
+3. Replay today with it seating: do its extra seats produce extra -50 crosses
+   and opens? That is the go/no-go number against the 1-per-10 bar.
+
 ## 12. The door refuses most of the supply (11:50)
 
 - 70 distinct names refused admission in 10 min (5 seated): thin_rvol 35,
