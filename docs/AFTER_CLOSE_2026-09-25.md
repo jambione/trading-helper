@@ -1,0 +1,59 @@
+# After-close log — Fri 2026-09-25
+
+Running list of things seen during the session, to work through after the
+close. Newest at the bottom. Replay/recording for today lands in
+`~/session_snapshots/2026-09-25/` on the mini at 16:05.
+
+## 1. Slow start — 0 opens by 09:47
+
+- 09:47 snapshot: 11 seated (7 momentum, 4 movers), only 3 armable, 4 data-blocked
+  (36%), 7/11 seated names with a price <= 15 s old. 0 opens.
+- Arm refusals 09:30-09:47: `tape_only` 210, `spread_wide` 171, `wait_mid_rise` 170,
+  `spread_unknown` 43, `pctr_not_live_alpaca` 23.
+- Engine tracked 39 names against the 30-slot setting: the cap only limits the
+  desk's pushes; Discord watchlist names (own slots since cebf3a3) and cheap
+  momentum names add on top, so the feed is over capacity again.
+- Momentum names could not pass the 0.20% SIP spread gate on tick size ($1-5):
+  556 momentum `spread_wide` refusals by 09:47. Exempted at 09:56 (c1b54b0).
+- Same pattern as 9/24 (first fill 11:05). To answer tonight: which names crossed
+  -50 between 09:30 and 10:30, were they seated with fresh data, and what refused them.
+
+## Changes made during the session
+
+| Time | Change | Commit |
+|---|---|---|
+| 09:56 | Momentum exempt from SIP spread gate (restart ~45 s) | c1b54b0 |
+
+## 2. Post-restart freeze: dashboard self-deadlock (FIXED 10:39, 55e7ced)
+
+- Every restart froze the desk 5-8 min: first /api/state snapshot built in 320 s
+  ("[SNAP] rebuilt in 320.25s"), the trader's startup sync waited on it, no
+  opens and no exit management meanwhile. Hit at 09:56, 10:09, 10:24.
+- faulthandler dump (b5e12cf) showed the cause: overlay_ai_book_live_prices ->
+  ai_entry_watch.apply_tape_blocker per book row inside _snapshot; live_print ->
+  dashboard_state() HTTP-called the dashboard's OWN /api/state (4 s timeout per
+  row; hot since Grok's d5d439b), and should_arm_buy fetched SIP bars/quotes
+  per row on cold caches.
+- Fix: in the dashboard process only, dashboard_state reads the cached
+  snapshot in-process and gate inputs are cache-only with a background warmer.
+  After fix: first snapshot 0.04 s.
+- KORU (09:56) sold at the broker in the same second as a restart; the desk
+  showed it OPEN for 8 min until the trader reconciled. Broker was flat.
+
+## 3. Trader startup still ~3 min (OPEN)
+
+- After 55e7ced the trader still took 3 min (10:39:35 -> 10:42:38) to start its
+  book thread: `_publish_book()` runs on the main thread before the book thread
+  and fetches SIP spread/gap/pace per candidate on cold caches. Exits are not
+  managed until it finishes. Fix after close: start the book thread first
+  and/or keep the startup sync cache-only. Rule until then: no mid-session
+  restarts.
+
+## 4. Morning opens and blockers (09:30-10:42)
+
+- 3 opens: KORU 09:52 (+0.7%), TOST 10:23 (-0.2%), FLY 10:23 (-2.1%).
+- ~30 min of the first 75 had the trader down or frozen (restarts 09:56, 10:04,
+  10:09, 10:24, 10:39) — most of the missing opens.
+- Arm reasons 09:30-10:42: wait_mid_rise 587, tape_only 549 (stale price),
+  spread_wide 199, pctr_not_live_alpaca 101, extended_cheap 95 (cheap momentum
+  names judged extended), spread_unknown 77.
