@@ -419,8 +419,11 @@ def sip_data_mins_open(now_et: datetime, cfg: dict | None = None) -> float:
     return max(1.0, live - delay) if live > 0 else live
 
 
-def fetch_rows(cfg: dict) -> list[dict]:
-    """One pass: rank movers, drop what cannot be traded, enrich survivors."""
+def fetch_rows(cfg: dict) -> list[dict] | None:
+    """One pass: rank movers, drop what cannot be traded, enrich survivors.
+
+    None when the pass could not measure anything (caller keeps the old file).
+    """
     api, sec = _keys()
     if not api or not sec:
         return []
@@ -527,7 +530,12 @@ def fetch_rows(cfg: dict) -> list[dict]:
             start=start, limit=10000, feed=DataFeed.SIP))
         bars = getattr(df, "data", {}) or {}
     except Exception as e:  # noqa: BLE001
-        print(f"[movers] daily bars failed: {e}", flush=True)
+        # No bars means no row can be measured; writing the empty result
+        # wiped the whole Movers list off the book (2026-09-25 11:24, a 429
+        # on the shared Alpaca budget). Skip the write: the last good list
+        # stays live until ai_movers_max_age_sec and the next pass retries.
+        print(f"[movers] daily bars failed, keeping last list: {e}", flush=True)
+        return None
 
     # Tape continuity. A DAILY dollar-volume floor is a sum, and a sum cannot
     # tell a name that trades every minute from one that does its whole day in

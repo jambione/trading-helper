@@ -587,3 +587,24 @@ def test_the_session_knobs_ship_declared():
     for k in ("ai_movers_session_append", "ai_movers_session_max",
               "ai_movers_use_most_actives", "ai_movers_actives_top"):
         assert k in DEFAULT_CONFIG, f"{k} missing from DEFAULT_CONFIG"
+
+
+def test_a_rate_limited_bars_call_keeps_the_last_list(monkeypatch):
+    """2026-09-25 11:24: a 429 on daily bars wrote 0 rows and emptied Movers."""
+    import alpaca.data.historical as hist
+    import alpaca.data.historical.screener as scr
+    g = type("G", (), {"symbol": "ABCD", "percent_change": 25.0, "price": 5.0, "name": "Abcd Inc"})
+    monkeypatch.setattr(ms, "_keys", lambda: ("k", "s"))
+    monkeypatch.setattr(ms, "universe_scan", lambda *a, **k: [])
+    monkeypatch.setattr(ms, "premarket_scan", lambda *a, **k: [])
+    monkeypatch.setattr(scr, "ScreenerClient", lambda *a: type("S", (), {
+        "get_market_movers": lambda self, req: type("M", (), {"gainers": [g]})()})())
+
+    class _Bars:
+        def __init__(self, *a):
+            pass
+
+        def get_stock_bars(self, req):
+            raise RuntimeError('{"message": "too many requests."}')
+    monkeypatch.setattr(hist, "StockHistoricalDataClient", _Bars)
+    assert ms.fetch_rows({"ai_movers_use_most_actives": False}) is None
