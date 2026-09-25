@@ -268,14 +268,35 @@ for sym, seq in bars.items():
         px = seq[i][4]
         lo = 1.0 if srcs == {"momentum"} else 20.0
         if lo <= px <= 100:
-            events.append((t, sym, srcs, px))
+            events.append((t, sym, srcs, px, i))
 
 out = collections.Counter()
 detail = collections.defaultdict(collections.Counter)
 by_hour = collections.defaultdict(collections.Counter)
 by_src = collections.defaultdict(collections.Counter)
 tape_ages = []
-for t, sym, srcs, px in sorted(events):
+outcome = collections.defaultdict(list)     # bucket -> [(ret15, ret30, runner)]
+
+
+def _outcome(sym, i, px):
+    seq = bars[sym]
+    fwd = [r for r in seq[i + 1:i + 31]]
+    if len(fwd) < 15 or not px:
+        return None
+    r15 = (fwd[14][4] / px - 1) * 100
+    r30 = (fwd[-1][4] / px - 1) * 100
+    run = None
+    for r in fwd:
+        if (r[3] / px - 1) * 100 <= -1.0:
+            run = False
+            break
+        if (r[2] / px - 1) * 100 >= 0.6:
+            run = True
+            break
+    return r15, r30, bool(run)
+
+
+for t, sym, srcs, px, bi in sorted(events):
     hour = datetime.fromtimestamp(t, ET).strftime("%H")
     sfam = "+".join(sorted(srcs)) or "none"
     if not srcs:
@@ -318,12 +339,25 @@ for t, sym, srcs, px in sorted(events):
         if ages:
             tape_ages.append(min(ages))
     out[k] += 1
+    oc = _outcome(sym, bi, px)
+    if oc:
+        outcome[k[:1]].append(oc)
+        if k[0] == "0":
+            last_why = why
+            outcome["0:" + ("dropped" if last_why.startswith("dropped") else
+                            "raw list" if last_why.startswith("on the raw") else "never")].append(oc)
     by_hour[hour][k[0]] += 1
     by_src[sfam][k[0]] += 1
 
 n = len(events)
+print("outcome after the cross (SIP 1m, from the cross-bar close; runner = +0.6% before -1% within 30m):")
+for b in sorted(outcome):
+    v = outcome[b]
+    print(f"  {b:12s} n={len(v):4d}  ret15 {sum(x[0] for x in v)/len(v):+.2f}%  "
+          f"ret30 {sum(x[1] for x in v)/len(v):+.2f}%  runner {sum(x[2] for x in v)/len(v):.0%}")
+print()
 print(f"{DAY}: in-band -50 crosses (fast up through -50, slow rising) 09:35-15:55: {n}"
-      f"  over {len({s for _, s, _, _ in events})} names  = {n / ((T1 - T0) / 600):.1f} per 10 min")
+      f"  over {len({e[1] for e in events})} names  = {n / ((T1 - T0) / 600):.1f} per 10 min")
 for k in sorted(out):
     print(f"  {k:36s} {out[k]:5d}  ({out[k] / max(1, n):.0%})")
 for k in sorted(detail):
