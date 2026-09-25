@@ -101,7 +101,12 @@ while i < len(raw):
     grp = raw[i:j]
     enters = {(s, src) for _, s, src, ev in grp if ev == "enter"}
     leaves = {(s, src) for _, s, src, ev in grp if ev == "leave"}
-    if not leaves and len(enters) >= max(8, 0.6 * len(active)) and active:
+    quiet = grp[0][0] - (raw[i - 1][0] if i else grp[0][0]) >= 60
+    # A restart re-log: no leaves, most of the pool, and either after the
+    # process was quiet >= 60 s or big. Small enter-only bursts are a pool
+    # flicker (same ~12 names enter, leave ~11 s later), not a restart.
+    if not leaves and active and len(enters) >= 0.6 * len(active) and (
+            (quiet and len(enters) >= 8) or len(enters) >= 20):
         for key in active - enters:           # restart re-log: the rest left
             member[key[0]].append((grp[0][0], key[1], False))
         relogs.append((grp[0][0], len(enters), len(active - enters)))
