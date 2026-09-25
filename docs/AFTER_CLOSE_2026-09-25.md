@@ -80,6 +80,7 @@ close. Newest at the bottom. Replay/recording for today lands in
 | 11:28 | Trader + dashboard gate inputs non-blocking (`ai_watch_async_gates`); movers keeps last list on a failed bars call. Restart with FFBC open (user OK); trader up in 27 s (was ~3 min) | bb58ab4, 73b6622 |
 | 11:41 | Held-quote REST refresh off the book thread (background, single-flight, 3 s floor). Desk flat at restart; trader up in 18 s; book 41 writes/90 s, max gap 7.0 s (was 20.5 s) | b96999c |
 | 11:51 | Removed the Mobile Trader L2 bridge from the dashboard (~50 Alpaca req/min in RTH). Desk flat at restart | b739543 |
+| 17:13 | After close: book paint can no longer advance the mid-rise latch (item 20) + guards (item 21). Desk flat; all services up in ~40 s | 24cc6bf, 4ebbfa4 |
 
 ## 2. Post-restart freeze: dashboard self-deadlock (FIXED 10:39, 55e7ced)
 
@@ -452,7 +453,7 @@ other 2. The replay is optimistic on exactly the live blockers.
   recall and precision are both high. Only then run the retention and
   admission-gate replays. Nothing ships Monday on replay evidence.
 
-## 20. LIVE BUG: the book paint consumed mid-rise crosses (fix 24cc6bf, NOT deployed)
+## 20. LIVE BUG: the book paint consumed mid-rise crosses (fix 24cc6bf, DEPLOYED 17:13 on 4ebbfa4)
 
 - SMCI 12:00: live book %R -56.6 -> -49.6 -> -45.1 with slow rising and fresh
   tape, yet the poll said wait_mid_rise through 12:03. The trader's book paint
