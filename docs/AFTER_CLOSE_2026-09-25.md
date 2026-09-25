@@ -108,3 +108,9 @@ would have produced, before anything goes live.
 
 Initial read (to confirm): mostly cause 1 (freshness fell as the watchlist grew;
 engine at 34-44 names vs 30), then cause 2.
+
+Update 10:59: seated freshness fell to 2/10 (70% data-blocked). Not an outage:
+Finnhub connected (38 subs), engine on realtime for 29/33 names, but only 14/33
+names printed a trade in the last 15 s (median age 16.8 s). Late-morning lull
+points at cause 2 (thin trading vs the 15 s rule) more than cause 1. The
+measurement should split by time of day.
