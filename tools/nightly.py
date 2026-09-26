@@ -10,7 +10,9 @@ a failed step does not stop the next:
   2. exact      tools/replay_session.py --exact with the code that booted the
                 desk: the acceptance verdict (0 read misses, >=99% decisions,
                 >=95% buys within 5 s) -> ai_reports/nightly/DAY/exact.json
-  3. paper      tools/studies/source_optimal_study.py on the day's actual
+  3. paper      (manual only: --only paper; the operator chose on 2026-09-26
+                not to spend weeks accumulating it)
+                tools/studies/source_optimal_study.py on the day's actual
                 nominations, SIP bars and real SIP spreads, for the live %R
                 trigger, the volume breakout and combination D. Each day's rows
                 are appended to ai_reports/nightly/paper_book.jsonl, and the
@@ -161,6 +163,8 @@ def summary_md(day: str, res: dict) -> str:
     else:
         lines += [f"**Exact replay: not run** — {ex.get('why')}", ""]
     pb = res.get("paper") or {}
+    if not pb:
+        return "\n".join(lines) + "\n"
     lines += ["## SIP paper book, running totals (net of real SIP spread)", "",
               "| trigger | exit | source | days | trades | gross bp | cost bp | net bp | days net>0 |",
               "|---|---|---|---|---|---|---|---|---|"]
@@ -186,7 +190,7 @@ def main() -> int:
         res["fidelity"] = {"rc": rc}
     if args.only in (None, "exact"):
         res["exact"] = step_exact(args.day, out, log)
-    if args.only in (None, "paper"):
+    if args.only == "paper":
         res["paper"] = step_paper(args.day, out, log)
     res["finished"] = time.time()
     (out / "nightly.json").write_text(json.dumps(res, indent=1, default=str))

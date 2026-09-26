@@ -64,5 +64,5 @@ def test_close_out_starts_the_fidelity_replay_only_when_asked(tmp_path, monkeypa
     assert calls == []
     ss.finish_day(ss.DayWriter("2026-09-26"), fidelity=True)
     assert len(calls) == 1
-    assert calls[0][-7:] == ["--day", "2026-09-26", "--start", "09:00",
-                             "--end", "15:50", "--fidelity"]
+    assert calls[0][-3].endswith("tools/nightly.py")
+    assert calls[0][-2:] == ["--day", "2026-09-26"]
