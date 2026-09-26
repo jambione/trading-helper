@@ -182,6 +182,90 @@ def live_code_sha(day: str, snap_dir: Path, start: str = "09:30",
     return best[1].rstrip("+"), best[1].endswith("+"), best[2]
 
 
+PAINT_FIX_SHA = "24cc6bf"
+
+
+def _contains(sha: str, ancestor: str) -> bool:
+    """True when *ancestor* is in *sha*'s history (or git cannot tell)."""
+    r = subprocess.run(["git", "-C", str(HERE), "merge-base", "--is-ancestor", ancestor, sha],
+                       capture_output=True)
+    return r.returncode != 1
+
+
+def overlay_harness(code: Path, here: Path | None = None) -> None:
+    """Put today's replay machinery into an export of (possibly older) code.
+
+    The driver, and desk_io's serving half, always come from this checkout: a
+    replay must read today's recordings even when the code it replays is older.
+    Regression: 2026-09-26 an exact replay of 7dc1682 exported that commit's
+    desk_io.py, whose Recording could not take the multi-day list of wire
+    files, and crashed with "TypeError: argument should be a str ... not
+    'list'". desk_io's recording half never runs inside a replay.
+    """
+    here = here or HERE
+    secrets = here / "config" / "secrets.json"
+    if secrets.exists() and not (code / "config" / "secrets.json").exists():
+        (code / "config").mkdir(parents=True, exist_ok=True)
+        (code / "config" / "secrets.json").symlink_to(secrets)
+    (code / "tools").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(here / "tools" / "replay_session.py", code / "tools" / "replay_session.py")
+    if (here / "desk_io.py").exists():
+        shutil.copy2(here / "desk_io.py", code / "desk_io.py")
+    # Share counts (float_feed reads ROOT/ai_reports/float_cache.json). The
+    # sandbox blocks Finnhub and an unknown float admits, so without the cache
+    # the float gate never fires: on 2026-09-25 PYPL/CVS/DB (850M-1.7B float)
+    # were seated and traded here while live refused them float_too_big.
+    # Floats do not move intraday, so today's cache is not look-ahead. The
+    # news cache is left out on purpose: it holds stories from after --start.
+    fc = here / "ai_reports" / "float_cache.json"
+    if fc.exists():
+        (code / "ai_reports").mkdir(exist_ok=True)
+        shutil.copy2(fc, code / "ai_reports" / "float_cache.json")
+
+
+def live_segments(day: str, snap_dir: Path, start: str = "09:30",
+                  end: str = "16:00") -> list[dict]:
+    """Every build that ran inside [start, end]: sha, from, to, minutes.
+
+    A restart or deploy starts a new segment even on the same sha (the recorder
+    writes a config row at boot and on every change), so a morning of restarts
+    shows up as short segments instead of vanishing into one number.
+    """
+    rows: list[tuple[float, str]] = []
+    for p in (snap_dir / "recorder_config.jsonl.gz",
+              HERE / "ai_reports" / "sessions" / day / "config.jsonl.gz"):
+        if p.exists():
+            with gzip.open(p, "rt") as f:
+                for line in f:
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue
+                    sha = str(r.get("git_sha") or "")
+                    if sha and sha != "unknown":
+                        rows.append((float(r.get("ts") or 0), sha))
+            break
+    d = datetime.strptime(day, "%Y-%m-%d")
+    w0, w1 = (d.replace(hour=int(x[:2]), minute=int(x[3:]), tzinfo=ET).timestamp()
+              for x in (start, end))
+    rows.sort()
+    out = []
+    for i, (ts, sha) in enumerate(rows):
+        nxt = rows[i + 1][0] if i + 1 < len(rows) else w1
+        a, b = max(ts, w0), min(nxt, w1)
+        if b <= a:
+            continue
+        if out and out[-1]["sha"] == sha and abs(out[-1]["_t1"] - a) < 1:
+            out[-1]["_t1"] = b
+        else:
+            out.append({"sha": sha, "_t0": a, "_t1": b})
+    for sgm in out:
+        sgm["from"] = datetime.fromtimestamp(sgm["_t0"], ET).strftime("%H:%M")
+        sgm["to"] = datetime.fromtimestamp(sgm["_t1"], ET).strftime("%H:%M")
+        sgm["minutes"] = round((sgm["_t1"] - sgm["_t0"]) / 60, 1)
+    return out
+
+
 def export_and_reexec(args) -> int:
     ref = args.sha
     if args.fidelity and ref == "HEAD":
@@ -211,27 +295,16 @@ def export_and_reexec(args) -> int:
     archive = subprocess.Popen(["git", "-C", str(HERE), "archive", sha], stdout=subprocess.PIPE)
     subprocess.check_call(["tar", "-x", "-C", str(code)], stdin=archive.stdout)
     archive.wait()
-    secrets = HERE / "config" / "secrets.json"
-    if secrets.exists():
-        (code / "config" / "secrets.json").symlink_to(secrets)
-    # The driver itself always comes from this checkout, so older commits can
-    # be replayed with today's harness.
-    shutil.copy2(Path(__file__), code / "tools" / "replay_session.py")
-    # desk_io's serving half is replay machinery, like this driver: it must be
-    # current even when the replayed code is older (a 7dc1682 export could not
-    # read a multi-day recording). Its recording half does not run in a replay.
-    if (HERE / "desk_io.py").exists():
-        shutil.copy2(HERE / "desk_io.py", code / "desk_io.py")
-    # Share counts (float_feed reads ROOT/ai_reports/float_cache.json). The
-    # sandbox blocks Finnhub and an unknown float admits, so without the cache
-    # the float gate never fires: on 2026-09-25 PYPL/CVS/DB (850M-1.7B float)
-    # were seated and traded here while live refused them float_too_big.
-    # Floats do not move intraday, so today's cache is not look-ahead. The
-    # news cache is left out on purpose: it holds stories from after --start.
-    fc = HERE / "ai_reports" / "float_cache.json"
-    if fc.exists():
-        (code / "ai_reports").mkdir(exist_ok=True)
-        shutil.copy2(fc, code / "ai_reports" / "float_cache.json")
+    overlay_harness(code)
+    # The paint-latch bug (fixed in 24cc6bf): before it, the book paint
+    # advanced the %R mid-rise latch. The replay paints every 2 s — far more
+    # often than live did — so on pre-fix code it ate nearly every cross:
+    # 2026-09-25 fidelity recall 1/13 with paint, 8/13 without. Replaying
+    # pre-fix code without the paint is the closer model of live.
+    if args.fidelity and not args.no_paint and not _contains(sha, PAINT_FIX_SHA):
+        sys.argv.append("--no-paint")
+        print(f"[replay] fidelity: {sha[:8]} predates the paint-latch fix "
+              f"({PAINT_FIX_SHA}); replaying with --no-paint")
     reports = work / "ai_reports"
     reports.mkdir()
     env = dict(os.environ, REPLAY_EXPORTED="1", REPLAY_SHA=sha, REPLAY_REPO=str(HERE),
@@ -1218,8 +1291,25 @@ def fidelity(args, snap_dir: Path, slots: dict, broker, t_start: float, t_end: f
             used.add(best)
             matched.append((ls, round(rep[best][0] - lt)))
     ov = [x for s in slots.values() for x in s.get("overlap", [])]
+    segs = live_segments(args.day, snap_dir)
+    all_buys = []
+    fills = snap_dir / "fills.jsonl"
+    if fills.exists():
+        for line in open(fills):
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if r.get("event") == "fill" and str(r.get("side")).lower() == "buy":
+                all_buys.append(float(r.get("ts") or 0))
+    for sg in segs:
+        sg["live_buys"] = sum(1 for t in all_buys if sg["_t0"] <= t < sg["_t1"])
+        sg["replayed"] = sg["_t0"] <= t_start + 60 and sg["_t1"] >= t_end - 60
+        sg.pop("_t0")
+        sg.pop("_t1")
     out = {
         "day": args.day, "window": f"{args.start}-{args.end}", "sha": os.getenv("REPLAY_SHA"),
+        "no_paint": bool(args.no_paint), "segments": segs,
         "live_buys": len(live), "replay_opens": len(rep), "matched": len(matched),
         "recall": round(len(matched) / len(live), 3) if live else None,
         "precision": round(len(matched) / len(rep), 3) if rep else None,
@@ -1438,7 +1528,7 @@ def run_exact(args) -> int:
     path = Path(args.out) if args.out else Path(os.environ.get("REPLAY_WORK", ".")) / "exact.json"
     path.write_text(json.dumps(out, indent=1, default=str))
     print(f"result: {path}")
-    return 0 if out["verdict"] in ("PASS", "NO DECISIONS") else 1
+    return 0 if out["verdict"] in ("PASS", "SKIP") else 1
 
 
 def exact_score(events, live_arms, replay_polls, entries, wire: Path,
@@ -1449,6 +1539,10 @@ def exact_score(events, live_arms, replay_polls, entries, wire: Path,
     first_div: dict[str, dict] = {}
     by_block: Counter = Counter()
     polls = arm_mismatch = 0
+    # Freshness path (barebones f273220): how live priced each seated name,
+    # and whether the replay agreed on the names live priced by quote.
+    src_n: Counter = Counter()
+    quote_checks = quote_agree = 0
     for t, ev in events:
         if ev != "poll" or not (t_start <= t <= t_end):
             continue
@@ -1458,9 +1552,15 @@ def exact_score(events, live_arms, replay_polls, entries, wire: Path,
             arm_mismatch += 1  # one side reached the arm pass, the other returned early
         live = {r["s"]: r for r in live_arms.get(k, [])}
         rep = {r["s"]: r for r in replay_polls.get(k, [])}
+        for r_ in live.values():
+            src_n[str(r_.get("src") or "none")] += 1
         for s_ in set(live) | set(rep):
             checks += 1
             a, b = live.get(s_), rep.get(s_)
+            if a is not None and str(a.get("src") or "") == "quote":
+                quote_checks += 1
+                if b is not None and key(a) == key(b) and b.get("src") == "quote":
+                    quote_agree += 1
             if a is None:
                 replay_only += 1
             elif b is None:
@@ -1491,6 +1591,8 @@ def exact_score(events, live_arms, replay_polls, entries, wire: Path,
     if arm_mismatch:
         checks += arm_mismatch
     return {"polls": polls, "arm_pass_mismatch": arm_mismatch,
+            "live_price_src": dict(src_n.most_common()),
+            "quote_checks": quote_checks, "quote_agree": quote_agree,
             "checks": checks, "agree": agree, "decision_agreement": dec_rate if not arm_mismatch
             else (agree / checks if checks else 0.0),
             "live_only_names": live_only, "replay_only_names": replay_only,
@@ -1515,6 +1617,9 @@ def print_exact(o: dict) -> None:
           f" replay-only {o['replay_only_names']}")
     for k, v in o["divergence_kinds"].items():
         print(f"    {v:6d}  {k}")
+    if o.get("live_price_src"):
+        print(f"  live price source at arm checks: {o['live_price_src']}; "
+              f"quote-priced checks replayed identically {o.get('quote_agree')}/{o.get('quote_checks')}")
     br = o["buy_recall"]
     print(f"  buys: {o['buys_matched_5s']}/{o['live_buys']} matched within 5 s"
           f" ({'-' if br is None else f'{br:.0%}'}); replay entries {o['replay_entries']}")
@@ -1525,7 +1630,7 @@ def print_exact(o: dict) -> None:
     ok = (n_miss == 0 and da is not None and da >= 0.99
           and (br is None or br >= 0.95) and not o.get("errors"))
     if n_miss == 0 and not o.get("errors") and not o["checks"] and not o["live_buys"]:
-        o["verdict"] = "NO DECISIONS"  # plumbing clean, nothing to score (off-session)
+        o["verdict"] = "SKIP"  # plumbing clean, nothing to score (no session)
     else:
         o["verdict"] = "PASS" if ok else "FAIL"
     print(f"  VERDICT {o['verdict']}  (need 0 misses, >=99% decisions, >=95% buys, no errors)")

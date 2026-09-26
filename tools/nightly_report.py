@@ -119,6 +119,43 @@ def wedges(day: str) -> str:
     return "\n".join(hits[-10:]) or "no WEDGED restarts in logs/watchdog.log"
 
 
+def replay_verdict(day: str, wait_sec: float = 2400.0) -> str:
+    """The nightly replay verdict (tools/nightly.py): SKIP / PASS / DRIFT /
+    FAIL from the exact replay of the recorded session, the authoritative
+    check since desk_io (2026-09-26). Falls back to the approximate fidelity
+    replay for days recorded before desk_io existed."""
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "ai_reports", "nightly", day, "nightly.json")
+    t0 = time.time()
+    while time.time() - t0 < wait_sec:
+        try:
+            r = json.load(open(p))
+            if r.get("verdict"):
+                break
+        except (OSError, ValueError):
+            pass
+        time.sleep(30)
+    try:
+        r = json.load(open(p))
+    except (OSError, ValueError):
+        r = {}
+    v = r.get("verdict")
+    if not v:
+        return ("**PENDING** — the exact replay has not finished; read "
+                f"ai_reports/nightly/{day}/summary.md when it lands.\n\n"
+                + fidelity_verdict(day, wait_sec=0))
+    why = r.get("verdict_why") or ""
+    ex = r.get("exact") or {}
+    head = f"**{v}** (exact replay)" + (f" — {why}" if why else "")
+    if v == "SKIP":
+        return head
+    detail = (f"sha {ex.get('sha')}, read misses {ex.get('misses')}, decisions "
+              f"{ex.get('decision_agreement')} of {ex.get('checks')}, buys {ex.get('buy_recall')} "
+              f"of {ex.get('live_buys')}; live price sources {ex.get('live_price_src')}, "
+              f"quote-priced checks replayed identically {ex.get('quote_agree')}/{ex.get('quote_checks')}")
+    return f"{head}\n\n{detail}\n\nApproximate replay (secondary): " + fidelity_verdict(day, wait_sec=0)
+
+
 def fidelity_verdict(day: str, wait_sec: float = 1800.0) -> str:
     """OK / DRIFT / MISSING from ~/session_snapshots/<day>/fidelity.json."""
     snap = os.path.join(os.path.expanduser("~"), "session_snapshots", day)
@@ -174,7 +211,7 @@ def main():
     parts.append(f"## Volume-pace observe gate (would it have helped?)\n\n"
                  f"```\n{rvol_pace_split(day)}\n```\n")
     parts.append(f"## Watchdog: hung-engine restarts\n\n```\n{wedges(day)}\n```\n")
-    parts.insert(2, f"## Replay fidelity\n\n{fidelity_verdict(day)}\n")
+    parts.insert(2, f"## Replay verdict\n\n{replay_verdict(day)}\n")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(parts))
     print(f"[nightly] wrote {path}", flush=True)

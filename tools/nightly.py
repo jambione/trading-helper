@@ -84,6 +84,47 @@ def boot_sha(day: str) -> str | None:
     return best[1] if best else None
 
 
+def session_recorded(day: str) -> tuple[bool, str]:
+    """Was there a trading session to check? A weekday with at least one
+    desk arm poll recorded between 09:30 and 16:00 ET. Otherwise every replay
+    check is SKIP (nothing happened), never FAIL."""
+    d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
+    if d.weekday() >= 5:
+        return False, "weekend"
+    t0 = d.replace(hour=9, minute=30).timestamp()
+    t1 = d.replace(hour=16).timestamp()
+    p = ROOT / "ai_reports" / "sessions" / day / "decisions.jsonl.gz"
+    if not p.exists():
+        # Days before desk_io (2026-09-26) have a session archive but no
+        # decisions stream: a real session, checked by the approximate replay.
+        fills = Path.home() / "session_snapshots" / day / "fills.jsonl"
+        if fills.exists() and fills.stat().st_size > 0:
+            return True, "legacy"
+        return False, "no decisions recorded (desk down, holiday, or recorder off)"
+    try:
+        with gzip.open(p, "rt") as f:
+            for line in f:
+                if '"poll"' not in line:
+                    continue
+                r = json.loads(line)
+                if r.get("ev") == "poll" and t0 <= float(r["ts"]) <= t1:
+                    return True, ""
+    except (OSError, ValueError, EOFError):
+        return False, "decisions stream unreadable"
+    return False, "no arm polls between 09:30 and 16:00 (market holiday or desk down)"
+
+
+def fidelity_result(day: str) -> dict:
+    """The approximate replay's score (tools/replay_session.py --fidelity)."""
+    p = Path.home() / "session_snapshots" / day / "fidelity.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except ValueError:
+        return {}
+
+
 def step_exact(day: str, out: Path, log: Path) -> dict:
     sha = boot_sha(day)
     if not sha:
@@ -96,6 +137,9 @@ def step_exact(day: str, out: Path, log: Path) -> dict:
     r = json.loads(res.read_text())
     io_ = r.get("io") or {}
     return {"ok": True, "sha": sha, "verdict": r.get("verdict"),
+            "live_price_src": r.get("live_price_src"), "quote_checks": r.get("quote_checks"),
+            "quote_agree": r.get("quote_agree"),
+            "first_divergence": dict(list((r.get("first_divergence") or {}).items())[:5]),
             "misses": sum((io_.get("missed") or {}).values()),
             "decision_agreement": r.get("decision_agreement"), "checks": r.get("checks"),
             "buy_recall": r.get("buy_recall"), "live_buys": r.get("live_buys"),
@@ -153,9 +197,44 @@ def paper_totals(hist: Path) -> list[dict]:
     return out
 
 
+def verdict(res: dict) -> tuple[str, str]:
+    """One word for the day, plus why: SKIP / PASS / DRIFT / FAIL.
+
+    DRIFT means the plumbing held (every recorded read was served, no pass
+    errors) but the replayed decisions or buys diverge from live — a code-path
+    or clock difference to chase. FAIL means the replay itself is broken
+    (unserved reads, errors, or it could not run)."""
+    if res.get("skip"):
+        return "SKIP", res["skip"]
+    if res.get("legacy"):
+        f = res.get("fidelity_json") or {}
+        rec, prec = f.get("recall"), f.get("precision")
+        if rec is None:
+            return "FAIL", "approximate replay produced no fidelity.json"
+        ok = rec >= 0.5 and (prec or 0) >= 0.5
+        return ("PASS" if ok else "DRIFT"), (
+            f"approximate replay only (pre-desk_io day): recall {rec}, precision {prec}")
+    ex = res.get("exact") or {}
+    if not ex.get("ok"):
+        return "FAIL", f"exact replay did not run: {ex.get('why')}"
+    v = ex.get("verdict")
+    if v in ("PASS", "SKIP"):
+        return v, ""
+    if ex.get("misses") == 0 and not ex.get("errors"):
+        return "DRIFT", (f"decisions {ex.get('decision_agreement')}, buys {ex.get('buy_recall')} "
+                         f"(need >=0.99 / >=0.95) with every read served")
+    return "FAIL", f"read misses {ex.get('misses')}, errors {ex.get('errors')}"
+
+
 def summary_md(day: str, res: dict) -> str:
     fmt = lambda v, f: "-" if v is None else format(v, f)  # noqa: E731
-    lines = [f"# Nightly {day}", ""]
+    v, why = verdict(res)
+    lines = [f"# Nightly {day}", "", f"VERDICT: {v}" + (f" — {why}" if why else ""), ""]
+    if res.get("skip"):
+        cat = res.get("catalyst") or {}
+        extra = [f"**AI catalyst scorecard:** rc={cat.get('rc')}", ""] if cat else []
+        return "\n".join(lines + [f"**Replay checks: SKIP** — no session to check ({res['skip']}).", ""]
+                         + extra)
     cat = res.get("catalyst") or {}
     if cat:
         lines += [f"**AI catalyst scorecard:** rc={cat.get('rc')}", ""]
@@ -165,8 +244,25 @@ def summary_md(day: str, res: dict) -> str:
                   f"read misses {ex.get('misses')}, decisions {fmt(ex.get('decision_agreement'), '.1%')} "
                   f"of {ex.get('checks')}, buys {fmt(ex.get('buy_recall'), '.0%')} of {ex.get('live_buys')}"
                   + (f", errors {ex.get('errors')}" if ex.get("errors") else ""), ""]
+        if ex.get("live_price_src"):
+            lines += [f"Freshness path: live priced arm checks by {ex.get('live_price_src')}; "
+                      f"quote-priced checks replayed identically "
+                      f"{ex.get('quote_agree')}/{ex.get('quote_checks')}.", ""]
+        if ex.get("verdict") == "FAIL" and ex.get("first_divergence"):
+            lines += ["First divergences (live vs replay): " + "; ".join(
+                f"{k} {v.get('t')}" for k, v in ex["first_divergence"].items()), ""]
     else:
         lines += [f"**Exact replay: not run** — {ex.get('why')}", ""]
+    fid = res.get("fidelity_json") or {}
+    if fid:
+        lines += [f"Approximate replay (fidelity, secondary): recall {fid.get('recall')}, precision "
+                  f"{fid.get('precision')} on {str(fid.get('sha') or '')[:8]} {fid.get('window')}"
+                  + (" (--no-paint: pre-24cc6bf code)" if fid.get("no_paint") else ""), ""]
+        segs = fid.get("segments") or []
+        if len(segs) > 1:
+            lines += ["Build segments (restarts/deploys): " + "; ".join(
+                f"{sg['sha'][:7]} {sg['from']}-{sg['to']} buys {sg.get('live_buys', 0)}"
+                + (" [replayed]" if sg.get("replayed") else "") for sg in segs), ""]
     pb = res.get("paper") or {}
     if not pb and not cat:
         return "\n".join(lines) + "\n"
@@ -195,15 +291,34 @@ def main() -> int:
         rc = run([py(), "-u", str(ROOT / "tools" / "ai_catalyst_score.py"),
                   "--asof", args.day], log, 30 * 60)
         res["catalyst"] = {"rc": rc}
+    ok, why = session_recorded(args.day)
+    if why == "legacy":
+        res["legacy"] = True
+    if not ok and args.only in (None, "fidelity", "exact"):
+        res["skip"] = why
+        res["exact"] = {"ok": True, "verdict": "SKIP", "why": why}
+        res["finished"] = time.time()
+        res["verdict"], res["verdict_why"] = verdict(res)
+        (out / "nightly.json").write_text(json.dumps(res, indent=1, default=str))
+        (out / "summary.md").write_text(summary_md(args.day, res))
+        print((out / "summary.md").read_text())
+        return 0
     if args.only in (None, "fidelity"):
         rc = run([py(), "-u", str(ROOT / "tools" / "replay_session.py"), "--day", args.day,
                   "--start", "09:00", "--end", "15:50", "--fidelity"], log, 3 * 3600)
         res["fidelity"] = {"rc": rc}
+        res["fidelity_json"] = fidelity_result(args.day)
     if args.only in (None, "exact"):
-        res["exact"] = step_exact(args.day, out, log)
+        if why == "legacy":
+            res["exact"] = {"ok": False, "why": "day predates the desk_io recorder (2026-09-26); "
+                                               "approximate replay only"}
+            res["legacy"] = True
+        else:
+            res["exact"] = step_exact(args.day, out, log)
     if args.only == "paper":
         res["paper"] = step_paper(args.day, out, log)
     res["finished"] = time.time()
+    res["verdict"], res["verdict_why"] = verdict(res)
     (out / "nightly.json").write_text(json.dumps(res, indent=1, default=str))
     (out / "summary.md").write_text(summary_md(args.day, res))
     print((out / "summary.md").read_text())
