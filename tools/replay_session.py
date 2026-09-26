@@ -217,6 +217,11 @@ def export_and_reexec(args) -> int:
     # The driver itself always comes from this checkout, so older commits can
     # be replayed with today's harness.
     shutil.copy2(Path(__file__), code / "tools" / "replay_session.py")
+    # desk_io's serving half is replay machinery, like this driver: it must be
+    # current even when the replayed code is older (a 7dc1682 export could not
+    # read a multi-day recording). Its recording half does not run in a replay.
+    if (HERE / "desk_io.py").exists():
+        shutil.copy2(HERE / "desk_io.py", code / "desk_io.py")
     # Share counts (float_feed reads ROOT/ai_reports/float_cache.json). The
     # sandbox blocks Finnhub and an unknown float admits, so without the cache
     # the float gate never fires: on 2026-09-25 PYPL/CVS/DB (850M-1.7B float)

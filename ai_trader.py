@@ -1210,6 +1210,17 @@ def main() -> None:
         try:
             import desk_io
             desk_io.install_live()
+            # The config in force at boot (the recorder otherwise writes it
+            # only from a book sync, which does not run off-session), so an
+            # exact replay starts from what live had, not from git.
+            try:
+                import learn_stamps
+                import session_recorder
+                session_recorder.record_config_snap(
+                    cfg, git_sha=learn_stamps.git_version(),
+                    fingerprint=learn_stamps.config_fingerprint(cfg))
+            except Exception:  # noqa: BLE001
+                pass
             print("[ai] desk_io recording alpaca + /api/state reads", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"[ai] desk_io install failed (not recording): {e}", flush=True)
