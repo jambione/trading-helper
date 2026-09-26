@@ -16,7 +16,6 @@ def _cfg(**over):
         # Isolate arm-ready soft-seed from square-prefer bus (own suite).
         "ai_watch_admit_prefer_square": False,
         "ai_watch_arm_cm_rsi_max": 75.0,
-        "ai_watch_arm_cm_rsi_require_rising": True,
         "ai_watch_require_exh_rising": True,
         "ai_watch_exhaustion_heat_min_pct": 40.0,
         "ai_max_price": 100.0,
@@ -75,15 +74,6 @@ def test_arm_ready_rejects_stale_tape(monkeypatch):
     )
     assert ok is False
     assert why == "stale"
-
-
-def test_arm_ready_rejects_rsi_not_rising(monkeypatch):
-    monkeypatch.setattr(ew, "live_print", lambda s: (12.0, 1.0))
-    row = _ready_row()
-    row["indicator"]["cm_rsi_rising"] = False
-    ok, why = ew.evaluate_arm_ready(row, _cfg())
-    assert ok is False
-    assert why == "rsi_not_rising"
 
 
 def test_arm_ready_rejects_rsi_extended(monkeypatch):
@@ -145,7 +135,7 @@ def test_inclusion_rejects_soft_seed_not_arm_ready(monkeypatch):
     monkeypatch.setattr(ew, "_consume_reseed_stream_clear", lambda *a, **k: False)
 
     row = _ready_row()
-    row["indicator"]["cm_rsi_rising"] = False
+    row["indicator"]["cm_rsi"] = 80.0
     cfg = _cfg(
         ai_watch_require_uptrend=True,
         ai_watch_require_indicators=False,
@@ -157,7 +147,7 @@ def test_inclusion_rejects_soft_seed_not_arm_ready(monkeypatch):
     ok, met, why = ew.passes_inclusion(row, cfg, indicators={})
     assert ok is False
     assert why.startswith("arm_ready_")
-    assert "rsi_not_rising" in why
+    assert "rsi_extended" in why
 
 
 def test_inclusion_keeps_arm_ready_soft_seed(monkeypatch):
@@ -378,7 +368,7 @@ class _FakeGT:
         return False
 
 
-def test_never_armable_evict_drops_rsi_not_rising(monkeypatch):
+def test_never_armable_evict_drops_rsi_extended(monkeypatch):
     dropped = []
     monkeypatch.setattr(ew, "drop_watch_symbols", lambda syms: dropped.extend(syms))
     now = time.time()
@@ -386,13 +376,13 @@ def test_never_armable_evict_drops_rsi_not_rising(monkeypatch):
         "symbol": "STUCK",
         "status": "watching",
         "admit_ts": now - 600.0,  # past subscribe grace
-        "block_code": "rsi_not_rising",
+        "block_code": "rsi_extended",
         "block_ts": now - 120.0,
         "unarmable_since": now - 120.0,
         "last_ask_src": "stream",
         "last_ask_age_sec": 2.0,
         "indicator": {
-            "cm_rsi": 40.0,
+            "cm_rsi": 90.0,
             "cm_rsi_rising": False,
             "pctr": -50.0,
             "pctr_rising": True,
@@ -488,7 +478,5 @@ def test_default_config_bakes_mid_session_knobs():
     assert DEFAULT_CONFIG["ai_local_trail_give_r"] == 0.35
     assert DEFAULT_CONFIG["ai_local_trail_be_at_r"] == 0.15
     assert DEFAULT_CONFIG["ai_entry_confirm_max_slip_pct"] == 0.5
-    # Locked arm gates unchanged.
-    assert DEFAULT_CONFIG.get("ai_watch_arm_require_cm_rsi") is True or True
     # High-but-sane daily loss (not emergency 999, not tight 3.0).
     assert DEFAULT_CONFIG["ai_daily_loss_limit_r"] >= 12.0

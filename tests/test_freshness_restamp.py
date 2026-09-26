@@ -389,9 +389,6 @@ def test_should_arm_buy_paint_trust_parity_with_old_row_ts(monkeypatch):
             "ai_watch_arm_mode": "last",
             "desk_product": "scalp_legacy",
             "ai_watch_require_exh_rising": False,
-            "ai_watch_arm_require_cm_rsi": False,
-            "ai_watch_soft_ob_enabled": False,
-            "ai_watch_mistimed_heat_enabled": False,
         },
         now=now,
     )
@@ -482,9 +479,6 @@ def test_promote_false_stale_from_young_field_age(monkeypatch):
             "ai_watch_arm_mode": "last",
             "desk_product": "scalp_legacy",
             "ai_watch_require_exh_rising": False,
-            "ai_watch_arm_require_cm_rsi": False,
-            "ai_watch_soft_ob_enabled": False,
-            "ai_watch_mistimed_heat_enabled": False,
         },
         now=now,
     )

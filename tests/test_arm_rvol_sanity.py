@@ -110,9 +110,6 @@ def test_should_arm_buy_respects_sane_max_zero_and_twenty_five():
 
     cfg0 = _last_cfg(
         ai_watch_arm_rvol_sane_max=0.0,
-        ai_watch_arm_require_cm_rsi=False,
-        ai_watch_soft_ob_enabled=False,
-        ai_watch_mistimed_heat_enabled=False,
         ai_watch_exhaustion_heat_min_pct=0.0,
     )
     ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=cfg0)

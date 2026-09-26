@@ -127,9 +127,7 @@ OVERLAY_KEYS = {
     # MACD direction veto (fail-open on a missing reading). The require_macd
     # stack, the narrowing veto and the EXH override were retired.
     "macd_block_bearish": "ai_watch_macd_block_bearish",
-    "require_cm_rsi": "ai_watch_arm_require_cm_rsi",
     "require_exh_rising": "ai_watch_require_exh_rising",
-    "mistimed_heat": "ai_watch_mistimed_heat_enabled",
 }
 VERDICT_CANDIDATE = "candidate"
 VERDICT_HYPOTHESIS = "hypothesis"

@@ -850,23 +850,6 @@ DEFAULT_CONFIG = {
     # flat → exh_not_rising (except pinned-ceiling + MACD-armed). Missing
     # reading → exh_rising_required (no blind no_exhaustion_fallback).
     "ai_watch_require_exh_rising": True,
-    # Soft overbought / late-heat arm veto. Refuse when the name is already
-    # in the overbought band AND RSI is at/above this floor. 0 / enabled
-    # false = off. Also inert when ai_watch_arm_require_cm_rsi is false
-    # (do not reintroduce RSI level gates via soft OB).
-    "ai_watch_soft_ob_enabled": True,
-    "ai_watch_soft_ob_rsi_min": 0.0,
-    # Mistimed heating-band chase (GTLB 2026-09-04). Soft OB only covers
-    # overbought+RSI≥55; a name still in the heat band with mid/high RSI
-    # used to arm (confirm RSI ~59, pass 53.3 → MFE ~0.01R). Heating-only:
-    # BULL-class last_overbought + RSI 46 stays on soft OB and is untouched.
-    # Pass floor 52 blocks GTLB's 53.3; peak floor 55 is the backup when RSI
-    # dips under the pass floor after printing hot on earlier confirm ticks.
-    # Default ON for paper scalp_legacy. Does not change RSI hard max 60,
-    # soft OB, macd_min_gap, or the EXH override.
-    "ai_watch_mistimed_heat_enabled": True,
-    "ai_watch_mistimed_heat_rsi_min": 52.0,
-    "ai_watch_mistimed_heat_rsi_peak_min": 55.0,
 
     # ── Plan B burst (premarket burst + RSI-2 >= 70). SAFE OFF. ──
     # Isolated from Plan A: these knobs do not OR into cool/EXH/soft_ob/
@@ -951,32 +934,9 @@ DEFAULT_CONFIG = {
     # whole book the constraint is the data feed (SIP), not this gate.
     # False: thin tape may still arm on zone; the ratchet does not need %R.
     "ai_watch_require_exhaustion_data": True,
-    # CM RSI-2 entry filter, as its own gate rather than a member of the
-    # ai_watch_arm_require triple (that list demands cm_ok AND pctr_ok AND
-    # cm_rsi_rising together, and blocked every in-zone arm when last tried).
-    #
-    # Operator's rule: anything trending up from 0 to 50 is a good entry,
-    # never trending down. A level test plus a direction test — so both have
-    # to come off the same RSI series, which is what ai_watch_cm_rsi_local
-    # below is about.
-    "ai_watch_arm_require_cm_rsi":  False,
-    # The band. 50 is the operator's ceiling; above it the entry is chasing.
+    # Admission RSI ceiling: evaluate_arm_ready refuses a name whose CM RSI-2
+    # is above this (rsi_extended). The CM RSI arm gate itself was retired.
     "ai_watch_arm_cm_rsi_max":       50.0,
-    "ai_watch_arm_cm_rsi_min":        0.0,
-    # Require the turn as well as the band. The band is the load-bearing half
-    # — see the numbers in cm_rsi_allows_buy. False trades a little edge per
-    # trade for five times the opportunities.
-    "ai_watch_arm_cm_rsi_require_rising": True,
-    # When rising is required: still allow a falling RSI if it is below this
-    # level AND fast %R is already rising toward overbought (pctr_rising).
-    # 0 = off (strict "never trending down"). 20 = deep washout exception.
-    "ai_watch_arm_cm_rsi_allow_falling_below": 0.0,
-    # Refuse an RSI the engine drew on the REST fallback instead of the
-    # Finnhub tape. bars_src flips per ticker mid-session (20 recoveries and
-    # 27 fallbacks across 18 symbols on 2026-08-20), so without this the same
-    # gate silently alternates between two data sources. The %R side's
-    # equivalent is ai_watch_require_live_pctr.
-    "ai_watch_require_realtime_rsi": False,
     # Recompute CM RSI-2 locally off Alpaca IEX REST bars, overwriting the
     # engine's reading. False keeps ONE series: the level and the direction
     # both come from the engine, which with REALTIME_BARS on is the Finnhub
@@ -1359,7 +1319,7 @@ DEFAULT_CONFIG = {
     # diff; factor 2 is the gitignored config/live_armed.json naming the
     # account. Neither alone arms anything — see live_arm.py.
     # Rollback for the 2026-09-18 change that pointed Phase B's indicator arm
-    # at RTH's (exhaustion_allows_buy + cm_rsi_allows_buy). True restores the
+    # at RTH's exhaustion_allows_buy. True restores the
     # old 40-70 band + direction-only RSI, which CONFLICTS with the square arm
     # — keep it off unless you mean to run the lanes on different theses.
     "ai_phase_b_legacy_arm":          False,
@@ -1773,11 +1733,6 @@ _EFFECTIVE_KEYS = (
     "ai_watch_arm_mode",
     "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_require_exh_rising",
-    "ai_watch_soft_ob_enabled",
-    "ai_watch_soft_ob_rsi_min",
-    "ai_watch_mistimed_heat_enabled",
-    "ai_watch_mistimed_heat_rsi_min",
-    "ai_watch_mistimed_heat_rsi_peak_min",
     "ai_strength_trade_enabled",
     "ai_strength_trade_dry_run",
     "ai_strength_signal_enabled",
@@ -2068,7 +2023,6 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_live",
     "ai_watch_exhaustion_trade_price_only",
     "ai_watch_stream_bars_live",
-    "ai_watch_arm_require_cm_rsi",
     # MACD arm levers — legend/State must match the live gate (require_macd
     # already false; narrowing off retires gap-as-arm clutter).
     "ai_watch_macd_block_bearish",
@@ -2076,20 +2030,12 @@ SAFE_CONFIG_KEYS = [
     # Published so the book legend prints the band the gate is actually
     # using. Without it the legend silently falls back to a default and
     # stops describing the rule the moment the floor is changed.
-    "ai_watch_arm_cm_rsi_min",
-    "ai_watch_arm_cm_rsi_allow_falling_below",
-    "ai_watch_require_realtime_rsi",
     "ai_watch_cm_rsi_local",
     "ai_watch_exhaustion_exit_sec",
     "ai_watch_exhaustion_exit_give_pct",
     "ai_watch_exhaustion_heat_min_pct",
     "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_require_exh_rising",
-    "ai_watch_soft_ob_enabled",
-    "ai_watch_soft_ob_rsi_min",
-    "ai_watch_mistimed_heat_enabled",
-    "ai_watch_mistimed_heat_rsi_min",
-    "ai_watch_mistimed_heat_rsi_peak_min",
     "ai_strength_trade_enabled",
     "ai_strength_trade_dry_run",
     "ai_strength_signal_enabled",

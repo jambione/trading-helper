@@ -113,9 +113,6 @@ _FINGERPRINT_KEYS = (
     # requires 0.8x separation.
     # Heating-band RSI chase veto (GTLB). Changes which last_heating arms
     # clear; soft OB covers overbought only.
-    "ai_watch_mistimed_heat_enabled",
-    "ai_watch_mistimed_heat_rsi_min",
-    "ai_watch_mistimed_heat_rsi_peak_min",
     # Gaining-EXH requirement — falling/flat EXH arms are a different regime.
     "ai_watch_require_exh_rising",
     "ai_watch_open_seed_stream_min_pct",

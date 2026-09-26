@@ -445,9 +445,6 @@ def test_refresh_seat_indicators_stamps_engine(monkeypatch, tmp_path):
         def exhaustion_allows_buy(record, cfg):
             return True, "stub_exh"
 
-        @staticmethod
-        def cm_rsi_allows_buy(record, cfg):
-            return True, "stub_rsi"
 
     monkeypatch.setitem(__import__("sys").modules, "ai_entry_watch", _EW)
     out = pb.refresh_seat_indicators(cfg=CFG_ON, now=_ts(8, 1))

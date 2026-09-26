@@ -605,10 +605,10 @@ def phase_b_arm_allows(
     phase_b_exh_band. Premarket was gated to reject exactly the state the
     thesis says to buy.
 
-    So the indicator legs now call the same functions the RTH arm calls —
-    exhaustion_allows_buy (square/triangle) and cm_rsi_allows_buy (direction)
-    — rather than reimplementing them. Shared, so the lanes cannot drift apart
-    again: a change to the square is a change to both.
+    So the indicator leg now calls the same function the RTH arm calls —
+    exhaustion_allows_buy — rather than reimplementing it. (The RTH CM RSI
+    arm gate, cm_rsi_allows_buy, was retired; it was off live.) Shared, so
+    the lanes cannot drift apart again.
 
     What stays Phase B's own is session mechanics, which are genuinely
     different premarket: the entry clock, print freshness, seat caps and the
@@ -653,10 +653,6 @@ def phase_b_arm_allows(
         ok_exh, why_exh = ew.exhaustion_allows_buy(record, c)
         if not ok_exh:
             return False, why_exh
-
-        ok_rsi, why_rsi = ew.cm_rsi_allows_buy(record, c)
-        if not ok_rsi:
-            return False, why_rsi
     else:
         ok_legacy, why_legacy = _legacy_arm_allows(record, c)
         if not ok_legacy:

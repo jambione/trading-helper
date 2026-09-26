@@ -1815,9 +1815,9 @@ def evaluate_arm_ready(
 ) -> tuple[bool, str]:
     """Admit-time arm-ready check. Returns ``(ok, reason)``.
 
-    Requires young tape, RSI rising under arm max, EXH rising at/above heat
-    min, and price under effective max. Reason codes match arm/block labels
-    where possible (``stale``, ``rsi_not_rising``, ``rsi_extended``,
+    Requires young tape, RSI under arm max, EXH rising at/above heat min,
+    and price under effective max. Reason codes match arm/block labels
+    where possible (``stale``, ``rsi_extended``,
     ``exh_falling``, ``above_max_price``, …).
     """
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -1843,7 +1843,7 @@ def evaluate_arm_ready(
         return False, "above_max_price"
 
     ind = _arm_ready_ind(row, indicators)
-    # RSI: rising and under arm max (same locked arm knobs — not loosened).
+    # RSI: under arm max (same locked arm knob — not loosened).
     rsi = _f_or_none(ind.get("cm_rsi"))
     if rsi is None:
         rsi = _f_or_none(row.get("cm_rsi"))
@@ -1855,12 +1855,6 @@ def evaluate_arm_ready(
         rsi_max = 75.0
     if float(rsi) > rsi_max:
         return False, "rsi_extended"
-    if bool(cfg.get("ai_watch_arm_cm_rsi_require_rising", True)):
-        rising_rsi = ind.get("cm_rsi_rising")
-        if rising_rsi is None:
-            rising_rsi = row.get("cm_rsi_rising")
-        if not bool(rising_rsi):
-            return False, "rsi_not_rising"
 
     if exh_oversold_triangle_arm_enabled(cfg):
         cls, _ = classify_exh_seat(row, cfg, ind=ind)
@@ -8915,45 +8909,6 @@ def refresh_engine_exh(rec: dict, sig: dict | None, cfg: dict | None,
     return True
 
 
-# Block codes cm_rsi_allows_buy can produce. Carried-forward values for these
-# go stale the moment the RSI behind them moves.
-_RSI_BLOCK_PREFIXES = ("no_rsi_data", "rsi_extended", "rsi_not_rising",
-                       "rsi_below_band", "rsi_not_realtime")
-
-
-def _restamp_rsi_block(rec: dict, cfg: dict, now: float) -> None:
-    """Re-decide an RSI block against the RSI the row is now showing.
-
-    The arm gate only runs in poll_once, on ai_watch_poll_sec (20s), and the
-    2s sync carries block_code forward untouched. Once the sync started
-    refreshing the RSI every 2s, that left a window where the State column
-    contradicted the RSI column beside it: a row could read "no rsi data" next
-    to a perfectly good 89.9, because the block was decided one cycle earlier
-    when the engine had not computed the name yet.
-
-    Only RSI-family codes are restamped, and only when the gate is enabled —
-    this is not a place to re-run the whole arm decision, just to stop one
-    label outliving the number it describes.
-    """
-    if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
-        return
-    code = str(rec.get("block_code") or "").strip().lower()
-    if not code.startswith(_RSI_BLOCK_PREFIXES):
-        return
-    ok, why = cm_rsi_allows_buy(rec, cfg)
-    if ok:
-        # The reason it was held on no longer applies. Clear rather than
-        # invent a new one — the next poll runs the full gate.
-        rec["block_code"] = None
-        rec["block_reason"] = None
-        rec["blocker"] = None
-    elif why != code:
-        rec["block_code"] = why
-        rec["blocker"] = format_blocker(why)
-        rec["block_reason"] = rec["blocker"]
-        rec["block_ts"] = float(now)
-
-
 ENGINE_HEARTBEAT = ROOT / "signal_state.json"
 
 # ── name-level gates: SIP spread and the opening gap ────────────────────────
@@ -10608,8 +10563,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             # up to ai_watch_poll_sec (20s) behind the reading the operator
             # is watching move on the chart.
             refresh_engine_macd(rec, _sync_indicators.get(sym))
-            if refresh_engine_rsi(rec, _sync_indicators.get(sym)):
-                _restamp_rsi_block(rec, cfg_z, t0)
+            refresh_engine_rsi(rec, _sync_indicators.get(sym))
         except Exception:
             pass
         # When the panels last offered this name. The grace below measures
@@ -12423,116 +12377,6 @@ def macd_bearish_blocks_buy(
     return "macd_bearish"
 
 
-def cm_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
-    """CM RSI-2 entry filter: inside the band AND turning up.
-
-    The operator's rule, in their words: anything trending up from 0 to 50 is
-    a good entry, never trending down. So this is a LEVEL test and a
-    DIRECTION test, and both readings must come off the same series — see the
-    note in apply_live_exhaustion about why that was not true before.
-
-    Direction is the engine's ``cm_rsi_rising``, which is RSI-2 now against
-    RSI-2 ``trend_lookback`` bars back (2 by default, strategy_three_indicator
-    ``_rising``). Flat is not rising: on a 2-period RSI a flat print is
-    usually a name that is not trading, not one that is turning.
-
-    Exception (``ai_watch_arm_cm_rsi_allow_falling_below``): when RSI is still
-    falling but deeply washed out (below that threshold) AND fast %R is already
-    rising toward overbought (``pctr_rising``), allow the arm. EXH is the
-    timing confirm; RSI only says "not chasing". 0 disables the exception.
-
-    ``ai_watch_require_realtime_rsi`` additionally refuses a reading the
-    engine drew on the REST fallback rather than the Finnhub tape — but only
-    when this gate is on. When ``ai_watch_arm_require_cm_rsi`` is false the
-    function short-circuits before level / rising / realtime checks, so RSI
-    cannot veto arms (display + provenance elsewhere stay intact).
-    """
-    if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
-        return True, "cm_rsi_off"
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-
-    rsi = _f_or_none(ind.get("cm_rsi"))
-    if rsi is None:
-        return False, "no_rsi_data"
-
-    if bool(cfg.get("ai_watch_require_realtime_rsi", False)):
-        src = str(ind.get("cm_rsi_src") or "").strip().lower()
-        if src != "realtime":
-            return False, f"rsi_not_realtime_{src or 'missing'}"
-
-    try:
-        band_max = float(cfg.get("ai_watch_arm_cm_rsi_max", 50.0))
-    except (TypeError, ValueError):
-        band_max = 50.0
-    try:
-        band_min = float(cfg.get("ai_watch_arm_cm_rsi_min", 0.0))
-    except (TypeError, ValueError):
-        band_min = 0.0
-    if rsi > band_max:
-        return False, "rsi_extended"
-    if rsi < band_min:
-        return False, "rsi_below_band"
-    # Direction is optional because it is the weaker half. Replayed over 4,585
-    # arms at a 15m horizon (tools/rsi_counterfactual.py):
-    #   0-50 AND rising   7% of arms   +0.305%   win 54.8%
-    #   0-50 only        37% of arms   +0.233%   win 49.3%
-    #   rising only      54% of arms   +0.019%   win 49.8%
-    # The band carries the edge. Requiring the turn as well buys a little more
-    # per trade and a better win rate, at a fifth of the opportunities; the
-    # turn on its own is indistinguishable from taking every arm.
-    if bool(cfg.get("ai_watch_arm_cm_rsi_require_rising", True)):
-        if not bool(ind.get("cm_rsi_rising")):
-            try:
-                fall_max = float(
-                    cfg.get("ai_watch_arm_cm_rsi_allow_falling_below", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                fall_max = 0.0
-            # Deep OS + EXH already heating: waive the RSI turn.
-            if (
-                fall_max > 0
-                and rsi < fall_max
-                and bool(ind.get("pctr_rising"))
-            ):
-                return True, "rsi_deep_os_exh_heating"
-            return False, "rsi_not_rising"
-        return True, "rsi_turning_up"
-    return True, "rsi_in_band"
-
-
-def late_heat_blocks_buy(record: dict, cfg: dict) -> str | None:
-    """Refuse a new long that is already overbought AND RSI-near-cap.
-
-    Conjunction with a soft RSI floor (historically 55, below a hard max)
-    separated HPE-class OB+high-RSI chases from BULL-class early OB heats.
-    Off when ``ai_watch_soft_ob_enabled`` is false, the RSI floor is 0, or
-    ``ai_watch_arm_require_cm_rsi`` is false (Plan A 2026-09-17: RSI is not
-    an arm gate — do not reintroduce level vetoes via soft OB). Missing RSI
-    abstains. Does not change MACD gap or the EXH override.
-    """
-    if not bool(cfg.get("ai_watch_soft_ob_enabled", False)):
-        return None
-    # RSI arm gate off → soft-OB RSI floor must not veto either.
-    if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
-        return None
-    try:
-        rsi_floor = float(cfg.get("ai_watch_soft_ob_rsi_min", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        rsi_floor = 0.0
-    if rsi_floor <= 0:
-        return None
-    if exhaustion_state(record, cfg) != "overbought":
-        return None
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-    rsi = _f_or_none(ind.get("cm_rsi"))
-    if rsi is None:
-        return None
-    if rsi + 1e-9 >= rsi_floor:
-        return "late_heat"
-    return None
-
-
 def _note_confirm_rsi(record: dict) -> float | None:
     """Track peak cm_rsi across the current arm-confirm streak.
 
@@ -12552,98 +12396,6 @@ def _note_confirm_rsi(record: dict) -> float | None:
         record["arm_confirm_rsi_max"] = float(rsi)
         return float(rsi)
     return float(prev)
-
-
-def mistimed_heat_detail(record: dict, cfg: dict | None = None) -> str:
-    """Operator/log detail for a mistimed_heat refuse."""
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-    rsi = _f_or_none(ind.get("cm_rsi"))
-    peak = _f_or_none(record.get("arm_confirm_rsi_max")) if isinstance(record, dict) else None
-    if peak is None:
-        peak = rsi
-    elif rsi is not None:
-        peak = max(peak, rsi)
-    exh = exhaustion_pct(record) if isinstance(record, dict) else None
-    state = exhaustion_state(record, cfg or {}) if isinstance(record, dict) else "?"
-    parts = [f"why=heating state={state}"]
-    if rsi is not None:
-        parts.append(f"rsi={rsi:.1f}")
-    if peak is not None:
-        parts.append(f"peak={peak:.1f}")
-    if exh is not None:
-        parts.append(f"exh={exh:.1f}")
-    return " ".join(parts)
-
-
-def mistimed_heat_blocks_buy(
-    record: dict,
-    cfg: dict,
-    *,
-    exh_why: str | None = None,
-) -> str | None:
-    """Refuse a heating-band arm that is already RSI-extended (GTLB chase).
-
-    Soft OB (``late_heat``) only fires on **overbought** + RSI≥55. GTLB on
-    2026-09-04 armed ``last_heating`` with confirm RSI ~59.3 / pass 53.3,
-    EXH still in the heat band — soft OB never ran. MFE ~0.01R then local
-    trail −0.13R.
-
-    Rule (heating path only — BULL-class ``last_overbought`` + RSI 46 stays
-    on soft OB and is untouched here):
-
-      refuse when exh_why is heating AND (
-          pass cm_rsi ≥ ai_watch_mistimed_heat_rsi_min   (default 52)
-          OR confirm-window peak ≥ ai_watch_mistimed_heat_rsi_peak_min
-             (default 55; 0 disables the peak leg)
-      )
-
-    Pass floor 52 blocks GTLB's 53.3 without needing the peak; the peak
-    leg is the backup when RSI dips under the pass floor after printing
-    hot on earlier confirm ticks. Early healthy heats (RSI ~46) clear
-    both. Does not change RSI hard max 60, soft OB, macd_min_gap, or
-    the EXH override.
-    """
-    if not bool(cfg.get("ai_watch_mistimed_heat_enabled", True)):
-        return None
-    # Aligned with soft OB: when CM RSI is not an arm gate, do not refuse
-    # on RSI floors here either.
-    if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
-        return None
-    why = str(exh_why or "").strip().lower()
-    # Accept raw exhaustion why or the last_/zone_ wrapped form.
-    if why.startswith("last_"):
-        why = why[5:]
-    elif why.startswith("zone_"):
-        why = why[5:]
-    if why != "heating":
-        return None
-    try:
-        rsi_floor = float(cfg.get("ai_watch_mistimed_heat_rsi_min", 52.0) or 0.0)
-    except (TypeError, ValueError):
-        rsi_floor = 52.0
-    try:
-        peak_floor = float(
-            cfg.get("ai_watch_mistimed_heat_rsi_peak_min", 55.0) or 0.0)
-    except (TypeError, ValueError):
-        peak_floor = 55.0
-    if rsi_floor <= 0 and peak_floor <= 0:
-        return None
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-    rsi = _f_or_none(ind.get("cm_rsi"))
-    if rsi is None:
-        return None
-    peak = _f_or_none(record.get("arm_confirm_rsi_max")) if isinstance(record, dict) else None
-    if peak is None:
-        peak = rsi
-    else:
-        peak = max(float(peak), float(rsi))
-    if rsi_floor > 0 and rsi + 1e-9 >= rsi_floor:
-        return "mistimed_heat"
-    if peak_floor > 0 and peak + 1e-9 >= peak_floor:
-        return "mistimed_heat"
-    return None
 
 
 def exhaustion_allows_buy(
@@ -15583,11 +15335,6 @@ def should_arm_buy(
     # sell_signal veto below can reference exh_why without UnboundLocalError.
     exh_ok, exh_why = exhaustion_allows_buy(record, cfg, now=t_arm)
 
-    # CM RSI-2 band + turn (checked when ai_watch_arm_require_cm_rsi is active)
-    rsi_ok, rsi_why = cm_rsi_allows_buy(record, cfg)
-    if not rsi_ok:
-        return False, rsi_why
-
     # Indicators: optional timing filter. Default off — book symbols often have
     # no engine indicator map, so requiring cm_ok/pctr_ok/cm_rsi_rising blocked
     # every in-zone arm. When present and enabled, still refuse sell_signal and
@@ -15741,26 +15488,12 @@ def should_arm_buy(
             return False, exh_why
         # zone_win > 0: stay on the name; zone entry starts a wait below.
 
-    # Soft overbought / late-heat: already in the OB band AND RSI is
-    # already near the hard cap. Runs after the EXH allow so we do not
-    # mask a real fade (not_rising_overbought) with late_heat, and after
-    # the RSI hard-max so rsi_extended still wins above 60.
     if exh_ok:
         # Room below the day's high (off at 0). Runs after the cross check so
         # the mid-rise latch keeps seeing every reading while this refuses.
         _hod_why = room_below_hod_refusal(record, _gate_sym, ask, cfg, now=now)
         if _hod_why:
             return False, _hod_why
-        late = late_heat_blocks_buy(record, cfg)
-        if late:
-            return False, late
-        # Heating-band chase (GTLB): soft OB needs overbought, so a name
-        # still in the heat band with mid/high RSI used to arm. Peak RSI
-        # across confirm ticks is noted by the poller before this runs on
-        # later ticks; current RSI is always considered too.
-        mistimed = mistimed_heat_blocks_buy(record, cfg, exh_why=exh_why)
-        if mistimed:
-            return False, mistimed
 
     # MACD direction veto: refuse a crossed-down gap. Fail-open on missing
     # MACD so it cannot starve opens the way macd_src_unknown once did.
@@ -16432,8 +16165,7 @@ def _arm_streak(rec: dict, ok: bool, *, seq: int | None = None) -> int:
 def _arm_gate_snapshot(rec: dict, ask: float | None = None) -> dict:
     """The handful of inputs the arm gate actually reads.
 
-    Field names match cm_rsi_allows_buy / macd_allows_buy / exhaustion_allows_
-    buy, so diffing two snapshots points straight at the input that moved
+    Field names match the indicator keys the arm gate reads, so diffing two snapshots points straight at the input that moved
     between the batch verdict and the post-refresh one. Values are read from
     ``indicator`` first and the record second, because refresh_engine_rsi and
     refresh_engine_macd stamp the former while the seed path fills the latter.
@@ -17123,8 +16855,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 # with that off it would read False for every name forever.
                 "cm_rsi_low": sig.get("cm_rsi_low"),
                 # Where the engine's bars came from, carried with the reading
-                # so the arm gate can refuse an RSI drawn on the REST fallback
-                # instead of the live tape. See cm_rsi_allows_buy.
+                # (display and the decision ledger).
                 "cm_rsi_src": sig.get("bars_src"),
                 "cm_rsi_age_sec": sig.get("bars_age_sec"),
                 # And the same two for MACD, which is now THE entry lever.
@@ -17689,9 +17420,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if _sr:
             _skip(_sr, detail=px_src or "not_stream")
             continue
-        # Peak RSI across the confirm window must be visible to mistimed_heat
-        # on later ticks (GTLB: confirm ~59.3, pass 53.3). Current RSI alone
-        # is enough when the pass print is already ≥ the floor.
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         if not ok_arm:
             _log_arm_recheck(
@@ -17704,11 +17432,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                        "late_hold_closed", "late_hold_not_late_admit"):
                 _skip(why)
             else:
-                detail = (
-                    mistimed_heat_detail(rec, cfg)
-                    if why == "mistimed_heat" else None
-                )
-                set_block_reason(rec, why or "blocked", now=t0, detail=detail)
+                set_block_reason(rec, why or "blocked", now=t0)
                 touched[sym] = rec
             continue
 
@@ -17729,7 +17453,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         need_arm = _arm_confirm_ticks(cfg)
         streak = _arm_streak(rec, True, seq=poll_seq)
         # After streak update (which may clear peak on a restart), note this
-        # tick's RSI so the next poll's mistimed_heat sees the window max.
+        # tick's RSI so the decision ledger records the confirm-window max.
         _note_confirm_rsi(rec)
         _arm_after = _arm_gate_snapshot(rec, ask_f)
         if streak < need_arm:
