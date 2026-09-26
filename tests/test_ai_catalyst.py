@@ -455,3 +455,83 @@ def test_universe_file_has_100(bot_mtime):
     uni = ac.load_universe()
     assert len(uni["symbols"]) == 100
     assert len(uni["etfs"]) == 10
+
+
+# ---------------------------------------------------------------------------
+# News request shape (real alpaca-py NewsRequest; fake client, no network)
+# ---------------------------------------------------------------------------
+
+class _FakeNewsResp:
+    def __init__(self, news, token=None):
+        self.data = {"news": news}
+        self.next_page_token = token
+
+
+class _RecordingNewsClient:
+    """Captures the real NewsRequest objects fetch_alpaca_news builds."""
+
+    def __init__(self, pages):
+        self.pages = list(pages)
+        self.requests = []
+
+    def get_news(self, req):
+        self.requests.append(req)
+        return self.pages.pop(0) if self.pages else _FakeNewsResp([])
+
+
+def _news_obj(nid, ts, symbols, headline="h"):
+    from types import SimpleNamespace
+    from datetime import timezone as _tz
+    return SimpleNamespace(
+        id=nid, headline=headline, summary="s", url=f"https://x/{nid}",
+        source="benzinga", created_at=datetime.fromtimestamp(ts, _tz.utc),
+        symbols=symbols,
+    )
+
+
+def test_news_request_kwargs_valid_for_real_alpaca_newsrequest(bot_mtime):
+    from alpaca.data.requests import NewsRequest
+
+    t1 = _weekday_ts(8, 45)
+    t0 = t1 - 72 * 3600
+    client = _RecordingNewsClient([
+        _FakeNewsResp([_news_obj(2, t1 - 60, ["AAPL"]), _news_obj(1, t1 - 120, ["NVDA", "AAPL"])],
+                      token="next"),
+        _FakeNewsResp([_news_obj(3, t1 - 30, ["JPM"])]),
+    ])
+    got = ac.fetch_alpaca_news(["nvda", "AAPL", "JPM"], t0, t1, client=client)
+
+    assert len(client.requests) == 2
+    for req in client.requests:
+        assert isinstance(req, NewsRequest)
+        assert isinstance(req.symbols, str)
+        assert req.symbols == "AAPL,JPM,NVDA"
+    assert client.requests[1].page_token == "next"
+    assert [r["id"] for r in got["AAPL"]] == ["alpaca:2", "alpaca:1"]
+    assert [r["id"] for r in got["NVDA"]] == ["alpaca:1"]
+    assert [r["id"] for r in got["JPM"]] == ["alpaca:3"]
+
+
+def test_news_request_list_symbols_would_fail(bot_mtime):
+    """Guard: alpaca-py rejects a list, which is what silently zeroed news."""
+    from alpaca.data.requests import NewsRequest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        NewsRequest(symbols=["AAPL", "NVDA"], limit=50)
+
+
+def test_news_fetch_error_is_logged_not_raised(bot_mtime, capsys, monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "sk_test_SENTINEL")
+
+    class Boom:
+        def get_news(self, req):
+            raise RuntimeError("upstream 500")
+
+    t1 = _weekday_ts(8, 45)
+    got = ac.fetch_alpaca_news(["AAPL", "NVDA"], t1 - 3600, t1, client=Boom())
+    assert got == {"AAPL": [], "NVDA": []}
+    out = capsys.readouterr().out
+    assert "[ai_catalyst] news fetch failed" in out
+    assert "RuntimeError: upstream 500" in out
+    assert "SENTINEL" not in out

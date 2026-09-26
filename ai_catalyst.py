@@ -532,7 +532,7 @@ def fetch_alpaca_news(
         pages = 0
         while pages < 40:
             kw: dict[str, Any] = {
-                "symbols": chunk,
+                "symbols": ",".join(chunk),  # alpaca-py NewsRequest.symbols is str
                 "start": start,
                 "end": end,
                 "limit": limit,
@@ -542,7 +542,14 @@ def fetch_alpaca_news(
                 kw["page_token"] = token
             try:
                 resp = nc.get_news(NewsRequest(**kw))
-            except Exception:
+            except Exception as e:  # noqa: BLE001
+                # Child stdout is logs/ai_catalyst.log. Type + short message only.
+                msg = str(e).replace("\n", " ")[:300]
+                print(
+                    f"[ai_catalyst] news fetch failed chunk={i // batch_size} "
+                    f"n_symbols={len(chunk)} page={pages}: {type(e).__name__}: {msg}",
+                    flush=True,
+                )
                 break
             items = getattr(resp, "news", None)
             if items is None:
