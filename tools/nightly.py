@@ -252,7 +252,9 @@ def summary_md(day: str, res: dict) -> str:
             lines += ["First divergences (live vs replay): " + "; ".join(
                 f"{k} {v.get('t')}" for k, v in ex["first_divergence"].items()), ""]
     else:
-        lines += [f"**Exact replay: not run** — {ex.get('why')}", ""]
+        why_ex = ex.get("why") or ("day predates the desk_io recorder (2026-09-26); approximate "
+                                   "replay only" if res.get("legacy") else "not requested")
+        lines += [f"**Exact replay: not run** — {why_ex}", ""]
     fid = res.get("fidelity_json") or {}
     if fid:
         lines += [f"Approximate replay (fidelity, secondary): recall {fid.get('recall')}, precision "
