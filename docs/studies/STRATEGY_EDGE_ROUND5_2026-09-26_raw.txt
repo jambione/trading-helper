@@ -1,0 +1,466 @@
+T7 seed-source audit: 6193 (source, symbol, day) nominations 2026-08-06..2026-09-25, 313 skipped (no bars / after 15:55)
+  entry = close of the nomination day; excess = return - U2 equal-weight same horizon; bp, gross (no cost); t day-clustered
+
+  price band: all
+  momentum      1d                   n  2792 days   34  mean  -110.0  med   -96.2  win  42%  t -3.69  CI [-166.9, -60.5]
+  momentum      5d                   n  2156 days   30  mean  -447.7  med  -468.3  win  34%  t -7.14  CI [-580.6,-298.7]
+  momentum     10d                   n  1705 days   25  mean  -711.8  med  -697.7  win  32%  t -6.38  CI [-855.4,-542.8]
+  trending      1d                   n  1185 days   35  mean    +8.2  med    -7.8  win  49%  t +0.28  CI [ -50.8, +68.5]
+  trending      5d                   n   915 days   31  mean  +104.5  med   +19.7  win  51%  t +0.08  CI [ -13.7,+197.7]
+  trending     10d                   n   632 days   26  mean    -5.3  med   -93.6  win  46%  t -0.71  CI [-139.7,+133.5]
+  movers        1d                   n   657 days   18  mean  -159.6  med  -120.1  win  41%  t -2.39  CI [-291.8, -25.5]
+  movers        5d                   n   422 days   14  mean  -607.5  med  -774.0  win  33%  t -3.65  CI [-1063.6,-183.4]
+  movers       10d                   n   225 days    9  mean  -621.9  med  -459.1  win  37%  t -3.12  CI [-939.6,-262.1]
+  research      1d                   n   514 days   33  mean    +6.4  med   -18.2  win  47%  t +0.71  CI [ -94.9,+112.5]
+  research      5d                   n   442 days   29  mean   -72.1  med  -143.7  win  43%  t -0.14  CI [-199.1, +51.6]
+  research     10d                   n   344 days   24  mean  -149.6  med  -199.7  win  42%  t -0.70  CI [-321.8, +62.8]
+  bb_live       1d                   n   349 days   31  mean  -264.0  med  -245.6  win  34%  t -2.29  CI [-474.0, -66.8]
+  bb_live       5d                   n   287 days   27  mean  -867.9  med  -748.7  win  26%  t -4.71  CI [-1232.3,-569.4]
+  bb_live      10d                   n   226 days   22  mean -1168.3  med -1183.1  win  25%  t -5.52  CI [-1584.4,-747.4]
+  discord       1d                   n 0
+  discord       5d                   n 0
+  discord      10d                   n 0
+  ALL sources   1d                   n  5497 days   35  mean   -89.3  med   -69.1  win  43%  t -3.83  CI [-133.6, -41.8]
+  ALL sources   5d                   n  4222 days   31  mean  -333.2  med  -293.1  win  38%  t -5.83  CI [-463.5,-194.9]
+  ALL sources  10d                   n  3132 days   26  mean  -534.0  med  -490.5  win  36%  t -7.26  CI [-654.0,-405.3]
+
+  price band: $20-100
+  momentum      1d                   n   406 days   32  mean   -78.4  med   -15.8  win  47%  t -2.15  CI [-177.8,  +0.6]
+  momentum      5d                   n   259 days   28  mean  -244.7  med   -93.1  win  42%  t -2.04  CI [-493.3,  -7.5]
+  momentum     10d                   n   211 days   23  mean  -587.9  med  -140.2  win  42%  t -2.73  CI [-876.1,-280.2]
+  trending      1d                   n   356 days   35  mean    +8.8  med   -14.6  win  47%  t +0.65  CI [ -51.6, +74.5]
+  trending      5d                   n   283 days   31  mean   +93.9  med   +35.6  win  51%  t -0.36  CI [ -76.3,+233.9]
+  trending     10d                   n   201 days   26  mean  -101.4  med   -68.3  win  45%  t -1.39  CI [-310.5, +80.2]
+  movers        1d                   n   155 days   15  mean   -89.8  med   -74.7  win  38%  t -0.48  CI [-691.3,+128.5]
+  movers        5d                   n    23 days   11  mean  -397.7  med -1470.5  win  35%  t -0.11  CI [-1871.2,+1568.0]
+  movers       10d                   n    15 days    7  mean   -21.3  med  -390.0  win  40%  t +0.83  CI [-941.6,+1663.8]
+  research      1d                   n   209 days   32  mean   +36.8  med    +6.0  win  52%  t +1.31  CI [ -32.9,+102.2]
+  research      5d                   n   175 days   28  mean   -19.0  med   -34.4  win  49%  t -0.02  CI [-205.8,+181.8]
+  research     10d                   n   134 days   23  mean   -20.7  med   +73.6  win  52%  t -0.41  CI [-351.0,+332.0]
+  bb_live       1d                   n    12 days   10  mean  -395.4  med   -96.2  win  25%  t -1.68  CI [-906.0,  +0.3]
+  bb_live       5d                   n    10 days    8  mean  +283.6  med    +6.8  win  50%  t +1.62  CI [ -82.0,+745.8]
+  bb_live      10d                   n     9 days    7  mean  +524.5  med   -20.5  win  44%  t +1.24  CI [ -52.3,+1697.4]
+  discord       1d                   n 0
+  discord       5d                   n 0
+  discord      10d                   n 0
+  ALL sources   1d                   n  1138 days   35  mean   -34.9  med   -20.6  win  46%  t -1.02  CI [-106.1, +29.6]
+  ALL sources   5d                   n   750 days   31  mean   -61.9  med   -46.1  win  47%  t -1.52  CI [-266.6,+120.1]
+  ALL sources  10d                   n   570 days   26  mean  -250.5  med   -73.7  win  45%  t -2.16  CI [-453.0, -14.8]
+
+T6 regime rule (prior close): % U2 above 50-day SMA >= 50% AND SPY 20d realized vol <= its trailing 250-day median
+  tune: filter ON 62/150 days
+  validate: filter ON 21/50 days
+  holdout: filter ON 17/50 days
+
+  book 10bp:5:30 (L, max 5 concurrent, $1,000/position):
+  tune     all days                  n  8034 days  150  mean    -3.0  med    -1.9  win  47%  t -4.18  CI [  -4.3,  -1.7]  $/day  -15.92 over 150 days
+  tune     filter ON                 n  3268 days   62  mean    -3.8  med    -1.7  win  47%  t -3.01  CI [  -6.2,  -1.2]  $/day  -19.78 over 62 days
+  tune     filter OFF                n  4766 days   88  mean    -2.4  med    -2.1  win  47%  t -2.90  CI [  -4.0,  -0.9]  $/day  -13.19 over 88 days
+  validate all days                  n  2774 days   50  mean    -3.6  med    -3.2  win  46%  t -3.05  CI [  -5.9,  -1.5]  $/day  -19.72 over 50 days
+  validate filter ON                 n  1176 days   21  mean    -3.1  med    -2.8  win  47%  t -1.81  CI [  -6.6,  +0.2]  $/day  -17.49 over 21 days
+  validate filter OFF                n  1598 days   29  mean    -3.9  med    -3.4  win  46%  t -2.43  CI [  -6.9,  -1.1]  $/day  -21.34 over 29 days
+  holdout  all days                  n  2731 days   50  mean    -1.8  med    -2.1  win  48%  t -1.98  CI [  -3.4,  +0.1]  $/day  -10.04 over 50 days
+  holdout  filter ON                 n   931 days   17  mean    -2.2  med    -1.7  win  48%  t -1.37  CI [  -5.2,  +0.6]  $/day  -11.94 over 17 days
+  holdout  filter OFF                n  1800 days   33  mean    -1.7  med    -2.2  win  47%  t -1.44  CI [  -3.6,  +0.6]  $/day   -9.07 over 33 days
+
+  book mkt:30 (L, max 5 concurrent, $1,000/position):
+  tune     all days                  n  8784 days  150  mean    -6.6  med    -4.7  win  42%  t -11.51  CI [  -7.6,  -5.6]  $/day  -38.67 over 150 days
+  tune     filter ON                 n  3635 days   62  mean    -5.6  med    -3.6  win  43%  t -6.36  CI [  -7.2,  -3.9]  $/day  -32.95 over 62 days
+  tune     filter OFF                n  5149 days   88  mean    -7.3  med    -5.5  win  41%  t -9.74  CI [  -8.7,  -5.9]  $/day  -42.69 over 88 days
+  validate all days                  n  2959 days   50  mean    -5.4  med    -5.1  win  42%  t -4.74  CI [  -7.6,  -3.4]  $/day  -32.02 over 50 days
+  validate filter ON                 n  1247 days   21  mean    -5.7  med    -5.2  win  42%  t -2.68  CI [  -9.7,  -1.4]  $/day  -34.12 over 21 days
+  validate filter OFF                n  1712 days   29  mean    -5.2  med    -5.1  win  42%  t -4.16  CI [  -7.5,  -3.1]  $/day  -30.50 over 29 days
+  holdout  all days                  n  2965 days   50  mean    -4.3  med    -3.7  win  43%  t -5.14  CI [  -5.9,  -2.7]  $/day  -25.34 over 50 days
+  holdout  filter ON                 n  1015 days   17  mean    -5.9  med    -3.5  win  43%  t -3.77  CI [  -9.1,  -3.2]  $/day  -35.51 over 17 days
+  holdout  filter OFF                n  1950 days   33  mean    -3.4  med    -3.7  win  43%  t -3.60  CI [  -5.2,  -1.7]  $/day  -20.11 over 33 days
+
+================ ROUND 5 — T4 / T1 / T3 / T2 / T5 raw outputs (appended 2026-09-26 15:02 ET) ================
+
+----- /tmp/e5_t4.out -----
+  2025-09-29: marks 11
+  2025-11-03: marks 11
+  2025-12-09: marks 11
+  2026-01-15: marks 11
+  2026-02-23: marks 11
+  2026-05-05: marks 11
+  2026-06-10: marks 11
+  2026-07-17: marks 11
+  2026-08-21: marks 11
+
+T4 Mark = top-decile 60d return, SPY > SMA50; mark days tune 108/150, validate 49/50, holdout 40/50
+stage                   hold | part         n  /day    net     t              CI |   rand excess  t_ex | gross-SPY     t
+Mark-only                30m | tune      1188  7.92  -25.1 -5.52 [ -33.5, -15.6] |  -15.3   -9.8 -2.37 |      -7.3 -2.17
+Mark-only                30m | validate   539 10.78   +3.4 +0.26 [ -25.2, +27.5] |  -10.6  +13.9 +1.01 |     +11.8 +1.09
+Mark-only                30m | holdout    440  8.80  -25.0 -3.24 [ -37.6,  -7.9] |  -16.0   -8.9 -1.23 |      -3.6 -0.63
+Mark-only                60m | tune      1188  7.92  -27.8 -4.59 [ -40.0, -14.9] |  -14.2  -13.6 -2.36 |      -9.5 -2.13
+Mark-only                60m | validate   539 10.78  -16.9 -1.06 [ -50.0, +10.2] |   -6.6  -10.2 -0.60 |      -5.4 -0.39
+Mark-only                60m | holdout    440  8.80  -23.2 -2.84 [ -38.1,  -6.1] |  -11.6  -11.6 -1.39 |      -3.3 -0.55
+Mark-only              15:50 | tune      1188  7.92  -26.4 -2.61 [ -45.8,  -7.8] |  -18.0   -8.5 -1.00 |      -6.8 -0.95
+Mark-only              15:50 | validate   539 10.78   -7.6 -0.26 [ -71.6, +40.7] |  -16.6   +9.0 +0.32 |      +6.8 +0.30
+Mark-only              15:50 | holdout    440  8.80  -19.9 -1.68 [ -40.4,  +2.0] |  -13.5   -6.3 -0.51 |      -1.8 -0.20
+Mark-only                 1d | tune      1188  7.92   +1.6 +0.09 [ -36.1, +36.8] |  -17.5  +19.1 +1.15 |     +19.8 +1.43
+Mark-only                 1d | validate   539 10.78   +8.2 +0.15 [-113.0,+111.3] |  -11.0  +19.2 +0.34 |     +21.3 +0.44
+Mark-only                 1d | holdout    429  8.58  -28.4 -1.28 [ -67.2, +23.1] |  -16.8  -11.5 -0.57 |      -7.7 -0.42
+Mark-only                 5d | tune      1188  7.92 +105.3 +3.28 [ +40.7,+166.6] |  -18.1 +123.4 +4.07 |    +104.9 +4.26
+Mark-only                 5d | validate   539 10.78  +73.3 +0.77 [-145.4,+252.6] |   -4.2  +77.5 +0.82 |     +75.5 +0.91
+Mark-only                 5d | holdout    385  7.70  -81.6 -1.77 [-179.8,  -5.5] |  -11.2  -70.4 -1.55 |     -48.7 -1.14
+Mark+Set                 30m | tune       752  5.01  -19.8 -4.63 [ -27.9, -11.7] |   -9.8  -10.0 -2.56 |      -8.5 -2.36
+Mark+Set                 30m | validate   360  7.20   -7.4 -1.02 [ -28.0,  +9.6] |   -6.5   -0.9 -0.40 |      +0.3 -0.22
+Mark+Set                 30m | holdout    286  5.72  -16.3 -2.80 [ -28.8,  -4.8] |   -6.9   -9.4 -1.65 |      -4.6 -0.81
+Mark+Set                 60m | tune       752  5.01  -22.9 -3.99 [ -35.5, -12.2] |   -9.3  -13.6 -2.83 |      -9.4 -2.10
+Mark+Set                 60m | validate   360  7.20  -16.5 -1.39 [ -44.8, +13.0] |   -2.6  -13.9 -1.16 |      -8.3 -0.90
+Mark+Set                 60m | holdout    286  5.72  -14.7 -2.29 [ -28.7,  -1.1] |   -5.5   -9.2 -1.72 |      -5.1 -0.97
+Mark+Set               15:50 | tune       752  5.01  -18.7 -1.86 [ -40.1,  +1.0] |  -12.8   -6.0 -1.04 |      -3.8 -0.77
+Mark+Set               15:50 | validate   360  7.20   -5.0 -0.83 [ -66.0, +47.5] |   -6.5   +1.5 -0.46 |      +3.1 -0.41
+Mark+Set               15:50 | holdout    286  5.72  -11.5 -1.10 [ -31.5,  +8.3] |   -8.0   -3.5 -0.61 |      +0.9 -0.20
+Mark+Set                  1d | tune       752  5.01  +19.1 +0.93 [ -20.0, +58.7] |   -9.5  +28.6 +1.38 |     +31.9 +1.92
+Mark+Set                  1d | validate   360  7.20  +44.5 +0.80 [ -96.4,+167.9] |   +3.6  +40.8 +0.90 |     +47.4 +1.17
+Mark+Set                  1d | holdout    280  5.60  -25.5 -1.30 [ -66.7, +27.9] |   -7.5  -18.0 -1.21 |     -10.4 -0.84
+Mark+Set                  5d | tune       752  5.01 +122.1 +3.46 [ +51.1,+192.2] |  -14.9 +137.0 +3.77 |    +113.8 +4.00
+Mark+Set                  5d | validate   360  7.20  +50.0 +0.83 [-166.3,+267.4] |   +6.3  +43.7 +0.85 |     +48.5 +0.94
+Mark+Set                  5d | holdout    257  5.14 -111.2 -2.01 [-245.1, -13.2] |   -1.9 -109.3 -1.94 |     -83.5 -1.73
+Mark+Set+Go(%R)          30m | tune       748  4.99  -17.3 -5.87 [ -24.3, -11.4] |   -8.3   -9.1 -3.45 |      -6.9 -3.03
+Mark+Set+Go(%R)          30m | validate   357  7.14  -14.8 -2.26 [ -32.3,  +1.0] |   -7.5   -7.3 -1.22 |      -4.5 -1.14
+Mark+Set+Go(%R)          30m | holdout    284  5.68  -12.9 -2.66 [ -22.2,  -1.8] |   -6.3   -6.6 -1.54 |      -2.4 -0.73
+Mark+Set+Go(%R)          60m | tune       748  4.99  -19.5 -4.23 [ -30.8, -10.2] |  -10.7   -8.8 -2.43 |      -6.3 -2.10
+Mark+Set+Go(%R)          60m | validate   357  7.14  -16.3 -1.65 [ -41.6,  +9.4] |   -8.7   -7.6 -0.97 |      -7.2 -1.00
+Mark+Set+Go(%R)          60m | holdout    284  5.68   -7.9 -1.15 [ -20.9,  +5.2] |   -7.6   -0.3 -0.13 |      +1.6 +0.26
+Mark+Set+Go(%R)        15:50 | tune       748  4.99  -13.7 -1.61 [ -33.6,  +4.5] |  -13.5   -0.2 -0.28 |      +0.1 -0.42
+Mark+Set+Go(%R)        15:50 | validate   357  7.14   -7.1 -0.99 [ -60.1, +40.9] |   -8.3   +1.1 -0.56 |      +2.2 -0.52
+Mark+Set+Go(%R)        15:50 | holdout    284  5.68   -5.0 -0.39 [ -24.6, +16.7] |   -6.9   +1.9 +0.07 |      +7.2 +0.57
+Mark+Set+Go(%R)           1d | tune       748  4.99  +24.8 +1.22 [ -13.7, +63.4] |  -16.9  +41.7 +2.24 |     +36.4 +2.19
+Mark+Set+Go(%R)           1d | validate   357  7.14  +46.0 +0.79 [ -89.7,+167.1] |   -1.7  +47.7 +0.95 |     +49.0 +1.18
+Mark+Set+Go(%R)           1d | holdout    278  5.56  -19.2 -0.96 [ -60.8, +38.5] |  -13.9   -5.3 -0.47 |      -4.0 -0.48
+Mark+Set+Go(%R)           5d | tune       748  4.99 +129.1 +3.60 [ +58.5,+200.7] |  -23.8 +152.9 +4.05 |    +119.9 +4.13
+Mark+Set+Go(%R)           5d | validate   357  7.14  +47.0 +0.82 [-166.2,+257.2] |   -4.9  +51.9 +0.87 |     +46.7 +0.94
+Mark+Set+Go(%R)           5d | holdout    255  5.10 -108.6 -2.00 [-236.1, -10.8] |  -35.9  -72.7 -1.48 |     -78.9 -1.69
+Mark+Set+Go(pullback)    30m | tune       605  4.03  -14.8 -3.20 [ -23.1,  -7.0] |   -4.4  -10.5 -2.36 |      -9.0 -2.27
+Mark+Set+Go(pullback)    30m | validate   302  6.04   -2.5 -0.29 [ -24.1, +16.3] |   -6.3   +3.8 +0.33 |      +2.2 +0.20
+Mark+Set+Go(pullback)    30m | holdout    227  4.54   -7.4 -0.84 [ -21.4,  +7.0] |   -3.8   -3.6 -0.18 |      -0.7 +0.25
+Mark+Set+Go(pullback)    60m | tune       605  4.03  -18.8 -2.87 [ -32.5,  -6.4] |   -5.0  -13.8 -2.24 |     -10.5 -1.90
+Mark+Set+Go(pullback)    60m | validate   302  6.04  -12.9 -1.00 [ -45.5, +15.0] |   -3.9   -9.1 -0.69 |      -8.2 -0.77
+Mark+Set+Go(pullback)    60m | holdout    227  4.54   -4.7 -0.55 [ -20.4,  +9.8] |   -1.0   -3.7 -0.61 |      +0.5 +0.05
+Mark+Set+Go(pullback)  15:50 | tune       605  4.03  -20.8 -1.65 [ -42.9,  -0.7] |   -9.6  -11.2 -1.13 |      -9.6 -1.19
+Mark+Set+Go(pullback)  15:50 | validate   302  6.04  -10.2 -0.41 [ -64.7, +39.4] |   -5.2   -4.9 -0.32 |      -0.1 -0.10
+Mark+Set+Go(pullback)  15:50 | holdout    227  4.54   -3.5 -0.19 [ -25.9, +17.0] |   -3.4   -0.1 -0.19 |      +4.6 +0.26
+Mark+Set+Go(pullback)     1d | tune       605  4.03  +17.8 +0.83 [ -26.7, +57.1] |  -14.4  +32.2 +1.49 |     +27.4 +1.40
+Mark+Set+Go(pullback)     1d | validate   302  6.04  +55.9 +1.19 [ -90.5,+184.5] |   +3.7  +52.2 +1.18 |     +63.4 +1.52
+Mark+Set+Go(pullback)     1d | holdout    222  4.44  -20.0 -1.03 [ -67.0, +44.5] |   -7.1  -12.9 -0.88 |     -10.8 -0.83
+Mark+Set+Go(pullback)     5d | tune       605  4.03 +141.9 +3.71 [ +59.7,+213.7] |  -23.8 +165.8 +4.28 |    +129.4 +3.97
+Mark+Set+Go(pullback)     5d | validate   302  6.04  +13.7 +0.93 [-198.8,+215.3] |   +6.0   +7.7 +0.94 |     +18.2 +1.04
+Mark+Set+Go(pullback)     5d | holdout    201  4.02 -107.3 -1.86 [-255.6,  +6.8] |   -7.9  -99.5 -1.83 |     -82.7 -1.69
+
+----- /tmp/e5_t4v2.out -----
+  2025-09-29: marks 5
+  2025-11-03: marks 5
+  2025-12-09: marks 5
+  2026-01-15: marks 5
+  2026-02-23: marks 5
+  2026-03-30: marks 5
+  2026-05-05: marks 5
+  2026-06-10: marks 5
+  2026-07-17: marks 5
+  2026-08-21: marks 5
+
+T4 variant 2 (alt Mark); mark days tune 150/150, validate 50/50, holdout 50/50
+stage                   hold | part         n  /day    net     t              CI |   rand excess  t_ex | gross-SPY     t
+Mark-only                30m | tune       750  5.00  -14.4 -1.89 [ -28.5,  -1.1] |  -14.7   +0.3 +0.04 |      +2.0 +0.31
+Mark-only                30m | validate   250  5.00  -13.4 -0.68 [ -55.5, +23.6] |   -7.9   -5.5 -0.28 |      +0.1 +0.00
+Mark-only                30m | holdout    250  5.00  -41.3 -1.93 [ -83.5,  -6.3] |  -16.5  -24.7 -1.13 |     -20.4 -1.08
+Mark-only                60m | tune       750  5.00  -17.7 -1.84 [ -37.8,  -0.7] |   -9.7   -8.0 -0.90 |      -3.2 -0.41
+Mark-only                60m | validate   250  5.00  -33.6 -1.53 [ -83.4,  +3.1] |   -9.2  -24.4 -1.09 |     -18.4 -0.92
+Mark-only                60m | holdout    250  5.00  -40.1 -1.52 [ -91.5,  +4.1] |  -15.8  -24.3 -0.91 |     -20.1 -0.85
+Mark-only              15:50 | tune       750  5.00  -19.7 -1.29 [ -44.5,  +6.2] |  -17.0   -2.7 -0.21 |      -3.5 -0.30
+Mark-only              15:50 | validate   250  5.00  -10.9 -0.30 [ -92.8, +56.6] |  -15.9   +5.0 +0.14 |      +6.2 +0.20
+Mark-only              15:50 | holdout    250  5.00   -7.6 -0.27 [ -65.0, +38.4] |  -14.9   +7.3 +0.25 |      +7.9 +0.32
+Mark-only                 1d | tune       750  5.00   +9.8 +0.38 [ -40.1, +58.0] |  -15.7  +25.5 +1.10 |     +22.3 +1.11
+Mark-only                 1d | validate   250  5.00  +35.3 +0.46 [-121.5,+194.4] |   -7.2  +42.5 +0.57 |     +49.7 +0.71
+Mark-only                 1d | holdout    245  4.90  +21.5 +0.34 [-108.1,+139.8] |  -13.8  +35.4 +0.53 |     +35.1 +0.59
+Mark-only                 5d | tune       750  5.00 +149.5 +2.92 [ +39.1,+237.9] |  -19.4 +168.9 +3.60 |    +135.3 +3.23
+Mark-only                 5d | validate   250  5.00 +206.2 +1.49 [ -84.2,+452.8] |  -14.9 +221.1 +1.62 |    +209.6 +1.62
+Mark-only                 5d | holdout    225  4.50 +106.8 +0.83 [-138.9,+342.3] |  +18.9  +87.9 +0.66 |     +89.1 +0.76
+Mark+Set                 30m | tune       484  3.23  -16.1 -3.96 [ -27.1,  -6.2] |  -10.5   -5.5 -2.24 |      -5.0 -2.24
+Mark+Set                 30m | validate   161  3.22  -13.9 -0.49 [ -48.3, +15.4] |   -7.8   -6.1 -0.06 |      -4.3 +0.10
+Mark+Set                 30m | holdout    146  2.92   +3.1 -0.81 [ -25.7, +28.7] |   -8.7  +11.8 -0.27 |     +14.3 -0.02
+Mark+Set                 60m | tune       484  3.23  -17.5 -3.33 [ -33.4,  -4.2] |   -7.7   -9.8 -2.60 |      -8.0 -2.36
+Mark+Set                 60m | validate   161  3.22  -27.4 -0.77 [ -70.4, +15.3] |   +1.4  -28.8 -0.84 |     -17.4 -0.40
+Mark+Set                 60m | holdout    146  2.92   -4.5 -0.98 [ -38.3, +30.0] |  -10.6   +6.1 -0.45 |      +9.0 -0.21
+Mark+Set               15:50 | tune       484  3.23  -14.7 -0.82 [ -41.6, +12.6] |  -11.5   -3.1 -0.04 |      -2.8 -0.08
+Mark+Set               15:50 | validate   161  3.22  -32.1 -0.89 [-114.3, +45.2] |  -11.4  -20.7 -0.52 |     -18.7 -0.57
+Mark+Set               15:50 | holdout    146  2.92  +19.2 +0.34 [ -23.2, +61.2] |   -9.6  +28.8 +0.73 |     +29.9 +0.98
+Mark+Set                  1d | tune       484  3.23  +16.0 +1.38 [ -35.0, +67.5] |  -17.6  +33.7 +2.11 |     +24.8 +2.01
+Mark+Set                  1d | validate   161  3.22  +54.8 +0.81 [-120.9,+220.6] |   +3.4  +51.4 +0.84 |     +67.5 +1.09
+Mark+Set                  1d | holdout    143  2.86  +75.0 +1.01 [ -64.1,+214.9] |  -33.6 +108.6 +1.52 |     +85.2 +1.17
+Mark+Set                  5d | tune       484  3.23 +140.2 +2.81 [ +27.1,+239.6] |   +2.5 +137.7 +2.65 |    +123.9 +2.81
+Mark+Set                  5d | validate   161  3.22 +202.9 +1.54 [-119.1,+483.1] |  -32.1 +235.0 +1.71 |    +210.5 +1.67
+Mark+Set                  5d | holdout    130  2.60  +27.8 +0.73 [-313.3,+360.2] |  -19.5  +47.3 +0.89 |     +44.8 +0.84
+Mark+Set+Go(%R)          30m | tune       482  3.21  -13.5 -3.36 [ -22.9,  -5.4] |   -5.3   -8.2 -2.32 |      -5.5 -1.87
+Mark+Set+Go(%R)          30m | validate   160  3.20  -14.5 -0.87 [ -44.0, +11.8] |  -10.2   -4.4 -0.24 |      -2.3 -0.09
+Mark+Set+Go(%R)          30m | holdout    146  2.92   +1.2 -0.17 [ -24.2, +28.9] |  -11.6  +12.9 +0.75 |     +13.9 +0.77
+Mark+Set+Go(%R)          60m | tune       482  3.21  -15.4 -2.18 [ -30.1,  -2.9] |   -7.2   -8.1 -1.17 |      -6.6 -1.21
+Mark+Set+Go(%R)          60m | validate   160  3.20  -21.9 -0.88 [ -61.4, +17.8] |   -9.0  -12.9 -0.42 |     -11.6 -0.43
+Mark+Set+Go(%R)          60m | holdout    146  2.92   +6.8 +0.34 [ -22.8, +36.1] |  -16.5  +23.3 +1.20 |     +20.6 +1.23
+Mark+Set+Go(%R)        15:50 | tune       482  3.21  -13.0 -0.38 [ -41.0, +11.4] |   -8.9   -4.2 +0.26 |      -1.5 +0.44
+Mark+Set+Go(%R)        15:50 | validate   160  3.20  -25.5 -0.89 [ -93.4, +49.2] |   -7.1  -18.4 -0.59 |     -10.7 -0.51
+Mark+Set+Go(%R)        15:50 | holdout    146  2.92  +25.3 +1.16 [ -17.4, +65.7] |  -15.1  +40.4 +1.73 |     +35.0 +1.96
+Mark+Set+Go(%R)           1d | tune       482  3.21  +17.1 +1.59 [ -36.0, +69.5] |  -13.0  +30.1 +2.19 |     +25.7 +2.21
+Mark+Set+Go(%R)           1d | validate   160  3.20  +63.6 +0.90 [-108.3,+223.2] |  -31.1  +94.6 +1.22 |     +77.4 +1.21
+Mark+Set+Go(%R)           1d | holdout    143  2.86  +81.1 +1.26 [ -55.6,+222.9] |  -13.8  +94.9 +1.17 |     +91.0 +1.43
+Mark+Set+Go(%R)           5d | tune       482  3.21 +141.8 +2.89 [ +27.4,+247.9] |   -2.4 +144.2 +3.09 |    +125.0 +2.89
+Mark+Set+Go(%R)           5d | validate   160  3.20 +207.6 +1.58 [-107.6,+482.5] |  -12.2 +219.8 +1.64 |    +217.4 +1.71
+Mark+Set+Go(%R)           5d | holdout    130  2.60  +32.1 +0.81 [-312.2,+358.5] |  +40.1   -8.0 +0.56 |     +48.4 +0.92
+Mark+Set+Go(pullback)    30m | tune       416  2.77   -9.2 -2.27 [ -20.8,  +1.3] |   -3.9   -5.2 -1.84 |      -2.7 -1.31
+Mark+Set+Go(pullback)    30m | validate   142  2.84   -8.4 -0.12 [ -45.1, +21.1] |   -5.7   -2.6 +0.16 |      -3.3 +0.21
+Mark+Set+Go(pullback)    30m | holdout    134  2.68  +12.3 -0.24 [ -18.9, +40.6] |   -6.0  +18.3 +0.17 |     +19.3 +0.24
+Mark+Set+Go(pullback)    60m | tune       416  2.77   -9.5 -2.11 [ -27.0,  +6.3] |   -1.7   -7.8 -1.94 |      -4.5 -1.66
+Mark+Set+Go(pullback)    60m | validate   142  2.84  -20.8 -0.56 [ -70.4, +24.3] |   -1.6  -19.2 -0.46 |     -16.0 -0.41
+Mark+Set+Go(pullback)    60m | holdout    134  2.68   +7.9 -0.23 [ -27.9, +45.9] |   -6.9  +14.8 +0.09 |     +16.9 +0.29
+Mark+Set+Go(pullback)  15:50 | tune       416  2.77   -9.1 -0.72 [ -37.3, +21.7] |   -7.0   -2.1 -0.48 |      -0.5 -0.38
+Mark+Set+Go(pullback)  15:50 | validate   142  2.84  -32.6 -0.66 [-115.0, +48.4] |   -4.6  -28.0 -0.55 |     -19.8 -0.42
+Mark+Set+Go(pullback)  15:50 | holdout    134  2.68  +32.2 +0.71 [ -15.0, +73.5] |  -10.7  +42.9 +1.16 |     +38.7 +1.12
+Mark+Set+Go(pullback)     1d | tune       416  2.77  +31.1 +1.40 [ -26.9, +86.4] |   -7.2  +38.2 +1.43 |     +36.8 +1.80
+Mark+Set+Go(pullback)     1d | validate   142  2.84  +47.2 +1.01 [-153.1,+233.7] |   +1.4  +45.8 +1.00 |     +63.3 +1.24
+Mark+Set+Go(pullback)     1d | holdout    131  2.62 +103.0 +1.20 [ -38.4,+251.1] |  -20.5 +123.5 +1.51 |    +107.5 +1.30
+Mark+Set+Go(pullback)     5d | tune       416  2.77 +191.2 +3.12 [ +74.6,+294.4] |   +7.7 +183.4 +3.06 |    +162.0 +3.09
+Mark+Set+Go(pullback)     5d | validate   142  2.84 +173.1 +1.70 [-139.6,+464.3] |   +5.0 +168.2 +1.64 |    +187.1 +1.81
+Mark+Set+Go(pullback)     5d | holdout    119  2.38   -0.0 +0.81 [-318.8,+327.3] |  -17.2  +17.2 +0.91 |     +16.3 +0.89
+
+----- /tmp/e5_t1.out -----
+picks built
+  RS20 N5 done
+  RS20 N10 done
+  RS60 N5 done
+  RS60 N10 done
+  RS12_1 N5 done
+  RS12_1 N10 done
+  NEAR_HIGH N5 done
+  NEAR_HIGH N10 done
+  PULLBACK N5 done
+  PULLBACK N10 done
+
+T1 horizon ladder: 2017-01-04..2026-09-24; tune ..2022-10-28, validate ..2024-10-10, holdout ..2026-09-24
+cells: 300; promoted (excess>0 tune & validate, combined t_ex>=2): 56
+signal      N regime     entry  h | tune n    net excess     t  t_no | val n    net excess     t | comb t | holdout n / net / excess / t / t_nonoverlap / -SPY
+RS12_1      5 none       close 20 |   7330 +227.1  +92.2 +6.43 +2.04 |  2445 +319.1 +128.1 +4.16 |  +7.65 | 2350 / +481.6 / +337.0 / +7.01 / +1.29 / +353.3  <- holdout run (top 5)
+RS12_1      5 none       open  20 |   7330 +211.9  +82.5 +5.82 +1.78 |  2445 +304.7 +119.2 +3.93 |  +7.01 | 2350 / +454.3 / +314.7 / +6.68 / +1.11 / +330.9  <- holdout run (top 5)
+RS60        5 SPY>SMA200 close 20 |   5855 +213.3  +96.5 +6.48 +0.77 |  2170 +229.0  +64.1 +2.64 |  +6.90 | 2080 / +398.8 / +283.7 / +6.39 / +1.68 / +315.5  <- holdout run (top 5)
+RS60        5 SPY>SMA200 open  20 |   5855 +200.8  +91.8 +6.18 +0.79 |  2170 +221.6  +60.8 +2.51 |  +6.58 | 2080 / +377.6 / +268.3 / +6.18 / +1.85 / +299.6  <- holdout run (top 5)
+RS12_1      5 SPY>SMA200 close 20 |   5855 +171.7  +54.9 +3.64 +0.36 |  2170 +349.6 +184.7 +5.69 |  +6.07 | 2080 / +407.0 / +291.9 / +5.53 / +1.06 / +323.1  <- holdout run (top 5)
+RS12_1      5 SPY>SMA50  close 20 |   5310 +183.3  +76.3 +4.69 +1.68 |  1875 +288.0 +140.8 +3.79 |  +5.97 | (not run)
+RS12_1      5 none       close 10 |   7330 +111.9  +49.4 +4.66 +1.82 |  2445 +171.7  +74.1 +3.33 |  +5.70 | (not run)
+RS12_1      5 SPY>SMA50  open  20 |   5310 +166.8  +67.4 +4.20 +1.26 |  1875 +276.4 +131.6 +3.60 |  +5.45 | (not run)
+RS12_1      5 SPY>SMA200 open  20 |   5855 +153.9  +45.0 +3.01 +0.16 |  2170 +334.3 +173.5 +5.42 |  +5.39 | (not run)
+RS12_1      5 none       open  10 |   7330  +97.1  +40.2 +3.82 +1.58 |  2445 +157.2  +65.1 +3.00 |  +4.81 | (not run)
+RS12_1     10 none       close 20 |  14660 +176.9  +42.0 +3.99 +1.04 |  4890 +244.0  +53.1 +2.43 |  +4.67 | (not run)
+RS60       10 SPY>SMA50  close 20 |  10620 +161.6  +54.6 +5.13 +0.44 |  3750 +156.1   +8.9 +0.48 |  +4.65 | (not run)
+
+Summary (regime none, next-open entry, N=10): net bp/trade [excess vs random] by hold, tune | validate
+  RS20       1d -5[+0] | +2[+4]   2d +2[+0] | +16[+7]   5d +21[-1] | +56[+14]   10d +58[+1] | +111[+19]   20d +127[-2] | +202[+16]
+  RS60       1d -8[-3] | -1[+1]   2d +2[-0] | +10[+2]   5d +28[+6] | +37[-5]   10d +76[+19] | +72[-21]   20d +174[+44] | +162[-23]
+  RS12_1     1d -8[-3] | -5[-3]   2d +2[+1] | +8[-1]   5d +30[+8] | +45[+3]   10d +77[+20] | +113[+21]   20d +165[+35] | +232[+47]
+  NEAR_HIGH  1d -7[+1] | -2[+1]   2d -2[+1] | +1[-4]   5d +14[+4] | +20[-14]   10d +43[+6] | +52[-24]   20d +86[+2] | +111[-55]
+  PULLBACK   1d -3[+2] | +0[+2]   2d -4[-1] | +17[+4]   5d +10[-2] | +44[+2]   10d +21[-18] | +88[+7]   20d +61[-25] | +149[-26]
+
+----- /tmp/e5_t1b.out -----
+
+RS12_1 top5 none close-entry 20d  (non-overlapping rebalance every 20 sessions, all 20 offsets)
+  tune     periods/offset ~  73  basket net  +227.1 bp  excess vs random   +92.2  minus-SPY  +134.1  overlap-free t(excess) +1.43 [min +1.00, max +2.04]  top contributors: TSLA 45%, COP 24%, NVDA 19%
+  validate periods/offset ~  24  basket net  +319.1 bp  excess vs random  +128.1  minus-SPY  +143.2  overlap-free t(excess) +0.93 [min +0.53, max +1.36]  top contributors: NVDA 92%, PLTR 39%, META 24%
+  holdout  periods/offset ~  23  basket net  +481.6 bp  excess vs random  +337.0  minus-SPY  +353.3  overlap-free t(excess) +1.57 [min +1.20, max +2.15]  top contributors: MU 42%, PLTR 32%, LRCX 16%
+  excess by year: 2017 +145  2018 +5  2019 +66  2020 +332  2021 -153  2022 +86  2023 +91  2024 +360  2025 +134  2026 +535
+
+RS12_1 top5 none open-entry 20d  (non-overlapping rebalance every 20 sessions, all 20 offsets)
+  tune     periods/offset ~  73  basket net  +211.9 bp  excess vs random   +82.5  minus-SPY  +122.6  overlap-free t(excess) +1.29 [min +0.61, max +1.78]  top contributors: TSLA 48%, COP 26%, NVDA 20%
+  validate periods/offset ~  24  basket net  +304.7 bp  excess vs random  +119.2  minus-SPY  +134.3  overlap-free t(excess) +0.88 [min +0.38, max +1.24]  top contributors: NVDA 94%, PLTR 41%, META 25%
+  holdout  periods/offset ~  23  basket net  +454.3 bp  excess vs random  +314.7  minus-SPY  +330.9  overlap-free t(excess) +1.50 [min +0.91, max +2.11]  top contributors: MU 43%, PLTR 33%, LRCX 16%
+  excess by year: 2017 +132  2018 -0  2019 +56  2020 +315  2021 -159  2022 +82  2023 +87  2024 +342  2025 +121  2026 +498
+
+RS60 top5 SPY>SMA200 open-entry 20d  (non-overlapping rebalance every 20 sessions, all 20 offsets)
+  tune     periods/offset ~  58  basket net  +200.8 bp  excess vs random   +91.8  minus-SPY  +127.1  overlap-free t(excess) +1.37 [min +0.59, max +2.05]  top contributors: TSLA 69%, AMD 22%, NVDA 12%
+  validate periods/offset ~  21  basket net  +221.6 bp  excess vs random   +60.8  minus-SPY   +68.6  overlap-free t(excess) +0.59 [min -0.18, max +1.54]  top contributors: NVDA 168%, META 58%, GE 34%
+  holdout  periods/offset ~  20  basket net  +377.6 bp  excess vs random  +268.3  minus-SPY  +299.6  overlap-free t(excess) +1.39 [min +0.65, max +2.28]  top contributors: MU 43%, PLTR 36%, LRCX 14%
+  excess by year: 2017 +18  2018 +93  2019 +65  2020 +415  2021 -99  2022 +308  2023 +72  2024 +155  2025 +224  2026 +229
+
+RS12_1 top10 none open-entry 20d  (non-overlapping rebalance every 20 sessions, all 20 offsets)
+  tune     periods/offset ~  73  basket net  +164.7 bp  excess vs random   +35.4  minus-SPY   +76.0  overlap-free t(excess) +0.76 [min +0.10, max +1.32]  top contributors: TSLA 58%, NVDA 32%, COP 30%
+  validate periods/offset ~  24  basket net  +232.0 bp  excess vs random   +46.5  minus-SPY   +62.7  overlap-free t(excess) +0.49 [min -0.06, max +0.99]  top contributors: NVDA 123%, PLTR 58%, AVGO 38%
+  holdout  periods/offset ~  23  basket net  +375.8 bp  excess vs random  +236.1  minus-SPY  +252.3  overlap-free t(excess) +1.45 [min +0.98, max +2.01]  top contributors: MU 30%, PLTR 23%, AMD 17%
+  excess by year: 2017 +62  2018 +11  2019 +31  2020 +165  2021 -144  2022 +39  2023 +75  2024 +148  2025 +76  2026 +421
+
+RS12_1 top5 none open-entry 10d  (non-overlapping rebalance every 10 sessions, all 10 offsets)
+  tune     periods/offset ~ 146  basket net   +97.1 bp  excess vs random   +40.2  minus-SPY   +59.3  overlap-free t(excess) +1.20 [min +0.83, max +1.58]  top contributors: TSLA 38%, COP 26%, NVDA 20%
+  validate periods/offset ~  48  basket net  +157.2 bp  excess vs random   +65.1  minus-SPY   +73.1  overlap-free t(excess) +0.94 [min +0.69, max +1.27]  top contributors: NVDA 82%, PLTR 35%, META 22%
+  holdout  periods/offset ~  48  basket net  +206.8 bp  excess vs random  +146.4  minus-SPY  +152.2  overlap-free t(excess) +1.39 [min +0.94, max +2.01]  top contributors: MU 42%, PLTR 34%, LRCX 15%
+  excess by year: 2017 +70  2018 -13  2019 +45  2020 +140  2021 -84  2022 +43  2023 +49  2024 +171  2025 +37  2026 +264
+
+RS12_1 top5 none open-entry 5d  (non-overlapping rebalance every 5 sessions, all 5 offsets)
+  tune     periods/offset ~ 293  basket net   +37.1 bp  excess vs random   +15.0  minus-SPY   +23.8  overlap-free t(excess) +0.83 [min +0.42, max +1.40]  top contributors: TSLA 47%, COP 33%, NVDA 24%
+  validate periods/offset ~  97  basket net   +65.3 bp  excess vs random   +23.8  minus-SPY   +28.1  overlap-free t(excess) +0.72 [min +0.45, max +0.96]  top contributors: NVDA 101%, PLTR 40%, META 25%
+  holdout  periods/offset ~  97  basket net   +96.9 bp  excess vs random   +72.7  minus-SPY   +74.7  overlap-free t(excess) +1.34 [min +1.00, max +1.93]  top contributors: MU 41%, PLTR 32%, LRCX 16%
+  excess by year: 2017 +26  2018 -13  2019 +16  2020 +65  2021 -48  2022 +22  2023 +11  2024 +86  2025 +9  2026 +137
+
+RS12_1 top5 none open-entry 1d  (non-overlapping rebalance every 1 sessions, all 1 offsets)
+  tune     periods/offset ~1466  basket net    -9.6 bp  excess vs random    -4.2  minus-SPY    -3.9  overlap-free t(excess) -1.36 [min -1.36, max -1.36]  top contributors: COP -18%, AAPL -7%, PG -4%
+  validate periods/offset ~ 489  basket net    -2.2 bp  excess vs random    -0.2  minus-SPY    -0.0  overlap-free t(excess) -0.04 [min -0.04, max -0.04]  top contributors: PLTR -784%, NVDA -682%, AVGO -638%
+  holdout  periods/offset ~ 489  basket net    -2.9 bp  excess vs random    +1.6  minus-SPY    +1.5  overlap-free t(excess) +0.19 [min +0.19, max +0.19]  top contributors: PLTR 170%, MU 149%, AMD 115%
+  excess by year: 2017 -4  2018 -7  2019 -4  2020 +1  2021 -13  2022 +0  2023 -0  2024 +4  2025 -3  2026 +6
+
+RS20 top10 none open-entry 20d  (non-overlapping rebalance every 20 sessions, all 20 offsets)
+  tune     periods/offset ~  73  basket net  +127.2 bp  excess vs random    -2.1  minus-SPY   +38.5  overlap-free t(excess) -0.05 [min -1.78, max +1.29]  top contributors: TSLA -780%, AMD -472%, NFLX -257%
+  validate periods/offset ~  24  basket net  +201.8 bp  excess vs random   +16.4  minus-SPY   +32.8  overlap-free t(excess) +0.29 [min -1.40, max +1.25]  top contributors: NVDA 199%, META 184%, PLTR 128%
+  holdout  periods/offset ~  23  basket net  +318.7 bp  excess vs random  +179.0  minus-SPY  +196.1  overlap-free t(excess) +1.65 [min +0.83, max +2.73]  top contributors: MU 32%, MRVL 25%, AMD 21%
+  excess by year: 2017 -37  2018 +11  2019 -10  2020 +183  2021 -126  2022 -48  2023 +45  2024 +70  2025 +103  2026 +249
+
+T6 rule applied to T1 leader picks (ON = breadth>=50% & SPY rv20 <= 250d median):
+
+RS12_1 top5 open 20d, T6 ON only  (non-overlapping rebalance every 20 sessions, all 20 offsets)
+  tune     periods/offset ~  34  basket net  +144.2 bp  excess vs random   +19.0  minus-SPY   +47.3  overlap-free t(excess) +0.23 [min -0.73, max +0.74]  top contributors: NVDA 163%, TSLA 95%, BA 36%
+  validate periods/offset ~  13  basket net  +277.3 bp  excess vs random  +129.3  minus-SPY  +153.8  overlap-free t(excess) +0.60 [min -0.25, max +1.07]  top contributors: NVDA 99%, PLTR 35%, META 28%
+  holdout  periods/offset ~  10  basket net  +472.7 bp  excess vs random  +349.0  minus-SPY  +386.1  overlap-free t(excess) +1.17 [min -0.27, max +2.09]  top contributors: MU 46%, LRCX 29%, AMAT 13%
+  excess by year: 2017 +132  2018 -145  2019 +85  2020 +194  2021 -184  2022 +315  2023 +75  2024 +304  2025 +86  2026 +766
+
+RS12_1 top5 open 20d, T6 OFF only  (non-overlapping rebalance every 20 sessions, all 20 offsets)
+  tune     periods/offset ~  38  basket net  +272.4 bp  excess vs random  +139.4  minus-SPY  +189.9  overlap-free t(excess) +1.50 [min +0.89, max +2.27]  top contributors: TSLA 42%, COP 26%, AMD 18%
+  validate periods/offset ~  10  basket net  +338.6 bp  excess vs random  +106.7  minus-SPY  +110.1  overlap-free t(excess) +0.69 [min -0.16, max +1.58]  top contributors: NVDA 87%, PLTR 50%, AVGO 38%
+  holdout  periods/offset ~  13  basket net  +440.2 bp  excess vs random  +288.3  minus-SPY  +288.5  overlap-free t(excess) +1.01 [min -0.15, max +1.79]  top contributors: PLTR 54%, MU 41%, AMD 15%
+  excess by year: 2017 +134  2018 +63  2019 +20  2020 +368  2021 -74  2022 +57  2023 +105  2024 +381  2025 +154  2026 +344
+
+RS12_1 top5 open 5d, T6 ON only  (non-overlapping rebalance every 5 sessions, all 5 offsets)
+  tune     periods/offset ~ 138  basket net   +22.6 bp  excess vs random    +5.1  minus-SPY    +9.5  overlap-free t(excess) +0.20 [min -0.22, max +0.46]  top contributors: NVDA 102%, AAPL 65%, TSLA 49%
+  validate periods/offset ~  54  basket net   +57.5 bp  excess vs random   +33.6  minus-SPY   +38.3  overlap-free t(excess) +0.74 [min +0.05, max +1.17]  top contributors: NVDA 87%, META 26%, UBER 25%
+  holdout  periods/offset ~  42  basket net   +38.3 bp  excess vs random   +32.3  minus-SPY   +36.9  overlap-free t(excess) +0.37 [min -0.27, max +1.46]  top contributors: MU 94%, LRCX 36%, MRVL 32%
+  excess by year: 2017 +11  2018 -14  2019 +28  2020 +49  2021 -48  2022 +224  2023 -10  2024 +112  2025 -60  2026 +136
+
+wrote mark file for T4 variant 2: 250 days, e.g. ('2026-09-25', ['MU', 'MRVL', 'AMD', 'AMAT', 'LRCX'])
+
+----- /tmp/e5_t3.out -----
+
+=== SPY  2021-09-27..2026-09-25  sessions 1255  cost/trade 2.3 bp (spread 0.3 + 2)
+  split: tune ..2024-09-24, validate ..2025-09-25, holdout ..2026-09-25
+  baseline all sessions mean c2c: tune +4.6 bp | validate +6.9 bp | holdout +7.1 bp
+  turn-of-month (4 ses)  tune n 36 gross   -4.5 net   -6.8 (t -0.20) excess-vs-random  -22.8 (t -0.68) | validate n 12 gross   +7.9 net   +5.7 (t +0.13) excess-vs-random  -19.5 (t -0.46) | holdout n 12 gross  +97.4 net  +95.2 (t +2.01) excess-vs-random  +69.0 (t +1.46)
+  pre-holiday session    tune n 29 gross  +22.8 net  +20.5 (t +1.54) excess-vs-random  +18.2 (t +1.31) | validate n 11 gross  +11.2 net   +8.9 (t +0.48) excess-vs-random   +4.4 (t +0.22) | holdout n 10 gross  +12.9 net  +10.7 (t +0.65) excess-vs-random   +5.8 (t +0.34)
+  FOMC day               tune n 24 gross  +32.4 net  +30.1 (t +1.02) excess-vs-random  +27.8 (t +0.93) | validate n  8 gross  -17.6 net  -19.9 (t -0.45) excess-vs-random  -24.5 (t -0.55) | holdout n  8 gross  -49.2 net  -51.5 (t -1.80) excess-vs-random  -56.3 (t -1.94)
+  FOMC day intraday      tune n 24 gross   +5.6 net   +3.3 (t +0.12) excess-vs-random   +1.0 (t +0.04) | validate n  8 gross  -30.0 net  -32.3 (t -0.81) excess-vs-random  -36.9 (t -0.91) | holdout n  8 gross  -52.0 net  -54.3 (t -2.04) excess-vs-random  -59.1 (t -2.18)
+  Mon c2c                tune n138 gross   +6.7 net   +4.5 (t +0.55) excess-vs-random   +2.2 (t +0.24) | validate n 48 gross   +9.2 net   +6.9 (t +0.49) excess-vs-random   +2.3 (t +0.14) | holdout n 48 gross  +33.8 net  +31.5 (t +2.99) excess-vs-random  +26.7 (t +2.27)
+  Tue c2c                tune n156 gross   +2.0 net   -0.3 (t -0.03) excess-vs-random   -2.6 (t -0.27) | validate n 52 gross   +5.4 net   +3.1 (t +0.28) excess-vs-random   -1.4 (t -0.11) | holdout n 52 gross   -1.0 net   -3.2 (t -0.29) excess-vs-random   -8.1 (t -0.66)
+  Wed c2c                tune n155 gross   +2.5 net   +0.2 (t +0.03) excess-vs-random   -2.1 (t -0.21) | validate n 51 gross  +32.2 net  +30.0 (t +1.26) excess-vs-random  +25.4 (t +1.01) | holdout n 52 gross   +9.0 net   +6.8 (t +0.64) excess-vs-random   +1.9 (t +0.16)
+  Thu c2c                tune n152 gross   +5.4 net   +3.2 (t +0.32) excess-vs-random   +0.9 (t +0.08) | validate n 50 gross  -13.0 net  -15.3 (t -0.92) excess-vs-random  -19.9 (t -1.08) | holdout n 49 gross   -6.6 net   -8.8 (t -0.71) excess-vs-random  -13.6 (t -1.02)
+  Fri c2c                tune n152 gross   +6.4 net   +4.2 (t +0.43) excess-vs-random   +1.9 (t +0.18) | validate n 50 gross   +0.1 net   -2.2 (t -0.12) excess-vs-random   -6.8 (t -0.35) | holdout n 50 gross   +1.3 net   -1.0 (t -0.08) excess-vs-random   -5.8 (t -0.43)
+  overnight vs intraday tune    : overnight gross +2.01 (t +0.85) net -0.25 | intraday gross +2.55 (t +0.76) net +2.29 (spread only, no open print... uses open print: +0.29)
+  overnight vs intraday validate: overnight gross +2.84 (t +0.61) net +0.58 | intraday gross +4.11 (t +0.60) net +3.85 (spread only, no open print... uses open print: +1.85)
+  overnight vs intraday holdout : overnight gross +6.51 (t +1.91) net +4.25 | intraday gross +0.61 (t +0.15) net +0.35 (spread only, no open print... uses open print: -1.65)
+
+=== QQQ  2021-09-27..2026-09-25  sessions 1255  cost/trade 2.3 bp (spread 0.3 + 2)
+  split: tune ..2024-09-24, validate ..2025-09-25, holdout ..2026-09-25
+  baseline all sessions mean c2c: tune +4.9 bp | validate +9.3 bp | holdout +10.0 bp
+  turn-of-month (4 ses)  tune n 36 gross   -7.1 net   -9.4 (t -0.20) excess-vs-random  -26.7 (t -0.57) | validate n 12 gross  +35.4 net  +33.1 (t +0.58) excess-vs-random   -1.8 (t -0.03) | holdout n 12 gross +112.3 net +110.0 (t +1.55) excess-vs-random  +72.3 (t +1.02)
+  pre-holiday session    tune n 29 gross  +27.5 net  +25.2 (t +1.24) excess-vs-random  +22.6 (t +1.07) | validate n 11 gross   +6.4 net   +4.1 (t +0.14) excess-vs-random   -2.9 (t -0.09) | holdout n 10 gross  +19.7 net  +17.4 (t +0.50) excess-vs-random   +9.7 (t +0.27)
+  FOMC day               tune n 24 gross  +64.4 net  +62.1 (t +1.52) excess-vs-random  +59.5 (t +1.45) | validate n  8 gross   -7.1 net   -9.4 (t -0.17) excess-vs-random  -16.4 (t -0.29) | holdout n  8 gross  -32.6 net  -35.0 (t -0.98) excess-vs-random  -42.6 (t -1.17)
+  FOMC day intraday      tune n 24 gross  +25.0 net  +22.6 (t +0.64) excess-vs-random  +20.1 (t +0.56) | validate n  8 gross  -26.3 net  -28.6 (t -0.58) excess-vs-random  -35.6 (t -0.71) | holdout n  8 gross  -57.5 net  -59.8 (t -1.74) excess-vs-random  -67.5 (t -1.92)
+  Mon c2c                tune n138 gross   +9.7 net   +7.4 (t +0.68) excess-vs-random   +4.8 (t +0.40) | validate n 48 gross  +11.8 net   +9.5 (t +0.50) excess-vs-random   +2.5 (t +0.12) | holdout n 48 gross  +51.3 net  +48.9 (t +3.04) excess-vs-random  +41.3 (t +2.30)
+  Tue c2c                tune n156 gross   +2.3 net   -0.1 (t -0.01) excess-vs-random   -2.6 (t -0.21) | validate n 52 gross   +8.9 net   +6.6 (t +0.46) excess-vs-random   -0.4 (t -0.02) | holdout n 52 gross   -4.5 net   -6.8 (t -0.37) excess-vs-random  -14.5 (t -0.73)
+  Wed c2c                tune n155 gross   +4.9 net   +2.6 (t +0.22) excess-vs-random   +0.0 (t +0.00) | validate n 51 gross  +40.3 net  +38.0 (t +1.35) excess-vs-random  +31.0 (t +1.05) | holdout n 52 gross  +15.4 net  +13.1 (t +0.87) excess-vs-random   +5.4 (t +0.32)
+  Thu c2c                tune n152 gross   +7.2 net   +4.9 (t +0.35) excess-vs-random   +2.3 (t +0.15) | validate n 50 gross  -16.2 net  -18.5 (t -0.93) excess-vs-random  -25.5 (t -1.16) | holdout n 49 gross   -7.0 net   -9.3 (t -0.47) excess-vs-random  -17.0 (t -0.80)
+  Fri c2c                tune n152 gross   +0.9 net   -1.4 (t -0.11) excess-vs-random   -4.0 (t -0.29) | validate n 50 gross   +1.2 net   -1.1 (t -0.05) excess-vs-random   -8.1 (t -0.36) | holdout n 50 gross   -3.5 net   -5.8 (t -0.31) excess-vs-random  -13.5 (t -0.66)
+  overnight vs intraday tune    : overnight gross +2.19 (t +0.71) net -0.12 | intraday gross +2.73 (t +0.60) net +2.42 (spread only, no open print... uses open print: +0.42)
+  overnight vs intraday validate: overnight gross +5.24 (t +0.92) net +2.93 | intraday gross +4.18 (t +0.52) net +3.87 (spread only, no open print... uses open print: +1.87)
+  overnight vs intraday holdout : overnight gross +8.71 (t +1.65) net +6.40 | intraday gross +1.31 (t +0.22) net +1.00 (spread only, no open print... uses open print: -1.00)
+
+(minus-SPY for QQQ = QQQ gross - SPY gross on the same windows; see QQQ vs SPY lines above)
+
+----- /tmp/e5_t2.out -----
+T2 inferred reaction days: 2412 events over 10.6 y, 2.52 per symbol-year (4.0 expected)
+  split by event date: tune ..2022-07-12, validate ..2024-07-30, holdout ..2026-09-23
+  top-quintile threshold (tune): reaction minus SPY >= +427 bp; bottom quintile <= -387 bp
+  Finnhub EPS rows matched to inferred reaction days: 152 (of 360)
+  A top-quintile reaction      open   1d | tune n 290 net   +5.2 ex   +7.5 (t -0.03) -SPY   +7.8 | validate n 117 net  -23.8 ex   -4.9 (t -0.03) -SPY   -4.0 | holdout n 112 net  -13.7 ex  -12.1 (t -0.45) -SPY  -12.3
+  A top-quintile reaction      open   5d | tune n 290 net  +48.9 ex   +8.6 (t +0.15) -SPY  +18.2 | validate n 117 net  +35.2 ex   +2.8 (t +0.10) -SPY   +9.7 | holdout n 112 net  -40.8 ex  -66.8 (t -1.19) -SPY  -72.1
+  A top-quintile reaction      open  10d | tune n 290 net  +65.4 ex   -4.2 (t -0.25) -SPY   +8.8 | validate n 117 net +123.6 ex  +16.2 (t +0.49) -SPY  +36.8 | holdout n 112 net  +45.4 ex  -13.8 (t -0.08) -SPY   -6.2
+  A top-quintile reaction      open  20d | tune n 290 net +113.0 ex   -1.6 (t -0.09) -SPY  +36.2 | validate n 117 net +282.3 ex  +65.2 (t +1.13) -SPY +100.9 | holdout n 112 net +198.4 ex +100.7 (t +1.17) -SPY +115.4
+  A top-quintile reaction      close  1d | tune n 290 net   +4.6 ex   -0.5 (t -0.75) -SPY   +2.1 | validate n 117 net  -30.2 ex  -11.2 (t -0.36) -SPY   -8.7 | holdout n 112 net  +11.8 ex   +3.6 (t +0.28) -SPY   +1.2
+  A top-quintile reaction      close  5d | tune n 290 net  +47.5 ex   -0.1 (t -0.30) -SPY  +11.8 | validate n 117 net  +30.2 ex   -2.2 (t -0.08) -SPY   +6.4 | holdout n 112 net  -15.9 ex  -51.9 (t -0.78) -SPY  -59.5
+  A top-quintile reaction      close 10d | tune n 290 net  +63.9 ex  -13.0 (t -0.61) -SPY   +2.3 | validate n 117 net +119.8 ex  +12.1 (t +0.34) -SPY  +34.5 | holdout n 112 net  +71.9 ex   +2.2 (t +0.22) -SPY   +7.9
+  A top-quintile reaction      close 20d | tune n 290 net +113.2 ex   -8.7 (t -0.29) -SPY  +31.5 | validate n 117 net +278.0 ex  +60.5 (t +1.01) -SPY  +98.2 | holdout n 112 net +225.7 ex +117.3 (t +1.33) -SPY +130.1
+  (info) all reactions         open   1d | tune n1447 net   -9.6 ex   -1.4 (t -1.05) -SPY   -1.2 | validate n 482 net   -2.0 ex   -3.4 (t +0.09) -SPY   -1.9 | holdout n 483 net   +8.1 ex   +8.8 (t +1.23) -SPY   +8.1
+  (info) bottom-quintile       open   1d | tune n 290 net  -45.2 ex  -27.9 (t -2.25) -SPY  -28.4 | validate n 128 net  +17.7 ex   +7.0 (t +0.36) -SPY  +11.1 | holdout n 168 net  +11.3 ex  +11.0 (t +0.00) -SPY  +12.4
+  (info) all reactions         open   5d | tune n1447 net  +15.6 ex   -6.0 (t -1.06) -SPY   +1.4 | validate n 482 net  +40.7 ex   -3.1 (t +0.30) -SPY   +4.6 | holdout n 480 net  +33.5 ex   +4.2 (t -0.15) -SPY   +6.6
+  (info) bottom-quintile       open   5d | tune n 290 net  -40.3 ex  -37.3 (t -1.48) -SPY  -27.3 | validate n 128 net +100.0 ex  +13.7 (t +0.01) -SPY  +27.9 | holdout n 167 net  +24.6 ex   +4.1 (t -0.24) -SPY  +17.6
+  (info) all reactions         open  10d | tune n1447 net  +45.6 ex  -12.0 (t -1.23) -SPY   +5.2 | validate n 482 net  +70.9 ex  -32.2 (t -0.63) -SPY  -13.1 | holdout n 476 net  +74.8 ex  +19.1 (t +0.50) -SPY  +26.1
+  (info) bottom-quintile       open  10d | tune n 290 net   +0.9 ex  -34.6 (t -1.07) -SPY  -11.7 | validate n 128 net +110.5 ex  -39.8 (t -1.08) -SPY  -13.0 | holdout n 165 net  +57.3 ex   +3.5 (t +0.11) -SPY  +20.9
+  (info) all reactions         open  20d | tune n1447 net +137.8 ex   +0.8 (t -0.87) -SPY  +44.6 | validate n 482 net +214.9 ex  +12.1 (t +0.65) -SPY  +44.4 | holdout n 470 net +143.7 ex  +25.6 (t +0.42) -SPY  +42.8
+  (info) bottom-quintile       open  20d | tune n 290 net  +67.5 ex  -40.6 (t -1.31) -SPY  +15.8 | validate n 128 net +276.4 ex   -8.3 (t -0.05) -SPY  +37.1 | holdout n 162 net  +98.8 ex   +1.0 (t -0.24) -SPY  +27.9
+  B EPS surprise > 0 (Finnhub last 4 quarters only -> ~1 year, UNDERPOWERED; parts = whatever falls in each split)
+  B EPS surprise>0             open   1d | tune n0 | validate n0 | holdout n 116 net   -6.4 ex   +0.9 (t +0.38) -SPY   -2.0
+  B EPS surprise>0             open   5d | tune n0 | validate n0 | holdout n 116 net   -1.0 ex  -26.7 (t -0.17) -SPY  -23.5
+  B EPS surprise>0             open  10d | tune n0 | validate n0 | holdout n 116 net  +37.0 ex  -27.6 (t -0.28) -SPY  -30.8
+  B EPS surprise>0             open  20d | tune n0 | validate n0 | holdout n 112 net  +81.4 ex  -88.1 (t -0.64) -SPY  -67.6
+  B EPS surprise>0             close  1d | tune n0 | validate n0 | holdout n 116 net  +11.6 ex  +15.0 (t +0.93) -SPY  +14.3
+  B EPS surprise>0             close  5d | tune n0 | validate n0 | holdout n 116 net  +17.8 ex  -11.9 (t +0.12) -SPY   -6.4
+  B EPS surprise>0             close 10d | tune n0 | validate n0 | holdout n 116 net  +55.9 ex  -12.5 (t -0.07) -SPY  -13.5
+  B EPS surprise>0             close 20d | tune n0 | validate n0 | holdout n 112 net +105.4 ex  -69.1 (t -0.44) -SPY  -46.4
+  (info) EPS surprise<=0       open   1d | tune n0 | validate n0 | holdout n  36 net  -61.2 ex  -47.5 (t -0.71) -SPY  -46.8
+  B+A surprise>0 & top-q       open   1d | tune n0 | validate n0 | holdout n  35 net  -17.0 ex   -8.7 (t +0.13) -SPY   -9.4
+  (info) EPS surprise<=0       open   5d | tune n0 | validate n0 | holdout n  36 net -126.6 ex  -93.0 (t -1.26) -SPY  -75.7
+  B+A surprise>0 & top-q       open   5d | tune n0 | validate n0 | holdout n  35 net -140.7 ex -135.3 (t -1.16) -SPY -152.9
+  (info) EPS surprise<=0       open  20d | tune n0 | validate n0 | holdout n  34 net  -82.6 ex  -85.6 (t -0.69) -SPY  -37.1
+  B+A surprise>0 & top-q       open  20d | tune n0 | validate n0 | holdout n  35 net +116.2 ex   +1.1 (t +0.25) -SPY  -14.4
+
+----- /tmp/e5_t5.out -----
+T5 news catalyst — L universe (U2), follow the day's direction, enter at close d, net excess vs U2 equal-weight (bp)
+  news items fetched: 55533; symbol-day windows with news: 39801
+  E1 news+move+vol long 1d tune      n   215 days   94  mean   -14.2  med    -5.7  win  49%  t +0.04  CI [ -54.9, +26.8]
+  E1 news+move+vol long 1d validate  n    60 days   25  mean   +72.8  med   +65.5  win  58%  t +1.52  CI [ -60.7,+221.4]
+  E1 news+move+vol long 1d tune+validate n   275 days  119  mean    +4.8  med    +4.0  win  51%  t +0.97  CI [ -42.1, +58.6]
+  E1 news+move+vol long 5d tune      n   215 days   94  mean    -4.8  med   -41.6  win  47%  t +1.76  CI [ -73.0, +80.3]
+  E1 news+move+vol long 5d validate  n    60 days   25  mean   -78.8  med   -78.1  win  42%  t +0.15  CI [-365.7,+170.5]
+  E1 news+move+vol long 5d tune+validate n   275 days  119  mean   -20.9  med   -63.7  win  46%  t +1.48  CI [-109.4, +70.2]
+  E1 news+move+vol long 10d tune     n   215 days   94  mean   +19.1  med   -48.8  win  47%  t +1.51  CI [ -92.5,+156.9]
+  E1 news+move+vol long 10d validate n    60 days   25  mean  -345.2  med  -273.6  win  35%  t -1.08  CI [-753.4, +44.9]
+  E1 news+move+vol long 10d tune+validate n   275 days  119  mean   -60.4  med   -78.2  win  44%  t +0.81  CI [-196.0, +95.2]
+  E1 news+move+vol short 1d tune     n   226 days   91  mean    -1.8  med    -8.6  win  47%  t +0.13  CI [ -32.9, +27.1]
+  E1 news+move+vol short 1d validate n    50 days   28  mean   +20.3  med   +30.7  win  56%  t +0.57  CI [ -73.3,+129.2]
+  E1 news+move+vol short 1d tune+validate n   276 days  119  mean    +2.2  med    -3.1  win  49%  t +0.44  CI [ -27.7, +32.9]
+  E1 news+move+vol short 5d tune     n   226 days   91  mean   -14.2  med   +13.4  win  52%  t -0.72  CI [ -89.7, +54.9]
+  E1 news+move+vol short 5d validate n    50 days   28  mean   +40.2  med   -52.1  win  42%  t +0.62  CI [ -80.0,+176.6]
+  E1 news+move+vol short 5d tune+validate n   276 days  119  mean    -4.4  med    +0.5  win  50%  t -0.31  CI [ -63.0, +53.0]
+  E1 news+move+vol short 10d tune    n   226 days   91  mean   -28.9  med   +18.2  win  52%  t -1.11  CI [-128.0, +61.6]
+  E1 news+move+vol short 10d validate n    50 days   28  mean   -69.7  med   -40.2  win  48%  t -0.26  CI [-238.5,+109.9]
+  E1 news+move+vol short 10d tune+validate n   276 days  119  mean   -36.3  med   +17.2  win  51%  t -1.13  CI [-112.2, +44.4]
+  E0 move+vol, NO news long 1d tune  n    27 days   21  mean   +39.1  med    +1.3  win  52%  t +0.44  CI [ -45.8,+143.1]
+  E0 move+vol, NO news long 1d validate n    10 days    8  mean  +159.4  med  +122.1  win  70%  t +0.98  CI [ -82.8,+377.1]
+  E0 move+vol, NO news long 1d tune+validate n    37 days   29  mean   +71.6  med   +28.0  win  57%  t +1.02  CI [ -33.5,+173.2]
+  E0 move+vol, NO news long 5d tune  n    27 days   21  mean   +14.9  med   -83.7  win  37%  t +0.34  CI [-147.7,+193.1]
+  E0 move+vol, NO news long 5d validate n    10 days    8  mean  -171.7  med  -263.1  win  20%  t -0.26  CI [-583.0,+435.5]
+  E0 move+vol, NO news long 5d tune+validate n    37 days   29  mean   -35.5  med  -102.3  win  32%  t +0.01  CI [-227.6,+192.9]
+  E0 move+vol, NO news long 10d tune n    27 days   21  mean   +25.5  med  +110.4  win  59%  t +0.10  CI [-171.3,+217.7]
+  E0 move+vol, NO news long 10d validate n    10 days    8  mean  -191.7  med  -289.5  win  30%  t -0.00  CI [-748.2,+675.5]
+  E0 move+vol, NO news long 10d tune+validate n    37 days   29  mean   -33.2  med   +61.8  win  51%  t +0.05  CI [-271.8,+248.1]
+  E0 move+vol, NO news short 1d tune n    38 days   23  mean   -42.2  med    -6.5  win  50%  t -0.50  CI [-112.9, +42.2]
+  E0 move+vol, NO news short 1d validate n    11 days    9  mean  -135.1  med   +47.5  win  64%  t -0.59  CI [-320.9, +79.8]
+  E0 move+vol, NO news short 1d tune+validate n    49 days   32  mean   -63.1  med    +2.1  win  53%  t -0.75  CI [-149.3, +27.4]
+  E0 move+vol, NO news short 5d tune n    38 days   23  mean   -42.3  med  -115.6  win  42%  t -0.68  CI [-227.3,+203.6]
+  E0 move+vol, NO news short 5d validate n    11 days    9  mean  -596.2  med  -159.3  win  36%  t -1.88  CI [-1074.7, -30.9]
+  E0 move+vol, NO news short 5d tune+validate n    49 days   32  mean  -166.6  med  -119.7  win  41%  t -1.65  CI [-458.8, +86.0]
+  E0 move+vol, NO news short 10d tune n    38 days   23  mean   +64.4  med    +2.9  win  53%  t +0.75  CI [-212.4,+425.6]
+  E0 move+vol, NO news short 10d validate n    11 days    9  mean  -767.1  med  -336.4  win  36%  t -1.55  CI [-1498.9, +17.8]
+  E0 move+vol, NO news short 10d tune+validate n    49 days   32  mean  -122.2  med   -21.1  win  49%  t -0.19  CI [-495.4,+257.6]
+  E2 news-count spike long 1d tune   n   424 days  135  mean   -27.7  med   -14.0  win  48%  t -1.24  CI [ -56.7,  -0.0]
+  E2 news-count spike long 1d validate n   134 days   44  mean   -26.3  med    +6.2  win  51%  t +0.44  CI [ -81.6, +26.4]
+  E2 news-count spike long 1d tune+validate n   558 days  179  mean   -27.4  med    -6.9  win  49%  t -0.75  CI [ -52.6,  -3.5]
+  E2 news-count spike long 5d tune   n   424 days  135  mean   -38.5  med   -54.8  win  44%  t -0.88  CI [ -89.0, +14.7]
+  E2 news-count spike long 5d validate n   134 days   44  mean   +21.1  med   -18.2  win  49%  t +1.18  CI [-130.3,+183.0]
+  E2 news-count spike long 5d tune+validate n   558 days  179  mean   -24.2  med   -50.9  win  45%  t +0.48  CI [ -80.6, +34.3]
+  E2 news-count spike long 10d tune  n   424 days  135  mean    +0.5  med   -69.0  win  45%  t +0.00  CI [ -71.1, +82.0]
+  E2 news-count spike long 10d validate n   134 days   44  mean   -44.7  med   -15.1  win  48%  t +0.70  CI [-186.3,+126.5]
+  E2 news-count spike long 10d tune+validate n   558 days  179  mean   -10.4  med   -56.6  win  46%  t +0.44  CI [ -80.1, +56.0]
+  E2 news-count spike short 1d tune  n   404 days  126  mean    -2.3  med    +1.7  win  50%  t -0.54  CI [ -28.9, +23.6]
+  E2 news-count spike short 1d validate n   113 days   43  mean   +54.2  med   +46.1  win  56%  t +1.95  CI [ -11.0,+126.7]
+  E2 news-count spike short 1d tune+validate n   517 days  169  mean   +10.1  med    +9.1  win  51%  t +0.97  CI [ -14.7, +33.6]
+  E2 news-count spike short 5d tune  n   404 days  126  mean    +7.9  med   +38.5  win  53%  t -1.06  CI [ -38.0, +50.8]
+  E2 news-count spike short 5d validate n   113 days   43  mean   +74.7  med   +40.2  win  54%  t +1.21  CI [ -25.4,+167.8]
+  E2 news-count spike short 5d tune+validate n   517 days  169  mean   +22.5  med   +40.2  win  54%  t +0.24  CI [ -18.1, +61.8]
+  E2 news-count spike short 10d tune n   404 days  126  mean   -13.4  med   +43.1  win  53%  t -2.07  CI [ -79.2, +43.0]
+  E2 news-count spike short 10d validate n   113 days   43  mean   +68.7  med   -58.5  win  46%  t +0.56  CI [ -98.3,+220.3]
+  E2 news-count spike short 10d tune+validate n   517 days  169  mean    +4.5  med   +21.0  win  51%  t -0.98  CI [ -51.8, +59.3]
+Promoted: []

@@ -1,0 +1,15 @@
+{
+ "study": "Round 4 addendum, test P: pullback limit entry after the arm (Jonathan's idea)",
+ "registered_at": "2026-09-26T13:26-04:00",
+ "registered_before_results": true,
+ "universes_splits_cost": "same as edge4_prereg.json: L = U2 on edge2 tune 150 / validate 50 / holdout 50; C = Stage-B names, tune 40 / holdout 20; spread = the same SpreadModel per universe",
+ "arm": "the live trigger as in round 1 (edge_c_grid.wr_signals): on IEX 1m bars with the previous session prepended, fast %R(21, EWM 7) crosses up through -50 while slow %R(112, EWM 3) is above its value 2 bars earlier; one per name per 15 min; arm bar k with 14 <= k <= 359 (09:45..15:30); C: $20-100",
+ "arm_price": "SIP close of the arm bar",
+ "limit": "buy limit = arm_price x (1 - d); d in {5, 10, 20, 40} bp and {0.25, 0.5} x ATR5 (mean true range of the last 14 completed 5-min SIP bars aligned to 09:30, previous session filling in, as bp of arm price)",
+ "wait_min": [2, 5, 10],
+ "fill": "first bar j in k+1..k+W whose SIP 1m low is STRICTLY below the limit; fill price = limit (no queue position); no spread on entry",
+ "exit": "SIP close of bar j+h (h = 15, 30, 60) or of the 15:50 bar ('eod', needs j <= 364); pay half the modeled spread at exit",
+ "metrics": ["fill rate", "net bp per filled trade", "net bp per ARM (unfilled = 0)", "market entry on the same arms (close of arm bar, full spread, same hold from the arm)", "market return of filled vs unfilled arms (adverse selection / missed winners)", "random-time limit: same name, same clock hour, random minute on another day of the same part (3 draws), same d/W/hold: fill rate, per fill, per attempt"],
+ "promotion": "net per ARM > 0 on tune AND validate (L) / on tune (C), day-clustered t >= 2 on tune+validate pooled (L) / tune (C), and per-arm net > random-limit per attempt; holdout printed once only for promoted cells (max 5)",
+ "multiple_testing": "6 d x 3 W x 4 holds = 72 cells per universe (144 total), highly correlated"
+}

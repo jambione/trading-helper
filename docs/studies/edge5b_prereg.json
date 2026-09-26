@@ -1,0 +1,37 @@
+{
+ "study": "Round 5 (full spec received 14:40 ET): T4 mark/get set/go, T1 horizon ladder, T3 calendar, T2 earnings drift, T5 news",
+ "registered_at": "2026-09-26T14:44-04:00",
+ "registered_before_results": true,
+ "rules": "free data only (historical SIP bars, Alpaca news, Finnhub free endpoints with the desk key read-only, never printed); read-only; nice 15; <= 1 request/s total; max 2 heavy jobs",
+ "costs": "full round-trip modeled spread (round-2 U2 SpreadModel at the entry minute; daily tests use the symbol's median) + 2 bp for any overnight or open-print leg (next-open entries, 1-day/5-day holds). Limit fills pay only the exit half-spread (+2 bp if overnight).",
+ "baselines": "random picks from the same universe on the same dates (same minute for intraday); report raw net, excess vs random, and minus-SPY; t clustered by date",
+ "splits": {
+  "intraday_T4": "edge2 split: tune 150 (2025-09-29..2026-05-04) / validate 50 / holdout 50 (2026-07-17..09-25)",
+  "daily_T1_T2_T3": "by time over the available daily history: oldest 60% tune, next 20% validate, newest 20% holdout (holdout run once)"
+ },
+ "T4": {
+  "universe": "U2 liquid 108 (Mark ranks the 108 names; SPY itself excluded from Mark picks? no: all 108 ranked, as specified)",
+  "mark": "before the open of day d: top decile (11 names) of the 108 by 60-day return close(d-1)/close(d-61)-1, tie-break 20-day return; only if SPY close(d-1) > SMA50(d-1); daily closes = last RTH 1-min SIP close (raw prices, split-consistent within the window)",
+  "get_set": "first 1-min bar close between 10:00 and 11:00 (bars closing 10:00..11:00) with SIP close > session VWAP AND return since the 09:30 open > SPY's return since its 09:30 open",
+  "go_wr": "after get set, first bar (closing by 11:30) where unsmoothed Williams %R(14) on SIP 1-min crosses up through -50 (prev <= -50 < now); enter at the next 1-min open",
+  "go_pullback": "after get set, buy limit at get-set close x (1 - 10 bp); fills if a SIP 1-min low trades strictly below within the next 10 bars; fill at the limit",
+  "stages": "Mark-only = buy 09:45 open (open of the 09:45 bar); Mark+Set = open of the bar after get set; Mark+Set+Go(%R); Mark+Set+Go(pullback)",
+  "holds": "30 min, 60 min (close of the bar 30/60 minutes after entry), 15:50 (close of the 15:49 bar), 1 day (next session's last RTH close), 5 days (5th session's last RTH close)",
+  "one_trade": "per name per day per stage",
+  "random": "5 random U2 names (not marked that day) entered at the same minute with the same hold and cost rule",
+  "second_variant": "if T1/T2 finds a clearly better pre-open selection on tune+validate, rerun T4 with it as Mark (labeled variant 2)"
+ },
+ "T1": {
+  "universe": "U2 108 (SURVIVORSHIP: today's list applied back in time); daily SIP bars (split+dividend adjusted) as far back as served; broader set not attempted (no point-in-time membership)",
+  "signals": {"RS20": "top decile 20-day return", "RS60": "top decile 60-day return", "RS12_1": "top decile return from t-252 to t-21", "NEAR_HIGH": "close within 2% of the 252-day high", "PULLBACK": "close > SMA50 and (RSI(2) < 10 or 3 consecutive down closes)"},
+  "selection": "equal-weight top N = 5 and 10 by the signal's ranking variable (RS: return; NEAR_HIGH: distance to high; PULLBACK: RSI(2) ascending) among qualifying names",
+  "regime": "none / SPY close > SMA50 / SPY close > SMA200 (all at signal close)",
+  "entry": "next open (primary) and signal-day close (variant)",
+  "holds_days": [1, 2, 5, 10, 20],
+  "report": "per-trade net bp and daily-portfolio bp (mean over signal dates of the equal-weight basket), excess vs random N names same date, minus-SPY",
+  "promotion": "net excess vs random > 0 on tune AND validate and date-clustered t >= 2 on tune+validate; holdout once for the best <= 5"
+ },
+ "T3": {"assets": "SPY, QQQ, last 5 years of daily bars", "effects": ["turn of month: last trading day through 3rd trading day, close-to-close vs other days", "pre-holiday: trading day before an exchange holiday (weekday gap)", "FOMC statement days (hardcoded public dates 2021-2026)", "day of week", "overnight (close->open) vs intraday (open->close)"], "cost": "+1 round trip (SPY/QQQ model spread) + 2 bp overnight leg where applicable"},
+ "T2": {"data": "Finnhub free /stock/earnings (EPS actual vs estimate, period) and /calendar/earnings where history exists; reaction day = first session after the report (BMO -> same day, AMC -> next)", "signals": "top-quintile reaction-day return among reports; EPS surprise > 0", "entry": "next open or reaction-day close", "holds_days": [1, 5, 10, 20], "underpowered": "flag if < ~1 year of reports"},
+ "T5": "as in edge5_prereg.json (unchanged)"
+}

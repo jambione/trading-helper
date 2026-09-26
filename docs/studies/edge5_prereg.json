@@ -1,0 +1,34 @@
+{
+ "study": "Round 5 addendum (T0, T5, T6, T7) — requested 2026-09-26 14:33 ET",
+ "registered_at": "2026-09-26T14:36-04:00",
+ "registered_before_results": true,
+ "note": "T1-T4 were not specified to this executor; T6's 'T1 picks' leg is therefore not run. Same rules: free data only (historical SIP, Alpaca news), read-only, nice 15, <= 1 multi-symbol request/s (the S1 quote fetch is paused while these fetches run).",
+ "T0": "inventory of external data sources by grepping the repo (no secrets read)",
+ "T5_news": {
+  "universe": "L = U2 (108 liquid names); days = edge2 split (tune 150 / validate 50 / holdout 50); 10-day forward returns truncate at 2026-09-25",
+  "data": "Alpaca historical news (Benzinga) via NewsClient, symbols = U2; SIP daily bars (close-to-close, volume)",
+  "news_day": "an item tagged with the symbol, created_at in (16:00 ET day d-1, 15:30 ET day d]",
+  "event_E1": "news_day AND |r_d| >= 2 x std of the prior 20 daily returns AND volume_d >= 1.5 x mean prior 20 daily volumes; direction = sign(r_d) (r_d = close_d / close_{d-1} - 1)",
+  "event_E2_count_spike": "count of items in that window >= max(3, 3 x mean daily count over the prior 20 days); direction = sign(r_d)",
+  "control_E0": "the same move+volume condition with NO news item (isolates the news part)",
+  "entry_exit": "enter at close_d, exit at close_{d+h}, h = 1, 5, 10 trading days; cost = one modeled full spread (U2 SpreadModel at 15:55)",
+  "tested_side": "follow the day's direction (long if r_d > 0, short if r_d < 0), reported per side; long side is the promotion candidate",
+  "baseline": "same-day equal-weight mean of all U2 names over the same horizon (excess return); and 5 random U2 names same day",
+  "promotion": "net excess > 0 on tune AND validate, day-clustered t >= 2 on tune+validate pooled; holdout printed once only for promoted cells"
+ },
+ "T6_breadth": {
+  "measures": "from U2 SIP daily closes: % of names above their 20-day and 50-day SMA, advance/decline ratio, SPY 20-day realized vol; all as of the PRIOR close (known before the open)",
+  "rule_book": "trade the round-4 L intraday book only on days where prior-close % of U2 above the 50-day SMA >= 50% AND SPY 20-day realized vol <= its trailing 250-day median",
+  "applied_to": "round-4 book specs limit 10bp:5:30 and market 30 on L (all 108 names); report tune / validate / holdout for filter-on days vs filter-off days vs all",
+  "rule_T1": "same rule on T1 picks — NOT RUN (T1 not specified to this executor)"
+ },
+ "T7_source_audit": {
+  "nominations": "first appearance per (source, symbol, day) in ai_reports/tapes/*/shadow.jsonl + rejects.jsonl (sources: momentum, trending, movers, anthropic, xai, agy, bb_live) plus sessions/*/sources.jsonl.gz and discord.jsonl.gz where present",
+  "entry": "close of the nomination day (the desk could hold overnight at the close; no intraday look-ahead); also nomination price -> close as info",
+  "horizons": "1, 5, 10 trading days close-to-close, SIP daily bars",
+  "baseline": "same-day equal-weight mean of U2 (random liquid names), excess = pick - baseline; day-clustered t",
+  "cost": "not charged in the headline (spreads of nominated names are unmeasured); gross excess must beat ~20-30 bp to matter",
+  "note": "descriptive audit: no split, no promotion; history 2026-08-04..2026-09-25 (~37 days)"
+ },
+ "options": "check only whether Alpaca's free indicative options feed returns historical bars; note as future test"
+}

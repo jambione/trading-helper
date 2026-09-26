@@ -1,0 +1,42 @@
+{
+ "study": "Round 4: volume and spread signals on free delayed (historical) SIP data",
+ "registered_at": "2026-09-26T13:10-04:00",
+ "registered_before_results": true,
+ "data": {
+  "sip_bars": "Alpaca historical SIP 1m bars (free: request end > 15 min in the past; verified 13:25 ET 2026-09-26: SIP 9/25 and 2025-10-01 bars returned, end=now-5min refused 'subscription does not permit querying recent SIP data')",
+  "iex_bars": "existing IEX 1m caches (edge_iex_bars/liq for L, edge_iex_bars/DAY.pkl for C) + 20 warm-up days fetched the same way",
+  "sip_quotes": "S1 only: SIP NBBO, last quote in (t-1s, t] at each minute boundary t, 09:45..15:50",
+  "outcome_prices": "always SIP 1m closes (forward-filled), whichever feed detected the signal",
+  "warmup": "20 trading days before each universe's first day (for same-time-of-day 20-day volume averages)"
+ },
+ "universes": {
+  "L": {"names": "edge2 U2 (edge_fetch.LIQUID + 8 sector ETFs, 108 names)", "days": "ai_reports/edge2_split.json: tune 150 (2025-09-29..2026-05-04) / validate 50 / holdout 50 (2026-07-17..2026-09-25)", "spread": "edge_common.SpreadModel(U2) at decision time (round-2 model)"},
+  "C": {"names": "Claude's Stage B universe: each day's symbols in combined_stage_b_rows.pkl (top $20-100 names by prior-day dollar volume, ~250/day, 327 unique)", "days": "2026-06-22..2026-09-15 (60): tune = first 40 (..2026-08-17), holdout = last 20 (2026-08-18..)", "spread": "edge_common.SpreadModel() (round-1 model: combined_spreads + edge_spreads)"}
+ },
+ "common": {
+  "decision": "at the close of 1m bar k (k = minutes after 09:30 of bar start); decisions only at or after 09:45 (k >= 14)",
+  "entry": "V signals: SIP close of the signal bar (= next bar's open). S1: SIP close one minute after the snapshot ('entry next minute')",
+  "holds_min": [15, 30, 60, 120, "to_15:50"],
+  "hold_rule": "fixed holds need exit bar <= 15:50; 'to 15:50' needs >= 15 min left",
+  "cost": "full modeled quoted spread at entry per round trip, bp",
+  "refractory": "one signal per name per signal variant per 15 min",
+  "direction": "long is the tested side; short mirror reported as info only",
+  "stats": "per-trade mean net bp; t = day-clustered (mean of day means / SE); 95% CI day bootstrap"
+ },
+ "signals": {
+  "V1_pace": {"def": "pace = cumulative RTH volume through bar k / mean over the prior 20 trading days (>=15 present) of that name's cumulative volume through bar k; evaluated on the 15-min grid 09:45,10:00,...,15:30", "long": "pace >= X AND close > session VWAP AND close > prior RTH close", "short_info": "pace >= X AND close < VWAP AND close < prior close", "X": [1.6, 2.0, 3.0], "claude_reference": "rvol_pace = SIP volume so far / (20d avg daily SIP volume x expected fraction); runway_target_study pace>=1.64: runway 4.0%->16.0% (z +13.8); vol_trail_book S7 (one arm + pace>=1.64) +0.046%/trade t~0.9"},
+  "V2_breakout": {"def": "bar volume (1m, or 5m aligned to 09:30) >= k x mean of the prior 20 bars of that timeframe (previous session's RTH bars fill in early); close > max high of the prior N minutes before the bar", "tf": ["1m", "5m"], "k": [3, 5], "N_min": [15, 30], "short_info": "same volume test, close < min low of prior N minutes", "claude_reference": "wr_trigger_study vol_brk = 1m volume > 3x 20-min mean and close > prior 15-min high: SIP runway 1.22x, fwd15 +9.4 bp gross (t 3.1), halves +3/+12; on IEX detection fwd15 +2.0 (t 0.6), halves -10/+9"},
+  "V3_vsa": {"def": "1m bars; avg range and avg volume = mean of the prior 20 bars", "EFR_long": "up bar (C>O), range >= 1.5x avg range, volume >= 2x avg volume, (C-L)/(H-L) >= 0.75", "ABS_long": "volume >= 2x avg, range <= 0.75x avg range, after a 15-min decline (C[k-1] < C[k-16])", "NS_long": "uptrend (C[k-1] > C[k-31] and C[k] > VWAP), down bar (C<O), volume <= 0.5x avg, range <= 1.0x avg", "short_info": "mirrors (down EFR closing in bottom quarter; ABS after a 15-min rise; up-bar no-demand in a downtrend)"},
+  "S1_quotes": {"universe": "L only, first 30 names of edge_fetch.LIQUID (SPY QQQ IWM DIA SMH XLF XLE XLK TLT GLD AAPL MSFT NVDA AMZN GOOGL META TSLA AVGO JPM V MA UNH XOM LLY JNJ PG HD COST ABBV MRK)", "days": "tune[::6] (25), validate[::3] (17), holdout[::3] (17) = 59 days x 366 snapshots (request budget ~6 h at 1 req/s)", "S1a_narrow_long": "spread_now <= 0.67 x median of the previous 30 snapshots (>= 20 present); long (non-directional: short mirror = sign flip)", "S1b_imbalance_long": "bid_size / (bid_size + ask_size) >= 0.75 (3x) and >= 0.833 (5x)", "S1b_short_info": "<= 0.25 / <= 0.167"},
+  "iex_side_by_side": "V1, V2 (and V3) are detected on SIP bars and separately on IEX bars; outcomes always on SIP prices, same spread"
+ },
+ "baselines": {
+  "random_across_days": "for each signal, 5 draws: same name, same clock hour, random minute, random other day within the same split part; excess = net - mean(draw nets); day-clustered t on excess",
+  "same_day": "same name, same day, random minute in the same clock hour (look-ahead caveat: shares the day's drift/news)"
+ },
+ "promotion": {
+  "L": "long only: net > 0 on tune AND validate, day-clustered t >= 2 on tune+validate pooled, and excess vs random_across_days > 0 on tune+validate pooled; holdout printed once, only for promoted cells (at most 5, by pooled t)",
+  "C": "long only: net > 0 and t >= 2 and excess > 0 on the 40 tune days; the 20 holdout days printed once, only for promoted cells (at most 5)",
+  "multiple_testing": "~300 long cells (L: 14 signal variants x 5 holds x 2 feeds = 140; C: 140; S1: 3 x 5 = 15), heavily correlated; with a one-sided 2.3% false-positive rate per cell, several spurious promotions are expected. A promotion that fails holdout counts as noise."
+ }
+}

@@ -1,0 +1,18 @@
+{
+ "registered_at": "2026-09-26T12:50 ET, before any MTF computation",
+ "split": "ai_reports/edge2_split.json (tune 150 / validate 50 / holdout 50) - unchanged",
+ "universe": "U2; stocks need prior-day median SIP spread <= 3 bp; the 15 ETFs always",
+ "bars": "1m IEX RTH, forward-filled closes; 5m and 10m bars built from 1m aligned to 09:30; prior session prepended for EMA warm-up; a higher-TF bar is used only once complete",
+ "trend_a": "close > EMA20 (of that TF's closes) AND EMA20[now] - EMA20[3 bars ago] > 0",
+ "trend_b": "last 3 bars: highs strictly rising AND lows strictly rising",
+ "down (short mirror)": "close < EMA20 and slope < 0 / lower highs + lower lows",
+ "S1": "first minute all three TFs (1/5/10) are up",
+ "S2": "5m and 10m up; 1m close crosses from <= its EMA20 to > its EMA20 (the pull-back-then-turn; with an EMA cross the pull-back is implied)",
+ "S3": "control: first minute the 10m trend turns up (at a 10m bar close), lower TFs ignored",
+ "window": "decision 09:45-15:30 ET; one signal per name per signal type per 15 min",
+ "entry": "open of the next 1m bar (close of the signal bar if that minute has no IEX bar)",
+ "exits": "hold 15/30/60/120 min, or when the 5m trend is no longer up (checked at each 5m close), all capped at 15:50",
+ "cost": "full SIP spread at entry (round-1 model fitted on U2 samples)",
+ "baselines": "random: every-5-min entries in the same name, same day, same clock hour, same exit rule; S3 for S1/S2",
+ "promote_to_holdout": "net > 0 on tune AND validate, pooled tune+validate day-clustered t >= 2.0, AND beats random on both; max 3 cells by t; holdout run once"
+}
