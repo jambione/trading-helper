@@ -253,8 +253,24 @@ def crosses(B, level=-50.0):
     return out
 
 
+TRIGGER = "live"
+
+
+def vol_breakouts(B, refract=15):
+    """(index, True) where 1m volume > 3x its 20-min mean and the close clears
+    the prior 15-min high (tools/studies/wr_trigger_study.py 'vol_brk')."""
+    t, o, h, l, c, v = B
+    out, last = [], -10 ** 9
+    for i in range(20, len(c)):
+        vm = sum(v[i - 20:i]) / 20.0
+        if vm > 0 and v[i] > 3 * vm and c[i] > max(h[i - 15:i]) and i - last >= refract:
+            out.append((i, True))
+            last = i
+    return out
+
+
 def candidates(day, noms, bars):
-    """All live-trigger crosses on nominated names, with gates applied."""
+    """All trigger events on nominated names, with gates applied."""
     out = []
     for sym, ivs in noms.items():
         rec = bars.get((sym, day))
@@ -266,7 +282,7 @@ def candidates(day, noms, bars):
         gap = (open_px / prev_close - 1) * 100 if open_px and prev_close else None
         if gap is not None and gap < -1.0:
             continue
-        for i, rising in crosses(B):
+        for i, rising in (vol_breakouts(B) if TRIGGER == "vol_brk" else crosses(B)):
             if not rising:
                 continue
             te = t[i] + 60  # the cross is known at the minute's close
@@ -363,7 +379,12 @@ def main():
     ap.add_argument("--hold", type=float, default=5.0)
     ap.add_argument("--no-spread", action="store_true", help="skip real spreads (gross only)")
     ap.add_argument("--noms", choices=("sources", "refused"), default="sources")
+    ap.add_argument("--trigger", choices=("live", "vol_brk"), default="live",
+                    help="live = fast %%R up through -50 with slow rising; vol_brk = volume "
+                         "burst + 15-min high (SIP volume)")
     args = ap.parse_args()
+    global TRIGGER
+    TRIGGER = args.trigger
     if args.days:
         days = args.days
     elif args.noms == "sources":
@@ -412,7 +433,7 @@ def main():
                 "net_spread_gated": statistics.mean(tight) if tight else None, "n_gated": len(tight),
                 "per_day": per_day})
     fmt = lambda v, f: "-" if v is None else format(v, f)  # noqa: E731
-    print(f"\nnominations: {args.noms}; days {days[0]}..{days[-1]} ({len(days)}); "
+    print(f"\ntrigger: {args.trigger}; nominations: {args.noms}; days {days[0]}..{days[-1]} ({len(days)}); "
           f"fill at the cross minute's close; real SIP spread")
     print(f"{'exit':9} {'source':9} {'nm/d':>5} {'trades':>6} {'/10m':>5} {'avg':>4} {'>=1':>4} {'>=2':>4} "
           f"{'win':>4} {'gross':>6} {'cost':>5} {'net':>6} {'t':>5} {'h1':>6} {'h2':>6} {'net<=.2%':>9}")
@@ -422,7 +443,7 @@ def main():
               f"{fmt(r['win'], '4.0%')} {fmt(r['gross_bp'], '+6.1f')} {fmt(r['cost_bp'], '5.1f')} "
               f"{fmt(r['net_bp'], '+6.1f')} {fmt(r['net_t'], '+5.1f')} {fmt(r['net_h1'], '+6.1f')} "
               f"{fmt(r['net_h2'], '+6.1f')} {fmt(r['net_spread_gated'], '+6.1f')} ({r['n_gated']})")
-    out = os.path.join(ROOT, "ai_reports", f"source_optimal_study_{args.noms}.json")
+    out = os.path.join(ROOT, "ai_reports", f"source_optimal_study_{args.noms}_{args.trigger}.json")
     with open(out, "w") as f:
         json.dump(rows, f, indent=1, default=str)
     print(f"\nwrote {out}")

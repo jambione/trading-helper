@@ -102,6 +102,17 @@ def signals(B):
             out["vol_brk"].append(i)
         if x50 and srise[i] and vm > 0 and v[i] > 2 * vm:
             out["live_vol"].append(i)
+        # Combinations, fixed before looking (2026-09-26):
+        brk15 = c[i] > max(h[i - 15:i])
+        volb = vm > 0 and v[i] > 3 * vm and brk15
+        if volb and srise[i]:
+            out["A_vb_slowup"].append(i)
+        if volb and frise and f1 > -50:
+            out["B_vb_fastup"].append(i)
+        if x50 and srise[i] and brk15:
+            out["C_live_brk"].append(i)
+        if x50 and srise[i] and brk15 and vm > 0 and v[i] > 2 * vm:
+            out["D_live_vol_brk"].append(i)
     for k, idx in out.items():
         kept, last = [], -10 ** 9
         for i in idx:
@@ -216,9 +227,10 @@ def main():
     base = summarize(ev["random"])
     print(f"detect on {FEED}; entry delay {DELAY} min; days {days[0]}..{days[-1]} ({len(days)}); names x days {len(cache)}; "
           f"gross, no costs (spread ~8-16 bp round trip)\n")
-    print(f"{'trigger':10} {'n':>6} {'runway':>7} {'vs rnd':>7} {'mfe30%':>7} "
+    print(f"{'trigger':14} {'n':>6} {'runway':>7} {'vs rnd':>7} {'mfe30%':>7} "
           f"{'fwd5':>6} {'fwd15':>6} {'fwd30':>6} {'fwd15 t':>8} {'h1 fwd15':>9} {'h2 fwd15':>9}")
-    order = ["random", "live", "both_up", "fast50", "slow_turn", "both50", "vol_brk", "live_vol"]
+    order = ["random", "live", "both_up", "fast50", "slow_turn", "both50", "vol_brk", "live_vol",
+             "A_vb_slowup", "B_vb_fastup", "C_live_brk", "D_live_vol_brk"]
     for k in order:
         rows = ev.get(k, [])
         if not rows:
@@ -231,7 +243,7 @@ def main():
         h1 = [x["fwd15"] for x in rows if x["day"] in half and x["fwd15"] is not None]
         h2 = [x["fwd15"] for x in rows if x["day"] not in half and x["fwd15"] is not None]
         fmt = lambda v, f: "-" if v is None else format(v, f)  # noqa: E731
-        print(f"{k:10} {len(rows):6d} {r:7.1%} {r / base['runway'][0]:6.2f}x "
+        print(f"{k:14} {len(rows):6d} {r:7.1%} {r / base['runway'][0]:6.2f}x "
               f"{fmt(s['mfe30'][0], '7.2f')} {fmt(s['fwd5'][0], '+6.1f')} {fmt(f15, '+6.1f')} "
               f"{fmt(s['fwd30'][0], '+6.1f')} {fmt(tval if k != 'random' else None, '+8.1f')} "
               f"{fmt(statistics.mean(h1) if h1 else None, '+9.1f')} {fmt(statistics.mean(h2) if h2 else None, '+9.1f')}")
