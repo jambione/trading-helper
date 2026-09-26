@@ -26,6 +26,7 @@ positions are managed in ai_positions.manage_open_positions().
 """
 
 import json
+import os
 import sys
 
 # `kill -USR1 <pid>` dumps every thread's Python stack to this process's log.
@@ -1203,6 +1204,15 @@ def main() -> None:
                 flush=True,
             )
             raise SystemExit(2)
+    # Record every external read this process makes (desk_io), so a replay
+    # can serve the exact bytes the decisions saw. DESK_IO_RECORD=0 disables.
+    if os.getenv("DESK_IO_RECORD", "1") != "0":
+        try:
+            import desk_io
+            desk_io.install_live()
+            print("[ai] desk_io recording alpaca + /api/state reads", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[ai] desk_io install failed (not recording): {e}", flush=True)
     try:
         cov = ai_positions.outcomes_coverage()
         if cov.get("n_uncovered"):

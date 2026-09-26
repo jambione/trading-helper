@@ -6498,10 +6498,15 @@ def dashboard_state(*, force: bool = False) -> dict:
     if not force and cached and (mono - ts) < _DASH_CACHE_TTL:
         return cached
     try:
-        with _dash_urlopen(f"{DASHBOARD_URL}/api/state") as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        import desk_io
+        if desk_io.MODE == "replay":
+            data = desk_io.serve_dash()
+        else:
+            with _dash_urlopen(f"{DASHBOARD_URL}/api/state") as resp:
+                data = json.loads(resp.read().decode("utf-8"))
         if not isinstance(data, dict):
             raise TypeError(f"unexpected payload type {type(data).__name__}")
+        desk_io.record_dash(data)
         _DASH_CACHE = (mono, data)
         _dash_error = ""
         return data
