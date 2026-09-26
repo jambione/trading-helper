@@ -37,6 +37,8 @@ from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
+if not os.path.isdir(os.path.join(ROOT, "ai_reports")):  # run from a copy: use the cwd repo
+    ROOT = os.getcwd()
 sys.path.insert(0, ROOT)
 
 
@@ -118,6 +120,7 @@ def main():
         out.append(row)
         if k % 25 == 0:
             print(f"  {k}/{len(samples)}")
+            json.dump(out, open(os.path.join(ROOT, "ai_reports", f"freshness_study_{args.day}.json"), "w"))
         time.sleep(0.25)
     json.dump(out, open(os.path.join(ROOT, "ai_reports", f"freshness_study_{args.day}.json"), "w"))
 
