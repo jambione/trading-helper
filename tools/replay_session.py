@@ -97,6 +97,9 @@ def parse_args(argv=None):
     ap.add_argument("--fidelity", action="store_true",
                     help="replay the code that ran and score against live")
     ap.add_argument("--step", type=float, default=2.0, help="book tick, sim seconds")
+    ap.add_argument("--live-book", action="store_true",
+                    help="hold book membership to live's recorded book every step, so fidelity "
+                         "scores the arm/entry/exit path alone (admission is not replayed)")
     ap.add_argument("--warm-book", action="store_true",
                     help="start from the recorded book at --start instead of empty")
     ap.add_argument("--snapshots", default=None, help="archive dir (default ~/session_snapshots/DAY)")
@@ -1084,6 +1087,29 @@ def run_inside(args) -> int:
             ew.sync_watch_from_source_panels(live, now=t)
         except Exception as e:  # noqa: BLE001
             print(f"[replay] sync failed at {datetime.fromtimestamp(t, ET):%H:%M:%S}: {e}")
+        if args.live_book:
+            # Live's book is built from a history of admissions and evictions
+            # across every build that ran that day; a replay rebuilds it from
+            # the source lists alone and drifts (2026-09-25: 4 of 5 missed live
+            # buys were names the replay had not seated). Take membership from
+            # the recording; keep the replay's own row where it has one, so its
+            # latch and indicator state carry on.
+            _, w_live = rec.get("ai_reports/entry_watch_state.json")
+            w_live = watch_rows(w_live)
+            if w_live:
+                with ew._WATCH_LOCK:
+                    cur = ew.load_watch()
+                    new = {}
+                    for sym_, row in w_live.items():
+                        if sym_ in broker.open:
+                            continue
+                        mine = cur.get(sym_)
+                        if mine is None:
+                            mine = dict(row)
+                            mine["status"] = "watching"
+                        new[sym_] = mine
+                    if set(new) != set(cur):
+                        ew.save_watch(new)
         # Live's book thread builds the dashboard payload on every publish
         # (ai_trader._positions_payload -> book_table_rows -> apply_tape_blocker
         # -> should_arm_buy), in the same process as the poll. Skipping it made
