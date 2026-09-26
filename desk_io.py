@@ -103,7 +103,26 @@ def _caller() -> str:
     return "?"
 
 
+# The desk pass (book sync, book paint, arm poll) this thread is running, by
+# its start time. Every record made during a pass carries it as "pt", so a
+# replay running that pass is served the reads live made inside it, in order,
+# rather than whatever was latest at the pass's start (a read happens a few ms
+# after the pass begins, and would otherwise look like it came from the future).
+_tl = threading.local()
+
+
+def set_pass(t: float | None) -> None:
+    _tl.pt = None if t is None else round(float(t), 3)
+
+
+def _current_pass() -> float | None:
+    return getattr(_tl, "pt", None)
+
+
 def _record(obj: dict) -> None:
+    pt = _current_pass()
+    if pt is not None:
+        obj["pt"] = pt
     try:
         import session_recorder
         session_recorder._append("wire", obj)
@@ -435,13 +454,22 @@ def _skip(rel: str) -> str | None:
     return rel
 
 
+def _always_input(rel: str) -> bool:
+    """Research output: written by LLM calls running inside this process
+    (seed_rank threads, ai_suggest), so it is not state the replayed code can
+    regenerate. It is recorded as the desk reads it even though this process
+    wrote it, and a replay serves it instead of re-running research."""
+    base = rel.rsplit("/", 1)[-1]
+    return base.startswith("seed_rank") or base.endswith("suggestions.json")
+
+
 def _is_read(mode: str) -> bool:
     return not any(c in mode for c in "wax+")
 
 
 def _note_write(path: Any) -> None:
     r = _rel(path)
-    if r is not None:
+    if r is not None and not _always_input(r):
         _own.add(r)
 
 
@@ -569,6 +597,7 @@ def install_live(*, files: bool = True) -> None:
     """Record every alpaca-py REST call and input-file read of this process."""
     global MODE, _orig_request
     from alpaca.common.rest import RESTClient
+    set_pass(None)
     with _lock:
         if _orig_request is None:
             _orig_request = RESTClient._request
@@ -576,6 +605,18 @@ def install_live(*, files: bool = True) -> None:
         MODE = "live"
     if files:
         _install_file_hooks(_live_open, _live_stat, _live_replace, _live_rename)
+    # Boot marker: an exact replay starts here, so its in-memory state (caches,
+    # latches, the files this process reads before it first writes them)
+    # begins where live's did.
+    sha = ""
+    try:
+        import subprocess
+        sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+                                      text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:  # noqa: BLE001
+        pass
+    _record({"ts": time.time(), "ch": "boot", "pid": os.getpid(),
+             "argv": " ".join(sys.argv)[:200], "sha": sha})
 
 
 # ── replay mode ────────────────────────────────────────────────────────────
@@ -589,6 +630,11 @@ class Recording:
         self.dash_ts: list[float] = []
         self._dash_recs: list[dict] = []
         self._file_recs: dict[str, list[dict]] = {}
+        self.alpaca_pt: dict[tuple, list[dict]] = {}
+        self.dash_pt: dict[float, list[int]] = {}
+        self.file_pt: dict[tuple, int] = {}
+        self.cursor: Counter = Counter()
+        self.rewinds = 0
         tmp: dict[str, list[tuple[float, dict]]] = {}
         if path.exists():
             with gzip.open(path, "rt") as f:
@@ -607,8 +653,14 @@ class Recording:
         for k, v in tmp.items():
             v.sort(key=lambda x: x[0])
             self.alpaca[k] = ([x[0] for x in v], [x[1] for x in v])
+            for _t, r in v:
+                if r.get("pt") is not None:
+                    self.alpaca_pt.setdefault((k, r["pt"]), []).append(r)
         self._dash_recs.sort(key=lambda r: float(r["ts"]))
         self.dash_ts = [float(r["ts"]) for r in self._dash_recs]
+        for i, r in enumerate(self._dash_recs):
+            if r.get("pt") is not None:
+                self.dash_pt.setdefault(r["pt"], []).append(i)
         self._dec = DashDecoder()
         self._dash_i = 0
         for v in self._file_recs.values():
@@ -617,39 +669,67 @@ class Recording:
         self._file_dec: dict[str, DeltaDecoder] = {}
         self._file_i: dict[str, int] = {}
         self._file_state: dict[str, dict] = {}
+        for rel, v in self._file_recs.items():
+            for i, r in enumerate(v):
+                if r.get("pt") is not None:
+                    self.file_pt[(rel, r["pt"])] = i
 
-    def alpaca_at(self, key: str, t: float) -> dict | None:
+    def _next_in_pass(self, key: tuple, n: int) -> int:
+        """The k-th read of *key* in this pass gets live's k-th (the last one
+        again if the replay reads more often than live did)."""
+        c = self.cursor[key]
+        self.cursor[key] += 1
+        return min(c, n - 1)
+
+    def alpaca_at(self, key: str, t: float, pt: float | None = None) -> dict | None:
+        if pt is not None:
+            same = self.alpaca_pt.get((key, pt))
+            if same:
+                return same[self._next_in_pass(("a", key, pt), len(same))]
         ts, recs = self.alpaca.get(key, ([], []))
         i = bisect.bisect_right(ts, t) - 1
         if i < 0 or t - ts[i] > self.max_age:
             return None
         return recs[i]
 
-    def dash_at(self, t: float) -> dict | None:
-        """Payload of the last live fetch at or before t (forward-only)."""
-        n = bisect.bisect_right(self.dash_ts, t)
-        if n == 0:
-            return None
+    def dash_at(self, t: float, pt: float | None = None) -> dict | None:
+        """Payload live fetched in this pass, else the last one at or before t.
+        Forward-only: a decoder cannot rewind, so a request for an older
+        fetch than one already applied gets the newer state (counted)."""
+        same = self.dash_pt.get(pt) if pt is not None else None
+        if same:
+            i = same[self._next_in_pass(("d", pt), len(same))]
+            n, t_at = i + 1, self.dash_ts[i]
+        else:
+            n = bisect.bisect_right(self.dash_ts, t)
+            if n == 0:
+                return None
+            t_at = t
+            if t - self.dash_ts[n - 1] > self.max_age:
+                return None
+        if n < self._dash_i:
+            self.rewinds += 1
         while self._dash_i < n:
             self._dec.apply(self._dash_recs[self._dash_i])
             self._dash_i += 1
-        if t - self.dash_ts[n - 1] > self.max_age:
-            return None
-        return self._dec.payload(t)
+        return self._dec.payload(t_at)
 
 
 _rec: Recording | None = None
 
 
-def _file_at(rec: "Recording", rel: str, t: float) -> dict | None:
-    """{'absent': True} | {'data': bytes, 'mt': float} as live last read it at
-    or before t; None when the recording never saw this file by then."""
+def _file_at(rec: "Recording", rel: str, t: float, pt: float | None = None) -> dict | None:
+    """{'absent': True} | {'data': bytes, 'mt': float} as live read it in this
+    pass, else as last read at or before t; None when never seen by then."""
     ts = rec._file_ts.get(rel)
     if not ts:
         return None
-    n = bisect.bisect_right(ts, t)
+    j = rec.file_pt.get((rel, pt)) if pt is not None else None
+    n = j + 1 if j is not None else bisect.bisect_right(ts, t)
     if n == 0:
         return None
+    if n < rec._file_i.get(rel, 0):
+        rec.rewinds += 1
     recs = rec._file_recs[rel]
     dec = rec._file_dec.setdefault(rel, DeltaDecoder())
     st = rec._file_state.setdefault(rel, {})
@@ -680,7 +760,7 @@ def _served_file(file) -> tuple[str, dict] | None:
     rel = _rel(file)
     if rel is None or rel in _own or _rec is None:
         return None
-    hit = _file_at(_rec, rel, _clock())
+    hit = _file_at(_rec, rel, _clock(), _current_pass())
     if hit is None:
         missed[f"file {rel}"] += 1
         miss_callers[_caller()] += 1
@@ -745,7 +825,7 @@ def _replay_request(self, method, path, data=None, base_url=None, api_version=No
     base = str(base_url or getattr(self, "_base_url", "") or "")
     full = f"{base}/{api_version or getattr(self, '_api_version', '')}{path}"
     key = alpaca_key(method, _path_only(full), _jsonable(data) if isinstance(data, dict) else data)
-    hit = _rec.alpaca_at(key, _clock()) if _rec is not None else None
+    hit = _rec.alpaca_at(key, _clock(), _current_pass()) if _rec is not None else None
     if hit is None:
         raise _miss("alpaca", f"{str(method).upper()} {_path_only(full)}")
     served[f"alpaca {_path_only(full)}"] += 1
@@ -756,7 +836,7 @@ def _replay_request(self, method, path, data=None, base_url=None, api_version=No
 
 def serve_dash() -> dict:
     """Replay: the /api/state payload live had at the replay clock."""
-    p = _rec.dash_at(_clock()) if _rec is not None else None
+    p = _rec.dash_at(_clock(), _current_pass()) if _rec is not None else None
     if p is None:
         raise _miss("dash", "/api/state")
     served["dash /api/state"] += 1
@@ -770,6 +850,7 @@ def install_replay(path: Path, clock: Callable[[], float], *, max_age: float = 6
     global ROOT
     global MODE, _orig_request, _rec, _clock
     from alpaca.common.rest import RESTClient
+    set_pass(None)
     with _lock:
         if _orig_request is None:
             _orig_request = RESTClient._request
@@ -793,6 +874,7 @@ def uninstall() -> None:
         MODE, _rec, _clock = "off", None, time.time
     if _file_on:
         _uninstall_file_hooks()
+    set_pass(None)
     _own.clear()
     _file_enc.clear()
     _file_mt.clear()
@@ -800,4 +882,5 @@ def uninstall() -> None:
 
 def report() -> dict:
     return {"mode": MODE, "served": dict(served), "missed": dict(missed),
+            "rewinds": getattr(_rec, "rewinds", 0),
             "miss_callers": dict(miss_callers.most_common(20))}

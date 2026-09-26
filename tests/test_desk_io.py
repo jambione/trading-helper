@@ -192,6 +192,7 @@ def test_file_channel_live_then_replay(isolated, monkeypatch, tmp_path):
     rows = [json.loads(l) for l in gzip.open(wire, "rt")]
     files = [r["f"] for r in rows if r.get("ch") == "file"]
     assert files == ["trending_stocks.json", "trending_stocks.json"], files
+    assert [r for r in rows if r.get("ch") == "boot"], "boot marker missing"
 
     # Replay from a tree where the panel does not exist on disk at all.
     panel.unlink()
@@ -269,3 +270,38 @@ def test_report_dir_files_share_one_name(monkeypatch, tmp_path):
     assert desk_io._rel(nested / "t.json") == "t.json"
     assert desk_io._rel(root / "config" / "bot_config.json") is None
     assert desk_io._rel(root / "a.txt") is None
+
+
+def test_arm_pass_rows_record_outcome_and_inputs(isolated):
+    import ai_entry_watch as ew
+    import session_recorder
+    touched = {"AAA": {"status": "watching", "block_code": "wait_mid_rise",
+                       "last_ask": 10.0, "last_ask_src": "stream", "last_ask_age_sec": 2.5,
+                       "indicator": {"pctr": -55.0, "pctr_slow": -60.0,
+                                     "pctr_slow_rising": True, "pctr_src": "live"}},
+               "BBB": "not a record"}
+    ew._record_arm_pass(touched, 1_790_000_000.0)
+    session_recorder.flush(force=True)
+    f = list(isolated.rglob("decisions.jsonl.gz"))[0]
+    row = json.loads(gzip.open(f, "rt").readline())
+    assert row["ts"] == 1_790_000_000.0 and row["ev"] == "arm" and len(row["rows"]) == 1
+    r = row["rows"][0]
+    assert (r["s"], r["b"], r["px"], r["src"], r["age"], r["r"], r["rsr"]) == \
+        ("AAA", "wait_mid_rise", 10.0, "stream", 2.5, -55.0, True)
+
+
+def test_research_output_written_in_process_is_still_an_input(isolated, monkeypatch, tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.setattr(desk_io, "ROOT", root)
+    desk_io.install_live(files=True)
+    try:
+        with open(root / "seed_rank_gx.json", "w") as f:
+            f.write('{"rows": [{"symbol": "AAA"}]}')
+        assert json.load(open(root / "seed_rank_gx.json"))["rows"][0]["symbol"] == "AAA"
+    finally:
+        import session_recorder
+        session_recorder.flush(force=True)
+        desk_io.uninstall()
+    rows = [json.loads(l) for l in gzip.open(_wire_file(isolated), "rt")]
+    assert [r["f"] for r in rows if r.get("ch") == "file"] == ["seed_rank_gx.json"]

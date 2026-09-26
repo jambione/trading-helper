@@ -5116,6 +5116,7 @@ def book_table_rows(
     appear as ``phase=open`` with live P&L (watch metadata preserved when
     the symbol was on the queue). Sort: open → ready → submitted → watching.
     """
+    _record_desk_event("paint", time.time())
     pos_map = positions if isinstance(positions, dict) else {}
     by_sym: dict[str, dict] = {}
 
@@ -10107,6 +10108,7 @@ def sync_watch_from_source_panels(
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     t0 = float(now if now is not None else time.time())
+    _record_desk_event("sync", t0)
 
     # A1: warm Finnhub for raw panel symbols (incl. seed-drop near-misses)
     # before the filtered shortlist is built — subscribe clock starts early.
@@ -17009,6 +17011,55 @@ def _signal_rank(rec: dict) -> tuple[int, float]:
     return tier, strength
 
 
+def _record_desk_event(kind: str, t: float) -> None:
+    """Mark when a state-changing pass ran (book sync, book paint), so an
+    exact replay runs it at the same moments live did. Never raises."""
+    try:
+        import desk_io
+        desk_io.set_pass(t)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import session_recorder
+        session_recorder._append("decisions", {"ts": float(t), "ev": kind})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _record_arm_pass(touched: dict, t0: float) -> None:
+    """One row per poll: every seated name's outcome and the inputs the arm
+    check read, for the session recorder's decisions stream.
+
+    A replay can then be compared with live check by check — which name,
+    which poll, which input first differed — instead of only by the buys that
+    came out the end. Never raises: telemetry must not stop the poll.
+    """
+    try:
+        import session_recorder
+        rows = []
+        for sym, rec in touched.items():
+            if not isinstance(rec, dict):
+                continue
+            ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
+            rows.append({
+                "s": sym,
+                "st": rec.get("status"),
+                "b": rec.get("block_code"),
+                "px": _f_or_none(rec.get("last_ask")),
+                "src": rec.get("last_ask_src") or rec.get("price_src"),
+                "age": _f_or_none(rec.get("last_ask_age_sec")),
+                "r": _f_or_none(ind.get("pctr")),
+                "rs": _f_or_none(ind.get("pctr_slow")),
+                "rsr": ind.get("pctr_slow_rising"),
+                "rf": ind.get("pctr_falling"),
+                "rsrc": ind.get("pctr_src"),
+                "bage": _f_or_none(ind.get("bars_age_sec")),
+            })
+        session_recorder._append("decisions", {"ts": float(t0), "ev": "arm", "rows": rows})
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     """One RTH watch poll: refresh quotes, restructure if needed, arm/buy.
 
@@ -17021,6 +17072,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     events: list[dict] = []
     cfg = cfg if isinstance(cfg, dict) else {}
     t0 = float(now if now is not None else time.time())
+    _record_desk_event("poll", t0)
 
     global _POLL_SEQ
     _POLL_SEQ += 1
@@ -18232,6 +18284,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 rec["status"] = "watching"
 
         touched[sym] = rec
+
+    _record_arm_pass(touched, t0)
 
     # Demand-driven stale_tape_cap + preferential unarmable-stale steal (A1).
     # Build inclusion-cleared funnel candidates first; cap only drops when a

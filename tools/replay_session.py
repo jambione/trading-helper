@@ -51,6 +51,8 @@ price is never younger than it was.
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_right
+from collections import Counter
 import gzip
 import json
 import os
@@ -104,6 +106,11 @@ def parse_args(argv=None):
                     help="start from the recorded book at --start instead of empty")
     ap.add_argument("--snapshots", default=None, help="archive dir (default ~/session_snapshots/DAY)")
     ap.add_argument("--out", default=None, help="write result JSON here")
+    ap.add_argument("--exact", action="store_true",
+                    help="serve every read from the day's desk_io wire recording and drive "
+                         "sync/paint/poll at live's own moments; score decisions check by check")
+    ap.add_argument("--sessions", default=None,
+                    help="session recorder dir (default <repo>/ai_reports/sessions/DAY)")
     ap.add_argument("--live-staleness", action="store_true",
                     help="refuse an entry when live's decision ledger had the name on stale "
                          "tape at that moment (live's stream staleness is not in the recording)")
@@ -240,8 +247,9 @@ class SimClock:
         self.t = t
 
 
-def guard_network() -> dict:
-    """Refuse DNS for everything but historical market data."""
+def guard_network(allowed: tuple = None) -> dict:
+    """Refuse DNS for everything but historical market data (or *allowed*)."""
+    allowed = ALLOWED_HOSTS if allowed is None else allowed
     import traceback
     blocked: dict[str, int] = {}
     real = socket.getaddrinfo
@@ -249,7 +257,7 @@ def guard_network() -> dict:
 
     def getaddrinfo(host, *a, **k):
         h = str(host or "")
-        if any(h == x or h.endswith("." + x) for x in ALLOWED_HOSTS):
+        if any(h == x or h.endswith("." + x) for x in allowed):
             return real(host, *a, **k)
         desk = [f for f in traceback.extract_stack()
                 if f.filename.startswith(root) and "replay_session" not in f.filename]
@@ -1258,10 +1266,243 @@ def report(args, slots, broker, blocked, wall0) -> None:
     print(f"result: {path}")
 
 
+# ── exact mode ─────────────────────────────────────────────────────────────
+
+def _gz_rows(path: Path):
+    if not path.exists():
+        return
+    with gzip.open(path, "rt") as f:
+        for line in f:
+            try:
+                yield json.loads(line)
+            except ValueError:
+                continue
+
+
+def run_exact(args) -> int:
+    """Replay the desk from its own recording, and diff it against live.
+
+    Every external read is served by desk_io from the day's wire stream (no
+    fetch, no guess: an unserved read is a counted miss), config follows the
+    recorded config stream, and the book sync, book paint and arm poll run at
+    exactly the moments live ran them (decisions stream). The simulation
+    starts at the desk process's boot so in-memory state begins where live's
+    did. Entries are captured, not sent. The score is live-vs-replay agreement
+    on every name at every poll, plus buys matched within 5 s.
+    """
+    root = Path.cwd()
+    sys.path.insert(0, str(root))
+    sys.path.insert(0, str(root / "tools"))
+    repo = Path(os.environ.get("REPLAY_REPO") or root)
+    sess = Path(args.sessions) if args.sessions else repo / "ai_reports" / "sessions" / args.day
+    wire, dec_path = sess / "wire.jsonl.gz", sess / "decisions.jsonl.gz"
+    for p in (wire, dec_path):
+        if not p.exists():
+            print(f"[exact] missing {p}: this day was not recorded with desk_io")
+            return 2
+    t_start, t_end = at(args.day, args.start), at(args.day, args.end)
+
+    boots = [float(r["ts"]) for r in _gz_rows(wire) if r.get("ch") == "boot"]
+    before = [b for b in boots if b <= t_start]
+    events, live_arms = [], {}
+    for r in _gz_rows(dec_path):
+        if r.get("ev") in ("sync", "paint", "poll"):
+            events.append((float(r["ts"]), r["ev"]))
+        elif r.get("ev") == "arm":
+            live_arms[round(float(r["ts"]), 3)] = r.get("rows") or []
+    events.sort()
+    if before:
+        t_boot = max(before)
+    else:
+        t_boot = events[0][0] if events else t_start
+        print("[exact] WARNING: no desk boot before --start; in-memory state starts cold")
+    events = [e for e in events if t_boot <= e[0] <= t_end]
+    cfgs = sorted((float(r["ts"]), r.get("config") or {}) for r in _gz_rows(sess / "config.jsonl.gz")
+                  if isinstance(r.get("config"), dict))
+    print(f"[exact] boot {datetime.fromtimestamp(t_boot, ET):%H:%M:%S}, "
+          f"{len(events)} recorded passes to {args.end}, {len(cfgs)} config versions")
+
+    overrides = {}
+    for kv in args.set:
+        k, _, v = kv.partition("=")
+        try:
+            overrides[k] = json.loads(v)
+        except ValueError:
+            overrides[k] = v
+    cfg_on = {"i": -1}
+
+    def follow_config(t: float) -> None:
+        i = bisect_right([c[0] for c in cfgs], t) - 1
+        if i >= 0 and i != cfg_on["i"]:
+            cfg_on["i"] = i
+            (root / "config" / "bot_config.json").write_text(
+                json.dumps({**cfgs[i][1], **overrides}, indent=1))
+
+    clock = SimClock(t_boot)
+    blocked = guard_network(allowed=())
+    follow_config(t_boot)
+
+    import desk_io
+    desk_io.install_replay(wire, clock=lambda: clock.t, root=root)
+    import session_recorder
+    replay_polls: dict[float, list] = {}
+    _append = session_recorder._append
+
+    def capture(stream, obj, **kw):
+        if stream == "decisions" and obj.get("ev") == "arm":
+            replay_polls[round(float(obj["ts"]), 3)] = obj.get("rows") or []
+            return
+        if stream in ("decisions", "wire"):
+            return
+        _append(stream, obj, **kw)
+
+    session_recorder._append = capture
+
+    import ai_entry_watch as ew
+    import ai_positions as cp
+    from config import load_config
+
+    patched: set = set()
+    patch_clocks(clock, root, patched)
+    ew.push_candidates_to_engine = lambda symbols, *a, **k: {"ok": True, "added": len(symbols or [])}
+    try:
+        import finnhub_stream as fs
+        fs.set_subscribe_priority = lambda *a, **k: None
+        fs.request_subscribe = lambda *a, **k: None
+    except Exception:  # noqa: BLE001
+        pass
+    entries: list[tuple[float, str]] = []
+
+    def place(sym, decision, equity_arg=None, **kw):
+        entries.append((clock.t, str(sym).upper()))
+        d = decision if isinstance(decision, dict) else {}
+        return {"ok": True, "replay": True, "stop_price": d.get("stop_price"),
+                "target_1": d.get("target_1")}
+
+    cp.place_scaled_entry = place
+
+    wall0 = _real_time.time()
+    errors: Counter = Counter()
+    for t, ev in events:
+        clock.t = t
+        follow_config(t)
+        patch_clocks(clock, root, patched)
+        cfg = load_config()
+        try:
+            if ev == "sync":
+                ew.sync_watch_from_source_panels(cfg, now=t)
+            elif ev == "paint":
+                ew.book_table_rows(positions={}, watch_rows=ew.public_snapshot())
+            else:
+                ew.poll_once(cfg=cfg, now=t)
+        except Exception as e:  # noqa: BLE001
+            errors[f"{ev}: {type(e).__name__}: {str(e)[:80]}"] += 1
+
+    out = exact_score(events, live_arms, replay_polls, entries, wire, t_start, t_end)
+    out.update({"day": args.day, "window": f"{args.start}-{args.end}",
+                "sha": os.getenv("REPLAY_SHA"), "boot": t_boot, "io": desk_io.report(),
+                "errors": dict(errors), "blocked_network": dict(blocked),
+                "wall_sec": round(_real_time.time() - wall0, 1)})
+    print_exact(out)
+    path = Path(args.out) if args.out else Path(os.environ.get("REPLAY_WORK", ".")) / "exact.json"
+    path.write_text(json.dumps(out, indent=1, default=str))
+    print(f"result: {path}")
+    return 0 if out["verdict"] == "PASS" else 1
+
+
+def exact_score(events, live_arms, replay_polls, entries, wire: Path,
+                t_start: float, t_end: float) -> dict:
+    """Live vs replay, name by name at every live poll in the window."""
+    key = lambda r: (r.get("st"), r.get("b"))  # noqa: E731
+    checks = agree = live_only = replay_only = 0
+    first_div: dict[str, dict] = {}
+    by_block: Counter = Counter()
+    polls = arm_mismatch = 0
+    for t, ev in events:
+        if ev != "poll" or not (t_start <= t <= t_end):
+            continue
+        polls += 1
+        k = round(t, 3)
+        if (k in live_arms) != (k in replay_polls):
+            arm_mismatch += 1  # one side reached the arm pass, the other returned early
+        live = {r["s"]: r for r in live_arms.get(k, [])}
+        rep = {r["s"]: r for r in replay_polls.get(k, [])}
+        for s_ in set(live) | set(rep):
+            checks += 1
+            a, b = live.get(s_), rep.get(s_)
+            if a is None:
+                replay_only += 1
+            elif b is None:
+                live_only += 1
+            elif key(a) == key(b):
+                agree += 1
+                continue
+            else:
+                by_block[f"{a.get('b')} -> {b.get('b')}"] += 1
+            first_div.setdefault(s_, {"t": datetime.fromtimestamp(t, ET).strftime("%H:%M:%S"),
+                                      "live": a, "replay": b})
+    buys = sorted((float(r["ts"]), str((r.get("q") or {}).get("symbol") or "").upper())
+                  for r in _gz_rows(wire)
+                  if r.get("ch") == "alpaca" and r.get("m") == "POST"
+                  and str(r.get("p", "")).endswith("/orders")
+                  and str((r.get("q") or {}).get("side", "")).lower() == "buy"
+                  and t_start <= float(r["ts"]) <= t_end)
+    rep_e = [e for e in entries if t_start <= e[0] <= t_end]
+    used, matched = set(), 0
+    for lt, ls in buys:
+        for j, (rt, rs) in enumerate(rep_e):
+            if j not in used and rs == ls and abs(rt - lt) <= 5.0:
+                used.add(j)
+                matched += 1
+                break
+    dec_rate = agree / checks if checks else None
+    buy_rate = matched / len(buys) if buys else None
+    if arm_mismatch:
+        checks += arm_mismatch
+    return {"polls": polls, "arm_pass_mismatch": arm_mismatch,
+            "checks": checks, "agree": agree, "decision_agreement": dec_rate if not arm_mismatch
+            else (agree / checks if checks else 0.0),
+            "live_only_names": live_only, "replay_only_names": replay_only,
+            "divergence_kinds": dict(by_block.most_common(15)),
+            "first_divergence": dict(sorted(first_div.items(), key=lambda kv: kv[1]["t"])[:25]),
+            "live_buys": len(buys), "replay_entries": len(rep_e), "buys_matched_5s": matched,
+            "buy_recall": buy_rate}
+
+
+def print_exact(o: dict) -> None:
+    io_ = o.get("io") or {}
+    n_miss = sum((io_.get("missed") or {}).values())
+    print(f"\nEXACT {o['day']} {o['window']}  sha {o.get('sha')}")
+    print(f"  reads served {sum((io_.get('served') or {}).values())}, MISSED {n_miss}")
+    for k, v in sorted((io_.get("missed") or {}).items(), key=lambda kv: -kv[1])[:10]:
+        print(f"    miss {v:6d}  {k}")
+    for k, v in list((io_.get("miss_callers") or {}).items())[:5]:
+        print(f"    by   {v:6d}  {k}")
+    da = o["decision_agreement"]
+    print(f"  decisions: {o['agree']}/{o['checks']} agree"
+          f" ({'-' if da is None else f'{da:.1%}'}); live-only names {o['live_only_names']},"
+          f" replay-only {o['replay_only_names']}")
+    for k, v in o["divergence_kinds"].items():
+        print(f"    {v:6d}  {k}")
+    br = o["buy_recall"]
+    print(f"  buys: {o['buys_matched_5s']}/{o['live_buys']} matched within 5 s"
+          f" ({'-' if br is None else f'{br:.0%}'}); replay entries {o['replay_entries']}")
+    if o.get("errors"):
+        print(f"  pass errors: {o['errors']}")
+    if o.get("blocked_network"):
+        print(f"  blocked network: {o['blocked_network']}")
+    ok = (n_miss == 0 and da is not None and da >= 0.99
+          and (br is None or br >= 0.95) and not o.get("errors"))
+    o["verdict"] = "PASS" if ok else "FAIL"
+    print(f"  VERDICT {o['verdict']}  (need 0 misses, >=99% decisions, >=95% buys, no errors)")
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     if os.getenv("REPLAY_EXPORTED") != "1":
         return export_and_reexec(args)
+    if args.exact:
+        return run_exact(args)
     return run_inside(args)
 
 
