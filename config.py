@@ -37,7 +37,6 @@ DEFAULT_CONFIG = {
     "cm_rsi_length":    2,   # RSI period (2 = original Larry Connors CM RSI-2)
     "cm_rsi_oversold": 25,   # approaching-oversold threshold for signal
     "cm_rsi_buy_max":   10.0,  # line at the bottom of the CM RSI pane
-    "cm_rsi_prefer_green": True,  # Connors color is a strength flag, not a gate
     # Desk buy = MACD bullish cross with wide line separation (gap).
     "ai_watch_tv_exh_rsi": False,
     # TV %R Trend Exhaustion square arm: enter on dual-OB + tight (red ■).

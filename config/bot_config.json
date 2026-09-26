@@ -372,7 +372,6 @@
   "rs_use_partial_session": false,
   "rs_use_rvol_filter": false,
   "rsi_overbought": 65,
-  "rsi_sell": 75,
   "rte_confluence_max": 15.0,
   "rte_min_boxes": 2,
   "rte_require_tight": true,
