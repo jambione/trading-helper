@@ -4451,22 +4451,6 @@ def test_arm_at_last_refuses_cooling_and_buys_rising_or_ob():
     assert ok and why.startswith("last_overbought")
 
 
-def _soft_ob_cfg(**over):
-    """Live-shaped last-mode knobs for the late-heat conjunction."""
-    cfg = _last_cfg(
-        ai_watch_soft_ob_enabled=True,
-        ai_watch_soft_ob_rsi_min=55.0,
-        ai_watch_ob_allow_hot=False,
-        ai_watch_arm_require_cm_rsi=True,
-        ai_watch_arm_cm_rsi_max=60.0,
-        ai_watch_arm_cm_rsi_require_rising=False,
-        ai_watch_require_realtime_rsi=False,
-        ai_watch_arm_require_macd=False,
-    )
-    cfg.update(over)
-    return cfg
-
-
 def _ob_rec(*, symbol, rsi, exh, source="trending", slow_gap: float = 3.0):
     rec = _armable_rec()
     rec["symbol"] = symbol
@@ -4489,114 +4473,11 @@ def _ob_rec(*, symbol, rsi, exh, source="trending", slow_gap: float = 3.0):
     return rec
 
 
-def test_late_heat_blocks_hpe_keeps_bull():
-    """Sep 3 counterfactual: HPE-class OB+RSI~60 blocked; BULL OB+RSI 46 allowed.
-
-    Both armed last_overbought live. A blunt heat_max~80 would have killed
-    BULL (EXH 85, +0.53R) along with HPE (EXH 83.5, −0.10R / MFE 0).
-    """
-    import ai_entry_watch as ew
-
-    cfg = _soft_ob_cfg()
-    hpe = _ob_rec(symbol="HPE", rsi=59.6, exh=83.5, source="momentum")
-    ok, why = ew.should_arm_buy(hpe, ask=50.44, bid=50.40, cfg=cfg)
-    assert ok is False and why == "late_heat"
-    assert ew.format_blocker("late_heat") == "late heat"
-    assert ew.late_heat_blocks_buy(hpe, cfg) == "late_heat"
-
-    bull = _ob_rec(symbol="BULL", rsi=46.3, exh=85.0, source="trending")
-    ok, why = ew.should_arm_buy(bull, ask=9.37, bid=9.35, cfg=cfg)
-    assert ok and why == "last_overbought"
-    assert ew.late_heat_blocks_buy(bull, cfg) is None
-
-
-def test_late_heat_does_not_block_heating_even_with_high_rsi():
-    """Soft OB still ignores heating — mistimed_heat owns that band now."""
-    import ai_entry_watch as ew
-
-    cfg = _soft_ob_cfg(ai_watch_mistimed_heat_enabled=False)
-    rec = _ob_rec(symbol="GLXY", rsi=53.1, exh=75.8, source="xai")
-    ok, why = ew.should_arm_buy(rec, ask=26.67, bid=26.60, cfg=cfg)
-    assert ok and why == "last_heating"
-    assert ew.late_heat_blocks_buy(rec, cfg) is None
-
-    # Heating + RSI 59.6 is still not the HPE soft-OB chase (not yet OB).
-    rec["indicator"]["cm_rsi"] = 59.6
-    ok, why = ew.should_arm_buy(rec, ask=26.67, bid=26.60, cfg=cfg)
-    assert ok and why == "last_heating"
-    assert ew.late_heat_blocks_buy(rec, cfg) is None
-
-
-def _mistimed_cfg(**over):
-    """Live-shaped last-mode knobs for the mistimed-heat heating veto."""
-    cfg = _soft_ob_cfg(
-        ai_watch_mistimed_heat_enabled=True,
-        ai_watch_mistimed_heat_rsi_min=52.0,
-        ai_watch_mistimed_heat_rsi_peak_min=55.0,
-    )
-    cfg.update(over)
-    return cfg
-
-
-def test_mistimed_heat_blocks_gtlb_keeps_bull():
-    """2026-09-04 GTLB: last_heating + RSI mid-50s blocked; Sep 3 BULL allowed.
-
-    GTLB armed last_heating on stream (confirm RSI ~59.3, pass 53.3) — soft
-    OB never fired because EXH was not overbought and/or pass RSI was under
-    55. BULL the prior session was last_overbought + RSI 46.3 (+0.53R); that
-    path stays on soft OB and must not be killed by a heating-only veto.
-
-    RSI hard max stays 60 — mistimed_heat (not a lower hard max) is the
-    separator so BULL-class early OB heats still clear.
-    """
-    import ai_entry_watch as ew
-    from config import DEFAULT_CONFIG
-
-    assert DEFAULT_CONFIG["ai_watch_mistimed_heat_enabled"] is True
-    assert DEFAULT_CONFIG["ai_watch_mistimed_heat_rsi_min"] == 52.0
-    assert DEFAULT_CONFIG["ai_watch_mistimed_heat_rsi_peak_min"] == 55.0
-    assert DEFAULT_CONFIG["ai_watch_require_exh_rising"] is True
-    # Live bot_config keeps RSI hard max at 60; mistimed_heat (floor 52) is
-    # the heating-band chase veto — do not tighten hard max to 55.
-
-    cfg = _mistimed_cfg(ai_watch_require_exh_rising=True)
-    # Pass-tick shape: heating band, RSI 53.3 (under soft OB floor, over 52).
-    gtlb = _ob_rec(symbol="GTLB", rsi=53.3, exh=75.0, source="anthropic")
-    assert ew.exhaustion_state(gtlb, cfg) == "heating"
-    assert ew.late_heat_blocks_buy(gtlb, cfg) is None
-    ok, why = ew.should_arm_buy(gtlb, ask=49.40, bid=49.38, cfg=cfg)
-    assert ok is False and why == "mistimed_heat"
-    assert ew.format_blocker("mistimed_heat") == "mistimed heat"
-    assert ew.mistimed_heat_blocks_buy(gtlb, cfg, exh_why="heating") == "mistimed_heat"
-    detail = ew.mistimed_heat_detail(gtlb, cfg)
-    assert "rsi=53.3" in detail and "why=heating" in detail
-
-    # Confirm-window peak alone: pass RSI dipped under 52 but peak was 59.3.
-    gtlb_dip = _ob_rec(symbol="GTLB", rsi=51.0, exh=74.0, source="anthropic")
-    gtlb_dip["arm_confirm_rsi_max"] = 59.3
-    assert ew.late_heat_blocks_buy(gtlb_dip, cfg) is None
-    ok, why = ew.should_arm_buy(gtlb_dip, ask=49.40, bid=49.38, cfg=cfg)
-    assert ok is False and why == "mistimed_heat"
-
-    # BULL-class: overbought + RSI 46 + rising EXH — soft OB allows;
-    # mistimed_heat skips non-heating paths. RSI max 60 untouched.
-    bull = _ob_rec(symbol="BULL", rsi=46.3, exh=85.0, source="trending")
-    ok, why = ew.should_arm_buy(bull, ask=9.37, bid=9.35, cfg=cfg)
-    assert ok and why == "last_overbought"
-    assert ew.mistimed_heat_blocks_buy(bull, cfg, exh_why="overbought") is None
-
-    # Early healthy heat: heating + RSI 46 + rising EXH still arms.
-    early = _ob_rec(symbol="EARLY", rsi=46.0, exh=72.0, source="momentum")
-    ok, why = ew.should_arm_buy(early, ask=12.0, bid=11.98, cfg=cfg)
-    assert ok and why == "last_heating"
-    assert ew.mistimed_heat_blocks_buy(early, cfg, exh_why="heating") is None
-
-
 def test_require_exh_rising_blocks_falling_and_allows_early_heat():
     """Positive early timing: rising EXH + low RSI arms; falling EXH refuses."""
     import ai_entry_watch as ew
 
-    cfg = _mistimed_cfg(ai_watch_require_exh_rising=True)
+    cfg = _last_cfg(ai_watch_ob_allow_hot=False, ai_watch_require_exh_rising=True)
 
     early = _ob_rec(symbol="EARLY", rsi=42.0, exh=55.0, source="momentum")
     ok, why = ew.should_arm_buy(early, ask=12.0, bid=11.98, cfg=cfg)
@@ -4626,48 +4507,6 @@ def test_require_exh_rising_blocks_falling_and_allows_early_heat():
     assert ok is False and why == "exh_rising_required"
 
 
-def test_mistimed_heat_off_leaves_gtlb_class_armed():
-    import ai_entry_watch as ew
-
-    gtlb = _ob_rec(symbol="GTLB", rsi=53.3, exh=75.0, source="anthropic")
-    ok, why = ew.should_arm_buy(
-        gtlb, ask=49.40, bid=49.38,
-        cfg=_mistimed_cfg(ai_watch_mistimed_heat_enabled=False))
-    assert ok and why == "last_heating"
-
-
-def test_shipped_mistimed_off_keeps_rsi_max60_level_refuse():
-    """2026-09-16 half-split dig: live-effective slice of narrower PASS cell.
-
-    Full AB winner was ``rsi_dir_mistimed_off_keep_max60`` (mistimed off +
-    fall floor 10 + keep max 60). Live ``cm_rsi_allows_buy`` only applies
-    ``allow_falling_below`` when ``require_rising`` is true, so the ship is
-    mistimed=false only; level max 60 must still refuse RSI 80 rising.
-    """
-    import ai_entry_watch as ew
-
-    cfg = _mistimed_cfg(
-        ai_watch_mistimed_heat_enabled=False,
-        ai_watch_arm_cm_rsi_max=60.0,
-        ai_watch_arm_cm_rsi_require_rising=False,
-        ai_watch_arm_cm_rsi_allow_falling_below=20.0,
-        ai_watch_soft_ob_enabled=True,
-    )
-    # Heating mid-50s: mistimed off → allow (was mistimed_heat under LIVE).
-    mid = _ob_rec(symbol="GTLB", rsi=53.3, exh=55.0, source="anthropic")
-    ok, why = ew.should_arm_buy(mid, ask=49.40, bid=49.38, cfg=cfg)
-    assert ok and why == "last_heating"
-
-    # Rising RSI 80: level max 60 still refuses.
-    hot = _ob_rec(symbol="HOT", rsi=80.0, exh=55.0, source="momentum")
-    hot["indicator"]["cm_rsi_rising"] = True
-    hot["indicator"]["cm_rsi_falling"] = False
-    ok, why = ew.cm_rsi_allows_buy(hot, cfg)
-    assert ok is False and why == "rsi_extended"
-    ok, why = ew.should_arm_buy(hot, ask=12.0, bid=11.98, cfg=cfg)
-    assert ok is False and why == "rsi_extended"
-
-
 def test_note_confirm_rsi_tracks_peak_and_clears_with_streak():
     import ai_entry_watch as ew
 
@@ -4680,34 +4519,14 @@ def test_note_confirm_rsi_tracks_peak_and_clears_with_streak():
     assert "arm_confirm_rsi_max" not in rec
 
 
-def test_late_heat_off_and_floor_zero_leave_hpe_class_armed():
-    import ai_entry_watch as ew
-
-    hpe = _ob_rec(symbol="HPE", rsi=59.6, exh=83.5, source="momentum")
-    ok, why = ew.should_arm_buy(
-        hpe, ask=50.44, bid=50.40, cfg=_soft_ob_cfg(ai_watch_soft_ob_enabled=False))
-    assert ok and why == "last_overbought"
-
-    ok, why = ew.should_arm_buy(
-        hpe, ask=50.44, bid=50.40, cfg=_soft_ob_cfg(ai_watch_soft_ob_rsi_min=0.0))
-    assert ok and why == "last_overbought"
-
-
 def test_plan_a_rsi_arm_off_high_rsi_still_arms():
-    """2026-09-17: require_cm_rsi=false → RSI level cannot veto arms.
-
-    Soft OB / mistimed RSI floors stay inert when the CM RSI gate is off.
-    Heat band (≥50, no max) and rising EXH still gate.
+    """2026-09-17 Plan A: RSI level cannot veto arms (the CM RSI arm gate and
+    its soft-OB / mistimed floors are retired). Heat band (≥50, no max) and
+    rising EXH still gate.
     """
     import ai_entry_watch as ew
 
     cfg = _last_cfg(
-        ai_watch_arm_require_cm_rsi=False,
-        ai_watch_arm_cm_rsi_max=100.0,
-        ai_watch_require_realtime_rsi=True,
-        ai_watch_soft_ob_enabled=True,
-        ai_watch_soft_ob_rsi_min=0.0,
-        ai_watch_mistimed_heat_enabled=False,
         ai_watch_exhaustion_heat_min_pct=50.0,
         ai_watch_exhaustion_heat_max_pct=0.0,
         ai_watch_require_exh_rising=True,
@@ -4717,8 +4536,6 @@ def test_plan_a_rsi_arm_off_high_rsi_still_arms():
     hot = _ob_rec(symbol="HOT", rsi=80.0, exh=65.0, source="momentum")
     hot["indicator"]["cm_rsi_rising"] = True
     hot["indicator"]["cm_rsi_src"] = "alpaca"
-    ok, why = ew.cm_rsi_allows_buy(hot, cfg)
-    assert ok is True and why == "cm_rsi_off"
     ok, why = ew.should_arm_buy(hot, ask=12.0, bid=11.98, cfg=cfg)
     assert ok is True, why
     assert why.startswith("last_")
@@ -4728,9 +4545,8 @@ def test_plan_a_rsi_arm_off_high_rsi_still_arms():
     )
     assert not str(why).startswith("rsi_not_realtime")
 
-    # Soft OB floor 0: HPE-class OB+high RSI still arms when require is false.
+    # HPE-class OB+high RSI still arms.
     hpe = _ob_rec(symbol="HPE", rsi=59.6, exh=83.5, source="momentum")
-    assert ew.late_heat_blocks_buy(hpe, cfg) is None
     ok, why = ew.should_arm_buy(hpe, ask=50.44, bid=50.40, cfg=cfg)
     assert ok and why == "last_overbought"
 
@@ -4781,15 +4597,6 @@ def test_heat_band_min50_no_upper_cap():
     }
     ok, why = ew.exhaustion_allows_buy(low, cfg)
     assert ok is False and why == "heating_too_low"
-
-
-def test_rsi_hard_max_still_wins_above_sixty():
-    """Do not rename rsi_extended to late_heat when RSI is already illegal."""
-    import ai_entry_watch as ew
-
-    rec = _ob_rec(symbol="HOT", rsi=61.0, exh=83.5, source="momentum")
-    ok, why = ew.should_arm_buy(rec, ask=50.44, bid=50.40, cfg=_soft_ob_cfg())
-    assert ok is False and why == "rsi_extended"
 
 
 def test_build_last_zone_stop_is_synth_pct_under_the_tape():
@@ -5173,113 +4980,6 @@ def test_heating_relief_reads_engine_map_not_only_the_row():
     assert "heating_rvol_relief" in met
 
 
-def test_square_arm_smci_pass_rklb_refuse_no_heating():
-    """2026-09-18 TV square mode: SMCI (gap~9, both OB) arms; RKLB (gap 25) don't.
-
-    Enter only dual-OB+tight. Pure heating (even tight) does not arm.
-    ai_watch_tv_exh_rsi stays false (RSI rising under 75 unchanged).
-    """
-    import ai_entry_watch as ew
-    from config import DEFAULT_CONFIG
-
-    assert DEFAULT_CONFIG.get("ai_watch_exh_square_arm") is True
-
-    cfg = _last_cfg(
-        ai_watch_exh_square_arm=True,
-        ai_watch_require_exh_rising=True,
-        ai_watch_exhaustion_heat_min_pct=40.0,
-        ai_watch_exhaustion_heat_max_pct=0.0,
-        ai_watch_arm_require_cm_rsi=True,
-        ai_watch_arm_cm_rsi_max=75.0,
-        ai_watch_arm_cm_rsi_require_rising=True,
-        ai_watch_require_realtime_rsi=False,
-        ai_watch_mistimed_heat_enabled=False,
-        ai_watch_soft_ob_enabled=False,
-        ai_watch_ob_allow_hot=False,
-        rte_threshold=20,
-        rte_confluence_max=15.0,
-        rte_require_tight=True,
-        ai_watch_tv_exh_rsi=False,
-    )
-
-    # SMCI-like: fast≈−13, slow≈−4, gap≈9, both OB.
-    smci = _armable_rec()
-    smci["symbol"] = "SMCI"
-    smci["source"] = "xai"
-    smci["structure"]["zone_kind"] = "at_last"
-    smci["structure"]["reward_risk"] = 0.6
-    smci["indicator"].update({
-        "pctr": -13.0,
-        "pctr_slow": -4.0,
-        "pctr_rising": True,
-        "pctr_falling": False,
-        "pctr_ob": True,
-        "pctr_tight": True,
-        "cm_rsi": 42.0,
-        "cm_rsi_rising": True,
-        "cm_rsi_src": "realtime",
-    })
-    ok, why = ew.exhaustion_allows_buy(smci, cfg)
-    assert ok is True and why == "overbought"
-    ok, why = ew.should_arm_buy(smci, ask=45.0, bid=44.95, cfg=cfg)
-    assert ok is True and why.startswith("last_overbought")
-
-    # RKLB-like: fast≈−39, slow≈−64, gap≈25 → exh_not_tight.
-    rklb = _armable_rec()
-    rklb["symbol"] = "RKLB"
-    rklb["source"] = "trending"
-    rklb["structure"]["zone_kind"] = "at_last"
-    rklb["structure"]["reward_risk"] = 0.6
-    rklb["indicator"].update({
-        "pctr": -39.0,
-        "pctr_slow": -64.0,
-        "pctr_rising": True,
-        "pctr_falling": False,
-        "pctr_ob": False,
-        "pctr_tight": False,
-        "cm_rsi": 48.0,
-        "cm_rsi_rising": True,
-        "cm_rsi_src": "realtime",
-    })
-    ok, why = ew.exhaustion_allows_buy(rklb, cfg)
-    assert ok is False and why == "exh_not_tight"
-    ok, why = ew.should_arm_buy(rklb, ask=64.0, bid=63.95, cfg=cfg)
-    assert ok is False and why == "exh_not_tight"
-
-    # Heating + tight but NOT both OB → no arm (square only).
-    early = _ob_rec(symbol="EARLY", rsi=45.0, exh=60.0, source="momentum",
-                    slow_gap=5.0)
-    ok, why = ew.exhaustion_allows_buy(early, cfg)
-    assert ok is False and why == "wait_exh"
-
-    # Same book with heating companion: square still arms, heat falls through.
-    both = dict(cfg)
-    both["ai_watch_exh_heating_with_square"] = True
-    ok, why = ew.exhaustion_allows_buy(smci, both)
-    assert ok is True and why == "overbought"
-    ok, why = ew.exhaustion_allows_buy(early, both)
-    assert ok is True and why == "heating"
-    ok, why = ew.exhaustion_allows_buy(rklb, both)
-    assert ok is False and why == "exh_not_tight"
-
-    # Heating companion refuses a falling tape even when %R is rising.
-    both["ai_watch_heating_price_rise_sec"] = 20.0
-    # Both %R lines must be rising for last_heating.
-    early["indicator"]["pctr_slow_rising"] = True
-    early["indicator"]["pctr_both_rising"] = True
-    early["px_ring"] = [[1_000.0, 10.50], [1_020.0, 10.20]]
-    ok, why = ew.exhaustion_allows_buy(early, both, now=1_020.0)
-    assert ok is False and why == "price_falling"
-    early["px_ring"] = [[1_000.0, 10.00], [1_020.0, 10.20]]
-    ok, why = ew.exhaustion_allows_buy(early, both, now=1_020.0)
-    assert ok is True and why == "heating"
-    # Fast rising, slow flat → refuse.
-    early["indicator"]["pctr_slow_rising"] = False
-    early["indicator"]["pctr_both_rising"] = False
-    ok, why = ew.exhaustion_allows_buy(early, both, now=1_020.0)
-    assert ok is False and why == "slow_not_rising"
-
-
 def test_square_left_overbought_triangle_exit():
     """Leave dual-OB (▼) → left_overbought; still both-OB → hold."""
     import ai_entry_watch as ew
@@ -5360,87 +5060,6 @@ def _left_ob_rec():
     }
 
 
-def test_entry_square_refuses_sticky_cache_after_live_left_ob():
-    """PSKY 2026-09-21: cached pctr_ob must not arm after TV left ■."""
-    import ai_entry_watch as ew
-
-    cfg = {
-        "ai_watch_exh_square_arm": True,
-        "rte_threshold": 20,
-        "rte_confluence_max": 15.0,
-        "ai_watch_require_exhaustion_data": True,
-        "ai_watch_ob_allow_hot": True,
-    }
-    rec = _left_ob_rec()  # live −40/−35, cache still OB+tight
-    ok, why = ew._square_exh_allows_buy(rec, cfg, require_rising=False)
-    assert ok is False
-    assert why in ("wait_exh", "exh_not_tight", "exh_falling")
-    assert ew.is_overbought(rec, cfg) is False
-
-
-def test_entry_square_allows_live_dual_ob_tight():
-    import ai_entry_watch as ew
-
-    cfg = {
-        "ai_watch_exh_square_arm": True,
-        "rte_threshold": 20,
-        "rte_confluence_max": 15.0,
-        "ai_watch_require_exhaustion_data": True,
-        "ai_watch_ob_allow_hot": True,
-        "ai_watch_square_max_age_sec": 0,
-    }
-    rec = {
-        "symbol": "SMCI",
-        "indicator": {
-            "pctr": -10.0, "pctr_slow": -8.0,
-            "pctr_ob": False, "pctr_tight": False,  # stale false cache
-            "pctr_rising": True, "pctr_falling": False,
-        },
-    }
-    ok, why = ew._square_exh_allows_buy(rec, cfg, require_rising=False)
-    assert ok is True and why == "overbought"
-
-
-def test_entry_square_refuses_wide_gap():
-    import ai_entry_watch as ew
-
-    cfg = {
-        "ai_watch_exh_square_arm": True,
-        "rte_threshold": 20,
-        "rte_confluence_max": 15.0,
-        "ai_watch_require_exhaustion_data": True,
-    }
-    rec = {
-        "symbol": "RKLB",
-        "indicator": {
-            "pctr": -10.0, "pctr_slow": -40.0,  # gap 30 > 15
-            "pctr_rising": True, "pctr_falling": False,
-        },
-    }
-    ok, why = ew._square_exh_allows_buy(rec, cfg, require_rising=False)
-    assert ok is False and why == "exh_not_tight"
-
-
-def test_entry_square_refuses_missing_slow():
-    import ai_entry_watch as ew
-
-    cfg = {
-        "ai_watch_exh_square_arm": True,
-        "rte_threshold": 20,
-        "rte_confluence_max": 15.0,
-        "ai_watch_require_exhaustion_data": True,
-    }
-    rec = {
-        "symbol": "PSKY",
-        "indicator": {
-            "pctr": -15.0, "pctr_slow": None,
-            "pctr_ob": True, "pctr_tight": True,
-        },
-    }
-    ok, why = ew._square_exh_allows_buy(rec, cfg, require_rising=False)
-    assert ok is False and why == "no_exhaustion_data"
-
-
 def test_exit_square_still_drops_the_latch():
     """The MARA fix: the exit path reads live math, never the cache."""
     import ai_entry_watch as ew
@@ -5451,18 +5070,6 @@ def test_exit_square_still_drops_the_latch():
     assert both_ob is False
 
 
-def test_sticky_flag_still_or_latches_for_legacy_callers():
-    """sticky=True remains for explicit legacy/tests; entry does not use it."""
-    import ai_entry_watch as ew
-
-    cfg = {"rte_threshold": 20, "rte_confluence_max": 15.0}
-    rec = _left_ob_rec()
-    both_ob, tight, err = ew.dual_r_ob_tight(rec, cfg, sticky=True)
-    assert err is None
-    assert both_ob is True and tight is True
-    assert rec["indicator"]["pctr_ob"] is True  # sticky never writes
-
-
 def test_live_both_ob_holds_for_entry_despite_false_cache():
     """A stale False cache must not block an entry the live lines allow."""
     import ai_entry_watch as ew
@@ -5471,7 +5078,7 @@ def test_live_both_ob_holds_for_entry_despite_false_cache():
     rec = {"indicator": {
         "pctr": -10.0, "pctr_slow": -8.0, "pctr_ob": False, "pctr_tight": False,
     }}
-    both_ob, tight, err = ew.dual_r_ob_tight(rec, cfg, sticky=False)
+    both_ob, tight, err = ew.dual_r_ob_tight(rec, cfg)
     assert err is None
     assert both_ob is True
     assert tight is True
@@ -5524,62 +5131,6 @@ def test_left_overbought_confirm_and_flicker_cancel():
     assert hit is True and why == "left_overbought"
 
 
-def _macd_fill_rec(**kw):
-    ind = {
-        "pctr": -40.0,
-        "pctr_slow": -55.0,
-        "macd_bull": True,
-        "macd_gap_rising": True,
-        "macd_gap": 0.03,
-        "cm_rsi": 52.0,
-        "cm_rsi_rising": True,
-    }
-    ind.update(kw.pop("ind", {}))
-    rec = {"symbol": "APLD", "indicator": ind, "cm_rsi": ind["cm_rsi"],
-           "cm_rsi_rising": ind["cm_rsi_rising"]}
-    rec.update(kw)
-    return rec
-
-
-def _macd_fill_cfg(**kw):
-    cfg = {
-        "ai_watch_macd_gap_arm": True,
-        "ai_watch_macd_gap_min_pct": 0.02,
-        "ai_watch_macd_gap_rsi_max": 60,
-        "ai_watch_exh_square_arm": True,
-        "rte_threshold": 20,
-        "rte_confluence_max": 15,
-    }
-    cfg.update(kw)
-    return cfg
-
-
-def test_macd_gap_fill_buys_the_scored_rule():
-    import ai_entry_watch as ew
-    # Price 10, gap 0.003 = 0.03% of price, RSI 52 rising, not in the square.
-    ok, why = ew.macd_gap_fill_allows_buy(
-        _macd_fill_rec(), _macd_fill_cfg(), price=10.0)
-    assert ok is True and why == "macd_gap"
-
-
-def test_macd_gap_fill_refuses_a_fresh_square():
-    import ai_entry_watch as ew
-    ok, why = ew.macd_gap_fill_allows_buy(
-        _macd_fill_rec(ind={"pctr": -5.0, "pctr_slow": -4.0}),
-        _macd_fill_cfg(), price=10.0)
-    assert ok is False and why == "in_square"
-
-
-def test_macd_gap_fill_refuses_hot_rsi_and_a_small_gap():
-    import ai_entry_watch as ew
-    ok, why = ew.macd_gap_fill_allows_buy(
-        _macd_fill_rec(ind={"cm_rsi": 74.0}), _macd_fill_cfg(), price=10.0)
-    assert ok is False and why == "macd_rsi_hot"
-    ok, why = ew.macd_gap_fill_allows_buy(
-        _macd_fill_rec(ind={"macd_gap": 0.001}), _macd_fill_cfg(), price=10.0)
-    assert ok is False and why == "macd_gap_too_small"
-
-
 def test_arm_sources_default_open_and_list_blocks_the_buy():
     """* keeps every source. momentum,movers blocks trending, xai, and a blank source.
 
@@ -5614,69 +5165,6 @@ def test_arm_sources_default_open_and_list_blocks_the_buy():
     rec["source"] = "movers"
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=tight)
     assert ok and why.startswith("zone")
-
-
-def test_arm_sources_block_trending_macd_gap_before_the_fill():
-    """MACD-gap is a buy. A blocked source never reaches last_macd_gap."""
-    import ai_entry_watch as ew
-
-    rec = {
-        "symbol": "APLD",
-        "status": "watching",
-        "source": "trending",
-        "structure": {
-            "decision": "WAIT", "wait_kind": "wait_for_zone",
-            "entry_low": 9.0, "entry_high": 11.0,
-            "stop_price": 8.0, "target_1": 14.0, "reward_risk": 2.0,
-            "zone_kind": "at_last",
-        },
-        "indicator": {
-            "pctr": -40.0, "pctr_slow": -55.0,
-            "pctr_rising": True, "pctr_falling": False,
-            "macd_bull": True, "macd_gap_rising": True, "macd_gap": 0.03,
-            "cm_rsi": 52.0, "cm_rsi_rising": True,
-        },
-        "cm_rsi": 52.0,
-        "cm_rsi_rising": True,
-    }
-    cfg = {
-        "desk_product": "scalp_legacy",
-        "ai_watch_arm_mode": "last",
-        "ai_watch_arm_sources": "momentum,movers",
-        "ai_watch_macd_gap_arm": True,
-        "ai_watch_macd_gap_min_pct": 0.02,
-        "ai_watch_macd_gap_rsi_max": 60,
-        "ai_watch_exh_square_arm": True,
-        "ai_watch_exh_oversold_triangle_arm": False,
-        "ai_watch_exhaustion_rules": True,
-        "ai_watch_require_exh_rising": False,
-        "rte_threshold": 20,
-        "rte_confluence_max": 15,
-        "ai_min_reward_risk": 0,
-        "ai_watch_min_stop_pct": 0,
-        "ai_watch_cheap_price": 0,
-        "ai_watch_arm_require_cm_rsi": False,
-        "ai_watch_arm_require_indicators": False,
-        "ai_watch_mistimed_heat_enabled": False,
-        "ai_watch_soft_ob_enabled": False,
-        "ai_watch_arm_require_macd": False,
-        "ai_watch_macd_block_bearish": False,
-        "ai_watch_macd_block_narrowing": False,
-        # Live window. At 0 a square miss returns before the MACD-gap arm.
-        "ai_watch_zone_exh_window_sec": 20.0,
-    }
-    ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.95, cfg=cfg)
-    assert not ok and why == "source_blocked"
-    rec["source"] = "momentum"
-    ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.95, cfg=cfg)
-    assert ok and why == "last_macd_gap"
-
-
-def test_macd_gap_fill_off_by_default():
-    import ai_entry_watch as ew
-    ok, why = ew.macd_gap_fill_allows_buy(
-        _macd_fill_rec(), {"ai_watch_exh_square_arm": True}, price=10.0)
-    assert ok is False and why == "macd_gap_arm_off"
 
 
 def test_merge_triangle_indicator_engine_leave_beats_live_hold():
@@ -6188,82 +5676,6 @@ def test_exhaustion_trade_price_only_can_be_turned_off(monkeypatch):
     assert ew.exhaustion_state(rec, cfg) == "overbought"
 
 
-def _rsi_cfg(**over) -> dict:
-    cfg = {
-        "ai_watch_arm_require_cm_rsi": True,
-        "ai_watch_arm_cm_rsi_max": 50.0,
-        "ai_watch_arm_cm_rsi_min": 0.0,
-    }
-    cfg.update(over)
-    return cfg
-
-
-def test_cm_rsi_arms_inside_the_band_and_rising():
-    """The operator's rule: trending up from 0 to 50 is a good entry."""
-    import ai_entry_watch as ew
-
-    for level in (2.0, 10.0, 33.3, 50.0):
-        rec = {"indicator": {"cm_rsi": level, "cm_rsi_rising": True}}
-        ok, why = ew.cm_rsi_allows_buy(rec, _rsi_cfg())
-        assert ok is True, (level, why)
-        assert why == "rsi_turning_up"
-
-
-def test_cm_rsi_refuses_when_trending_down():
-    """"Never trending down" — the level alone is not enough."""
-    import ai_entry_watch as ew
-
-    rec = {"indicator": {"cm_rsi": 12.0, "cm_rsi_rising": False}}
-    ok, why = ew.cm_rsi_allows_buy(rec, _rsi_cfg())
-    assert ok is False and why == "rsi_not_rising"
-
-
-def test_cm_rsi_refuses_above_the_band():
-    """Rising is not enough either — above 50 the entry is chasing."""
-    import ai_entry_watch as ew
-
-    rec = {"indicator": {"cm_rsi": 67.7, "cm_rsi_rising": True}}
-    ok, why = ew.cm_rsi_allows_buy(rec, _rsi_cfg())
-    assert ok is False and why == "rsi_extended"
-
-
-def test_cm_rsi_refuses_a_missing_reading():
-    """No reading refuses rather than passing through — same rule as %R."""
-    import ai_entry_watch as ew
-
-    ok, why = ew.cm_rsi_allows_buy({"indicator": {}}, _rsi_cfg())
-    assert ok is False and why == "no_rsi_data"
-
-
-def test_cm_rsi_can_require_the_live_tape():
-    """A reading off the REST fallback is not the live tape and can refuse."""
-    import ai_entry_watch as ew
-
-    cfg = _rsi_cfg(ai_watch_require_realtime_rsi=True)
-    fallback = {"indicator": {
-        "cm_rsi": 20.0, "cm_rsi_rising": True, "cm_rsi_src": "alpaca"}}
-    ok, why = ew.cm_rsi_allows_buy(fallback, cfg)
-    assert ok is False and why == "rsi_not_realtime_alpaca"
-
-    live = {"indicator": {
-        "cm_rsi": 20.0, "cm_rsi_rising": True, "cm_rsi_src": "realtime"}}
-    ok, why = ew.cm_rsi_allows_buy(live, cfg)
-    assert ok is True and why == "rsi_turning_up"
-
-    # Off by default, so the fallback still arms until the operator opts in.
-    ok, why = ew.cm_rsi_allows_buy(fallback, _rsi_cfg())
-    assert ok is True and why == "rsi_turning_up"
-
-
-def test_cm_rsi_gate_is_off_by_default():
-    """Absent the flag the gate is inert — no behaviour change on deploy."""
-    import ai_entry_watch as ew
-
-    rec = {"indicator": {"cm_rsi": 99.0, "cm_rsi_rising": False}}
-    ok, why = ew.cm_rsi_allows_buy(rec, {})
-    assert ok is True and why == "cm_rsi_off"
-
-
 def test_cm_rsi_level_and_direction_come_from_one_series(monkeypatch):
     """Whichever series owns the level owns the direction too.
 
@@ -6356,43 +5768,6 @@ def test_local_cm_rsi_publishes_a_direction_off_its_own_series(monkeypatch):
     assert seen == {True, False}
 
 
-def test_arm_requires_both_exhaustion_and_rsi(monkeypatch):
-    """CM RSI-2 arms *along with* %R, not instead of it."""
-    import ai_entry_watch as ew
-
-    calls = {"exh": 0}
-
-    def fake_exh(record, cfg, now=None):
-        calls["exh"] += 1
-        return True, "heating"
-
-    monkeypatch.setattr(ew, "exhaustion_allows_buy", fake_exh)
-
-    base = {
-        "symbol": "TEM",
-        "status": "watching",
-        "structure": {
-            "decision": "BUY", "entry_low": 9.9, "entry_high": 10.1,
-            "stop_price": 9.0, "target_1": 12.0, "reward_risk": 2.0,
-            "zone_kind": "double_bottom",
-        },
-        "indicator": {"cm_rsi": 70.0, "cm_rsi_rising": True},
-    }
-    cfg = {
-        "ai_watch_arm_require_cm_rsi": True,
-        "ai_watch_arm_cm_rsi_max": 50.0,
-        "ai_watch_min_stop_pct": 0.0,
-        "ai_max_spread_pct": 100.0,
-    }
-    ok, why = ew.should_arm_buy(base, ask=10.0, bid=9.99, cfg=cfg)
-    assert ok is False and why == "rsi_extended"
-    assert calls["exh"] == 1, "exhaustion still evaluated; RSI is an AND"
-
-    base["indicator"]["cm_rsi"] = 22.0
-    ok, why = ew.should_arm_buy(base, ask=10.0, bid=9.99, cfg=cfg)
-    assert why != "rsi_extended"
-
-
 def test_refresh_engine_exh_stamps_fresh_realtime_percent_r():
     import ai_entry_watch as ew
 
@@ -6456,9 +5831,6 @@ def test_refresh_engine_rsi_stamps_the_wire_value():
     assert ind["cm_rsi_rising"] is True
     assert ind["cm_rsi_src"] == "realtime"
     assert ind["cm_rsi_age_sec"] == 3.4
-    # And that reading now satisfies the arm band it previously failed.
-    ok, why = ew.cm_rsi_allows_buy(rec, _rsi_cfg())
-    assert ok is True and why == "rsi_turning_up"
 
 
 def test_refresh_engine_rsi_leaves_the_record_alone_without_a_reading():
@@ -6471,101 +5843,6 @@ def test_refresh_engine_rsi_leaves_the_record_alone_without_a_reading():
     assert rec["indicator"]["cm_rsi"] == 22.0
 
 
-def test_rsi_block_is_restamped_when_the_rsi_moves():
-    """The State column must not contradict the RSI column beside it.
-
-    Screenshot 2026-08-20 11:44: four rows reading "no rsi data" while the RSI
-    column showed 89.9, 73.1, 18.1 and 53.4. The block was decided one poll
-    earlier, when the engine had not computed those names yet, and the 2s sync
-    carried it forward while refreshing the RSI underneath it.
-    """
-    import ai_entry_watch as ew
-
-    cfg = _rsi_cfg()
-
-    # Blocked for no data, but a reading has since arrived and it qualifies.
-    rec = {
-        "symbol": "ASST",
-        "block_code": "no_rsi_data",
-        "block_reason": "no rsi data",
-        "indicator": {"cm_rsi": 22.0, "cm_rsi_rising": True},
-    }
-    ew._restamp_rsi_block(rec, cfg, 1_700_000_000.0)
-    assert rec["block_code"] is None, rec["block_code"]
-
-    # Reading arrived but is extended — the label follows the new reason.
-    rec2 = {
-        "symbol": "ASST",
-        "block_code": "no_rsi_data",
-        "indicator": {"cm_rsi": 89.9, "cm_rsi_rising": True},
-    }
-    ew._restamp_rsi_block(rec2, cfg, 1_700_000_000.0)
-    assert rec2["block_code"] == "rsi_extended"
-    assert rec2["blocker"]
-
-    # A non-RSI block is left alone — this only owns its own family.
-    rec3 = {
-        "symbol": "TEM",
-        "block_code": "reentry_cooldown",
-        "indicator": {"cm_rsi": 22.0, "cm_rsi_rising": True},
-    }
-    ew._restamp_rsi_block(rec3, cfg, 1_700_000_000.0)
-    assert rec3["block_code"] == "reentry_cooldown"
-
-    # Gate disabled: nothing is restamped at all.
-    rec4 = {
-        "symbol": "TEM",
-        "block_code": "no_rsi_data",
-        "indicator": {"cm_rsi": 22.0, "cm_rsi_rising": True},
-    }
-    ew._restamp_rsi_block(rec4, {}, 1_700_000_000.0)
-    assert rec4["block_code"] == "no_rsi_data"
-
-
-def test_row_arm_refuse_carries_the_rsi(monkeypatch):
-    """The wire-row reconstruction must carry CM RSI-2, not just %R.
-
-    _row_arm_refuse rebuilds a record from a book row to paint the State
-    column. It populated only the %R fields, so once cm_rsi_allows_buy shipped,
-    every row rendered "no rsi data" whatever the book held — masking the real
-    refusals behind a reason that was never true.
-    """
-    import ai_entry_watch as ew
-
-    monkeypatch.setattr(ew, "_push_cfg", lambda: {
-        "ai_watch_exhaustion_rules": True,
-        "ai_watch_require_live_pctr": True,
-        "ai_watch_arm_require_cm_rsi": True,
-        "ai_watch_arm_cm_rsi_max": 50.0,
-        "ai_watch_require_realtime_rsi": False,
-        "ai_watch_min_stop_pct": 0.0,
-        "ai_max_spread_pct": 100.0,
-    })
-
-    row = {
-        "symbol": "TEM", "entry_low": 9.9, "entry_high": 10.1,
-        "stop_price": 9.0, "target_1": 12.0, "reward_risk": 2.0,
-        "zone_kind": "double_bottom",
-        "pctr": -20.0, "exhaustion_state": "heating",
-        "cm_rsi": 88.0, "cm_rsi_rising": True, "cm_rsi_src": "realtime",
-    }
-    why = ew._row_arm_refuse(row, 10.0)
-    assert why != "no_rsi_data", "reconstruction lost the RSI again"
-    # And it must not lose pctr_src either: without it, require_live_pctr
-    # reports "missing" for every row while the book holds live/clock_range,
-    # hiding the real refusal behind a cause that was never true.
-    assert why != "pctr_not_live_missing", "reconstruction lost pctr_src"
-
-    # A row with no usable %R still carries its RSI — independent gates.
-    thin = {
-        "symbol": "TEM", "entry_low": 9.9, "entry_high": 10.1,
-        "stop_price": 9.0, "target_1": 12.0, "reward_risk": 2.0,
-        "zone_kind": "double_bottom", "pctr_src": "thin",
-        "cm_rsi": 22.0, "cm_rsi_rising": True, "cm_rsi_src": "realtime",
-    }
-    assert ew._row_arm_refuse(thin, 10.0) != "no_rsi_data"
-
-
 def test_row_arm_refuse_reports_the_real_pctr_source(monkeypatch):
     """A clock_range row must say clock_range, not "missing"."""
     import ai_entry_watch as ew
@@ -6575,9 +5852,6 @@ def test_row_arm_refuse_reports_the_real_pctr_source(monkeypatch):
     monkeypatch.setattr(ew, "_push_cfg", lambda: {
         "ai_watch_exhaustion_rules": True,
         "ai_watch_require_live_pctr": True,
-        "ai_watch_arm_require_cm_rsi": True,
-        "ai_watch_arm_cm_rsi_max": 50.0,
-        "ai_watch_require_realtime_rsi": False,
         "ai_watch_min_stop_pct": 0.0,
         "ai_max_spread_pct": 100.0,
     })
@@ -6596,67 +5870,6 @@ def test_row_arm_refuse_reports_the_real_pctr_source(monkeypatch):
     # A live source gets past that gate and is judged on the reading itself.
     row_live = dict(row, pctr_src="live")
     assert ew._row_arm_refuse(row_live, 17.05) != "pctr_not_live_live"
-
-
-def test_cm_rsi_rising_requirement_can_be_dropped():
-    """Level-only: the band is the load-bearing half of the rule."""
-    import ai_entry_watch as ew
-
-    falling_in_band = {"indicator": {"cm_rsi": 22.0, "cm_rsi_rising": False}}
-    cfg = _rsi_cfg(ai_watch_arm_cm_rsi_require_rising=False)
-    ok, why = ew.cm_rsi_allows_buy(falling_in_band, cfg)
-    assert ok is True and why == "rsi_in_band"
-
-    # The band still binds — dropping direction is not dropping the rule.
-    extended = {"indicator": {"cm_rsi": 88.0, "cm_rsi_rising": True}}
-    ok, why = ew.cm_rsi_allows_buy(extended, cfg)
-    assert ok is False and why == "rsi_extended"
-
-    # Default keeps requiring the turn.
-    ok, why = ew.cm_rsi_allows_buy(falling_in_band, _rsi_cfg())
-    assert ok is False and why == "rsi_not_rising"
-
-
-def test_cm_rsi_allows_falling_when_deep_os_and_exh_heating():
-    """Falling RSI below 20 is OK only when EXH is already rising toward OB."""
-    import ai_entry_watch as ew
-
-    cfg = _rsi_cfg(ai_watch_arm_cm_rsi_allow_falling_below=20.0)
-    deep_os_heating = {
-        "indicator": {
-            "cm_rsi": 12.0,
-            "cm_rsi_rising": False,
-            "pctr_rising": True,
-        }
-    }
-    ok, why = ew.cm_rsi_allows_buy(deep_os_heating, cfg)
-    assert ok is True and why == "rsi_deep_os_exh_heating"
-
-    # Still falling but not deep enough — rising still required.
-    mid_band = {
-        "indicator": {
-            "cm_rsi": 25.0,
-            "cm_rsi_rising": False,
-            "pctr_rising": True,
-        }
-    }
-    ok, why = ew.cm_rsi_allows_buy(mid_band, cfg)
-    assert ok is False and why == "rsi_not_rising"
-
-    # Deep OS but EXH not heating — no exception.
-    deep_os_flat = {
-        "indicator": {
-            "cm_rsi": 8.0,
-            "cm_rsi_rising": False,
-            "pctr_rising": False,
-        }
-    }
-    ok, why = ew.cm_rsi_allows_buy(deep_os_flat, cfg)
-    assert ok is False and why == "rsi_not_rising"
-
-    # Flag at 0 keeps the old strict rule even with EXH heating.
-    ok, why = ew.cm_rsi_allows_buy(deep_os_heating, _rsi_cfg())
-    assert ok is False and why == "rsi_not_rising"
 
 
 # ── crossing cost on the outcome row ──────────────────────────────────────
@@ -7033,16 +6246,20 @@ def test_quote_age_is_recomputed_from_the_quotes_own_timestamp():
     assert ew.row_quote_age_sec({"last_ask": 10.0}, now=now) is None
 
 
-def test_apply_decision_price_stores_the_timestamp_only_when_provable():
+def test_apply_decision_price_stores_the_timestamp_only_when_provable(monkeypatch):
     """An unprovable age must not leave a timestamp behind.
 
-    Deriving quote_ts = now - age is exact when the age is real. When the age
-    is None there is nothing to derive from, and writing one anyway is how a
-    stale print comes to look fresh — the bug reverted twice today.
+    Deriving quote_ts = (wall clock at pricing) - age is exact when the age is
+    real. When the age is None there is nothing to derive from, and writing
+    one anyway is how a stale print comes to look fresh — the bug reverted
+    twice today. The wall clock is pinned here; see tests/test_price_clock.py
+    for why it, and not the poll's `now`, is the stamping clock.
     """
     import ai_entry_watch as ew
 
     now = 2_000_000.0
+    wall = {"t": now}
+    monkeypatch.setattr(ew.time, "time", lambda: wall["t"])
 
     calls = {}
 
@@ -7062,6 +6279,7 @@ def test_apply_decision_price_stores_the_timestamp_only_when_provable():
         # A later unprovable read must CLEAR the stamp, not leave the old one
         # to keep answering for a price it no longer describes.
         calls["AAA"] = (11.0, "rest", None)
+        wall["t"] = now + 60.0
         ew.apply_decision_price(rec, {}, now + 60.0)
         assert "last_ask_ts" not in rec, (
             "stale timestamp survived an unprovable read — the row would "
@@ -7133,6 +6351,7 @@ def test_quote_timestamp_survives_a_record_rebuild(monkeypatch):
     import ai_entry_watch as ew
 
     now = 3_000_000.0
+    monkeypatch.setattr(ew.time, "time", lambda: now)  # the pricing wall clock
     monkeypatch.setattr(ew, "_LAST_QUOTE_TS", {}, raising=False)
     monkeypatch.setattr(ew, "decision_price",
                         lambda s, c, n=None: (5.0, "stream", 2.0))

@@ -37,16 +37,13 @@ DEFAULT_CONFIG = {
     "cm_rsi_length":    2,   # RSI period (2 = original Larry Connors CM RSI-2)
     "cm_rsi_oversold": 25,   # approaching-oversold threshold for signal
     "cm_rsi_buy_max":   10.0,  # line at the bottom of the CM RSI pane
-    "cm_rsi_prefer_green": True,  # Connors color is a strength flag, not a gate
     # Desk buy = MACD bullish cross with wide line separation (gap).
     "ai_watch_tv_exh_rsi": False,
-    # TV %R Trend Exhaustion square arm: enter on dual-OB + tight (red ■).
-    # Rollback: set false to restore legacy heating only.
+    # Dual-%R overbought semantics (TV red ■: both lines OB) for
+    # is_overbought and the left_overbought exit; false = fast line only.
+    # The square ENTRY arm this once switched on was retired; the exits in
+    # ai_positions.py still read this key.
     "ai_watch_exh_square_arm": True,
-    # When true with square arm: square still wins, else fall through to
-    # last_heating (heat band + rising + dual-tight). Square-only stays
-    # the default.
-    "ai_watch_exh_heating_with_square": False,
     # Heating may arm only when prints rose over this many seconds.
     # 0 disables. Square ■ is not gated by this.
     "ai_watch_heating_price_rise_sec": 0.0,
@@ -57,21 +54,12 @@ DEFAULT_CONFIG = {
     "ai_watch_heating_admit_max_tape_age_sec": 300.0,
     # Sticky dead seats (falling / stale / no RSI) leave the book this fast.
     "ai_watch_dead_seat_evict_sec": 30.0,
-    # Square-aligned admit bus: prefer pre_square/square seats; evict far.
-    "ai_watch_admit_prefer_square": True,
+    # Dual-%R seat classes: both lines ≥ −pre_thr (and tight, rising) is
+    # pre_square. Soft-seed keeps a pre_square/square seat without full
+    # arm_ready.
     "ai_watch_exh_pre_thr": 35.0,          # both lines ≥ −pre_thr = approach
-    # Aggressive pre-square farm (2026-09-21): starve far keeps; faster bus.
-    # 0 = refuse new far soft-seed keeps (flood may still spray, then steal).
+    # 0 = refuse new far soft-seed keeps (flood may still spray).
     "ai_watch_max_far_exh_seats": 0,       # soft-seed far keep cap
-    "ai_watch_far_exh_evict_sec": 45.0,    # far seat TTL before drop/steal
-    # Refuse entry if dual-OB square is older than this (prevents climax chases).
-    "ai_watch_square_max_age_sec": 60.0,
-    # TV %R Trend Exhaustion oversold triangle arm: inverse of square/triangle for OB.
-    # Arm when both %R lines were in oversold squares (<= -100 + rte_threshold, tight),
-    # and we hit an oversold triangle (leaves oversold / turns up) with RSI directional
-    # indicator (cm_rsi_rising).
-    "ai_watch_exh_oversold_triangle_arm": True,
-    "ai_watch_os_triangle_max_age_sec": 60.0,
 
     # Live bar tape. iex is the free Alpaca feed. sip needs Algo Trader Plus
     # and is what matches TradingView highs/lows on thin names.
@@ -86,48 +74,16 @@ DEFAULT_CONFIG = {
     "macd_signal":  9,
     "macd_sep_mult": 0.8,
     "macd_min_gap": 0.005,
-    "ai_watch_arm_require_macd": True,
-    # Refuse to arm when the fast/slow gap is CLOSING. Every other MACD test
-    # measures how far apart the lines are; none says which way they are
-    # moving, so a +0.03 gap that was +0.08 two bars ago passes all of them
-    # while the momentum it is meant to ride is already over. Judged on
-    # trend_lookback (2 bars), the same basis as cm_rsi_rising.
+    # Refuse to open when the fast line is at or below the slow line (a
+    # negative histogram is the same statement). Fail-open on missing MACD.
     #
-    # Independent of ai_watch_arm_require_macd: with require_macd off, EXH+RSI
-    # arm the open and this knob alone still vetoes a closing gap (fail-open
-    # when direction is unknown). With require_macd on, it runs last inside
-    # the full size/bullish stack and unknown direction refuses.
-    #
-    # A FLAT gap still passes — the rule is "do not open into a closing gap",
-    # and flat is not closing. False = shipped behaviour (size only).
-    "ai_watch_macd_block_narrowing": False,
-    # The other half of MACD direction, as its own veto: refuse to open when
-    # the fast line is at or below the slow line (a negative histogram is the
-    # same statement). Independent of ai_watch_arm_require_macd, fail-open on
-    # missing MACD.
-    #
-    # Why it is separate from require_macd. That flag bundles direction with
-    # SIZE (macd_min_gap, macd_sep_mult) and AVAILABILITY (no_macd_data,
-    # macd_src_unknown, macd_stale_bars). Measured 2026-08-31..09-04 the
+    # Why it is its own veto. The retired require_macd gate bundled direction
+    # with SIZE (macd_min_gap, macd_sep_mult) and AVAILABILITY (no_macd_data,
+    # macd_src_unknown, macd_stale_bars). Measured 2026-08-31..09-04 that
     # bundle refused 84-94% of every arm decision, macd_bearish the largest
-    # single reason each session; turning it off to stop size and
-    # availability starving opens drops the direction test with them. This
-    # knob is the EXH+RSI arm path keeping "not crossed down" without the
-    # rest. False = shipped behaviour.
+    # single reason each session. This knob keeps "not crossed down" without
+    # the rest. False = shipped behaviour.
     "ai_watch_macd_block_bearish": False,
-    # Confluence override (operator, 8/26): MACD open and RISING at any gap
-    # while %R exhaustion is RISING and at or past
-    # ai_watch_macd_exh_override_min_pct arms the entry regardless of
-    # macd_min_gap and the separation test. Two independent readings agreeing
-    # is the evidence; gap size is not.
-    #
-    # BOTH must be turning up, not merely present: a %R at 85 that is rolling
-    # over is a top, and the operator's own setup calls that "where the
-    # profit gain stops". Runs before both size tests; cannot bypass the
-    # bearish check, and cannot collide with the narrowing rule since it
-    # requires the gap to be rising.
-    "ai_watch_macd_exh_override":         False,
-    "ai_watch_macd_exh_override_min_pct": 70.0,
     # Refuse a MACD the engine drew on the REST fallback instead of the
     # Finnhub tape, and optionally one whose bars are too old. MACD became
     # the entry lever on 8/26 with no provenance check while the levers it
@@ -883,23 +839,6 @@ DEFAULT_CONFIG = {
     # flat → exh_not_rising (except pinned-ceiling + MACD-armed). Missing
     # reading → exh_rising_required (no blind no_exhaustion_fallback).
     "ai_watch_require_exh_rising": True,
-    # Soft overbought / late-heat arm veto. Refuse when the name is already
-    # in the overbought band AND RSI is at/above this floor. 0 / enabled
-    # false = off. Also inert when ai_watch_arm_require_cm_rsi is false
-    # (do not reintroduce RSI level gates via soft OB).
-    "ai_watch_soft_ob_enabled": True,
-    "ai_watch_soft_ob_rsi_min": 0.0,
-    # Mistimed heating-band chase (GTLB 2026-09-04). Soft OB only covers
-    # overbought+RSI≥55; a name still in the heat band with mid/high RSI
-    # used to arm (confirm RSI ~59, pass 53.3 → MFE ~0.01R). Heating-only:
-    # BULL-class last_overbought + RSI 46 stays on soft OB and is untouched.
-    # Pass floor 52 blocks GTLB's 53.3; peak floor 55 is the backup when RSI
-    # dips under the pass floor after printing hot on earlier confirm ticks.
-    # Default ON for paper scalp_legacy. Does not change RSI hard max 60,
-    # soft OB, macd_min_gap, or the EXH override.
-    "ai_watch_mistimed_heat_enabled": True,
-    "ai_watch_mistimed_heat_rsi_min": 52.0,
-    "ai_watch_mistimed_heat_rsi_peak_min": 55.0,
 
     # ── Plan B burst (premarket burst + RSI-2 >= 70). SAFE OFF. ──
     # Isolated from Plan A: these knobs do not OR into cool/EXH/soft_ob/
@@ -984,32 +923,9 @@ DEFAULT_CONFIG = {
     # whole book the constraint is the data feed (SIP), not this gate.
     # False: thin tape may still arm on zone; the ratchet does not need %R.
     "ai_watch_require_exhaustion_data": True,
-    # CM RSI-2 entry filter, as its own gate rather than a member of the
-    # ai_watch_arm_require triple (that list demands cm_ok AND pctr_ok AND
-    # cm_rsi_rising together, and blocked every in-zone arm when last tried).
-    #
-    # Operator's rule: anything trending up from 0 to 50 is a good entry,
-    # never trending down. A level test plus a direction test — so both have
-    # to come off the same RSI series, which is what ai_watch_cm_rsi_local
-    # below is about.
-    "ai_watch_arm_require_cm_rsi":  False,
-    # The band. 50 is the operator's ceiling; above it the entry is chasing.
+    # Admission RSI ceiling: evaluate_arm_ready refuses a name whose CM RSI-2
+    # is above this (rsi_extended). The CM RSI arm gate itself was retired.
     "ai_watch_arm_cm_rsi_max":       50.0,
-    "ai_watch_arm_cm_rsi_min":        0.0,
-    # Require the turn as well as the band. The band is the load-bearing half
-    # — see the numbers in cm_rsi_allows_buy. False trades a little edge per
-    # trade for five times the opportunities.
-    "ai_watch_arm_cm_rsi_require_rising": True,
-    # When rising is required: still allow a falling RSI if it is below this
-    # level AND fast %R is already rising toward overbought (pctr_rising).
-    # 0 = off (strict "never trending down"). 20 = deep washout exception.
-    "ai_watch_arm_cm_rsi_allow_falling_below": 0.0,
-    # Refuse an RSI the engine drew on the REST fallback instead of the
-    # Finnhub tape. bars_src flips per ticker mid-session (20 recoveries and
-    # 27 fallbacks across 18 symbols on 2026-08-20), so without this the same
-    # gate silently alternates between two data sources. The %R side's
-    # equivalent is ai_watch_require_live_pctr.
-    "ai_watch_require_realtime_rsi": False,
     # Recompute CM RSI-2 locally off Alpaca IEX REST bars, overwriting the
     # engine's reading. False keeps ONE series: the level and the direction
     # both come from the engine, which with REALTIME_BARS on is the Finnhub
@@ -1243,6 +1159,9 @@ DEFAULT_CONFIG = {
     # that was still working. Off unless the tape says otherwise.
     "ai_exit_macd_curl_on_falling":    False,
     "ai_local_trail_give_spread_k":    0.0,
+    # A young IEX quote that agrees with a recent print counts as a fresh
+    # decision price (ai_entry_watch.cross_checked_quote). False = prints only.
+    "ai_watch_quote_freshness":        True,
     # Floor the trail cushion at k x the name's 1m volatility at entry (%
     # of price). 0 = off. Study: tools/studies/vol_trail_book_study.py.
     "ai_local_trail_give_vol_k":       0.0,
@@ -1320,12 +1239,6 @@ DEFAULT_CONFIG = {
     "ai_watch_momentum_spread_exempt": False,
     "ai_watch_async_gates": False,
     "ai_watch_min_room_below_hod_pct": 0.0,
-    # Second open: MACD gap when the name is not in an overbought square.
-    # Off in defaults so tests that omit the key stay on square only.
-    # Live bot_config turns it on. See macd_gap_fill_allows_buy.
-    "ai_watch_macd_gap_arm":           False,
-    "ai_watch_macd_gap_min_pct":       0.02,
-    "ai_watch_macd_gap_rsi_max":       60.0,
     # RTH buy allow-list. "*" / empty / all = every source (current book).
     # A comma list (momentum,movers) refuses the buy only — seats stay.
     # Stays "*" until tools/extension_by_source.py prints PASS.
@@ -1395,7 +1308,7 @@ DEFAULT_CONFIG = {
     # diff; factor 2 is the gitignored config/live_armed.json naming the
     # account. Neither alone arms anything — see live_arm.py.
     # Rollback for the 2026-09-18 change that pointed Phase B's indicator arm
-    # at RTH's (exhaustion_allows_buy + cm_rsi_allows_buy). True restores the
+    # at RTH's exhaustion_allows_buy. True restores the
     # old 40-70 band + direction-only RSI, which CONFLICTS with the square arm
     # — keep it off unless you mean to run the lanes on different theses.
     "ai_phase_b_legacy_arm":          False,
@@ -1732,7 +1645,6 @@ def validate_ai_config(cfg: dict) -> list[str]:
 # "hybrid arm"); this is the resolved set the process is actually running.
 _EFFECTIVE_KEYS = (
     "ai_watch_exh_square_arm",
-    "ai_watch_exh_heating_with_square",
     "ai_watch_heating_price_rise_sec",
     "ai_watch_heating_min_rvol",
     "ai_watch_heating_admit_max_tape_age_sec",
@@ -1760,20 +1672,14 @@ _EFFECTIVE_KEYS = (
     "ai_local_trail_peak_give_pct",
     "ai_exit_limit_collar_pct",
     "ai_exit_limit_collar_wait_sec",
-    "ai_watch_exh_oversold_triangle_arm",
-    "ai_watch_os_triangle_max_age_sec",
-    "ai_watch_macd_gap_arm",
     "ai_watch_arm_sources",
     "ai_exit_left_overbought",
     "ai_exit_left_overbought_confirm_sec",
     "ai_exit_dual_slow_max_age_sec",
     "ai_exit_left_ob_exempt_min_hold",
     "ai_dual_tranche_triangle_exit",
-    "ai_watch_square_max_age_sec",
-    "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",
     "ai_watch_max_far_exh_seats",
-    "ai_watch_far_exh_evict_sec",
     "ai_edge_mode",
     "ai_stop_use_market",
     "ai_watch_synth_rr",
@@ -1810,11 +1716,6 @@ _EFFECTIVE_KEYS = (
     "ai_watch_arm_mode",
     "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_require_exh_rising",
-    "ai_watch_soft_ob_enabled",
-    "ai_watch_soft_ob_rsi_min",
-    "ai_watch_mistimed_heat_enabled",
-    "ai_watch_mistimed_heat_rsi_min",
-    "ai_watch_mistimed_heat_rsi_peak_min",
     "ai_strength_trade_enabled",
     "ai_strength_trade_dry_run",
     "ai_strength_signal_enabled",
@@ -2078,21 +1979,14 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_dual_slow_max_age_sec",
     "ai_exit_left_ob_exempt_min_hold",
     "ai_dual_tranche_triangle_exit",
-    "ai_watch_square_max_age_sec",
     "ai_watch_exh_square_arm",
-    "ai_watch_exh_heating_with_square",
     "ai_watch_heating_price_rise_sec",
     "ai_watch_heating_min_rvol",
     "ai_watch_heating_admit_max_tape_age_sec",
     "ai_watch_dead_seat_evict_sec",
-    "ai_watch_exh_oversold_triangle_arm",
-    "ai_watch_os_triangle_max_age_sec",
-    "ai_watch_macd_gap_arm",
     "ai_watch_arm_sources",
-    "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",
     "ai_watch_max_far_exh_seats",
-    "ai_watch_far_exh_evict_sec",
     "ai_watch_exhaustion_rules",
     # Published so the book legend can state the live entry/exit criteria
     # instead of a fallback. The attempt cap and the dead-reentry pair are
@@ -2106,31 +2000,19 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_live",
     "ai_watch_exhaustion_trade_price_only",
     "ai_watch_stream_bars_live",
-    "ai_watch_arm_require_cm_rsi",
     # MACD arm levers — legend/State must match the live gate (require_macd
     # already false; narrowing off retires gap-as-arm clutter).
-    "ai_watch_arm_require_macd",
-    "ai_watch_macd_block_narrowing",
     "ai_watch_macd_block_bearish",
-    "ai_watch_macd_exh_override",
     "ai_watch_arm_cm_rsi_max",
     # Published so the book legend prints the band the gate is actually
     # using. Without it the legend silently falls back to a default and
     # stops describing the rule the moment the floor is changed.
-    "ai_watch_arm_cm_rsi_min",
-    "ai_watch_arm_cm_rsi_allow_falling_below",
-    "ai_watch_require_realtime_rsi",
     "ai_watch_cm_rsi_local",
     "ai_watch_exhaustion_exit_sec",
     "ai_watch_exhaustion_exit_give_pct",
     "ai_watch_exhaustion_heat_min_pct",
     "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_require_exh_rising",
-    "ai_watch_soft_ob_enabled",
-    "ai_watch_soft_ob_rsi_min",
-    "ai_watch_mistimed_heat_enabled",
-    "ai_watch_mistimed_heat_rsi_min",
-    "ai_watch_mistimed_heat_rsi_peak_min",
     "ai_strength_trade_enabled",
     "ai_strength_trade_dry_run",
     "ai_strength_signal_enabled",
@@ -2197,7 +2079,6 @@ SAFE_CONFIG_KEYS = [
     "macd_sep_mult",
     "macd_min_gap",
     "ai_watch_macd_max_age_sec",
-    "ai_watch_macd_exh_override_min_pct",
     "ai_local_trail_be_at_pct",
     "ai_local_trail_give_max_pct",
     "ai_exit_macd_confirm_ticks",
@@ -2241,8 +2122,6 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_momentum_spread_exempt",
     "ai_watch_async_gates",
     "ai_watch_min_room_below_hod_pct",
-    "ai_watch_macd_gap_min_pct",
-    "ai_watch_macd_gap_rsi_max",
     "ai_breakeven_offset_px",
     "ai_book_tick_sec",
     "ai_shelf_tick_sec",

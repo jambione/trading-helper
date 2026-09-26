@@ -37,7 +37,6 @@ def _cfg(**over):
         "ai_watch_soft_seed_research": True,
         "ai_watch_soft_seed_movers": False,
         "ai_watch_soft_seed_trending": False,
-        "ai_watch_admit_prefer_square": True,
         "ai_watch_admit_require_arm_ready": False,
         "ai_watch_min_price": 2.0,
         "ai_max_price": 100.0,
@@ -45,7 +44,6 @@ def _cfg(**over):
         "rte_threshold": 20,
         "rte_confluence_max": 15.0,
         "ai_watch_scout_ttl_sec": 120.0,
-        "ai_watch_far_exh_evict_sec": 45.0,
         "ai_watch_max_far_exh_seats": 0,
         "ai_watch_exh_square_arm": True,
     }
@@ -118,43 +116,6 @@ def _pre_ind():
     }
 
 
-def test_flood_seats_pre_square_ahead_of_far(monkeypatch):
-    """Far momentum does not take a keep seat. Pre-square does, past max."""
-    monkeypatch.setattr(ew, "trading_hours_active", lambda *a, **k: True)
-    now = _et_ts(10, 0)
-    far = [
-        {
-            "symbol": f"F{i:02d}",
-            "source": "momentum",
-            "price": 5.0 + i,
-            "pct_change": 30.0,
-            "dollar_volume": 5e6,
-            "criteria": ["soft_seed", "momentum"],
-            "indicator": _far_ind(),
-        }
-        for i in range(20)
-    ]
-    pre = [
-        {
-            "symbol": f"P{i:02d}",
-            "source": "momentum",
-            "price": 8.0,
-            "pct_change": 6.0,
-            "dollar_volume": 2e6,
-            "criteria": ["soft_seed", "momentum"],
-            "indicator": _pre_ind(),
-        }
-        for i in range(14)
-    ]
-    monkeypatch.setattr(ew, "_soft_seed_source_rows", lambda cfg, now=None: far + pre)
-    picked, fired = ew.maybe_soft_seed_rows(
-        _cfg(ai_watch_soft_seed_max=12), now=now, seen=set())
-    assert fired is True
-    syms = {r["symbol"] for r in picked if not r.get("scout_only")}
-    assert syms == {f"P{i:02d}" for i in range(14)}
-    assert all(r.get("morning_flood") == 1 for r in picked if not r.get("scout_only"))
-
-
 def test_flood_soft_seed_refuses_below_min_price(monkeypatch):
     monkeypatch.setattr(ew, "trading_hours_active", lambda *a, **k: True)
     now = _et_ts(10, 0)
@@ -188,165 +149,13 @@ def test_flood_soft_seed_refuses_below_min_price(monkeypatch):
     ])
     picked, fired = ew.maybe_soft_seed_rows(_cfg(), now=now, seen=set())
     assert fired is True
-    syms = {r["symbol"] for r in picked}
-    assert "OK1" in syms
-    assert "PENNY" not in syms
-    assert "NOPX" not in syms
-
-
-def test_after_flood_soft_seed_max_and_prefer_square_apply(monkeypatch):
-    """11:30 ET → soft_seed_max and prefer-square far refuse return."""
-    monkeypatch.setattr(ew, "trading_hours_active", lambda *a, **k: True)
-    now = _et_ts(11, 30)
-    rows = [
-        {
-            "symbol": f"M{i:02d}",
-            "source": "momentum",
-            "price": 5.0,
-            "pct_change": 12.0,
-            "dollar_volume": 5e6,
-            "criteria": ["soft_seed", "momentum"],
-            "indicator": _far_ind(),
-        }
-        for i in range(20)
-    ]
-    monkeypatch.setattr(ew, "_soft_seed_source_rows", lambda cfg, now=None: rows)
-    picked, fired = ew.maybe_soft_seed_rows(
-        _cfg(ai_watch_soft_seed_max=12), now=now, seen=set())
-    assert fired is True
-    # Far + prefer_square → no keep seats from this far-only batch.
-    assert picked == [] or all(
-        r.get("scout_only") is True or r.get("exh_seat_class") != "far"
-        for r in picked
-    )
-    assert all(r.get("morning_flood") != 1 for r in picked)
-    assert len(picked) <= 12
-
-
-def test_flood_off_identical_to_prefer_square(monkeypatch):
-    monkeypatch.setattr(ew, "trading_hours_active", lambda *a, **k: True)
-    now = _et_ts(10, 0)
-    rows = [
-        {
-            "symbol": "FAR1",
-            "source": "momentum",
-            "price": 10.0,
-            "pct_change": 20.0,
-            "dollar_volume": 5e6,
-            "criteria": ["soft_seed", "momentum"],
-            "indicator": _far_ind(),
-        },
-        {
-            "symbol": "PRE1",
-            "source": "momentum",
-            "price": 11.0,
-            "pct_change": 12.0,
-            "dollar_volume": 3e6,
-            "criteria": ["soft_seed", "momentum"],
-            "indicator": {
-                "pctr": -30.0, "pctr_slow": -28.0,
-                "pctr_rising": True, "pctr_slow_rising": True,
-            },
-        },
-    ]
-    monkeypatch.setattr(ew, "_soft_seed_source_rows", lambda cfg, now=None: rows)
-    picked, fired = ew.maybe_soft_seed_rows(
-        _cfg(ai_watch_morning_flood_enabled=False, ai_watch_soft_seed_max=12),
-        now=now, seen=set())
-    assert fired is True
-    syms = {r["symbol"] for r in picked}
-    assert "PRE1" in syms
-    assert "FAR1" not in syms
-
-
-def test_far_exh_evict_skipped_for_flood_momentum(monkeypatch):
-    """Blind far_exh drop still skips flood; steal path yields to pre_square."""
-    dropped = []
-    monkeypatch.setattr(ew, "drop_watch_symbols", lambda s: dropped.extend(s))
-    now = _et_ts(10, 0)
-    rec = {
-        "symbol": "MOMFAR",
-        "source": "momentum",
-        "status": "watching",
-        "admit_ts": now - 600.0,
-        "far_exh_since": now - 200.0,
-        "exh_seat_class": "far",
-        "indicator": _far_ind(),
-        "morning_flood": 1,
-    }
-
-    class _CP:
-        def log_event(self, kind, **kw):
-            return {"kind": kind, **kw}
-
-    class _GT:
-        def has_open_position(self, sym):
-            return False
-
-    assert ew._maybe_far_exh_evict(
-        rec, sym="MOMFAR", cfg=_cfg(), now=now,
-        events=[], cp=_CP(), gt=_GT(),
-    ) is False
-    assert dropped == []
-
-    # After 11:00, far eviction resumes.
-    later = _et_ts(11, 30)
-    rec["far_exh_since"] = later - 200.0
-    assert ew._maybe_far_exh_evict(
-        rec, sym="MOMFAR", cfg=_cfg(), now=later,
-        events=[], cp=_CP(), gt=_GT(),
-    ) is True
-    assert dropped == ["MOMFAR"]
-
-
-def test_flood_far_stealable_for_pre_square(monkeypatch):
-    """Flood still seats far names, but they yield ASAP to pre_square/square."""
-    dropped = []
-    monkeypatch.setattr(ew, "drop_watch_symbols", lambda s: dropped.extend(s))
-    now = _et_ts(10, 0)
-    state = {
-        "MOMFAR": {
-            "symbol": "MOMFAR",
-            "source": "momentum",
-            "status": "watching",
-            "admit_ts": now - 600.0,
-            "far_exh_since": now - 20.0,  # past min(45,15)=15 flood steal gate
-            "exh_seat_class": "far",
-            "indicator": _far_ind(),
-            "morning_flood": 1,
-            "admit_dollar_volume": 1e5,
-        }
-    }
-    cands = [{
-        "symbol": "PRE1",
-        "source": "momentum",
-        "exh_seat_class": "pre_square",
-        "indicator": {
-            "pctr": -32.0, "pctr_slow": -30.0,
-            "pctr_rising": True, "pctr_slow_rising": True,
-        },
-        "dollar_volume": 5e6,
-        "last_ask_src": "stream",
-        "last_ask_age_sec": 1.0,
-    }]
-
-    class _CP:
-        def log_event(self, kind, **kw):
-            return {"kind": kind, **kw}
-
-    class _GT:
-        def has_open_position(self, sym):
-            return False
-
-    events = []
-    got = ew._preferential_far_exh_steal(
-        state, cfg=_cfg(), now=now, events=events,
-        cp=_CP(), gt=_GT(), candidates=cands,
-    )
-    assert got == ["MOMFAR"]
-    assert events[0]["reason"] == "far_exh_steal_for_pre_square"
-    # Far flood seat is stealable (unarmable path) past TTL too.
-    assert ew._is_unarmable_stale_watching(state["MOMFAR"], _cfg(), now=now) is True
+    # The flood price floor decides who gets a FLOOD seat. A refused name may
+    # still come back as an ordinary soft-seed row (inclusion gates it later),
+    # but never with morning_flood=1.
+    flood = {r["symbol"] for r in picked if r.get("morning_flood") == 1}
+    assert "OK1" in flood
+    assert "PENNY" not in flood
+    assert "NOPX" not in flood
 
 
 def test_square_arm_still_refuses_non_ob_tight_morning_seats():

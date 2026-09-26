@@ -639,7 +639,7 @@ def clear_tape_data_block_if_stream_fresh(
     src = str(
         rec.get("last_ask_src") or rec.get("price_src") or ""
     ).strip().lower()
-    if src != "stream":
+    if not price_src_fresh(src):
         return False
     # Prefer field age when the map clock lags (Class C).
     align_stream_clock_if_field_young(rec, cfg)
@@ -826,7 +826,7 @@ def stream_price_required_block(px_src: str | None, cfg: dict | None) -> str | N
     """
     if not bool((cfg or {}).get("ai_watch_arm_require_stream_price", False)):
         return None
-    if str(px_src or "").strip().lower() == "stream":
+    if price_src_fresh(px_src):
         return None
     return "stream_required"
 
@@ -1787,7 +1787,7 @@ def _arm_ready_young_tape(
         age = _f_or_none(row.get("tape_age_sec"))
     if age is None:
         age = _f_or_none(row.get("price_age_sec"))
-    if src == "stream" and age is not None and float(age) <= ceiling:
+    if price_src_fresh(src) and age is not None and float(age) <= ceiling:
         return True, "ok"
     if sym:
         try:
@@ -1815,9 +1815,9 @@ def evaluate_arm_ready(
 ) -> tuple[bool, str]:
     """Admit-time arm-ready check. Returns ``(ok, reason)``.
 
-    Requires young tape, RSI rising under arm max, EXH rising at/above heat
-    min, and price under effective max. Reason codes match arm/block labels
-    where possible (``stale``, ``rsi_not_rising``, ``rsi_extended``,
+    Requires young tape, RSI under arm max, EXH rising at/above heat min,
+    and price under effective max. Reason codes match arm/block labels
+    where possible (``stale``, ``rsi_extended``,
     ``exh_falling``, ``above_max_price``, …).
     """
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -1843,7 +1843,7 @@ def evaluate_arm_ready(
         return False, "above_max_price"
 
     ind = _arm_ready_ind(row, indicators)
-    # RSI: rising and under arm max (same locked arm knobs — not loosened).
+    # RSI: under arm max (same locked arm knob — not loosened).
     rsi = _f_or_none(ind.get("cm_rsi"))
     if rsi is None:
         rsi = _f_or_none(row.get("cm_rsi"))
@@ -1855,25 +1855,6 @@ def evaluate_arm_ready(
         rsi_max = 75.0
     if float(rsi) > rsi_max:
         return False, "rsi_extended"
-    if bool(cfg.get("ai_watch_arm_cm_rsi_require_rising", True)):
-        rising_rsi = ind.get("cm_rsi_rising")
-        if rising_rsi is None:
-            rising_rsi = row.get("cm_rsi_rising")
-        if not bool(rising_rsi):
-            return False, "rsi_not_rising"
-
-    if exh_oversold_triangle_arm_enabled(cfg):
-        cls, _ = classify_exh_seat(row, cfg, ind=ind)
-        if cls == "os_triangle":
-            rising_exh = _exh_rising_hint(row, ind)
-            falling = ind.get("pctr_falling") if ind else None
-            if falling is None and isinstance(row, dict):
-                falling = row.get("pctr_falling")
-            if falling is True or rising_exh is False:
-                return False, "exh_falling"
-            if bool(cfg.get("ai_watch_require_exh_rising", True)) and rising_exh is not True:
-                return False, "exh_falling"
-            return True, "ok"
 
     # EXH: rising and ≥ heat_min.
     exh = _exh_from_row_or_ind(row, ind)
@@ -1947,21 +1928,11 @@ def is_warming_exh_profile(
     row: dict | None = None,
     ind: dict | None = None,
 ) -> bool:
-    """True when EXH is a warming / pre-square scout.
-
-    When ``ai_watch_admit_prefer_square`` is on and dual-%R is present:
-    warming ≡ ``pre_square`` or ``square`` (approach/OB band + tight + rising).
-    Missing slow → unknown (not pre-square); ``allow_unknown`` only then.
-    Legacy fallback: single-line heat in ``warming_exh_band``.
+    """True when EXH is a warming scout: single-line heat in
+    ``warming_exh_band``, not falling. ``row`` / ``ind`` are accepted for
+    callers' convenience and not read.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
-    if admit_prefer_square(cfg) and (row is not None or ind is not None):
-        cls, _gap = classify_exh_seat(row if isinstance(row, dict) else {}, cfg, ind=ind)
-        if cls in ("pre_square", "square", "os_square", "os_triangle"):
-            return True
-        if cls == "unknown":
-            return bool(allow_unknown)
-        return False  # far
     lo, hi = warming_exh_band(cfg)
     if exh is None:
         return bool(allow_unknown)
@@ -1981,40 +1952,30 @@ def soft_seed_scout_score(
 ) -> float:
     """Higher = better soft-seed scout.
 
-    Primary (when prefer_square): square / os_triangle > pre_square / os_square ≫ far.
-    Secondary: day CHG% soft band (~+8…+40). Deprioritize hot RSI.
+    Primary: single-line EXH heat inside the warming band. Secondary: day
+    CHG% soft band (~+8…+40). Deprioritize hot RSI.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if isinstance(row, dict) and ind and "indicator" not in row:
         # Allow classify_exh_seat to see dual-%R on the row.
         pass
-    cls = stamp_exh_seat_fields(row, cfg, ind=ind) if isinstance(row, dict) else "unknown"
+    # Stamps exh_seat_class on the row; the soft-seed keep pass reads it.
+    if isinstance(row, dict):
+        stamp_exh_seat_fields(row, cfg, ind=ind)
     score = 0.0
-    if admit_prefer_square(cfg):
-        # Aggressive farm: square/os_triangle ≫ pre_square/os_square ≫ everything; far never
-        # outranks a true pre_square on CHG alone (floor well below).
-        if cls in ("square", "os_triangle"):
-            score += 120.0
-        elif cls in ("pre_square", "os_square"):
-            score += 80.0
-        elif cls == "unknown":
-            score += 10.0  # scout-only candidate (missing slow ≠ pre_square)
-        else:  # far
-            score -= 120.0
+    exh = _exh_from_row_or_ind(row, ind)
+    rising = _exh_rising_hint(row, ind)
+    lo, hi = warming_exh_band(cfg)
+    if exh is None:
+        score += 20.0
+    elif lo <= exh <= hi:
+        score += 50.0 + (hi - abs((lo + hi) / 2.0 - exh))
+        if rising is True:
+            score += 15.0
+    elif exh < lo:
+        score += 10.0
     else:
-        exh = _exh_from_row_or_ind(row, ind)
-        rising = _exh_rising_hint(row, ind)
-        lo, hi = warming_exh_band(cfg)
-        if exh is None:
-            score += 20.0
-        elif lo <= exh <= hi:
-            score += 50.0 + (hi - abs((lo + hi) / 2.0 - exh))
-            if rising is True:
-                score += 15.0
-        elif exh < lo:
-            score += 10.0
-        else:
-            score -= 40.0 + max(0.0, exh - hi)
+        score -= 40.0 + max(0.0, exh - hi)
     rsi = None
     for src in (ind, row):
         if isinstance(src, dict):
@@ -2034,11 +1995,11 @@ def soft_seed_scout_score(
     if isinstance(row, dict):
         row["admit_chg_band"] = band
         row["admit_pct_change"] = float(pct)
-    # CHG band is secondary to square-distance.
+    # CHG band is secondary to EXH heat.
     if band == "prefer":
-        score += 15.0 if admit_prefer_square(cfg) else 25.0
+        score += 25.0
     elif band == "mid":
-        score += 5.0 if admit_prefer_square(cfg) else 8.0
+        score += 8.0
     elif band == "below_prefer":
         score += min(8.0, max(0.0, float(pct)) * 0.2)
     elif band == "over_soft":
@@ -2400,7 +2361,6 @@ def maybe_soft_seed_rows(
     except (TypeError, ValueError):
         max_px = None
     require_ready = admit_require_arm_ready(cfg, t0)
-    prefer_sq = admit_prefer_square(cfg)
     ttl = scout_ttl_sec(cfg)
     _, _, chg_soft = admit_chg_band_bounds(cfg)
     far_cap = max_far_exh_seats(cfg)
@@ -2449,9 +2409,7 @@ def maybe_soft_seed_rows(
 
     picked: list[dict] = []
 
-    # Morning flood: momentum + research still bypass soft_seed_max, but
-    # prefer-square keeps the approach ahead of far. A far flood name does
-    # not take a keep seat. Square / pre_square / oversold-square do.
+    # Morning flood: momentum + research still bypass soft_seed_max.
     if flood:
         for _sc, row in ranked:
             if not is_morning_flood_source(row):
@@ -2467,10 +2425,6 @@ def maybe_soft_seed_rows(
                 stamp_exh_seat_fields(out, cfg)
             except Exception:
                 pass
-            if prefer_sq:
-                cls = str(out.get("exh_seat_class") or "")
-                if cls not in ("square", "pre_square", "os_square", "os_triangle"):
-                    continue
             picked.append(out)
         flood_syms = {
             str(r.get("symbol") or "").upper().strip() for r in picked
@@ -2478,7 +2432,7 @@ def maybe_soft_seed_rows(
     else:
         flood_syms = set()
 
-    if not require_ready and not prefer_sq:
+    if not require_ready:
         for sc, row in ranked:
             sym = str(row.get("symbol") or "").upper().strip()
             if sym in flood_syms:
@@ -2511,10 +2465,8 @@ def maybe_soft_seed_rows(
         if sc < 0 and any(s >= 20 for s, _ in ranked[: max(1, max_n or 1)]):
             continue
         cls = str(row.get("exh_seat_class") or "")
-        if prefer_sq and cls not in ("square", "pre_square", "os_square", "os_triangle"):
-            continue
         if require_ready and not bool(row.get("arm_ready")):
-            # Prefer-square: pre_square, square, os_square, os_triangle keep seats without full
+            # pre_square, square, os_square, os_triangle keep seats without full
             # arm_ready — arm_ready gates the OPEN, not the approach seat.
             if cls not in ("square", "pre_square", "os_square", "os_triangle"):
                 continue
@@ -2539,11 +2491,8 @@ def maybe_soft_seed_rows(
             if str(r.get("symbol") or "").upper() not in flood_syms
         )
 
-    # Pass 1b: limited far keeps. prefer_square alone starves far.
-    # Heating-with-square: only rising-heat far seats (both lines rising,
-    # tight, heat band) — falling/stale far must not fill the book.
-    heat_with_sq = exh_heating_with_square(cfg)
-    if (not prefer_sq or heat_with_sq) and (max_n <= 0 or _other_keep_n() < max_n):
+    # Pass 1b: limited far keeps.
+    if max_n <= 0 or _other_keep_n() < max_n:
         for sc, row in ranked:
             sym = str(row.get("symbol") or "").upper().strip()
             if sym in flood_syms:
@@ -2554,13 +2503,8 @@ def maybe_soft_seed_rows(
                 continue
             if far_cap >= 0 and _far_keep_count(picked) >= far_cap:
                 break
-            if heat_with_sq and not rising_heat_quality(row, cfg):
-                continue
             if require_ready and not bool(row.get("arm_ready")):
-                # Rising-heat approach seats may warm without full arm_ready
-                # (price-rise window still filling).
-                if not (heat_with_sq and rising_heat_quality(row, cfg)):
-                    continue
+                continue
             row["scout_only"] = False
             row["rising_heat_seat"] = True
             picked.append(row)
@@ -2577,8 +2521,6 @@ def maybe_soft_seed_rows(
             if not sym or sym in picked_syms or sym in flood_syms:
                 continue
             cls = str(row.get("exh_seat_class") or "")
-            if prefer_sq and cls == "far":
-                continue  # far does not consume soft-seed seats
             if cls in ("square", "pre_square", "os_square", "os_triangle") and not bool(row.get("scout_only")):
                 # Already eligible for keep; skip duplicate scout.
                 if any(
@@ -2604,13 +2546,11 @@ def maybe_soft_seed_rows(
             )
             exh = _exh_from_row_or_ind(row, ind_r)
             rising = _exh_rising_hint(row, ind_r)
-            # Unknown (no slow) may scout briefly; far never.
             allow_unk = cls == "unknown"
             if not is_warming_exh_profile(
                 exh, rising, cfg, allow_unknown=allow_unk, row=row, ind=ind_r,
             ):
-                if not (allow_unk and prefer_sq):
-                    continue
+                continue
             out = dict(row)
             out["scout_only"] = True
             out["seat_role"] = "warming"
@@ -3353,7 +3293,7 @@ def _is_stream_ready_seat(
     src = str(
         rec.get("last_ask_src") or rec.get("price_src") or ""
     ).strip().lower()
-    if src != "stream":
+    if not price_src_fresh(src):
         return False
     age = row_quote_age_sec(rec, now=now)
     if age is None:
@@ -3398,19 +3338,6 @@ def _is_unarmable_stale_watching(
         if since is None or since <= 0:
             return False
         return (float(now) - float(since)) >= limit
-    # Far dual-%R seats (square bus): stealable past far_exh grace — including
-    # pins AND morning-flood sources so a far-only flood spray cannot freeze
-    # the book. Tape-dead grace (_within_stale_restream_grace) still holds.
-    if admit_prefer_square(cfg):
-        cls = str(rec.get("exh_seat_class") or "")
-        if not cls:
-            cls, _ = classify_exh_seat(rec, cfg)
-        if cls == "far":
-            limit = far_exh_evict_sec(cfg)
-            if limit > 0:
-                since = _f_or_none(rec.get("far_exh_since"))
-                if since is not None and (float(now) - float(since)) >= limit:
-                    return True
     if _is_stream_ready_seat(rec, cfg, now=now):
         return False
     src = str(
@@ -3607,13 +3534,10 @@ def _track_far_exh_seat(rec: dict, cfg: dict | None, *, now: float) -> None:
     if cls == "square":
         if _f_or_none(rec.get("square_since")) is None:
             rec["square_since"] = float(now)
-    elif cls == "os_square":
-        if _f_or_none(rec.get("os_square_since")) is None:
-            rec["os_square_since"] = float(now)
     elif cls in ("far", "unknown"):
         rec.pop("square_since", None)
         rec.pop("os_square_since", None)
-    # pre_square / os_triangle: keep any prior square_since / os_square_since.
+    # pre_square: keep any prior square_since.
 
 
 _DEAD_UNKNOWN_BLOCKS = frozenset({
@@ -3723,91 +3647,6 @@ def _maybe_dead_unknown_evict(
     return True
 
 
-def _maybe_far_exh_evict(
-    rec: dict,
-    *,
-    sym: str,
-    cfg: dict,
-    now: float,
-    events: list,
-    cp,
-    gt,
-) -> bool:
-    """Drop seats stuck ``far`` from dual-%R square past short grace.
-
-    Pins are eligible (book must not freeze on HOOD/ONON-class lag). Promote
-    instead of drop when the seat has become pre_square/square.
-
-    Morning flood far seats are **stealable** (see ``_preferential_far_exh_steal``)
-    but are not blind-evicted into vacuum here — flood occupancy still matters
-    until a pre_square/square admittee is waiting.
-    """
-    if not admit_prefer_square(cfg):
-        return False
-    # Rising-heat far seats stay. Falling / stale / no-RSI seats do not —
-    # they were filling the book with names that cannot open.
-    _dead_far = str((rec or {}).get("block_code") or "").strip().lower() in (
-        "exh_falling", "stale_quote", "no_rsi_data",
-    )
-    if exh_heating_with_square(cfg) and not _dead_far:
-        # Quality heater still on the book — keep.
-        if rising_heat_quality(rec, cfg):
-            return False
-        # Not rising-heat and not a sticky dead code: still stealable as far.
-    try:
-        dead_limit = float(cfg.get("ai_watch_dead_seat_evict_sec", 30.0) or 0.0)
-    except (TypeError, ValueError):
-        dead_limit = 30.0
-    limit = far_exh_evict_sec(cfg)
-    if _dead_far and dead_limit > 0:
-        limit = min(limit, dead_limit) if limit > 0 else dead_limit
-    if limit <= 0 or not isinstance(rec, dict):
-        return False
-    status = str(rec.get("status") or "").lower().strip()
-    if status != "watching":
-        return False
-    if _within_subscribe_grace(rec, cfg, now):
-        return False
-    _track_far_exh_seat(rec, cfg, now=now)
-    _cls = str(rec.get("exh_seat_class") or "")
-    if _cls != "far" and not (
-        exh_heating_with_square(cfg) and _dead_far and _cls in ("unknown", "")
-    ):
-        return False
-    # Flood far: do not blind-drop; dedicated steal yields to pre_square/square.
-    if morning_flood_active(cfg, now) and is_morning_flood_source(rec):
-        return False
-    since = _f_or_none(rec.get("far_exh_since"))
-    if since is None or since <= 0:
-        since = _f_or_none(rec.get("block_ts")) or _f_or_none(
-            rec.get("unarmable_since"))
-    if since is None or since <= 0:
-        return False
-    if (float(now) - float(since)) < limit:
-        return False
-    try:
-        if gt is not None and gt.has_open_position(sym):
-            return False
-    except Exception:
-        pass
-    try:
-        events.append(cp.log_event(
-            "watch_drop", symbol=sym, reason="far_exh",
-            exh_seat_class="far",
-            pctr_gap=_f_or_none(rec.get("pctr_gap")),
-            elapsed_sec=round(float(now) - float(since), 1),
-            seat_role=str(rec.get("seat_role") or "") or None,
-            arm_ready=bool(rec.get("arm_ready")) if "arm_ready" in rec else None,
-        ))
-    except Exception:  # noqa: BLE001
-        events.append({
-            "kind": "watch_drop", "symbol": sym, "reason": "far_exh",
-            "exh_seat_class": "far",
-        })
-    drop_watch_symbols([sym])
-    return True
-
-
 def _candidate_young_stream_age(
     cand: dict,
     cfg: dict | None,
@@ -3908,15 +3747,8 @@ def _preferential_unarmable_steal(
     for key, rec in state.items():
         if not isinstance(rec, dict):
             continue
-        # Pins protected unless far dual-%R (square bus — don't freeze on lag).
-        # Flood far seats are also stealable past TTL (aggressive pre-square farm).
-        pin_prot = _is_protected_pin_seat(rec, cfg, now=now)
-        if pin_prot:
-            cls = str(rec.get("exh_seat_class") or "")
-            if not cls:
-                cls, _ = classify_exh_seat(rec, cfg)
-            if cls != "far" or not admit_prefer_square(cfg):
-                continue
+        if _is_protected_pin_seat(rec, cfg, now=now):
+            continue
         if _is_protected_warming_seat(rec, cfg, now=now):
             continue
         if not _is_unarmable_stale_watching(rec, cfg, now=now):
@@ -4113,149 +3945,6 @@ def _preferential_preheat_steal(
     return dropped
 
 
-def _preferential_far_exh_steal(
-    state: dict,
-    *,
-    cfg: dict,
-    now: float,
-    events: list,
-    cp,
-    gt,
-    candidates: list | None = None,
-) -> list[str]:
-    """Steal far dual-%R seats for waiting ``pre_square`` / ``square`` admittees.
-
-    Aggressive pre-square farm: far (including flood/pin past TTL) yields as
-    soon as a true approach/OB candidate is waiting. Distinct drop reasons:
-    ``far_exh_steal_for_pre_square`` / ``far_exh_steal_for_square``.
-    """
-    if not isinstance(state, dict) or not admit_prefer_square(cfg):
-        return []
-    limit = far_exh_evict_sec(cfg)
-    if limit <= 0:
-        return []
-
-    on_book = {
-        str(rec.get("symbol") or key or "").upper().strip()
-        for key, rec in state.items()
-        if isinstance(rec, dict)
-    }
-    admittees: list[tuple[str, str, float, float]] = []
-    for cand in candidates or []:
-        if not isinstance(cand, dict):
-            continue
-        sym = str(cand.get("symbol") or "").upper().strip()
-        if not sym or sym in on_book:
-            continue
-        cls = str(cand.get("exh_seat_class") or "").strip().lower()
-        if not cls:
-            cls, _ = classify_exh_seat(cand, cfg)
-        if cls not in ("pre_square", "square", "os_square", "os_triangle"):
-            continue
-        age = _candidate_young_stream_age(cand, cfg, now=now)
-        # Class-ranked hunt may lack a live stream stamp yet — still allow
-        # steal so soft-seed can claim the seat next cycle.
-        age_f = float(age) if age is not None else 9e8
-        dvol = _f_or_none(cand.get("admit_dollar_volume"))
-        if dvol is None:
-            dvol = _f_or_none(cand.get("dollar_volume")) or 0.0
-        admittees.append((sym, cls, float(dvol), age_f))
-    if not admittees:
-        return []
-    # square / os_triangle before pre_square / os_square, then $vol, then younger tape.
-    rank = {"square": 0, "os_triangle": 0, "pre_square": 1, "os_square": 1}
-    admittees.sort(key=lambda t: (rank.get(t[1], 9), -t[2], t[3], t[0]))
-
-    victims: list[tuple[str, dict, float, float]] = []
-    for key, rec in state.items():
-        if not isinstance(rec, dict):
-            continue
-        status = str(rec.get("status") or "").lower().strip()
-        if status != "watching":
-            continue
-        if _within_subscribe_grace(rec, cfg, now):
-            continue
-        cls = str(rec.get("exh_seat_class") or "")
-        if not cls:
-            cls, _ = classify_exh_seat(rec, cfg)
-        if cls != "far":
-            continue
-        since = _f_or_none(rec.get("far_exh_since"))
-        if since is None or (float(now) - float(since)) < limit:
-            # Flood far: mark stealable immediately (TTL 0-hold for farm).
-            flood_far = (
-                morning_flood_active(cfg, now)
-                and is_morning_flood_source(rec)
-            )
-            if not flood_far:
-                continue
-            if since is None:
-                rec["far_exh_since"] = float(now)
-                since = float(now)
-            # Flood far steals after half TTL (or immediately if TTL tiny).
-            if (float(now) - float(since)) < min(limit, 15.0):
-                continue
-        sym = str(rec.get("symbol") or key or "").upper().strip()
-        if not sym:
-            continue
-        if _within_stale_restream_grace(sym, now, cfg):
-            continue
-        try:
-            if gt is not None and gt.has_open_position(sym):
-                continue
-        except Exception:
-            pass
-        # Warming pre_square seats are never victims here.
-        if str(rec.get("seat_role") or "").lower() == "warming":
-            wcls = str(rec.get("exh_seat_class") or "")
-            if wcls in ("pre_square", "square", "os_square", "os_triangle"):
-                continue
-        dvol = _f_or_none(rec.get("admit_dollar_volume")) or 0.0
-        age = row_quote_age_sec(rec, now=now)
-        if age is None:
-            age = _f_or_none(rec.get("last_ask_age_sec"))
-        age_f = float(age) if age is not None else 1e9
-        victims.append((sym, rec, float(dvol), age_f))
-    if not victims:
-        return []
-    victims.sort(key=lambda t: (t[2], -t[3], t[0]))
-
-    n = min(len(victims), len(admittees))
-    if n <= 0:
-        return []
-    dropped: list[str] = []
-    for i in range(n):
-        sym, rec, dvol, age_f = victims[i]
-        admit_sym, admit_cls, _advol, _aage = admittees[i]
-        reason = (
-            "far_exh_steal_for_square"
-            if admit_cls in ("square", "os_triangle")
-            else "far_exh_steal_for_pre_square"
-        )
-        try:
-            events.append(cp.log_event(
-                "watch_drop", symbol=sym, reason=reason,
-                admittee=admit_sym,
-                admittee_class=admit_cls,
-                exh_seat_class="far",
-                exh_seat_class_at_steal="far",
-                age_sec=round(age_f, 1) if age_f < 1e8 else None,
-                dollar_volume=round(dvol, 0) if dvol else None,
-                morning_flood=bool(rec.get("morning_flood")),
-                seat_role=str(rec.get("seat_role") or "") or None,
-            ))
-        except Exception:  # noqa: BLE001
-            events.append({
-                "kind": "watch_drop", "symbol": sym, "reason": reason,
-                "admittee": admit_sym, "admittee_class": admit_cls,
-                "exh_seat_class": "far",
-            })
-        dropped.append(sym)
-    if dropped:
-        drop_watch_symbols(dropped)
-    return dropped
-
-
 def _poller_blocked(rec: dict) -> bool:
     """True when the last poll recorded a real reason it would not buy.
 
@@ -4280,7 +3969,7 @@ def _poller_blocked(rec: dict) -> bool:
         src = str(
             rec.get("last_ask_src") or rec.get("price_src") or ""
         ).strip().lower()
-        if src != "stream":
+        if not price_src_fresh(src):
             return True
     # Tape is fresh (check above). A leftover data-condition refuse is not a
     # real poller veto — same rule as derive_blocker fall-through.
@@ -6082,8 +5771,7 @@ def morning_flood_active(
     """True during the RTH morning flood window (default 09:30–11:00 ET).
 
     When active: momentum + Trader Bro/research names that are already
-    square or pre_square bypass soft_seed_max. Far names do not take a
-    keep seat while prefer-square is on. Arms unchanged.
+    square or pre_square bypass soft_seed_max. Arms unchanged.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if not bool(cfg.get("ai_watch_morning_flood_enabled", True)):
@@ -8475,6 +8163,57 @@ def _ask_max_dev_pct(cfg: dict | None) -> float:
     return max(0.0, v)
 
 
+# Cross-checked IEX quote as a second fresh price source (barebones step 1).
+# On 2026-09-25, 43% of RTH arm checks were refused tape_only; SIP had traded
+# within 15 s on 99% of them — IEX sees a few percent of all trades, so a
+# liquid name's last IEX PRINT ages while its IEX QUOTE keeps updating. The
+# quote alone is unsafe (thin IEX books: p90 error 330 bp vs the SIP ask), but
+# a quote no older than QUOTE_MAX_AGE_SEC that sits within QUOTE_PRINT_AGREE_BP
+# of a print no older than QUOTE_PRINT_MAX_AGE_SEC cleared 60% of refusals at
+# a median 0.0 bp / p90 3 bp error against the SIP ask
+# (tools/studies/freshness_study.py, 123 refusals).
+QUOTE_MAX_AGE_SEC = 5.0
+QUOTE_PRINT_AGREE_BP = 30.0
+QUOTE_PRINT_MAX_AGE_SEC = 60.0
+FRESH_PRICE_SRCS = ("stream", "quote")
+
+
+def price_src_fresh(src: str | None) -> bool:
+    """True for a price source the arm may trust when young: a stream print,
+    or a cross-checked quote. One predicate for every arm/seat gate."""
+    return str(src or "").strip().lower() in FRESH_PRICE_SRCS
+
+
+def cross_checked_quote(
+    symbol: str,
+    tape: tuple[float, float | None] | None,
+    cfg: dict | None,
+    now: float | None = None,
+) -> tuple[float, str, float] | None:
+    """``(ask, "quote", quote_age)`` when the cached IEX quote is young and
+    agrees with a recent print; else None. Cache only — the poll primes one
+    batched quote call for the whole book, so this adds no request."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get("ai_watch_quote_freshness", True)):
+        return None
+    if tape is None or not tape[0] or tape[0] <= 0 or tape[1] is None:
+        return None
+    if float(tape[1]) > QUOTE_PRINT_MAX_AGE_SEC:
+        return None
+    try:
+        import ai_trading as gt
+        hit = gt._cached_quote(symbol)
+        q_age = gt.cached_quote_age_sec(symbol, now)
+    except Exception:  # noqa: BLE001
+        return None
+    if not hit or not hit[0] or q_age is None or q_age > QUOTE_MAX_AGE_SEC:
+        return None
+    ask = float(hit[0])
+    if ask <= 0 or abs(ask / float(tape[0]) - 1.0) * 1e4 > QUOTE_PRINT_AGREE_BP:
+        return None
+    return ask, "quote", float(q_age)
+
+
 def decision_price(
     symbol: str,
     cfg: dict | None,
@@ -8497,6 +8236,9 @@ def decision_price(
         px, age = tape
         if age is not None and age <= max_age and px > 0:
             return px, "stream", age
+    q = cross_checked_quote(symbol, tape, cfg, now)
+    if q is not None:
+        return q
     ask_f = 0.0
     try:
         import ai_trading as gt
@@ -8563,10 +8305,18 @@ def apply_decision_price(rec: dict, cfg: dict | None, now: float) -> tuple[float
         # src="stream" with age=None, a pair both stream writers now make
         # impossible at write time. The clock has to outlive the record.
         _sym_k = str(rec.get("symbol") or "").upper().strip()
+        # The age was measured at the wall clock of THIS call (the dashboard
+        # reports it as of its response), not at `now`, the poll's start.
+        # poll_once prices ~30 names in turn and ran 17-36 s on 2026-09-25, so
+        # stamping `now - age` made every print look older by however long the
+        # poll had been running: the desk logged a median 24 s where the
+        # dashboard said 10.7 s and IEX had printed 6.7 s before, and 43% of
+        # RTH arm checks were refused tape_only.
+        _measured_at = time.time()
         if age is not None:
-            rec["last_ask_ts"] = float(now) - float(age)
+            rec["last_ask_ts"] = _measured_at - float(age)
             if _sym_k:
-                _set_quote_ts(_sym_k, float(now) - float(age))
+                _set_quote_ts(_sym_k, _measured_at - float(age))
         else:
             rec.pop("last_ask_ts", None)
             if _sym_k:
@@ -8851,45 +8601,6 @@ def refresh_engine_exh(rec: dict, sig: dict | None, cfg: dict | None,
     ind["pctr_px_src"] = "engine"
     ind["pctr_ts"] = float(now)
     return True
-
-
-# Block codes cm_rsi_allows_buy can produce. Carried-forward values for these
-# go stale the moment the RSI behind them moves.
-_RSI_BLOCK_PREFIXES = ("no_rsi_data", "rsi_extended", "rsi_not_rising",
-                       "rsi_below_band", "rsi_not_realtime")
-
-
-def _restamp_rsi_block(rec: dict, cfg: dict, now: float) -> None:
-    """Re-decide an RSI block against the RSI the row is now showing.
-
-    The arm gate only runs in poll_once, on ai_watch_poll_sec (20s), and the
-    2s sync carries block_code forward untouched. Once the sync started
-    refreshing the RSI every 2s, that left a window where the State column
-    contradicted the RSI column beside it: a row could read "no rsi data" next
-    to a perfectly good 89.9, because the block was decided one cycle earlier
-    when the engine had not computed the name yet.
-
-    Only RSI-family codes are restamped, and only when the gate is enabled —
-    this is not a place to re-run the whole arm decision, just to stop one
-    label outliving the number it describes.
-    """
-    if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
-        return
-    code = str(rec.get("block_code") or "").strip().lower()
-    if not code.startswith(_RSI_BLOCK_PREFIXES):
-        return
-    ok, why = cm_rsi_allows_buy(rec, cfg)
-    if ok:
-        # The reason it was held on no longer applies. Clear rather than
-        # invent a new one — the next poll runs the full gate.
-        rec["block_code"] = None
-        rec["block_reason"] = None
-        rec["blocker"] = None
-    elif why != code:
-        rec["block_code"] = why
-        rec["blocker"] = format_blocker(why)
-        rec["block_reason"] = rec["blocker"]
-        rec["block_ts"] = float(now)
 
 
 ENGINE_HEARTBEAT = ROOT / "signal_state.json"
@@ -10546,8 +10257,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             # up to ai_watch_poll_sec (20s) behind the reading the operator
             # is watching move on the chart.
             refresh_engine_macd(rec, _sync_indicators.get(sym))
-            if refresh_engine_rsi(rec, _sync_indicators.get(sym)):
-                _restamp_rsi_block(rec, cfg_z, t0)
+            refresh_engine_rsi(rec, _sync_indicators.get(sym))
         except Exception:
             pass
         # When the panels last offered this name. The grace below measures
@@ -11626,9 +11336,9 @@ def _rsi_wire_fields(rec: dict) -> dict:
 def _macd_wire_fields(rec: dict) -> dict:
     """MACD momentum for the book's MACD column (exit/display).
 
-    The 8/26 redesign made MACD an entry lever and added the column; gap
-    narrowing as an arm veto is now opt-in via ai_watch_macd_block_narrowing
-    (off after #1b declutter). Still on the wire for exits + desk display.
+    The 8/26 redesign made MACD an entry lever and added the column. MACD no
+    longer gates entry (only the optional bearish veto). Still on the wire
+    for exits + desk display.
     Sibling of _exhaustion_wire_fields for exactly the same reason.
 
     Direction travels with size. Every other field here says how far apart
@@ -11763,28 +11473,18 @@ def exhaustion_pct(record: dict) -> float | None:
 
 
 def exh_square_arm_enabled(cfg: dict | None) -> bool:
-    """Dual-%R OB+tight square arm (TV red ■). Default on once shipped."""
+    """Dual-%R overbought semantics (TV red ■) for is_overbought and the
+    left_overbought exit. The square ENTRY arm was retired; this switch now
+    only chooses dual-line vs fast-line OB for those readers."""
     cfg = cfg if isinstance(cfg, dict) else {}
     return bool(cfg.get("ai_watch_exh_square_arm", True))
-
-
-def exh_heating_with_square(cfg: dict | None) -> bool:
-    """Square ■ first, then last_heating on the same book.
-
-    Off (default): a square miss is a hard refuse — no heating fall-through.
-    On: square still arms when it matches; otherwise the legacy heat band
-    (rising + dual-tight) may arm. Wed/Thu 2026-09-16/17 occupancy was
-    last_heating; this keeps that lane without turning the square off.
-    """
-    cfg = cfg if isinstance(cfg, dict) else {}
-    return bool(cfg.get("ai_watch_exh_heating_with_square", False))
 
 
 def exh_mid_rise_arm_enabled(cfg: dict | None) -> bool:
     """ONE arm: fast %R crosses up through -50 with the slow line rising.
 
-    When on it is the only exhaustion lane — square, oversold triangle and
-    heating are not consulted. tools/entry_screen.py, 2026-09-14..22, events
+    When on it is the only exhaustion lane — heating is not consulted (the
+    square and oversold-triangle arms it replaced are retired). tools/entry_screen.py, 2026-09-14..22, events
     after admission: random minute 51.5% +1%-before--1%, mid_rise 51.0%,
     square 45.1% (z -2.6), live heating 45.0% (z -4.1). Default off.
     """
@@ -11848,12 +11548,6 @@ def _mid_rise_allows_buy(
     return True, "mid_rise"
 
 
-def exh_oversold_triangle_arm_enabled(cfg: dict | None) -> bool:
-    """TV %R Trend Exhaustion oversold triangle arm. Default True."""
-    cfg = cfg if isinstance(cfg, dict) else {}
-    return bool(cfg.get("ai_watch_exh_oversold_triangle_arm", True))
-
-
 def _rte_threshold(cfg: dict | None) -> float:
     try:
         return float((cfg or {}).get("rte_threshold", 20) or 20)
@@ -11871,8 +11565,6 @@ def _rte_confluence_max(cfg: dict | None) -> float:
 def dual_r_ob_tight(
     record: dict,
     cfg: dict | None = None,
-    *,
-    sticky: bool = False,
 ) -> tuple[bool | None, bool | None, str | None]:
     """Dual-%R square read: ``(both_ob, tight, refuse_reason)``.
 
@@ -11880,12 +11572,7 @@ def dual_r_ob_tight(
     ``refuse_reason`` is set when the square cannot be evaluated or fails
     a hard presence check (``no_exhaustion_data``).
 
-    ``sticky`` restores the pre-d7d05b5 OR-latch (cached ``pctr_ob`` /
-    ``pctr_tight`` OR live math) and never writes the cache. Entry no longer
-    uses it — ``_square_exh_allows_buy`` is live dual only (PSKY 2026-09-21
-    false-■). Keep the flag for explicit tests / legacy callers.
-
-    By default ``both_ob`` is live math only (fast ≥ −thr AND slow ≥ −thr).
+    ``both_ob`` is live math only (fast ≥ −thr AND slow ≥ −thr).
     A sticky ``pctr_ob`` cache must not keep hold (or arm) after the lines
     have left OB — that OR-latch was the MARA 2026-09-18 exit lag and the
     PSKY 2026-09-21 entry false-■.
@@ -11901,14 +11588,6 @@ def dual_r_ob_tight(
     gap = abs(float(fast) - float(slow))
     live_ob = float(fast) >= -thr and float(slow) >= -thr
     live_tight = gap <= tight_max + 1e-9
-    if sticky:
-        # Friday (pre-d7d05b5) entry semantics: a cached hold still counts.
-        # Never writes, so a live-math caller earlier in the same poll
-        # cannot silently defeat the latch.
-        both_ob = bool(ind.get("pctr_ob")) or live_ob
-        tight = bool(ind.get("pctr_tight")) or live_tight
-        ind["pctr_gap"] = round(gap, 2)
-        return bool(both_ob), bool(tight), None
     both_ob = live_ob
     tight = live_tight
     # Keep cache honest when callers pass a mutable indicator dict.
@@ -11916,36 +11595,6 @@ def dual_r_ob_tight(
     ind["pctr_tight"] = bool(tight and both_ob)
     ind["pctr_gap"] = round(gap, 2)
     return bool(both_ob), bool(tight), None
-
-
-def dual_r_os_tight(
-    record: dict,
-    cfg: dict | None = None,
-) -> tuple[bool | None, bool | None, str | None]:
-    """Dual-%R oversold read: ``(both_os, tight, refuse_reason)``.
-
-    ``both_os`` / ``tight`` are None when lines are missing.
-    ``refuse_reason`` is set when %R lines are missing (``no_exhaustion_data``).
-
-    Live math: fast <= -100 + thr and slow <= -100 + thr (e.g. <= -80).
-    tight: gap <= rte_confluence_max (e.g. <= 15).
-    """
-    cfg = cfg if isinstance(cfg, dict) else {}
-    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
-    fast = _f_or_none(ind.get("pctr"))
-    slow = _f_or_none(ind.get("pctr_slow"))
-    if fast is None or slow is None:
-        return None, None, "no_exhaustion_data"
-    thr = _rte_threshold(cfg)
-    os_level = -100.0 + thr
-    tight_max = _rte_confluence_max(cfg)
-    gap = abs(float(fast) - float(slow))
-    live_os = float(fast) <= os_level and float(slow) <= os_level
-    live_tight = gap <= tight_max + 1e-9
-    ind["pctr_os"] = bool(live_os)
-    ind["pctr_os_tight"] = bool(live_os and live_tight)
-    ind["pctr_gap"] = round(gap, 2)
-    return bool(live_os), bool(live_tight), None
 
 
 def exh_pre_thr(cfg: dict | None = None) -> float:
@@ -11957,12 +11606,6 @@ def exh_pre_thr(cfg: dict | None = None) -> float:
         return 35.0
 
 
-def admit_prefer_square(cfg: dict | None = None) -> bool:
-    """Prefer square/pre-square seats on soft-seed / keep (default ON)."""
-    cfg = cfg if isinstance(cfg, dict) else {}
-    return bool(cfg.get("ai_watch_admit_prefer_square", True))
-
-
 def max_far_exh_seats(cfg: dict | None = None) -> int:
     """Cap on far dual-%R keep seats. <0 disables. Default 0 (starve far)."""
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -11970,15 +11613,6 @@ def max_far_exh_seats(cfg: dict | None = None) -> int:
         return int(cfg.get("ai_watch_max_far_exh_seats", 0))
     except (TypeError, ValueError):
         return 0
-
-
-def far_exh_evict_sec(cfg: dict | None = None) -> float:
-    """Seconds a far seat may stick before eviction. 0 disables."""
-    cfg = cfg if isinstance(cfg, dict) else {}
-    try:
-        return max(0.0, float(cfg.get("ai_watch_far_exh_evict_sec", 45.0) or 0.0))
-    except (TypeError, ValueError):
-        return 45.0
 
 
 def exh_seat_class_counts(state: dict | None) -> dict[str, int]:
@@ -12067,19 +11701,6 @@ def classify_exh_seat(
     rising_ok = (rising is True) or (slow_rising is True)
     if both_pre and tight and rising_ok:
         return "pre_square", gap
-    if exh_oversold_triangle_arm_enabled(cfg):
-        os_level = -100.0 + thr
-        both_os = float(fast) <= os_level and float(slow) <= os_level
-        if both_os and tight:
-            if isinstance(row, dict):
-                row["exh_was_oversold"] = True
-            return "os_square", gap
-        was_os = bool(
-            (row and row.get("exh_was_oversold"))
-            or (isinstance(src, dict) and src.get("pctr_os"))
-        )
-        if was_os and float(fast) > os_level and float(fast) < -thr and tight and rising_ok:
-            return "os_triangle", gap
     return "far", gap
 
 
@@ -12308,234 +11929,6 @@ def macd_reading_is_live(ind: dict | None, cfg: dict | None = None) -> tuple[boo
     return True, ""
 
 
-def macd_gap_fill_allows_buy(
-    record: dict,
-    cfg: dict,
-    price: float | None = None,
-) -> tuple[bool, str]:
-    """Second arm: MACD gap while the name is not in an overbought square.
-
-    Square / leave-OB stays the main open. This fills a slot only when both
-    %R lines are not in a fresh square. The rule is the one Monday 9/21 and
-    Tuesday 9/22 shadow scored best at 15 minutes: MACD bullish, gap rising,
-    gap at least 0.02% of price, CM RSI rising and under 60.
-    n=15, median +0.20%, mean +0.15%, 60% winners. Wider gaps and hot RSI
-    did not beat it.
-    """
-    if not bool((cfg or {}).get("ai_watch_macd_gap_arm", False)):
-        return False, "macd_gap_arm_off"
-    both_ob, tight, _err = dual_r_ob_tight(record, cfg)
-    if both_ob and tight:
-        return False, "in_square"
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-    if ind.get("macd_bull") is not True:
-        return False, "macd_not_bull"
-    if ind.get("macd_gap_rising") is not True:
-        return False, "macd_gap_not_rising"
-    gap = _f_or_none(ind.get("macd_gap"))
-    if gap is None:
-        gap = _f_or_none(ind.get("macd_hist"))
-    px = _f_or_none(price)
-    if px is None and isinstance(record, dict):
-        px = _f_or_none(record.get("price"))
-    if gap is None or px is None or px <= 0:
-        return False, "no_macd_data"
-    try:
-        min_pct = float(cfg.get("ai_watch_macd_gap_min_pct", 0.02) or 0.0)
-    except (TypeError, ValueError):
-        min_pct = 0.02
-    if (gap / px) * 100.0 + 1e-12 < min_pct:
-        return False, "macd_gap_too_small"
-    rsi = _f_or_none(ind.get("cm_rsi"))
-    if rsi is None and isinstance(record, dict):
-        rsi = _f_or_none(record.get("cm_rsi"))
-    rising = ind.get("cm_rsi_rising")
-    if rising is None and isinstance(record, dict):
-        rising = record.get("cm_rsi_rising")
-    if rsi is None or rising is None:
-        return False, "no_rsi_data"
-    if rising is not True:
-        return False, "rsi_not_rising"
-    try:
-        rsi_max = float(cfg.get("ai_watch_macd_gap_rsi_max", 60) or 60)
-    except (TypeError, ValueError):
-        rsi_max = 60.0
-    if float(rsi) >= rsi_max:
-        return False, "macd_rsi_hot"
-    return True, "macd_gap"
-
-
-def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
-    """Buy side of the MACD momentum gate.
-
-    Opens positions on MACD bullish crossover where slow and fast lines have
-    sufficient separation/gap (the farther apart, the more bullish the signal).
-    """
-    if not bool(cfg.get("ai_watch_arm_require_macd", False)):
-        return True, "macd_off"
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-
-    fast = _f_or_none(ind.get("macd_fast") if ind.get("macd_fast") is not None else ind.get("macd_line"))
-    slow = _f_or_none(ind.get("macd_slow") if ind.get("macd_slow") is not None else ind.get("macd_signal"))
-    gap = _f_or_none(ind.get("macd_gap") if ind.get("macd_gap") is not None else ind.get("macd_hist"))
-    if fast is None or slow is None or gap is None:
-        if isinstance(record, dict):
-            record["block_detail"] = "no realtime MACD (needs 1-min bars)"
-        return False, "no_macd_data"
-
-    # Was this reading drawn on the live tape, and how old is it? MACD became
-    # the entry lever on 8/26 with no provenance check of its own, while the
-    # levers it replaced both had one. bars_src flips per ticker mid-session,
-    # so an ungated gate alternates between the Finnhub tape (0.3s at the
-    # median, measured 8/26) and the Alpaca REST fallback (up to 60s) without
-    # saying which it used. Refused rather than merely noted: an entry on a
-    # 60s-old MACD is an entry on a different indicator.
-    if bool(cfg.get("ai_watch_require_realtime_macd", False)):
-        live, why = macd_reading_is_live(ind, cfg)
-        if not live:
-            if isinstance(record, dict):
-                if why == "macd_src_unknown":
-                    record["block_detail"] = "MACD source unknown"
-                elif why == "macd_stale_bars":
-                    age = _f_or_none(ind.get("macd_age_sec"))
-                    record["block_detail"] = (
-                        f"MACD bars {age:.1f}s old" if age is not None
-                        else "MACD bars too old")
-                else:
-                    src = str(ind.get("macd_src") or ind.get("bars_src") or "")
-                    record["block_detail"] = (
-                        f"MACD drawn on {src}, not the tape")
-            return False, why
-
-    if fast <= slow or gap <= 0:
-        if isinstance(record, dict):
-            record["block_detail"] = f"fast {fast:.4f} <= slow {slow:.4f} (gap {gap:+.4f})"
-        return False, "macd_bearish"
-
-    # CONFLUENCE OVERRIDE — the operator's rule, 8/26: "if the MACD is open
-    # and trending at ANY gap when EXH is at or past 70, that is an automatic
-    # yes." Two independent readings agreeing is the evidence; the size of
-    # the gap is not, so this deliberately runs BEFORE macd_min_gap and the
-    # separation test and bypasses both.
-    #
-    # It cannot bypass the bearish check above — "open" means the lines are
-    # apart, and a negative gap is not a narrow one. Nor can it collide with
-    # the narrowing rule below, because it requires the gap to be RISING:
-    # opening and closing are not both true.
-    if bool(cfg.get("ai_watch_macd_exh_override", False)):
-        try:
-            need = float(cfg.get("ai_watch_macd_exh_override_min_pct", 70.0)
-                         or 70.0)
-        except (TypeError, ValueError):
-            need = 70.0
-        ex = exhaustion_pct(record)
-        # BOTH lines trending up, not just both present. A %R at 85 that is
-        # rolling over is a top, not a confirmation — it is the exact reading
-        # the operator's original setup called "where the profit gain stops".
-        # So the override needs the level AND the turn, on both indicators.
-        macd_up = bool(ind.get("macd_gap_rising"))
-        exh_up = bool(ind.get("pctr_rising"))
-        # Same ceiling problem as exhaustion_allows_buy: %R pinned at the top
-        # of its range is flat by construction, never rising, so the override
-        # could never fire on the most extended names — the ones it exists
-        # for. A pinned reading counts as "up" while it is not FALLING; a top
-        # that has rolled over is still excluded, which was the point of
-        # requiring the turn in the first place.
-        if (not exh_up
-                and bool(cfg.get("ai_watch_ob_allow_flat_when_macd_armed", False))
-                and exhaustion_state(record, cfg) == "overbought"
-                and not ind.get("pctr_falling")):
-            exh_up = True
-        # OR, not AND — the operator's call on 2026-08-28.
-        #
-        # Either leg alone now earns the bypass: a MACD gap that is opening,
-        # or a %R at or past the threshold and rising. It was written as
-        # confluence on the argument that two independent readings agreeing is
-        # what justifies skipping macd_min_gap and the separation test.
-        #
-        # Recording the cost rather than arguing it again: this is the path
-        # that took GAP at 13:31:46 today. Its separation was inside the noise
-        # band and the position closed 79 seconds later on macd_negative. With
-        # OR, a rising gap of any size reaches this branch, so the 1.5x entry
-        # bar no longer stands between the desk and that trade — the arm
-        # confirmation (ai_watch_arm_confirm_ticks) is what remains, and it
-        # only requires the reading to survive, not to be large.
-        macd_leg = macd_up
-        exh_leg = exh_up and ex is not None and ex >= need
-        if macd_leg or exh_leg:
-            if isinstance(record, dict):
-                _legs = []
-                if macd_leg:
-                    _legs.append(f"MACD opening {gap:+.4f}")
-                if exh_leg:
-                    _legs.append(f"EXH {ex:.1f}% rising (>= {need:.0f}%)")
-                record["block_detail"] = " or ".join(_legs)
-            return True, "macd_exh_confluence"
-
-    try:
-        min_gap = float(cfg.get("macd_min_gap", 0.005) or 0.005)
-    except (TypeError, ValueError):
-        min_gap = 0.005
-
-    if gap < min_gap:
-        if isinstance(record, dict):
-            record["block_detail"] = f"gap {gap:+.4f} < min {min_gap:.4f}"
-        return False, "macd_gap_too_close"
-
-    try:
-        sep_mult = float(cfg.get("macd_sep_mult", 0.8) or 0.8)
-    except (TypeError, ValueError):
-        sep_mult = 0.8
-
-    # "Wide separation" — the rule the strategy is named for. It read
-    # macd_hist_std / macd_std, and the engine publishes NEITHER: it computes
-    # the rolling std internally and puts the finished quotient on the wire as
-    # macd_sep_ratio. So `std` was None on every symbol, the whole check
-    # short-circuited, and the live rule was bare `gap >= macd_min_gap` while
-    # the doc and the commit title both said "wide gap". Same field-name class
-    # of bug as price_age_sec and dollar_volume before it.
-    #
-    # gap >= sep_mult * std  <=>  (gap / std) >= sep_mult  <=>  ratio >= mult.
-    # The raw std path is kept for any producer that does publish it.
-    ratio = _f_or_none(ind.get("macd_sep_ratio"))
-    std = _f_or_none(ind.get("macd_hist_std") if ind.get("macd_hist_std") is not None else ind.get("macd_std"))
-    if sep_mult > 0:
-        if ratio is not None:
-            if ratio < sep_mult:
-                if isinstance(record, dict):
-                    record["block_detail"] = (
-                        f"sep {ratio:.2f}x < {sep_mult:.1f}x std")
-                return False, "macd_gap_insufficient"
-        elif std is not None and std > 0:
-            if gap < sep_mult * std:
-                if isinstance(record, dict):
-                    record["block_detail"] = f"gap {gap:+.4f} < {sep_mult:.1f}x std ({sep_mult * std:.4f})"
-                return False, "macd_gap_insufficient"
-        else:
-            # Neither form on the record. The separation test is the strategy,
-            # not a garnish, so an unmeasurable one is a refusal rather than a
-            # silent pass — which is what it had been doing.
-            if isinstance(record, dict):
-                record["block_detail"] = "no separation reading (needs 50 bars)"
-            return False, "macd_sep_unknown"
-
-    if bool(cfg.get("macd_require_cross", False)):
-        if not bool(ind.get("macd_cross")):
-            if isinstance(record, dict):
-                record["block_detail"] = "no bullish cross in confirm window"
-            return False, "macd_no_recent_cross"
-
-    # Direction last: size tests above do not say which way the gap is moving.
-    narrow_why = macd_narrowing_blocks_buy(
-        record, cfg, fail_open_unknown=False)
-    if narrow_why:
-        return False, narrow_why
-
-    return True, "macd_bullish_gap"
-
-
 def macd_bearish_blocks_buy(
     record: dict,
     cfg: dict,
@@ -12544,11 +11937,9 @@ def macd_bearish_blocks_buy(
 ) -> str | None:
     """Refuse when the MACD lines are crossed down. Reason or ``None``.
 
-    Sibling of macd_narrowing_blocks_buy, and independent of
-    ``ai_watch_arm_require_macd`` for the same reason: this is a veto, not
-    the positive gate.
+    A veto, not a positive gate.
 
-    Why it is its own knob. ``require_macd`` bundles three different
+    Why it is its own knob. The retired ``require_macd`` gate bundled three different
     questions — DIRECTION (crossed down, gap closing), SIZE (macd_min_gap,
     macd_sep_mult) and AVAILABILITY (no_macd_data, macd_src_unknown,
     macd_stale_bars). Measured over 2026-08-31..09-04 the bundle refused
@@ -12559,8 +11950,7 @@ def macd_bearish_blocks_buy(
     than merely small. This keeps that half alone: a name whose fast line
     sits below its slow line is not an open, whatever the gap measures.
 
-    Fail-open on missing MACD by default, like the narrowing veto — failing
-    closed here would reintroduce the availability refusals that the EXH+RSI
+    Fail-open on missing MACD by default — failing closed here would reintroduce the availability refusals that the EXH+RSI
     arm path exists to avoid.
     """
     if not bool(cfg.get("ai_watch_macd_block_bearish", False)):
@@ -12582,169 +11972,14 @@ def macd_bearish_blocks_buy(
         if isinstance(record, dict):
             record["block_detail"] = "no realtime MACD (needs 1-min bars)"
         return "no_macd_data"
-    # Same test, same wording as the one inside macd_allows_buy: a negative
-    # histogram and a fast line at or under the signal are both "crossed
-    # down", so the two paths cannot disagree about what bearish means.
+    # A negative histogram and a fast line at or under the signal are both
+    # "crossed down".
     if fast > slow and gap > 0:
         return None
     if isinstance(record, dict):
         record["block_detail"] = (
             f"fast {fast:.4f} <= slow {slow:.4f} (gap {gap:+.4f})")
     return "macd_bearish"
-
-
-def macd_narrowing_blocks_buy(
-    record: dict,
-    cfg: dict,
-    *,
-    fail_open_unknown: bool = False,
-) -> str | None:
-    """Refuse when the MACD gap is closing. Returns a reason or ``None``.
-
-    Independent of ``ai_watch_arm_require_macd``: the size/bullish stack is the
-    positive gate; this is the "do not open into a closing gap" veto. Flat is
-    not closing. When ``fail_open_unknown`` is True (EXH+RSI arm / MACD
-    veto-only), missing indicator or unknown direction does not block — MACD
-    is a veto, not a requirement. The full MACD path keeps fail-closed on
-    unknown direction so State still names ``macd_gap_dir_unknown``.
-    """
-    if not bool(cfg.get("ai_watch_macd_block_narrowing", False)):
-        return None
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-    rising = ind.get("macd_gap_rising")
-    falling = ind.get("macd_gap_falling")
-    if rising is None and falling is None:
-        if fail_open_unknown:
-            return None
-        if isinstance(record, dict):
-            record["block_detail"] = "gap direction unknown (needs bars)"
-        return "macd_gap_dir_unknown"
-    if not bool(falling):
-        return None
-    gap = _f_or_none(
-        ind.get("macd_gap") if ind.get("macd_gap") is not None
-        else ind.get("macd_hist"))
-    prev = _f_or_none(ind.get("macd_gap_prev"))
-    if isinstance(record, dict):
-        if prev is not None and gap is not None:
-            record["block_detail"] = (
-                f"gap closing {prev:+.4f} -> {gap:+.4f}")
-        elif gap is not None:
-            record["block_detail"] = f"gap closing (now {gap:+.4f})"
-        else:
-            record["block_detail"] = "gap closing"
-    return "macd_gap_narrowing"
-
-
-def cm_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
-    """CM RSI-2 entry filter: inside the band AND turning up.
-
-    The operator's rule, in their words: anything trending up from 0 to 50 is
-    a good entry, never trending down. So this is a LEVEL test and a
-    DIRECTION test, and both readings must come off the same series — see the
-    note in apply_live_exhaustion about why that was not true before.
-
-    Direction is the engine's ``cm_rsi_rising``, which is RSI-2 now against
-    RSI-2 ``trend_lookback`` bars back (2 by default, strategy_three_indicator
-    ``_rising``). Flat is not rising: on a 2-period RSI a flat print is
-    usually a name that is not trading, not one that is turning.
-
-    Exception (``ai_watch_arm_cm_rsi_allow_falling_below``): when RSI is still
-    falling but deeply washed out (below that threshold) AND fast %R is already
-    rising toward overbought (``pctr_rising``), allow the arm. EXH is the
-    timing confirm; RSI only says "not chasing". 0 disables the exception.
-
-    ``ai_watch_require_realtime_rsi`` additionally refuses a reading the
-    engine drew on the REST fallback rather than the Finnhub tape — but only
-    when this gate is on. When ``ai_watch_arm_require_cm_rsi`` is false the
-    function short-circuits before level / rising / realtime checks, so RSI
-    cannot veto arms (display + provenance elsewhere stay intact).
-    """
-    if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
-        return True, "cm_rsi_off"
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-
-    rsi = _f_or_none(ind.get("cm_rsi"))
-    if rsi is None:
-        return False, "no_rsi_data"
-
-    if bool(cfg.get("ai_watch_require_realtime_rsi", False)):
-        src = str(ind.get("cm_rsi_src") or "").strip().lower()
-        if src != "realtime":
-            return False, f"rsi_not_realtime_{src or 'missing'}"
-
-    try:
-        band_max = float(cfg.get("ai_watch_arm_cm_rsi_max", 50.0))
-    except (TypeError, ValueError):
-        band_max = 50.0
-    try:
-        band_min = float(cfg.get("ai_watch_arm_cm_rsi_min", 0.0))
-    except (TypeError, ValueError):
-        band_min = 0.0
-    if rsi > band_max:
-        return False, "rsi_extended"
-    if rsi < band_min:
-        return False, "rsi_below_band"
-    # Direction is optional because it is the weaker half. Replayed over 4,585
-    # arms at a 15m horizon (tools/rsi_counterfactual.py):
-    #   0-50 AND rising   7% of arms   +0.305%   win 54.8%
-    #   0-50 only        37% of arms   +0.233%   win 49.3%
-    #   rising only      54% of arms   +0.019%   win 49.8%
-    # The band carries the edge. Requiring the turn as well buys a little more
-    # per trade and a better win rate, at a fifth of the opportunities; the
-    # turn on its own is indistinguishable from taking every arm.
-    if bool(cfg.get("ai_watch_arm_cm_rsi_require_rising", True)):
-        if not bool(ind.get("cm_rsi_rising")):
-            try:
-                fall_max = float(
-                    cfg.get("ai_watch_arm_cm_rsi_allow_falling_below", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                fall_max = 0.0
-            # Deep OS + EXH already heating: waive the RSI turn.
-            if (
-                fall_max > 0
-                and rsi < fall_max
-                and bool(ind.get("pctr_rising"))
-            ):
-                return True, "rsi_deep_os_exh_heating"
-            return False, "rsi_not_rising"
-        return True, "rsi_turning_up"
-    return True, "rsi_in_band"
-
-
-def late_heat_blocks_buy(record: dict, cfg: dict) -> str | None:
-    """Refuse a new long that is already overbought AND RSI-near-cap.
-
-    Conjunction with a soft RSI floor (historically 55, below a hard max)
-    separated HPE-class OB+high-RSI chases from BULL-class early OB heats.
-    Off when ``ai_watch_soft_ob_enabled`` is false, the RSI floor is 0, or
-    ``ai_watch_arm_require_cm_rsi`` is false (Plan A 2026-09-17: RSI is not
-    an arm gate — do not reintroduce level vetoes via soft OB). Missing RSI
-    abstains. Does not change MACD gap or the EXH override.
-    """
-    if not bool(cfg.get("ai_watch_soft_ob_enabled", False)):
-        return None
-    # RSI arm gate off → soft-OB RSI floor must not veto either.
-    if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
-        return None
-    try:
-        rsi_floor = float(cfg.get("ai_watch_soft_ob_rsi_min", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        rsi_floor = 0.0
-    if rsi_floor <= 0:
-        return None
-    if exhaustion_state(record, cfg) != "overbought":
-        return None
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-    rsi = _f_or_none(ind.get("cm_rsi"))
-    if rsi is None:
-        return None
-    if rsi + 1e-9 >= rsi_floor:
-        return "late_heat"
-    return None
 
 
 def _note_confirm_rsi(record: dict) -> float | None:
@@ -12766,98 +12001,6 @@ def _note_confirm_rsi(record: dict) -> float | None:
         record["arm_confirm_rsi_max"] = float(rsi)
         return float(rsi)
     return float(prev)
-
-
-def mistimed_heat_detail(record: dict, cfg: dict | None = None) -> str:
-    """Operator/log detail for a mistimed_heat refuse."""
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-    rsi = _f_or_none(ind.get("cm_rsi"))
-    peak = _f_or_none(record.get("arm_confirm_rsi_max")) if isinstance(record, dict) else None
-    if peak is None:
-        peak = rsi
-    elif rsi is not None:
-        peak = max(peak, rsi)
-    exh = exhaustion_pct(record) if isinstance(record, dict) else None
-    state = exhaustion_state(record, cfg or {}) if isinstance(record, dict) else "?"
-    parts = [f"why=heating state={state}"]
-    if rsi is not None:
-        parts.append(f"rsi={rsi:.1f}")
-    if peak is not None:
-        parts.append(f"peak={peak:.1f}")
-    if exh is not None:
-        parts.append(f"exh={exh:.1f}")
-    return " ".join(parts)
-
-
-def mistimed_heat_blocks_buy(
-    record: dict,
-    cfg: dict,
-    *,
-    exh_why: str | None = None,
-) -> str | None:
-    """Refuse a heating-band arm that is already RSI-extended (GTLB chase).
-
-    Soft OB (``late_heat``) only fires on **overbought** + RSI≥55. GTLB on
-    2026-09-04 armed ``last_heating`` with confirm RSI ~59.3 / pass 53.3,
-    EXH still in the heat band — soft OB never ran. MFE ~0.01R then local
-    trail −0.13R.
-
-    Rule (heating path only — BULL-class ``last_overbought`` + RSI 46 stays
-    on soft OB and is untouched here):
-
-      refuse when exh_why is heating AND (
-          pass cm_rsi ≥ ai_watch_mistimed_heat_rsi_min   (default 52)
-          OR confirm-window peak ≥ ai_watch_mistimed_heat_rsi_peak_min
-             (default 55; 0 disables the peak leg)
-      )
-
-    Pass floor 52 blocks GTLB's 53.3 without needing the peak; the peak
-    leg is the backup when RSI dips under the pass floor after printing
-    hot on earlier confirm ticks. Early healthy heats (RSI ~46) clear
-    both. Does not change RSI hard max 60, soft OB, macd_min_gap, or
-    the EXH override.
-    """
-    if not bool(cfg.get("ai_watch_mistimed_heat_enabled", True)):
-        return None
-    # Aligned with soft OB: when CM RSI is not an arm gate, do not refuse
-    # on RSI floors here either.
-    if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
-        return None
-    why = str(exh_why or "").strip().lower()
-    # Accept raw exhaustion why or the last_/zone_ wrapped form.
-    if why.startswith("last_"):
-        why = why[5:]
-    elif why.startswith("zone_"):
-        why = why[5:]
-    if why != "heating":
-        return None
-    try:
-        rsi_floor = float(cfg.get("ai_watch_mistimed_heat_rsi_min", 52.0) or 0.0)
-    except (TypeError, ValueError):
-        rsi_floor = 52.0
-    try:
-        peak_floor = float(
-            cfg.get("ai_watch_mistimed_heat_rsi_peak_min", 55.0) or 0.0)
-    except (TypeError, ValueError):
-        peak_floor = 55.0
-    if rsi_floor <= 0 and peak_floor <= 0:
-        return None
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-    rsi = _f_or_none(ind.get("cm_rsi"))
-    if rsi is None:
-        return None
-    peak = _f_or_none(record.get("arm_confirm_rsi_max")) if isinstance(record, dict) else None
-    if peak is None:
-        peak = rsi
-    else:
-        peak = max(float(peak), float(rsi))
-    if rsi_floor > 0 and rsi + 1e-9 >= rsi_floor:
-        return "mistimed_heat"
-    if peak_floor > 0 and peak + 1e-9 >= peak_floor:
-        return "mistimed_heat"
-    return None
 
 
 def exhaustion_allows_buy(
@@ -12905,29 +12048,10 @@ def exhaustion_allows_buy(
     if tv_exh_rsi_enabled(cfg):
         return _tv_exh_rsi_allows_buy(record, cfg)
     # One arm (2026-09-23): the fast -50 cross replaces square, triangle and
-    # heating. Exclusive — the lanes below are not consulted when it is on.
-    # See legacy_arms.py for the settings those lanes own; live mid_rise
-    # never imports that module.
+    # heating. Exclusive — the heating lane below is not consulted when it is
+    # on. (The square and oversold-triangle entry arms were retired.)
     if exh_mid_rise_arm_enabled(cfg):
         return _mid_rise_allows_buy(record, cfg, now=now)
-    # Square mode (TV red ■): enter on dual-OB + tight.
-    # Oversold triangle mode: enter on oversold squares -> oversold triangle + RSI rising.
-    sq_ok, sq_why = False, ""
-    if exh_square_arm_enabled(cfg):
-        sq_ok, sq_why = _square_exh_allows_buy(record, cfg, require_rising=require_rising, now=now)
-        if sq_ok:
-            return True, sq_why
-    if exh_oversold_triangle_arm_enabled(cfg):
-        os_ok, os_why = _oversold_triangle_allows_buy(record, cfg, now=now)
-        if os_ok:
-            return True, os_why
-    if exh_square_arm_enabled(cfg) and not exh_heating_with_square(cfg):
-        if exh_oversold_triangle_arm_enabled(cfg) and (
-            bool(record.get("exh_was_oversold"))
-            or os_why in ("oversold_squares", "stale_oversold_triangle", "still_oversold", "rsi_not_rising")
-        ):
-            return False, os_why
-        return False, sq_why
     state = exhaustion_state(record, cfg)
     if state == "unknown":
         # Gaining-EXH rule needs a reading. Fallback used to arm blind when
@@ -13010,7 +12134,7 @@ def exhaustion_allows_buy(
         return False, f"not_rising_{state}"
     if state == "overbought":
         return True, "overbought"
-    # Legacy heating path (square arm off): still require dual-%R tight so
+    # Heating path: still require dual-%R tight so
     # RKLB-class wide-gap heaters cannot last_heating.
     tight_ok, tight_why = _heating_dual_r_allows(record, cfg)
     if not tight_ok:
@@ -13030,167 +12154,6 @@ def exhaustion_allows_buy(
     if not px_ok:
         return False, px_why
     return True, "heating"
-
-
-def _square_exh_allows_buy(
-    record: dict,
-    cfg: dict,
-    *,
-    require_rising: bool,
-    now: float | None = None,
-) -> tuple[bool, str]:
-    """Enter only on TV red-square: both %R OB and tight.
-
-    No ``last_heating`` / fast-only heat. Falling still refuses. Already in
-    the square (dual OB+tight) may arm even if flat (pinned at highs).
-    """
-    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
-    # Live dual only — sticky OR-latch armed false ■ after TV left (PSKY).
-    both_ob, tight, err = dual_r_ob_tight(record, cfg, sticky=False)
-    if err:
-        if require_rising and (
-            ind.get("pctr_falling") or exhaustion_state(record, cfg) == "cooling"
-        ):
-            return False, "exh_falling"
-        if bool(cfg.get("ai_watch_require_exhaustion_data", True)):
-            return False, err
-        return False, "exh_not_tight"
-    if ind.get("pctr_falling") or exhaustion_state(record, cfg) == "cooling":
-        if require_rising or both_ob:
-            return False, "exh_falling"
-        return False, "exh_falling"
-    if not both_ob:
-        # Not in the square. Wide gap → exh_not_tight (RKLB); else wait_exh.
-        if tight is False:
-            fast = _f_or_none(ind.get("pctr"))
-            slow = _f_or_none(ind.get("pctr_slow"))
-            if fast is not None and slow is not None:
-                gap = abs(float(fast) - float(slow))
-                record["block_detail"] = (
-                    f"exh gap {gap:.1f}>{_rte_confluence_max(cfg):g}")
-            return False, "exh_not_tight"
-        return False, "wait_exh"
-    if not tight:
-        fast = _f_or_none(ind.get("pctr"))
-        slow = _f_or_none(ind.get("pctr_slow"))
-        if fast is not None and slow is not None:
-            gap = abs(float(fast) - float(slow))
-            record["block_detail"] = (
-                f"exh gap {gap:.1f}>{_rte_confluence_max(cfg):g}")
-        return False, "exh_not_tight"
-    # Staleness gate: refuse entries if the square has already been running too long.
-    # Entering late into a square buys the climax rather than the breakout.
-    max_sq_age = _f_or_none(cfg.get("ai_watch_square_max_age_sec", 60.0))
-    if max_sq_age is not None and max_sq_age > 0:
-        sq_since = _f_or_none(record.get("square_since"))
-        if sq_since is not None:
-            now_ts = float(now if now is not None else time.time())
-            sq_age = max(0.0, now_ts - sq_since)
-            if sq_age >= max_sq_age:
-                record["block_detail"] = f"square age {sq_age:.0f}s >= {max_sq_age:.0f}s"
-                return False, "stale_square"
-    # In the square. Rising preferred; flat while both OB is still a square.
-    if require_rising and not ind.get("pctr_rising") and not both_ob:
-        return False, "exh_not_rising"
-    if bool(cfg.get("ai_watch_ob_allow_hot", True)) and _hot_ob_source(record):
-        return True, "overbought_hot"
-    return True, "overbought"
-
-
-def _oversold_triangle_allows_buy(
-    record: dict,
-    cfg: dict,
-    *,
-    now: float | None = None,
-) -> tuple[bool, str]:
-    """Enter on TV oversold triangle: oversold squares confirmed, then leave-OS triangle.
-
-    Inverse of the overbought square/triangle thesis:
-      - Oversold squares: both %R in oversold band (<= -100 + rte_threshold) and tight.
-      - Oversold triangle: leaves oversold band (fast > -100 + rte_threshold) while rising.
-      - RSI directional indicator: cm_rsi_rising is True.
-    """
-    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
-    both_os, tight, err = dual_r_os_tight(record, cfg)
-    if err:
-        return False, err
-
-    t_now = float(now if now is not None else time.time())
-    thr = _rte_threshold(cfg)
-    os_level = -100.0 + thr
-
-    # In oversold squares: record latch and wait for triangle (do not enter in squares)
-    if both_os and tight:
-        if isinstance(record, dict):
-            record["exh_was_oversold"] = True
-            if _f_or_none(record.get("os_square_since")) is None:
-                record["os_square_since"] = t_now
-            record["left_os_since"] = None
-        return False, "oversold_squares"
-
-    # Must have had oversold squares (thesis requirement)
-    was_os = bool(record.get("exh_was_oversold")) if isinstance(record, dict) else False
-    if not was_os and bool(ind.get("pctr_os")):
-        was_os = True
-        if isinstance(record, dict):
-            record["exh_was_oversold"] = True
-    if not was_os:
-        return False, "never_oversold"
-
-    fast = _f_or_none(ind.get("pctr"))
-    if fast is None:
-        return False, "no_exhaustion_data"
-
-    # Fast %R must have left oversold band (> os_level)
-    if float(fast) <= os_level:
-        return False, "still_oversold"
-
-    # Must not be already extended into overbought
-    if float(fast) >= -thr:
-        return False, "already_extended"
-
-    # Confluence check: fast and slow should remain reasonably tight
-    if tight is False and bool(cfg.get("rte_require_tight", True)):
-        fast = _f_or_none(ind.get("pctr"))
-        slow = _f_or_none(ind.get("pctr_slow"))
-        if fast is not None and slow is not None and isinstance(record, dict):
-            gap = abs(float(fast) - float(slow))
-            record["block_detail"] = f"exh gap {gap:.1f}>{_rte_confluence_max(cfg):g}"
-        return False, "exh_not_tight"
-
-    # Fast line must be rising out of oversold, not falling
-    falling = ind.get("pctr_falling")
-    if falling is None and isinstance(record, dict):
-        falling = record.get("pctr_falling")
-    if falling or exhaustion_state(record, cfg) == "cooling":
-        return False, "exh_falling"
-
-    pctr_rising = ind.get("pctr_rising")
-    if pctr_rising is None and isinstance(record, dict):
-        pctr_rising = record.get("pctr_rising")
-    if not bool(pctr_rising):
-        return False, "exh_not_rising"
-
-    # RSI directional indicator: cm_rsi_rising must be True
-    rsi_rising = ind.get("cm_rsi_rising")
-    if rsi_rising is None and isinstance(record, dict):
-        rsi_rising = record.get("cm_rsi_rising")
-    if not bool(rsi_rising):
-        return False, "rsi_not_rising"
-
-    # Staleness gate: refuse entries if the triangle has been active too long
-    max_age = _f_or_none(cfg.get("ai_watch_os_triangle_max_age_sec", 60.0))
-    if max_age is not None and max_age > 0 and isinstance(record, dict):
-        since = _f_or_none(record.get("left_os_since"))
-        if since is None:
-            record["left_os_since"] = t_now
-        else:
-            age = max(0.0, t_now - since)
-            if age >= max_age:
-                record["block_detail"] = f"os triangle age {age:.0f}s >= {max_age:.0f}s"
-                return False, "stale_oversold_triangle"
-
-    return True, "oversold_triangle"
 
 
 def note_px_ring(rec: dict, px: float | None, now: float | None) -> None:
@@ -13336,10 +12299,9 @@ def _heating_dual_r_allows(record: dict, cfg: dict) -> tuple[bool, str]:
 def _macd_is_armed(record: dict) -> bool:
     """Bullish AND opening — the direction %R cannot express at 100%.
 
-    Deliberately narrower than macd_allows_buy: no min-gap, no separation
-    test, no confluence override. This answers one question — are the lines
-    apart and still separating — because it is standing in for a %R turn, not
-    re-deciding the entry. macd_allows_buy still runs on its own afterwards.
+    No min-gap, no separation test. This answers one question — are the
+    lines apart and still separating — because it is standing in for a %R
+    turn, not re-deciding the entry.
 
     Provenance is required for the same reason it is everywhere else: an
     opening gap drawn on the REST fallback is an opening gap in older bars,
@@ -15018,7 +13980,7 @@ def _entry_features(rec: dict, *, ask: float | None = None,
             bool(sig.get("pctr_tight")) if sig.get("pctr_tight") is not None
             else None
         ),
-        # Entry square is live dual only; pin false so a false-■ cannot hide.
+        # The sticky dual-%R latch is retired; kept false for ledger schema.
         "sticky_used": False,
         # Which tape the levers were on at arm. Gate 1 (min-hold) is only
         # evidence about the realtime product when these are live/realtime.
@@ -15794,20 +14756,9 @@ def should_arm_buy(
     if min_rr > 0 and rr + 1e-12 < min_rr:
         return False, "reward_risk"
 
-    # MACD bullish crossover + wide separation gap (primary momentum entry gate)
-    if bool(cfg.get("ai_watch_arm_require_macd", False)):
-        macd_ok, macd_why = macd_allows_buy(record, cfg)
-        if not macd_ok:
-            return False, macd_why
-
     # Exhaustion first so (a) missing %R is named correctly, and (b) the soft
     # sell_signal veto below can reference exh_why without UnboundLocalError.
     exh_ok, exh_why = exhaustion_allows_buy(record, cfg, now=t_arm)
-
-    # CM RSI-2 band + turn (checked when ai_watch_arm_require_cm_rsi is active)
-    rsi_ok, rsi_why = cm_rsi_allows_buy(record, cfg)
-    if not rsi_ok:
-        return False, rsi_why
 
     # Indicators: optional timing filter. Default off — book symbols often have
     # no engine indicator map, so requiring cm_ok/pctr_ok/cm_rsi_rising blocked
@@ -15962,47 +14913,20 @@ def should_arm_buy(
             return False, exh_why
         # zone_win > 0: stay on the name; zone entry starts a wait below.
 
-    # Soft overbought / late-heat: already in the OB band AND RSI is
-    # already near the hard cap. Runs after the EXH allow so we do not
-    # mask a real fade (not_rising_overbought) with late_heat, and after
-    # the RSI hard-max so rsi_extended still wins above 60.
     if exh_ok:
         # Room below the day's high (off at 0). Runs after the cross check so
         # the mid-rise latch keeps seeing every reading while this refuses.
         _hod_why = room_below_hod_refusal(record, _gate_sym, ask, cfg, now=now)
         if _hod_why:
             return False, _hod_why
-        late = late_heat_blocks_buy(record, cfg)
-        if late:
-            return False, late
-        # Heating-band chase (GTLB): soft OB needs overbought, so a name
-        # still in the heat band with mid/high RSI used to arm. Peak RSI
-        # across confirm ticks is noted by the poller before this runs on
-        # later ticks; current RSI is always considered too.
-        mistimed = mistimed_heat_blocks_buy(record, cfg, exh_why=exh_why)
-        if mistimed:
-            return False, mistimed
 
-    # MACD DIRECTION vetoes without the size/bullish stack. When require_macd
-    # is on, macd_allows_buy already ran both of these inside it — bearish
-    # first, narrowing last — so the same precedence is kept here.
-    # When it is off, EXH+RSI (and soft OB / mistimed) are the open path and
-    # these two alone refuse a crossed-down or actively closing gap.
-    # Fail-open on missing MACD so neither veto can re-starve opens the
-    # way macd_src_unknown did under the full gate.
-    if (not bool(cfg.get("ai_watch_arm_require_macd", False))
-            and bool(cfg.get("ai_watch_macd_block_bearish", False))):
+    # MACD direction veto: refuse a crossed-down gap. Fail-open on missing
+    # MACD so it cannot starve opens the way macd_src_unknown once did.
+    if bool(cfg.get("ai_watch_macd_block_bearish", False)):
         bear_why = macd_bearish_blocks_buy(
             record, cfg, fail_open_unknown=True)
         if bear_why:
             return False, bear_why
-
-    if (not bool(cfg.get("ai_watch_arm_require_macd", False))
-            and bool(cfg.get("ai_watch_macd_block_narrowing", False))):
-        narrow_why = macd_narrowing_blocks_buy(
-            record, cfg, fail_open_unknown=True)
-        if narrow_why:
-            return False, narrow_why
 
     # Cheap pullback/offset + overbought is the HCTI/BYSI dump: $2 spike,
     # 20% of equity, then −1R in under a minute. Last-mode used to skip
@@ -16030,18 +14954,11 @@ def should_arm_buy(
 
     if last_mode:
         # Last is the entry. Structure only supplies stop/target for R.
-        # Square first. MACD gap is only for a name that is not in ■.
         if exh_ok:
             pace_ok, pace_why = _rvol_pace_gate(record, cfg, now)
             if not pace_ok:
                 return False, pace_why
             return True, f"last_{exh_why}"
-        fill_ok, _fill_why = macd_gap_fill_allows_buy(record, cfg, price=a)
-        if fill_ok:
-            pace_ok, pace_why = _rvol_pace_gate(record, cfg, now)
-            if not pace_ok:
-                return False, pace_why
-            return True, "last_macd_gap"
         return False, exh_why
 
     t_now = float(now if now is not None else time.time())
@@ -16673,8 +15590,7 @@ def _arm_streak(rec: dict, ok: bool, *, seq: int | None = None) -> int:
 def _arm_gate_snapshot(rec: dict, ask: float | None = None) -> dict:
     """The handful of inputs the arm gate actually reads.
 
-    Field names match cm_rsi_allows_buy / macd_allows_buy / exhaustion_allows_
-    buy, so diffing two snapshots points straight at the input that moved
+    Field names match the indicator keys the arm gate reads, so diffing two snapshots points straight at the input that moved
     between the batch verdict and the post-refresh one. Values are read from
     ``indicator`` first and the record second, because refresh_engine_rsi and
     refresh_engine_macd stamp the former while the seed path fills the latter.
@@ -17268,7 +16184,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             drop_watch_symbols([sym])
             continue
 
-        # Scout-only short TTL + never-armable / far-exh eviction (square bus).
+        # Scout-only short TTL + never-armable eviction.
         if status not in ("submitted", "filled"):
             if _maybe_scout_ttl_drop(
                 rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
@@ -17279,10 +16195,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             ):
                 continue
             if _maybe_dead_unknown_evict(
-                rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
-            ):
-                continue
-            if _maybe_far_exh_evict(
                 rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
             ):
                 continue
@@ -17364,8 +16276,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 # with that off it would read False for every name forever.
                 "cm_rsi_low": sig.get("cm_rsi_low"),
                 # Where the engine's bars came from, carried with the reading
-                # so the arm gate can refuse an RSI drawn on the REST fallback
-                # instead of the live tape. See cm_rsi_allows_buy.
+                # (display and the decision ledger).
                 "cm_rsi_src": sig.get("bars_src"),
                 "cm_rsi_age_sec": sig.get("bars_age_sec"),
                 # And the same two for MACD, which is now THE entry lever.
@@ -17525,7 +16436,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             px_src = "stream"
             px_age = rec.get("last_ask_age_sec")
             clear_tape_data_block_if_stream_fresh(rec, cfg)
-        elif str(px_src or "").strip().lower() == "stream":
+        elif price_src_fresh(px_src):
             clear_tape_data_block_if_stream_fresh(rec, cfg)
         tape_only = str(px_src or "").strip().lower() == "stale_tape"
         rec["last_poll_ts"] = t0
@@ -17930,9 +16841,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if _sr:
             _skip(_sr, detail=px_src or "not_stream")
             continue
-        # Peak RSI across the confirm window must be visible to mistimed_heat
-        # on later ticks (GTLB: confirm ~59.3, pass 53.3). Current RSI alone
-        # is enough when the pass print is already ≥ the floor.
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         if not ok_arm:
             _log_arm_recheck(
@@ -17945,11 +16853,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                        "late_hold_closed", "late_hold_not_late_admit"):
                 _skip(why)
             else:
-                detail = (
-                    mistimed_heat_detail(rec, cfg)
-                    if why == "mistimed_heat" else None
-                )
-                set_block_reason(rec, why or "blocked", now=t0, detail=detail)
+                set_block_reason(rec, why or "blocked", now=t0)
                 touched[sym] = rec
             continue
 
@@ -17970,7 +16874,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         need_arm = _arm_confirm_ticks(cfg)
         streak = _arm_streak(rec, True, seq=poll_seq)
         # After streak update (which may clear peak on a restart), note this
-        # tick's RSI so the next poll's mistimed_heat sees the window max.
+        # tick's RSI so the decision ledger records the confirm-window max.
         _note_confirm_rsi(rec)
         _arm_after = _arm_gate_snapshot(rec, ask_f)
         if streak < need_arm:
@@ -18144,13 +17048,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         place_decision["entry_exhaustion_state"] = exhaustion_state(rec, cfg)
         # Arm class (square vs heating) — stop logging only seed text.
         _arm_why = str(why2 or "")
-        if exh_square_arm_enabled(cfg) and _arm_why in (
-                "overbought", "last_overbought"):
-            _arm_why = "square"
-        elif _arm_why in (
-                "oversold_triangle", "last_oversold_triangle", "zone_oversold_triangle"):
-            _arm_why = "oversold_triangle"
-        elif not _arm_why:
+        if not _arm_why:
             _arm_why = str(
                 place_decision.get("entry_exhaustion_state") or "unknown")
         place_decision["arm_why"] = _arm_why
@@ -18327,29 +17225,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _cap_state, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
             candidates=_steal_cands)
         for _s in _preheat_dropped:
-            touched.pop(_s, None)
-            _cap_state.pop(_s, None)
-        # Active pre-square farm: pull square/pre_square from the same
-        # soft-seed universe and steal far seats (incl. flood) for them.
-        _farm_cands: list[dict] = list(_steal_cands)
-        try:
-            for _row in _soft_seed_source_rows(cfg, now=t0):
-                if not isinstance(_row, dict):
-                    continue
-                _sym = str(_row.get("symbol") or "").upper().strip()
-                if not _sym or _sym in _cap_state:
-                    continue
-                _out = dict(_row)
-                stamp_exh_seat_fields(_out, cfg)
-                if str(_out.get("exh_seat_class") or "") in (
-                        "pre_square", "square", "os_square", "os_triangle"):
-                    _farm_cands.append(_out)
-        except Exception:
-            pass
-        _far_dropped = _preferential_far_exh_steal(
-            _cap_state, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
-            candidates=_farm_cands)
-        for _s in _far_dropped:
             touched.pop(_s, None)
             _cap_state.pop(_s, None)
     except Exception:

@@ -392,41 +392,6 @@ def test_leave_ob_exempt_from_min_hold(monkeypatch):
     assert hit is True and why == "left_overbought"
 
 
-def test_stale_square_gate_refuses_late_entry():
-    """Age-of-square gate blocks entering a climax after square ran >= max_age."""
-    import ai_entry_watch as ew
-
-    cfg = _cfg(ai_watch_square_max_age_sec=60.0)
-    now = 1_000.0
-
-    # Young square (10s old) -> passes (live dual OB+tight; cache irrelevant)
-    young_rec = {
-        "symbol": "SMCI",
-        "square_since": now - 10.0,
-        "indicator": {
-            "pctr": -10.0, "pctr_slow": -8.0, "pctr_ob": True,
-            "pctr_rising": True, "pctr_falling": False,
-        },
-    }
-    ok, why = ew._square_exh_allows_buy(young_rec, cfg, require_rising=False, now=now)
-    assert ok is True and why == "overbought"
-
-    # Stale square (75s old >= 60s) -> refused
-    stale_rec = {
-        "symbol": "SMCI",
-        "square_since": now - 75.0,
-        "indicator": {"pctr": -10.0, "pctr_slow": -8.0, "pctr_ob": True},
-    }
-    ok, why = ew._square_exh_allows_buy(stale_rec, cfg, require_rising=False, now=now)
-    assert ok is False and why == "stale_square"
-    assert "square age 75s >= 60s" in stale_rec.get("block_detail", "")
-
-    # Disabled gate (0) -> passes
-    cfg_off = _cfg(ai_watch_square_max_age_sec=0)
-    ok_off, why_off = ew._square_exh_allows_buy(stale_rec, cfg_off, require_rising=False, now=now)
-    assert ok_off is True and why_off == "overbought"
-
-
 def test_dual_tranche_triangle_exit_yields_trail_and_flattens():
     """In square mode with ai_dual_tranche_triangle_exit=True:
     1. trail_yields_to_triangle yields to triangle even for dual tranche.

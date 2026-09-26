@@ -353,17 +353,6 @@ def test_exh_55_rising_allows(monkeypatch):
     assert ok is True
 
 
-def test_macd_off_does_not_refuse_phase_b_arm(monkeypatch):
-    """Plan A MACD require must not gate Phase B strip."""
-    monkeypatch.setattr(pb, "fresh_stream_last", lambda *a, **k: (3.0, None))
-    rec = _rec(55, True, 30, True)
-    rec["indicator"]["macd_hist"] = -1.0
-    rec["indicator"]["macd_bullish"] = False
-    cfg = dict(CFG_ON, ai_watch_arm_require_macd=True)
-    ok, why = pb.phase_b_arm_allows(rec, cfg=cfg, now=_ts(8, 0), last=3.0)
-    assert ok is True, why
-
-
 # ── Part 6: ledger + defaults ────────────────────────────────────────────
 
 def test_config_defaults_are_off_and_dry():
@@ -456,9 +445,6 @@ def test_refresh_seat_indicators_stamps_engine(monkeypatch, tmp_path):
         def exhaustion_allows_buy(record, cfg):
             return True, "stub_exh"
 
-        @staticmethod
-        def cm_rsi_allows_buy(record, cfg):
-            return True, "stub_rsi"
 
     monkeypatch.setitem(__import__("sys").modules, "ai_entry_watch", _EW)
     out = pb.refresh_seat_indicators(cfg=CFG_ON, now=_ts(8, 1))

@@ -59,14 +59,8 @@ def test_every_grid_declares_min_n(path):
         f"underpowered cell can be promoted")
 
 
-def test_the_macd_direction_knobs_are_mapped():
-    """The three that today's work turns on, named explicitly.
-
-    Parametrised coverage above would pass if a grid stopped mentioning
-    them; these are the ones the arm-gate question rests on.
-    """
-    for knob, key in (("require_macd", "ai_watch_arm_require_macd"),
-                      ("macd_block_bearish", "ai_watch_macd_block_bearish"),
-                      ("macd_block_narrowing",
-                       "ai_watch_macd_block_narrowing")):
-        assert opt.OVERLAY_KEYS.get(knob) == key
+def test_the_macd_direction_knob_is_mapped():
+    """Named explicitly: parametrised coverage above would pass if a grid
+    stopped mentioning it."""
+    assert opt.OVERLAY_KEYS.get("macd_block_bearish") == (
+        "ai_watch_macd_block_bearish")

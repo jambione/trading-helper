@@ -887,7 +887,7 @@ function _bookEntryCriteria(cfg, row) {
   const r = row && typeof row === 'object' ? row : null;
   const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
 
-  let macd = null, exh = null, both = null, fresh = null, live = null, rsi = null;
+  let macd = null, exh = null, fresh = null, live = null;
   if (r) {
     // PROVENANCE FIRST. The gate refuses a MACD not drawn on the live tape
     // before it looks at any of the rules below, so a legend that scored the
@@ -898,29 +898,18 @@ function _bookEntryCriteria(cfg, row) {
     const src = String(r.macd_src || '').toLowerCase();
     live = src ? src === 'realtime' : null;
 
-    const gap = num(r.macd_gap), sep = num(r.macd_sep_ratio);
-    const falling = r.macd_gap_falling;
-    // Same honesty as RSI: if no MACD arm lever is in force, the legend must
-    // not tick gap/sep/opening as if they still gate the open. require_macd
-    // owns size; block_narrowing / block_bearish are the direction vetoes.
-    const requireMacd = b('ai_watch_arm_require_macd', 0);
-    const blockNarrow = b('ai_watch_macd_block_narrowing', 0);
+    const gap = num(r.macd_gap);
+    // The only MACD entry rule left is the bearish veto. Off, it is not a
+    // rule in force, so the legend must not tick it.
     const blockBear = b('ai_watch_macd_block_bearish', 0);
-    if (!requireMacd && !blockNarrow && !blockBear) {
+    if (!blockBear) {
       macd = null;                       // switched off: not a rule in force
-    } else if (!requireMacd && (blockNarrow || blockBear)) {
-      // Direction-only path (EXH+RSI arm + MACD vetoes).
+    } else {
       const bear = (gap != null) ? gap <= 0 : null;
       if (live !== true) macd = null;
-      else if (blockBear && bear === true) macd = false;
-      else if (blockNarrow && falling === true) macd = false;
-      else if ((blockBear && bear == null) || (blockNarrow && falling == null)) macd = null;
+      else if (bear === true) macd = false;
+      else if (bear == null) macd = null;
       else macd = true;
-    } else {
-      macd = live !== true ? null
-        : (gap == null || sep == null) ? null
-        : (gap > n('macd_min_gap', 0.005) && sep >= n('macd_sep_mult', 1.5)
-           && falling !== true);
     }
 
     const ex = num(r.exhaustion), rising = r.pctr_rising;
@@ -933,42 +922,6 @@ function _bookEntryCriteria(cfg, row) {
            || ex >= n('ai_watch_ob_flat_min_pct', 99));
     }
 
-    // OR, matching the gate: either leg alone earns the bypass — but the
-    // override sits BEHIND the provenance check, so an unusable MACD makes
-    // the whole branch unreachable regardless of which leg is strong.
-    const _exhLeg = ex == null ? null
-      : (ex >= n('ai_watch_macd_exh_override_min_pct', 70) && rising === true);
-    const _macdLeg = r.macd_gap_rising == null ? null : r.macd_gap_rising === true;
-    if (!b('ai_watch_macd_exh_override', 0)) {
-      both = null;                      // override off: not a rule in force
-    } else {
-      both = live !== true ? null
-        : (_exhLeg === true || _macdLeg === true) ? true
-        : (_exhLeg == null || _macdLeg == null) ? null : false;
-    }
-
-    // RSI leg. Reads the SAME three knobs cm_rsi_allows_buy does, so the
-    // legend cannot drift from the gate: band, the turn, and the deep-OS
-    // waiver. Note the gate fails CLOSED on a missing reading — so a null
-    // here is "no reading", which the gate treats as a refusal, and the row
-    // is marked unjudgeable rather than passing.
-    const rv = num(r.cm_rsi);
-    if (!n('ai_watch_arm_require_cm_rsi', 0)) {
-      rsi = null;                       // switched off: not a rule in force
-    } else if (rv == null) {
-      rsi = false;                      // no_rsi_data — the gate refuses this
-    } else if (rv > n('ai_watch_arm_cm_rsi_max', 50)
-               || rv < n('ai_watch_arm_cm_rsi_min', 0)) {
-      rsi = false;
-    } else if (r.cm_rsi_rising === true) {
-      rsi = true;
-    } else if (r.cm_rsi_rising == null) {
-      rsi = null;                       // level fine, direction unknown
-    } else {
-      const fb = n('ai_watch_arm_cm_rsi_allow_falling_below', 0);
-      rsi = (fb > 0 && rv < fb && r.pctr_rising === true);
-    }
-
     const pAge = num(r.price_age_sec), mAge = num(r.macd_age_sec);
     fresh = live === false ? false
       : (pAge == null || mAge == null) ? null
@@ -979,7 +932,7 @@ function _bookEntryCriteria(cfg, row) {
   const ready = !!(r && (r.ready
     || String(r.phase || '').toLowerCase() === 'ready'));
 
-  return { macd, exh, both, fresh, live, rsi, ready, n, s, b };
+  return { macd, exh, fresh, live, ready, n, s, b };
 }
 
 /** Same open-row test _bookRows / RStop use: is_position or open/submitted. */
@@ -1018,7 +971,7 @@ function _paintBookLegend(cfg, row) {
 
   const c = cfg && typeof cfg === 'object' ? cfg : {};
   if (!Object.keys(c).length) return;
-  const { macd, exh, both, fresh, rsi, n, s, b } = _bookEntryCriteria(cfg, row);
+  const { macd, exh, fresh, n, s, b } = _bookEntryCriteria(cfg, row);
   const r = row && typeof row === 'object' ? row : null;
   const isOpen = _legendRowIsOpen(r);
   // Open → EXIT only. Watch / no selection → ENTRY only.
@@ -1026,36 +979,21 @@ function _paintBookLegend(cfg, row) {
   const showExit = isOpen;
 
   // ENTRY. Evaluated against the selected row where the inputs exist.
-  // Hide MACD from the ENTRY legend when no arm MACD flag is on — it is not
-  // a gate, so advertising "not required" still looks like a live column.
-  const _macdArmOn = b('ai_watch_arm_require_macd', 0)
-    || b('ai_watch_macd_block_narrowing', 0)
-    || b('ai_watch_macd_block_bearish', 0);
+  // Hide MACD from the ENTRY legend when the bearish veto is off — it is
+  // not a gate, so advertising "not required" still looks like a live column.
   const entry = [
-    ...(_macdArmOn
-      ? [['MACD', b('ai_watch_arm_require_macd', 0)
-          ? `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.0)}× &nbsp;·&nbsp; opening`
-          : `${b('ai_watch_macd_block_bearish', 0) ? 'not bearish' : ''}${b('ai_watch_macd_block_bearish', 0) && b('ai_watch_macd_block_narrowing', 0) ? ' &nbsp;·&nbsp; ' : ''}${b('ai_watch_macd_block_narrowing', 0) ? 'gap not closing' : ''}`, macd]]
+    ...(b('ai_watch_macd_block_bearish', 0)
+      ? [['MACD', 'not bearish', macd]]
       : []),
     ['EXH',   n('ai_watch_exhaustion_rules', 1)
                 ? `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`
                 : 'not required', exh],
-    ['EITHER', b('ai_watch_macd_exh_override', 0)
-                ? `EXH ≥ ${n('ai_watch_macd_exh_override_min_pct', 70)}% rising OR MACD rising = override`
-                : 'not required', both],
-    ['RSI',   n('ai_watch_arm_require_cm_rsi', 0)
-                ? `CM RSI-2 rising${n('ai_watch_arm_cm_rsi_max', 100) < 100
-                    ? ` &nbsp;·&nbsp; ${n('ai_watch_arm_cm_rsi_min', 0)}–${n('ai_watch_arm_cm_rsi_max', 100)} band` : ''}`
-                  + `${n('ai_watch_arm_cm_rsi_allow_falling_below', 0) > 0
-                    ? ` &nbsp;·&nbsp; or falling under ${n('ai_watch_arm_cm_rsi_allow_falling_below', 0)} with EXH rising` : ''}`
-                : 'not required', rsi],
-    // Provenance is a gate, not a footnote: %R and RSI are refused outright
-    // when they did not come off the live tape, so the legend has to say so
+    // Provenance is a gate, not a footnote: %R is refused outright when it
+    // did not come off the live tape, so the legend has to say so
     // or it describes a looser desk than the one running.
     ['FRESH', `price ≤ ${n('ai_watch_decision_max_age_sec', 15)}s &nbsp;·&nbsp; MACD ≤ ${n('ai_watch_macd_max_age_sec', 60)}s`
                 + `${b('ai_watch_require_realtime_macd', 0) ? ' on the live tape' : ' (REST ok)'}`
-                + `${b('ai_watch_require_live_pctr', 0) ? ' &nbsp;·&nbsp; %R live' : ''}`
-                + `${b('ai_watch_require_realtime_rsi', 0) ? ' &nbsp;·&nbsp; RSI realtime' : ''}`, fresh],
+                + `${b('ai_watch_require_live_pctr', 0) ? ' &nbsp;·&nbsp; %R live' : ''}`, fresh],
     ['SETUP', `R:R ≥ ${n('ai_min_reward_risk', 0.5)} &nbsp;·&nbsp; stop ≥ ${n('ai_watch_min_stop_pct', 1.5)}% `
                 + `&nbsp;·&nbsp; 1R = ${n('ai_watch_synth_stop_pct', 5)}% of price`, null],
     ['ARM',   `${n('ai_watch_arm_confirm_ticks', 1)} agreeing polls &nbsp;·&nbsp; ${n('ai_exit_min_hold_sec', 0)}s min hold after fill`, null],
@@ -1339,13 +1277,10 @@ function _bookBlockerLabel(r) {
   const b = String(r.blocker || r.block_reason || '').trim();
   const code = String(r.block_code || '').trim().toLowerCase();
   const detail = String(r.block_detail || '').trim();
-  const cfg = (typeof get === 'function' ? get('config') : null) || {};
-  const gapArmLive = !!(cfg.ai_watch_arm_require_macd
-    || cfg.ai_watch_macd_block_narrowing);
   const whyLow = (code || b).toLowerCase();
-  // When gap/narrowing is not an arm lever, do not advertise leftover
+  // Gap/narrowing is no longer an arm lever, so do not advertise leftover
   // macd_gap_* State strings — fall through to ready / other blockers.
-  if (!gapArmLive && _MACD_GAP_ARM_CODES.has(whyLow)) {
+  if (_MACD_GAP_ARM_CODES.has(whyLow)) {
     if (r.ready || phase === 'ready') return 'ready';
     // Prefer a non-gap blocker if the wire still carries one.
     if (b && !_MACD_GAP_ARM_CODES.has(b.toLowerCase())
@@ -1939,10 +1874,9 @@ function _fmtMacdTitle(r) {
   return bits.join(' · ');
 }
 
-/** True when this reading satisfies the arm condition on its own: inside the
- *  0-50 band and turning up. Also paints when RSI is still falling but deeply
- *  washed out (<20) while EXH is heating toward overbought — matches
- *  ai_watch_arm_cm_rsi_allow_falling_below. */
+/** Paint hint only (RSI is not an arm gate): inside the 0-50 band and
+ *  turning up, or still falling but deeply washed out (<20) while EXH is
+ *  heating toward overbought. */
 function _rsiArms(r) {
   if (!r || r.cm_rsi == null || !Number.isFinite(Number(r.cm_rsi))) return false;
   const v = Number(r.cm_rsi);

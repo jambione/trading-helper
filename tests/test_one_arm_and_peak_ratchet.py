@@ -67,8 +67,8 @@ def test_state_is_per_symbol():
 
 
 def test_one_arm_is_exclusive_even_with_square_on():
-    cfg = {**ON, "ai_watch_exhaustion_rules": True, "ai_watch_exh_square_arm": True,
-           "ai_watch_exh_heating_with_square": True}
+    # The heating lane below mid_rise is never consulted while it is on.
+    cfg = {**ON, "ai_watch_exhaustion_rules": True, "ai_watch_exh_square_arm": True}
     ok, why = ew.exhaustion_allows_buy(_rec(-60), cfg)
     assert (ok, why) == (False, "wait_mid_rise")
 

@@ -38,10 +38,6 @@ def _cfg(**over):
         "rte_threshold": 20,
         "rte_confluence_max": 15.0,
         "rte_require_tight": True,
-        "ai_watch_arm_require_cm_rsi": True,
-        "ai_watch_arm_cm_rsi_max": 100.0,
-        "ai_watch_arm_cm_rsi_min": 0.0,
-        "ai_watch_arm_cm_rsi_require_rising": True,
         "ai_watch_exhaustion_rules": True,
         "ai_watch_require_exh_rising": True,
     }
@@ -127,49 +123,6 @@ def test_a_missing_slow_line_refuses_premarket():
 def test_falling_exhaustion_is_refused():
     ok, why = _arm(_rec(pctr_rising=False, pctr_falling=True), _cfg())
     assert ok is False and why == "exh_falling"
-
-
-# ── RSI direction, shared ─────────────────────────────────────────────────────
-
-def test_rsi_must_be_rising_premarket():
-    ok, why = _arm(_rec(cm_rsi_rising=False), _cfg())
-    assert ok is False and why == "rsi_not_rising"
-
-
-def test_flat_rsi_is_not_rising():
-    """RTH treats flat as not-rising; the old Phase B rule let flat pass.
-
-    On a 2-period RSI a flat print is usually a name that is not trading.
-    """
-    ok, why = _arm(_rec(cm_rsi_rising=None), _cfg())
-    assert ok is False and why == "rsi_not_rising"
-
-    # The same flat reading under the old rule, on a record inside the legacy
-    # 40-70 band so the band cannot be what refuses it: it armed. The old leg
-    # blocked only on actively falling, so flat was a pass.
-    legacy_ok, _ = _arm(_rec(pctr=-45.0, pctr_slow=-45.0, cm_rsi_rising=None),
-                        _cfg(ai_phase_b_legacy_arm=True))
-    assert legacy_ok is True, "the old rule really was looser here"
-
-
-def test_the_deep_oversold_waiver_carries_over():
-    """RTH's ai_watch_arm_cm_rsi_allow_falling_below applies premarket too."""
-    # Arms where it otherwise would not: RSI 8 and falling, waived because the
-    # name is deeply washed out and %R is already heating.
-    ok, _why = _arm(
-        _rec(cm_rsi=8.0, cm_rsi_rising=False),
-        _cfg(ai_watch_arm_cm_rsi_allow_falling_below=20.0))
-    assert ok is True
-
-    blocked, why = _arm(_rec(cm_rsi=8.0, cm_rsi_rising=False),
-                        _cfg(ai_watch_arm_cm_rsi_allow_falling_below=0.0))
-    assert blocked is False and why == "rsi_not_rising"
-
-
-def test_an_rsi_ceiling_would_apply_premarket_if_set():
-    """Live max is 100 (no ceiling). If that changes, premarket follows."""
-    ok, why = _arm(_rec(cm_rsi=88.0), _cfg(ai_watch_arm_cm_rsi_max=50.0))
-    assert ok is False and why == "rsi_extended"
 
 
 # ── Session mechanics stay Phase B's ──────────────────────────────────────────

@@ -18,10 +18,10 @@ Living list. Add items during RTH; implement **after close** only (no mid-sessio
    **After close:** add an explicit buy-gate (proposed `ai_rth_buy_start_time="09:40"`) in `trading_hours_active` so Alpaca `market_open` alone is not enough. Keep watch/shadow + morning-flood **seating/warm** from 09:30; only **arms/fills** wait until 09:40. Move `ai_open_bell_time` to **09:40** (or later) so overnight open-bell path does not jump the gun (live default is 09:35). Fingerprint the new key. Tests: before 09:40 → no buy; at/after 09:40 + market open → allowed.  
    **Why:** SNXX 09:30:26 fill → dead follow-through → trail −0.19R by 09:32; open auction noise is a bad first print for square scalp.
 
-2. **SNXX triangle-first fail-open (local, uncommitted)**  
-   Shelf tick with blank dual %R returned `no_dual_read` and let `local_trail` sell while `exh_was_overbought` (SNXX 09:30–09:32, −0.19R, zero `local_trail_deferred_*`).  
-   **Fix in tree:** `no_dual_read_hold` + entry-features fallback + persist `pos["indicator"]` on manage + `now=` in `apply_local_trail`. Tests: `tests/test_trail_triangle_first.py` (12 pass).  
-   **After close:** commit → deploy mini → `./trading restart` → confirm next square seat logs `local_trail_deferred_dual_ob` when dual is blank/still OB.
+2. **SNXX triangle-first + trail `now=` crash — SHIPPED mid-session Wed `65ec7d8`**  
+   (a) Shelf tick blank dual → `no_dual_read` fail-open (SNXX). (b) **`8b6d271` passed `now=` into `local_profit_stop` without binding `now`** → `manage_open_positions` NameError every raise tick; ratchet / green catch-up dead; flattens still worked. IONQ sat broker-only then shelved at restart.  
+   **Shipped:** `no_dual_read_hold` + features fallback + persist dual + `now = time.time()` in `apply_local_trail`. Deployed + restarted.  
+   **Still verify on next green seat:** `local_trail_raised` / catch-up steps appear; no `manage_open_positions failed` spam.
 
 3. **Phase 1 / capital card for Mon–Wed**  
    Occupancy (open≥1/≥2/≥3) · exit race `left_overbought` vs `local_trail` · MFE≥0.15R share · live-equivalent session green count.  

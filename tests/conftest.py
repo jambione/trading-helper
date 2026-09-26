@@ -71,8 +71,7 @@ def column_cells(table, header):
 
 _SESSION_KNOBS = (
     "ai_watch_exh_mid_rise_arm", "ai_watch_exh_square_arm",
-    "ai_watch_exh_heating_with_square", "ai_watch_exh_oversold_triangle_arm",
-    "ai_watch_admit_prefer_square", "ai_watch_max_far_exh_seats",
+    "ai_watch_max_far_exh_seats",
     "ai_watch_min_price", "ai_watch_movers_min_price", "ai_movers_min_price",
     "ai_exit_limit_collar_pct", "ai_exit_limit_collar_wait_sec",
     "ai_local_trail_peak_give_pct", "ai_watch_engine_stale_max_sec",

@@ -31,7 +31,6 @@ def _cfg(**over):
         "ai_watch_arm_mode": "last",
         "ai_watch_exhaustion_rules": True,
         "ai_watch_exhaustion_heat_min_pct": 40.0,
-        "ai_watch_arm_require_cm_rsi": True,
         "ai_min_reward_risk": 0.5,
         "ai_watch_synth_rr": 1.0,
         "ai_watch_synth_stop_pct": 5.0,

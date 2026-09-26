@@ -123,23 +123,11 @@ OVERLAY_KEYS = {
     # The live 0.10R working shelf is what closed the 86-second scalp; a
     # last-hour hold cannot be tested while that shelf is seeded on every fill.
     "trail_enabled": "ai_local_trail_enabled",
-    # Arm-gate A/B: MACD is the first-fail open-starver (~94% of shadow refuses).
-    # require_macd=False leaves EXH + CM RSI (+ mistimed_heat if live) as the
-    # simpler open path. macd_block_narrowing stays independent: with
-    # require_macd off it still vetoes a closing gap (fail-open if no MACD).
-    "require_macd": "ai_watch_arm_require_macd",
     "macd_min_gap": "macd_min_gap",
-    "macd_block_narrowing": "ai_watch_macd_block_narrowing",
-    # The other direction veto, separable from require_macd for the same
-    # reason narrowing is: the bundle answers direction, size and
-    # availability at once, and only the first is a statement about the
-    # trade. Both vetoes fail open on a missing reading, so a cell with
-    # require_macd off and these two on is "direction only, no starving".
+    # MACD direction veto (fail-open on a missing reading). The require_macd
+    # stack, the narrowing veto and the EXH override were retired.
     "macd_block_bearish": "ai_watch_macd_block_bearish",
-    "macd_exh_override": "ai_watch_macd_exh_override",
-    "require_cm_rsi": "ai_watch_arm_require_cm_rsi",
     "require_exh_rising": "ai_watch_require_exh_rising",
-    "mistimed_heat": "ai_watch_mistimed_heat_enabled",
 }
 VERDICT_CANDIDATE = "candidate"
 VERDICT_HYPOTHESIS = "hypothesis"

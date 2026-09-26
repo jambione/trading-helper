@@ -1,6 +1,7 @@
-"""The direction half of the MACD stack, on its own knob.
+"""The direction half of the retired MACD stack, on its own knob.
 
-``ai_watch_arm_require_macd`` answers three different questions at once:
+The retired ``ai_watch_arm_require_macd`` gate answered three different
+questions at once:
 
   DIRECTION      crossed down (macd_bearish), gap closing (macd_gap_narrowing)
   SIZE           macd_min_gap, macd_sep_mult
@@ -14,7 +15,7 @@ under its slow line is the one of the three that says the trade is wrong
 rather than merely small or unmeasured.
 
 ``ai_watch_macd_block_bearish`` is that test standing alone, fail-open on a
-missing reading exactly like the narrowing veto beside it.
+missing reading.
 """
 import sys
 from pathlib import Path
@@ -25,10 +26,8 @@ sys.path.insert(0, str(_ROOT))
 import ai_entry_watch as ew  # noqa: E402
 
 # The veto-only arm path: MACD is not required, direction still refuses.
-VETO = {"ai_watch_arm_require_macd": False,
-        "ai_watch_macd_block_bearish": True}
-OFF = {"ai_watch_arm_require_macd": False,
-       "ai_watch_macd_block_bearish": False}
+VETO = {"ai_watch_macd_block_bearish": True}
+OFF = {"ai_watch_macd_block_bearish": False}
 
 
 def _rec(**ind):
@@ -47,7 +46,7 @@ def test_crossed_down_is_refused():
 
 
 def test_a_negative_histogram_is_bearish_even_with_fast_above_slow():
-    # Both halves of the live test, kept identical to macd_allows_buy:
+    # Both halves of the live test:
     # `fast <= slow or gap <= 0`. A crossed-up pair with a negative
     # histogram is a contradiction the sim must not resolve differently
     # from the desk.
@@ -85,7 +84,7 @@ def test_a_record_with_no_indicator_dict_fails_open():
     assert ew.macd_bearish_blocks_buy({"symbol": "AAA"}, VETO) is None
 
 
-# ── line/signal aliases, as macd_allows_buy reads them ───────────────────
+# ── line/signal aliases ───────────────────
 
 def test_line_and_signal_aliases_are_honoured():
     rec = {"symbol": "AAA",
@@ -94,19 +93,7 @@ def test_line_and_signal_aliases_are_honoured():
     assert ew.macd_bearish_blocks_buy(rec, VETO) == "macd_bearish"
 
 
-# ── agreement with the bundled path ──────────────────────────────────────
-
-def test_standalone_veto_matches_the_full_stack_on_direction():
-    """Same input, same verdict, whichever path evaluates it."""
-    bear = {"macd_fast": 0.02, "macd_slow": 0.06, "macd_gap": -0.04,
-            "macd_sep_ratio": 1.5}
-    full = {"ai_watch_arm_require_macd": True}
-    ok, why = ew.macd_allows_buy({"symbol": "AAA", "indicator": dict(bear)},
-                                 full)
-    assert (ok, why) == (False, "macd_bearish")
-    assert ew.macd_bearish_blocks_buy(
-        {"symbol": "AAA", "indicator": dict(bear)}, VETO) == "macd_bearish"
-
+# ── no size tests ─────────────────────────────────────────────────────────
 
 def test_the_veto_does_not_apply_the_size_tests():
     """A bullish gap far too small for macd_min_gap still passes.
@@ -117,7 +104,3 @@ def test_the_veto_does_not_apply_the_size_tests():
     tiny = {"macd_fast": 0.1002, "macd_slow": 0.1000, "macd_gap": 0.0002}
     assert ew.macd_bearish_blocks_buy(
         {"symbol": "AAA", "indicator": dict(tiny)}, VETO) is None
-    ok, why = ew.macd_allows_buy(
-        {"symbol": "AAA", "indicator": dict(tiny, macd_sep_ratio=1.5)},
-        {"ai_watch_arm_require_macd": True})
-    assert (ok, why) == (False, "macd_gap_too_close")

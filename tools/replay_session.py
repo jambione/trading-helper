@@ -276,16 +276,26 @@ def guard_network(allowed: tuple = None) -> dict:
 
 
 class TimeProxy:
-    """Stands in for the ``time`` module inside desk modules."""
+    """Stands in for the ``time`` module inside desk modules.
 
-    def __init__(self, clock: SimClock):
+    *advance* (exact mode) returns the recorded time of the latest read
+    served in the current pass, so time moves inside a pass as it did live
+    instead of standing still at the pass's start."""
+
+    def __init__(self, clock: SimClock, advance=None):
         self._clock = clock
+        self._advance = advance
 
     def time(self):
-        return self._clock.t
+        t = self._clock.t
+        if self._advance is not None:
+            a = self._advance()
+            if a is not None and a > t:
+                return a
+        return t
 
     def monotonic(self):
-        return self._clock.t
+        return self.time()
 
     def sleep(self, _s):
         return None
@@ -294,9 +304,9 @@ class TimeProxy:
         return getattr(_real_time, name)
 
 
-def patch_clocks(clock: SimClock, root: Path, done: set) -> None:
+def patch_clocks(clock: SimClock, root: Path, done: set, advance=None) -> None:
     """Give every desk module (code under root) the simulated clock."""
-    proxy = TimeProxy(clock)
+    proxy = TimeProxy(clock, advance)
     for name, mod in list(sys.modules.items()):
         if name in done or mod is None:
             continue
@@ -1384,7 +1394,7 @@ def run_exact(args) -> int:
     from config import load_config
 
     patched: set = set()
-    patch_clocks(clock, root, patched)
+    patch_clocks(clock, root, patched, advance=desk_io.pass_clock)
     ew.push_candidates_to_engine = lambda symbols, *a, **k: {"ok": True, "added": len(symbols or [])}
     try:
         import finnhub_stream as fs
@@ -1407,7 +1417,7 @@ def run_exact(args) -> int:
     for t, ev in events:
         clock.t = t
         follow_config(t)
-        patch_clocks(clock, root, patched)
+        patch_clocks(clock, root, patched, advance=desk_io.pass_clock)
         cfg = load_config()
         try:
             if ev == "sync":
