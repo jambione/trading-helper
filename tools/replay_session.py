@@ -101,6 +101,9 @@ def parse_args(argv=None):
                     help="start from the recorded book at --start instead of empty")
     ap.add_argument("--snapshots", default=None, help="archive dir (default ~/session_snapshots/DAY)")
     ap.add_argument("--out", default=None, help="write result JSON here")
+    ap.add_argument("--live-staleness", action="store_true",
+                    help="refuse an entry when live's decision ledger had the name on stale "
+                         "tape at that moment (live's stream staleness is not in the recording)")
     ap.add_argument("--trace", action="append", default=[], metavar="SYM",
                     help="print this symbol's arm inputs every poll")
     return ap.parse_args(argv)
@@ -204,6 +207,16 @@ def export_and_reexec(args) -> int:
     # The driver itself always comes from this checkout, so older commits can
     # be replayed with today's harness.
     shutil.copy2(Path(__file__), code / "tools" / "replay_session.py")
+    # Share counts (float_feed reads ROOT/ai_reports/float_cache.json). The
+    # sandbox blocks Finnhub and an unknown float admits, so without the cache
+    # the float gate never fires: on 2026-09-25 PYPL/CVS/DB (850M-1.7B float)
+    # were seated and traded here while live refused them float_too_big.
+    # Floats do not move intraday, so today's cache is not look-ahead. The
+    # news cache is left out on purpose: it holds stories from after --start.
+    fc = HERE / "ai_reports" / "float_cache.json"
+    if fc.exists():
+        (code / "ai_reports").mkdir(exist_ok=True)
+        shutil.copy2(fc, code / "ai_reports" / "float_cache.json")
     reports = work / "ai_reports"
     reports.mkdir()
     env = dict(os.environ, REPLAY_EXPORTED="1", REPLAY_SHA=sha, REPLAY_REPO=str(HERE),
@@ -678,6 +691,55 @@ def day_bars(day: str, syms: set[str], client) -> dict:
     return have
 
 
+class LiveStaleness:
+    """Live's own verdict on its tape, from the day's decision ledger.
+
+    The replay's prices come from recorded dashboard rows, whose ages are
+    usually fresh. Live's arm pass reads its in-process stream instead, and on
+    2026-09-25 refused 43% of arm checks as stale tape (tape_only /
+    mid_rise_stale). That is not in the recording, so without this the replay
+    models a desk with better data than live had, and opens ~4x as often.
+    The ledger writes on change, not every pass, so a row's verdict holds
+    until the next row, for up to *hold* seconds. Live's arm pass runs about
+    every 13 s, so it judges the same cross a few seconds after the replay
+    does; a row up to *lead* seconds after t counts as that pass.
+    """
+
+    STALE_WHY = {"tape_only", "mid_rise_stale"}
+
+    def __init__(self, snap_dir: Path, hold: float = 300.0, lead: float = 15.0):
+        import bisect
+        self._bisect = bisect
+        self.hold, self.lead = hold, lead
+        self.by: dict[str, tuple[list[float], list[bool]]] = {}
+        self.refused = 0
+        self.no_row = 0
+        rows: dict[str, list[tuple[float, bool]]] = {}
+        p = snap_dir / "decision_ledger.jsonl"
+        if p.exists():
+            for line in open(p):
+                try:
+                    r = json.loads(line)
+                    t = float(r["ts"])
+                except (ValueError, KeyError, TypeError):
+                    continue
+                stale = (r.get("tape_src") == "stale_tape"
+                         or r.get("arm_why") in self.STALE_WHY)
+                rows.setdefault(str(r.get("symbol") or "").upper(), []).append((t, stale))
+        for sym, v in rows.items():
+            v.sort()
+            self.by[sym] = ([x[0] for x in v], [x[1] for x in v])
+        self.loaded = bool(self.by)
+
+    def stale(self, sym: str, t: float) -> bool:
+        ts, flags = self.by.get(str(sym).upper(), ([], []))
+        i = self._bisect.bisect_right(ts, t + self.lead) - 1
+        if i < 0 or t - ts[i] > self.hold:
+            self.no_row += 1
+            return False
+        return flags[i]
+
+
 class RecordedInputs:
     """Spread / pace / gap values the live desk computed that session."""
 
@@ -894,11 +956,26 @@ def run_inside(args) -> int:
     ew._recent_exit_ts = lambda s: broker.last_exit.get(str(s).upper())
     ew._entries_today = lambda s: broker.entries.get(str(s).upper(), 0)
 
+    live_stale = LiveStaleness(snap_dir) if args.live_staleness else None
+    if live_stale is not None and not live_stale.loaded:
+        print("[replay] --live-staleness: no decision_ledger.jsonl in the archive; off")
+        live_stale = None
+    broker.live_stale = live_stale
+
     def place(sym, decision, equity_arg=None, **kw):
         s = str(sym).upper()
         px = broker.price(dash["state"], s)
         if px is None:
             return {"ok": False, "error": "replay: no recorded price"}
+        if live_stale is not None and live_stale.stale(s, clock.t):
+            live_stale.refused += 1
+            # Live never reaches the arm check on stale tape; by the time the
+            # tape is fresh the cross is usually past its 60 s window
+            # (mid_rise_stale). Cancel it, so this name needs a new cross.
+            st = getattr(ew, "_MID_RISE_STATE", None)
+            if isinstance(st, dict) and s in st:
+                st[s] = (st[s][0], None)
+            return {"ok": False, "error": "replay: live tape was stale"}
         synthetic = any(r.get("synthetic") for r in dash["state"].get("tickers") or []
                         if r.get("ticker") == s)
         return broker.enter(s, px, clock.t, decision, cfg=load_config(), synthetic=synthetic)
@@ -1137,6 +1214,10 @@ def report(args, slots, broker, blocked, wall0) -> None:
           f">=2 {sum(1 for x in all_open if x >= 2) / max(1, len(all_open)):.0%}  "
           f"closed {n}  gross/trade {1e4 * avg(rets):+.1f} bp  mean hold {avg(holds):.1f}m")
     print(f"exits {dict(why)}  opens on synthetic data {syn}")
+    live_stale = getattr(broker, "live_stale", None)
+    if live_stale is not None:
+        print(f"live staleness: refused {live_stale.refused} entries  "
+              f"(no live arm row within {live_stale.hold:.0f}s: {live_stale.no_row})")
     if blocked:
         print(f"blocked network: {dict(sorted(blocked.items(), key=lambda kv: -kv[1]))}")
     print(f"wall time {_real_time.time() - wall0:.0f}s")
