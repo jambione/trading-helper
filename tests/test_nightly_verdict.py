@@ -120,3 +120,42 @@ def test_exact_score_reports_the_quote_path(tmp_path):
     o = rs.exact_score(events, live, rep, [], wire, 0.0, 1e9)
     assert o["live_price_src"] == {"quote": 1, "stale_tape": 1}
     assert (o["quote_checks"], o["quote_agree"]) == (1, 1)
+
+
+def test_weekday_without_any_recording_says_so(repo):
+    ok, why = nightly.session_recorded("2026-09-22")
+    assert not ok
+    assert why.startswith("no session recording for this day")
+
+
+def test_not_run_reason_is_never_none():
+    # --only fidelity on a pre-recorder day: no "exact" key at all (the 9/25 case)
+    legacy = {"legacy": True, "fidelity_json": {"recall": 0.5, "precision": 0.2}}
+    assert nightly.exact_not_run_reason(legacy) == nightly.LEGACY_WHY
+    md = nightly.summary_md("2026-09-25", legacy)
+    assert "**Exact replay: not run** — day predates the desk_io recorder" in md
+    assert "None" not in md
+
+    # recorded day, exact not requested
+    only_fid = {"fidelity_json": {"recall": 0.9, "precision": 0.9}}
+    v, why = nightly.verdict(only_fid)
+    assert v == "FAIL" and "None" not in why and "not requested" in why
+    assert "None" not in nightly.summary_md("2026-09-28", only_fid)
+
+    # a literal None / "None" reason falls back to words
+    for bad in (None, "", "None"):
+        r = {"exact": {"ok": False, "why": bad}}
+        assert nightly.exact_not_run_reason(r) == "no reason recorded"
+        assert "None" not in nightly.verdict(r)[1]
+
+    # a real reason passes through
+    r = {"exact": {"ok": False, "why": "no desk_io boot marker before 09:30"}}
+    assert "no desk_io boot marker" in nightly.summary_md("2026-09-28", r)
+
+
+def test_skip_summary_for_unrecorded_weekday(repo):
+    _, why = nightly.session_recorded("2026-09-22")
+    res = {"skip": why, "exact": {"ok": True, "verdict": "SKIP", "why": why}}
+    md = nightly.summary_md("2026-09-22", res)
+    assert "VERDICT: SKIP — no session recording for this day" in md
+    assert "None" not in md

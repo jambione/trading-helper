@@ -84,6 +84,26 @@ def boot_sha(day: str) -> str | None:
     return best[1] if best else None
 
 
+LEGACY_WHY = "day predates the desk_io recorder (2026-09-26); approximate replay only"
+NO_RECORDING_WHY = ("no session recording for this day (no decisions stream or fills archive: "
+                    "desk down, holiday, or before the recorder)")
+
+
+def exact_not_run_reason(res: dict) -> str:
+    """Why the exact replay did not run, as words. Never None or empty."""
+    ex = res.get("exact") or {}
+    why = str(ex.get("why") or "").strip()
+    if why and why != "None":
+        return why
+    if res.get("legacy"):
+        return LEGACY_WHY
+    if res.get("skip"):
+        return str(res["skip"])
+    if "exact" not in res:
+        return "exact step not requested in this run (--only)"
+    return "no reason recorded"
+
+
 def session_recorded(day: str) -> tuple[bool, str]:
     """Was there a trading session to check? A weekday with at least one
     desk arm poll recorded between 09:30 and 16:00 ET. Otherwise every replay
@@ -100,7 +120,7 @@ def session_recorded(day: str) -> tuple[bool, str]:
         fills = Path.home() / "session_snapshots" / day / "fills.jsonl"
         if fills.exists() and fills.stat().st_size > 0:
             return True, "legacy"
-        return False, "no decisions recorded (desk down, holiday, or recorder off)"
+        return False, NO_RECORDING_WHY
     try:
         with gzip.open(p, "rt") as f:
             for line in f:
@@ -216,7 +236,7 @@ def verdict(res: dict) -> tuple[str, str]:
             f"approximate replay only (pre-desk_io day): recall {rec}, precision {prec}")
     ex = res.get("exact") or {}
     if not ex.get("ok"):
-        return "FAIL", f"exact replay did not run: {ex.get('why')}"
+        return "FAIL", f"exact replay did not run: {exact_not_run_reason(res)}"
     v = ex.get("verdict")
     if v in ("PASS", "SKIP"):
         return v, ""
@@ -252,13 +272,11 @@ def summary_md(day: str, res: dict) -> str:
             lines += ["First divergences (live vs replay): " + "; ".join(
                 f"{k} {v.get('t')}" for k, v in ex["first_divergence"].items()), ""]
     else:
-        why_ex = ex.get("why") or ("day predates the desk_io recorder (2026-09-26); approximate "
-                                   "replay only" if res.get("legacy") else "not requested")
-        lines += [f"**Exact replay: not run** — {why_ex}", ""]
+        lines += [f"**Exact replay: not run** — {exact_not_run_reason(res)}", ""]
     fid = res.get("fidelity_json") or {}
     if fid:
         lines += [f"Approximate replay (fidelity, secondary): recall {fid.get('recall')}, precision "
-                  f"{fid.get('precision')} on {str(fid.get('sha') or '')[:8]} {fid.get('window')}"
+                  f"{fid.get('precision')} on {str(fid.get('sha') or '-')[:8]} {fid.get('window') or '-'}"
                   + (" (--no-paint: pre-24cc6bf code)" if fid.get("no_paint") else ""), ""]
         segs = fid.get("segments") or []
         if len(segs) > 1:
@@ -312,8 +330,7 @@ def main() -> int:
         res["fidelity_json"] = fidelity_result(args.day)
     if args.only in (None, "exact"):
         if why == "legacy":
-            res["exact"] = {"ok": False, "why": "day predates the desk_io recorder (2026-09-26); "
-                                               "approximate replay only"}
+            res["exact"] = {"ok": False, "why": LEGACY_WHY}
             res["legacy"] = True
         else:
             res["exact"] = step_exact(args.day, out, log)
