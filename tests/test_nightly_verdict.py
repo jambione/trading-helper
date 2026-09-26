@@ -159,3 +159,5 @@ def test_skip_summary_for_unrecorded_weekday(repo):
     md = nightly.summary_md("2026-09-22", res)
     assert "VERDICT: SKIP — no session recording for this day" in md
     assert "None" not in md
+    assert md.count("no session recording for this day") == 1
+    assert "((" not in md

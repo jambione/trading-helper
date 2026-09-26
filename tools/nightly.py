@@ -253,7 +253,7 @@ def summary_md(day: str, res: dict) -> str:
     if res.get("skip"):
         cat = res.get("catalyst") or {}
         extra = [f"**AI catalyst scorecard:** rc={cat.get('rc')}", ""] if cat else []
-        return "\n".join(lines + [f"**Replay checks: SKIP** — no session to check ({res['skip']}).", ""]
+        return "\n".join(lines + ["**Replay checks: SKIP** — no session to replay (reason on the VERDICT line).", ""]
                          + extra)
     cat = res.get("catalyst") or {}
     if cat:
