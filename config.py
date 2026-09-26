@@ -1243,6 +1243,9 @@ DEFAULT_CONFIG = {
     # that was still working. Off unless the tape says otherwise.
     "ai_exit_macd_curl_on_falling":    False,
     "ai_local_trail_give_spread_k":    0.0,
+    # A young IEX quote that agrees with a recent print counts as a fresh
+    # decision price (ai_entry_watch.cross_checked_quote). False = prints only.
+    "ai_watch_quote_freshness":        True,
     # Floor the trail cushion at k x the name's 1m volatility at entry (%
     # of price). 0 = off. Study: tools/studies/vol_trail_book_study.py.
     "ai_local_trail_give_vol_k":       0.0,

@@ -639,7 +639,7 @@ def clear_tape_data_block_if_stream_fresh(
     src = str(
         rec.get("last_ask_src") or rec.get("price_src") or ""
     ).strip().lower()
-    if src != "stream":
+    if not price_src_fresh(src):
         return False
     # Prefer field age when the map clock lags (Class C).
     align_stream_clock_if_field_young(rec, cfg)
@@ -826,7 +826,7 @@ def stream_price_required_block(px_src: str | None, cfg: dict | None) -> str | N
     """
     if not bool((cfg or {}).get("ai_watch_arm_require_stream_price", False)):
         return None
-    if str(px_src or "").strip().lower() == "stream":
+    if price_src_fresh(px_src):
         return None
     return "stream_required"
 
@@ -1787,7 +1787,7 @@ def _arm_ready_young_tape(
         age = _f_or_none(row.get("tape_age_sec"))
     if age is None:
         age = _f_or_none(row.get("price_age_sec"))
-    if src == "stream" and age is not None and float(age) <= ceiling:
+    if price_src_fresh(src) and age is not None and float(age) <= ceiling:
         return True, "ok"
     if sym:
         try:
@@ -3353,7 +3353,7 @@ def _is_stream_ready_seat(
     src = str(
         rec.get("last_ask_src") or rec.get("price_src") or ""
     ).strip().lower()
-    if src != "stream":
+    if not price_src_fresh(src):
         return False
     age = row_quote_age_sec(rec, now=now)
     if age is None:
@@ -4280,7 +4280,7 @@ def _poller_blocked(rec: dict) -> bool:
         src = str(
             rec.get("last_ask_src") or rec.get("price_src") or ""
         ).strip().lower()
-        if src != "stream":
+        if not price_src_fresh(src):
             return True
     # Tape is fresh (check above). A leftover data-condition refuse is not a
     # real poller veto — same rule as derive_blocker fall-through.
@@ -8475,6 +8475,57 @@ def _ask_max_dev_pct(cfg: dict | None) -> float:
     return max(0.0, v)
 
 
+# Cross-checked IEX quote as a second fresh price source (barebones step 1).
+# On 2026-09-25, 43% of RTH arm checks were refused tape_only; SIP had traded
+# within 15 s on 99% of them — IEX sees a few percent of all trades, so a
+# liquid name's last IEX PRINT ages while its IEX QUOTE keeps updating. The
+# quote alone is unsafe (thin IEX books: p90 error 330 bp vs the SIP ask), but
+# a quote no older than QUOTE_MAX_AGE_SEC that sits within QUOTE_PRINT_AGREE_BP
+# of a print no older than QUOTE_PRINT_MAX_AGE_SEC cleared 60% of refusals at
+# a median 0.0 bp / p90 3 bp error against the SIP ask
+# (tools/studies/freshness_study.py, 123 refusals).
+QUOTE_MAX_AGE_SEC = 5.0
+QUOTE_PRINT_AGREE_BP = 30.0
+QUOTE_PRINT_MAX_AGE_SEC = 60.0
+FRESH_PRICE_SRCS = ("stream", "quote")
+
+
+def price_src_fresh(src: str | None) -> bool:
+    """True for a price source the arm may trust when young: a stream print,
+    or a cross-checked quote. One predicate for every arm/seat gate."""
+    return str(src or "").strip().lower() in FRESH_PRICE_SRCS
+
+
+def cross_checked_quote(
+    symbol: str,
+    tape: tuple[float, float | None] | None,
+    cfg: dict | None,
+    now: float | None = None,
+) -> tuple[float, str, float] | None:
+    """``(ask, "quote", quote_age)`` when the cached IEX quote is young and
+    agrees with a recent print; else None. Cache only — the poll primes one
+    batched quote call for the whole book, so this adds no request."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get("ai_watch_quote_freshness", True)):
+        return None
+    if tape is None or not tape[0] or tape[0] <= 0 or tape[1] is None:
+        return None
+    if float(tape[1]) > QUOTE_PRINT_MAX_AGE_SEC:
+        return None
+    try:
+        import ai_trading as gt
+        hit = gt._cached_quote(symbol)
+        q_age = gt.cached_quote_age_sec(symbol, now)
+    except Exception:  # noqa: BLE001
+        return None
+    if not hit or not hit[0] or q_age is None or q_age > QUOTE_MAX_AGE_SEC:
+        return None
+    ask = float(hit[0])
+    if ask <= 0 or abs(ask / float(tape[0]) - 1.0) * 1e4 > QUOTE_PRINT_AGREE_BP:
+        return None
+    return ask, "quote", float(q_age)
+
+
 def decision_price(
     symbol: str,
     cfg: dict | None,
@@ -8497,6 +8548,9 @@ def decision_price(
         px, age = tape
         if age is not None and age <= max_age and px > 0:
             return px, "stream", age
+    q = cross_checked_quote(symbol, tape, cfg, now)
+    if q is not None:
+        return q
     ask_f = 0.0
     try:
         import ai_trading as gt
@@ -17525,7 +17579,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             px_src = "stream"
             px_age = rec.get("last_ask_age_sec")
             clear_tape_data_block_if_stream_fresh(rec, cfg)
-        elif str(px_src or "").strip().lower() == "stream":
+        elif price_src_fresh(px_src):
             clear_tape_data_block_if_stream_fresh(rec, cfg)
         tape_only = str(px_src or "").strip().lower() == "stale_tape"
         rec["last_poll_ts"] = t0
