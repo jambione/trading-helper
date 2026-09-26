@@ -15063,15 +15063,17 @@ def _entry_features(rec: dict, *, ask: float | None = None,
 
 
 def _vol_1m_pct(sym: str, now: float, n: int = 15,
-                max_age: float = 180.0) -> float | None:
-    """Stdev of the last *n* one-minute close-to-close returns, %, from the
-    cached IEX bars the arm pass already fetched.
+                max_age: float = 180.0, window: int = 20) -> float | None:
+    """Stdev of one-minute close-to-close returns, %, from the cached IEX bars
+    the arm pass already fetched.
 
-    None unless the last n+1 bars are consecutive minutes and the newest ends
-    within *max_age* of now. A thin IEX tape skips minutes, and a return taken
-    across a gap folds several minutes of drift into one "1m" step, which
-    overstates the volatility. Better no reading than a wide wrong one.
-    tools/studies/vol_trail_book_study.py uses the same definition.
+    Only returns between adjacent minutes count. A thin IEX tape skips minutes
+    (TOST/VIAV/BMNR lost 1-3 of 15 on 2026-09-25), and a return taken across
+    a gap folds several minutes of drift into one "1m" step, which overstates
+    the volatility. So the last *window* bars are searched for adjacent pairs
+    and at least ``n - 5`` are required. The newest bar must end within
+    *max_age* of now. None otherwise: better no reading than a wide wrong one.
+    Close to tools/studies/vol_trail_book_study.py (15 SIP minutes).
     """
     sym = str(sym or "").upper()
     if not sym:
@@ -15082,20 +15084,22 @@ def _vol_1m_pct(sym: str, now: float, n: int = 15,
     if not hit or not ts_hit:
         return None
     rows, stamps = hit[1], ts_hit[1]
-    if len(rows) != len(stamps) or len(rows) < n + 1:
+    if len(rows) != len(stamps) or len(rows) < 2:
         return None
-    rows, stamps = rows[-(n + 1):], stamps[-(n + 1):]
+    rows, stamps = rows[-(window + 1):], stamps[-(window + 1):]
     if now - (float(stamps[-1]) + 60.0) > max_age:
-        return None
-    if any(abs(float(b) - float(a) - 60.0) > 1.0 for a, b in zip(stamps, stamps[1:])):
         return None
     try:
         closes = [float(r[2]) for r in rows]
     except (TypeError, ValueError, IndexError):
         return None
-    if any(c <= 0 for c in closes):
+    rets = [(closes[i] / closes[i - 1] - 1.0) * 100.0
+            for i in range(1, len(closes))
+            if abs(float(stamps[i]) - float(stamps[i - 1]) - 60.0) <= 1.0
+            and closes[i - 1] > 0 and closes[i] > 0]
+    rets = rets[-n:]
+    if len(rets) < max(2, n - 5):
         return None
-    rets = [(b / a - 1.0) * 100.0 for a, b in zip(closes, closes[1:])]
     mean = sum(rets) / len(rets)
     return round((sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)) ** 0.5, 4)
 

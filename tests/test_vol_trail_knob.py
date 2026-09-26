@@ -62,7 +62,18 @@ def test_vol_1m_pct_consecutive_minutes():
     assert v is not None and v > 0.9
 
 
-def test_vol_1m_pct_refuses_gaps_and_stale_bars():
+def test_vol_1m_pct_skips_returns_across_a_gap():
+    # A 10% jump across a missing minute must not count as a 1m return.
+    closes = [10.0, 10.01] * 8 + [11.0]
+    stamps = [1_000_000.0 + 60 * i for i in range(16)] + [1_000_000.0 + 60 * 17]
+    with ew._ohlc_cache_lock:
+        ew._ohlc_cache["SKIP"] = (stamps[-1], [(c, c, c) for c in closes])
+        ew._ohlc_ts_cache["SKIP"] = (stamps[-1], stamps)
+    v = ew._vol_1m_pct("SKIP", stamps[-1] + 60)
+    assert v is not None and v < 0.2
+
+
+def test_vol_1m_pct_refuses_sparse_and_stale_bars():
     closes = [10.0, 10.1] * 8
     last = _seed("GAPT", closes, 1_000_000.0, step=120.0)
     assert ew._vol_1m_pct("GAPT", last + 60) is None
