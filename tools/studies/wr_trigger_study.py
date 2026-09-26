@@ -44,6 +44,10 @@ import mid_rise_runway_study as mr  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
 CACHE = os.path.join(ROOT, "ai_reports", "source_study_bars.pkl")
+IEX_CACHE = os.path.join(ROOT, "ai_reports", "wr_study_iex_bars.pkl")
+# WR_FEED=iex: detect every trigger on IEX 1m bars (what the live desk sees),
+# score the outcome on SIP bars at the same minute.
+FEED = os.environ.get("WR_FEED", "sip")
 T0, T1 = 9 * 60 + 45, 15 * 60 + 30
 REFRACT = 15  # minutes between two signals of one trigger on one name
 
@@ -139,8 +143,50 @@ def summarize(rows):
     return {k: m(k) for k in ("runway", "mfe30", "fwd5", "fwd15", "fwd30")}
 
 
+def iex_bars(cache):
+    iex = {}
+    if os.path.exists(IEX_CACHE):
+        iex = pickle.load(open(IEX_CACHE, "rb"))
+    want = defaultdict(list)
+    for (sym, day), rec in cache.items():
+        if rec and rec[0] and (sym, day) not in iex:
+            want[day].append(sym)
+    if want:
+        import time as _t
+        from datetime import timezone
+        from alpaca.data.enums import DataFeed
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+        sys.path.insert(0, ROOT)
+        import ai_entry_watch as ew
+        cl = ew._data_client()
+        for day, syms in sorted(want.items()):
+            d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
+            for i in range(0, len(syms), 50):
+                batch = syms[i:i + 50]
+                got = {}
+                try:
+                    bs = cl.get_stock_bars(StockBarsRequest(
+                        symbol_or_symbols=batch, timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+                        start=d.replace(hour=4).astimezone(timezone.utc),
+                        end=d.replace(hour=16, minute=5).astimezone(timezone.utc), feed=DataFeed.IEX))
+                    for sym, rows in (bs.data or {}).items():
+                        got[sym] = ([r.timestamp.timestamp() for r in rows], [float(r.open) for r in rows],
+                                    [float(r.high) for r in rows], [float(r.low) for r in rows],
+                                    [float(r.close) for r in rows], [float(r.volume) for r in rows])
+                except Exception as e:  # noqa: BLE001
+                    print(f"  iex {day}: {e}"[:140])
+                for s_ in batch:
+                    iex[(s_, day)] = got.get(s_)
+                _t.sleep(1.0)
+            print(f"  iex bars {day}: {len(syms)}")
+        pickle.dump(iex, open(IEX_CACHE, "wb"))
+    return iex
+
+
 def main():
     cache = pickle.load(open(CACHE, "rb"))
+    iex = iex_bars(cache) if FEED == "iex" else {}
     days = sorted({d for _s, d in cache})
     half = set(days[: len(days) // 2])
     rng = random.Random(7)
@@ -149,7 +195,15 @@ def main():
         if not rec or not rec[0]:
             continue
         B = rec[0]
-        sig = signals(B)
+        if FEED == "iex":
+            Bi = iex.get((sym, day))
+            if not Bi or len(Bi[0]) < 150:
+                continue
+            pos = {ts: j for j, ts in enumerate(B[0])}
+            sig = {k: [pos[Bi[0][i]] for i in idx if Bi[0][i] in pos]
+                   for k, idx in signals(Bi).items()}
+        else:
+            sig = signals(B)
         for k, idx in sig.items():
             for i in idx:
                 ev[k].append({"day": day, **label(B, i)})
@@ -160,7 +214,7 @@ def main():
         for i in rng.sample(elig, min(len(elig), max(2, len(sig.get("live", []))))):
             ev["random"].append({"day": day, **label(B, i)})
     base = summarize(ev["random"])
-    print(f"entry delay {DELAY} min; days {days[0]}..{days[-1]} ({len(days)}); names x days {len(cache)}; "
+    print(f"detect on {FEED}; entry delay {DELAY} min; days {days[0]}..{days[-1]} ({len(days)}); names x days {len(cache)}; "
           f"gross, no costs (spread ~8-16 bp round trip)\n")
     print(f"{'trigger':10} {'n':>6} {'runway':>7} {'vs rnd':>7} {'mfe30%':>7} "
           f"{'fwd5':>6} {'fwd15':>6} {'fwd30':>6} {'fwd15 t':>8} {'h1 fwd15':>9} {'h2 fwd15':>9}")
