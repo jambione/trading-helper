@@ -170,10 +170,8 @@ def apply_macd_direction(
 
     live_macd publishes how far APART the lines are; which way they are
     MOVING comes off the signal engine (strategy_three_indicator.evaluate),
-    and a replay has no engine. Left unset, macd_narrowing_blocks_buy answers
-    macd_gap_dir_unknown on every bar inside the full stack (it fails closed
-    there by design), so require_macd=true places nothing — a broken
-    simulation, not a gate refusing every trade.
+    and a replay has no engine. Left unset, _macd_is_armed never sees an
+    opening gap, so the pinned-overbought exemption cannot fire in a replay.
 
     Same series and same lookback as the live rule: ew.macd_series over the
     primed 1m closes with the forming minute folded in, then a strict > / <

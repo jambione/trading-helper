@@ -88,34 +88,8 @@ def main() -> int:
           "PASS" if ok3 else "FAIL",
           f"shelf={shelf} book={book} declared_in_bot_config={raw_declared}")
 
-    # R4 guards THE LEVER — whichever indicator currently opens positions.
-    #
-    # It used to check require_live_pctr and require_realtime_rsi, and by 8/27
-    # it was failing on a system that was not broken: MACD replaced both on
-    # 8/26 (ai_watch_arm_require_macd), CM RSI-2 is no longer an arm gate at
-    # all (ai_watch_arm_require_cm_rsi=False), so its freshness knob guards
-    # nothing, and %R now decides only inside the MACD/EXH confluence
-    # override. A check that fails for a stale reason trains you to ignore it.
-    rt_macd = bool(cfg.get("ai_watch_require_realtime_macd"))
-    arm_macd = bool(cfg.get("ai_watch_arm_require_macd"))
-    if not arm_macd:
-        check("R4 lever freshness guard armed", "FAIL",
-              "ai_watch_arm_require_macd=False — no lever to guard")
-    else:
-        check("R4 lever freshness guard armed", "PASS" if rt_macd else "FAIL",
-              f"lever=MACD require_realtime_macd={rt_macd}"
-              f" (cm_rsi arm gate off, so its knob is inert)")
-
-    # The override is the most permissive path in the entry gate: it returns
-    # an automatic yes and skips both macd_min_gap and the separation test.
-    # Its %R leg is read straight off the record, so it does NOT pass through
-    # exhaustion_allows_buy's require_live_pctr provenance check. Reported,
-    # not enforced — the override is the operator's rule and tightening it
-    # changes what trades.
-    if bool(cfg.get("ai_watch_macd_exh_override")):
-        check("R4b override EXH provenance", "WARN",
-              "confluence override reads pctr_rising directly; "
-              "require_live_pctr does not cover it")
+    # R4 (MACD lever freshness) and R4b (MACD/EXH override provenance) were
+    # retired with the MACD entry gate: MACD no longer opens positions.
 
     poll = float(cfg.get("ai_watch_poll_sec") or 0)
     check("R5 arm cadence tightened", "PASS" if 0 < poll <= 10.0 else "FAIL",
@@ -285,7 +259,7 @@ def main() -> int:
             # the file ages past the ceiling every night and all weekend. That
             # is the design working, not a fault, and reporting it as FAIL
             # would train the operator to ignore this row — the exact failure
-            # R4 above was rewritten to avoid. Read the producer's own window
+            # the old R4 check was rewritten to avoid. Read the producer's own window
             # so the two cannot drift apart.
             try:
                 import movers_screener as _ms

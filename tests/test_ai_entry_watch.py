@@ -4461,7 +4461,6 @@ def _soft_ob_cfg(**over):
         ai_watch_arm_cm_rsi_max=60.0,
         ai_watch_arm_cm_rsi_require_rising=False,
         ai_watch_require_realtime_rsi=False,
-        ai_watch_arm_require_macd=False,
     )
     cfg.update(over)
     return cfg
@@ -5524,62 +5523,6 @@ def test_left_overbought_confirm_and_flicker_cancel():
     assert hit is True and why == "left_overbought"
 
 
-def _macd_fill_rec(**kw):
-    ind = {
-        "pctr": -40.0,
-        "pctr_slow": -55.0,
-        "macd_bull": True,
-        "macd_gap_rising": True,
-        "macd_gap": 0.03,
-        "cm_rsi": 52.0,
-        "cm_rsi_rising": True,
-    }
-    ind.update(kw.pop("ind", {}))
-    rec = {"symbol": "APLD", "indicator": ind, "cm_rsi": ind["cm_rsi"],
-           "cm_rsi_rising": ind["cm_rsi_rising"]}
-    rec.update(kw)
-    return rec
-
-
-def _macd_fill_cfg(**kw):
-    cfg = {
-        "ai_watch_macd_gap_arm": True,
-        "ai_watch_macd_gap_min_pct": 0.02,
-        "ai_watch_macd_gap_rsi_max": 60,
-        "ai_watch_exh_square_arm": True,
-        "rte_threshold": 20,
-        "rte_confluence_max": 15,
-    }
-    cfg.update(kw)
-    return cfg
-
-
-def test_macd_gap_fill_buys_the_scored_rule():
-    import ai_entry_watch as ew
-    # Price 10, gap 0.003 = 0.03% of price, RSI 52 rising, not in the square.
-    ok, why = ew.macd_gap_fill_allows_buy(
-        _macd_fill_rec(), _macd_fill_cfg(), price=10.0)
-    assert ok is True and why == "macd_gap"
-
-
-def test_macd_gap_fill_refuses_a_fresh_square():
-    import ai_entry_watch as ew
-    ok, why = ew.macd_gap_fill_allows_buy(
-        _macd_fill_rec(ind={"pctr": -5.0, "pctr_slow": -4.0}),
-        _macd_fill_cfg(), price=10.0)
-    assert ok is False and why == "in_square"
-
-
-def test_macd_gap_fill_refuses_hot_rsi_and_a_small_gap():
-    import ai_entry_watch as ew
-    ok, why = ew.macd_gap_fill_allows_buy(
-        _macd_fill_rec(ind={"cm_rsi": 74.0}), _macd_fill_cfg(), price=10.0)
-    assert ok is False and why == "macd_rsi_hot"
-    ok, why = ew.macd_gap_fill_allows_buy(
-        _macd_fill_rec(ind={"macd_gap": 0.001}), _macd_fill_cfg(), price=10.0)
-    assert ok is False and why == "macd_gap_too_small"
-
-
 def test_arm_sources_default_open_and_list_blocks_the_buy():
     """* keeps every source. momentum,movers blocks trending, xai, and a blank source.
 
@@ -5614,69 +5557,6 @@ def test_arm_sources_default_open_and_list_blocks_the_buy():
     rec["source"] = "movers"
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=tight)
     assert ok and why.startswith("zone")
-
-
-def test_arm_sources_block_trending_macd_gap_before_the_fill():
-    """MACD-gap is a buy. A blocked source never reaches last_macd_gap."""
-    import ai_entry_watch as ew
-
-    rec = {
-        "symbol": "APLD",
-        "status": "watching",
-        "source": "trending",
-        "structure": {
-            "decision": "WAIT", "wait_kind": "wait_for_zone",
-            "entry_low": 9.0, "entry_high": 11.0,
-            "stop_price": 8.0, "target_1": 14.0, "reward_risk": 2.0,
-            "zone_kind": "at_last",
-        },
-        "indicator": {
-            "pctr": -40.0, "pctr_slow": -55.0,
-            "pctr_rising": True, "pctr_falling": False,
-            "macd_bull": True, "macd_gap_rising": True, "macd_gap": 0.03,
-            "cm_rsi": 52.0, "cm_rsi_rising": True,
-        },
-        "cm_rsi": 52.0,
-        "cm_rsi_rising": True,
-    }
-    cfg = {
-        "desk_product": "scalp_legacy",
-        "ai_watch_arm_mode": "last",
-        "ai_watch_arm_sources": "momentum,movers",
-        "ai_watch_macd_gap_arm": True,
-        "ai_watch_macd_gap_min_pct": 0.02,
-        "ai_watch_macd_gap_rsi_max": 60,
-        "ai_watch_exh_square_arm": True,
-        "ai_watch_exh_oversold_triangle_arm": False,
-        "ai_watch_exhaustion_rules": True,
-        "ai_watch_require_exh_rising": False,
-        "rte_threshold": 20,
-        "rte_confluence_max": 15,
-        "ai_min_reward_risk": 0,
-        "ai_watch_min_stop_pct": 0,
-        "ai_watch_cheap_price": 0,
-        "ai_watch_arm_require_cm_rsi": False,
-        "ai_watch_arm_require_indicators": False,
-        "ai_watch_mistimed_heat_enabled": False,
-        "ai_watch_soft_ob_enabled": False,
-        "ai_watch_arm_require_macd": False,
-        "ai_watch_macd_block_bearish": False,
-        "ai_watch_macd_block_narrowing": False,
-        # Live window. At 0 a square miss returns before the MACD-gap arm.
-        "ai_watch_zone_exh_window_sec": 20.0,
-    }
-    ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.95, cfg=cfg)
-    assert not ok and why == "source_blocked"
-    rec["source"] = "momentum"
-    ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.95, cfg=cfg)
-    assert ok and why == "last_macd_gap"
-
-
-def test_macd_gap_fill_off_by_default():
-    import ai_entry_watch as ew
-    ok, why = ew.macd_gap_fill_allows_buy(
-        _macd_fill_rec(), {"ai_watch_exh_square_arm": True}, price=10.0)
-    assert ok is False and why == "macd_gap_arm_off"
 
 
 def test_merge_triangle_indicator_engine_leave_beats_live_hold():

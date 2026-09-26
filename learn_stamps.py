@@ -102,19 +102,15 @@ _FINGERPRINT_KEYS = (
     # strategy — none of these were fingerprinted, so the ledger would pool
     # MACD sessions and EXH/RSI sessions into one meaningless mean, exactly
     # the failure ai_watch_tv_exh_rsi is on this list to prevent.
-    "ai_watch_arm_require_macd",
     "macd_min_gap",
     "macd_sep_mult",
     "macd_require_cross",
     # Whether a CLOSING gap can still open a position. Size and direction are
     # different rules; a session that refuses the fade is not the same regime
     # as one that buys it.
-    "ai_watch_macd_block_narrowing",
     # Whether EXH confluence can override the gap-size tests. A session
     # that arms on confluence is not the same regime as one that
     # requires 0.8x separation.
-    "ai_watch_macd_exh_override",
-    "ai_watch_macd_exh_override_min_pct",
     # Heating-band RSI chase veto (GTLB). Changes which last_heating arms
     # clear; soft OB covers overbought only.
     "ai_watch_mistimed_heat_enabled",
@@ -202,9 +198,6 @@ _FINGERPRINT_KEYS = (
     "ai_watch_async_gates",
     "ai_watch_min_room_below_hod_pct",
     # Second arm. Changes who gets bought when the square is absent.
-    "ai_watch_macd_gap_arm",
-    "ai_watch_macd_gap_min_pct",
-    "ai_watch_macd_gap_rsi_max",
     # Who may buy. "*" and "momentum,movers" are different regimes.
     "ai_watch_arm_sources",
     # Dead-trade is a time-stop, so it decides holds the same way the

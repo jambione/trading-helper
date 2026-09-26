@@ -11688,9 +11688,9 @@ def _rsi_wire_fields(rec: dict) -> dict:
 def _macd_wire_fields(rec: dict) -> dict:
     """MACD momentum for the book's MACD column (exit/display).
 
-    The 8/26 redesign made MACD an entry lever and added the column; gap
-    narrowing as an arm veto is now opt-in via ai_watch_macd_block_narrowing
-    (off after #1b declutter). Still on the wire for exits + desk display.
+    The 8/26 redesign made MACD an entry lever and added the column. MACD no
+    longer gates entry (only the optional bearish veto). Still on the wire
+    for exits + desk display.
     Sibling of _exhaustion_wire_fields for exactly the same reason.
 
     Direction travels with size. Every other field here says how far apart
@@ -12370,234 +12370,6 @@ def macd_reading_is_live(ind: dict | None, cfg: dict | None = None) -> tuple[boo
     return True, ""
 
 
-def macd_gap_fill_allows_buy(
-    record: dict,
-    cfg: dict,
-    price: float | None = None,
-) -> tuple[bool, str]:
-    """Second arm: MACD gap while the name is not in an overbought square.
-
-    Square / leave-OB stays the main open. This fills a slot only when both
-    %R lines are not in a fresh square. The rule is the one Monday 9/21 and
-    Tuesday 9/22 shadow scored best at 15 minutes: MACD bullish, gap rising,
-    gap at least 0.02% of price, CM RSI rising and under 60.
-    n=15, median +0.20%, mean +0.15%, 60% winners. Wider gaps and hot RSI
-    did not beat it.
-    """
-    if not bool((cfg or {}).get("ai_watch_macd_gap_arm", False)):
-        return False, "macd_gap_arm_off"
-    both_ob, tight, _err = dual_r_ob_tight(record, cfg)
-    if both_ob and tight:
-        return False, "in_square"
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-    if ind.get("macd_bull") is not True:
-        return False, "macd_not_bull"
-    if ind.get("macd_gap_rising") is not True:
-        return False, "macd_gap_not_rising"
-    gap = _f_or_none(ind.get("macd_gap"))
-    if gap is None:
-        gap = _f_or_none(ind.get("macd_hist"))
-    px = _f_or_none(price)
-    if px is None and isinstance(record, dict):
-        px = _f_or_none(record.get("price"))
-    if gap is None or px is None or px <= 0:
-        return False, "no_macd_data"
-    try:
-        min_pct = float(cfg.get("ai_watch_macd_gap_min_pct", 0.02) or 0.0)
-    except (TypeError, ValueError):
-        min_pct = 0.02
-    if (gap / px) * 100.0 + 1e-12 < min_pct:
-        return False, "macd_gap_too_small"
-    rsi = _f_or_none(ind.get("cm_rsi"))
-    if rsi is None and isinstance(record, dict):
-        rsi = _f_or_none(record.get("cm_rsi"))
-    rising = ind.get("cm_rsi_rising")
-    if rising is None and isinstance(record, dict):
-        rising = record.get("cm_rsi_rising")
-    if rsi is None or rising is None:
-        return False, "no_rsi_data"
-    if rising is not True:
-        return False, "rsi_not_rising"
-    try:
-        rsi_max = float(cfg.get("ai_watch_macd_gap_rsi_max", 60) or 60)
-    except (TypeError, ValueError):
-        rsi_max = 60.0
-    if float(rsi) >= rsi_max:
-        return False, "macd_rsi_hot"
-    return True, "macd_gap"
-
-
-def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
-    """Buy side of the MACD momentum gate.
-
-    Opens positions on MACD bullish crossover where slow and fast lines have
-    sufficient separation/gap (the farther apart, the more bullish the signal).
-    """
-    if not bool(cfg.get("ai_watch_arm_require_macd", False)):
-        return True, "macd_off"
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-
-    fast = _f_or_none(ind.get("macd_fast") if ind.get("macd_fast") is not None else ind.get("macd_line"))
-    slow = _f_or_none(ind.get("macd_slow") if ind.get("macd_slow") is not None else ind.get("macd_signal"))
-    gap = _f_or_none(ind.get("macd_gap") if ind.get("macd_gap") is not None else ind.get("macd_hist"))
-    if fast is None or slow is None or gap is None:
-        if isinstance(record, dict):
-            record["block_detail"] = "no realtime MACD (needs 1-min bars)"
-        return False, "no_macd_data"
-
-    # Was this reading drawn on the live tape, and how old is it? MACD became
-    # the entry lever on 8/26 with no provenance check of its own, while the
-    # levers it replaced both had one. bars_src flips per ticker mid-session,
-    # so an ungated gate alternates between the Finnhub tape (0.3s at the
-    # median, measured 8/26) and the Alpaca REST fallback (up to 60s) without
-    # saying which it used. Refused rather than merely noted: an entry on a
-    # 60s-old MACD is an entry on a different indicator.
-    if bool(cfg.get("ai_watch_require_realtime_macd", False)):
-        live, why = macd_reading_is_live(ind, cfg)
-        if not live:
-            if isinstance(record, dict):
-                if why == "macd_src_unknown":
-                    record["block_detail"] = "MACD source unknown"
-                elif why == "macd_stale_bars":
-                    age = _f_or_none(ind.get("macd_age_sec"))
-                    record["block_detail"] = (
-                        f"MACD bars {age:.1f}s old" if age is not None
-                        else "MACD bars too old")
-                else:
-                    src = str(ind.get("macd_src") or ind.get("bars_src") or "")
-                    record["block_detail"] = (
-                        f"MACD drawn on {src}, not the tape")
-            return False, why
-
-    if fast <= slow or gap <= 0:
-        if isinstance(record, dict):
-            record["block_detail"] = f"fast {fast:.4f} <= slow {slow:.4f} (gap {gap:+.4f})"
-        return False, "macd_bearish"
-
-    # CONFLUENCE OVERRIDE — the operator's rule, 8/26: "if the MACD is open
-    # and trending at ANY gap when EXH is at or past 70, that is an automatic
-    # yes." Two independent readings agreeing is the evidence; the size of
-    # the gap is not, so this deliberately runs BEFORE macd_min_gap and the
-    # separation test and bypasses both.
-    #
-    # It cannot bypass the bearish check above — "open" means the lines are
-    # apart, and a negative gap is not a narrow one. Nor can it collide with
-    # the narrowing rule below, because it requires the gap to be RISING:
-    # opening and closing are not both true.
-    if bool(cfg.get("ai_watch_macd_exh_override", False)):
-        try:
-            need = float(cfg.get("ai_watch_macd_exh_override_min_pct", 70.0)
-                         or 70.0)
-        except (TypeError, ValueError):
-            need = 70.0
-        ex = exhaustion_pct(record)
-        # BOTH lines trending up, not just both present. A %R at 85 that is
-        # rolling over is a top, not a confirmation — it is the exact reading
-        # the operator's original setup called "where the profit gain stops".
-        # So the override needs the level AND the turn, on both indicators.
-        macd_up = bool(ind.get("macd_gap_rising"))
-        exh_up = bool(ind.get("pctr_rising"))
-        # Same ceiling problem as exhaustion_allows_buy: %R pinned at the top
-        # of its range is flat by construction, never rising, so the override
-        # could never fire on the most extended names — the ones it exists
-        # for. A pinned reading counts as "up" while it is not FALLING; a top
-        # that has rolled over is still excluded, which was the point of
-        # requiring the turn in the first place.
-        if (not exh_up
-                and bool(cfg.get("ai_watch_ob_allow_flat_when_macd_armed", False))
-                and exhaustion_state(record, cfg) == "overbought"
-                and not ind.get("pctr_falling")):
-            exh_up = True
-        # OR, not AND — the operator's call on 2026-08-28.
-        #
-        # Either leg alone now earns the bypass: a MACD gap that is opening,
-        # or a %R at or past the threshold and rising. It was written as
-        # confluence on the argument that two independent readings agreeing is
-        # what justifies skipping macd_min_gap and the separation test.
-        #
-        # Recording the cost rather than arguing it again: this is the path
-        # that took GAP at 13:31:46 today. Its separation was inside the noise
-        # band and the position closed 79 seconds later on macd_negative. With
-        # OR, a rising gap of any size reaches this branch, so the 1.5x entry
-        # bar no longer stands between the desk and that trade — the arm
-        # confirmation (ai_watch_arm_confirm_ticks) is what remains, and it
-        # only requires the reading to survive, not to be large.
-        macd_leg = macd_up
-        exh_leg = exh_up and ex is not None and ex >= need
-        if macd_leg or exh_leg:
-            if isinstance(record, dict):
-                _legs = []
-                if macd_leg:
-                    _legs.append(f"MACD opening {gap:+.4f}")
-                if exh_leg:
-                    _legs.append(f"EXH {ex:.1f}% rising (>= {need:.0f}%)")
-                record["block_detail"] = " or ".join(_legs)
-            return True, "macd_exh_confluence"
-
-    try:
-        min_gap = float(cfg.get("macd_min_gap", 0.005) or 0.005)
-    except (TypeError, ValueError):
-        min_gap = 0.005
-
-    if gap < min_gap:
-        if isinstance(record, dict):
-            record["block_detail"] = f"gap {gap:+.4f} < min {min_gap:.4f}"
-        return False, "macd_gap_too_close"
-
-    try:
-        sep_mult = float(cfg.get("macd_sep_mult", 0.8) or 0.8)
-    except (TypeError, ValueError):
-        sep_mult = 0.8
-
-    # "Wide separation" — the rule the strategy is named for. It read
-    # macd_hist_std / macd_std, and the engine publishes NEITHER: it computes
-    # the rolling std internally and puts the finished quotient on the wire as
-    # macd_sep_ratio. So `std` was None on every symbol, the whole check
-    # short-circuited, and the live rule was bare `gap >= macd_min_gap` while
-    # the doc and the commit title both said "wide gap". Same field-name class
-    # of bug as price_age_sec and dollar_volume before it.
-    #
-    # gap >= sep_mult * std  <=>  (gap / std) >= sep_mult  <=>  ratio >= mult.
-    # The raw std path is kept for any producer that does publish it.
-    ratio = _f_or_none(ind.get("macd_sep_ratio"))
-    std = _f_or_none(ind.get("macd_hist_std") if ind.get("macd_hist_std") is not None else ind.get("macd_std"))
-    if sep_mult > 0:
-        if ratio is not None:
-            if ratio < sep_mult:
-                if isinstance(record, dict):
-                    record["block_detail"] = (
-                        f"sep {ratio:.2f}x < {sep_mult:.1f}x std")
-                return False, "macd_gap_insufficient"
-        elif std is not None and std > 0:
-            if gap < sep_mult * std:
-                if isinstance(record, dict):
-                    record["block_detail"] = f"gap {gap:+.4f} < {sep_mult:.1f}x std ({sep_mult * std:.4f})"
-                return False, "macd_gap_insufficient"
-        else:
-            # Neither form on the record. The separation test is the strategy,
-            # not a garnish, so an unmeasurable one is a refusal rather than a
-            # silent pass — which is what it had been doing.
-            if isinstance(record, dict):
-                record["block_detail"] = "no separation reading (needs 50 bars)"
-            return False, "macd_sep_unknown"
-
-    if bool(cfg.get("macd_require_cross", False)):
-        if not bool(ind.get("macd_cross")):
-            if isinstance(record, dict):
-                record["block_detail"] = "no bullish cross in confirm window"
-            return False, "macd_no_recent_cross"
-
-    # Direction last: size tests above do not say which way the gap is moving.
-    narrow_why = macd_narrowing_blocks_buy(
-        record, cfg, fail_open_unknown=False)
-    if narrow_why:
-        return False, narrow_why
-
-    return True, "macd_bullish_gap"
-
-
 def macd_bearish_blocks_buy(
     record: dict,
     cfg: dict,
@@ -12606,11 +12378,9 @@ def macd_bearish_blocks_buy(
 ) -> str | None:
     """Refuse when the MACD lines are crossed down. Reason or ``None``.
 
-    Sibling of macd_narrowing_blocks_buy, and independent of
-    ``ai_watch_arm_require_macd`` for the same reason: this is a veto, not
-    the positive gate.
+    A veto, not a positive gate.
 
-    Why it is its own knob. ``require_macd`` bundles three different
+    Why it is its own knob. The retired ``require_macd`` gate bundled three different
     questions — DIRECTION (crossed down, gap closing), SIZE (macd_min_gap,
     macd_sep_mult) and AVAILABILITY (no_macd_data, macd_src_unknown,
     macd_stale_bars). Measured over 2026-08-31..09-04 the bundle refused
@@ -12621,8 +12391,7 @@ def macd_bearish_blocks_buy(
     than merely small. This keeps that half alone: a name whose fast line
     sits below its slow line is not an open, whatever the gap measures.
 
-    Fail-open on missing MACD by default, like the narrowing veto — failing
-    closed here would reintroduce the availability refusals that the EXH+RSI
+    Fail-open on missing MACD by default — failing closed here would reintroduce the availability refusals that the EXH+RSI
     arm path exists to avoid.
     """
     if not bool(cfg.get("ai_watch_macd_block_bearish", False)):
@@ -12644,59 +12413,14 @@ def macd_bearish_blocks_buy(
         if isinstance(record, dict):
             record["block_detail"] = "no realtime MACD (needs 1-min bars)"
         return "no_macd_data"
-    # Same test, same wording as the one inside macd_allows_buy: a negative
-    # histogram and a fast line at or under the signal are both "crossed
-    # down", so the two paths cannot disagree about what bearish means.
+    # A negative histogram and a fast line at or under the signal are both
+    # "crossed down".
     if fast > slow and gap > 0:
         return None
     if isinstance(record, dict):
         record["block_detail"] = (
             f"fast {fast:.4f} <= slow {slow:.4f} (gap {gap:+.4f})")
     return "macd_bearish"
-
-
-def macd_narrowing_blocks_buy(
-    record: dict,
-    cfg: dict,
-    *,
-    fail_open_unknown: bool = False,
-) -> str | None:
-    """Refuse when the MACD gap is closing. Returns a reason or ``None``.
-
-    Independent of ``ai_watch_arm_require_macd``: the size/bullish stack is the
-    positive gate; this is the "do not open into a closing gap" veto. Flat is
-    not closing. When ``fail_open_unknown`` is True (EXH+RSI arm / MACD
-    veto-only), missing indicator or unknown direction does not block — MACD
-    is a veto, not a requirement. The full MACD path keeps fail-closed on
-    unknown direction so State still names ``macd_gap_dir_unknown``.
-    """
-    if not bool(cfg.get("ai_watch_macd_block_narrowing", False)):
-        return None
-    ind = record.get("indicator") if isinstance(record, dict) else None
-    ind = ind if isinstance(ind, dict) else {}
-    rising = ind.get("macd_gap_rising")
-    falling = ind.get("macd_gap_falling")
-    if rising is None and falling is None:
-        if fail_open_unknown:
-            return None
-        if isinstance(record, dict):
-            record["block_detail"] = "gap direction unknown (needs bars)"
-        return "macd_gap_dir_unknown"
-    if not bool(falling):
-        return None
-    gap = _f_or_none(
-        ind.get("macd_gap") if ind.get("macd_gap") is not None
-        else ind.get("macd_hist"))
-    prev = _f_or_none(ind.get("macd_gap_prev"))
-    if isinstance(record, dict):
-        if prev is not None and gap is not None:
-            record["block_detail"] = (
-                f"gap closing {prev:+.4f} -> {gap:+.4f}")
-        elif gap is not None:
-            record["block_detail"] = f"gap closing (now {gap:+.4f})"
-        else:
-            record["block_detail"] = "gap closing"
-    return "macd_gap_narrowing"
 
 
 def cm_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
@@ -13398,10 +13122,9 @@ def _heating_dual_r_allows(record: dict, cfg: dict) -> tuple[bool, str]:
 def _macd_is_armed(record: dict) -> bool:
     """Bullish AND opening — the direction %R cannot express at 100%.
 
-    Deliberately narrower than macd_allows_buy: no min-gap, no separation
-    test, no confluence override. This answers one question — are the lines
-    apart and still separating — because it is standing in for a %R turn, not
-    re-deciding the entry. macd_allows_buy still runs on its own afterwards.
+    No min-gap, no separation test. This answers one question — are the
+    lines apart and still separating — because it is standing in for a %R
+    turn, not re-deciding the entry.
 
     Provenance is required for the same reason it is everywhere else: an
     opening gap drawn on the REST fallback is an opening gap in older bars,
@@ -15856,12 +15579,6 @@ def should_arm_buy(
     if min_rr > 0 and rr + 1e-12 < min_rr:
         return False, "reward_risk"
 
-    # MACD bullish crossover + wide separation gap (primary momentum entry gate)
-    if bool(cfg.get("ai_watch_arm_require_macd", False)):
-        macd_ok, macd_why = macd_allows_buy(record, cfg)
-        if not macd_ok:
-            return False, macd_why
-
     # Exhaustion first so (a) missing %R is named correctly, and (b) the soft
     # sell_signal veto below can reference exh_why without UnboundLocalError.
     exh_ok, exh_why = exhaustion_allows_buy(record, cfg, now=t_arm)
@@ -16045,26 +15762,13 @@ def should_arm_buy(
         if mistimed:
             return False, mistimed
 
-    # MACD DIRECTION vetoes without the size/bullish stack. When require_macd
-    # is on, macd_allows_buy already ran both of these inside it — bearish
-    # first, narrowing last — so the same precedence is kept here.
-    # When it is off, EXH+RSI (and soft OB / mistimed) are the open path and
-    # these two alone refuse a crossed-down or actively closing gap.
-    # Fail-open on missing MACD so neither veto can re-starve opens the
-    # way macd_src_unknown did under the full gate.
-    if (not bool(cfg.get("ai_watch_arm_require_macd", False))
-            and bool(cfg.get("ai_watch_macd_block_bearish", False))):
+    # MACD direction veto: refuse a crossed-down gap. Fail-open on missing
+    # MACD so it cannot starve opens the way macd_src_unknown once did.
+    if bool(cfg.get("ai_watch_macd_block_bearish", False)):
         bear_why = macd_bearish_blocks_buy(
             record, cfg, fail_open_unknown=True)
         if bear_why:
             return False, bear_why
-
-    if (not bool(cfg.get("ai_watch_arm_require_macd", False))
-            and bool(cfg.get("ai_watch_macd_block_narrowing", False))):
-        narrow_why = macd_narrowing_blocks_buy(
-            record, cfg, fail_open_unknown=True)
-        if narrow_why:
-            return False, narrow_why
 
     # Cheap pullback/offset + overbought is the HCTI/BYSI dump: $2 spike,
     # 20% of equity, then −1R in under a minute. Last-mode used to skip
@@ -16092,18 +15796,11 @@ def should_arm_buy(
 
     if last_mode:
         # Last is the entry. Structure only supplies stop/target for R.
-        # Square first. MACD gap is only for a name that is not in ■.
         if exh_ok:
             pace_ok, pace_why = _rvol_pace_gate(record, cfg, now)
             if not pace_ok:
                 return False, pace_why
             return True, f"last_{exh_why}"
-        fill_ok, _fill_why = macd_gap_fill_allows_buy(record, cfg, price=a)
-        if fill_ok:
-            pace_ok, pace_why = _rvol_pace_gate(record, cfg, now)
-            if not pace_ok:
-                return False, pace_why
-            return True, "last_macd_gap"
         return False, exh_why
 
     t_now = float(now if now is not None else time.time())

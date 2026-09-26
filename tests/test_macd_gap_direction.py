@@ -1,17 +1,10 @@
-"""Is the MACD gap opening or closing? Size alone cannot say.
+"""MACD on the wire, its provenance, and the pinned-%R exemption.
 
-Every test in macd_allows_buy measures how far APART the fast and slow
-lines are — bullish sign, an absolute floor, a multiple of the histogram's
-own rolling std. None of them says which way the lines are moving, so a
-+0.03 gap that was +0.08 two bars ago passes all of them while the momentum
-the entry is meant to ride is already over. Entering that buys the fade.
-
-Same distinction cm_rsi_rising draws for RSI, on the same trend_lookback.
-
-A FLAT gap is deliberately allowed: the operator's rule is "if it is
-trending towards closing we don't want to open", and flat is not closing.
-Tightening that to "must be actively widening" would be a second, stricter
-knob rather than a reinterpretation of this one.
+MACD no longer gates entry (the require_macd stack, the narrowing veto and
+the EXH confluence override were retired). What remains: the book's MACD
+column and the record's MACD fields, the live-tape provenance check that
+``_macd_is_armed`` relies on, and the pinned-overbought exemption that lets
+an armed MACD stand in for a %R turn.
 """
 import sys
 from pathlib import Path
@@ -21,8 +14,6 @@ sys.path.insert(0, str(_ROOT))
 
 import ai_entry_watch as ew  # noqa: E402
 
-ON = {"ai_watch_arm_require_macd": True, "ai_watch_macd_block_narrowing": True}
-OFF = {"ai_watch_arm_require_macd": True, "ai_watch_macd_block_narrowing": False}
 
 
 def _rec(**ind):
@@ -34,81 +25,6 @@ def _rec(**ind):
             "macd_sep_ratio": 1.5}
     base.update(ind)
     return {"symbol": "AAA", "indicator": base}
-
-
-# ── the rule ─────────────────────────────────────────────────────────────
-
-def test_a_closing_gap_is_refused():
-    rec = _rec(macd_gap_rising=False, macd_gap_falling=True,
-               macd_gap_prev=0.08)
-    ok, why = ew.macd_allows_buy(rec, ON)
-    assert ok is False
-    assert why == "macd_gap_narrowing"
-    assert "0.08" in str(rec.get("block_detail"))
-    assert "0.05" in str(rec.get("block_detail"))
-
-
-def test_an_opening_gap_passes():
-    ok, why = ew.macd_allows_buy(
-        _rec(macd_gap_rising=True, macd_gap_falling=False, macd_gap_prev=0.02),
-        ON)
-    assert ok is True
-    assert why == "macd_bullish_gap"
-
-
-def test_a_flat_gap_passes_because_flat_is_not_closing():
-    ok, why = ew.macd_allows_buy(
-        _rec(macd_gap_rising=False, macd_gap_falling=False), ON)
-    assert ok is True
-    assert why == "macd_bullish_gap"
-
-
-def test_unknown_direction_is_refused_not_waved_through():
-    """Too few bars for the lookback. Absence is not a pass — the same rule
-    the rest of this desk runs on."""
-    rec = _rec(macd_gap_rising=None, macd_gap_falling=None)
-    ok, why = ew.macd_allows_buy(rec, ON)
-    assert ok is False
-    assert why == "macd_gap_dir_unknown"
-
-
-def test_a_missing_direction_field_is_also_unknown():
-    """An engine that has not published the field yet must not read as flat."""
-    ok, why = ew.macd_allows_buy(_rec(), ON)
-    assert ok is False
-    assert why == "macd_gap_dir_unknown"
-
-
-# ── it is opt-in and does not disturb the size tests ─────────────────────
-
-def test_off_by_default_keeps_the_size_only_behaviour():
-    from config import DEFAULT_CONFIG
-    assert DEFAULT_CONFIG["ai_watch_macd_block_narrowing"] is False
-    ok, why = ew.macd_allows_buy(
-        _rec(macd_gap_rising=False, macd_gap_falling=True, macd_gap_prev=0.08),
-        OFF)
-    assert ok is True, "a closing gap still passes when the knob is off"
-    assert why == "macd_bullish_gap"
-
-
-def test_direction_is_checked_last_so_size_refusals_keep_their_reason():
-    """A bearish name must report macd_bearish, not macd_gap_narrowing —
-    the State column has to name the first thing that is wrong."""
-    rec = {"symbol": "AAA", "indicator": {
-        "macd_fast": 0.01, "macd_slow": 0.05, "macd_gap": -0.04,
-        "macd_gap_rising": False, "macd_gap_falling": True}}
-    ok, why = ew.macd_allows_buy(rec, ON)
-    assert ok is False
-    assert why == "macd_bearish"
-
-
-def test_a_gap_under_the_floor_still_reports_the_floor():
-    rec = {"symbol": "AAA", "indicator": {
-        "macd_fast": 0.10, "macd_slow": 0.099, "macd_gap": 0.001,
-        "macd_gap_rising": False, "macd_gap_falling": True}}
-    ok, why = ew.macd_allows_buy(rec, ON)
-    assert ok is False
-    assert why == "macd_gap_too_close"
 
 
 # ── the wire carries it ──────────────────────────────────────────────────
@@ -218,267 +134,48 @@ def test_the_poll_whitelist_carries_the_levels_not_just_the_verdict():
         assert f'"{k}": sig.get("{k}")' in body, f"{k} missing from the whitelist"
 
 
-# ── the separation rule the strategy is named for ────────────────────────
-
-def test_a_narrow_separation_is_refused():
-    """gap >= sep_mult * std  <=>  ratio >= sep_mult. The gate used to read
-    macd_hist_std, which the engine does not publish — it puts the finished
-    quotient on the wire as macd_sep_ratio — so `std` was None on every
-    symbol and this check silently never ran."""
-    rec = _rec(macd_sep_ratio=0.4, macd_gap_rising=True, macd_gap_falling=False)
-    ok, why = ew.macd_allows_buy(rec, ON)
-    assert ok is False
-    assert why == "macd_gap_insufficient"
-    assert "0.40" in str(rec.get("block_detail"))
-
-
-def test_a_wide_separation_passes():
-    ok, why = ew.macd_allows_buy(
-        _rec(macd_sep_ratio=4.25, macd_gap_rising=True, macd_gap_falling=False),
-        ON)
-    assert ok is True and why == "macd_bullish_gap"
-
-
-def test_the_ratio_is_read_at_the_configured_multiple():
-    cfg = dict(ON, macd_sep_mult=2.0)
-    base = dict(macd_gap_rising=True, macd_gap_falling=False)
-    assert ew.macd_allows_buy(_rec(macd_sep_ratio=1.5, **base), cfg)[1] == (
-        "macd_gap_insufficient")
-    assert ew.macd_allows_buy(_rec(macd_sep_ratio=2.5, **base), cfg)[0] is True
-
-
-def test_a_raw_std_is_still_honoured_if_a_producer_publishes_one():
-    rec = {"symbol": "AAA", "indicator": {
-        "macd_fast": 0.10, "macd_slow": 0.05, "macd_gap": 0.05,
-        "macd_hist_std": 0.20,          # 0.8 * 0.20 = 0.16 > 0.05
-        "macd_gap_rising": True, "macd_gap_falling": False}}
-    ok, why = ew.macd_allows_buy(rec, ON)
-    assert ok is False and why == "macd_gap_insufficient"
-
-
-def test_no_separation_reading_at_all_is_refused_not_passed():
-    """This is the bug: with neither field the whole check short-circuited
-    and the live rule collapsed to a bare gap >= macd_min_gap."""
-    rec = {"symbol": "AAA", "indicator": {
-        "macd_fast": 0.10, "macd_slow": 0.05, "macd_gap": 0.05,
-        "macd_gap_rising": True, "macd_gap_falling": False}}
-    ok, why = ew.macd_allows_buy(rec, ON)
-    assert ok is False
-    assert why == "macd_sep_unknown"
-
-
-def test_zeroing_the_multiple_does_NOT_disable_the_separation_test():
-    """Footgun, pinned rather than "fixed" without being asked for.
-
-    The knob is read as `float(cfg.get("macd_sep_mult", 0.8) or 0.8)`, and
-    0 is falsy — so setting macd_sep_mult to 0 in bot_config.json silently
-    restores 0.8 instead of turning the check off. Several knobs on this
-    desk document "0 disables"; this one does the opposite, quietly. Set it
-    to a tiny positive number if you actually want it out of the way.
-    """
-    cfg = dict(ON, macd_sep_mult=0)
-    ok, why = ew.macd_allows_buy(
-        _rec(macd_sep_ratio=0.01, macd_gap_rising=True,
-             macd_gap_falling=False), cfg)
-    assert ok is False, "0 does not disable — it re-reads as the 0.8 default"
-    assert why == "macd_gap_insufficient"
-
-    ok2, _ = ew.macd_allows_buy(
-        _rec(macd_sep_ratio=0.01, macd_gap_rising=True,
-             macd_gap_falling=False), dict(ON, macd_sep_mult=1e-9))
-    assert ok2 is True, "a tiny positive multiple is how you stand it down"
-
-
-# ── the EXH confluence override ──────────────────────────────────────────
-
-OVR = dict(ON, ai_watch_macd_exh_override=True,
-           ai_watch_macd_exh_override_min_pct=70.0)
-
-
-def _ovr_rec(pctr, *, rising=True, exh_rising=True, gap=0.0004, sep=0.05):
-    """A gap far too small for either size test, so only the override can
-    pass it. pctr is the raw %R; exhaustion_pct is 100 + pctr."""
-    return {"symbol": "AAA", "indicator": {
-        "macd_fast": 0.10, "macd_slow": 0.10 - gap, "macd_gap": gap,
-        "macd_sep_ratio": sep,
-        "macd_gap_rising": rising, "macd_gap_falling": not rising,
-        "pctr": pctr, "pctr_rising": exh_rising,
-        "pctr_falling": not exh_rising,
-    }}
-
-
-# The override became OR on 2026-08-28 at the operator's direction: EITHER a
-# MACD gap that is opening, OR a %R at/past the threshold and rising, earns
-# the bypass past macd_min_gap and the separation test. It was written as
-# confluence — two independent readings agreeing — and the cost of the change
-# is recorded in ai_entry_watch beside the branch.
-
-
-def test_confluence_opens_at_any_gap():
-    """MACD open and trending at ANY gap is now an automatic yes on its own.
-    This gap is 0.0004 — an order of magnitude under macd_min_gap, and 0.05x
-    separation."""
-    rec = _ovr_rec(-25.0)                       # EXH 75%
-    ok, why = ew.macd_allows_buy(rec, OVR)
-    assert ok is True
-    assert why == "macd_exh_confluence"
-    assert "75.0%" in str(rec.get("block_detail"))
-
-
-def test_the_same_row_is_refused_without_the_override():
-    ok, why = ew.macd_allows_buy(_ovr_rec(-25.0), ON)
-    assert ok is False
-    assert why == "macd_gap_too_close"
-
-
-def test_a_weak_exh_no_longer_blocks_the_macd_leg():
-    """Under OR the EXH threshold only governs the EXH leg. EXH 65% is under
-    the bar, but the gap is opening, so that leg carries it alone."""
-    ok, why = ew.macd_allows_buy(_ovr_rec(-35.0), OVR)   # EXH 65%
-    assert ok is True and why == "macd_exh_confluence"
-
-
-def test_neither_leg_means_no_override():
-    """The refusal that must survive: gap not opening AND EXH under the bar."""
-    ok, why = ew.macd_allows_buy(_ovr_rec(-35.0, rising=False), OVR)
-    assert ok is False
-    assert why in ("macd_gap_too_close", "macd_gap_narrowing")
-
-
-def test_a_closing_gap_can_still_be_carried_by_the_exh_leg():
-    """Under OR a closing MACD gap is not fatal if %R is past the bar and
-    rising — that is the leg doing its job."""
-    ok, why = ew.macd_allows_buy(_ovr_rec(-25.0, rising=False), OVR)
-    assert ok is True and why == "macd_exh_confluence"
-
-
-def test_a_rolling_over_exh_cannot_carry_its_own_leg():
-    """A %R at 85 that is ROLLING OVER is a top, not a confirmation. It fails
-    the EXH leg; only an opening MACD gap can still carry the row."""
-    ok, why = ew.macd_allows_buy(
-        _ovr_rec(-15.0, exh_rising=False, rising=False), OVR)
-    assert ok is False
-    assert why in ("macd_gap_too_close", "macd_gap_narrowing")
-
-
-def test_the_override_cannot_rescue_a_bearish_macd():
-    """"Open" means the lines are apart. A negative gap is not a narrow one,
-    and no amount of EXH makes it bullish."""
-    rec = _ovr_rec(-10.0)
-    rec["indicator"].update({"macd_fast": 0.01, "macd_slow": 0.05,
-                             "macd_gap": -0.04})
-    ok, why = ew.macd_allows_buy(rec, OVR)
-    assert ok is False and why == "macd_bearish"
-
-
-def test_missing_exh_leaves_only_the_macd_leg():
-    """Absence is not a pass on the EXH side — but it does not veto the MACD
-    leg either. With the gap closing too, nothing carries it."""
-    rec = _ovr_rec(-25.0, rising=False)
-    rec["indicator"]["pctr"] = None
-    ok, why = ew.macd_allows_buy(rec, OVR)
-    assert ok is False
-    assert why in ("macd_gap_too_close", "macd_gap_narrowing")
-
-
-def test_the_threshold_still_governs_the_exh_leg():
-    """Gap held closing so only the EXH leg can decide."""
-    cfg = dict(OVR, ai_watch_macd_exh_override_min_pct=90.0)
-    assert ew.macd_allows_buy(_ovr_rec(-25.0, rising=False), cfg)[0] is False
-    assert ew.macd_allows_buy(_ovr_rec(-5.0, rising=False), cfg)[0] is True
-
-
-def test_override_is_off_by_default():
-    from config import DEFAULT_CONFIG
-    assert DEFAULT_CONFIG["ai_watch_macd_exh_override"] is False
-    assert DEFAULT_CONFIG["ai_watch_macd_exh_override_min_pct"] == 70.0
-
-
-def test_a_wide_healthy_gap_still_passes_on_its_own_merits():
-    """The override adds a path; it must not become the only one."""
-    ok, why = ew.macd_allows_buy(
-        _rec(macd_sep_ratio=2.0, macd_gap_rising=True, macd_gap_falling=False),
-        OVR)
-    # Under OR the rising gap reaches the override first, so the reason is the
-    # override's. The point of the test is that it PASSES on its own merits.
-    assert ok is True and why in ("macd_bullish_gap", "macd_exh_confluence")
-
-
 # ── provenance: which tape drew this reading ─────────────────────────────
 
-RT = dict(ON, ai_watch_require_realtime_macd=True)
+RT = {"ai_watch_require_realtime_macd": True}
+
+
+def _live(**ind):
+    return ew.macd_reading_is_live(_rec(**ind)["indicator"], RT)
 
 
 def test_a_rest_fallback_reading_is_refused():
-    """MACD became the entry lever with no provenance check while the levers
-    it replaced both had one. bars_src flips per ticker mid-session, so an
-    ungated gate alternates between the Finnhub tape (0.3s median, measured
-    8/26) and the Alpaca REST fallback (up to 60s) without saying which."""
-    rec = _rec(macd_gap_rising=True, macd_gap_falling=False,
-               macd_src="alpaca")
-    ok, why = ew.macd_allows_buy(rec, RT)
-    assert ok is False
-    assert why == "macd_not_realtime_alpaca"
-    assert "alpaca" in str(rec.get("block_detail"))
+    """bars_src flips per ticker mid-session, so an unchecked reading
+    alternates between the Finnhub tape (0.3s median, measured 8/26) and the
+    Alpaca REST fallback (up to 60s) without saying which."""
+    assert _live(macd_src="alpaca") == (False, "macd_not_realtime_alpaca")
 
 
 def test_a_realtime_reading_passes():
-    ok, why = ew.macd_allows_buy(
-        _rec(macd_gap_rising=True, macd_gap_falling=False,
-             macd_src="realtime", macd_age_sec=0.3), RT)
-    assert ok is True and why == "macd_bullish_gap"
+    assert _live(macd_src="realtime", macd_age_sec=0.3) == (True, "")
 
 
 def test_unknown_provenance_is_refused():
     """Absence is not a pass — the rule everywhere else on this desk."""
-    ok, why = ew.macd_allows_buy(
-        _rec(macd_gap_rising=True, macd_gap_falling=False), RT)
-    assert ok is False and why == "macd_src_unknown"
+    assert _live() == (False, "macd_src_unknown")
 
 
 def test_an_age_without_a_source_is_not_provenance():
     """The hole: src empty + age set used to skip macd_src_unknown."""
-    ok, why = ew.macd_allows_buy(
-        _rec(macd_gap_rising=True, macd_gap_falling=False,
-             macd_age_sec=0.3), RT)
-    assert ok is False and why == "macd_src_unknown"
+    assert _live(macd_age_sec=0.3) == (False, "macd_src_unknown")
 
 
 def test_an_age_ceiling_is_optional_and_off_by_default():
     from config import DEFAULT_CONFIG
     assert DEFAULT_CONFIG["ai_watch_macd_max_age_sec"] == 0.0
     # 0 = source check only: a realtime reading of any age still passes.
-    ok, _ = ew.macd_allows_buy(
-        _rec(macd_gap_rising=True, macd_gap_falling=False,
-             macd_src="realtime", macd_age_sec=999.0), RT)
-    assert ok is True
+    assert _live(macd_src="realtime", macd_age_sec=999.0)[0] is True
 
 
 def test_the_age_ceiling_bites_when_set():
-    cfg = dict(RT, ai_watch_macd_max_age_sec=10.0)
-    ok, why = ew.macd_allows_buy(
-        _rec(macd_gap_rising=True, macd_gap_falling=False,
-             macd_src="realtime", macd_age_sec=42.0), cfg)
+    ok, why = ew.macd_reading_is_live(
+        _rec(macd_src="realtime", macd_age_sec=42.0)["indicator"],
+        dict(RT, ai_watch_macd_max_age_sec=10.0))
     assert ok is False and why == "macd_stale_bars"
-
-
-def test_provenance_is_checked_before_the_size_tests():
-    """A fallback reading must not be reported as a narrow gap — the State
-    column has to name the real problem, which is the feed."""
-    rec = _rec(macd_gap=0.0001, macd_sep_ratio=0.01,
-               macd_gap_rising=True, macd_gap_falling=False,
-               macd_src="alpaca")
-    ok, why = ew.macd_allows_buy(rec, RT)
-    assert ok is False and why == "macd_not_realtime_alpaca"
-
-
-def test_the_guard_is_off_by_default():
-    from config import DEFAULT_CONFIG
-    assert DEFAULT_CONFIG["ai_watch_require_realtime_macd"] is False
-    ok, _ = ew.macd_allows_buy(
-        _rec(macd_gap_rising=True, macd_gap_falling=False,
-             macd_src="alpaca"), ON)
-    assert ok is True, "a fallback reading still passes when the guard is off"
 
 
 def test_refresh_stamps_provenance_onto_the_record():
@@ -511,21 +208,16 @@ def test_the_poll_whitelist_carries_macd_provenance():
 
 
 def test_a_record_with_provenance_is_not_refused_for_lacking_it():
-    """The end the operator sees: same record, guard on, no macd_src_unknown."""
-    rec = _rec(macd_gap_rising=True, macd_gap_falling=False,
-               macd_gap_prev=0.02, macd_src="realtime", macd_age_sec=0.4)
-    ok, why = ew.macd_allows_buy(rec, RT)
-    assert why != "macd_src_unknown"
+    """Same record the poll builds: provenance present, no macd_src_unknown."""
+    ok, why = _live(macd_gap_rising=True, macd_gap_falling=False,
+                    macd_gap_prev=0.02, macd_src="realtime", macd_age_sec=0.4)
     assert ok, why
 
 
 def test_the_same_record_without_provenance_is_still_refused():
-    """The guard must stay real — this is the half that must NOT regress."""
-    rec = _rec(macd_gap_rising=True, macd_gap_falling=False,
-               macd_gap_prev=0.02)
-    ok, why = ew.macd_allows_buy(rec, RT)
-    assert ok is False
-    assert why == "macd_src_unknown"
+    """The check must stay real — this is the half that must NOT regress."""
+    assert _live(macd_gap_rising=True, macd_gap_falling=False,
+                 macd_gap_prev=0.02) == (False, "macd_src_unknown")
 
 
 # ── a %R pinned at the ceiling cannot be "rising" ───────────────────────────
@@ -583,8 +275,7 @@ def test_macd_is_armed_refuses_an_unproven_reading():
 
 def test_macd_is_armed_is_narrower_than_the_entry_gate():
     """It stands in for a %R turn; it does not re-decide the entry. A gap far
-    under macd_min_gap still counts as armed, and macd_allows_buy runs on its
-    own afterwards to refuse it."""
+    under macd_min_gap still counts as armed."""
     assert ew._macd_is_armed({"indicator": _armed_ind(macd_gap=0.0001)}) is True
 
 
@@ -636,44 +327,9 @@ def test_the_knob_is_off_by_default_and_reaches_the_live_config():
     assert "ai_watch_ob_allow_flat_when_macd_armed" in load_config()
 
 
-# ── EXH+RSI arm + MACD closing veto only ─────────────────────────────────
-# require_macd off drops the size/bullish stack; block_narrowing alone still
-# refuses a gap that is actively closing. Missing MACD fails open.
-
-VETO = {
-    "ai_watch_arm_require_macd": False,
-    "ai_watch_macd_block_narrowing": True,
-}
-
-
-def test_helper_closing_gap_refuses_even_when_require_macd_is_off():
-    rec = _rec(macd_gap_rising=False, macd_gap_falling=True, macd_gap_prev=0.08)
-    why = ew.macd_narrowing_blocks_buy(rec, VETO, fail_open_unknown=True)
-    assert why == "macd_gap_narrowing"
-    assert "0.08" in str(rec.get("block_detail"))
-
-
-def test_helper_flat_and_opening_pass_under_veto_only():
-    assert ew.macd_narrowing_blocks_buy(
-        _rec(macd_gap_rising=False, macd_gap_falling=False),
-        VETO, fail_open_unknown=True) is None
-    assert ew.macd_narrowing_blocks_buy(
-        _rec(macd_gap_rising=True, macd_gap_falling=False),
-        VETO, fail_open_unknown=True) is None
-
-
-def test_helper_unknown_direction_fails_open_in_veto_only_mode():
-    assert ew.macd_narrowing_blocks_buy(
-        _rec(), VETO, fail_open_unknown=True) is None
-    assert ew.macd_narrowing_blocks_buy(
-        {"symbol": "AAA"}, VETO, fail_open_unknown=True) is None
-
-
-def test_helper_unknown_direction_still_refuses_on_full_macd_path():
-    why = ew.macd_narrowing_blocks_buy(
-        _rec(), ON, fail_open_unknown=False)
-    assert why == "macd_gap_dir_unknown"
-
+# ── MACD is not an entry gate ────────────────────────────────────────────
+# With the require_macd stack and the narrowing veto retired, a tiny or
+# missing MACD reading does not stop an EXH arm.
 
 def _veto_arm_cfg(**over):
     cfg = {
@@ -692,8 +348,6 @@ def _veto_arm_cfg(**over):
         "ai_watch_min_stop_pct": 0,
         "ai_watch_synth_stop_pct": 5.0,
         "ai_watch_synth_rr": 0.6,
-        "ai_watch_arm_require_macd": False,
-        "ai_watch_macd_block_narrowing": True,
         # See _LEGACY_ARM: the square arm would refuse these fast-only %R
         # fixtures before the MACD veto under test ever runs.
         "ai_watch_exh_square_arm": False,
@@ -722,16 +376,6 @@ def _veto_arm_rec(**ind):
     }
 
 
-def test_should_arm_vetoes_closing_gap_without_requiring_macd_size():
-    """EXH+RSI would arm; closing MACD alone stops the open — no min_gap."""
-    rec = _veto_arm_rec(
-        macd_fast=0.10, macd_slow=0.05, macd_gap=0.01,
-        macd_gap_rising=False, macd_gap_falling=True, macd_gap_prev=0.04)
-    ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.99, cfg=_veto_arm_cfg())
-    assert ok is False
-    assert why == "macd_gap_narrowing"
-
-
 def test_should_arm_allows_opening_gap_under_exh_rsi_without_min_gap():
     """A tiny opening gap used to die on macd_gap_too_close under full MACD."""
     rec = _veto_arm_rec(
@@ -745,15 +389,5 @@ def test_should_arm_allows_opening_gap_under_exh_rsi_without_min_gap():
 def test_should_arm_allows_missing_macd_under_veto_only():
     rec = _veto_arm_rec()  # no macd_* fields
     ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.99, cfg=_veto_arm_cfg())
-    assert ok is True
-    assert why.startswith("last_")
-
-
-def test_should_arm_skips_narrowing_veto_when_block_narrowing_is_off():
-    rec = _veto_arm_rec(
-        macd_gap=0.05, macd_gap_rising=False, macd_gap_falling=True,
-        macd_gap_prev=0.08)
-    cfg = _veto_arm_cfg(ai_watch_macd_block_narrowing=False)
-    ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.99, cfg=cfg)
     assert ok is True
     assert why.startswith("last_")

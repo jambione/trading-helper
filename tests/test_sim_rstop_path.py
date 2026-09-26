@@ -57,7 +57,6 @@ def _cfg(**over):
     return path_cfg(
         ai_watch_exhaustion_rules=False,
         ai_watch_arm_require_cm_rsi=False,
-        ai_watch_arm_require_macd=False,
         ai_watch_synth_stop_pct=5.0,
         ai_local_trail_give_r=0.10,
         ai_local_trail_give_open_r=0.10,

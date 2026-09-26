@@ -27,6 +27,9 @@ could not answer the question at all, for two independent reasons.
 Both are the class of bug replay_cfg already existed for (ai_watch_cm_rsi_local
 =False makes should_arm_buy answer no_rsi_data on every bar of a sim). The
 tests below fail on the pre-fix code with exactly those two reasons.
+
+The full MACD stack (require_macd + narrowing) has since been retired; the
+direction and provenance fields still feed _macd_is_armed.
 """
 import sys
 import time
@@ -113,43 +116,3 @@ def test_too_few_bars_leaves_direction_unset_rather_than_guessing():
     rec = sim.make_rec("SHORT", px, {}, source="momentum")
     assert sim.apply_macd_direction(rec, "SHORT", px, {}, time.time()) is False
     assert "macd_gap_rising" not in rec["indicator"]
-
-
-# ── the verdict that was n=0 ─────────────────────────────────────────────
-
-def _full_stack_reason(symbol: str, bars: list[tuple]) -> str:
-    px = _prime(symbol, bars)
-    cfg = {
-        "ai_watch_arm_require_macd": True,
-        "ai_watch_macd_block_narrowing": True,
-        "ai_watch_require_realtime_macd": True,
-        "ai_watch_macd_max_age_sec": 60.0,   # the live value
-        "ai_watch_arm_require_indicators": False,
-        "ai_watch_require_exhaustion_data": False,
-        "ai_watch_require_db_zone": False,
-    }
-    rec = sim.make_rec(symbol, px, cfg, source="momentum")
-    _ok, why = sim.try_arm(rec, px, cfg, time.time())
-    return why
-
-
-def test_the_full_stack_no_longer_answers_dir_unknown_on_every_bar():
-    why = _full_stack_reason("RISE2", _bars(80, 10.0, 0.02))
-    assert why != "macd_gap_dir_unknown"
-
-
-def test_the_full_stack_no_longer_answers_src_unknown_on_every_bar():
-    why = _full_stack_reason("RISE3", _bars(80, 10.0, 0.02))
-    assert why != "macd_src_unknown"
-
-
-def test_a_rolling_over_series_can_still_be_refused_for_a_real_reason():
-    """The fix must not make the gate toothless — only answerable.
-
-    A turned-over series should reach a MACD verdict about the trade, not a
-    verdict about the simulator's instrumentation.
-    """
-    bars = _bars(70, 10.0, 0.05) + _bars(12, 13.5, -0.04)
-    why = _full_stack_reason("TURN2", bars)
-    assert why not in ("macd_gap_dir_unknown", "macd_src_unknown",
-                       "no_macd_data")

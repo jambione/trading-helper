@@ -85,48 +85,16 @@ DEFAULT_CONFIG = {
     "macd_signal":  9,
     "macd_sep_mult": 0.8,
     "macd_min_gap": 0.005,
-    "ai_watch_arm_require_macd": True,
-    # Refuse to arm when the fast/slow gap is CLOSING. Every other MACD test
-    # measures how far apart the lines are; none says which way they are
-    # moving, so a +0.03 gap that was +0.08 two bars ago passes all of them
-    # while the momentum it is meant to ride is already over. Judged on
-    # trend_lookback (2 bars), the same basis as cm_rsi_rising.
+    # Refuse to open when the fast line is at or below the slow line (a
+    # negative histogram is the same statement). Fail-open on missing MACD.
     #
-    # Independent of ai_watch_arm_require_macd: with require_macd off, EXH+RSI
-    # arm the open and this knob alone still vetoes a closing gap (fail-open
-    # when direction is unknown). With require_macd on, it runs last inside
-    # the full size/bullish stack and unknown direction refuses.
-    #
-    # A FLAT gap still passes — the rule is "do not open into a closing gap",
-    # and flat is not closing. False = shipped behaviour (size only).
-    "ai_watch_macd_block_narrowing": False,
-    # The other half of MACD direction, as its own veto: refuse to open when
-    # the fast line is at or below the slow line (a negative histogram is the
-    # same statement). Independent of ai_watch_arm_require_macd, fail-open on
-    # missing MACD.
-    #
-    # Why it is separate from require_macd. That flag bundles direction with
-    # SIZE (macd_min_gap, macd_sep_mult) and AVAILABILITY (no_macd_data,
-    # macd_src_unknown, macd_stale_bars). Measured 2026-08-31..09-04 the
+    # Why it is its own veto. The retired require_macd gate bundled direction
+    # with SIZE (macd_min_gap, macd_sep_mult) and AVAILABILITY (no_macd_data,
+    # macd_src_unknown, macd_stale_bars). Measured 2026-08-31..09-04 that
     # bundle refused 84-94% of every arm decision, macd_bearish the largest
-    # single reason each session; turning it off to stop size and
-    # availability starving opens drops the direction test with them. This
-    # knob is the EXH+RSI arm path keeping "not crossed down" without the
-    # rest. False = shipped behaviour.
+    # single reason each session. This knob keeps "not crossed down" without
+    # the rest. False = shipped behaviour.
     "ai_watch_macd_block_bearish": False,
-    # Confluence override (operator, 8/26): MACD open and RISING at any gap
-    # while %R exhaustion is RISING and at or past
-    # ai_watch_macd_exh_override_min_pct arms the entry regardless of
-    # macd_min_gap and the separation test. Two independent readings agreeing
-    # is the evidence; gap size is not.
-    #
-    # BOTH must be turning up, not merely present: a %R at 85 that is rolling
-    # over is a top, and the operator's own setup calls that "where the
-    # profit gain stops". Runs before both size tests; cannot bypass the
-    # bearish check, and cannot collide with the narrowing rule since it
-    # requires the gap to be rising.
-    "ai_watch_macd_exh_override":         False,
-    "ai_watch_macd_exh_override_min_pct": 70.0,
     # Refuse a MACD the engine drew on the REST fallback instead of the
     # Finnhub tape, and optionally one whose bars are too old. MACD became
     # the entry lever on 8/26 with no provenance check while the levers it
@@ -1322,12 +1290,6 @@ DEFAULT_CONFIG = {
     "ai_watch_momentum_spread_exempt": False,
     "ai_watch_async_gates": False,
     "ai_watch_min_room_below_hod_pct": 0.0,
-    # Second open: MACD gap when the name is not in an overbought square.
-    # Off in defaults so tests that omit the key stay on square only.
-    # Live bot_config turns it on. See macd_gap_fill_allows_buy.
-    "ai_watch_macd_gap_arm":           False,
-    "ai_watch_macd_gap_min_pct":       0.02,
-    "ai_watch_macd_gap_rsi_max":       60.0,
     # RTH buy allow-list. "*" / empty / all = every source (current book).
     # A comma list (momentum,movers) refuses the buy only — seats stay.
     # Stays "*" until tools/extension_by_source.py prints PASS.
@@ -1764,7 +1726,6 @@ _EFFECTIVE_KEYS = (
     "ai_exit_limit_collar_wait_sec",
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
-    "ai_watch_macd_gap_arm",
     "ai_watch_arm_sources",
     "ai_exit_left_overbought",
     "ai_exit_left_overbought_confirm_sec",
@@ -2089,7 +2050,6 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_dead_seat_evict_sec",
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
-    "ai_watch_macd_gap_arm",
     "ai_watch_arm_sources",
     "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",
@@ -2111,10 +2071,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_arm_require_cm_rsi",
     # MACD arm levers — legend/State must match the live gate (require_macd
     # already false; narrowing off retires gap-as-arm clutter).
-    "ai_watch_arm_require_macd",
-    "ai_watch_macd_block_narrowing",
     "ai_watch_macd_block_bearish",
-    "ai_watch_macd_exh_override",
     "ai_watch_arm_cm_rsi_max",
     # Published so the book legend prints the band the gate is actually
     # using. Without it the legend silently falls back to a default and
@@ -2199,7 +2156,6 @@ SAFE_CONFIG_KEYS = [
     "macd_sep_mult",
     "macd_min_gap",
     "ai_watch_macd_max_age_sec",
-    "ai_watch_macd_exh_override_min_pct",
     "ai_local_trail_be_at_pct",
     "ai_local_trail_give_max_pct",
     "ai_exit_macd_confirm_ticks",
@@ -2243,8 +2199,6 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_momentum_spread_exempt",
     "ai_watch_async_gates",
     "ai_watch_min_room_below_hod_pct",
-    "ai_watch_macd_gap_min_pct",
-    "ai_watch_macd_gap_rsi_max",
     "ai_breakeven_offset_px",
     "ai_book_tick_sec",
     "ai_shelf_tick_sec",

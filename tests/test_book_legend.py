@@ -26,10 +26,8 @@ _CSS = (_ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
 
 KEYS = [
     "macd_min_gap", "macd_sep_mult",
-    "ai_watch_arm_require_macd", "ai_watch_macd_block_narrowing",
-    "ai_watch_macd_block_bearish", "ai_watch_macd_exh_override",
+    "ai_watch_macd_block_bearish",
     "ai_watch_exhaustion_heat_min_pct", "ai_watch_ob_flat_min_pct",
-    "ai_watch_macd_exh_override_min_pct",
     "ai_watch_decision_max_age_sec", "ai_watch_macd_max_age_sec",
     "ai_watch_arm_confirm_ticks", "ai_exit_min_hold_sec",
     "ai_local_trail_give_max_pct", "ai_local_trail_be_at_pct",
