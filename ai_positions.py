@@ -3122,6 +3122,17 @@ def _note_min_hold(pos: dict[str, Any] | None, which: str,
     pos["min_hold_last_ts"] = float(now if now is not None else time.time())
 
 
+def _pos_vol_pct(pos: dict[str, Any] | None) -> float | None:
+    """1m volatility at entry, %, from the entry features (None if unread)."""
+    feats = pos.get("features") if isinstance(pos, dict) else None
+    v = feats.get("vol_1m_pct") if isinstance(feats, dict) else None
+    try:
+        f = float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+    return f if f is not None and f > 0 else None
+
+
 def _pos_spread_r(pos: dict[str, Any] | None) -> float | None:
     """Round-trip spread this position crossed, as a fraction of R.
 
@@ -3188,6 +3199,7 @@ def local_trail_give(
     cfg: dict | None = None,
     mfe_r: float | None = None,
     spread_r: float | None = None,
+    vol_pct: float | None = None,
 ) -> float:
     """Dollar cushion under last for the local R-stop.
 
@@ -3242,6 +3254,24 @@ def local_trail_give(
             px = 0.0
         if px > 0:
             give = min(give, px * max_pct / 100.0)
+    # Volatility floor: ai_local_trail_give_vol_k x the name's 1m stdev at
+    # entry (*vol_pct*, %), in percent of price. A flat cushion sized for a
+    # quiet name stops a volatile one out on ordinary minute-to-minute noise.
+    # Applied after the percent ceiling on purpose, since widening volatile
+    # names is its whole job. With no reading or k = 0 (the default) it does
+    # nothing.
+    try:
+        vol_k = float(cfg.get("ai_local_trail_give_vol_k", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        vol_k = 0.0
+    if vol_k > 0 and vol_pct is not None:
+        try:
+            px = float(last) if last is not None else 0.0
+            vp = float(vol_pct)
+        except (TypeError, ValueError):
+            px = vp = 0.0
+        if px > 0 and vp > 0:
+            give = max(give, px * vol_k * vp / 100.0)
     try:
         floor = float(cfg.get(
             "ai_local_trail_min_give_px", DEFAULT_LOCAL_TRAIL_MIN_GIVE_PX)
@@ -3804,7 +3834,8 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: floa
                                     spread_r=_pos_spread_r(pos)):
         give_mfe = 0.0
     give = local_trail_give(last, risk, cfg, mfe_r=give_mfe,
-                            spread_r=_pos_spread_r(pos))
+                            spread_r=_pos_spread_r(pos),
+                            vol_pct=_pos_vol_pct(pos))
     cand = float(last) - give
     if floor is not None:
         cand = max(float(floor), cand)

@@ -505,6 +505,8 @@ class FakeBroker:
             import ai_positions as cp
             try:
                 pos = open_position(cp, cfg or {}, px, now, stop)
+                if pos is not None and isinstance(decision, dict):
+                    pos["features"] = dict(decision.get("features") or {})
             except AttributeError:
                 pos = None  # commit predates the local trail: fixed hold
             self.open[sym]["pos"] = pos

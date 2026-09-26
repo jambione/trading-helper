@@ -15056,7 +15056,48 @@ def _entry_features(rec: dict, *, ask: float | None = None,
         # a threshold read off these rows means what the gate will mean.
         "bid": _f_or_none(bid),
         "spread_r": _spread_r(ask, bid, stop),
+        # 1m volatility at entry, for ai_local_trail_give_vol_k: the trail
+        # cushion scaled to how far this name moves in a minute.
+        "vol_1m_pct": _vol_1m_pct(str(rec.get("symbol") or ""), now),
     }
+
+
+def _vol_1m_pct(sym: str, now: float, n: int = 15,
+                max_age: float = 180.0) -> float | None:
+    """Stdev of the last *n* one-minute close-to-close returns, %, from the
+    cached IEX bars the arm pass already fetched.
+
+    None unless the last n+1 bars are consecutive minutes and the newest ends
+    within *max_age* of now. A thin IEX tape skips minutes, and a return taken
+    across a gap folds several minutes of drift into one "1m" step, which
+    overstates the volatility. Better no reading than a wide wrong one.
+    tools/studies/vol_trail_book_study.py uses the same definition.
+    """
+    sym = str(sym or "").upper()
+    if not sym:
+        return None
+    with _ohlc_cache_lock:
+        hit = _ohlc_cache.get(sym)
+        ts_hit = _ohlc_ts_cache.get(sym)
+    if not hit or not ts_hit:
+        return None
+    rows, stamps = hit[1], ts_hit[1]
+    if len(rows) != len(stamps) or len(rows) < n + 1:
+        return None
+    rows, stamps = rows[-(n + 1):], stamps[-(n + 1):]
+    if now - (float(stamps[-1]) + 60.0) > max_age:
+        return None
+    if any(abs(float(b) - float(a) - 60.0) > 1.0 for a, b in zip(stamps, stamps[1:])):
+        return None
+    try:
+        closes = [float(r[2]) for r in rows]
+    except (TypeError, ValueError, IndexError):
+        return None
+    if any(c <= 0 for c in closes):
+        return None
+    rets = [(b / a - 1.0) * 100.0 for a, b in zip(closes, closes[1:])]
+    mean = sum(rets) / len(rets)
+    return round((sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)) ** 0.5, 4)
 
 
 # symbol -> last ts a reject sample was written. The book is rebuilt every 2s;

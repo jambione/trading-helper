@@ -88,6 +88,7 @@ _FINGERPRINT_KEYS = (
     # cushion a fill is protected by, which is to say what every trade
     # banks — the same argument as the twelve knobs above.
     "ai_local_trail_give_spread_k",
+    "ai_local_trail_give_vol_k",
     "ai_local_trail_give_spread_max_r",
     "ai_local_trail_be_at_spread_k",
     # How long the desk's discretionary exits stay holstered. This is the

@@ -1243,6 +1243,9 @@ DEFAULT_CONFIG = {
     # that was still working. Off unless the tape says otherwise.
     "ai_exit_macd_curl_on_falling":    False,
     "ai_local_trail_give_spread_k":    0.0,
+    # Floor the trail cushion at k x the name's 1m volatility at entry (%
+    # of price). 0 = off. Study: tools/studies/vol_trail_book_study.py.
+    "ai_local_trail_give_vol_k":       0.0,
     # Ceiling on the spread floor, in R. Uncapped, k=1 on a p90
     # book (5.56R) parks the shelf 5.5R down, which is no stop.
     "ai_local_trail_give_spread_max_r": 0.50,
@@ -2204,6 +2207,7 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_macd_curl_px",
     "ai_exit_macd_curl_on_falling",
     "ai_local_trail_give_spread_k",
+    "ai_local_trail_give_vol_k",
     "ai_local_trail_give_spread_max_r",
     "ai_local_trail_be_at_spread_k",
     "ai_local_trail_min_give_px",
