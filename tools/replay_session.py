@@ -1428,7 +1428,7 @@ def run_exact(args) -> int:
     path = Path(args.out) if args.out else Path(os.environ.get("REPLAY_WORK", ".")) / "exact.json"
     path.write_text(json.dumps(out, indent=1, default=str))
     print(f"result: {path}")
-    return 0 if out["verdict"] == "PASS" else 1
+    return 0 if out["verdict"] in ("PASS", "NO DECISIONS") else 1
 
 
 def exact_score(events, live_arms, replay_polls, entries, wire: Path,
@@ -1514,7 +1514,10 @@ def print_exact(o: dict) -> None:
         print(f"  blocked network: {o['blocked_network']}")
     ok = (n_miss == 0 and da is not None and da >= 0.99
           and (br is None or br >= 0.95) and not o.get("errors"))
-    o["verdict"] = "PASS" if ok else "FAIL"
+    if n_miss == 0 and not o.get("errors") and not o["checks"] and not o["live_buys"]:
+        o["verdict"] = "NO DECISIONS"  # plumbing clean, nothing to score (off-session)
+    else:
+        o["verdict"] = "PASS" if ok else "FAIL"
     print(f"  VERDICT {o['verdict']}  (need 0 misses, >=99% decisions, >=95% buys, no errors)")
 
 
