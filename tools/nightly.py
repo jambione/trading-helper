@@ -5,12 +5,14 @@ Started by tools/session_snapshot.py when it closes the day (16:05 ET), in the
 background. Steps run in sequence (never more than one replay at a time), and
 a failed step does not stop the next:
 
-  1. fidelity   tools/replay_session.py --fidelity (the approximate replay's
+  1. catalyst   tools/ai_catalyst_score.py (forward-return scorecard for the
+                AI news catalyst shadow logger; quick; runs first)
+  2. fidelity   tools/replay_session.py --fidelity (the approximate replay's
                 score against live buys; writes fidelity.json in the archive)
-  2. exact      tools/replay_session.py --exact with the code that booted the
+  3. exact      tools/replay_session.py --exact with the code that booted the
                 desk: the acceptance verdict (0 read misses, >=99% decisions,
                 >=95% buys within 5 s) -> ai_reports/nightly/DAY/exact.json
-  3. paper      (manual only: --only paper; the operator chose on 2026-09-26
+  4. paper      (manual only: --only paper; the operator chose on 2026-09-26
                 not to spend weeks accumulating it)
                 tools/studies/source_optimal_study.py on the day's actual
                 nominations, SIP bars and real SIP spreads, for the live %R
@@ -154,6 +156,9 @@ def paper_totals(hist: Path) -> list[dict]:
 def summary_md(day: str, res: dict) -> str:
     fmt = lambda v, f: "-" if v is None else format(v, f)  # noqa: E731
     lines = [f"# Nightly {day}", ""]
+    cat = res.get("catalyst") or {}
+    if cat:
+        lines += [f"**AI catalyst scorecard:** rc={cat.get('rc')}", ""]
     ex = res.get("exact") or {}
     if ex.get("ok"):
         lines += [f"**Exact replay (acceptance): {ex.get('verdict')}** — sha {ex.get('sha')}, "
@@ -163,6 +168,8 @@ def summary_md(day: str, res: dict) -> str:
     else:
         lines += [f"**Exact replay: not run** — {ex.get('why')}", ""]
     pb = res.get("paper") or {}
+    if not pb and not cat:
+        return "\n".join(lines) + "\n"
     if not pb:
         return "\n".join(lines) + "\n"
     lines += ["## SIP paper book, running totals (net of real SIP spread)", "",
@@ -178,12 +185,16 @@ def summary_md(day: str, res: dict) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--day", default=datetime.now(ET).strftime("%Y-%m-%d"))
-    ap.add_argument("--only", choices=("fidelity", "exact", "paper"), default=None)
+    ap.add_argument("--only", choices=("catalyst", "fidelity", "exact", "paper"), default=None)
     args = ap.parse_args()
     out = ROOT / "ai_reports" / "nightly" / args.day
     out.mkdir(parents=True, exist_ok=True)
     log = out / "nightly.log"
     res: dict = {"day": args.day, "started": time.time()}
+    if args.only in (None, "catalyst"):
+        rc = run([py(), "-u", str(ROOT / "tools" / "ai_catalyst_score.py"),
+                  "--asof", args.day], log, 30 * 60)
+        res["catalyst"] = {"rc": rc}
     if args.only in (None, "fidelity"):
         rc = run([py(), "-u", str(ROOT / "tools" / "replay_session.py"), "--day", args.day,
                   "--start", "09:00", "--end", "15:50", "--fidelity"], log, 3 * 3600)

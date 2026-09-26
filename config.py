@@ -1370,6 +1370,8 @@ DEFAULT_CONFIG = {
     "claude_research_times": ["08:30", "14:30"],
     "claude_research_weekdays_only": True,
     "claude_research_catchup_min": 120,
+    # log-only AI news catalyst logger; no trading impact
+    "ai_catalyst_log_enabled": True,
     # Seed-only AI ranker (momentum+trending+movers → ≤5 names → watchlist).
     # Google AGY + Grok; recommend only; never places. Default publish is union
     # of per-model top-N with peer second_opinion; set publish_mode=agreement

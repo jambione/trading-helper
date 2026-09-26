@@ -1654,6 +1654,14 @@ def main() -> None:
         except Exception as e:  # noqa: BLE001
             print(f"[ai] seed_rank tick failed: {e}", flush=True)
 
+        try:
+            import ai_catalyst
+            started = ai_catalyst.tick(load_config(), t0)
+            if started:
+                print(f"[ai] ai_catalyst {started}", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[ai] ai_catalyst tick failed: {e}", flush=True)
+
         if trading and book is not None and _open_bell_due(cfg, t0):
             try:
                 book.refresh_quotes(t0)

@@ -1,0 +1,154 @@
+[
+  {
+    "symbol": "AAPL",
+    "company": "Apple Inc.",
+    "prior_close": 190.0,
+    "last": 192.5,
+    "last_ts": 1758883500.0,
+    "age_sec": 12.0,
+    "news": [
+      {
+        "id": "alpaca:1",
+        "ts": 1758883200.0,
+        "source": "Business Wire",
+        "headline": "Apple announces new product",
+        "summary": "Cupertino \u2014 Apple Inc. today announced a new product line with expanded features for professionals. xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "url": "https://example.com/aapl1",
+        "symbols": [
+          "AAPL"
+        ]
+      },
+      {
+        "id": "alpaca:2",
+        "ts": 1758879600.0,
+        "source": "Reuters",
+        "headline": "Analyst upgrades AAPL",
+        "summary": "An analyst raised the price target.",
+        "url": "https://example.com/aapl2",
+        "symbols": [
+          "AAPL"
+        ]
+      },
+      {
+        "id": "alpaca:3",
+        "ts": 1758876000.0,
+        "source": "Bloomberg",
+        "headline": "Supply chain update",
+        "summary": "Minor supply note.",
+        "url": "https://example.com/aapl3",
+        "symbols": [
+          "AAPL"
+        ]
+      },
+      {
+        "id": "alpaca:4",
+        "ts": 1758872400.0,
+        "source": "CNBC",
+        "headline": "Extra headline 4",
+        "summary": "Should be truncated by max headlines when over limit.",
+        "url": "https://example.com/aapl4",
+        "symbols": [
+          "AAPL"
+        ]
+      },
+      {
+        "id": "alpaca:5",
+        "ts": 1758868800.0,
+        "source": "WSJ",
+        "headline": "Extra headline 5",
+        "summary": "five",
+        "url": "https://example.com/aapl5",
+        "symbols": [
+          "AAPL"
+        ]
+      },
+      {
+        "id": "alpaca:6",
+        "ts": 1758865200.0,
+        "source": "FT",
+        "headline": "Extra headline 6",
+        "summary": "six",
+        "url": "https://example.com/aapl6",
+        "symbols": [
+          "AAPL"
+        ]
+      },
+      {
+        "id": "alpaca:7",
+        "ts": 1758861600.0,
+        "source": "Barrons",
+        "headline": "Extra headline 7",
+        "summary": "seven",
+        "url": "https://example.com/aapl7",
+        "symbols": [
+          "AAPL"
+        ]
+      },
+      {
+        "id": "alpaca:8",
+        "ts": 1758858000.0,
+        "source": "MarketWatch",
+        "headline": "Extra headline 8",
+        "summary": "eight",
+        "url": "https://example.com/aapl8",
+        "symbols": [
+          "AAPL"
+        ]
+      },
+      {
+        "id": "alpaca:9",
+        "ts": 1758854400.0,
+        "source": "Yahoo",
+        "headline": "SHOULD NOT APPEAR",
+        "summary": "ninth headline beyond max",
+        "url": "https://example.com/aapl9",
+        "symbols": [
+          "AAPL"
+        ]
+      }
+    ]
+  },
+  {
+    "symbol": "NVDA",
+    "company": "NVIDIA Corporation",
+    "prior_close": 120.0,
+    "last": 125.0,
+    "last_ts": 1758883400.0,
+    "age_sec": 20.0,
+    "news": [
+      {
+        "id": "alpaca:10",
+        "ts": 1758883100.0,
+        "source": "Reuters",
+        "headline": "NVIDIA wins new chip order",
+        "summary": "A large order was announced.",
+        "url": "https://example.com/nvda1",
+        "symbols": [
+          "NVDA"
+        ]
+      },
+      {
+        "id": "alpaca:11",
+        "ts": 1758880000.0,
+        "source": "TechCrunch",
+        "headline": "GPU demand update",
+        "summary": "Demand remains firm.",
+        "url": "https://example.com/nvda2",
+        "symbols": [
+          "NVDA"
+        ]
+      },
+      {
+        "id": "alpaca:12",
+        "ts": 1758877000.0,
+        "source": "The Verge",
+        "headline": "Partner announcement",
+        "summary": "A partner named NVIDIA in a release.",
+        "url": "https://example.com/nvda3",
+        "symbols": [
+          "NVDA"
+        ]
+      }
+    ]
+  }
+]

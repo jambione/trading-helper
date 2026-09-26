@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "source": "tests/fixtures/ai_catalyst",
+  "etfs": ["SPY"],
+  "symbols": ["SPY", "BBB", "CCC"]
+}
