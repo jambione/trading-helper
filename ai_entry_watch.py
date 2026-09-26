@@ -8617,10 +8617,18 @@ def apply_decision_price(rec: dict, cfg: dict | None, now: float) -> tuple[float
         # src="stream" with age=None, a pair both stream writers now make
         # impossible at write time. The clock has to outlive the record.
         _sym_k = str(rec.get("symbol") or "").upper().strip()
+        # The age was measured at the wall clock of THIS call (the dashboard
+        # reports it as of its response), not at `now`, the poll's start.
+        # poll_once prices ~30 names in turn and ran 17-36 s on 2026-09-25, so
+        # stamping `now - age` made every print look older by however long the
+        # poll had been running: the desk logged a median 24 s where the
+        # dashboard said 10.7 s and IEX had printed 6.7 s before, and 43% of
+        # RTH arm checks were refused tape_only.
+        _measured_at = time.time()
         if age is not None:
-            rec["last_ask_ts"] = float(now) - float(age)
+            rec["last_ask_ts"] = _measured_at - float(age)
             if _sym_k:
-                _set_quote_ts(_sym_k, float(now) - float(age))
+                _set_quote_ts(_sym_k, _measured_at - float(age))
         else:
             rec.pop("last_ask_ts", None)
             if _sym_k:

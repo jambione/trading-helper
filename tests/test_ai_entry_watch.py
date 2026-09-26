@@ -7033,16 +7033,20 @@ def test_quote_age_is_recomputed_from_the_quotes_own_timestamp():
     assert ew.row_quote_age_sec({"last_ask": 10.0}, now=now) is None
 
 
-def test_apply_decision_price_stores_the_timestamp_only_when_provable():
+def test_apply_decision_price_stores_the_timestamp_only_when_provable(monkeypatch):
     """An unprovable age must not leave a timestamp behind.
 
-    Deriving quote_ts = now - age is exact when the age is real. When the age
-    is None there is nothing to derive from, and writing one anyway is how a
-    stale print comes to look fresh — the bug reverted twice today.
+    Deriving quote_ts = (wall clock at pricing) - age is exact when the age is
+    real. When the age is None there is nothing to derive from, and writing
+    one anyway is how a stale print comes to look fresh — the bug reverted
+    twice today. The wall clock is pinned here; see tests/test_price_clock.py
+    for why it, and not the poll's `now`, is the stamping clock.
     """
     import ai_entry_watch as ew
 
     now = 2_000_000.0
+    wall = {"t": now}
+    monkeypatch.setattr(ew.time, "time", lambda: wall["t"])
 
     calls = {}
 
@@ -7062,6 +7066,7 @@ def test_apply_decision_price_stores_the_timestamp_only_when_provable():
         # A later unprovable read must CLEAR the stamp, not leave the old one
         # to keep answering for a price it no longer describes.
         calls["AAA"] = (11.0, "rest", None)
+        wall["t"] = now + 60.0
         ew.apply_decision_price(rec, {}, now + 60.0)
         assert "last_ask_ts" not in rec, (
             "stale timestamp survived an unprovable read — the row would "
@@ -7133,6 +7138,7 @@ def test_quote_timestamp_survives_a_record_rebuild(monkeypatch):
     import ai_entry_watch as ew
 
     now = 3_000_000.0
+    monkeypatch.setattr(ew.time, "time", lambda: now)  # the pricing wall clock
     monkeypatch.setattr(ew, "_LAST_QUOTE_TS", {}, raising=False)
     monkeypatch.setattr(ew, "decision_price",
                         lambda s, c, n=None: (5.0, "stream", 2.0))

@@ -113,6 +113,25 @@ _tl = threading.local()
 
 def set_pass(t: float | None) -> None:
     _tl.pt = None if t is None else round(float(t), 3)
+    _tl.pass_t = None
+
+
+def _advance(ts) -> None:
+    """Replay: time inside a pass moves to each served read's recorded time."""
+    try:
+        t = float(ts)
+    except (TypeError, ValueError):
+        return
+    cur = getattr(_tl, "pass_t", None)
+    if cur is None or t > cur:
+        _tl.pass_t = t
+
+
+def pass_clock() -> float | None:
+    """The replay's wall clock inside the current pass: the recorded time of
+    the latest read served in it (None before the first). Live code that
+    stamps "now - age" must see time move exactly as it did live."""
+    return getattr(_tl, "pass_t", None)
 
 
 def _current_pass() -> float | None:
@@ -688,7 +707,9 @@ class Recording:
         if pt is not None:
             same = self.alpaca_pt.get((key, pt))
             if same:
-                return same[self._next_in_pass(("a", key, pt), len(same))]
+                hit = same[self._next_in_pass(("a", key, pt), len(same))]
+                _advance(hit.get("ts"))
+                return hit
         ts, recs = self.alpaca.get(key, ([], []))
         i = bisect.bisect_right(ts, t) - 1
         if i < 0 or t - ts[i] > self.max_age:
@@ -703,6 +724,7 @@ class Recording:
         if same:
             i = same[self._next_in_pass(("d", pt), len(same))]
             n, t_at = i + 1, self.dash_ts[i]
+            _advance(t_at)
         else:
             n = bisect.bisect_right(self.dash_ts, t)
             if n == 0:
