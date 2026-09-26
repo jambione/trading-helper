@@ -10,8 +10,9 @@ desk's state files, plus the dashboard's /api/state, to
 as records ``{ts, file, mtime, sha, data}`` (the format tools/rehearse_snap.py
 reads). At 16:05 it hard-links the day's ledgers and the session recorder's
 streams into the same folder and writes ``DONE``, so one directory holds
-everything a replay needs. It then starts tools/replay_session.py --fidelity
-in the background, which replays the code that ran and writes fidelity.json
+everything a replay needs. It then starts tools/nightly.py in the background
+(fidelity replay, exact acceptance replay, SIP paper book); the fidelity step
+replays the code that ran and writes fidelity.json
 (set SESSION_SNAPSHOT_FIDELITY=0 to skip).
 
 What each source gives a replay:
@@ -142,7 +143,8 @@ def _trim_api(data: dict) -> dict:
 
 
 def launch_fidelity(day: str, out_dir: Path) -> None:
-    """Replay the day with the code that ran and score it (tools/replay_session.py)."""
+    """Start the after-close checks (tools/nightly.py): the fidelity replay,
+    the exact acceptance replay and the SIP paper book, one after another."""
     if os.getenv("SESSION_SNAPSHOT_FIDELITY", "1") == "0":
         return
     py = ROOT / ".venv" / "bin" / "python"
@@ -150,12 +152,11 @@ def launch_fidelity(day: str, out_dir: Path) -> None:
         log = open(out_dir / "fidelity.log", "ab")
         subprocess.Popen(
             [str(py if py.exists() else sys.executable), "-u",
-             str(ROOT / "tools" / "replay_session.py"), "--day", day,
-             "--start", "09:00", "--end", "15:50", "--fidelity"],
+             str(ROOT / "tools" / "nightly.py"), "--day", day],
             cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL, start_new_session=True,
             env=dict(os.environ, REPLAY_REPO=str(ROOT)))
-        _log(f"{day} fidelity replay started -> {out_dir / 'fidelity.log'}")
+        _log(f"{day} nightly checks started -> ai_reports/nightly/{day}/summary.md")
     except OSError as e:
         _log(f"could not start fidelity replay: {e}")
 

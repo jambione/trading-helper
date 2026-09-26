@@ -624,7 +624,7 @@ def install_live(*, files: bool = True) -> None:
 class Recording:
     """The wire stream of one day, indexed for serving at a replay clock."""
 
-    def __init__(self, path: Path, *, max_age: float = 600.0):
+    def __init__(self, path, *, max_age: float = 600.0):
         self.max_age = max_age
         self.alpaca: dict[str, tuple[list[float], list[dict]]] = {}
         self.dash_ts: list[float] = []
@@ -636,8 +636,11 @@ class Recording:
         self.cursor: Counter = Counter()
         self.rewinds = 0
         tmp: dict[str, list[tuple[float, dict]]] = {}
-        if path.exists():
-            with gzip.open(path, "rt") as f:
+        paths = [Path(p) for p in (path if isinstance(path, (list, tuple)) else [path])]
+        for p in paths:
+            if not p.exists():
+                continue
+            with gzip.open(p, "rt") as f:
                 for line in f:
                     try:
                         r = json.loads(line)
@@ -843,7 +846,7 @@ def serve_dash() -> dict:
     return _tracked(p)
 
 
-def install_replay(path: Path, clock: Callable[[], float], *, max_age: float = 600.0,
+def install_replay(path, clock: Callable[[], float], *, max_age: float = 600.0,
                    files: bool = True, root: Path | None = None) -> Recording:
     """Serve every alpaca-py REST call, /api/state and input file from a
     recording. *root* is the replayed code's repo root (default: this file's)."""
@@ -854,7 +857,7 @@ def install_replay(path: Path, clock: Callable[[], float], *, max_age: float = 6
     with _lock:
         if _orig_request is None:
             _orig_request = RESTClient._request
-        _rec = Recording(Path(path), max_age=max_age)
+        _rec = Recording(path, max_age=max_age)
         _clock = clock
         RESTClient._request = _replay_request
         MODE = "replay"

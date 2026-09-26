@@ -11,7 +11,7 @@ plumbing is perfect:
              nominating it (gaps < 3 min merged), 09:30-15:50
   data       SIP 1m bars from 04:00 (premarket warms the %R lines as live)
   arm        the live trigger: fast %R(21, EWM 7) crosses up through -50 with
-             the slow line (%R 21 on 15m bars) rising; no staleness, no latch
+             the slow line (%R 112 EWM 3 on 1m, as live) rising; no staleness, no latch
              loss, no admission refusal
   gates      the intended ones only: $20-$100 at the cross, no gap-down > 1%
   book       live rules: max 5 open, one per name, 120 s cooldown after exit
@@ -227,29 +227,43 @@ class Spreads:
             json.dump(self.d, f)
 
 
-def crosses(B, level=-50.0):
-    """(index, slow_rising) for fast %R up-crosses through -50.
-
-    Slow rising is a state, as live reads it: the slow line's current value
-    above its previous distinct value. The slow line is %R(21) on 15m bars
-    and moves once per 15 minutes, so comparing it minute to minute (what
-    mid_rise_runway_study.find_crosses does) reads 'flat' ~97% of the time.
-    """
+def _lines(B):
+    """Fast/slow %R exactly as the live engine builds them: fast %R(21) EWM 7,
+    slow %R(112) EWM 3 on 1m bars (rte_slow_timeframe unset — TradingView's
+    native layout); rising = above its value 2 bars earlier."""
     t, o, h, l, c, v = B
-    fast = mr.percent_r_series(h, l, c, mr.FAST_LEN, mr.FAST_SPAN)
-    slow = mr.slow_percent_r_on_1m(t, h, l, c)
+    fast = mr.percent_r_series(h, l, c, 21, 7.0)
+    slow = mr.percent_r_series(h, l, c, 112, 3.0)
+    srise = [i >= 2 and slow[i] is not None and slow[i - 2] is not None and slow[i] > slow[i - 2]
+             for i in range(len(c))]
+    return fast, srise
+
+
+def crosses(B, level=-50.0):
+    """(index, slow_rising) for fast %R up-crosses through -50 (the live arm)."""
+    fast, srise = _lines(B)
     out = []
-    cur = prev = None
-    for i in range(len(c)):
-        s_ = slow[i]
-        if s_ is not None and s_ != cur:
-            prev, cur = cur, s_
-        if i == 0:
-            continue
+    for i in range(1, len(fast)):
         a, b = fast[i - 1], fast[i]
-        if a is None or b is None or not (a <= level < b):
+        if a is not None and b is not None and a <= level < b:
+            out.append((i, srise[i]))
+    return out
+
+
+def combo_d(B, refract=15):
+    """(index, True) for the live %R arm confirmed by volume > 2x its 20-min
+    mean and a close above the prior 15-min high (wr_trigger_study 'D')."""
+    t, o, h, l, c, v = B
+    fast, srise = _lines(B)
+    out, last = [], -10 ** 9
+    for i in range(20, len(c)):
+        a, b = fast[i - 1], fast[i]
+        if a is None or b is None or not (a <= -50 < b) or not srise[i]:
             continue
-        out.append((i, cur is not None and prev is not None and cur > prev))
+        vm = sum(v[i - 20:i]) / 20.0
+        if vm > 0 and v[i] > 2 * vm and c[i] > max(h[i - 15:i]) and i - last >= refract:
+            out.append((i, True))
+            last = i
     return out
 
 
@@ -282,7 +296,8 @@ def candidates(day, noms, bars):
         gap = (open_px / prev_close - 1) * 100 if open_px and prev_close else None
         if gap is not None and gap < -1.0:
             continue
-        for i, rising in (vol_breakouts(B) if TRIGGER == "vol_brk" else crosses(B)):
+        events = {"vol_brk": vol_breakouts, "combo_d": combo_d}.get(TRIGGER, crosses)(B)
+        for i, rising in events:
             if not rising:
                 continue
             te = t[i] + 60  # the cross is known at the minute's close
@@ -379,9 +394,9 @@ def main():
     ap.add_argument("--hold", type=float, default=5.0)
     ap.add_argument("--no-spread", action="store_true", help="skip real spreads (gross only)")
     ap.add_argument("--noms", choices=("sources", "refused"), default="sources")
-    ap.add_argument("--trigger", choices=("live", "vol_brk"), default="live",
+    ap.add_argument("--trigger", choices=("live", "vol_brk", "combo_d"), default="live",
                     help="live = fast %%R up through -50 with slow rising; vol_brk = volume "
-                         "burst + 15-min high (SIP volume)")
+                         "burst + 15-min high; combo_d = live arm + volume >2x + 15-min high")
     args = ap.parse_args()
     global TRIGGER
     TRIGGER = args.trigger

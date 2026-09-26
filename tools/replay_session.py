@@ -1302,14 +1302,29 @@ def run_exact(args) -> int:
             return 2
     t_start, t_end = at(args.day, args.start), at(args.day, args.end)
 
+    # The desk may have booted on an earlier day (a weekend deploy): its boot
+    # marker, its first reads of its own state and its config live in that
+    # day's recording. Walk back to the last boot before --start (<= 10 days).
+    dirs = [sess]
     boots = [float(r["ts"]) for r in _gz_rows(wire) if r.get("ch") == "boot"]
+    d0 = datetime.strptime(args.day, "%Y-%m-%d")
+    for back in range(1, 11):
+        if any(b <= t_start for b in boots):
+            break
+        from datetime import timedelta
+        prev = sess.parent / (d0 - timedelta(days=back)).strftime("%Y-%m-%d")
+        if prev.is_dir():
+            dirs.insert(0, prev)
+            boots += [float(r["ts"]) for r in _gz_rows(prev / "wire.jsonl.gz") if r.get("ch") == "boot"]
+    wires = [d / "wire.jsonl.gz" for d in dirs]
     before = [b for b in boots if b <= t_start]
     events, live_arms = [], {}
-    for r in _gz_rows(dec_path):
-        if r.get("ev") in ("sync", "paint", "poll"):
-            events.append((float(r["ts"]), r["ev"]))
-        elif r.get("ev") == "arm":
-            live_arms[round(float(r["ts"]), 3)] = r.get("rows") or []
+    for d in dirs:
+        for r in _gz_rows(d / "decisions.jsonl.gz"):
+            if r.get("ev") in ("sync", "paint", "poll"):
+                events.append((float(r["ts"]), r["ev"]))
+            elif r.get("ev") == "arm":
+                live_arms[round(float(r["ts"]), 3)] = r.get("rows") or []
     events.sort()
     if before:
         t_boot = max(before)
@@ -1317,9 +1332,10 @@ def run_exact(args) -> int:
         t_boot = events[0][0] if events else t_start
         print("[exact] WARNING: no desk boot before --start; in-memory state starts cold")
     events = [e for e in events if t_boot <= e[0] <= t_end]
-    cfgs = sorted((float(r["ts"]), r.get("config") or {}) for r in _gz_rows(sess / "config.jsonl.gz")
-                  if isinstance(r.get("config"), dict))
-    print(f"[exact] boot {datetime.fromtimestamp(t_boot, ET):%H:%M:%S}, "
+    cfgs = sorted((float(r["ts"]), r.get("config") or {}) for d in dirs
+                  for r in _gz_rows(d / "config.jsonl.gz") if isinstance(r.get("config"), dict))
+    print(f"[exact] boot {datetime.fromtimestamp(t_boot, ET):%Y-%m-%d %H:%M:%S} "
+          f"({len(dirs)} recorded day(s)), "
           f"{len(events)} recorded passes to {args.end}, {len(cfgs)} config versions")
 
     overrides = {}
@@ -1343,7 +1359,7 @@ def run_exact(args) -> int:
     follow_config(t_boot)
 
     import desk_io
-    desk_io.install_replay(wire, clock=lambda: clock.t, root=root)
+    desk_io.install_replay(wires, clock=lambda: clock.t, root=root)
     import session_recorder
     replay_polls: dict[float, list] = {}
     _append = session_recorder._append
