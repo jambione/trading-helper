@@ -227,13 +227,9 @@ def test_open_seed_keeps_wire_heater_and_drops_thin_non_heater(tmp_path, monkeyp
     assert benf["indicator"]["pctr"] == -44.6
     drops = ew.seed_drop_snapshot()
     assert drops["counts"].get("momentum", {}).get("thin_rvol", 0) >= 1
-    # ai_watch_admit_prefer_square (on) grades a candidate row by dual-%R
-    # seat class, not the single-line warming band: a fast-only -65 reading is
-    # "unknown" (no slow line) and, once given one, "far" — the approach band
-    # is both lines >= -exh_pre_thr (35). -30/-34 is pre_square and tight,
-    # which is what "warming scout" now means for a row.
-    tagged = [{"symbol": "W", "pctr": -30.0, "pctr_slow": -34.0,
-               "pctr_rising": True}]
+    # A warming scout is single-line heat inside the warming band
+    # (default 15-45): fast %R -65 is heat 35, rising.
+    tagged = [{"symbol": "W", "pctr": -65.0, "pctr_rising": True}]
     assert ew.tag_warming_on_candidates(tagged, {}) == 1
     assert tagged[0].get("seat_role") == "warming"
     assert "preheat_steal" in ew._BLOCKER_LABELS

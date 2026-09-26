@@ -56,13 +56,12 @@ DEFAULT_CONFIG = {
     "ai_watch_heating_admit_max_tape_age_sec": 300.0,
     # Sticky dead seats (falling / stale / no RSI) leave the book this fast.
     "ai_watch_dead_seat_evict_sec": 30.0,
-    # Square-aligned admit bus: prefer pre_square/square seats; evict far.
-    "ai_watch_admit_prefer_square": True,
+    # Dual-%R seat classes: both lines ≥ −pre_thr (and tight, rising) is
+    # pre_square. Soft-seed keeps a pre_square/square seat without full
+    # arm_ready.
     "ai_watch_exh_pre_thr": 35.0,          # both lines ≥ −pre_thr = approach
-    # Aggressive pre-square farm (2026-09-21): starve far keeps; faster bus.
-    # 0 = refuse new far soft-seed keeps (flood may still spray, then steal).
+    # 0 = refuse new far soft-seed keeps (flood may still spray).
     "ai_watch_max_far_exh_seats": 0,       # soft-seed far keep cap
-    "ai_watch_far_exh_evict_sec": 45.0,    # far seat TTL before drop/steal
     # Refuse entry if dual-OB square is older than this (prevents climax chases).
     "ai_watch_square_max_age_sec": 60.0,
     # TV %R Trend Exhaustion oversold triangle arm: inverse of square/triangle for OB.
@@ -1693,10 +1692,8 @@ _EFFECTIVE_KEYS = (
     "ai_exit_left_ob_exempt_min_hold",
     "ai_dual_tranche_triangle_exit",
     "ai_watch_square_max_age_sec",
-    "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",
     "ai_watch_max_far_exh_seats",
-    "ai_watch_far_exh_evict_sec",
     "ai_edge_mode",
     "ai_stop_use_market",
     "ai_watch_synth_rr",
@@ -2006,10 +2003,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exh_oversold_triangle_arm",
     "ai_watch_os_triangle_max_age_sec",
     "ai_watch_arm_sources",
-    "ai_watch_admit_prefer_square",
     "ai_watch_exh_pre_thr",
     "ai_watch_max_far_exh_seats",
-    "ai_watch_far_exh_evict_sec",
     "ai_watch_exhaustion_rules",
     # Published so the book legend can state the live entry/exit criteria
     # instead of a fallback. The attempt cap and the dead-reentry pair are

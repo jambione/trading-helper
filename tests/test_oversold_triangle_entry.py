@@ -10,7 +10,6 @@ def _base_cfg():
         "ai_watch_exhaustion_rules": True,
         "ai_watch_exh_square_arm": True,
         "ai_watch_exh_oversold_triangle_arm": True,
-        "ai_watch_admit_prefer_square": True,
         "ai_watch_require_exh_rising": True,
         "ai_watch_os_triangle_max_age_sec": 60.0,
         "rte_threshold": 20.0,
