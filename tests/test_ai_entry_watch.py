@@ -4980,108 +4980,6 @@ def test_heating_relief_reads_engine_map_not_only_the_row():
     assert "heating_rvol_relief" in met
 
 
-def test_square_arm_smci_pass_rklb_refuse_no_heating():
-    """2026-09-18 TV square mode: SMCI (gap~9, both OB) arms; RKLB (gap 25) don't.
-
-    Enter only dual-OB+tight. Pure heating (even tight) does not arm.
-    ai_watch_tv_exh_rsi stays false (RSI rising under 75 unchanged).
-    """
-    import ai_entry_watch as ew
-    from config import DEFAULT_CONFIG
-
-    assert DEFAULT_CONFIG.get("ai_watch_exh_square_arm") is True
-
-    cfg = _last_cfg(
-        ai_watch_exh_square_arm=True,
-        ai_watch_require_exh_rising=True,
-        ai_watch_exhaustion_heat_min_pct=40.0,
-        ai_watch_exhaustion_heat_max_pct=0.0,
-        ai_watch_arm_cm_rsi_max=75.0,
-        ai_watch_ob_allow_hot=False,
-        rte_threshold=20,
-        rte_confluence_max=15.0,
-        rte_require_tight=True,
-        ai_watch_tv_exh_rsi=False,
-    )
-
-    # SMCI-like: fast≈−13, slow≈−4, gap≈9, both OB.
-    smci = _armable_rec()
-    smci["symbol"] = "SMCI"
-    smci["source"] = "xai"
-    smci["structure"]["zone_kind"] = "at_last"
-    smci["structure"]["reward_risk"] = 0.6
-    smci["indicator"].update({
-        "pctr": -13.0,
-        "pctr_slow": -4.0,
-        "pctr_rising": True,
-        "pctr_falling": False,
-        "pctr_ob": True,
-        "pctr_tight": True,
-        "cm_rsi": 42.0,
-        "cm_rsi_rising": True,
-        "cm_rsi_src": "realtime",
-    })
-    ok, why = ew.exhaustion_allows_buy(smci, cfg)
-    assert ok is True and why == "overbought"
-    ok, why = ew.should_arm_buy(smci, ask=45.0, bid=44.95, cfg=cfg)
-    assert ok is True and why.startswith("last_overbought")
-
-    # RKLB-like: fast≈−39, slow≈−64, gap≈25 → exh_not_tight.
-    rklb = _armable_rec()
-    rklb["symbol"] = "RKLB"
-    rklb["source"] = "trending"
-    rklb["structure"]["zone_kind"] = "at_last"
-    rklb["structure"]["reward_risk"] = 0.6
-    rklb["indicator"].update({
-        "pctr": -39.0,
-        "pctr_slow": -64.0,
-        "pctr_rising": True,
-        "pctr_falling": False,
-        "pctr_ob": False,
-        "pctr_tight": False,
-        "cm_rsi": 48.0,
-        "cm_rsi_rising": True,
-        "cm_rsi_src": "realtime",
-    })
-    ok, why = ew.exhaustion_allows_buy(rklb, cfg)
-    assert ok is False and why == "exh_not_tight"
-    ok, why = ew.should_arm_buy(rklb, ask=64.0, bid=63.95, cfg=cfg)
-    assert ok is False and why == "exh_not_tight"
-
-    # Heating + tight but NOT both OB → no arm (square only).
-    early = _ob_rec(symbol="EARLY", rsi=45.0, exh=60.0, source="momentum",
-                    slow_gap=5.0)
-    ok, why = ew.exhaustion_allows_buy(early, cfg)
-    assert ok is False and why == "wait_exh"
-
-    # Same book with heating companion: square still arms, heat falls through.
-    both = dict(cfg)
-    both["ai_watch_exh_heating_with_square"] = True
-    ok, why = ew.exhaustion_allows_buy(smci, both)
-    assert ok is True and why == "overbought"
-    ok, why = ew.exhaustion_allows_buy(early, both)
-    assert ok is True and why == "heating"
-    ok, why = ew.exhaustion_allows_buy(rklb, both)
-    assert ok is False and why == "exh_not_tight"
-
-    # Heating companion refuses a falling tape even when %R is rising.
-    both["ai_watch_heating_price_rise_sec"] = 20.0
-    # Both %R lines must be rising for last_heating.
-    early["indicator"]["pctr_slow_rising"] = True
-    early["indicator"]["pctr_both_rising"] = True
-    early["px_ring"] = [[1_000.0, 10.50], [1_020.0, 10.20]]
-    ok, why = ew.exhaustion_allows_buy(early, both, now=1_020.0)
-    assert ok is False and why == "price_falling"
-    early["px_ring"] = [[1_000.0, 10.00], [1_020.0, 10.20]]
-    ok, why = ew.exhaustion_allows_buy(early, both, now=1_020.0)
-    assert ok is True and why == "heating"
-    # Fast rising, slow flat → refuse.
-    early["indicator"]["pctr_slow_rising"] = False
-    early["indicator"]["pctr_both_rising"] = False
-    ok, why = ew.exhaustion_allows_buy(early, both, now=1_020.0)
-    assert ok is False and why == "slow_not_rising"
-
-
 def test_square_left_overbought_triangle_exit():
     """Leave dual-OB (▼) → left_overbought; still both-OB → hold."""
     import ai_entry_watch as ew
@@ -5162,87 +5060,6 @@ def _left_ob_rec():
     }
 
 
-def test_entry_square_refuses_sticky_cache_after_live_left_ob():
-    """PSKY 2026-09-21: cached pctr_ob must not arm after TV left ■."""
-    import ai_entry_watch as ew
-
-    cfg = {
-        "ai_watch_exh_square_arm": True,
-        "rte_threshold": 20,
-        "rte_confluence_max": 15.0,
-        "ai_watch_require_exhaustion_data": True,
-        "ai_watch_ob_allow_hot": True,
-    }
-    rec = _left_ob_rec()  # live −40/−35, cache still OB+tight
-    ok, why = ew._square_exh_allows_buy(rec, cfg, require_rising=False)
-    assert ok is False
-    assert why in ("wait_exh", "exh_not_tight", "exh_falling")
-    assert ew.is_overbought(rec, cfg) is False
-
-
-def test_entry_square_allows_live_dual_ob_tight():
-    import ai_entry_watch as ew
-
-    cfg = {
-        "ai_watch_exh_square_arm": True,
-        "rte_threshold": 20,
-        "rte_confluence_max": 15.0,
-        "ai_watch_require_exhaustion_data": True,
-        "ai_watch_ob_allow_hot": True,
-        "ai_watch_square_max_age_sec": 0,
-    }
-    rec = {
-        "symbol": "SMCI",
-        "indicator": {
-            "pctr": -10.0, "pctr_slow": -8.0,
-            "pctr_ob": False, "pctr_tight": False,  # stale false cache
-            "pctr_rising": True, "pctr_falling": False,
-        },
-    }
-    ok, why = ew._square_exh_allows_buy(rec, cfg, require_rising=False)
-    assert ok is True and why == "overbought"
-
-
-def test_entry_square_refuses_wide_gap():
-    import ai_entry_watch as ew
-
-    cfg = {
-        "ai_watch_exh_square_arm": True,
-        "rte_threshold": 20,
-        "rte_confluence_max": 15.0,
-        "ai_watch_require_exhaustion_data": True,
-    }
-    rec = {
-        "symbol": "RKLB",
-        "indicator": {
-            "pctr": -10.0, "pctr_slow": -40.0,  # gap 30 > 15
-            "pctr_rising": True, "pctr_falling": False,
-        },
-    }
-    ok, why = ew._square_exh_allows_buy(rec, cfg, require_rising=False)
-    assert ok is False and why == "exh_not_tight"
-
-
-def test_entry_square_refuses_missing_slow():
-    import ai_entry_watch as ew
-
-    cfg = {
-        "ai_watch_exh_square_arm": True,
-        "rte_threshold": 20,
-        "rte_confluence_max": 15.0,
-        "ai_watch_require_exhaustion_data": True,
-    }
-    rec = {
-        "symbol": "PSKY",
-        "indicator": {
-            "pctr": -15.0, "pctr_slow": None,
-            "pctr_ob": True, "pctr_tight": True,
-        },
-    }
-    ok, why = ew._square_exh_allows_buy(rec, cfg, require_rising=False)
-    assert ok is False and why == "no_exhaustion_data"
-
-
 def test_exit_square_still_drops_the_latch():
     """The MARA fix: the exit path reads live math, never the cache."""
     import ai_entry_watch as ew
@@ -5253,18 +5070,6 @@ def test_exit_square_still_drops_the_latch():
     assert both_ob is False
 
 
-def test_sticky_flag_still_or_latches_for_legacy_callers():
-    """sticky=True remains for explicit legacy/tests; entry does not use it."""
-    import ai_entry_watch as ew
-
-    cfg = {"rte_threshold": 20, "rte_confluence_max": 15.0}
-    rec = _left_ob_rec()
-    both_ob, tight, err = ew.dual_r_ob_tight(rec, cfg, sticky=True)
-    assert err is None
-    assert both_ob is True and tight is True
-    assert rec["indicator"]["pctr_ob"] is True  # sticky never writes
-
-
 def test_live_both_ob_holds_for_entry_despite_false_cache():
     """A stale False cache must not block an entry the live lines allow."""
     import ai_entry_watch as ew
@@ -5273,7 +5078,7 @@ def test_live_both_ob_holds_for_entry_despite_false_cache():
     rec = {"indicator": {
         "pctr": -10.0, "pctr_slow": -8.0, "pctr_ob": False, "pctr_tight": False,
     }}
-    both_ob, tight, err = ew.dual_r_ob_tight(rec, cfg, sticky=False)
+    both_ob, tight, err = ew.dual_r_ob_tight(rec, cfg)
     assert err is None
     assert both_ob is True
     assert tight is True

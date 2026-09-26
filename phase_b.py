@@ -641,10 +641,9 @@ def phase_b_arm_allows(
             return False, why
 
     if not bool(c.get("ai_phase_b_legacy_arm", False)):
-        # Shared with RTH. exhaustion_allows_buy routes to the square arm when
-        # ai_watch_exh_square_arm is on (it is), so premarket and RTH agree on
-        # what a good entry looks like by construction rather than by two
-        # sets of knobs that happen to match.
+        # Shared with RTH (mid_rise when on, else the heating lane), so
+        # premarket and RTH agree on what a good entry looks like by
+        # construction rather than by two sets of knobs that happen to match.
         try:
             import ai_entry_watch as ew
         except Exception as e:  # noqa: BLE001

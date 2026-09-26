@@ -39,13 +39,11 @@ DEFAULT_CONFIG = {
     "cm_rsi_buy_max":   10.0,  # line at the bottom of the CM RSI pane
     # Desk buy = MACD bullish cross with wide line separation (gap).
     "ai_watch_tv_exh_rsi": False,
-    # TV %R Trend Exhaustion square arm: enter on dual-OB + tight (red ■).
-    # Rollback: set false to restore legacy heating only.
+    # Dual-%R overbought semantics (TV red ■: both lines OB) for
+    # is_overbought and the left_overbought exit; false = fast line only.
+    # The square ENTRY arm this once switched on was retired; the exits in
+    # ai_positions.py still read this key.
     "ai_watch_exh_square_arm": True,
-    # When true with square arm: square still wins, else fall through to
-    # last_heating (heat band + rising + dual-tight). Square-only stays
-    # the default.
-    "ai_watch_exh_heating_with_square": False,
     # Heating may arm only when prints rose over this many seconds.
     # 0 disables. Square ■ is not gated by this.
     "ai_watch_heating_price_rise_sec": 0.0,
@@ -62,14 +60,6 @@ DEFAULT_CONFIG = {
     "ai_watch_exh_pre_thr": 35.0,          # both lines ≥ −pre_thr = approach
     # 0 = refuse new far soft-seed keeps (flood may still spray).
     "ai_watch_max_far_exh_seats": 0,       # soft-seed far keep cap
-    # Refuse entry if dual-OB square is older than this (prevents climax chases).
-    "ai_watch_square_max_age_sec": 60.0,
-    # TV %R Trend Exhaustion oversold triangle arm: inverse of square/triangle for OB.
-    # Arm when both %R lines were in oversold squares (<= -100 + rte_threshold, tight),
-    # and we hit an oversold triangle (leaves oversold / turns up) with RSI directional
-    # indicator (cm_rsi_rising).
-    "ai_watch_exh_oversold_triangle_arm": True,
-    "ai_watch_os_triangle_max_age_sec": 60.0,
 
     # Live bar tape. iex is the free Alpaca feed. sip needs Algo Trader Plus
     # and is what matches TradingView highs/lows on thin names.
@@ -1655,7 +1645,6 @@ def validate_ai_config(cfg: dict) -> list[str]:
 # "hybrid arm"); this is the resolved set the process is actually running.
 _EFFECTIVE_KEYS = (
     "ai_watch_exh_square_arm",
-    "ai_watch_exh_heating_with_square",
     "ai_watch_heating_price_rise_sec",
     "ai_watch_heating_min_rvol",
     "ai_watch_heating_admit_max_tape_age_sec",
@@ -1683,15 +1672,12 @@ _EFFECTIVE_KEYS = (
     "ai_local_trail_peak_give_pct",
     "ai_exit_limit_collar_pct",
     "ai_exit_limit_collar_wait_sec",
-    "ai_watch_exh_oversold_triangle_arm",
-    "ai_watch_os_triangle_max_age_sec",
     "ai_watch_arm_sources",
     "ai_exit_left_overbought",
     "ai_exit_left_overbought_confirm_sec",
     "ai_exit_dual_slow_max_age_sec",
     "ai_exit_left_ob_exempt_min_hold",
     "ai_dual_tranche_triangle_exit",
-    "ai_watch_square_max_age_sec",
     "ai_watch_exh_pre_thr",
     "ai_watch_max_far_exh_seats",
     "ai_edge_mode",
@@ -1993,15 +1979,11 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_dual_slow_max_age_sec",
     "ai_exit_left_ob_exempt_min_hold",
     "ai_dual_tranche_triangle_exit",
-    "ai_watch_square_max_age_sec",
     "ai_watch_exh_square_arm",
-    "ai_watch_exh_heating_with_square",
     "ai_watch_heating_price_rise_sec",
     "ai_watch_heating_min_rvol",
     "ai_watch_heating_admit_max_tape_age_sec",
     "ai_watch_dead_seat_evict_sec",
-    "ai_watch_exh_oversold_triangle_arm",
-    "ai_watch_os_triangle_max_age_sec",
     "ai_watch_arm_sources",
     "ai_watch_exh_pre_thr",
     "ai_watch_max_far_exh_seats",
