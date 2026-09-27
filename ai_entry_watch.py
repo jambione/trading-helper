@@ -1682,7 +1682,7 @@ def admit_chg_band_bounds(cfg: dict | None = None) -> tuple[float, float, float]
     except (TypeError, ValueError):
         hi = 40.0
     try:
-        soft = float(cfg.get("ai_watch_admit_chg_soft_max", 50.0) or 50.0)
+        soft = _cfg_float(cfg, "ai_watch_admit_chg_soft_max", 50.0)
     except (TypeError, ValueError):
         soft = 50.0
     if hi < lo:
@@ -2142,7 +2142,7 @@ def _soft_seed_source_rows(
         try:
             max_price = _soft_seed_max_price(cfg)
             try:
-                min_pct = float(cfg.get("ai_watch_min_pct_change", 50.0) or 50.0)
+                min_pct = _cfg_float(cfg, "ai_watch_min_pct_change", 50.0)
             except (TypeError, ValueError):
                 min_pct = 50.0
             scored: list[tuple[float, dict]] = []
@@ -2163,6 +2163,8 @@ def _soft_seed_source_rows(
             # thin_rvol seed-drop — soft-seed is scout eligibility only).
             for r in _dashboard_tickers():
                 if not isinstance(r, dict):
+                    continue
+                if _is_book_echo_row(r):
                     continue
                 s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
                 if not s or not s[0].isalpha() or s in have:
@@ -5729,6 +5731,57 @@ def _et_now(now: float | None = None):
     return datetime.fromtimestamp(t0, tz=ZoneInfo("America/New_York"))
 
 
+def _cfg_float(cfg: dict | None, key: str, default: float) -> float:
+    """Read a float config value without treating explicit 0 as missing.
+
+    ``cfg.get(key, 50) or 50`` turns a deliberate 0.0 into 50. Live
+    ``ai_watch_min_pct_change=0`` hit that trap (name-finding 9/27).
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if key not in cfg or cfg.get(key) is None:
+        return float(default)
+    try:
+        return float(cfg.get(key))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _is_book_echo_row(row: dict | None) -> bool:
+    """True when the dashboard ticker is an AI Watch book subscription echo.
+
+    Book → ticker-log push stamps ``src=book``. Momentum seeders that read
+    those rows re-claim names other sources already seated and make first-seed
+    labels look ~10:50 when the real sighting was earlier.
+    """
+    if not isinstance(row, dict):
+        return False
+    return str(row.get("src") or "").strip().lower() == "book"
+
+
+def _pre_rth(now: float | None = None) -> bool:
+    """True before the RTH open bell (09:30 ET) on a session clock."""
+    h = _et_hour_decimal(now)
+    return h is not None and h < 9.5
+
+
+def _seed_rvol_value(rvol: Any, *, now: float | None = None) -> float | None:
+    """Normalize seed RVOL; premarket ~0 prints count as unknown (abstain).
+
+    Time-adjusted premarket RVOL often lands near 0 and was hard-refusing
+    mom_open as thin_rvol thousands of times/day. Unknown abstains; a real
+    post-open thin tape still refuses.
+    """
+    if rvol is None:
+        return None
+    try:
+        rv = float(rvol)
+    except (TypeError, ValueError):
+        return None
+    if _pre_rth(now) and rv < 0.05:
+        return None
+    return rv
+
+
 def _et_hour_decimal(now: float | None = None) -> float | None:
     """ET hour as a decimal (9.5 == 09:30), for time-of-day slicing."""
     try:
@@ -6246,6 +6299,8 @@ def _momentum_flagged_from_dashboard(max_price: Any) -> list[tuple[float, dict]]
     for r in tickers:
         if not isinstance(r, dict):
             continue
+        if _is_book_echo_row(r):
+            continue
         if not _momentum_has_flag(r):
             continue
         s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
@@ -6329,6 +6384,8 @@ def _big_mover_from_dashboard(
     scored: list[tuple[float, dict]] = []
     for r in tickers:
         if not isinstance(r, dict):
+            continue
+        if _is_book_echo_row(r):
             continue
         pct = _pct_change_value(r.get("pct_change"))
         # Signed, not abs(): the desk is long-only (OrderSide.BUY), so a name
@@ -6608,22 +6665,12 @@ def desk_candidate_rows(
     _LAST_POOL_CTX.update({
         "dash_n": len(_st.get("tickers") or []) if isinstance(_st, dict) else None,
         "eq": eq, "max_price": max_price})
-    try:
-        min_pct = float(cfg.get("ai_watch_min_pct_change", 50.0) or 50.0)
-    except (TypeError, ValueError):
-        min_pct = 50.0
+    min_pct = _cfg_float(cfg, "ai_watch_min_pct_change", 50.0)
     # Gates the soft open seed below. Separate knob because min_pct governs
     # _big_mover_from_dashboard only; 0.0 keeps the shipped behaviour.
-    try:
-        open_seed_min_pct = float(
-            cfg.get("ai_watch_open_seed_min_pct", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        open_seed_min_pct = 0.0
-    try:
-        # Ratio units: 1.0 == 100% of average volume (same as desk RVOL display).
-        min_rvol = float(cfg.get("ai_watch_min_rvol", 2.0) or 2.0)
-    except (TypeError, ValueError):
-        min_rvol = 2.0
+    open_seed_min_pct = _cfg_float(cfg, "ai_watch_open_seed_min_pct", 0.0)
+    # Ratio units: 1.0 == 100% of average volume (same as desk RVOL display).
+    min_rvol = _cfg_float(cfg, "ai_watch_min_rvol", 2.0)
     # One map for every seed source. Heating RVOL relief needs %R that
     # often lives on signal_proximity, not on the seed file row.
     try:
@@ -6697,6 +6744,8 @@ def desk_candidate_rows(
             for r in _dashboard_tickers():
                 if not isinstance(r, dict):
                     continue
+                if _is_book_echo_row(r):
+                    continue
                 s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
                 if not s or not s[0].isalpha():
                     continue
@@ -6720,10 +6769,8 @@ def desk_candidate_rows(
                                     pct=seed_pct, price=r.get("price"))
                     continue
                 # Known-thin tape: hot day-move waives (same as movers).
-                try:
-                    rv = float(r.get("rvol")) if r.get("rvol") is not None else None
-                except (TypeError, ValueError):
-                    rv = None
+                # Premarket ~0 time-adjusted RVOL abstains (unknown), not refuse.
+                rv = _seed_rvol_value(r.get("rvol"), now=now)
                 thin_why, seed_ind = seed_rvol_gate(
                     s, rv, seed_pct, cfg, source="momentum",
                     row=r, indicators=_seed_inds)
@@ -6751,21 +6798,13 @@ def desk_candidate_rows(
                             break
                         except (TypeError, ValueError):
                             pass
-                try:
-                    stream_young_max = float(
-                        cfg.get("ai_watch_stream_max_age_sec", 10.0) or 10.0)
-                except (TypeError, ValueError):
-                    stream_young_max = 10.0
+                stream_young_max = _cfg_float(cfg, "ai_watch_stream_max_age_sec", 10.0)
                 has_young_stream = (
                     stream_age is not None
                     and stream_young_max > 0
                     and stream_age <= stream_young_max
                 )
-                try:
-                    stream_min_pct = float(
-                        cfg.get("ai_watch_open_seed_stream_min_pct", 5.0) or 0.0)
-                except (TypeError, ValueError):
-                    stream_min_pct = 5.0
+                stream_min_pct = _cfg_float(cfg, "ai_watch_open_seed_stream_min_pct", 5.0)
                 need_pct = open_seed_min_pct
                 if has_young_stream and stream_min_pct > 0:
                     if open_seed_min_pct <= 0:
@@ -6773,7 +6812,15 @@ def desk_candidate_rows(
                     else:
                         need_pct = min(open_seed_min_pct, stream_min_pct)
                 if need_pct > 0:
-                    if seed_pct is None or seed_pct < need_pct:
+                    if seed_pct is None:
+                        _note_seed_drop(
+                            "momentum", s, "pct_missing",
+                            pct=None, price=r.get("price"))
+                        continue
+                    if seed_pct < need_pct:
+                        _note_seed_drop(
+                            "momentum", s, "pct_low",
+                            pct=seed_pct, price=r.get("price"))
                         continue
                 if _is_wash_look(r):
                     continue
@@ -7772,12 +7819,21 @@ def _min_price_for(source, cfg: dict | None, default: float = 1.0) -> float:
     ai_watch_momentum_min_price (unset = the shared ai_watch_min_price) lets
     the curated Discord momentum names be tested from $1 while Movers,
     Trending and Research keep the shared floor. 2026-09-25, user request.
+
+    ai_watch_bb_live_min_price: same idea for Trader Bro LIVE callouts so
+    volatile sub-$20 names can seat while movers stay on the liquid floor.
+    Enable on the mini after Monday barebones (name-finding 9/27).
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     src = str(source or "").strip().lower()
     if src.startswith("momentum") and cfg.get("ai_watch_momentum_min_price") is not None:
         try:
             return max(0.0, float(cfg.get("ai_watch_momentum_min_price")))
+        except (TypeError, ValueError):
+            pass
+    if src in _BB_LIVE_SOURCES and cfg.get("ai_watch_bb_live_min_price") is not None:
+        try:
+            return max(0.0, float(cfg.get("ai_watch_bb_live_min_price")))
         except (TypeError, ValueError):
             pass
     try:
@@ -7793,10 +7849,16 @@ def _spread_gate_max(source, cfg: dict | None) -> float:
     pass a 0.20% gate on tick size alone (1 cent on $3 is 0.33%); exempt
     them for the momentum test so their real cost can be measured. User
     request 2026-09-25. Other sources keep the gate.
+
+    ai_watch_bb_live_spread_exempt: same for LIVE callout seats (seat only;
+    the −50 arm still sees tape quality).
     """
     cfg = cfg if isinstance(cfg, dict) else {}
-    if (str(source or "").strip().lower().startswith("momentum")
+    src = str(source or "").strip().lower()
+    if (src.startswith("momentum")
             and bool(cfg.get("ai_watch_momentum_spread_exempt", False))):
+        return 0.0
+    if src in _BB_LIVE_SOURCES and bool(cfg.get("ai_watch_bb_live_spread_exempt", False)):
         return 0.0
     try:
         return float(cfg.get("ai_watch_max_sip_spread_pct", 0) or 0)

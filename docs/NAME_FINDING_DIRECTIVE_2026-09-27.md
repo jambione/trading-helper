@@ -1,8 +1,9 @@
 # Name-finding prime directive and 9/27 findings — 2026-09-27
 
 Written Sunday 2026-09-27 so that Claude or AGY can pick up today's work cold.
-Branch `master-mac`. Everything in the findings section was read-only: no code,
-config, or restart changes were made today.
+Branch `master-mac`. Findings sections are read-only studies: no live config,
+restart, or trading changes. Helper scripts for the longer-holds follow-ups
+live under `tools/studies/`.
 
 ---
 
@@ -92,14 +93,18 @@ Commit `97cddec`; doc `docs/studies/MOMENTUM_RUNWAY_2026-09-27.md`; script
     0 act as +50%.
   - Only about 21% of premarket momentum names are in the $20–100 band at the
     open.
-- **Proposed fixes (NOT built):**
-  - Ignore `src=="book"` rows in the momentum seeders, or keep the first
-    proposer's label.
-  - Use a live SIP/IEX price before 9:30 and treat premarket RVOL as unknown.
-  - Log the silent pct skip.
-  - Fix the `or 50.0` fallback.
-- **Recommended timing:** after the Monday 9/28 barebones verdict, so that
-  Monday stays a clean comparison with Friday. Jonathan has not decided.
+- **Fixes built in code (enable band after Monday barebones):**
+  - Momentum / mom_open / soft-seed momentum **skip `src=="book"`** dashboard
+    echoes so first-seed labels stay with the real proposer.
+  - Premarket RVOL near 0 is treated as **unknown** (abstain) instead of
+    hard `thin_rvol` on mom_open.
+  - Silent mom_open pct skips now `_note_seed_drop` as `pct_missing` / `pct_low`.
+  - `_cfg_float` so `ai_watch_min_pct_change=0` is not rewritten to 50.
+  - New knobs (default null/off): `ai_watch_bb_live_min_price`,
+    `ai_watch_bb_live_spread_exempt` — set on the mini **after** Monday
+    barebones (e.g. min_price 2.0, spread_exempt true) so Monday stays a
+    clean Friday compare. Movers/momentum stay on the live $20 floor until
+    separately decided.
 
 ### (d) Sub-$20 premarket panel names, 9:30–11:00 ET, with real SIP spreads
 
@@ -128,7 +133,7 @@ multi-month momentum, post-earnings drift, overnight versus intraday returns,
 and catalysts. The AI catalyst shadow logger starts Monday 9/28 at 08:45 and
 12:15 ET and will run for 6–8 weeks.
 
-## 5. DONE (9/27): five-pillar study and Discord squeeze-levels study
+## 5. DONE (9/27): five-pillar study, Discord squeeze-levels, premarket five-pillars, longer holds
 
 ### (a) Five pillars: no capturable runway in any cell
 
@@ -163,11 +168,53 @@ Bob's room, 9/1-9/25 (18 sessions), with SIP bars and quotes.
   -1.9%. The only faint lead is the VOLUME category at a +1.9% median close vs open
   (54% green, n=80). This is not significant on its own.
 
+## 5b. DONE (9/27 later): premarket five-pillars — still no edge; paid SIP not justified
+
+Doc [`docs/studies/PREMARKET_FIVE_PILLARS_2026-09-27.md`](studies/PREMARKET_FIVE_PILLARS_2026-09-27.md);
+script `tools/studies/premarket_five_pillars_study.py`. Premarket-bar candidates (11,232 name-days;
+39% missed by daily bars), 288 cells × 5 entries × 7 exits on historical SIP.
+
+- **No P1 cell is net-positive in both halves.** Gross 15-minute drift is already negative for most
+  cells (median about −105 bp). Net is about minus the spread (−150 to −450 bp).
+- Strict premarket five pillars: ~4.8 names/day; P1 H15 net −128 / −324 bp (A/B). Holding to 09:35
+  is worse. Tradeable subsets (spread ≤100 bp & dv5 ≥ $50k) still lose.
+- A handful of P2 breakout cells print net>0 in both halves with test t ≈ 0.1 — noise.
+- **Do not buy paid live SIP to trade these names.** Historical SIP already shows no capturable edge.
+
+## 5d. DONE (9/27 later): Bullish Bob LIVE callouts — same story as the levels
+
+Doc [`docs/studies/BB_LIVE_CALLOUTS_2026-09-27.md`](studies/BB_LIVE_CALLOUTS_2026-09-27.md);
+script `tools/studies/bb_live_callouts_study.py`. Archive: mini `ai_reports/bb_live.jsonl`
+(1,730 calls, 34 sessions).
+
+- Buying the next SIP minute at the LIVE call timestamp loses after costs on actionable,
+  lean-in, and first-call-of-day buckets (net 15m roughly −100 to −330 bp; both halves).
+- Gross is about flat. Call vs random later minute on the same name: no lift (t ≈ 0).
+- Median MFE30 ~+800 bp and MAE30 ~−850 bp — volatility without a selective entry.
+- Keep callouts as a **seed / attention** source only. Do not arm on the call minute.
+
+## 5c. DONE (9/27 later): longer holds — only overnight momentum, and only at auction fills
+
+Doc [`docs/studies/LONGER_HOLDS_2026-09-27.md`](studies/LONGER_HOLDS_2026-09-27.md);
+script `tools/studies/longer_holds_study.py` plus `lh_earn_overnight.py` / `lh_auction_probe.py`.
+
+- On 2016–2026 daily SIP, **nothing beats SPY after realistic costs out of sample** except overnight
+  holding of top-20 12-1 momentum liquid names: ~16 bp/night gross (stable IS/OOS), survives at
+  ≤2 bp/side auction fills, dies at modelled 15:55/09:35 quoted spreads (~27 bp round trip).
+- Dropping earnings-flagged names (OOS) cuts the edge only mildly (16.1 → 14.3 bp/night).
+- News-flagged PEAD and gap-and-go lose to SPY on net−SPY in every OOS cell.
+- Auction probe: continuous NBBO mid vs official open/close is tens to hundreds of bp — not a fill
+  proof. **Do not change the live desk** until a real MOC/MOO fill pilot.
+
 ## 6. NEXT STEPS and open decisions for Jonathan
 
-- When to ship the seeding fixes in §4(c).
-- Whether to widen the band for five-pillar names, depending on the study.
-- Whether to run the longer-hold daily-data study.
+- **Mon 9/28:** barebones + catalyst logger checks only (no band flip).
+- **After Mon close / Tue pre:** enable on mini
+  `ai_watch_bb_live_min_price=2` and `ai_watch_bb_live_spread_exempt=true`
+  (code already on master-mac once this ships). Pull + kickstart outside RTH.
+  Observe bb_live → seat → armable funnel; keep movers/momentum at $20.
+- Whether to widen momentum/movers band later (separate from LIVE).
+- Whether to run a small MOC/MOO fill pilot for overnight 12-1 momentum.
 - The book server stays in shadow.
 - Whether to delete the 8 merged remote branches.
 

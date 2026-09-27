@@ -1237,6 +1237,11 @@ DEFAULT_CONFIG = {
     # Band floor for the Discord momentum source only (None = ai_watch_min_price).
     "ai_watch_momentum_min_price":     None,
     "ai_watch_momentum_spread_exempt": False,
+    # Trader Bro LIVE callouts: optional cheaper band so volatile early names
+    # can seat while movers stay on the liquid floor. None = shared min_price.
+    # Enable on mini after Monday barebones (set 2.0); leave null until then.
+    "ai_watch_bb_live_min_price":      None,
+    "ai_watch_bb_live_spread_exempt":  False,
     "ai_watch_async_gates": False,
     "ai_watch_min_room_below_hod_pct": 0.0,
     # RTH buy allow-list. "*" / empty / all = every source (current book).
@@ -1669,6 +1674,8 @@ _EFFECTIVE_KEYS = (
     "ai_watch_slot_priority",
     "ai_watch_momentum_min_price",
     "ai_watch_momentum_spread_exempt",
+    "ai_watch_bb_live_min_price",
+    "ai_watch_bb_live_spread_exempt",
     "ai_watch_async_gates",
     "ai_watch_min_room_below_hod_pct",
     "ai_local_trail_peak_give_pct",
@@ -2122,6 +2129,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_slot_priority",
     "ai_watch_momentum_min_price",
     "ai_watch_momentum_spread_exempt",
+    "ai_watch_bb_live_min_price",
+    "ai_watch_bb_live_spread_exempt",
     "ai_watch_async_gates",
     "ai_watch_min_room_below_hod_pct",
     "ai_breakeven_offset_px",

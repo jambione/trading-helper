@@ -1,78 +1,79 @@
-# LONGER HOLDS: do slower edges survive costs? (WORK IN PROGRESS, 2026-09-27)
+# LONGER HOLDS: do slower edges survive costs? (2026-09-27)
 
-**Status: WIP handoff. Usage ran out mid-run. Every number below is PARTIAL and preliminary.** The news-flagged
-PEAD and gap-and-go cells have not run yet because the news fetch was still going. Nothing here has been reviewed for a
-final call. Read-only study: no config edits, no restarts, no pytest.
+**Question.** Weeks of intraday tests found no free-data edge after costs. Do slower, documented edges — 12-1 momentum, short-term reversal, post-earnings / gap drift, overnight holding, daily gap-and-go — survive realistic costs on years of free Alpaca SIP daily bars?
 
-## Plain words (partial)
-- **Nothing beats buy-and-hold SPY on a beta-adjusted basis after realistic costs out of sample.** Only one idea is still standing:
-  overnight holding of 12-1 momentum names. It has a real, stable gross edge of about 16 bp per night (IS 15.5, OOS 16.1).
-  It survives **only if both legs fill in the auctions** (MOC buy, MOO sell) at about 2 bp per side or less. Break-even is about 5 to 6 bp per side.
-  With marketable orders near 15:55 and 09:35 (modelled quoted spreads) it loses badly. The desk has never measured auction fills.
-- 12-1 monthly momentum on the liquid set (ADV at least $50M, top decile, about 90 names) returned **+17.5% CAGR OOS vs SPY +12.3%**, but at beta 1.4.
-  Alpha is +3.3%/yr with t 0.3, which is not significant. With 10 to 20 names it is worse: MDD −50% or more, and no alpha. In the $5M and $20–100 universes it does not beat SPY.
-- Weekly short-term reversal: costs of 20–40%/yr destroy it. Gap/PEAD drift and daily gap-and-go, using the gap/RVOL **proxy** without the news flag,
-  lose net of costs versus SPY OOS in every cell (e.g. gap ≥ 5% & RVOL ≥ 2, 60-day hold: net−SPY −2.5% per trade, t −6.9).
+**Answer.** **Nothing beats buy-and-hold SPY on a beta-adjusted basis after realistic costs out of sample**, except one idea that still needs a fill proof:
+- **Overnight holding of top-20 12-1 momentum names (liquid, ADV ≥ $50M)** has a real, stable gross edge of about **16 bp per night** (IS 15.5, OOS 16.1). It survives **only if both legs fill in the auctions** (MOC buy, MOO sell) at about **2 bp per side or less**. Break-even is about 5–6 bp per side. With marketable orders near 15:55 / 09:35 (modelled quoted spreads, ~27 bp round trip) it loses badly (OOS CAGR −25%).
+- Excluding earnings-flagged names from that overnight book (OOS 2022–2026, Benzinga headline screen) cuts the gross edge from 16.1 → **14.3 bp/night** and 2 bp/side alpha t from 1.9 → 1.5. Earnings nights are not the whole story; the edge is mostly elsewhere.
+- 12-1 *monthly* momentum on the liquid set beats SPY on CAGR but not on alpha (OOS +17.5% vs SPY +12.3%, beta 1.4, alpha +3.3%/yr t 0.3).
+- Weekly short-term reversal is destroyed by turnover costs (~20–40%/yr).
+- News-flagged PEAD and gap-and-go: every OOS cell loses to SPY on net−SPY (typical t −2 to −9). Earnings-flagged gaps look less bad than unfiltered gaps on raw net, and still fail the SPY-relative test.
 
-## Method (done)
-- Data: free Alpaca SIP daily bars, adjustment=all, 2016-01-04 → 2026-09-25, for 6,227 US common stocks
-  (NYSE/NASDAQ/AMEX, `is_common`, ETPs/funds/SPACs/prefs/notes removed by name, ARCA/BATS excluded). The set **includes 820 inactive/delisted
-  assets**, and 16 renamed duplicates were dropped. Survivorship caveat: Alpaca's inactive list only covers delistings from 2018 on
-  (2018: 90, 2019: 217, … 2022: 142), so names delisted in 2016–17 are missing. There is no delisting return: a delisted position is held as cash at its last close.
-- The raw price for the ≥$5 and $20–100 filters comes from monthly RAW bars (raw/adj factor per symbol-month). It is wrong only in the month of a split.
-- Universe: price ≥ $5 and ADV20 ≥ $5M (median about 1,600–2,700 names/day), liquid ≥ $50M (about 900), band $20–100 (about 1,180).
-- **Costs:** Abdi-Ranaldo and Corwin-Schultz were cross-checked against **real SIP NBBO quotes** (300 name-days, 2025–26, at 09:35, 12:30 and 15:55).
-  Both fail at the name level: rank correlation with quoted spread is AR 0.03–0.05 and CS 0.34, and they overstate the mean by 2–3x. The primary model is therefore a
-  quote-calibrated regression, log spread ~ log ADV + log price, fitted separately for 09:35 (open trades) and 15:55 (close trades), with a mean correction and a 1-tick floor.
-  The model's in-sample rank correlation is 0.72. Median quoted spread: liquid 29/8/7 bp at 09:35/12:30/15:55; $5–50M 78/16/12 bp; band 43/12/9 bp.
-  Commission is 0. The calibration uses 2025–26 quotes and is applied to all years (caveat).
-- Validation: IS 2017–2021, OOS 2022–2026-09, plus by-year figures. Metrics: CAGR, Sharpe (rf = 0), MDD, SPY correlation, beta, alpha with t-stat.
-  Per trade: gross, cost, net, win rate, and net−SPY over the same window with t-stat. Multiple-testing tally so far: **102 cells** (the news cells will add more).
-  At that count a t of about 2 is what you would expect by chance.
+**Desk recommendation:** do **not** change the live scalp desk. First run a small paper and live-size pilot that records auction fill vs official open/close. Alpaca paper fills do not prove auction slippage. Default answer without that proof is SPY.
 
-## Partial numbers (OOS 2022–2026-09; SPY CAGR 12.3%, Sharpe 0.76)
-| cell | OOS CAGR | Sharpe | beta | alpha/yr (t) | turnover / cost drag |
+Script: `tools/studies/longer_holds_study.py` (unpack → `lh_*.py` under `/tmp/lh`). Helpers: `tools/studies/lh_earn_overnight.py`, `tools/studies/lh_auction_probe.py`. Raw log: `/tmp/lh/LONGER_HOLDS_raw.txt` on the mini.
+
+## Method
+- **Data.** Free Alpaca SIP daily bars, adjustment=all, 2016-01-04 → 2026-09-25, 6,227 US common stocks (NYSE/NASDAQ/AMEX; ETPs/funds/SPACs/prefs removed; ARCA/BATS excluded). Includes 820 inactive/delisted assets from 2018 on; 2016–17 delistings are missing. No delisting return (held as cash at last close).
+- **Raw price** for ≥$5 and $20–100 filters from monthly RAW bars (wrong only in the month of a split).
+- **Universes.** price ≥ $5 & ADV20 ≥ $5M (~1,600–2,700 names/day); liquid ≥ $50M (~900); band $20–100 (~1,180).
+- **Costs.** Abdi-Ranaldo and Corwin-Schultz fail vs real SIP NBBO (rank corr AR 0.03–0.05, CS 0.34; overstate mean 2–3×). Primary model: quote-calibrated regression `log spread ~ log ADV + log price`, separate fits for 09:35 and 15:55, mean correction, 1-tick floor. In-sample rank corr 0.72. Median quoted spread: liquid 29/8/7 bp at 09:35/12:30/15:55. Commission 0. Calibration uses 2025–26 quotes applied to all years (caveat).
+- **Validation.** IS 2017–2021, OOS 2022–2026-09. Metrics: CAGR, Sharpe (rf=0), MDD, SPY corr/beta/alpha(t). Per trade: gross, cost, net, win, net−SPY(t).
+- **Multiple testing.** 102 cells evaluated (benchmark 3, momentum 9, reversal 6, overnight 18, pead 42, gapgo 24). At that count a t ≈ 2 is what chance can produce.
+- **News.** Alpaca/Benzinga for 2,651 candidate event days (gap≥5% or day-up≥10% on RVOL≥2). Earnings flag: headline match and ≤3 symbols tagged.
+- **Overnight earnings filter.** For each OOS session, top-20 12-1 liquid names; news window close 16:00 → next 09:35; drop names with an earnings-flagged article. 1,186 nights; 471 nights had ≥1 earn hit (739 name-hits).
+- **Auction probe.** 80 liquid name-days in 2025–26: official daily open/close vs first/last SIP NBBO mid near 09:30 / 15:59.
+
+## Compact results (OOS 2022–2026-09; SPY CAGR 12.3%, Sharpe 0.76)
+
+| cell | OOS CAGR | Sharpe | beta | alpha/yr (t) | note |
 |---|---|---|---|---|---|
-| EW universe $5M (benchmark) | 4.9% | 0.33 | 1.07 | −7.1% (−1.6) | 95%/yr, 0.2%/yr |
-| Momentum liquid, top decile | 17.5% | 0.65 | 1.40 | +3.3% (0.3) | 385%/yr, 0.4%/yr |
+| EW universe $5M (benchmark) | 4.9% | 0.33 | 1.07 | −7.1% (−1.6) | |
+| Momentum liquid, top decile (monthly) | 17.5% | 0.65 | 1.40 | +3.3% (0.3) | no significant alpha |
 | Momentum liquid, top 20 | 12.6% | 0.49 | 1.68 | +1.4% (0.1) | MDD −52% |
-| Momentum $5M, top 20 | −7.8% | 0.06 | 1.55 | −17.6% (−1.0) | |
-| Momentum band, top decile | 10.7% | 0.50 | 1.24 | −2.1% (−0.2) | |
-| Reversal liquid decile (1-week) | −10.4% | −0.16 | 1.50 | −25% (−2.6) | 4000%/yr, 20%/yr |
-| Overnight, EW liquid, gross | 7.1% | 0.63 | 0.36 | +2.8% (0.6) | 3.0 bp/night |
-| Overnight, EW liquid, 2 bp/side | −3.2% | −0.21 | | | |
-| **Overnight top-20 12-1 momentum (liquid), gross** | 44.2% | 1.44 | 0.60 | +32.7% (2.7) | 16 bp/night |
-| same, 2 bp/side (auction) | 30.4% | 1.08 | 0.60 | +22.7% (1.9) | ~500 round trips/yr |
-| same, 5 bp/side | 12.1% | 0.55 | | +7.5% (0.6) | |
-| same, modelled quoted spreads (15:55 in, 09:35 out, ~27 bp round trip) | −25.2% | −0.89 | | | |
-| Top-20 day gainers overnight (liquid), 2 bp/side | 7.7% | 0.40 | | +5.0% (0.4) | IS 77% then decayed |
+| Reversal liquid decile (1-week) | −10.4% | −0.16 | 1.50 | −25% (−2.6) | ~20%/yr cost drag |
+| **Overnight top-20 12-1 (liquid), gross** | **44.2%** | **1.44** | **0.60** | **+32.7% (2.7)** | **16.1 bp/night OOS** |
+| same, 2 bp/side (auction) | 30.4% | 1.08 | 0.60 | +22.7% (1.9) | ~500 RT/yr |
+| same, 5 bp/side | 12.1% | 0.55 | | +7.5% (0.6) | ~break-even vs SPY |
+| same, modelled quoted spreads (~27 bp RT) | −25.2% | −0.89 | 0.60 | −33% (−2.7) | |
+| same OOS, drop earn-flagged names, 2 bp/side | 24.7% | | | +17.9% (1.5) | 14.3 bp/night gross |
+| Top-20 day gainers overnight (liquid), 2 bp/side | 7.7% | 0.40 | | +5.0% (0.4) | IS strong, OOS decayed |
 
-Overnight momentum top-20 at 2 bp/side, by year (strategy vs SPY): 2017 +41 (+22), 2018 +4 (−5), 2019 +26 (+31), 2020 +58 (+18), 2021 +25 (+29),
-2022 +3 (−18), 2023 +8 (+26), 2024 +90 (+25), 2025 +21 (+18), 2026 +36 (+14). Dropping the best 1% of nights still leaves 10 bp/night.
-The top-10/top-50, $20–100 band and $5M variants all show a gross edge of 13–16 bp/night. The raw log is `LONGER_HOLDS_partial_raw.txt` in /tmp/lh.
+Overnight top-20 @ 2 bp/side by year (strategy vs SPY %): 2017 +41(+22), 2018 +4(−5), 2019 +26(+31), 2020 +58(+18), 2021 +25(+29), 2022 +3(−18), 2023 +8(+26), 2024 +90(+25), 2025 +21(+18), 2026 +36(+14). Dropping the best 1% of nights still leaves 10 bp/night; 58.9% of nights are green.
 
-## What it would mean for the desk (if the auction-fill assumption holds)
-The desk would stop flattening at 15:50 for these names. It would send MOC buys for about 20 top 12-1-momentum liquid names at the close
-and MOO sells at the next open, every session. That means overnight gap risk on 100% of the book, earnings nights included (not yet excluded),
-and a strategy that is flat intraday. It is a daily, mechanical rebalance with no intraday signals. **Recommendation so far:** do not change the live desk yet.
-First run a small paper and live-size pilot that records auction fill vs. official open/close. Alpaca paper fills do not prove auction slippage.
-Also add an earnings-night filter test. Otherwise the default answer is SPY.
+### News-flagged PEAD / gap (OOS net−SPY)
+Every cell below is **negative** net−SPY out of sample. Earnings-flagged gaps are less bad than unfiltered gaps on raw net, and still lose the relative test.
 
-## Remaining work
-1. Finish the news fetch (`lh_news.py` was at day 200/2651 at 11:04 ET; it is resumable and niced), then rerun `lh_run.py analyze` to get the
-   news-flagged PEAD (earnings) and gap-and-go (news) cells.
-2. Test overnight momentum excluding earnings nights. Look at the MOO/MOC fill realism (the SIP official open vs the first NBBO mid).
-3. Final doc and plain-words verdict. Add the pointers in docs/NAME_FINDING_DIRECTIVE_2026-09-27.md and the HANDOFF.md START HERE block (not done yet).
+| cell | OOS net | OOS net−SPY (t) |
+|---|---|---|
+| PEAD gap≥5% earn, buy close, hold 5d | +0.13% | −0.40% (−3.5) |
+| PEAD gap≥5% earn, buy close, hold 20d | +1.20% | −0.07% (−0.4) |
+| PEAD gap≥5% earn, buy close, hold 60d | +3.36% | −0.58% (−1.6) |
+| PEAD gap≥5% any, buy close, hold 5d | −0.20% | −0.68% (−4.3) |
+| PEAD gap≥5% any, buy close, hold 60d | +1.29% | −2.54% (−6.9) |
+| PEAD gap≥10% earn, buy close, hold 20d | +0.99% | −0.15% (−0.5) |
+| Gap-and-go ≥10% RVOL≥3 news, hold 1d | −0.15% | −0.28% (−1.9) |
+| Gap-and-go ≥10% RVOL≥3 news, hold 20d | −0.63% | −1.75% (−4.8) |
+| Gap-and-go $20–100 any, hold 20d | −0.26% | −1.39% (−3.1) |
 
-## Caches and resume (Mac mini, /tmp/lh)
-`bars_all.pkl` (daily adj), `bars_rawM.pkl` (monthly raw), `panel.npz`, `universe_assets.json`, `assets_raw.json`, `quotes.json`,
-`quote_sample.json`, `news_cands.json`, `news.json` (partial), and the modules `lh_*.py` (bundled in tools/studies/longer_holds_study.py; `unpack` writes them).
-Resume:
-```
-cd /tmp/lh && export PYTHONPATH=/tmp/lh:/tmp:$HOME/repo/trading-helper:$HOME/repo/trading-helper/tools
-pgrep -f lh_news.py || nohup nice -n 15 ~/repo/trading-helper/.venv/bin/python -u lh_news.py >> news.log 2>&1 < /dev/null &
-# when news.log says "done":
-nice -n 15 ~/repo/trading-helper/.venv/bin/python -u lh_run.py analyze > analyze_final.log 2>&1
-```
-Note: the Alpaca key is shared and rate-limited (another study plus the desk), so fetches run at about 4–8 requests/min for us.
-Long jobs started from the Cursor shell die. Start them from the MacBook with `ssh mac-mini-away 'nohup … & disown'`.
+Open entries pay ~3–4× the close-entry cost model and are worse on every PEAD cell.
+
+## Auction fill realism (probe, not proof)
+On 80 liquid 2025–26 name-days, the first SIP NBBO mid after 09:30 sat a median **+83 bp** above the official open print (p90 abs ~474 bp). Near 15:59 the last mid sat a median **+38 bp** above the official close (p90 abs ~489 bp).
+
+That gap is the continuous book versus the auction print. It is **not** measured MOC/MOO slippage. It does say that treating daily open/close as a 2 bp fill is an assumption, not a measurement. True auction slippage needs broker fill logs against the official print.
+
+## What it would mean for the desk (if auction fills hold)
+Stop flattening these names at 15:50. Send MOC buys for ~20 top 12-1 momentum liquid names at the close and MOO sells at the next open, every session. Overnight gap risk on 100% of that book; flat intraday; mechanical daily rebalance; no intraday signals. Earnings-night filtering is optional and only mildly changes the edge.
+
+**Do not ship that** until a fill pilot records live MOC/MOO vs official open/close at the size you would actually trade.
+
+## Caveats
+- Survivorship: Alpaca inactive list starts 2018; earlier delistings missing.
+- Quote-cost model fitted on 2025–26 and applied historically.
+- News/earnings flags are Benzinga-via-Alpaca headlines, not a full earnings calendar.
+- Overnight earn filter covers OOS only (2022+); IS not re-scored with the filter.
+- 102 correlated cells; treat t ≲ 2 as weak.
+
+## Caches (Mac mini `/tmp/lh`)
+`bars_all.pkl`, `bars_rawM.pkl`, `panel.npz`, `universe_assets.json`, `quotes.json`, `news_cands.json`, `news.json` (2,651 days), `earn_nights.json`, `on_sels.json`, `auction_probe.json`, `LONGER_HOLDS_raw.txt`, `results.json`.
