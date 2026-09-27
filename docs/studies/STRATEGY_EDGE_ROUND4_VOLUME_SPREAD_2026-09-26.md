@@ -1,7 +1,7 @@
 # Strategy edge — Round 4: volume, spread and pullback-entry signals on free historical SIP (2026-09-26)
 
 **Verdict up front: no volume, spread or pullback signal clears costs.**
-- 0 of about 430 long cells passed the pre-registered promotion rule. That covers V1–V3 in both universes (280), test P in both universes (144) and S1 (pending). So no holdout was spent on promotions.
+- 0 of about 430 long cells passed the pre-registered promotion rule. That covers V1–V3 in both universes (280), test P in both universes (144) and S1 (15; null, net ≈ −spread in every spread bucket). So no holdout was spent on promotions.
 - The pullback-after-arm idea (test P, the headline) is negative per arm in every L cell except five with 1–8% fill rates. It is negative in every C cell.
 - The dips it buys behave like random dips, with no bounce.
 - Paying for SIP is **not** justified by this evidence. SIP-detected volume signals carry only about 1–2 bp more gross than IEX-detected ones, which is below the spread in every universe.
@@ -151,21 +151,48 @@ What the comparison shows:
 
 ---
 
-## 3. S1 spread / NBBO-imbalance signals (SIP quotes) — PENDING
+## 3. S1 spread / NBBO-imbalance signals (SIP quotes): null
 
 Design, pre-registered:
-- The first 30 LIQUID names, sampled on 59 days (tune[::6], validate[::3], holdout[::3]).
+- The first 30 LIQUID names (mostly 1-tick ETFs and mega caps, **not** the $20–100 C universe), sampled on 59 days (tune[::6], validate[::3], holdout[::3]). Tune+validate is 42 days.
 - One NBBO snapshot per minute, 09:45–15:50, from the last quote in (t−1 s, t]. Entry is one minute later.
 - **S1a:** spread ≤ 0.67 × its trailing 30-snapshot median.
 - **S1b:** bid size / (bid + ask) ≥ 0.75 (3×) or ≥ 0.833 (5×).
+- Full rerun on all 59 quote days on 2026-09-27 (`cells_S1.json`, 120 cells). This replaces the partial 9/26 run.
 
-**Status:**
-- The quote fetch is about 21,600 requests at ≤1/s, roughly 6.3 h. It is still running on the mini (`/tmp/e4_quotes.out`, `ai_reports/edge4/quotes/`), interleaved across tune/validate/holdout so any prefix is balanced. Coverage is about 78% of name-minutes (no quote update inside the 1-second window for the rest).
-- The pipeline has been smoke-tested on the first 3 days. Those numbers are not reported because 2 days per part are too few for day-clustered t.
-- **To finish:**
-  `ssh mac-mini-away 'cd ~/repo/trading-helper && export PYTHONPATH=/tmp:$PWD:$PWD/tools:$PWD/tools/studies; nice -n 15 .venv/bin/python /tmp/edge4_study.py S1 && .venv/bin/python /tmp/edge4_report.py S1'`
-  Scripts are also in tools/studies/.
-- **Prior expectation:** the top-30 names are mostly 1-tick-spread ETFs and mega caps. S1a can only fire on multi-tick names, and both signals would need more than about 1–3 bp of gross.
+**Verdict: null.** 0 of 15 long cells were promoted. Across the 30-minute cells, gross is +0.5 to +1.0 bp, the modeled spread is 2.6–3.0 bp, and net is −1.6 to −2.3 bp. No cell beats the random same-name, same-hour baseline (|t_excess| ≤ 0.6). This confirms Claude's prior finding: gross is about 0, so net is about minus the spread.
+
+Tune+validate pooled, long, bp per trade (t is day-clustered):
+
+| signal | hold | n | gross | spread | net (t) | random baseline | excess (t) |
+|---|---|---|---|---|---|---|---|
+| S1a narrow | 30 | 11,694 | +0.5 | 2.8 | −2.3 (−2.67) | −2.3 | +0.1 (+0.07) |
+| S1b imb ≥3× | 30 | 18,205 | +0.9 | 3.0 | −2.1 (−2.77) | −2.4 | +0.3 (+0.41) |
+| S1b imb ≥5× | 30 | 11,356 | +1.0 | 2.6 | −1.6 (−1.93) | −2.0 | +0.3 (+0.39) |
+| S1b imb ≥5× | 120 | 8,557 | +5.6 | 2.8 | +2.8 (+0.88) | +2.3 | +0.5 (+0.13) |
+| S1b imb ≥5× | eod | 11,895 | +7.9 | 2.6 | +5.3 (+1.21) | +4.2 | +1.1 (+0.26) |
+
+- **The 120-minute and to-15:50 positives are market drift, not signal.** Random entries in the same name and hour earn about the same (+1.2 to +4.2). Excess stays ≤ 1.1 bp with t < 0.6, and the sign flips between tune (+10 to +12 at eod) and validate (−2.6 to −3.8).
+- **Short mirror:** no cell with t ≥ 2.
+
+**By quoted spread at decision** (post-hoc, info only; 30-minute hold, tune+validate, `/tmp/edge4_s1_buckets.py`). net = gross − modeled spread:
+
+| signal | spread bucket | n | gross | spread (model / quoted) | net (t) |
+|---|---|---|---|---|---|
+| all minutes (baseline) | <1 bp | 104,949 | +0.9 | 0.9 / 0.5 | +0.1 (−0.23) |
+| all minutes (baseline) | 2–5 bp | 85,985 | +0.9 | 3.9 / 3.2 | −3.0 (−3.48) |
+| S1a narrow | <1 bp | 6,110 | +0.5 | 1.2 / 0.5 | −0.6 (−0.72) |
+| S1a narrow | 2–5 bp | 2,358 | +0.7 | 5.5 / 3.1 | −4.8 (−4.35) |
+| S1b imb ≥3× | <1 bp | 5,578 | +1.3 | 0.9 / 0.5 | +0.4 (+0.19) |
+| S1b imb ≥3× | 1–2 bp | 5,301 | −0.0 | 2.0 / 1.5 | −2.0 (−2.51) |
+| S1b imb ≥3× | 2–5 bp | 4,795 | +1.5 | 4.0 / 3.2 | −2.4 (−2.61) |
+| S1b imb ≥3× | 5–10 bp | 2,000 | +0.8 | 6.8 / 6.9 | −6.0 (−5.69) |
+| S1b imb ≥5× | <1 bp | 3,968 | +1.3 | 0.8 / 0.5 | +0.5 (+0.27) |
+| S1b imb ≥5× | ≥10 bp | 247 | −0.5 | 11.7 / 13.4 | −12.2 (−3.10) |
+
+- In every bucket gross is 0 to +1.5 bp, whatever the spread, so net falls by roughly one spread per bucket.
+- The only positive-net buckets are the sub-1 bp names (S1b +0.4 / +0.5, t ≤ 0.3). Unconditional minutes in that bucket earn the same (+0.1 net, +0.9 gross), so this is not an edge.
+- Raw output is appended to the `_raw.txt` file.
 
 ---
 
