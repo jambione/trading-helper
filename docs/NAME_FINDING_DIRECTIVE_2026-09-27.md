@@ -128,27 +128,40 @@ multi-month momentum, post-earnings drift, overnight versus intraday returns,
 and catalysts. The AI catalyst shadow logger starts Monday 9/28 at 08:45 and
 12:15 ET and will run for 6–8 weeks.
 
-## 5. IN PROGRESS: five-pillar criteria study
+## 5. DONE (9/27): five-pillar study and Discord squeeze-levels study
 
-The study was running on the mini as of Sunday 9/27 at about 06:05 ET, with
-working files in `/tmp` on the mini.
+### (a) Five pillars: no capturable runway in any cell
 
-- **Method:** rebuild candidates from free Alpaca historical SIP daily and
-  minute bars (6–12 months). Float comes from `float_feed`, and news comes
-  from Alpaca news (pass the symbols as a comma-separated string). Record the
-  first time each name qualifies. Measure 9:30–11:00 ET outcomes (the −50
-  cross, a random minute, and a buy at the qualify time), net of the real SIP
-  spread.
-- **Grid:**
-  - price $2–5 / $3–8 / $5–10 / $10–20 / $2–20;
-  - gain ≥10% / 20% / 30%;
-  - RVOL ≥2 / 5 / 10;
-  - float <10M / 20M / 50M / any;
-  - catalyst yes / no / any.
-  Train and test on alternate days.
-- **Expected output:** `docs/studies/FIVE_PILLARS_2026-09-27.md` plus a script
-  under `tools/studies/`. If that doc does not exist on `master-mac`, the study
-  did not finish and should be rerun from this method.
+Commit `9f046aa`; doc [`docs/studies/FIVE_PILLARS_2026-09-27.md`](studies/FIVE_PILLARS_2026-09-27.md);
+script `tools/studies/five_pillars_study.py`.
+
+- 540 threshold cells were tested (price x gain x RVOL x float x catalyst) on 12 months
+  of SIP data. None is positive out of sample.
+- The strict five pillars ($2-20, >=10%, >=5x RVOL, float <10M, news) give about
+  6.9 names a day. 82% of them qualify premarket, with a median qualify time of 07:41 ET.
+  So the names can be found early.
+- But net is about minus the spread: roughly zero drift is left after they qualify.
+- Low float adds no drift and doubles the spread (median 158 bp for <10M vs
+  about 90 bp overall). It is the most damaging pillar for net.
+
+### (b) Discord "Squeeze Potential Alert" levels: buying the break loses
+
+Doc [`docs/studies/DISCORD_SQUEEZE_LEVELS_2026-09-27.md`](studies/DISCORD_SQUEEZE_LEVELS_2026-09-27.md);
+script `tools/studies/discord_squeeze_levels_study.py`. It used 191 alerts from Bullish
+Bob's room, 9/1-9/25 (18 sessions), with SIP bars and quotes.
+
+- Buying breaks of the posted levels loses even before costs (at best flat: zero-cost
+  bracket E1 -1.3%, E3 +0.1%; zero-cost 30-minute hold negative for every entry). After the real SIP
+  spread plus 1 cent it loses about -2.3% to -3% a trade with the room's own bracket, and
+  more with a 30-minute hold. Every level entry did worse than a random minute on the same name.
+  Both alternate-day halves are negative, although 18 days is a weak check.
+- The levels sit far above the price. Price was below L1 at 187 of 188 alerts
+  (median -32%), and L1 printed before 10:30 only 36 times.
+- The free IEX feed cannot see these names premarket. There were zero IEX bars before
+  08:00 ET on all 190 name-days, and IEX volume is 0.6% of SIP from 06:30 to 09:30.
+- Nightly watchlists find volatility, not direction. The next-day median close vs open is
+  -1.9%. The only faint lead is the VOLUME category at a +1.9% median close vs open
+  (54% green, n=80). This is not significant on its own.
 
 ## 6. NEXT STEPS and open decisions for Jonathan
 

@@ -3,9 +3,19 @@
 > time. Entries and exits stay as they are; all effort goes into name finding
 > and early seeding for 9:30–11:00 ET. Read
 > [`docs/NAME_FINDING_DIRECTIVE_2026-09-27.md`](docs/NAME_FINDING_DIRECTIVE_2026-09-27.md)
-> for the criteria, the 9/27 findings, the in-progress five-pillar study, and
+> for the criteria, the 9/27 findings, the finished five-pillar and Discord studies, and
 > the Monday 9/28 checks. The latest session handoff before it is
 > `docs/HANDOFF_2026-09-26.md`. The rest of this file is the 2026-08-26 record.
+>
+> **9/27 findings (plain words):** the five-pillar name criteria find names
+> early (about 6.9 a day, 82% premarket, median qualify 07:41 ET), but none of
+> 540 cells is positive out of sample. Net is about minus the spread with about
+> zero drift left, and low float doubles the spread
+> ([`docs/studies/FIVE_PILLARS_2026-09-27.md`](docs/studies/FIVE_PILLARS_2026-09-27.md)).
+> Buying breaks of the Discord room's posted squeeze levels loses even before
+> costs (at best flat before costs; about -2% to -3% a trade after the real spread). Free IEX has zero premarket bars before 08:00 ET on those names. The
+> watchlist VOLUME category is only a faint +1.9% median lead (n=80)
+> ([`docs/studies/DISCORD_SQUEEZE_LEVELS_2026-09-27.md`](docs/studies/DISCORD_SQUEEZE_LEVELS_2026-09-27.md)).
 
 # Desk state — 2026-08-26
 
