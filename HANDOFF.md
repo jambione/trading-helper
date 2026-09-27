@@ -1,3 +1,12 @@
+> **START HERE (2026-09-27): name-finding is the prime directive.** Profit comes
+> from serving the best possible names to the book, early and at the right
+> time. Entries and exits stay as they are; all effort goes into name finding
+> and early seeding for 9:30–11:00 ET. Read
+> [`docs/NAME_FINDING_DIRECTIVE_2026-09-27.md`](docs/NAME_FINDING_DIRECTIVE_2026-09-27.md)
+> for the criteria, the 9/27 findings, the in-progress five-pillar study, and
+> the Monday 9/28 checks. The latest session handoff before it is
+> `docs/HANDOFF_2026-09-26.md`. The rest of this file is the 2026-08-26 record.
+
 # Desk state — 2026-08-26
 
 Replaces `GROK_HANDOFF.md`. Written for someone with none of the chat that
