@@ -194,7 +194,12 @@ _FINGERPRINT_KEYS = (
     "ai_watch_momentum_spread_exempt",
     "ai_watch_async_gates",
     "ai_watch_min_room_below_hod_pct",
-    # Second arm. Changes who gets bought when the square is absent.
+    # Square/triangle product vs −50 mid-rise rollback.
+    "ai_watch_exh_square_arm",
+    "ai_watch_exh_heating_with_square",
+    "ai_watch_square_min_count",
+    "ai_watch_square_max_age_sec",
+    "ai_watch_exh_mid_rise_arm",
     # Who may buy. "*" and "momentum,movers" are different regimes.
     "ai_watch_arm_sources",
     # Dead-trade is a time-stop, so it decides holds the same way the

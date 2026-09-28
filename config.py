@@ -39,11 +39,13 @@ DEFAULT_CONFIG = {
     "cm_rsi_buy_max":   10.0,  # line at the bottom of the CM RSI pane
     # Desk buy = MACD bullish cross with wide line separation (gap).
     "ai_watch_tv_exh_rsi": False,
-    # Dual-%R overbought semantics (TV red ■: both lines OB) for
-    # is_overbought and the left_overbought exit; false = fast line only.
-    # The square ENTRY arm this once switched on was retired; the exits in
-    # ai_positions.py still read this key.
+    # Dual-%R OB+tight square ENTRY (TV red ■) and dual-line OB for exits.
+    # Live product: square on, mid-rise off. Min consecutive square polls
+    # before open; max age refuses late climax entries.
     "ai_watch_exh_square_arm": True,
+    "ai_watch_exh_heating_with_square": False,
+    "ai_watch_square_min_count": 2,
+    "ai_watch_square_max_age_sec": 60.0,
     # Heating may arm only when prints rose over this many seconds.
     # 0 disables. Square ■ is not gated by this.
     "ai_watch_heating_price_rise_sec": 0.0,
@@ -778,7 +780,7 @@ DEFAULT_CONFIG = {
     "ai_exit_left_overbought": True,
     # Dual leave-OB must persist this long before flatten (APLD flicker guard).
     # Cap enforced in code at 15s — must stay ≪ 30s (MARA-class lag).
-    "ai_exit_left_overbought_confirm_sec": 3.0,
+    "ai_exit_left_overbought_confirm_sec": 1.0,
     # If slow %R cannot refresh and is older than this while fast has left OB
     # (and we already latched dual OB), fire triangle rather than wait on trail.
     "ai_exit_dual_slow_max_age_sec": 45.0,
@@ -1204,8 +1206,8 @@ DEFAULT_CONFIG = {
     # then market for the remainder after the wait. 0 = plain market.
     "ai_exit_limit_collar_pct":        0.0,
     "ai_exit_limit_collar_wait_sec":   2.0,
-    # ONE arm: fast %R crosses up through the level with the slow line
-    # rising; replaces square / triangle / heating when on. Off by default.
+    # Rollback / measure lane: fast %R −50 cross. Off while square/triangle
+    # is the live product. Exclusive when on (square/heating not consulted).
     "ai_watch_exh_mid_rise_arm":       False,
     "ai_watch_mid_rise_level":         -50.0,
     "ai_watch_mid_rise_max_age_sec":   60.0,
@@ -1652,6 +1654,9 @@ def validate_ai_config(cfg: dict) -> list[str]:
 # "hybrid arm"); this is the resolved set the process is actually running.
 _EFFECTIVE_KEYS = (
     "ai_watch_exh_square_arm",
+    "ai_watch_exh_heating_with_square",
+    "ai_watch_square_min_count",
+    "ai_watch_square_max_age_sec",
     "ai_watch_heating_price_rise_sec",
     "ai_watch_heating_min_rvol",
     "ai_watch_heating_admit_max_tape_age_sec",
@@ -1989,6 +1994,9 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_left_ob_exempt_min_hold",
     "ai_dual_tranche_triangle_exit",
     "ai_watch_exh_square_arm",
+    "ai_watch_exh_heating_with_square",
+    "ai_watch_square_min_count",
+    "ai_watch_square_max_age_sec",
     "ai_watch_heating_price_rise_sec",
     "ai_watch_heating_min_rvol",
     "ai_watch_heating_admit_max_tape_age_sec",

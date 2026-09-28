@@ -1,34 +1,28 @@
-"""book_server — ranked Movers+Trending+Research book (shadow or live).
+"""book_server — ranked seed book hunting names entering the square zone.
 
 Replaces the soft-seed / momentum / Discord intake tangle when
 ``ai_book_server_mode`` is ``live``. Default is ``shadow``: builds its own
 ranked queue, logs would-have-done decisions, places no orders.
 
-Ranking (docs/RUNWAY_STUDY_2026-09-24.md + NAME_QUALITY_RERUN correction),
-using only inputs the live candidate rows actually carry:
+Square/triangle product ranking (enter dual-OB+tight ■, exit leave-OB ▼):
 
     runway_score =
-        1.5 * tanh(day_chg_pct / 8)    # mild; no hard kink (symbol-day n thin)
+        1.5 * tanh(day_chg_pct / 8)
       + 0.5 * (mins_open < 90)
       + 0.5 * (source == movers)
       + pace_term(volume pace)         # soft-cap ~4x; ignored before ~09:46
 
-    seat_priority = runway_score + 2 * closeness_to_−50
+    seat_priority = runway_score + 2.5 * closeness_to_square(fast, slow)
 
-Rows with a known fast %R rank ahead of rows without one: the arm cannot fire
-on a name with no %R, and scoring its closeness as 0 would rank it on a number
-that does not exist.
+``closeness_to_square`` peaks on dual-OB+tight squares, then pre-square
+(approach band + tight + rising), then names warming toward the zone.
+Supply covers movers / trending / research / momentum (and AI seed tags).
 
-Dropped until a live source exists: the study's used range, EMA9 slope,
-distance below HOD and below the 30-minute swing high. No candidate row
-carries them and nothing live computes them (they need intraday bars per
-candidate); the first build scored them as 0 on every row.
+Rows with both %R lines known rank ahead of rows missing a line: the square
+arm cannot fire without dual readings.
 
-Volume pace is the study's measure (SIP volume so far vs the stock's own
-20-day SIP normal). It comes from ``rvol_pace_sip`` (stamped on seated
-records, cached per process) or, for movers rows, the screener's ``rvol``,
-which is the same statistic. Trending's rvol is an IEX ratio and is not used.
-Pace is a ranking input only (``ai_watch_min_rvol_pace`` stays 0).
+Volume pace is SIP day volume vs the name's own 20-day SIP normal when
+available (``rvol_pace_sip`` or movers ``rvol``). Trending IEX rvol is not used.
 """
 from __future__ import annotations
 
@@ -45,8 +39,11 @@ log = logging.getLogger("book_server")
 ET = ZoneInfo("America/New_York")
 _ROOT = Path(__file__).resolve().parent
 
-# Sources the server accepts. Everything else is retired as intake when live.
-SUPPLY_SOURCES = frozenset({"movers", "trending", "research", "agy", "xai", "grok"})
+# Sources the server accepts across desk seeds when hunting square setups.
+SUPPLY_SOURCES = frozenset({
+    "movers", "trending", "research", "agy", "xai", "grok",
+    "momentum", "mom", "mom_open", "bb_live", "bro", "stocktwits", "st",
+})
 
 # Settings the live book-server path retires (documented for the night report).
 RETIRED_WHEN_LIVE = (
@@ -64,7 +61,7 @@ RETIRED_WHEN_LIVE = (
 
 _PACE_SOFT_CAP = 4.0
 _PACE_FLOOR = 1.64
-_CLOSENESS_W = 2.0
+_CLOSENESS_W = 2.5
 _MORNING_MINS = 90
 _PACE_READY_MIN = 9 * 60 + 46  # ~09:46 ET — SIP pace not served earlier
 _SHADOW_HEARTBEAT_SEC = 60.0
@@ -136,20 +133,66 @@ def pace_term(rvol_pace: float | None) -> float:
 
 
 def closeness_to_cross(fast_pctr: float | None, level: float = -50.0) -> float:
-    """Higher as fast %R approaches ``level`` from below and is rising-ready.
-
-    Below level: score rises as we near it (distance shrinks).
-    Above level: already crossed — small residual credit that fades.
-    """
+    """Legacy −50 proximity (kept for tests / mid-rise rollback ranking)."""
     if fast_pctr is None:
         return 0.0
     f = float(fast_pctr)
     if f <= level:
-        # −100 → 0, −50 → 1
         span = max(1.0, level - (-100.0))
         return max(0.0, min(1.0, (f - (-100.0)) / span))
-    # Past the cross: fade from 1 toward 0 over the next 20 pts.
     return max(0.0, 1.0 - (f - level) / 20.0)
+
+
+def closeness_to_square(
+    fast_pctr: float | None,
+    slow_pctr: float | None = None,
+    *,
+    thr: float = 20.0,
+    pre_thr: float = 35.0,
+    tight_max: float = 15.0,
+    rising: bool | None = None,
+    slow_rising: bool | None = None,
+) -> float:
+    """Higher as dual %R enters the square / pre-square zone.
+
+    1.0 = dual OB + tight (square ■)
+    ~0.5–0.95 = pre-square (both in approach band, tight, rising)
+    lower = warming toward the zone or wide-gap heaters
+    """
+    if fast_pctr is None:
+        return 0.0
+    f = float(fast_pctr)
+    s = float(slow_pctr) if slow_pctr is not None else None
+    thr = max(1.0, float(thr))
+    pre_thr = max(thr, float(pre_thr))
+    tight_max = max(0.0, float(tight_max))
+    if s is None:
+        # Fast-only: weak credit as it nears the OB band.
+        if f >= -thr:
+            return 0.35
+        span = max(1.0, 100.0 - thr)
+        return 0.25 * max(0.0, min(1.0, (f - (-100.0)) / span))
+    gap = abs(f - s)
+    tight = gap <= tight_max + 1e-9
+    both_ob = f >= -thr and s >= -thr
+    if both_ob and tight:
+        return 1.0
+    if both_ob and not tight:
+        return 0.55  # in OB band but wide (RKLB-class) — seat, don't prefer
+    both_pre = f >= -pre_thr and s >= -pre_thr
+    rising_ok = (rising is True) or (slow_rising is True) or (rising is None and slow_rising is None)
+    if both_pre and tight and rising_ok:
+        lo = min(f, s)
+        span = max(1.0, pre_thr - thr)
+        t = (lo - (-pre_thr)) / span  # 0 at pre edge → 1 at OB edge
+        return 0.55 + 0.40 * max(0.0, min(1.0, t))
+    if both_pre and not tight:
+        return 0.40
+    lo = min(f, s)
+    if lo < -pre_thr:
+        span = max(1.0, 100.0 - pre_thr)
+        return 0.35 * max(0.0, min(1.0, (lo - (-100.0)) / span))
+    return 0.15
 
 
 def runway_score(
@@ -194,6 +237,14 @@ def row_inputs(
     if ind is None and indicators:
         ind = indicators.get(sym) if isinstance(indicators.get(sym), dict) else None
     pctr = _f(ind.get("pctr")) if ind else _f(row.get("pctr"))
+    pctr_slow = _f(ind.get("pctr_slow")) if ind else _f(row.get("pctr_slow"))
+    rising = None
+    slow_rising = None
+    if ind:
+        if "pctr_rising" in ind:
+            rising = bool(ind.get("pctr_rising"))
+        if "pctr_slow_rising" in ind:
+            slow_rising = bool(ind.get("pctr_slow_rising"))
     pace, pace_src = _first(row, "rvol_pace_sip"), "pace_sip"
     if pace is None and paces and sym in paces:
         pace, pace_src = _f(paces.get(sym)), "pace_sip"
@@ -206,7 +257,27 @@ def row_inputs(
         "pace": pace,
         "pace_src": pace_src if pace is not None else None,
         "pctr": pctr,
+        "pctr_slow": pctr_slow,
+        "pctr_rising": rising,
+        "pctr_slow_rising": slow_rising,
     }
+
+
+def _square_params(cfg: dict | None = None) -> tuple[float, float, float]:
+    cfg = cfg or {}
+    try:
+        thr = float(cfg.get("rte_threshold", 20) or 20)
+    except (TypeError, ValueError):
+        thr = 20.0
+    try:
+        pre = float(cfg.get("ai_watch_exh_pre_thr", 35.0) or 35.0)
+    except (TypeError, ValueError):
+        pre = 35.0
+    try:
+        tight = float(cfg.get("rte_confluence_max", 15.0) or 15.0)
+    except (TypeError, ValueError):
+        tight = 15.0
+    return thr, pre, tight
 
 
 def seat_priority(
@@ -216,12 +287,26 @@ def seat_priority(
     mid_rise_level: float = -50.0,
     closeness_w: float = _CLOSENESS_W,
     inputs: dict | None = None,
+    cfg: dict | None = None,
 ) -> float:
-    """Combine runway with proximity to the −50 cross."""
+    """Combine runway with proximity to the dual-%R square zone."""
     got = inputs if inputs is not None else row_inputs(row)
     rs = runway_score(
         day_chg_pct=got["chg"], source=_source(row), rvol_pace=got["pace"], now=now)
-    return rs + float(closeness_w) * closeness_to_cross(got["pctr"], mid_rise_level)
+    thr, pre, tight = _square_params(cfg)
+    # Mid-rise rollback ranking when square arm is off.
+    if cfg and bool(cfg.get("ai_watch_exh_mid_rise_arm", False)) and not bool(
+        cfg.get("ai_watch_exh_square_arm", True)
+    ):
+        close = closeness_to_cross(got["pctr"], mid_rise_level)
+    else:
+        close = closeness_to_square(
+            got["pctr"], got.get("pctr_slow"),
+            thr=thr, pre_thr=pre, tight_max=tight,
+            rising=got.get("pctr_rising"),
+            slow_rising=got.get("pctr_slow_rising"),
+        )
+    return rs + float(closeness_w) * close
 
 
 def filter_supply(rows: list[dict]) -> list[dict]:
@@ -257,6 +342,7 @@ def rank_candidates(
         level = float(cfg.get("ai_watch_mid_rise_level", -50.0) or -50.0)
     except (TypeError, ValueError):
         level = -50.0
+    thr, pre, tight = _square_params(cfg)
     scored = []
     seen: set[str] = set()
     for r in filter_supply(rows):
@@ -265,14 +351,24 @@ def rank_candidates(
             continue
         seen.add(sym)
         got = row_inputs(r, indicators=indicators, paces=paces)
-        pri = seat_priority(r, now=now, mid_rise_level=level, inputs=got)
+        pri = seat_priority(
+            r, now=now, mid_rise_level=level, inputs=got, cfg=cfg)
+        close = closeness_to_square(
+            got["pctr"], got.get("pctr_slow"),
+            thr=thr, pre_thr=pre, tight_max=tight,
+            rising=got.get("pctr_rising"),
+            slow_rising=got.get("pctr_slow_rising"),
+        )
         out = dict(r)
         out["_book_server_priority"] = round(pri, 4)
-        out["_book_server_runway"] = round(
-            pri - _CLOSENESS_W * closeness_to_cross(got["pctr"], level), 4)
+        out["_book_server_runway"] = round(pri - _CLOSENESS_W * close, 4)
+        out["_book_server_square_close"] = round(close, 4)
         out["_book_server_inputs"] = got
         scored.append(out)
+    # Prefer dual-%R known, then priority. Square arm needs both lines.
     scored.sort(key=lambda x: (
+        x["_book_server_inputs"]["pctr"] is not None
+        and x["_book_server_inputs"].get("pctr_slow") is not None,
         x["_book_server_inputs"]["pctr"] is not None,
         float(x.get("_book_server_priority") or 0),
     ), reverse=True)
@@ -354,7 +450,9 @@ def shadow_tick(
                 "source": r.get("source") or r.get("src"),
                 "priority": r.get("_book_server_priority"),
                 "runway": r.get("_book_server_runway"),
-                **r["_book_server_inputs"],
+                "square_close": r.get("_book_server_square_close"),
+                **{k: v for k, v in (r.get("_book_server_inputs") or {}).items()
+                   if k in ("chg", "pace", "pace_src", "pctr", "pctr_slow")},
             }
             for r in would_seat[:12]
         ],

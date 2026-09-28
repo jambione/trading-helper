@@ -24,6 +24,18 @@ def test_closeness_peaks_near_minus_50():
     assert bs.closeness_to_cross(-50) > bs.closeness_to_cross(-30)
 
 
+def test_closeness_to_square_prefers_dual_ob_tight():
+    sq = bs.closeness_to_square(-13.0, -4.0, thr=20, pre_thr=35, tight_max=15)
+    pre = bs.closeness_to_square(
+        -30.0, -28.0, thr=20, pre_thr=35, tight_max=15, rising=True)
+    far = bs.closeness_to_square(-90.0, -85.0, thr=20, pre_thr=35, tight_max=15)
+    wide = bs.closeness_to_square(-13.0, -40.0, thr=20, pre_thr=35, tight_max=15)
+    assert sq == 1.0
+    assert pre > far
+    assert sq > pre
+    assert sq > wide
+
+
 def test_runway_movers_morning_bump():
     # 09:40 ET on an arbitrary day
     from datetime import datetime
@@ -39,23 +51,30 @@ def test_runway_movers_morning_bump():
     assert morning > late  # morning bump
 
 
-def test_rank_prefers_near_cross_with_pace():
+def test_rank_prefers_near_square_with_pace():
     rows = [
         {"symbol": "FAR", "source": "research", "day_chg_pct": 2.0,
-         "indicator": {"pctr": -90.0}, "rvol_pace_sip": 0.5},
-        {"symbol": "NEAR", "source": "movers", "day_chg_pct": 6.0,
-         "indicator": {"pctr": -52.0}, "rvol_pace_sip": 2.0,
-         "dist_hod_pct": -3.0},
-        {"symbol": "MOM", "source": "momentum", "day_chg_pct": 20.0,
-         "indicator": {"pctr": -51.0}, "rvol_pace_sip": 5.0},  # filtered out
+         "indicator": {"pctr": -90.0, "pctr_slow": -88.0}, "rvol_pace_sip": 0.5},
+        {"symbol": "PRE", "source": "movers", "day_chg_pct": 6.0,
+         "indicator": {
+             "pctr": -28.0, "pctr_slow": -30.0,
+             "pctr_rising": True, "pctr_slow_rising": True,
+         }, "rvol_pace_sip": 2.0},
+        {"symbol": "DISC", "source": "discord", "day_chg_pct": 20.0,
+         "indicator": {"pctr": -15.0, "pctr_slow": -12.0}, "rvol_pace_sip": 5.0},
     ]
     from datetime import datetime
     from zoneinfo import ZoneInfo
     now = datetime(2026, 9, 24, 10, 30, tzinfo=ZoneInfo("America/New_York")).timestamp()
-    ranked = bs.rank_candidates(rows, now=now, limit=10)
+    ranked = bs.rank_candidates(rows, now=now, limit=10, cfg={
+        "ai_watch_exh_square_arm": True,
+        "rte_threshold": 20,
+        "ai_watch_exh_pre_thr": 35.0,
+        "rte_confluence_max": 15.0,
+    })
     syms = [r["symbol"] for r in ranked]
-    assert "MOM" not in syms  # momentum not in supply
-    assert syms[0] == "NEAR"
+    assert "DISC" not in syms  # discord not in supply
+    assert syms[0] == "PRE"  # pre-square beats far
 
 
 def test_shadow_tick_writes_log(tmp_path, monkeypatch):

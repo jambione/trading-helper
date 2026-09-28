@@ -218,6 +218,9 @@ _BLOCKER_LABELS: dict[str, str] = {
     "wait_mid_rise": "wait -50 cross",
     "mid_rise_stale": "-50 cross stale",
     "mid_rise_lost": "back under -50",
+    "wait_square": "wait ■",
+    "square_confirm": "■ confirming",
+    "overbought": "ready",
     "engine_stale": "engine stale",
     "spread_wide": "spread wide",
     "spread_unknown": "spread ?",
@@ -11535,23 +11538,50 @@ def exhaustion_pct(record: dict) -> float | None:
 
 
 def exh_square_arm_enabled(cfg: dict | None) -> bool:
-    """Dual-%R overbought semantics (TV red ■) for is_overbought and the
-    left_overbought exit. The square ENTRY arm was retired; this switch now
-    only chooses dual-line vs fast-line OB for those readers."""
+    """Dual-%R OB+tight square ENTRY arm (TV red ■) and dual-line OB for exits.
+
+    When on (and mid-rise off): enter only on dual OB + tight after
+    ``ai_watch_square_min_count`` consecutive square polls. Also selects
+    dual-line vs fast-line OB for ``is_overbought`` / leave-OB readers.
+    """
     cfg = cfg if isinstance(cfg, dict) else {}
     return bool(cfg.get("ai_watch_exh_square_arm", True))
 
 
-def exh_mid_rise_arm_enabled(cfg: dict | None) -> bool:
-    """ONE arm: fast %R crosses up through -50 with the slow line rising.
+def exh_heating_with_square(cfg: dict | None) -> bool:
+    """Allow heating fall-through when the square arm misses.
 
-    When on it is the only exhaustion lane — heating is not consulted (the
-    square and oversold-triangle arms it replaced are retired). tools/entry_screen.py, 2026-09-14..22, events
-    after admission: random minute 51.5% +1%-before--1%, mid_rise 51.0%,
-    square 45.1% (z -2.6), live heating 45.0% (z -4.1). Default off.
+    Off (default): a square miss is a hard refuse — no heating lane.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return bool(cfg.get("ai_watch_exh_heating_with_square", False))
+
+
+def exh_mid_rise_arm_enabled(cfg: dict | None) -> bool:
+    """Fast %R −50 cross arm (rollback / measure lane).
+
+    When on it is the only exhaustion lane — square and heating are not
+    consulted. Live product keeps this off while square/triangle is on.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     return bool(cfg.get("ai_watch_exh_mid_rise_arm", False))
+
+
+def square_min_count(cfg: dict | None = None) -> int:
+    """Consecutive dual-OB+tight polls required before a square open."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        n = int(cfg.get("ai_watch_square_min_count", 2) or 2)
+    except (TypeError, ValueError):
+        n = 2
+    return max(1, n)
+
+
+# {symbol: (consecutive dual-OB+tight count, last_increment_ts)}.
+# Process-local like mid-rise: paint sets _MID_RISE_PEEK and must not advance.
+# should_arm_buy runs twice per buy-ready poll — debounce so one poll = one square.
+_SQUARE_STREAK: dict[str, tuple[int, float]] = {}
+_SQUARE_STREAK_DEBOUNCE_SEC = 0.35
 
 
 # {symbol: (last fast %R seen, ts of the last upward -50 cross)}. Process
@@ -11608,6 +11638,101 @@ def _mid_rise_allows_buy(
     if ind.get("pctr_falling"):
         return False, "exh_falling"
     return True, "mid_rise"
+
+
+def _square_streak_note(
+    sym: str,
+    is_square: bool,
+    *,
+    now: float | None = None,
+) -> int:
+    """Update consecutive square-poll count. Returns current streak (0 if off).
+
+    One poll may call the arm gate twice; increments closer than
+    ``_SQUARE_STREAK_DEBOUNCE_SEC`` reuse the prior count.
+    """
+    sym = str(sym or "").upper()
+    if not sym:
+        return 0
+    if not is_square:
+        _SQUARE_STREAK.pop(sym, None)
+        return 0
+    prev_n, prev_t = _SQUARE_STREAK.get(sym, (0, 0.0))
+    if getattr(_MID_RISE_PEEK, "on", False):
+        return int(prev_n)
+    t = float(now if now is not None else time.time())
+    if prev_t > 0 and (t - float(prev_t)) < _SQUARE_STREAK_DEBOUNCE_SEC:
+        return int(prev_n)
+    n = int(prev_n) + 1
+    _SQUARE_STREAK[sym] = (n, t)
+    return n
+
+
+def _square_exh_allows_buy(
+    record: dict,
+    cfg: dict,
+    *,
+    require_rising: bool,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    """Enter only on TV red-square: both %R OB and tight, min consecutive polls.
+
+    No ``last_heating`` / fast-only heat. Live dual math only (no sticky OB).
+    Requires ``ai_watch_square_min_count`` consecutive dual-OB+tight polls
+    (default 2). Optional ``ai_watch_square_max_age_sec`` refuses late climax.
+    """
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    sym = str(record.get("symbol") or "").upper()
+    both_ob, tight, err = dual_r_ob_tight(record, cfg)
+    if err:
+        _square_streak_note(sym, False)
+        if require_rising and (
+            ind.get("pctr_falling") or exhaustion_state(record, cfg) == "cooling"
+        ):
+            return False, "exh_falling"
+        if bool(cfg.get("ai_watch_require_exhaustion_data", True)):
+            return False, err
+        return False, "exh_not_tight"
+    if ind.get("pctr_falling") or exhaustion_state(record, cfg) == "cooling":
+        _square_streak_note(sym, False)
+        return False, "exh_falling"
+    in_square = bool(both_ob) and bool(tight)
+    if not in_square:
+        _square_streak_note(sym, False)
+        if tight is False:
+            fast = _f_or_none(ind.get("pctr"))
+            slow = _f_or_none(ind.get("pctr_slow"))
+            if fast is not None and slow is not None:
+                gap = abs(float(fast) - float(slow))
+                record["block_detail"] = (
+                    f"exh gap {gap:.1f}>{_rte_confluence_max(cfg):g}")
+            return False, "exh_not_tight"
+        return False, "wait_exh"
+    # Dual OB + tight this poll.
+    t_now = float(now if now is not None else time.time())
+    streak = _square_streak_note(sym, True, now=t_now)
+    if isinstance(record, dict):
+        record["square_streak"] = int(streak)
+        if _f_or_none(record.get("square_since")) is None:
+            record["square_since"] = t_now
+    need = square_min_count(cfg)
+    if streak < need:
+        record["block_detail"] = f"square {streak}/{need}"
+        return False, "square_confirm" if streak >= 1 else "wait_square"
+    # Staleness: refuse if the square episode is already old (late climax).
+    max_sq_age = _f_or_none(cfg.get("ai_watch_square_max_age_sec", 60.0))
+    if max_sq_age is not None and max_sq_age > 0:
+        sq_since = _f_or_none(record.get("square_since"))
+        if sq_since is not None:
+            now_ts = float(now if now is not None else time.time())
+            sq_age = max(0.0, now_ts - float(sq_since))
+            if sq_age >= max_sq_age:
+                record["block_detail"] = (
+                    f"square age {sq_age:.0f}s >= {max_sq_age:.0f}s")
+                return False, "stale_square"
+    if bool(cfg.get("ai_watch_ob_allow_hot", True)) and _hot_ob_source(record):
+        return True, "overbought_hot"
+    return True, "overbought"
 
 
 def _rte_threshold(cfg: dict | None) -> float:
@@ -12109,11 +12234,18 @@ def exhaustion_allows_buy(
             return False, f"pctr_not_live_{src or 'missing'}"
     if tv_exh_rsi_enabled(cfg):
         return _tv_exh_rsi_allows_buy(record, cfg)
-    # One arm (2026-09-23): the fast -50 cross replaces square, triangle and
-    # heating. Exclusive — the heating lane below is not consulted when it is
-    # on. (The square and oversold-triangle entry arms were retired.)
+    # Mid-rise (−50 cross) is exclusive when on — kept as a rollback lane.
+    # Live square/triangle product keeps mid-rise off.
     if exh_mid_rise_arm_enabled(cfg):
         return _mid_rise_allows_buy(record, cfg, now=now)
+    # Square mode (TV red ■): dual-OB + tight, min consecutive square polls.
+    if exh_square_arm_enabled(cfg):
+        sq_ok, sq_why = _square_exh_allows_buy(
+            record, cfg, require_rising=require_rising, now=now)
+        if sq_ok:
+            return True, sq_why
+        if not exh_heating_with_square(cfg):
+            return False, sq_why
     state = exhaustion_state(record, cfg)
     if state == "unknown":
         # Gaining-EXH rule needs a reading. Fallback used to arm blind when

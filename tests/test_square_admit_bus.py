@@ -300,9 +300,13 @@ def test_dead_unknown_evicts_stale_quote_after_its_own_clock(monkeypatch):
 
 
 def test_square_arm_unchanged_smci_rklb():
-    """Admit bus must not loosen square arm gates."""
+    """Admit bus must not loosen square arm gates (dual OB+tight)."""
+    ew._SQUARE_STREAK.clear()
     cfg = {
         "ai_watch_exh_square_arm": True,
+        "ai_watch_exh_mid_rise_arm": False,
+        "ai_watch_exh_heating_with_square": False,
+        "ai_watch_square_min_count": 2,
         "ai_watch_require_exh_rising": True,
         "ai_watch_require_live_pctr": False,
         "ai_watch_tv_exh_rsi": False,
@@ -310,13 +314,19 @@ def test_square_arm_unchanged_smci_rklb():
         "rte_confluence_max": 15,
         "ai_watch_ob_allow_hot": False,
     }
-    smci = {"indicator": {
-        **_ind(fast=-13, slow=-4), "pctr_ob": True, "pctr_tight": True,
-    }}
-    rklb = {"indicator": _ind(fast=-39, slow=-64)}
-    ok, why = ew.exhaustion_allows_buy(smci, cfg)
+    smci = {
+        "symbol": "SMCI",
+        "indicator": {
+            **_ind(fast=-13, slow=-4), "pctr_ob": True, "pctr_tight": True,
+        },
+    }
+    rklb = {"symbol": "RKLB", "indicator": _ind(fast=-39, slow=-64)}
+    t0 = 2_000_000.0
+    ok, why = ew.exhaustion_allows_buy(smci, cfg, now=t0)
+    assert ok is False and why == "square_confirm"
+    ok, why = ew.exhaustion_allows_buy(smci, cfg, now=t0 + 1.0)
     assert ok is True and why == "overbought"
-    ok, why = ew.exhaustion_allows_buy(rklb, cfg)
+    ok, why = ew.exhaustion_allows_buy(rklb, cfg, now=t0 + 2.0)
     assert ok is False and why == "exh_not_tight"
 
 

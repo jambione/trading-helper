@@ -20,6 +20,8 @@ SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
 # caller that touches it.
 ALLOWED = {
     "_MID_RISE_STATE": "decision state; paint is read-only via _MID_RISE_PEEK",
+    "_SQUARE_STREAK": "square consecutive-poll count; paint is read-only via "
+                      "_MID_RISE_PEEK (same peek flag)",
     "_LAST_QUOTE_TS": "decision state (price clock); paint restamps it — open "
                       "question in docs/AFTER_CLOSE_2026-09-25.md item 21",
     "_GAP_CACHE": "data cache",

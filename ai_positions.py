@@ -3052,8 +3052,8 @@ def trail_yields_to_triangle(
     since = _num(pos.get("left_ob_since"))
     t_now = float(now if now is not None else time.time())
     if since is not None and since > 0:
-        # confirm window + 2s manage-race grace
-        if (t_now - float(since)) < (max(0.0, confirm) + 2.0):
+        # confirm window + 1s manage-race grace (square/triangle: liquidate fast)
+        if (t_now - float(since)) < (max(0.0, confirm) + 1.0):
             return True, "left_ob_race"
     else:
         # First sighting of leave on the trail tick — start race, don't sell.
