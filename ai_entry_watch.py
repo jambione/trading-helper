@@ -3539,10 +3539,12 @@ def _track_far_exh_seat(rec: dict, cfg: dict | None, *, now: float) -> None:
     if cls == "square":
         if _f_or_none(rec.get("square_since")) is None:
             rec["square_since"] = float(now)
+        # Latch for leave-OB ▼ paint / exit thesis on the watch book.
+        rec["exh_was_overbought"] = True
     elif cls in ("far", "unknown"):
         rec.pop("square_since", None)
         rec.pop("os_square_since", None)
-    # pre_square: keep any prior square_since.
+    # pre_square: keep any prior square_since / was-OB latch.
 
 
 _DEAD_UNKNOWN_BLOCKS = frozenset({
@@ -4716,6 +4718,18 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "exh_seat_class": (
             str(rec.get("exh_seat_class") or "").strip().lower() or None
         ),
+        "square_streak": (
+            int(rec["square_streak"])
+            if isinstance(rec.get("square_streak"), (int, float))
+            and int(rec.get("square_streak") or 0) > 0
+            else (
+                int(_SQUARE_STREAK.get(sym, (0, 0.0))[0])
+                if int(_SQUARE_STREAK.get(sym, (0, 0.0))[0]) > 0
+                else None
+            )
+        ),
+        "exh_was_overbought": bool(rec.get("exh_was_overbought")),
+        "left_ob_since": _f_or_none(rec.get("left_ob_since")),
         **_exhaustion_wire_fields(rec),
         **_macd_wire_fields(rec),
         **_rsi_wire_fields(rec),
@@ -4966,6 +4980,39 @@ def book_table_rows(
                 by_sym[key]["entry_time"] = float(et) if et is not None else None
             except (TypeError, ValueError):
                 by_sym[key]["entry_time"] = None
+            # Square / triangle paint for open seats.
+            by_sym[key]["exh_was_overbought"] = bool(
+                mpos.get("exh_was_overbought")
+                or by_sym[key].get("exh_was_overbought")
+            )
+            try:
+                lob = mpos.get("left_ob_since")
+                by_sym[key]["left_ob_since"] = (
+                    float(lob) if lob is not None else by_sym[key].get("left_ob_since")
+                )
+            except (TypeError, ValueError):
+                pass
+            mind = mpos.get("indicator") if isinstance(mpos.get("indicator"), dict) else {}
+            if mind:
+                if mind.get("pctr") is not None:
+                    by_sym[key]["pctr"] = _f_or_none(mind.get("pctr"))
+                if mind.get("pctr_slow") is not None:
+                    by_sym[key]["pctr_slow"] = _f_or_none(mind.get("pctr_slow"))
+                if "pctr_ob" in mind:
+                    by_sym[key]["pctr_ob"] = bool(mind.get("pctr_ob"))
+                if "pctr_tight" in mind:
+                    by_sym[key]["pctr_tight"] = bool(mind.get("pctr_tight"))
+                if mind.get("pctr_gap") is not None:
+                    by_sym[key]["pctr_gap"] = _f_or_none(mind.get("pctr_gap"))
+                # Recompute seat class from live dual when open.
+                try:
+                    cls, gap = classify_exh_seat(
+                        {"indicator": mind}, cfg, ind=mind)
+                    by_sym[key]["exh_seat_class"] = cls
+                    if gap is not None:
+                        by_sym[key]["pctr_gap"] = round(float(gap), 2)
+                except Exception:
+                    pass
             try:
                 import ai_positions as _cp2
                 now_h = time.time()

@@ -329,6 +329,10 @@ function _bookRows(book) {
       pctr_ob: !!w.pctr_ob,
       pctr_tight: !!w.pctr_tight,
       pctr_gap: w.pctr_gap != null ? w.pctr_gap : null,
+      exh_seat_class: w.exh_seat_class || null,
+      square_streak: w.square_streak != null ? w.square_streak : null,
+      exh_was_overbought: !!w.exh_was_overbought,
+      left_ob_since: w.left_ob_since != null ? w.left_ob_since : null,
       cm_rsi: w.cm_rsi != null ? w.cm_rsi : null,
       cm_rsi_green: !!w.cm_rsi_green,
       cm_rsi_low: !!w.cm_rsi_low,
@@ -1264,13 +1268,50 @@ const _MACD_BLOCKER_DESCRIPTIONS = {
   'macd_no_recent_cross': 'Wait Cross: Bullish crossover has not occurred within the confirm window',
 };
 
+/** Dual-OB+tight square (■) / pre-square (▢) / leave-OB triangle (▼). */
+function _bookInSquare(r) {
+  if (!r) return false;
+  const cls = String(r.exh_seat_class || '').toLowerCase();
+  if (cls === 'square') return true;
+  return !!(r.pctr_ob && r.pctr_tight);
+}
+
+function _bookSquareGlyph(r) {
+  if (!r) return '';
+  if (_bookTriangleGlyph(r)) return ''; // ▼ owns the cell when leaving OB
+  const cls = String(r.exh_seat_class || '').toLowerCase();
+  if (_bookInSquare(r)) {
+    const need = 2;
+    const streak = Number(r.square_streak);
+    if (Number.isFinite(streak) && streak > 0 && streak < need) return '■…';
+    return '■';
+  }
+  if (cls === 'pre_square') return '▢';
+  return '';
+}
+
+function _bookTriangleGlyph(r) {
+  if (!r) return '';
+  if (r.left_ob_since != null && Number(r.left_ob_since) > 0) return '▼';
+  if (!_bookInSquare(r) && r.exh_was_overbought && !r.pctr_ob) return '▼';
+  return '';
+}
+
+function _bookSqTriPrefix(r) {
+  const tri = _bookTriangleGlyph(r);
+  if (tri) return `${tri} `;
+  const sq = _bookSquareGlyph(r);
+  return sq ? `${sq} ` : '';
+}
+
 /** Status column shows *why we are not long* (blocker), not READY/WATCH. */
 function _bookBlockerLabel(r) {
   if (!r) return '—';
   const phase = String(r.phase || '').toLowerCase();
   if (phase === 'open' || r.is_position) {
     if (_shelfHit(r) && _holdLeft(r) == null) return 'open · SELL';
-    return 'open';
+    const mark = _bookTriangleGlyph(r) || _bookSquareGlyph(r);
+    return mark ? `open · ${mark}` : 'open';
   }
   if (phase === 'submitted') return 'sent';
   if (_bookTapeStale(r) && phase !== 'open') return 'stale quote';
@@ -1294,18 +1335,20 @@ function _bookBlockerLabel(r) {
     return _MACD_BLOCKER_LABELS[code];
   }
 
+  const mark = _bookTriangleGlyph(r) || _bookSquareGlyph(r);
+  const withMark = (lab) => (mark ? `${lab} · ${mark}` : lab);
   // A real refuse (heat low, dead today) wins over leftover "in zone" / ready.
   if (b && !(r.ready) && !['in zone', 'in_zone', 'buy', 'ready'].includes(b.toLowerCase()) && code !== 'in_zone') {
-    return _MACD_BLOCKER_LABELS[b.toLowerCase()] || b;
+    return withMark(_MACD_BLOCKER_LABELS[b.toLowerCase()] || b);
   }
   if (code && !r.ready && !['in_zone', 'placing'].includes(code)) {
-    return _MACD_BLOCKER_LABELS[code] || b || code.replace(/_/g, ' ');
+    return withMark(_MACD_BLOCKER_LABELS[code] || b || code.replace(/_/g, ' '));
   }
   // Armable, not filled — never say "buy" here (that read as an open).
-  if (r.ready || phase === 'ready') return 'ready';
-  if (b) return _MACD_BLOCKER_LABELS[b.toLowerCase()] || b;
-  if (detail) return detail;
-  return 'watching';
+  if (r.ready || phase === 'ready') return withMark('ready');
+  if (b) return withMark(_MACD_BLOCKER_LABELS[b.toLowerCase()] || b);
+  if (detail) return withMark(detail);
+  return withMark('watching');
 }
 
 function _bookBlockerTitle(r) {
@@ -1321,6 +1364,10 @@ function _bookBlockerTitle(r) {
   if (code && !parts.some(p => p.toLowerCase().includes(code.replace(/_/g, ' ')))) {
     parts.push(code.replace(/_/g, ' '));
   }
+  const mark = _bookTriangleGlyph(r) || _bookSquareGlyph(r);
+  if (mark === '▼') parts.push('leave-OB triangle');
+  else if (mark === '■' || mark === '■…') parts.push('dual-OB+tight square');
+  else if (mark === '▢') parts.push('pre-square');
   return parts.join(' — ');
 }
 
@@ -1752,8 +1799,7 @@ function _fmtPr(v) {
   return n.toFixed(1);
 }
 
-/** The book's EXH cell: the 0-100 exhaustion the square arm compares, with
- *  its direction. Slow %R stays in the hover (needs 112 bars). */
+/** The book's EXH cell: square/triangle glyph + 0-100 exhaustion + direction. */
 function _bookExhText(r) {
   if (!r) return '—';
   let ex = r.exhaustion;
@@ -1761,13 +1807,20 @@ function _bookExhText(r) {
       && r.pctr != null && Number.isFinite(Number(r.pctr))) {
     ex = Math.max(0, Math.min(100, 100 + Number(r.pctr)));
   }
-  return _fmtExh(ex, r.exhaustion_state, r.pctr_src);
+  const body = _fmtExh(ex, r.exhaustion_state, r.pctr_src);
+  const prefix = _bookSqTriPrefix(r);
+  return prefix ? `${prefix}${body}` : body;
 }
 
 /** Colour for the EXH cell, off the same state the arrow comes from. */
 function _bookExhClass(r) {
   if (!r) return '';
   if (r.pctr_src === 'sparse_window' && r.exhaustion == null) return '';
+  if (_bookTriangleGlyph(r)) return ' exh--triangle';
+  if (_bookInSquare(r)) return ' exh--square';
+  if (String(r.exh_seat_class || '').toLowerCase() === 'pre_square') {
+    return ' exh--presquare';
+  }
   const state = String(r.exhaustion_state || '').toLowerCase();
   if (state === 'overbought') return ' exh--ob';
   if (state === 'heating') return ' exh--up';
@@ -1779,6 +1832,10 @@ function _bookExhClass(r) {
 function _fmtExhTitle(r) {
   if (!r) return '';
   const bits = ['EXH = 100 + fast %R'];
+  if (_bookTriangleGlyph(r)) bits.unshift('▼ leave-OB triangle (exit)');
+  else if (_bookSquareGlyph(r) === '■…') bits.unshift('■ square confirming (need 2)');
+  else if (_bookSquareGlyph(r) === '■') bits.unshift('■ dual-OB+tight square');
+  else if (_bookSquareGlyph(r) === '▢') bits.unshift('▢ pre-square (approaching)');
   if (r.pctr != null && Number.isFinite(Number(r.pctr))) {
     bits.push(`fast ${Number(r.pctr).toFixed(1)}`);
   }
@@ -1791,8 +1848,13 @@ function _fmtExhTitle(r) {
   if (src && src !== 'live') {
     bits.push(`NOT LIVE (${src}) - range over the bars that existed`);
   }
+  const seat = String(r.exh_seat_class || '').toLowerCase();
+  if (seat) bits.push(`seat ${seat}`);
+  if (r.square_streak != null) bits.push(`streak ${r.square_streak}`);
   if (r.pctr_ob) bits.push('red boxes');
   if (r.pctr_tight) bits.push('tight');
+  if (r.exh_was_overbought) bits.push('was OB');
+  if (r.left_ob_since != null) bits.push('leave-OB pending');
   if (r.pctr_gap != null && Number.isFinite(Number(r.pctr_gap))) {
     bits.push(`gap ${Number(r.pctr_gap).toFixed(1)}`);
   }
