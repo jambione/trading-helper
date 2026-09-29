@@ -130,6 +130,89 @@ def test_stop_rebased_behind_fill_when_ask_shelf_lands_on_fill():
     assert ap.ensure_stop_behind_fill(pos, cfg) is None
 
 
+def test_stop_behind_fill_leaves_raised_shelf_after_under_fill_seed():
+    """AIG: green catch-up above the fill before arm_r must not be yanked."""
+    cfg = _cfg(
+        ai_local_trail_give_r=0.12,
+        ai_local_trail_arm_r=0.06,
+        ai_local_trail_give_max_pct=1.0,
+        ai_local_trail_min_give_px=0.0,
+    )
+    pos = {
+        "entry_price": 74.51,
+        "local_stop_price": 74.07,
+        "risk_per_share": 3.764,
+        "stop_price": 70.746,
+        "mfe_r": 0.042,
+        "last_seen_price": 74.64,
+    }
+    # First tick under the fill stamps the seed; does not move the stop.
+    assert ap.ensure_stop_behind_fill(pos, cfg) is None
+    assert pos["entry_shelf_price"] == pytest.approx(74.07)
+    # Catch-up raised the working stop above the fill while still under arm_r.
+    pos["local_stop_price"] = 74.64
+    assert ap.ensure_stop_behind_fill(pos, cfg) is None
+    assert pos["local_stop_price"] == pytest.approx(74.64)
+
+
+def test_apply_local_trail_sells_raised_shelf_before_arm_r(monkeypatch):
+    """Print through a catch-up shelf above the fill sells before arm_r."""
+    import time as _time
+    now = _time.time()
+    cfg = _cfg(
+        ai_local_trail_arm_r=0.06,
+        ai_local_trail_give_r=0.12,
+        ai_local_trail_entry_catchup_sec=0.0,
+        ai_local_trail_time_decay_enabled=False,
+        ai_exit_min_hold_sec=0.0,
+    )
+    monkeypatch.setattr(ap, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(ap, "_cfg_flag", lambda k, d=False: bool(cfg.get(k, d)))
+    monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
+    monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
+    monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda: False)
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "apply_live_exhaustion", lambda *a, **k: False)
+
+    closed_calls = []
+
+    class _Alp:
+        def cancel_open_orders(self, t):
+            return None
+
+        def close_out(self, t):
+            closed_calls.append(t)
+            return {"order_id": "aig-stop"}
+
+    import sys
+    monkeypatch.setitem(sys.modules, "alpaca_trader", _Alp())
+
+    pos = _pos(
+        symbol="AIG",
+        entry_price=74.51,
+        entry_time=now - 120.0,
+        entry_confirmed_at=now - 120.0,
+        risk_per_share=3.764,
+        local_stop_price=74.64,
+        entry_shelf_price=74.07,
+        last_seen_price=74.64,
+        peak_price=74.665,
+        mfe_r=0.042,
+        trail_prints=[74.64, 74.64],
+        indicator={},
+        features={},
+        exh_was_overbought=False,
+    )
+    events = []
+    exit_why = {}
+    _ch, closed = ap.apply_local_trail("AIG", pos, 74.64, events, exit_why)
+    assert closed is True
+    assert closed_calls == ["AIG"]
+    assert pos["local_stop_price"] == pytest.approx(74.64)
+    assert pos.get("closing_reason") == "local_trail"
+
+
 def test_apply_local_trail_entry_catchup_before_hit(monkeypatch):
     """30s unmoved shelf jumps to last−$0.01 before the stale seed can sell."""
     import time as _time

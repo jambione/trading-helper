@@ -3452,11 +3452,17 @@ def ensure_stop_behind_fill(
     pos: dict[str, Any],
     cfg: dict | None = None,
 ) -> float | None:
-    """Working stop must sit strictly under the fill.
+    """Working stop must sit strictly under the fill — once, at stamp time.
 
     GLND 2026-09-23: ask was $2.87 so the shelf stamped at $2.85, then the
     market fill was $2.85 and the shelf was left on the fill. Raise-only
     never pulled it back, so the first print at the entry sold.
+
+    AIG 2026-09-29: green catch-up raised the shelf above the fill before
+    ``arm_r``, the dashboard painted LAST ≤ shelf · SELL, then this helper
+    yanked the stop back under the fill *before* the hit test — so the print
+    never sold. Once a working shelf has sat under the fill, a later stop
+    at/above the fill is a raise and must be left for the hit test.
 
     Returns the new stop when it moved, else None.
     """
@@ -3472,6 +3478,10 @@ def ensure_stop_behind_fill(
     if loc is None:
         return None
     if float(loc) + 1e-9 < float(entry):
+        # Correct under-fill shelf. Stamp it so a later catch-up raise above
+        # the fill is not mistaken for an ask stamp and yanked before sell.
+        if _num(pos.get("entry_shelf_price")) is None:
+            pos["entry_shelf_price"] = float(loc)
         return None
     # A stop at/above the fill is legal once the trail has armed (BE shelf).
     # Only the ask-stamped shelf that landed on a lower fill gets pulled back.
@@ -3484,6 +3494,10 @@ def ensure_stop_behind_fill(
     # Reading 0 as "never armed" pulled every ratcheted stop (NVDA +0.40R,
     # shelf 20.30 over a 20.00 fill) back under the fill on each tick.
     if arm <= 0 or (mfe is not None and float(mfe) + 1e-9 >= arm):
+        return None
+    # Already had a working under-fill shelf (rebased or seeded correctly).
+    # Current stop at/above the fill is a raise — leave it for the hit test.
+    if _num(pos.get("entry_shelf_price")) is not None:
         return None
     seed = initial_local_stop(
         entry, _risk_basis(pos), cfg, spread_r=_pos_spread_r(pos))
