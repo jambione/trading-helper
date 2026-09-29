@@ -909,10 +909,160 @@ function _paintExtremeOffBook(sectionEl, book) {
   el.hidden = false;
 }
 
+function _etFormat(opts) {
+  try {
+    return new Intl.DateTimeFormat('en-US', opts);
+  } catch (e) {
+    const fallback = { ...opts };
+    delete fallback.hourCycle;
+    fallback.hour12 = false;
+    return new Intl.DateTimeFormat('en-US', fallback);
+  }
+}
+const _etClock = _etFormat({
+  timeZone: 'America/New_York',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+});
+const _etDayFmt = _etFormat({
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+const _DAY_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function _fmtEtClock(ts, day) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  const ms = n > 1e12 ? n : n * 1000;
+  const when = new Date(ms);
+  const clock = _etClock.format(when);
+  // A fill from before today's session (an overnight flatten) needs the date,
+  // or the clock reads as if it happened this morning.
+  let etDay = '';
+  try {
+    const parts = _etDayFmt.formatToParts(when);
+    const y = parts.find(p => p.type === 'year');
+    const m = parts.find(p => p.type === 'month');
+    const d = parts.find(p => p.type === 'day');
+    if (y && m && d) etDay = `${y.value}-${m.value}-${d.value}`;
+  } catch (e) { /* clock alone is still the time */ }
+  if (day && etDay && etDay !== day) {
+    const short = _fmtHistDay(etDay);
+    return short ? `${short} ${clock}` : clock;
+  }
+  return clock;
+}
+
+function _fmtHistPx(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  return `$${n.toFixed(2)}`;
+}
+
+function _fmtHistPl(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '—';
+  const sign = n > 0 ? '+' : n < 0 ? '-' : '';
+  return `${sign}$${Math.abs(n).toFixed(2)}`;
+}
+
+function _fmtHistQty(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  return Math.abs(n - Math.round(n)) < 1e-3 ? String(Math.round(n)) : n.toFixed(2);
+}
+
+function _fmtHistDay(day) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day || ''));
+  if (!m) return '';
+  const month = _DAY_MONTHS[Number(m[2]) - 1];
+  if (!month) return '';
+  return `${month} ${Number(m[3])}`;
+}
+
+/** Day's positions, in the slot under the book. Newest activity first. */
+function _paintDayHistory(sectionEl, book) {
+  if (!sectionEl) return;
+  const root = sectionEl.querySelector('[data-ai-book-day-hist]');
+  const list = sectionEl.querySelector('[data-ai-book-day-hist-list]');
+  const label = sectionEl.querySelector('[data-ai-book-day-hist-label]');
+  if (!root || !list) return;
+  const hist = (book && book.day_history && typeof book.day_history === 'object')
+    ? book.day_history
+    : {};
+  const dayTxt = _fmtHistDay(hist.day);
+  const labelTxt = dayTxt ? `Positions · ${dayTxt}` : 'Positions';
+  if (label && label.textContent !== labelTxt) label.textContent = labelTxt;
+  const rows = Array.isArray(hist.rows) ? hist.rows : [];
+  const day = String(hist.day || '');
+  let sig = '';
+  try { sig = JSON.stringify(rows); } catch (e) { sig = String(rows.length); }
+  if (list.dataset.sig === sig) return;
+  list.dataset.sig = sig;
+  if (!rows.length) {
+    list.innerHTML = '<div class="dh-empty">No positions today</div>';
+    return;
+  }
+  list.innerHTML = rows.map((row) => {
+    const r = row && typeof row === 'object' ? row : {};
+    const qty = _fmtHistQty(r.qty);
+    const pl = _fmtHistPl(r.pl);
+    const plN = Number(r.pl);
+    const plCls = Number.isFinite(plN) && plN > 0
+      ? 'chg-pos'
+      : (Number.isFinite(plN) && plN < 0 ? 'chg-neg' : '');
+    const open = String(r.status || '') === 'open';
+    const entryQty = Number(r.qty);
+    const exits = Array.isArray(r.exits) ? r.exits : [];
+    const entryWhy = String(r.entry_reason || '').trim();
+    const legs = [];
+    legs.push(
+      `<div class="dh-leg" title="Entry">`
+      + `<span class="dh-k">entry</span>`
+      + `<span class="dh-t">${_esc(_fmtEtClock(r.entry_time, day))}</span>`
+      + `<span class="dh-px">${_esc(_fmtHistPx(r.entry_price))}</span>`
+      + `<span class="dh-why">${entryWhy ? _esc(entryWhy) : '—'}</span>`
+      + `</div>`,
+    );
+    exits.forEach((ex) => {
+      const e = ex && typeof ex === 'object' ? ex : {};
+      const eq = Number(e.qty);
+      const partial = Number.isFinite(eq) && Number.isFinite(entryQty)
+        && Math.abs(eq - entryQty) > 0.01;
+      const px = partial
+        ? `${_fmtHistPx(e.price)} ×${_fmtHistQty(e.qty)}`
+        : _fmtHistPx(e.price);
+      const why = String(e.reason || '').trim();
+      legs.push(
+        `<div class="dh-leg" title="Exit">`
+        + `<span class="dh-k">exit</span>`
+        + `<span class="dh-t">${_esc(_fmtEtClock(e.time, day))}</span>`
+        + `<span class="dh-px">${_esc(px)}</span>`
+        + `<span class="dh-why">${why ? _esc(why) : '—'}</span>`
+        + `</div>`,
+      );
+    });
+    return `<div class="dh-pos">`
+      + `<div class="dh-top">`
+      + `<span class="dh-sym">${_esc(String(r.symbol || ''))}</span>`
+      + (qty ? `<span class="dh-qty">${_esc(qty)}</span>` : '')
+      + (open ? '<span class="dh-open">open</span>' : '')
+      + `<span class="dh-pl ${plCls}">${_esc(pl)}</span>`
+      + `</div>`
+      + legs.join('')
+      + `</div>`;
+  }).join('');
+}
+
 function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
   if (!rowsEl) return;
   const rows = _sortBookRows(_bookRows(book));
   try { _paintExtremeOffBook(sectionEl, book); } catch (e) { /* strip is diagnostic */ }
+  try { _paintDayHistory(sectionEl, book); } catch (e) { /* history is display-only */ }
   _announcePositions(rows);
   const nOpen = rows.filter(r => r && r.phase === 'open').length;
   const nReady = rows.filter(r => r && r.phase === 'ready').length;

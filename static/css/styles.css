@@ -2572,6 +2572,100 @@ body.mobile [data-tv-toggle-btn] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Day's positions — the slot the entry/exit legend used to occupy. */
+.panel-ai-watch .ai-book-day-hist {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  padding: 7px 11px 8px;
+  border-top: 1px solid rgba(167, 139, 250, 0.28);
+  background: rgba(20, 16, 36, 0.72);
+  font-variant-numeric: tabular-nums;
+}
+.panel-ai-watch .ai-book-day-hist__label {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #c4b5fd;
+}
+.panel-ai-watch .ai-book-day-hist__list {
+  max-height: 11.5rem;
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.panel-ai-watch .dh-pos {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.panel-ai-watch .dh-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ede9fe;
+}
+.panel-ai-watch .dh-sym { letter-spacing: 0.04em; }
+.panel-ai-watch .dh-qty {
+  font-size: 10px;
+  font-weight: 600;
+  color: #a78bfa;
+}
+.panel-ai-watch .dh-open {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #c4b5fd;
+}
+.panel-ai-watch .dh-pl {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.panel-ai-watch .dh-pl.chg-pos { color: #4ade80; }
+.panel-ai-watch .dh-pl.chg-neg { color: #f87171; }
+.panel-ai-watch .dh-leg {
+  display: grid;
+  grid-template-columns: 2.7rem max-content max-content minmax(0, 1fr);
+  gap: 6px;
+  align-items: baseline;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.panel-ai-watch .dh-k {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8b7ab8;
+}
+.panel-ai-watch .dh-t,
+.panel-ai-watch .dh-px {
+  font-variant-numeric: tabular-nums;
+  color: #ddd6fe;
+}
+.panel-ai-watch .dh-why {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a78bfa;
+}
+.panel-ai-watch .dh-empty {
+  font-size: 11px;
+  color: #8b7ab8;
+}
+body.mobile .panel-ai-watch .ai-book-day-hist__list { max-height: 9rem; }
+@media (max-width: 620px) {
+  .panel-ai-watch .dh-why { white-space: normal; }
+  .panel-ai-watch .dh-leg { column-gap: 4px; }
+}
 
 /* Mobile Book: two lines per row so every field fits without horizontal scroll.
    Line 1 — identity + money: Ticker | State | Last | Entry | P&L

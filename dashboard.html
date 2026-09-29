@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=170" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=171" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -395,6 +395,13 @@
                 </div>
                 <div class="ai-book-extreme-off" data-ai-book-extreme-off hidden
                      title="Desk names at/above the extreme day-move threshold that are not on the book — each with the seed or inclusion reason. Silent miss is a bug."></div>
+                <div class="ai-book-day-hist" data-ai-book-day-hist
+                     title="Today's positions. Entry, each exit, and P&amp;L. Clears at midnight ET.">
+                    <div class="ai-book-day-hist__label" data-ai-book-day-hist-label>Positions</div>
+                    <div class="ai-book-day-hist__list" data-ai-book-day-hist-list>
+                        <div class="dh-empty">No positions today</div>
+                    </div>
+                </div>
             </section>
         </main>
 
@@ -815,7 +822,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=191"></script>
+        <script type="module" src="/static/js/app.js?v=192"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

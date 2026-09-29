@@ -532,6 +532,23 @@ def _positions_payload(
         except (TypeError, ValueError):
             day_pl = None
 
+    # Today's round trips for the strip under the book. Fills come from the
+    # Alpaca account; reasons come from the outcome record. A failure here
+    # must not blank the rest of the wire.
+    try:
+        import day_history as _day_history
+        try:
+            managed_book = ai_positions._load_state()
+        except Exception:
+            managed_book = {}
+        day_hist = _day_history.for_book(
+            now,
+            open_positions=positions if isinstance(positions, dict) else {},
+            managed=managed_book if isinstance(managed_book, dict) else {},
+        )
+    except Exception:
+        day_hist = {"day": "", "rows": []}
+
     return {
         "updated": now,
         "mode": mode,
@@ -552,6 +569,8 @@ def _positions_payload(
         "entry_watch": entry_watch,
         # Unified Watch section: watches + open positions with P&L.
         "entry_book": entry_book,
+        # Day's positions (entry, each exit, P&L). ET day; empty after midnight.
+        "day_history": day_hist,
         # Operator-facing liveness for the AI Watch column stamp.
         "watch_meta": {
             "updated": now,
