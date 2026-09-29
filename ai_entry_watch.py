@@ -11875,9 +11875,9 @@ def _os_streak_note(
 def _os_leave_max_age(cfg: dict | None) -> float:
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
-        age = float(cfg.get("ai_watch_os_leave_max_age_sec", 60.0) or 60.0)
+        age = float(cfg.get("ai_watch_os_leave_max_age_sec", 180.0) or 180.0)
     except (TypeError, ValueError):
-        age = 60.0
+        age = 180.0
     return max(0.0, age)
 
 
@@ -11902,7 +11902,7 @@ def _os_leave_allows_buy(
     |fast − slow| ≤ rte_confluence_max. Needs ``ai_watch_square_min_count``
     consecutive triangle polls (default 2). The open is the leave: a line
     rises back through that level while fast %R is rising, within
-    ``ai_watch_os_leave_max_age_sec`` (default 60). A wide gap while both
+    ``ai_watch_os_leave_max_age_sec`` (default 180). A wide gap while both
     lines are still deep is not a leave.
     """
     ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}

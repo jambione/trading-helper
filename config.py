@@ -50,7 +50,7 @@ DEFAULT_CONFIG = {
     # then a line rises back through that level. On beside the square arm.
     # Getter treats a missing key as off so partial test cfgs stay square-only.
     "ai_watch_exh_oversold_arm": True,
-    "ai_watch_os_leave_max_age_sec": 60.0,
+    "ai_watch_os_leave_max_age_sec": 180.0,
     # Heating may arm only when prints rose over this many seconds.
     # 0 disables. Square ■ is not gated by this.
     "ai_watch_heating_price_rise_sec": 0.0,

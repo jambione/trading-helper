@@ -96,6 +96,28 @@ def test_leave_requires_rising_and_expires():
     assert ok is False and why == "stale_os_leave"
 
 
+def test_live_180s_window_still_arms_two_minutes_after_leave():
+    """Live desk keeps the leave armable for 3 minutes after the leave print."""
+    cfg = _cfg(ai_watch_os_leave_max_age_sec=180.0)
+    t0 = 1_000_000.0
+    ew.exhaustion_allows_buy(_rec("DD", -90, -86), cfg, now=t0)
+    ew.exhaustion_allows_buy(_rec("DD", -90, -86), cfg, now=t0 + 1.0)
+    leave = _rec("DD", -70, -74, rising=True)
+    leave["os_qualified"] = True
+    ok, why = ew.exhaustion_allows_buy(leave, cfg, now=t0 + 2.0)
+    assert ok is True and why == "oversold_leave"
+    later = _rec("DD", -68, -72, rising=True)
+    later["os_qualified"] = True
+    later["left_os_since"] = t0 + 2.0
+    ok, why = ew.exhaustion_allows_buy(later, cfg, now=t0 + 2.0 + 120.0)
+    assert ok is True and why == "oversold_leave"
+    stale = _rec("DD", -68, -72, rising=True)
+    stale["os_qualified"] = True
+    stale["left_os_since"] = t0 + 2.0
+    ok, why = ew.exhaustion_allows_buy(stale, cfg, now=t0 + 2.0 + 181.0)
+    assert ok is False and why == "stale_os_leave"
+
+
 def test_square_still_wins_when_both_arms_on():
     cfg = _cfg()
     rec = _rec("SMCI", -13, -4)
