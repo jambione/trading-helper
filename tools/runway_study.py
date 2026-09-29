@@ -37,6 +37,12 @@ Not a tape: 1-minute bars, no spread, no intra-bar order.
 USAGE (on the mini; needs config/secrets.json)
     python3 tools/runway_study.py [--since 2026-08-04] [--json out.json]
     python3 tools/runway_study.py --since 2026-09-15 --by git_version
+    python3 tools/runway_study.py --since 2026-09-29 --until 2026-09-29 --by arm --list
+
+    --by arm splits fills by the entry arm stamped in arm_why: full square
+    (■), empty square (▢), leave-oversold (▲). --list prints each fill's
+    runway next to its own symbol-day control, so a day with a handful of
+    fills can be read one trade at a time.
 
     --by git_version lists every deploy in the order it first traded, with
     realized R over all its fills and bar runway over those with bars. Today's
@@ -266,6 +272,21 @@ def _subject(ver: str) -> str:
         return ""
 
 
+def arm_kind(r: dict) -> str:
+    """Entry arm from the outcome's arm_why (■ full, ▢ empty, ▲ oversold)."""
+    why = str(r.get("arm_why") or (r.get("features") or {}).get("arm_why") or "")
+    why = why.strip().lower()
+    if why.startswith("last_"):
+        why = why[5:]
+    if why == "presquare":
+        return "empty_sq"
+    if why.startswith("overbought") or why == "square":
+        return "full_sq"
+    if why.startswith("oversold") or why.startswith("os_"):
+        return "oversold"
+    return why or "unknown"
+
+
 def group_table(by: str, rows: list, fills: list, ctrl_r30: dict, tgt: str) -> list:
     """Per-group realized R (every fill) and bar runway (fills with bars).
 
@@ -329,7 +350,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--since", default="2026-08-04")
     ap.add_argument("--json")
-    ap.add_argument("--by", action="append", choices=("source", "git_version", "config_fp"),
+    ap.add_argument("--until", default="9999-12-31", help="last day (inclusive)")
+    ap.add_argument("--list", action="store_true",
+                    help="print every fill's runway beside its symbol-day control")
+    ap.add_argument("--by", action="append",
+                    choices=("source", "git_version", "config_fp", "arm"),
                     help="group fills by this outcome field (repeatable; default source)")
     ap.add_argument("--target", default="up_15",
                     help="runway metric features are tested against")
@@ -345,7 +370,7 @@ def main():
         et, px = r.get("entry_time"), r.get("entry_price")
         if not SYM_RE.match(sym) or not isinstance(et, (int, float)) or not px:
             continue
-        if bars.day_of(et) < args.since:
+        if not (args.since <= bars.day_of(et) <= args.until):
             continue
         m = bars.et_minutes(et)
         if m < 9 * 60 + 31 or m > 15 * 60 + 30:
@@ -365,6 +390,7 @@ def main():
             "source": str((r.get("features") or {}).get("source") or r.get("source")),
             "git_version": str(r.get("git_version") or "unknown"),
             "config_fp": str(r.get("config_fp") or "unknown"),
+            "arm": arm_kind(r),
         }
         B = cache.get((r["symbol"], bars.day_of(r["entry_time"])))
         if not B:
@@ -438,6 +464,25 @@ def main():
 
     for by in (args.by or ["source"]):
         out += group_table(by, rows, fills, ctrl_r30, tgt)
+
+    if args.list:
+        # Runway only: no exit, no realized R. ctl is the median of the same
+        # symbol-day's post-first-fill minutes, so "+" means this entry had
+        # more room than the name usually offered after we found it.
+        fmt = lambda x: "   —  " if x is None else f"{x:+6.2f}"
+        out.append(f"\n== EVERY FILL: runway from the fill (%), exits ignored ==")
+        out.append(f"  {'time':<12}{'sym':<6}{'arm':<10}{'up5':>7}{'up15':>7}{'up30':>7}"
+                   f"{'dn15':>7}{'ret30':>7}{'tp1':>5}  {tgt + ' ctl':>10}{'vs ctl':>8}")
+        for f in sorted(fills, key=lambda f: f["t0"]):
+            c = ctrl_med.get((f["symbol"], f["day"]))
+            tp1 = {1: "up", 0: "dn", None: " —"}[f.get("tp_1.0")]
+            vs = (f[tgt] - c) if (c is not None and f.get(tgt) is not None) else None
+            out.append(
+                f"  {time.strftime('%m-%d %H:%M', time.localtime(f['t0'])):<12}"
+                f"{f['symbol']:<6}{f['group']['arm']:<10}"
+                f"{fmt(f.get('up_5'))}{fmt(f.get('up_15'))}{fmt(f.get('up_30'))}"
+                f"{fmt(f.get('dn_15'))}{fmt(f.get('ret_30'))}{tp1:>5}"
+                f"  {fmt(c):>10}{fmt(vs):>8}")
 
     # feature terciles with split-half
     days_sorted = sorted({f["day"] for f in fills})
