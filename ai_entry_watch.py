@@ -223,7 +223,6 @@ _BLOCKER_LABELS: dict[str, str] = {
     "wait_os": "wait ▲",
     "os_confirm": "▲ confirming",
     "wait_os_leave": "wait leave OS",
-    "oversold": "ready",
     "oversold_leave": "ready",
     "os_leave_not_rising": "OS not rising",
     "stale_os_leave": "stale ▲",
@@ -11897,14 +11896,14 @@ def _os_leave_allows_buy(
     *,
     now: float | None = None,
 ) -> tuple[bool, str]:
-    """Open while still in the oversold triangle (buy the dip).
+    """Open after an oversold triangle, on the rise back through −80.
 
     Triangle: fast and slow both ≤ −(100 − rte_threshold) and
     |fast − slow| ≤ rte_confluence_max. Needs ``ai_watch_square_min_count``
-    consecutive triangle polls (default 2). Once qualified, the arm stays
-    true for every poll that remains in the triangle — no rising leave and
-    no post-leave timer. Leaving the triangle clears the latch; a wide gap
-    while both lines are still deep is not a triangle.
+    consecutive triangle polls (default 2). The open is the leave: a line
+    rises back through that level while fast %R is rising, within
+    ``ai_watch_os_leave_max_age_sec`` (default 180). A wide gap while both
+    lines are still deep is not a leave.
     """
     ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
     sym = str(record.get("symbol") or "").upper()
@@ -11925,6 +11924,10 @@ def _os_leave_allows_buy(
     if sym not in _OS_QUALIFIED and record.get("os_qualified"):
         since_q = _f_or_none(record.get("os_qualified_since"))
         _OS_QUALIFIED[sym] = float(since_q if since_q is not None else t_now)
+    if sym not in _OS_LEFT:
+        prev_left = _f_or_none(record.get("left_os_since"))
+        if prev_left is not None and prev_left > 0:
+            _OS_LEFT[sym] = float(prev_left)
 
     if in_triangle:
         streak = _os_streak_note(sym, True, now=t_now)
@@ -11942,17 +11945,34 @@ def _os_leave_allows_buy(
             record.pop("left_os_since", None)
         elif sym in _OS_QUALIFIED:
             record["os_qualified"] = True
-        return True, "oversold"
+        return False, "wait_os_leave"
 
     _os_streak_note(sym, False)
     record.pop("os_streak", None)
-    if not peek:
-        _os_clear_latch(sym, record)
     if both_deep and not tight:
         record["block_detail"] = (
             f"exh gap {gap:.1f}>{_rte_confluence_max(cfg):g}")
         return False, "exh_not_tight"
-    return False, "wait_os"
+    if sym not in _OS_QUALIFIED:
+        return False, "wait_os"
+
+    if not peek:
+        if sym not in _OS_LEFT:
+            _OS_LEFT[sym] = t_now
+        record["left_os_since"] = float(_OS_LEFT[sym])
+        since = float(_OS_LEFT[sym])
+    else:
+        since = _OS_LEFT.get(sym)
+        if since is None:
+            since = _f_or_none(record.get("left_os_since"))
+    max_age = _os_leave_max_age(cfg)
+    if since is not None and max_age > 0 and (t_now - float(since)) > max_age:
+        if not peek:
+            _os_clear_latch(sym, record)
+        return False, "stale_os_leave"
+    if not ind.get("pctr_rising"):
+        return False, "os_leave_not_rising"
+    return True, "oversold_leave"
 
 
 def _os_block_wins(

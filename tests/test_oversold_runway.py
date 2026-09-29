@@ -53,8 +53,7 @@ def teardown_function():
     setup_function()
 
 
-def test_oversold_triangle_opens_after_two_polls():
-    """Buy the dip: qualified dual-OS+tight arms while still in the boxes."""
+def test_leave_oversold_opens_after_two_triangles():
     cfg = _cfg()
     t0 = 1_000_000.0
     deep = _rec("AAL", -90, -85, rising=False)
@@ -63,39 +62,60 @@ def test_oversold_triangle_opens_after_two_polls():
     ok, why = ew.exhaustion_allows_buy(deep, cfg, now=t0 + 0.05)
     assert ok is False and why == "os_confirm"  # same-poll debounce
     ok, why = ew.exhaustion_allows_buy(deep, cfg, now=t0 + 1.0)
-    assert ok is True and why == "oversold"
+    assert ok is False and why == "wait_os_leave"
     assert deep.get("os_qualified") is True
-    # Still in the triangle on the next poll — still ready, no leave needed.
-    still = _rec("AAL", -88, -84, rising=False)
-    still["os_qualified"] = True
-    ok, why = ew.exhaustion_allows_buy(still, cfg, now=t0 + 2.0)
-    assert ok is True and why == "oversold"
+    leave = _rec("AAL", -70, -74, rising=True)
+    leave["os_qualified"] = True
+    ok, why = ew.exhaustion_allows_buy(leave, cfg, now=t0 + 2.0)
+    assert ok is True and why == "oversold_leave"
 
 
-def test_wide_gap_while_deep_is_not_a_triangle():
+def test_wide_gap_while_deep_is_not_a_leave():
     cfg = _cfg()
     t0 = 1_000_000.0
     ew.exhaustion_allows_buy(_rec("BB", -92, -88), cfg, now=t0)
     ew.exhaustion_allows_buy(_rec("BB", -92, -88), cfg, now=t0 + 1.0)
-    # Both still ≤ −80, gap 17. Widening is not the triangle.
+    # Both still ≤ −80, gap 17. Widening is not a leave.
     wide = _rec("BB", -98, -81, rising=True)
     ok, why = ew.exhaustion_allows_buy(wide, cfg, now=t0 + 2.0)
     assert ok is False and why == "exh_not_tight"
-    assert "BB" not in ew._OS_QUALIFIED
+    assert "BB" not in ew._OS_LEFT
 
 
-def test_leaving_the_triangle_clears_the_arm():
-    """Post-leave bounce is not an open — need a fresh OS triangle."""
+def test_leave_requires_rising_and_expires():
     cfg = _cfg()
     t0 = 1_000_000.0
     ew.exhaustion_allows_buy(_rec("CC", -90, -86), cfg, now=t0)
     ew.exhaustion_allows_buy(_rec("CC", -90, -86), cfg, now=t0 + 1.0)
-    assert "CC" in ew._OS_QUALIFIED
-    left = _rec("CC", -70, -72, rising=True)
-    ok, why = ew.exhaustion_allows_buy(left, cfg, now=t0 + 2.0)
-    assert ok is False and why == "wait_os"
-    assert "CC" not in ew._OS_QUALIFIED
-    assert left.get("os_qualified") is False
+    flat = _rec("CC", -70, -72, rising=False)
+    ok, why = ew.exhaustion_allows_buy(flat, cfg, now=t0 + 2.0)
+    assert ok is False and why == "os_leave_not_rising"
+    # Still in the low band, but the leave window has closed.
+    late = _rec("CC", -78, -74, rising=True)
+    ok, why = ew.exhaustion_allows_buy(late, cfg, now=t0 + 2.0 + 61.0)
+    assert ok is False and why == "stale_os_leave"
+
+
+def test_live_180s_window_still_arms_two_minutes_after_leave():
+    """Live desk keeps the leave armable for 3 minutes after the leave print."""
+    cfg = _cfg(ai_watch_os_leave_max_age_sec=180.0)
+    t0 = 1_000_000.0
+    ew.exhaustion_allows_buy(_rec("DD", -90, -86), cfg, now=t0)
+    ew.exhaustion_allows_buy(_rec("DD", -90, -86), cfg, now=t0 + 1.0)
+    leave = _rec("DD", -70, -74, rising=True)
+    leave["os_qualified"] = True
+    ok, why = ew.exhaustion_allows_buy(leave, cfg, now=t0 + 2.0)
+    assert ok is True and why == "oversold_leave"
+    later = _rec("DD", -68, -72, rising=True)
+    later["os_qualified"] = True
+    later["left_os_since"] = t0 + 2.0
+    ok, why = ew.exhaustion_allows_buy(later, cfg, now=t0 + 2.0 + 120.0)
+    assert ok is True and why == "oversold_leave"
+    stale = _rec("DD", -68, -72, rising=True)
+    stale["os_qualified"] = True
+    stale["left_os_since"] = t0 + 2.0
+    ok, why = ew.exhaustion_allows_buy(stale, cfg, now=t0 + 2.0 + 181.0)
+    assert ok is False and why == "stale_os_leave"
 
 
 def test_square_still_wins_when_both_arms_on():
