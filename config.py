@@ -46,6 +46,11 @@ DEFAULT_CONFIG = {
     "ai_watch_exh_heating_with_square": False,
     "ai_watch_square_min_count": 2,
     "ai_watch_square_max_age_sec": 60.0,
+    # Leave-oversold entry (▲): both %R ≤ −(100−thr), tight, min polls,
+    # then a line rises back through that level. On beside the square arm.
+    # Getter treats a missing key as off so partial test cfgs stay square-only.
+    "ai_watch_exh_oversold_arm": True,
+    "ai_watch_os_leave_max_age_sec": 60.0,
     # Heating may arm only when prints rose over this many seconds.
     # 0 disables. Square ■ is not gated by this.
     "ai_watch_heating_price_rise_sec": 0.0,
@@ -1188,6 +1193,10 @@ DEFAULT_CONFIG = {
     "ai_local_trail_time_decay_enabled": True,
     "ai_local_trail_decay_idle_sec":  8.0,
     "ai_local_trail_decay_step_r":    0.05,
+    # Same idle clock while last ≤ entry, smaller step. 0 disables.
+    # Missing key in a partial cfg also disables (see green_catchup_raise).
+    # 0.02R on a 0.50 risk is +$0.01 per idle, capped at last−$0.01.
+    "ai_local_trail_decay_red_step_r": 0.02,
     # Optional MFE ceiling for decay; 0 = off (green gate alone).
     "ai_local_trail_decay_max_mfe_r": 0.0,
     # True = stop>=last at ceiling (overtake; greens bank without a dip).
@@ -1283,6 +1292,13 @@ DEFAULT_CONFIG = {
     # Mid-session 2026-09-18: leave off (do not re-enable with admit fix).
     "ai_exh_falling_flatten_enabled":  False,
     "ai_exh_falling_flatten_confirm_ticks": 2,
+    # Hard drop while fast %R was in the upper band (≥ −rte_threshold) and
+    # then falls this many points inside the window. Off until a bar study
+    # shows it beats stop+EOD on both halves. Not the any-tick EXH-falling exit.
+    "ai_exit_rsi_dump_enabled": False,
+    "ai_exit_rsi_dump_points": 30.0,
+    "ai_exit_rsi_dump_sec": 60.0,
+    "ai_exit_rsi_dump_confirm_ticks": 2,
     # Paper experiment: last-hour hold (gate 1+2, 2026-08-20). When on,
     # daytime auto-arm is off. New entries only 14:00–15:30 ET on names
     # admitted in that window; 2% hard stop, no 0.10R shelf, 30m dead,
@@ -1657,6 +1673,8 @@ _EFFECTIVE_KEYS = (
     "ai_watch_exh_heating_with_square",
     "ai_watch_square_min_count",
     "ai_watch_square_max_age_sec",
+    "ai_watch_exh_oversold_arm",
+    "ai_watch_os_leave_max_age_sec",
     "ai_watch_heating_price_rise_sec",
     "ai_watch_heating_min_rvol",
     "ai_watch_heating_admit_max_tape_age_sec",
@@ -1997,6 +2015,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exh_heating_with_square",
     "ai_watch_square_min_count",
     "ai_watch_square_max_age_sec",
+    "ai_watch_exh_oversold_arm",
+    "ai_watch_os_leave_max_age_sec",
     "ai_watch_heating_price_rise_sec",
     "ai_watch_heating_min_rvol",
     "ai_watch_heating_admit_max_tape_age_sec",
@@ -2113,6 +2133,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_time_decay_enabled",
     "ai_local_trail_decay_idle_sec",
     "ai_local_trail_decay_step_r",
+    "ai_local_trail_decay_red_step_r",
     "ai_local_trail_decay_max_mfe_r",
     "ai_local_trail_decay_overtake",
     "ai_local_trail_entry_catchup_sec",
@@ -2155,6 +2176,10 @@ SAFE_CONFIG_KEYS = [
     "ai_no_progress_mfe_r",
     "ai_exh_falling_flatten_enabled",
     "ai_exh_falling_flatten_confirm_ticks",
+    "ai_exit_rsi_dump_enabled",
+    "ai_exit_rsi_dump_points",
+    "ai_exit_rsi_dump_sec",
+    "ai_exit_rsi_dump_confirm_ticks",
     "desk_product",
     "ai_h4_paper",
     "ai_h3_paper",

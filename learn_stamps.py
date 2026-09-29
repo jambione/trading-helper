@@ -167,6 +167,7 @@ _FINGERPRINT_KEYS = (
     "ai_local_trail_time_decay_enabled",
     "ai_local_trail_decay_idle_sec",
     "ai_local_trail_decay_step_r",
+    "ai_local_trail_decay_red_step_r",
     "ai_local_trail_decay_max_mfe_r",
     # Where the green catch-up stop parks: last (legacy overtake) vs
     # last-$0.01 (e7fa69e). Different exit prices, so it must stamp.
@@ -199,6 +200,8 @@ _FINGERPRINT_KEYS = (
     "ai_watch_exh_heating_with_square",
     "ai_watch_square_min_count",
     "ai_watch_square_max_age_sec",
+    "ai_watch_exh_oversold_arm",
+    "ai_watch_os_leave_max_age_sec",
     "ai_watch_exh_mid_rise_arm",
     # Who may buy. "*" and "momentum,movers" are different regimes.
     "ai_watch_arm_sources",
@@ -206,6 +209,10 @@ _FINGERPRINT_KEYS = (
     # min-hold gate does — and the two now interact.
     "ai_dead_trade_min",
     "ai_dead_trade_mfe_r",
+    "ai_exit_rsi_dump_enabled",
+    "ai_exit_rsi_dump_points",
+    "ai_exit_rsi_dump_sec",
+    "ai_exit_rsi_dump_confirm_ticks",
     # Entry gates and sizing.
     "ai_max_spread_r",
     "ai_max_position_pct_cheap",

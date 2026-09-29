@@ -505,6 +505,11 @@ def _positions_payload(
         if str(r.get("exh_seat_class") or "").lower() == "far"
         and not (r.get("phase") == "open" or r.get("is_position"))
     )
+    n_os = sum(
+        1 for r in entry_book
+        if str(r.get("exh_seat_class") or "").lower() in ("os_triangle", "os_leave")
+        and not (r.get("phase") == "open" or r.get("is_position"))
+    )
 
     poll_sec = watch_poll_sec
     if poll_sec is None:
@@ -560,6 +565,7 @@ def _positions_payload(
             # Dual-%R seat mix for pre-square farm scoreboard.
             "n_square": n_square,
             "n_pre_square": n_pre_square,
+            "n_os": n_os,
             "n_far": n_far,
             "day_pl": day_pl,
             "day_pl_pct": day_pl_pct,

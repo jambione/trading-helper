@@ -333,6 +333,10 @@ function _bookRows(book) {
       square_streak: w.square_streak != null ? w.square_streak : null,
       exh_was_overbought: !!w.exh_was_overbought,
       left_ob_since: w.left_ob_since != null ? w.left_ob_since : null,
+      os_streak: w.os_streak != null ? w.os_streak : null,
+      os_qualified: !!w.os_qualified,
+      exh_was_oversold: !!w.exh_was_oversold,
+      left_os_since: w.left_os_since != null ? w.left_os_since : null,
       cm_rsi: w.cm_rsi != null ? w.cm_rsi : null,
       cm_rsi_green: !!w.cm_rsi_green,
       cm_rsi_low: !!w.cm_rsi_low,
@@ -1136,9 +1140,10 @@ function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
     stampEl.classList.toggle('feed-stamp--stale', !live);
     const nSq = meta.n_square != null ? Number(meta.n_square) : null;
     const nPre = meta.n_pre_square != null ? Number(meta.n_pre_square) : null;
+    const nOs = meta.n_os != null ? Number(meta.n_os) : null;
     const nFar = meta.n_far != null ? Number(meta.n_far) : null;
-    const seatMix = (nSq != null || nPre != null || nFar != null)
-      ? `■${nSq || 0}/pre${nPre || 0}/far${nFar || 0}`
+    const seatMix = (nSq != null || nPre != null || nFar != null || nOs != null)
+      ? `■${nSq || 0}/pre${nPre || 0}/▲${nOs || 0}os/far${nFar || 0}`
       : null;
     const detail = [
       ageBucket != null ? `updated ${ageBucket}` : null,
@@ -1272,6 +1277,7 @@ const _MACD_BLOCKER_DESCRIPTIONS = {
 function _bookInSquare(r) {
   if (!r) return false;
   const cls = String(r.exh_seat_class || '').toLowerCase();
+  if (cls === 'os_triangle' || cls === 'os_leave') return false;
   if (cls === 'square') return true;
   return !!(r.pctr_ob && r.pctr_tight);
 }
@@ -1292,16 +1298,34 @@ function _bookSquareGlyph(r) {
 
 function _bookTriangleGlyph(r) {
   if (!r) return '';
+  const cls = String(r.exh_seat_class || '').toLowerCase();
+  if (cls === 'os_triangle' || cls === 'os_leave') return '';
   if (r.left_ob_since != null && Number(r.left_ob_since) > 0) return '▼';
   if (!_bookInSquare(r) && r.exh_was_overbought && !r.pctr_ob) return '▼';
   return '';
 }
 
+/** Oversold triangle (▲) / confirming (▲…) / leave-oversold (▲). */
+function _bookOsGlyph(r) {
+  if (!r) return '';
+  if (_bookTriangleGlyph(r) || _bookSquareGlyph(r)) return '';
+  const cls = String(r.exh_seat_class || '').toLowerCase();
+  if (cls === 'os_triangle') {
+    const streak = Number(r.os_streak);
+    if (Number.isFinite(streak) && streak > 0 && streak < 2) return '▲…';
+    return '▲';
+  }
+  if (cls === 'os_leave') return '▲';
+  return '';
+}
+
+function _bookMark(r) {
+  return _bookTriangleGlyph(r) || _bookSquareGlyph(r) || _bookOsGlyph(r);
+}
+
 function _bookSqTriPrefix(r) {
-  const tri = _bookTriangleGlyph(r);
-  if (tri) return `${tri} `;
-  const sq = _bookSquareGlyph(r);
-  return sq ? `${sq} ` : '';
+  const mark = _bookMark(r);
+  return mark ? `${mark} ` : '';
 }
 
 /** Status column shows *why we are not long* (blocker), not READY/WATCH. */
@@ -1310,7 +1334,7 @@ function _bookBlockerLabel(r) {
   const phase = String(r.phase || '').toLowerCase();
   if (phase === 'open' || r.is_position) {
     if (_shelfHit(r) && _holdLeft(r) == null) return 'open · SELL';
-    const mark = _bookTriangleGlyph(r) || _bookSquareGlyph(r);
+    const mark = _bookMark(r);
     return mark ? `open · ${mark}` : 'open';
   }
   if (phase === 'submitted') return 'sent';
@@ -1335,7 +1359,7 @@ function _bookBlockerLabel(r) {
     return _MACD_BLOCKER_LABELS[code];
   }
 
-  const mark = _bookTriangleGlyph(r) || _bookSquareGlyph(r);
+  const mark = _bookMark(r);
   const withMark = (lab) => (mark ? `${lab} · ${mark}` : lab);
   // A real refuse (heat low, dead today) wins over leftover "in zone" / ready.
   if (b && !(r.ready) && !['in zone', 'in_zone', 'buy', 'ready'].includes(b.toLowerCase()) && code !== 'in_zone') {
@@ -1364,10 +1388,12 @@ function _bookBlockerTitle(r) {
   if (code && !parts.some(p => p.toLowerCase().includes(code.replace(/_/g, ' ')))) {
     parts.push(code.replace(/_/g, ' '));
   }
-  const mark = _bookTriangleGlyph(r) || _bookSquareGlyph(r);
+  const mark = _bookMark(r);
   if (mark === '▼') parts.push('leave-OB triangle');
   else if (mark === '■' || mark === '■…') parts.push('dual-OB+tight square');
   else if (mark === '▢') parts.push('pre-square');
+  else if (mark === '▲…') parts.push('▲ oversold triangle confirming (need 2)');
+  else if (mark === '▲') parts.push('▲ oversold triangle');
   return parts.join(' — ');
 }
 
@@ -1821,6 +1847,7 @@ function _bookExhClass(r) {
   if (String(r.exh_seat_class || '').toLowerCase() === 'pre_square') {
     return ' exh--presquare';
   }
+  if (_bookOsGlyph(r)) return ' exh--os';
   const state = String(r.exhaustion_state || '').toLowerCase();
   if (state === 'overbought') return ' exh--ob';
   if (state === 'heating') return ' exh--up';
@@ -1836,6 +1863,8 @@ function _fmtExhTitle(r) {
   else if (_bookSquareGlyph(r) === '■…') bits.unshift('■ square confirming (need 2)');
   else if (_bookSquareGlyph(r) === '■') bits.unshift('■ dual-OB+tight square');
   else if (_bookSquareGlyph(r) === '▢') bits.unshift('▢ pre-square (approaching)');
+  else if (_bookOsGlyph(r) === '▲…') bits.unshift('▲ oversold triangle confirming (need 2)');
+  else if (_bookOsGlyph(r) === '▲') bits.unshift('▲ oversold triangle / leave-oversold');
   if (r.pctr != null && Number.isFinite(Number(r.pctr))) {
     bits.push(`fast ${Number(r.pctr).toFixed(1)}`);
   }

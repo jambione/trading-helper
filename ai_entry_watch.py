@@ -220,6 +220,13 @@ _BLOCKER_LABELS: dict[str, str] = {
     "mid_rise_lost": "back under -50",
     "wait_square": "wait ■",
     "square_confirm": "■ confirming",
+    "wait_os": "wait ▲",
+    "os_confirm": "▲ confirming",
+    "wait_os_leave": "wait leave OS",
+    "oversold_leave": "ready",
+    "os_leave_not_rising": "OS not rising",
+    "stale_os_leave": "stale ▲",
+    "last_oversold_leave": "ready",
     "overbought": "ready",
     "engine_stale": "engine stale",
     "spread_wide": "spread wide",
@@ -2471,9 +2478,11 @@ def maybe_soft_seed_rows(
             continue
         cls = str(row.get("exh_seat_class") or "")
         if require_ready and not bool(row.get("arm_ready")):
-            # pre_square, square, os_square, os_triangle keep seats without full
-            # arm_ready — arm_ready gates the OPEN, not the approach seat.
-            if cls not in ("square", "pre_square", "os_square", "os_triangle"):
+            # pre_square, square, os_square, os_triangle, os_leave keep seats
+            # without full arm_ready — arm_ready gates the OPEN, not the seat.
+            if cls not in (
+                "square", "pre_square", "os_square", "os_triangle", "os_leave",
+            ):
                 continue
         pct = _pct_change_value(row.get("pct_change"))
         if pct is None:
@@ -2526,7 +2535,9 @@ def maybe_soft_seed_rows(
             if not sym or sym in picked_syms or sym in flood_syms:
                 continue
             cls = str(row.get("exh_seat_class") or "")
-            if cls in ("square", "pre_square", "os_square", "os_triangle") and not bool(row.get("scout_only")):
+            if cls in (
+                "square", "pre_square", "os_square", "os_triangle", "os_leave",
+            ) and not bool(row.get("scout_only")):
                 # Already eligible for keep; skip duplicate scout.
                 if any(
                     str(p.get("symbol") or "").upper() == sym for p in picked
@@ -3541,6 +3552,12 @@ def _track_far_exh_seat(rec: dict, cfg: dict | None, *, now: float) -> None:
             rec["square_since"] = float(now)
         # Latch for leave-OB ▼ paint / exit thesis on the watch book.
         rec["exh_was_overbought"] = True
+    elif cls == "os_triangle":
+        rec["exh_was_oversold"] = True
+        if _f_or_none(rec.get("os_square_since")) is None:
+            rec["os_square_since"] = float(now)
+    elif cls == "os_leave":
+        rec["exh_was_oversold"] = True
     elif cls in ("far", "unknown"):
         rec.pop("square_since", None)
         rec.pop("os_square_since", None)
@@ -3553,7 +3570,7 @@ _DEAD_UNKNOWN_BLOCKS = frozenset({
 })
 
 _PROTECTED_DEAD_CLASSES = frozenset({
-    "square", "pre_square", "os_square", "os_triangle",
+    "square", "pre_square", "os_square", "os_triangle", "os_leave",
 })
 
 
@@ -4730,6 +4747,19 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         ),
         "exh_was_overbought": bool(rec.get("exh_was_overbought")),
         "left_ob_since": _f_or_none(rec.get("left_ob_since")),
+        "os_streak": (
+            int(rec["os_streak"])
+            if isinstance(rec.get("os_streak"), (int, float))
+            and int(rec.get("os_streak") or 0) > 0
+            else (
+                int(_OS_STREAK.get(sym, (0, 0.0))[0])
+                if int(_OS_STREAK.get(sym, (0, 0.0))[0]) > 0
+                else None
+            )
+        ),
+        "os_qualified": bool(rec.get("os_qualified")),
+        "exh_was_oversold": bool(rec.get("exh_was_oversold")),
+        "left_os_since": _f_or_none(rec.get("left_os_since")),
         **_exhaustion_wire_fields(rec),
         **_macd_wire_fields(rec),
         **_rsi_wire_fields(rec),
@@ -10289,6 +10319,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
         for k in (
             "block_code", "block_reason", "block_ts", "block_detail",
             "exh_was_overbought", "exh_was_oversold", "os_square_since", "left_os_since",
+            "os_streak", "os_qualified", "os_qualified_since",
             "pctr_fall_since", "last_trade", "last_ask_src",
             # Keep the quote clock across the 2s rebuild — dropping age/ts
             # left stale_tape rows with age=None while engine still had 3–14m
@@ -11782,6 +11813,192 @@ def _square_exh_allows_buy(
     return True, "overbought"
 
 
+def exh_oversold_arm_enabled(cfg: dict | None) -> bool:
+    """Leave-oversold ENTRY arm (▲). Missing key stays off.
+
+    Live default is on in ``config.py`` / ``bot_config``. Partial test cfgs
+    that omit the key keep today's square-only arm.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return bool(cfg.get("ai_watch_exh_oversold_arm", False))
+
+
+def _os_band(cfg: dict | None) -> tuple[float, float]:
+    """``(os_level, pre_os_level)`` on the Williams %R scale.
+
+    Mirror of the overbought band: thr 20 → −80, pre_thr 35 → −65.
+    """
+    thr = _rte_threshold(cfg)
+    pre = exh_pre_thr(cfg)
+    return -100.0 + thr, -100.0 + pre
+
+
+# {symbol: (consecutive dual-OS+tight count, last_increment_ts)}.
+# Same debounce and paint-peek rule as ``_SQUARE_STREAK``.
+_OS_STREAK: dict[str, tuple[int, float]] = {}
+# Qualified once the streak hits min count. Survives the streak reset on leave.
+_OS_QUALIFIED: dict[str, float] = {}
+# First poll that left the oversold triangle after qualifying.
+_OS_LEFT: dict[str, float] = {}
+
+_OS_BLOCK_WINS = frozenset({
+    "os_confirm", "wait_os_leave", "os_leave_not_rising",
+    "stale_os_leave", "wait_os",
+})
+_SQ_GENERIC_MISS = frozenset({"wait_exh", "exh_not_tight", "exh_falling"})
+
+
+def _os_streak_note(
+    sym: str,
+    in_triangle: bool,
+    *,
+    now: float | None = None,
+) -> int:
+    """Consecutive oversold-triangle polls. Paint peek does not advance."""
+    sym = str(sym or "").upper()
+    if not sym:
+        return 0
+    if not in_triangle:
+        _OS_STREAK.pop(sym, None)
+        return 0
+    prev_n, prev_t = _OS_STREAK.get(sym, (0, 0.0))
+    if getattr(_MID_RISE_PEEK, "on", False):
+        return int(prev_n)
+    t = float(now if now is not None else time.time())
+    if prev_t > 0 and (t - float(prev_t)) < _SQUARE_STREAK_DEBOUNCE_SEC:
+        return int(prev_n)
+    n = int(prev_n) + 1
+    _OS_STREAK[sym] = (n, t)
+    return n
+
+
+def _os_leave_max_age(cfg: dict | None) -> float:
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        age = float(cfg.get("ai_watch_os_leave_max_age_sec", 60.0) or 60.0)
+    except (TypeError, ValueError):
+        age = 60.0
+    return max(0.0, age)
+
+
+def _os_clear_latch(sym: str, record: dict) -> None:
+    _OS_QUALIFIED.pop(sym, None)
+    _OS_LEFT.pop(sym, None)
+    if isinstance(record, dict):
+        record["os_qualified"] = False
+        record.pop("os_qualified_since", None)
+        record.pop("left_os_since", None)
+
+
+def _os_leave_allows_buy(
+    record: dict,
+    cfg: dict,
+    *,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    """Open after an oversold triangle, on the rise back through −80.
+
+    Triangle: fast and slow both ≤ −(100 − rte_threshold) and
+    |fast − slow| ≤ rte_confluence_max. Needs ``ai_watch_square_min_count``
+    consecutive triangle polls (default 2). The open is the leave: a line
+    rises back through that level while fast %R is rising, within
+    ``ai_watch_os_leave_max_age_sec`` (default 60). A wide gap while both
+    lines are still deep is not a leave.
+    """
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    sym = str(record.get("symbol") or "").upper()
+    fast = _f_or_none(ind.get("pctr"))
+    slow = _f_or_none(ind.get("pctr_slow"))
+    if fast is None or slow is None or not sym:
+        return False, "no_exhaustion_data"
+    os_level, _pre_os = _os_band(cfg)
+    tight_max = _rte_confluence_max(cfg)
+    gap = abs(float(fast) - float(slow))
+    tight = gap <= tight_max + 1e-9
+    both_deep = (
+        float(fast) <= os_level + 1e-9 and float(slow) <= os_level + 1e-9
+    )
+    in_triangle = both_deep and tight
+    t_now = float(now if now is not None else time.time())
+    peek = bool(getattr(_MID_RISE_PEEK, "on", False))
+    if sym not in _OS_QUALIFIED and record.get("os_qualified"):
+        since_q = _f_or_none(record.get("os_qualified_since"))
+        _OS_QUALIFIED[sym] = float(since_q if since_q is not None else t_now)
+    if sym not in _OS_LEFT:
+        prev_left = _f_or_none(record.get("left_os_since"))
+        if prev_left is not None and prev_left > 0:
+            _OS_LEFT[sym] = float(prev_left)
+
+    if in_triangle:
+        streak = _os_streak_note(sym, True, now=t_now)
+        record["os_streak"] = int(streak)
+        need = square_min_count(cfg)
+        qualified = sym in _OS_QUALIFIED or bool(record.get("os_qualified"))
+        if streak < need and not qualified:
+            record["block_detail"] = f"os {streak}/{need}"
+            return False, "os_confirm" if streak >= 1 else "wait_os"
+        if not peek:
+            _OS_QUALIFIED.setdefault(sym, t_now)
+            _OS_LEFT.pop(sym, None)
+            record["os_qualified"] = True
+            record["os_qualified_since"] = float(_OS_QUALIFIED.get(sym, t_now))
+            record.pop("left_os_since", None)
+        elif sym in _OS_QUALIFIED:
+            record["os_qualified"] = True
+        return False, "wait_os_leave"
+
+    _os_streak_note(sym, False)
+    record.pop("os_streak", None)
+    if both_deep and not tight:
+        record["block_detail"] = (
+            f"exh gap {gap:.1f}>{_rte_confluence_max(cfg):g}")
+        return False, "exh_not_tight"
+    if sym not in _OS_QUALIFIED:
+        return False, "wait_os"
+
+    if not peek:
+        if sym not in _OS_LEFT:
+            _OS_LEFT[sym] = t_now
+        record["left_os_since"] = float(_OS_LEFT[sym])
+        since = float(_OS_LEFT[sym])
+    else:
+        since = _OS_LEFT.get(sym)
+        if since is None:
+            since = _f_or_none(record.get("left_os_since"))
+    max_age = _os_leave_max_age(cfg)
+    if since is not None and max_age > 0 and (t_now - float(since)) > max_age:
+        if not peek:
+            _os_clear_latch(sym, record)
+        return False, "stale_os_leave"
+    if not ind.get("pctr_rising"):
+        return False, "os_leave_not_rising"
+    return True, "oversold_leave"
+
+
+def _os_block_wins(
+    record: dict,
+    cfg: dict,
+    sq_why: str,
+    os_why: str,
+) -> bool:
+    """Prefer the oversold reason only while the name is actually low.
+
+    Square confirms and other square-specific refuses stay on the square
+    label so existing square fixtures keep ``square_confirm`` / ``exh_not_tight``.
+    """
+    if os_why not in _OS_BLOCK_WINS or sq_why not in _SQ_GENERIC_MISS:
+        return False
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    fast = _f_or_none(ind.get("pctr"))
+    slow = _f_or_none(ind.get("pctr_slow"))
+    if fast is None or slow is None:
+        return False
+    _os_level, pre_os = _os_band(cfg)
+    return (
+        float(fast) <= pre_os + 1e-9 and float(slow) <= pre_os + 1e-9
+    )
+
+
 def _rte_threshold(cfg: dict | None) -> float:
     try:
         return float((cfg or {}).get("rte_threshold", 20) or 20)
@@ -11856,6 +12073,7 @@ def exh_seat_class_counts(state: dict | None) -> dict[str, int]:
         "n_pre_square": 0,
         "n_os_square": 0,
         "n_os_triangle": 0,
+        "n_os_leave": 0,
         "n_far": 0,
         "n_unknown": 0,
         "n_seats": 0,
@@ -11883,6 +12101,8 @@ def exh_seat_class_counts(state: dict | None) -> dict[str, int]:
             out["n_os_square"] += 1
         elif cls == "os_triangle":
             out["n_os_triangle"] += 1
+        elif cls == "os_leave":
+            out["n_os_leave"] += 1
         elif cls == "far":
             out["n_far"] += 1
         else:
@@ -11899,10 +12119,14 @@ def classify_exh_seat(
     """Classify dual-%R seat quality for admit/seed/eviction.
 
     Returns ``(class, gap)`` where class is ``square`` | ``pre_square`` |
-    ``far`` | ``unknown``.
+    ``os_triangle`` | ``os_leave`` | ``far`` | ``unknown``.
 
     - square: both ≥ −rte_threshold and gap ≤ confluence
     - pre_square: both ≥ −pre_thr, gap ≤ confluence, and rising (fast or slow)
+    - os_triangle: both ≤ −(100 − thr) and gap ≤ confluence
+    - os_leave: still in the −(100 − pre_thr) band, at least one line back
+      above the oversold level, tight and rising — or a fresh leave latch
+      while both lines are still that low
     - far: otherwise when both lines present
     - unknown: missing slow (or fast) — not pre-square
     """
@@ -11935,10 +12159,33 @@ def classify_exh_seat(
     rising_ok = (rising is True) or (slow_rising is True)
     if both_pre and tight and rising_ok:
         return "pre_square", gap
+    os_level, pre_os = _os_band(cfg)
+    both_os = (
+        float(fast) <= os_level + 1e-9 and float(slow) <= os_level + 1e-9
+    )
+    if both_os and tight:
+        return "os_triangle", gap
+    both_low = (
+        float(fast) <= pre_os + 1e-9 and float(slow) <= pre_os + 1e-9
+    )
+    one_left = float(fast) > os_level + 1e-9 or float(slow) > os_level + 1e-9
+    left = None
+    if isinstance(row, dict):
+        left = _f_or_none(row.get("left_os_since"))
+    if left is None:
+        left = _f_or_none(src.get("left_os_since"))
+    # Latch keeps a just-left name seated only while it is still low.
+    # A rip through the approach band is not an oversold seat.
+    if left is not None and left > 0 and both_low:
+        return "os_leave", gap
+    if both_low and one_left and tight and rising_ok:
+        return "os_leave", gap
     return "far", gap
 
 
-_KNOWN_EXH_SEAT_CLASSES = frozenset({"square", "pre_square", "far", "os_square", "os_triangle"})
+_KNOWN_EXH_SEAT_CLASSES = frozenset({
+    "square", "pre_square", "far", "os_square", "os_triangle", "os_leave",
+})
 
 
 def maybe_freeze_exh_seat_class_admit(rec: dict | None) -> str | None:
@@ -12285,14 +12532,26 @@ def exhaustion_allows_buy(
     # Live square/triangle product keeps mid-rise off.
     if exh_mid_rise_arm_enabled(cfg):
         return _mid_rise_allows_buy(record, cfg, now=now)
-    # Square mode (TV red ■): dual-OB + tight, min consecutive square polls.
-    if exh_square_arm_enabled(cfg):
+    # Square (TV red ■) and leave-oversold (▲) are independent arms.
+    # A square pass returns immediately. A square miss still consults the
+    # oversold arm when that flag is on. Missing oversold key stays off.
+    # Heating fall-through stays behind both refuses, and stays off live.
+    sq_on = exh_square_arm_enabled(cfg)
+    os_on = exh_oversold_arm_enabled(cfg)
+    sq_ok, sq_why = False, ""
+    if sq_on:
         sq_ok, sq_why = _square_exh_allows_buy(
             record, cfg, require_rising=require_rising, now=now)
         if sq_ok:
             return True, sq_why
-        if not exh_heating_with_square(cfg):
-            return False, sq_why
+    if os_on:
+        os_ok, os_why = _os_leave_allows_buy(record, cfg, now=now)
+        if os_ok:
+            return True, os_why
+        if not sq_on or _os_block_wins(record, cfg, sq_why, os_why):
+            return False, os_why
+    if sq_on and not sq_ok and not exh_heating_with_square(cfg):
+        return False, sq_why
     state = exhaustion_state(record, cfg)
     if state == "unknown":
         # Gaining-EXH rule needs a reading. Fallback used to arm blind when

@@ -195,6 +195,100 @@ def closeness_to_square(
     return 0.15
 
 
+def closeness_to_oversold(
+    fast_pctr: float | None,
+    slow_pctr: float | None = None,
+    *,
+    thr: float = 20.0,
+    pre_thr: float = 35.0,
+    tight_max: float = 15.0,
+    rising: bool | None = None,
+    slow_rising: bool | None = None,
+) -> float:
+    """Higher as dual %R enters the oversold triangle / leave band.
+
+    Mirror of ``closeness_to_square``. 1.0 = both ≤ −(100−thr) and tight.
+    High EXH near 0 scores low so an oversold-only book does not seat heaters.
+    """
+    if fast_pctr is None:
+        return 0.0
+    f = float(fast_pctr)
+    s = float(slow_pctr) if slow_pctr is not None else None
+    thr = max(1.0, float(thr))
+    pre_thr = max(thr, float(pre_thr))
+    tight_max = max(0.0, float(tight_max))
+    os_lvl = -100.0 + thr
+    pre_lvl = -100.0 + pre_thr
+    if s is None:
+        if f <= os_lvl:
+            return 0.35
+        span = max(1.0, 100.0 - thr)
+        return 0.25 * max(0.0, min(1.0, ((-f) - thr) / span))
+    gap = abs(f - s)
+    tight = gap <= tight_max + 1e-9
+    both_os = f <= os_lvl and s <= os_lvl
+    if both_os and tight:
+        return 1.0
+    if both_os and not tight:
+        return 0.55
+    both_pre = f <= pre_lvl and s <= pre_lvl
+    rising_ok = (
+        (rising is True) or (slow_rising is True)
+        or (rising is None and slow_rising is None)
+    )
+    if both_pre and not both_os and tight and rising_ok:
+        # Shallower line: 0 at the −65 edge, 1 as it reaches −80.
+        shallower = max(f, s)
+        span = max(1.0, pre_lvl - os_lvl)
+        t = (pre_lvl - shallower) / span
+        return 0.55 + 0.40 * max(0.0, min(1.0, t))
+    if both_pre and not tight:
+        return 0.40
+    # Above the low band (high EXH): small credit, fading toward 0.
+    shallower = max(f, s)
+    if shallower > pre_lvl:
+        span = max(1.0, 0.0 - pre_lvl)
+        t = max(0.0, min(1.0, (shallower - pre_lvl) / span))
+        return 0.20 * (1.0 - t)
+    return 0.15
+
+
+def zone_closeness(got: dict, cfg: dict | None = None, *,
+                   mid_rise_level: float = -50.0) -> float:
+    """Closeness the active arms actually trade.
+
+    Missing ``ai_watch_exh_oversold_arm`` keeps today's square closeness so
+    partial test cfgs do not start preferring −90 over a pre-square.
+    Oversold on → max(square, oversold) when the square arm is also on,
+    or oversold alone when square is explicitly off.
+    Mid-rise −50 ranking only when it is the exclusive arm.
+    """
+    cfg = cfg or {}
+    thr, pre, tight = _square_params(cfg)
+    os_on = bool(cfg.get("ai_watch_exh_oversold_arm", False))
+    sq_on = bool(cfg.get("ai_watch_exh_square_arm", True))
+    mid_on = bool(cfg.get("ai_watch_exh_mid_rise_arm", False))
+    if mid_on and not sq_on and not os_on:
+        return closeness_to_cross(got.get("pctr"), mid_rise_level)
+    sq = closeness_to_square(
+        got.get("pctr"), got.get("pctr_slow"),
+        thr=thr, pre_thr=pre, tight_max=tight,
+        rising=got.get("pctr_rising"),
+        slow_rising=got.get("pctr_slow_rising"),
+    )
+    if not os_on:
+        return sq
+    os_c = closeness_to_oversold(
+        got.get("pctr"), got.get("pctr_slow"),
+        thr=thr, pre_thr=pre, tight_max=tight,
+        rising=got.get("pctr_rising"),
+        slow_rising=got.get("pctr_slow_rising"),
+    )
+    if sq_on:
+        return max(sq, os_c)
+    return os_c
+
+
 def runway_score(
     *,
     day_chg_pct: float | None = None,
@@ -293,19 +387,7 @@ def seat_priority(
     got = inputs if inputs is not None else row_inputs(row)
     rs = runway_score(
         day_chg_pct=got["chg"], source=_source(row), rvol_pace=got["pace"], now=now)
-    thr, pre, tight = _square_params(cfg)
-    # Mid-rise rollback ranking when square arm is off.
-    if cfg and bool(cfg.get("ai_watch_exh_mid_rise_arm", False)) and not bool(
-        cfg.get("ai_watch_exh_square_arm", True)
-    ):
-        close = closeness_to_cross(got["pctr"], mid_rise_level)
-    else:
-        close = closeness_to_square(
-            got["pctr"], got.get("pctr_slow"),
-            thr=thr, pre_thr=pre, tight_max=tight,
-            rising=got.get("pctr_rising"),
-            slow_rising=got.get("pctr_slow_rising"),
-        )
+    close = zone_closeness(got, cfg, mid_rise_level=mid_rise_level)
     return rs + float(closeness_w) * close
 
 
@@ -342,7 +424,6 @@ def rank_candidates(
         level = float(cfg.get("ai_watch_mid_rise_level", -50.0) or -50.0)
     except (TypeError, ValueError):
         level = -50.0
-    thr, pre, tight = _square_params(cfg)
     scored = []
     seen: set[str] = set()
     for r in filter_supply(rows):
@@ -353,12 +434,7 @@ def rank_candidates(
         got = row_inputs(r, indicators=indicators, paces=paces)
         pri = seat_priority(
             r, now=now, mid_rise_level=level, inputs=got, cfg=cfg)
-        close = closeness_to_square(
-            got["pctr"], got.get("pctr_slow"),
-            thr=thr, pre_thr=pre, tight_max=tight,
-            rising=got.get("pctr_rising"),
-            slow_rising=got.get("pctr_slow_rising"),
-        )
+        close = zone_closeness(got, cfg, mid_rise_level=level)
         out = dict(r)
         out["_book_server_priority"] = round(pri, 4)
         out["_book_server_runway"] = round(pri - _CLOSENESS_W * close, 4)

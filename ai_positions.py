@@ -2867,6 +2867,76 @@ def exh_falling_flatten_due(
     return streak >= need
 
 
+def rsi_dump_due(
+    pos: dict[str, Any] | None,
+    sig: dict[str, Any] | None,
+    cfg: dict | None = None,
+    now: float | None = None,
+) -> bool:
+    """True when fast %R dumps out of the upper band inside a short window.
+
+    Peak in the window was ≥ −rte_threshold, and the current read is at
+    least ``ai_exit_rsi_dump_points`` below that peak. Needs
+    ``ai_exit_rsi_dump_confirm_ticks`` agreeing reads (a 5-point wiggle
+    does not fire). Missing flag stays off. Not the any-tick EXH-falling exit.
+    """
+    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
+    if not bool(cfg.get("ai_exit_rsi_dump_enabled", False)):
+        return False
+    if not isinstance(pos, dict):
+        return False
+    if not pos.get("entry_confirmed") or pos.get("closing_reason"):
+        return False
+    ind = sig if isinstance(sig, dict) else {}
+    try:
+        pctr = float(ind.get("pctr"))
+    except (TypeError, ValueError):
+        pos["rsi_dump_streak"] = 0
+        return False
+    try:
+        window = float(cfg.get("ai_exit_rsi_dump_sec", 60.0) or 60.0)
+    except (TypeError, ValueError):
+        window = 60.0
+    try:
+        points = float(cfg.get("ai_exit_rsi_dump_points", 30.0) or 30.0)
+    except (TypeError, ValueError):
+        points = 30.0
+    try:
+        need = int(cfg.get("ai_exit_rsi_dump_confirm_ticks", 2) or 2)
+    except (TypeError, ValueError):
+        need = 2
+    try:
+        thr = float(cfg.get("rte_threshold", 20) or 20)
+    except (TypeError, ValueError):
+        thr = 20.0
+    window = max(1.0, window)
+    points = max(0.0, points)
+    need = max(1, need)
+    band = -thr
+    t = float(now) if now is not None else time.time()
+    ring = pos.get("rsi_dump_ring")
+    if not isinstance(ring, list):
+        ring = []
+    clean: list[list[float]] = []
+    cutoff = t - window
+    for item in ring:
+        try:
+            ts, val = float(item[0]), float(item[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if ts + 1e-9 >= cutoff:
+            clean.append([ts, val])
+    clean.append([t, pctr])
+    pos["rsi_dump_ring"] = clean[-40:]
+    peak = max(val for _ts, val in clean)
+    if peak + 1e-9 < band or pctr > peak - points + 1e-9:
+        pos["rsi_dump_streak"] = 0
+        return False
+    streak = int(pos.get("rsi_dump_streak") or 0) + 1
+    pos["rsi_dump_streak"] = streak
+    return streak >= need
+
+
 def no_progress_due(
     pos: dict[str, Any] | None,
     now: float | None = None,
@@ -3524,6 +3594,87 @@ def _trail_min_cushion_px(
     return max(0.01, float(floor) if floor > 0 else 0.01)
 
 
+def _underwater_catchup_raise(
+    pos: dict[str, Any],
+    cfg: dict,
+    *,
+    last: float,
+    entry: float,
+    prev: float | None,
+    risk: float | None,
+    now: float | None,
+    red_step: float,
+) -> float | None:
+    """Raise-only chase while last ≤ entry. Smaller step than the green leash.
+
+    Ceiling is last − $0.01. A new high under water resets the idle clock.
+    Crossing down from a green session starts a fresh red peak instead of
+    stepping on the old green idle. Never lowers a stop that is already
+    above last.
+    """
+    try:
+        idle_need = float(cfg.get(
+            "ai_local_trail_decay_idle_sec",
+            DEFAULT_LOCAL_TRAIL_DECAY_IDLE_SEC,
+        ) or DEFAULT_LOCAL_TRAIL_DECAY_IDLE_SEC)
+    except (TypeError, ValueError):
+        idle_need = DEFAULT_LOCAL_TRAIL_DECAY_IDLE_SEC
+    idle_need = max(0.0, idle_need)
+    if idle_need <= 0 or red_step <= 0:
+        return None
+    t = float(now) if now is not None else time.time()
+    # Green session peak is above the fill: this is the cross into red.
+    # Start the red clock at `last` and do not step on the stale green idle.
+    green_peak = _num(pos.get("trail_decay_peak"))
+    if green_peak is not None and float(green_peak) > float(entry) + 1e-9:
+        pos.pop("trail_decay_peak", None)
+        pos.pop("trail_decay_idle_since", None)
+        pos.pop("trail_decay_last_step_at", None)
+        pos.pop("trail_decay_overtake", None)
+        pos["trail_decay_red_peak"] = float(last)
+        pos["trail_decay_red_idle_since"] = t
+        pos["trail_decay_red_last_step_at"] = t
+        return None
+    prev_red = _num(pos.get("trail_decay_red_peak"))
+    if prev_red is None or float(last) > float(prev_red) + 1e-9:
+        pos["trail_decay_red_peak"] = float(last)
+        pos["trail_decay_red_idle_since"] = t
+        pos["trail_decay_red_last_step_at"] = t
+        return None
+    last_step = _num(pos.get("trail_decay_red_last_step_at"))
+    if last_step is None:
+        pos["trail_decay_red_last_step_at"] = t
+        pos.setdefault("trail_decay_red_idle_since", t)
+        return None
+    elapsed = t - float(last_step)
+    if elapsed + 1e-9 < idle_need:
+        return None
+    n_steps = int(elapsed // idle_need)
+    if n_steps < 1:
+        return None
+    try:
+        r = float(risk) if risk is not None else 0.0
+    except (TypeError, ValueError):
+        r = 0.0
+    step_px = red_step * r if r > 0 else 0.01
+    cushion = _trail_min_cushion_px(last, risk, cfg)
+    ceiling = float(last) - cushion
+    pos["trail_decay_red_last_step_at"] = float(last_step) + n_steps * idle_need
+    if prev is None or float(prev) + 1e-9 >= ceiling:
+        return None
+    raised = float(prev) + n_steps * step_px
+    raised = min(raised, ceiling)
+    raised = max(raised, float(prev))
+    raised = math.ceil(round(raised * 100.0, 4)) / 100.0
+    if raised + 1e-9 >= float(last):
+        raised = round(float(last) - max(cushion, 0.01), 2)
+    if raised + 1e-9 > ceiling:
+        raised = math.floor(round(ceiling * 100.0, 4)) / 100.0
+    if raised + 1e-9 <= float(prev):
+        return None
+    return round(raised, 2)
+
+
 def green_catchup_raise(
     pos: dict[str, Any],
     cfg: dict | None = None,
@@ -3555,13 +3706,27 @@ def green_catchup_raise(
     risk = _risk_basis(pos)
     if last is None or last <= 0 or entry is None or entry <= 0:
         return None
-    # Red / flat: decay OFF — do not yank the stop into a loss.
+    # At or under the fill. Missing / 0 red step keeps the old contract:
+    # clear the green idle and do not raise. A positive red step creeps
+    # the shelf toward last−$0.01 so a sure loss shrinks. Raise-only.
     if float(last) <= float(entry) + 1e-9:
-        pos.pop("trail_decay_idle_since", None)
-        pos.pop("trail_decay_last_step_at", None)
-        pos.pop("trail_decay_peak", None)
-        pos.pop("trail_decay_overtake", None)
-        return None
+        try:
+            red_step = float(cfg.get("ai_local_trail_decay_red_step_r", 0) or 0.0)
+        except (TypeError, ValueError):
+            red_step = 0.0
+        if red_step <= 0:
+            pos.pop("trail_decay_idle_since", None)
+            pos.pop("trail_decay_last_step_at", None)
+            pos.pop("trail_decay_peak", None)
+            pos.pop("trail_decay_overtake", None)
+            return None
+        return _underwater_catchup_raise(
+            pos, cfg, last=float(last), entry=float(entry), prev=prev,
+            risk=risk, now=now, red_step=red_step,
+        )
+    pos.pop("trail_decay_red_peak", None)
+    pos.pop("trail_decay_red_idle_since", None)
+    pos.pop("trail_decay_red_last_step_at", None)
     try:
         max_mfe = float(cfg.get(
             "ai_local_trail_decay_max_mfe_r",
@@ -3828,6 +3993,17 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: floa
         jump = entry_catchup_stop(pos, cfg, last, _num(out), now)
         if jump is not None:
             out = jump if out is None else max(float(out), jump)
+        # Chase from the fill, including under arm_r. The first tick only
+        # arms the idle clock and returns None, so an unarmed shelf holds.
+        if bool(cfg.get(
+            "ai_local_trail_time_decay_enabled",
+            DEFAULT_LOCAL_TRAIL_TIME_DECAY_ENABLED,
+        )):
+            catch = green_catchup_raise(pos, cfg, now=now)
+            if catch is not None:
+                if float(catch) + 1e-9 >= float(last):
+                    return round(float(catch), 2)
+                out = float(catch) if out is None else max(float(out), float(catch))
         return out
     give_mfe = mfe
     if not _tight_give_clears_entry(last, entry, risk, cfg,
@@ -7014,6 +7190,49 @@ def manage_open_positions(
                     "exh_falling_flatten", symbol=ticker,
                     pctr=sig_fall.get("pctr"),
                     streak=pos.get("exh_fall_streak"),
+                )
+                changed = True
+                continue
+
+        # Upper-band %R dump. Off unless ai_exit_rsi_dump_enabled. A hard
+        # drop out of the green/overbought band, not any downward tick.
+        if (
+            pos.get("entry_confirmed")
+            and not pos.get("closing_reason")
+            and bool(_cfg_all().get("ai_exit_rsi_dump_enabled", False))
+        ):
+            sig_dump = dict(indicators.get(ticker) or {})
+            live_px = _num(pos.get("last_seen_price"))
+            if live_px:
+                try:
+                    import ai_entry_watch as _ew_dump
+                    got = _ew_dump.live_exhaustion(
+                        ticker, live_px, _cfg_all(), now)
+                    if got:
+                        pctr_d, _ex, _ris, _fall = got
+                        sig_dump["pctr"] = round(pctr_d, 2)
+                except Exception:
+                    pass
+            prev_ring = pos.get("rsi_dump_streak")
+            fire = rsi_dump_due(pos, sig_dump, _cfg_all(), now)
+            if pos.get("rsi_dump_streak") != prev_ring:
+                changed = True
+            if fire:
+                alpaca_trader.cancel_open_orders(ticker)
+                out = alpaca_trader.close_out(ticker) or {}
+                if isinstance(out, dict) and out.get("order_id"):
+                    pos["close_order_id"] = str(out["order_id"])
+                pos["closing_reason"] = "rsi_dump"
+                exit_why[ticker] = "rsi_dump"
+                events.append({
+                    "ticker": ticker, "event": "rsi_dump",
+                    "pctr": sig_dump.get("pctr"),
+                    "streak": pos.get("rsi_dump_streak"),
+                })
+                log_event(
+                    "rsi_dump", symbol=ticker,
+                    pctr=sig_dump.get("pctr"),
+                    streak=pos.get("rsi_dump_streak"),
                 )
                 changed = True
                 continue
