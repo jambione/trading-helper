@@ -1,19 +1,9 @@
-"""Entry rules on the book, rendered from the live config.
+"""Book cell pass highlights share one ENTRY criteria helper.
 
-The operator asked to see what values have to cross before a position opens.
-The one thing that must not happen is a legend written down by hand: it would
-drift from the thresholds it claims to describe the first time a knob moved,
-and this desk has been bitten three times in one session by a number that said
-one thing while the code did another —
-
-  ai_watch_decision_max_age_sec read 30 and resolved to a hardcoded 8
-  ai_watch_min_pct_change read 50 and gated a path admissions do not use
-  the research seed refused red names with no knob at all
-
-A legend is the same failure with a friendlier face, so every value comes off
-the config the server actually loaded.
+The Criteria button and ENTRY/EXIT legend panel are gone. What remains is
+``_bookEntryCriteria`` driving ``crit--pass`` on State / EXH cells, so a
+pass mark still has to match the arm gate's provenance-first rules.
 """
-import re
 import sys
 from pathlib import Path
 
@@ -24,107 +14,39 @@ _JS = (_ROOT / "static" / "js" / "feeds.js").read_text(encoding="utf-8")
 _HTML = (_ROOT / "dashboard.html").read_text(encoding="utf-8")
 _CSS = (_ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
 
-KEYS = [
-    "ai_watch_macd_block_bearish",
-    "ai_watch_exhaustion_heat_min_pct", "ai_watch_ob_flat_min_pct",
-    "ai_watch_decision_max_age_sec", "ai_watch_macd_max_age_sec",
-    "ai_watch_arm_confirm_ticks", "ai_exit_min_hold_sec",
-    "ai_local_trail_give_max_pct", "ai_local_trail_be_at_pct",
-    "ai_dead_trade_min", "ai_eod_liquidate_time",
-    # The rest of what the legend now claims. A criterion the operator can
-    # change must be READ, not described: the attempt cap and the re-entry
-    # pair refuse before price is looked at, give_r is the other half of the
-    # shelf width, and be_at_r the other half of the breakeven floor.
-    "ai_watch_max_entries_per_symbol_day", "ai_reentry_cooldown_sec",
-    "ai_dead_reentry_block", "ai_reentry_min_mfe_r", "ai_daily_loss_limit_r",
-    "ai_max_positions", "ai_max_buys_per_poll", "ai_fill_abort_r",
-    "ai_entry_order_style", "ai_risk_pct",
-    "ai_local_trail_give_r", "ai_local_trail_arm_r", "ai_local_trail_enabled",
-    "ai_local_trail_be_at_r", "ai_breakeven_offset_px",
-    "ai_watch_synth_stop_pct", "ai_min_reward_risk", "ai_watch_min_stop_pct",
-    "ai_dead_trade_mfe_r", "ai_no_progress_flatten_enabled",
-    "ai_no_progress_sec", "ai_no_progress_mfe_r",
-    "ai_exh_falling_flatten_enabled",
-    "ai_exh_falling_flatten_confirm_ticks",
-    "ai_stale_data_max_age_sec",
-    "ai_broker_stop_enabled", "ai_eod_liquidate_enabled",
-    "ai_watch_require_live_pctr", "ai_watch_require_realtime_macd",
-]
-
-
-def _legend() -> str:
-    i = _JS.index("function _paintBookLegend")
-    return _JS[i:_JS.index("\n}", i)]
-
 
 def _criteria() -> str:
-    """Pass evaluation lives in _bookEntryCriteria (shared with cell paint)."""
     i = _JS.index("function _bookEntryCriteria")
     return _JS[i:_JS.index("\n}", i)]
 
 
-def test_every_threshold_reaches_the_client():
-    """A key the server does not publish renders as its fallback, which is a
-    legend quietly showing a number nobody set."""
-    from config import SAFE_CONFIG_KEYS
-    missing = [k for k in KEYS if k not in set(SAFE_CONFIG_KEYS)]
-    assert not missing, f"not published to the client: {missing}"
+def test_criteria_button_and_legend_are_gone():
+    assert "data-ai-book-legend-toggle" not in _HTML
+    assert "data-ai-book-legend>" not in _HTML
+    assert "Criteria</button>" not in _HTML
+    assert "function _paintBookLegend" not in _JS
+    assert ".ai-book-legend" not in _CSS
 
 
-def test_every_threshold_is_read_from_config():
-    body = _legend()
-    missing = [k for k in KEYS if k not in body]
-    assert not missing, f"legend does not read: {missing}"
+def test_cell_pass_highlight_reuses_criteria_helper():
+    assert "function _bookEntryCriteria" in _JS
+    assert "crit--pass" in _JS
+    assert ".crit--pass" in _CSS
+    assert "#5fcf96" in _CSS
 
 
-def test_no_threshold_is_written_by_hand():
-    """The regression that matters. Each rule line must interpolate n(...),
-    never a literal the config could move away from."""
-    body = _legend()
-    lines = [l for l in body.split("\n") if "['" in l or "['" in l]
-    rules = [l for l in body.split("\n") if re.search(r"^\s*\['[A-Z]+',", l)]
-    assert rules, "no rule rows found"
-    for l in rules:
-        assert any(a in l for a in ("n('", "s('", "b('")), (
-            f"rule row has no config lookup: {l.strip()[:70]}")
-
-
-def test_the_container_exists_under_the_rows():
-    i = _HTML.index("data-ai-book-rows")
-    # Exact container attr — not data-ai-book-legend-toggle in the header.
-    j = _HTML.index("data-ai-book-legend>")
-    assert j > i, "the legend belongs below the book, not above it"
-
-
-def test_it_hides_itself_when_empty():
-    """Before the first config arrives there is nothing true to say."""
-    assert ".ai-book-legend:empty" in _CSS
-    assert "return;" in _legend()
-
-
-def test_it_can_never_break_the_book():
-    """A legend is a reference, not a mechanism. If it throws, the rows still
-    have to paint."""
-    i = _JS.index("_paintBookLegend(get('config'),")
-    assert "try {" in _JS[i - 80:i]
-    assert "catch" in _JS[i:i + 300]
-
-
-# ── provenance gates the whole panel ───────────────────────────────────────
+# ── provenance gates cell pass marks ───────────────────────────────────────
 #
-# PATH, 2026-08-28: the State column read "MACD not live" while the legend
+# PATH, 2026-08-28: the State column read "MACD not live" while a legend
 # showed EITHER as satisfied. Both were describing the same row. The gate
 # refuses a MACD not drawn on the live tape BEFORE it looks at gap size,
-# separation or the override, so scoring those rules on an unusable reading
-# ticks a branch the gate never reached.
-#
-# A reading that cannot be used is not a rule that passes. It is a rule that
-# could not be judged — the same distinction the desk draws everywhere else.
+# so scoring those rules on an unusable reading ticks a branch the gate
+# never reached. Cell highlights use the same helper.
+
 
 def test_provenance_is_read_before_the_rules():
     body = _criteria()
     i = body.index("const src = String(r.macd_src")
-    # The assignments, not the `let` line that declares them all as null.
     for later in ("const gap = num(r.macd_gap)",
                   "fresh = live === false"):
         assert body.index(later) > i, f"{later} is evaluated before provenance"
@@ -137,96 +59,11 @@ def test_a_non_live_macd_makes_its_rules_unjudgeable():
 
 
 def test_a_non_live_macd_fails_fresh_outright():
-    """FRESH is the row that is ABOUT usability, so there it is a real fail
-    rather than an unknown — otherwise nothing on the panel would say why."""
+    """FRESH is about usability, so there it is a real fail rather than unknown."""
     body = _criteria()
     assert "fresh = live === false ? false" in body
-
-
-def test_fresh_says_it_covers_the_tape():
-    """The row has to name what it now checks, or the panel is accurate and
-    still unreadable.
-
-    Provenance is conditional now: MACD may run on the REST fallback
-    (ai_watch_require_realtime_macd is false), while %R and CM RSI-2 are
-    refused outright unless they came off the live tape. The row states
-    whichever is in force rather than one fixed sentence.
-    """
-    body = _legend()
-    assert "on the live tape" in body and "(REST ok)" in body, (
-        "FRESH must say which way MACD provenance is set")
-    assert "%R live" in body, (
-        "FRESH must name the provenance gate that refuses outright")
 
 
 def test_unknown_provenance_is_not_treated_as_live():
     body = _criteria()
     assert "live = src ? src === 'realtime' : null" in body
-
-
-def test_the_legend_renders_the_entry_and_exit_separation_from_config():
-    """Verify live rendering of entry separation and exit configuration.
-
-    The flatten time goes through s(), not n(). It is "15:50" — a string —
-    and Number("15:50") is NaN, so reading it with n() always fell through to
-    the hardcoded fallback. The legend could not have shown a changed flatten
-    time, which is exactly the drift this file exists to prevent.
-    """
-    assert "n('ai_dead_trade_min'" in _JS
-    assert "s('ai_eod_liquidate_time'" in _JS
-    assert "n('ai_eod_liquidate_time'" not in _JS, (
-        "a non-numeric knob read through n() renders its fallback forever")
-    from config import SAFE_CONFIG_KEYS
-    for k in ("ai_dead_trade_min", "ai_eod_liquidate_time"):
-        assert k in SAFE_CONFIG_KEYS, f"{k} never reaches the browser"
-
-
-# ── compact legend / cell pass highlights ─────────────────────────────────
-
-def test_legend_defaults_collapsed():
-    """The ENTRY/EXIT block is hidden until the operator asks for it."""
-    assert "ai-book-legend--collapsed" in _JS
-    assert "aiBookLegendOpen" in _JS
-    assert "data-ai-book-legend-toggle" in _HTML
-    assert ".ai-book-legend--collapsed" in _CSS
-
-
-def test_cell_pass_highlight_reuses_criteria_helper():
-    """MACD / EXH / RSI / STATE cells share the legend's pass evaluation."""
-    assert "function _bookEntryCriteria" in _JS
-    assert "crit--pass" in _JS
-    assert ".crit--pass" in _CSS
-    assert "#5fcf96" in _CSS
-
-# ── row-context: ENTRY vs EXIT ────────────────────────────────────────────
-#
-# Selecting an open position should not dump the arm checklist on top of
-# exit rules the operator is already living inside. Watch rows get ENTRY;
-# open / submitted rows get EXIT; Criteria with no selection stays ENTRY-only.
-
-
-def test_legend_detects_open_rows_like_the_book():
-    """Same signals _bookRows / RStop already use — do not invent a third."""
-    i = _JS.index("function _legendRowIsOpen")
-    body = _JS[i:_JS.index("\n}", i)]
-    assert "r.is_position" in body
-    assert "phase === 'open'" in body
-    assert "phase === 'submitted'" in body
-
-
-def test_open_row_shows_exit_section_only():
-    body = _legend()
-    assert "showEntry = !isOpen" in body
-    assert "showExit = isOpen" in body
-    assert "if (showEntry)" in body
-    assert "if (showExit)" in body
-    # Must not unconditionally concatenate both sections anymore.
-    assert "html = head\n    + '<div class=\"lg-sec\">ENTRY" not in body
-
-
-def test_no_selection_defaults_to_entry_only():
-    """Criteria toggle with no row: ENTRY, not the full both-block."""
-    body = _legend()
-    assert "const isOpen = _legendRowIsOpen(r)" in body
-    assert "showEntry = !isOpen" in body
-    assert "showExit = isOpen" in body

@@ -80,25 +80,6 @@ export function init(panelEl, kind) {
       bookSection, bookRowsEl, bookCountEl, bookStampEl, _aiBook(), bookDayPlEl,
     );
     _bindBookSort(_repaintBook);
-
-    // Click a row to have the legend explain THAT name. Open positions get
-    // EXIT only; watch rows get ENTRY only (pass/fail marks). Click again to
-    // clear. Delegated, because rows are re-rendered on every paint.
-    bookRowsEl.addEventListener('click', (ev) => {
-      const row = ev.target && ev.target.closest
-        ? ev.target.closest('[data-book-symbol]') : null;
-      if (!row) return;
-      const sym = String(row.dataset.bookSymbol || '');
-      _legendFor = (_legendFor === sym) ? '' : sym;
-      bookRowsEl.querySelectorAll('[data-book-symbol]').forEach((el) => {
-        el.classList.toggle('is-explained',
-          !!_legendFor && el.dataset.bookSymbol === _legendFor);
-      });
-      // Row-click explain needs the legend visible even when the operator
-      // keeps it collapsed by default — temporary reveal, preference stays.
-      _repaintBook();
-    });
-    _bindBookLegendToggle(_repaintBook);
   }
 
   /** Prefer last good wire when store briefly has a clobber/empty book. */
@@ -828,55 +809,7 @@ function _announcePositions(rows) {
   _prevOpenSyms = now;
 }
 
-/** Which book row the legend is explaining, or '' for the plain rules. */
-let _legendFor = '';
-
-/** Legend panel open/closed. Default collapsed — the ENTRY/EXIT block eats
- *  vertical space the book needs; criteria still paint as green cells. */
-const _BOOK_LEGEND_LS = 'aiBookLegendOpen';
-
-function _legendExpanded() {
-  try {
-    return localStorage.getItem(_BOOK_LEGEND_LS) === '1';
-  } catch (e) {
-    return false;
-  }
-}
-
-function _setLegendExpanded(open) {
-  try {
-    if (open) localStorage.setItem(_BOOK_LEGEND_LS, '1');
-    else localStorage.removeItem(_BOOK_LEGEND_LS);
-  } catch (e) { /* private mode: session-only */ }
-}
-
-function _syncLegendToggleBtn() {
-  const btn = document.querySelector('[data-ai-book-legend-toggle]');
-  if (!btn) return;
-  const open = _legendExpanded() || !!_legendFor;
-  btn.setAttribute('aria-pressed', open ? 'true' : 'false');
-  btn.classList.toggle('btn--active', _legendExpanded());
-  btn.title = _legendExpanded()
-    ? 'Hide entry/exit criteria legend'
-    : 'Show entry/exit criteria legend';
-  btn.textContent = 'Criteria';
-}
-
-function _bindBookLegendToggle(repaint) {
-  const btn = document.querySelector('[data-ai-book-legend-toggle]');
-  if (!btn || btn.dataset.bound === '1') return;
-  btn.dataset.bound = '1';
-  btn.addEventListener('click', (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    _setLegendExpanded(!_legendExpanded());
-    _syncLegendToggleBtn();
-    if (typeof repaint === 'function') repaint();
-  });
-  _syncLegendToggleBtn();
-}
-
-/** Shared ENTRY pass evaluation — legend marks and per-cell crit--pass.
+/** Shared ENTRY pass evaluation for per-cell crit--pass highlights.
  *  Provenance-first, same knobs as the arm gate. null = unjudgeable. */
 function _bookEntryCriteria(cfg, row) {
   const c = cfg && typeof cfg === 'object' ? cfg : {};
@@ -943,128 +876,6 @@ function _bookEntryCriteria(cfg, row) {
   return { macd, exh, fresh, live, ready, n, s, b };
 }
 
-/** Same open-row test _bookRows / RStop use: is_position or open/submitted. */
-function _legendRowIsOpen(r) {
-  if (!r || typeof r !== 'object') return false;
-  const phase = String(r.phase || '').toLowerCase();
-  const status = String(r.status || '').toLowerCase();
-  return !!(r.is_position || phase === 'open' || phase === 'submitted'
-    || status === 'filled' || status === 'submitted');
-}
-
-/** Entry/exit rules, rendered from the LIVE config rather than written down.
- *
- *  Hardcoding the numbers here would produce a legend that drifts from the
- *  thresholds it claims to describe — the same failure as a config knob
- *  nothing reads, and this desk has hit that three times in one session.
- *  Every value below comes off the config the server actually loaded.
- *
- *  With a row selected each rule is also EVALUATED against it, so the panel
- *  answers "what is this name missing" rather than only "what is required".
- *  A rule whose inputs are absent reads UNKNOWN, never PASS — the desk's own
- *  rule that absence is not a pass.
- *
- *  Section choice follows the row: an OPEN position (is_position / phase open)
- *  shows EXIT only; a watch-only row shows ENTRY only. Criteria with no row
- *  selected defaults to ENTRY only — not the full both-block.
- */
-function _paintBookLegend(cfg, row) {
-  const el = document.querySelector('[data-ai-book-legend]');
-  if (!el) return;
-  _syncLegendToggleBtn();
-  // Collapsed by default. A selected row still expands so explain works.
-  const show = _legendExpanded() || !!_legendFor;
-  el.classList.toggle('ai-book-legend--collapsed', !show);
-  if (!show) return;
-
-  const c = cfg && typeof cfg === 'object' ? cfg : {};
-  if (!Object.keys(c).length) return;
-  const { macd, exh, fresh, n, s, b } = _bookEntryCriteria(cfg, row);
-  const r = row && typeof row === 'object' ? row : null;
-  const isOpen = _legendRowIsOpen(r);
-  // Open → EXIT only. Watch / no selection → ENTRY only.
-  const showEntry = !isOpen;
-  const showExit = isOpen;
-
-  // ENTRY. Evaluated against the selected row where the inputs exist.
-  // Hide MACD from the ENTRY legend when the bearish veto is off — it is
-  // not a gate, so advertising "not required" still looks like a live column.
-  const entry = [
-    ...(b('ai_watch_macd_block_bearish', 0)
-      ? [['MACD', 'not bearish', macd]]
-      : []),
-    ['EXH',   n('ai_watch_exhaustion_rules', 1)
-                ? `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`
-                : 'not required', exh],
-    // Provenance is a gate, not a footnote: %R is refused outright when it
-    // did not come off the live tape, so the legend has to say so
-    // or it describes a looser desk than the one running.
-    ['FRESH', `price ≤ ${n('ai_watch_decision_max_age_sec', 15)}s &nbsp;·&nbsp; MACD ≤ ${n('ai_watch_macd_max_age_sec', 60)}s`
-                + `${b('ai_watch_require_realtime_macd', 0) ? ' on the live tape' : ' (REST ok)'}`
-                + `${b('ai_watch_require_live_pctr', 0) ? ' &nbsp;·&nbsp; %R live' : ''}`, fresh],
-    ['SETUP', `R:R ≥ ${n('ai_min_reward_risk', 0.5)} &nbsp;·&nbsp; stop ≥ ${n('ai_watch_min_stop_pct', 1.5)}% `
-                + `&nbsp;·&nbsp; 1R = ${n('ai_watch_synth_stop_pct', 5)}% of price`, null],
-    ['ARM',   `${n('ai_watch_arm_confirm_ticks', 1)} agreeing polls &nbsp;·&nbsp; ${n('ai_exit_min_hold_sec', 0)}s min hold after fill`, null],
-    // The brakes. These refuse before price is looked at, so a row can clear
-    // every rule above and still not open.
-    ['BRAKE', `≤ ${n('ai_watch_max_entries_per_symbol_day', 0) || '∞'}/name/day &nbsp;·&nbsp; ${n('ai_reentry_cooldown_sec', 0)}s cooldown`
-                + `${b('ai_dead_reentry_block', 0)
-                    ? ` &nbsp;·&nbsp; no re-entry after a red exit under ${n('ai_reentry_min_mfe_r', 0.5)}R` : ''}`
-                + ` &nbsp;·&nbsp; stop at −${n('ai_daily_loss_limit_r', 0)}R`, null],
-    ['SIZE',  `${s('ai_entry_order_style', 'limit')} &nbsp;·&nbsp; ${n('ai_risk_pct', 1)}% risk &nbsp;·&nbsp; ${n('ai_max_positions', 0)} open`
-                + ` &nbsp;·&nbsp; ${n('ai_max_buys_per_poll', 0)}/poll &nbsp;·&nbsp; abort ${n('ai_fill_abort_r', 0)}R through`, null],
-  ];
-
-  // EXIT. Informational — these describe an open position.
-  //
-  // The shelf is the one line that must be COMPUTED rather than quoted. The
-  // give is min(give_r × R, give_max_pct% of price) and R is synth_stop_pct%
-  // of price, so the cap converts to give_max_pct/synth_stop_pct in R and the
-  // smaller of the two is what actually trails. Printing give_max_pct alone
-  // said "0.5%" while the shelf was really a flat 0.10R, and printing give_r
-  // alone said 0.2R — both true about a knob, neither true about the desk.
-  const _capR = n('ai_watch_synth_stop_pct', 5) > 0
-    ? n('ai_local_trail_give_max_pct', 0) / n('ai_watch_synth_stop_pct', 5)
-    : 0;
-  const _giveR = n('ai_local_trail_give_max_pct', 0) > 0
-    ? Math.min(n('ai_local_trail_give_r', 0), _capR)
-    : n('ai_local_trail_give_r', 0);
-  const exit = [
-    ['SHELF', b('ai_local_trail_enabled', 1)
-                ? `peak − ${(Math.round(_giveR * 1000) / 1000)}R`
-                  + ` &nbsp;(min of give ${n('ai_local_trail_give_r', 0)}R, cap ${n('ai_local_trail_give_max_pct', 0)}% of price)`
-                  + ` &nbsp;·&nbsp; arms at ${n('ai_local_trail_arm_r', 0)}R`
-                : 'off', null],
-    ['STOP',  `${b('ai_broker_stop_enabled', 0) ? 'broker' : 'local_stop'} 1R`
-                + ` &nbsp;=&nbsp; ${n('ai_watch_synth_stop_pct', 5)}% under entry`, null],
-    ['BE',    `floor at fill +$${n('ai_breakeven_offset_px', 0)} once ${n('ai_local_trail_be_at_r', 0)}R or ${n('ai_local_trail_be_at_pct', 0)}%`, null],
-    ['DEAD',  `${n('ai_dead_trade_min', 0)}m held with MFE under ${n('ai_dead_trade_mfe_r', 0)}R`, null],
-    ['NOPROG', b('ai_no_progress_flatten_enabled', 0)
-                ? `${n('ai_no_progress_sec', 60)}s after fill with MFE under ${n('ai_no_progress_mfe_r', 0.05)}R`
-                : 'off', null],
-    ['EXHFALL', b('ai_exh_falling_flatten_enabled', 0)
-                ? `EXH falling ×${n('ai_exh_falling_flatten_confirm_ticks', 2)} polls → flatten`
-                : 'off', null],
-    ['STALE', `no live quote for ${n('ai_stale_data_max_age_sec', 15)}s → close`, null],
-    ['EOD',   b('ai_eod_liquidate_enabled', 1) ? `flatten at ${s('ai_eod_liquidate_time', '15:50')}` : 'no EOD flatten', null],
-  ];
-
-  const head = r
-    ? `<div class="lg-head">${_esc(String(r.symbol || ''))} — ${isOpen ? 'EXIT' : 'ENTRY'} · tap row again to clear</div>`
-    : '';
-  const paint = (list) => list.map(([k, v, ok]) => {
-    const cls = ok === true ? ' lg-pass' : ok === false ? ' lg-fail' : '';
-    const mark = !r || ok == null ? '' :
-      `<span class="lg-mark">${ok ? '✓' : '✗'}</span>`;
-    return `<div class="lg-row${cls}"><span class="lg-k">${k}</span>`
-      + `<span class="lg-v">${v}</span>${mark}</div>`;
-  }).join('');
-  let html = head;
-  if (showEntry) html += '<div class="lg-sec">ENTRY — all must pass</div>' + paint(entry);
-  if (showExit) html += '<div class="lg-sec">EXIT — any one fires</div>' + paint(exit);
-  if (el.innerHTML !== html) el.innerHTML = html;
-}
-
 /** Extreme day-movers off the book — each must show a reason. */
 function _paintExtremeOffBook(sectionEl, book) {
   if (!sectionEl) return;
@@ -1101,10 +912,6 @@ function _paintExtremeOffBook(sectionEl, book) {
 function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
   if (!rowsEl) return;
   const rows = _sortBookRows(_bookRows(book));
-  try {
-    _paintBookLegend(get('config'),
-      _legendFor ? rows.find(x => String(x.symbol || '') === _legendFor) : null);
-  } catch (e) { /* legend is never load-bearing */ }
   try { _paintExtremeOffBook(sectionEl, book); } catch (e) { /* strip is diagnostic */ }
   _announcePositions(rows);
   const nOpen = rows.filter(r => r && r.phase === 'open').length;
