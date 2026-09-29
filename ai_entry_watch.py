@@ -220,6 +220,10 @@ _BLOCKER_LABELS: dict[str, str] = {
     "mid_rise_lost": "back under -50",
     "wait_square": "wait ■",
     "square_confirm": "■ confirming",
+    "wait_presquare": "wait ▢",
+    "presquare_confirm": "▢ confirming",
+    "presquare": "ready",
+    "last_presquare": "ready",
     "wait_os": "wait ▲",
     "os_confirm": "▲ confirming",
     "wait_os_leave": "wait leave OS",
@@ -11626,6 +11630,25 @@ def exh_square_arm_enabled(cfg: dict | None) -> bool:
     return bool(cfg.get("ai_watch_exh_square_arm", True))
 
 
+def exh_presquare_arm_enabled(cfg: dict | None) -> bool:
+    """Empty-square ENTRY (▢): approach band, tight, and still rising.
+
+    Missing key stays off so partial test cfgs keep square-only behavior.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return bool(cfg.get("ai_watch_exh_presquare_arm", False))
+
+
+def square_require_rising(cfg: dict | None) -> bool:
+    """Full-square opens only while fast %R is rising (green EXH).
+
+    Missing key stays off so existing square fixtures can arm a flat box.
+    Live config turns it on: a red/cooling or stalled square has no runway.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return bool(cfg.get("ai_watch_square_require_rising", False))
+
+
 def exh_heating_with_square(cfg: dict | None) -> bool:
     """Allow heating fall-through when the square arm misses.
 
@@ -11786,6 +11809,11 @@ def _square_exh_allows_buy(
                     f"exh gap {gap:.1f}>{_rte_confluence_max(cfg):g}")
             return False, "exh_not_tight"
         return False, "wait_exh"
+    # Green EXH only. A stalled or rolling-over full square has no runway.
+    # Falling already returned above; this catches a flat box.
+    if square_require_rising(cfg) and not ind.get("pctr_rising"):
+        _square_streak_note(sym, False)
+        return False, "exh_not_rising"
     # Dual OB + tight this poll.
     t_now = float(now if now is not None else time.time())
     streak = _square_streak_note(sym, True, now=t_now)
@@ -11811,6 +11839,80 @@ def _square_exh_allows_buy(
     if bool(cfg.get("ai_watch_ob_allow_hot", True)) and _hot_ob_source(record):
         return True, "overbought_hot"
     return True, "overbought"
+
+
+# {symbol: (consecutive approach-band polls, last_increment_ts)}.
+_PRESQUARE_STREAK: dict[str, tuple[int, float]] = {}
+
+
+def _presquare_streak_note(
+    sym: str,
+    is_pre: bool,
+    *,
+    now: float | None = None,
+) -> int:
+    """Consecutive empty-square polls. Paint peek does not advance."""
+    sym = str(sym or "").upper()
+    if not sym:
+        return 0
+    if not is_pre:
+        _PRESQUARE_STREAK.pop(sym, None)
+        return 0
+    prev_n, prev_t = _PRESQUARE_STREAK.get(sym, (0, 0.0))
+    if getattr(_MID_RISE_PEEK, "on", False):
+        return int(prev_n)
+    t = float(now if now is not None else time.time())
+    if prev_t > 0 and (t - float(prev_t)) < _SQUARE_STREAK_DEBOUNCE_SEC:
+        return int(prev_n)
+    n = int(prev_n) + 1
+    _PRESQUARE_STREAK[sym] = (n, t)
+    return n
+
+
+def _presquare_exh_allows_buy(
+    record: dict,
+    cfg: dict,
+    *,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    """Empty square ▢: approach band, tight, and fast %R still rising.
+
+    Both lines ≥ −pre_thr, not yet a full OB square, gap inside
+    confluence, after ``ai_watch_square_min_count`` polls. Rising is the
+    green EXH cell; cooling or flat is no runway. Full squares and the
+    oversold band return ``wait_exh`` so those arms keep their labels.
+    """
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    sym = str(record.get("symbol") or "").upper()
+    fast = _f_or_none(ind.get("pctr"))
+    slow = _f_or_none(ind.get("pctr_slow"))
+    if fast is None or slow is None or not sym:
+        _presquare_streak_note(sym, False)
+        return False, "wait_exh"
+    thr = _rte_threshold(cfg)
+    pre = exh_pre_thr(cfg)
+    gap = abs(float(fast) - float(slow))
+    tight = gap <= _rte_confluence_max(cfg) + 1e-9
+    both_ob = float(fast) >= -thr and float(slow) >= -thr
+    both_pre = float(fast) >= -pre and float(slow) >= -pre
+    if (both_ob and tight) or not both_pre or not tight:
+        _presquare_streak_note(sym, False)
+        return False, "wait_exh"
+    if ind.get("pctr_falling") or exhaustion_state(record, cfg) == "cooling":
+        _presquare_streak_note(sym, False)
+        return False, "exh_falling"
+    if not ind.get("pctr_rising"):
+        _presquare_streak_note(sym, False)
+        return False, "exh_not_rising"
+    t_now = float(now if now is not None else time.time())
+    streak = _presquare_streak_note(sym, True, now=t_now)
+    if isinstance(record, dict):
+        record["presquare_streak"] = int(streak)
+    need = square_min_count(cfg)
+    if streak < need:
+        record["block_detail"] = f"presquare {streak}/{need}"
+        return False, "presquare_confirm" if streak >= 1 else "wait_presquare"
+    return True, "presquare"
 
 
 def exh_oversold_arm_enabled(cfg: dict | None) -> bool:
@@ -12532,24 +12634,36 @@ def exhaustion_allows_buy(
     # Live square/triangle product keeps mid-rise off.
     if exh_mid_rise_arm_enabled(cfg):
         return _mid_rise_allows_buy(record, cfg, now=now)
-    # Square (TV red ■) and leave-oversold (▲) are independent arms.
-    # A square pass returns immediately. A square miss still consults the
-    # oversold arm when that flag is on. Missing oversold key stays off.
-    # Heating fall-through stays behind both refuses, and stays off live.
+    # Full square (■), empty square (▢), and leave-oversold (▲) are
+    # independent arms. A pass returns immediately. A square miss still
+    # consults the empty-square and oversold arms when those flags are on.
+    # Heating fall-through stays behind the refuses, and stays off live.
     sq_on = exh_square_arm_enabled(cfg)
     os_on = exh_oversold_arm_enabled(cfg)
+    pre_on = exh_presquare_arm_enabled(cfg)
     sq_ok, sq_why = False, ""
     if sq_on:
         sq_ok, sq_why = _square_exh_allows_buy(
             record, cfg, require_rising=require_rising, now=now)
         if sq_ok:
             return True, sq_why
+    pre_ok, pre_why = False, ""
+    if pre_on:
+        pre_ok, pre_why = _presquare_exh_allows_buy(record, cfg, now=now)
+        if pre_ok:
+            return True, pre_why
     if os_on:
         os_ok, os_why = _os_leave_allows_buy(record, cfg, now=now)
         if os_ok:
             return True, os_why
         if not sq_on or _os_block_wins(record, cfg, sq_why, os_why):
             return False, os_why
+    if (
+        pre_on and not pre_ok
+        and pre_why not in _SQ_GENERIC_MISS
+        and (not sq_on or sq_why in _SQ_GENERIC_MISS)
+    ):
+        return False, pre_why
     if sq_on and not sq_ok and not exh_heating_with_square(cfg):
         return False, sq_why
     state = exhaustion_state(record, cfg)

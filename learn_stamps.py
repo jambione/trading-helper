@@ -197,6 +197,8 @@ _FINGERPRINT_KEYS = (
     "ai_watch_min_room_below_hod_pct",
     # Square/triangle product vs −50 mid-rise rollback.
     "ai_watch_exh_square_arm",
+    "ai_watch_square_require_rising",
+    "ai_watch_exh_presquare_arm",
     "ai_watch_exh_heating_with_square",
     "ai_watch_square_min_count",
     "ai_watch_square_max_age_sec",

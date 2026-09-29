@@ -40,9 +40,12 @@ DEFAULT_CONFIG = {
     # Desk buy = MACD bullish cross with wide line separation (gap).
     "ai_watch_tv_exh_rsi": False,
     # Dual-%R OB+tight square ENTRY (TV red ■) and dual-line OB for exits.
-    # Live product: square on, mid-rise off. Min consecutive square polls
-    # before open; max age refuses late climax entries.
+    # Live product: full square and empty square (pre-square ▢) on, mid-rise
+    # off. Min consecutive polls before open; max age refuses a late climax.
+    # Rising is required on both so a red/cooling EXH cannot open.
     "ai_watch_exh_square_arm": True,
+    "ai_watch_square_require_rising": True,
+    "ai_watch_exh_presquare_arm": True,
     "ai_watch_exh_heating_with_square": False,
     "ai_watch_square_min_count": 2,
     "ai_watch_square_max_age_sec": 60.0,
@@ -1670,6 +1673,8 @@ def validate_ai_config(cfg: dict) -> list[str]:
 # "hybrid arm"); this is the resolved set the process is actually running.
 _EFFECTIVE_KEYS = (
     "ai_watch_exh_square_arm",
+    "ai_watch_square_require_rising",
+    "ai_watch_exh_presquare_arm",
     "ai_watch_exh_heating_with_square",
     "ai_watch_square_min_count",
     "ai_watch_square_max_age_sec",
@@ -2012,6 +2017,8 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_left_ob_exempt_min_hold",
     "ai_dual_tranche_triangle_exit",
     "ai_watch_exh_square_arm",
+    "ai_watch_square_require_rising",
+    "ai_watch_exh_presquare_arm",
     "ai_watch_exh_heating_with_square",
     "ai_watch_square_min_count",
     "ai_watch_square_max_age_sec",

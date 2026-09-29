@@ -118,6 +118,19 @@ def test_live_180s_window_still_arms_two_minutes_after_leave():
     assert ok is False and why == "stale_os_leave"
 
 
+def test_presquare_on_does_not_steal_oversold_leave():
+    cfg = _cfg(ai_watch_exh_presquare_arm=True, ai_watch_square_require_rising=True)
+    t0 = 1_000_000.0
+    ew._PRESQUARE_STREAK.clear()
+    ew.exhaustion_allows_buy(_rec("OSQ", -90, -86), cfg, now=t0)
+    ew.exhaustion_allows_buy(_rec("OSQ", -90, -86), cfg, now=t0 + 1.0)
+    leave = _rec("OSQ", -70, -74, rising=True)
+    leave["os_qualified"] = True
+    ok, why = ew.exhaustion_allows_buy(leave, cfg, now=t0 + 2.0)
+    assert ok is True and why == "oversold_leave"
+    ew._PRESQUARE_STREAK.clear()
+
+
 def test_square_still_wins_when_both_arms_on():
     cfg = _cfg()
     rec = _rec("SMCI", -13, -4)

@@ -123,3 +123,67 @@ def test_stale_square_refuses_late_climax():
     rec = _rec("EEE", -10.0, -8.0, square_since=now - 30.0)
     ok, why = ew.exhaustion_allows_buy(rec, cfg, now=now)
     assert ok is False and why == "stale_square"
+
+
+def test_flat_square_refuses_when_rising_required():
+    """Green EXH is rising. A flat full square has no runway."""
+    cfg = _cfg(ai_watch_square_require_rising=True, ai_watch_square_min_count=1)
+    rec = _rec("FLAT", -10.0, -8.0, rising=False, falling=False)
+    ok, why = ew.exhaustion_allows_buy(rec, cfg, now=1_000_000.0)
+    assert ok is False and why == "exh_not_rising"
+
+
+def test_cooling_square_still_refuses():
+    cfg = _cfg(ai_watch_square_require_rising=True)
+    rec = _rec("RED", -10.0, -8.0, rising=False, falling=True)
+    ok, why = ew.exhaustion_allows_buy(rec, cfg, now=1_000_000.0)
+    assert ok is False and why == "exh_falling"
+
+
+def test_empty_square_arms_while_rising():
+    """▢ approach band (EXH ~65–80), tight, green/rising — the runway open."""
+    cfg = _cfg(ai_watch_exh_presquare_arm=True, ai_watch_exh_pre_thr=35.0)
+    ew._PRESQUARE_STREAK.clear()
+    rec = _rec("KMX", -28.0, -26.0)  # EXH 72 / 74, gap 2, rising
+    t0 = 1_000_000.0
+    ok1, why1 = ew.exhaustion_allows_buy(rec, cfg, now=t0)
+    assert ok1 is False and why1 == "presquare_confirm"
+    ok_same, why_same = ew.exhaustion_allows_buy(rec, cfg, now=t0 + 0.05)
+    assert ok_same is False and why_same == "presquare_confirm"
+    ok2, why2 = ew.exhaustion_allows_buy(rec, cfg, now=t0 + 1.0)
+    assert ok2 is True and why2 == "presquare"
+    ew._PRESQUARE_STREAK.clear()
+
+
+def test_empty_square_refuses_red_and_flat():
+    cfg = _cfg(ai_watch_exh_presquare_arm=True, ai_watch_exh_pre_thr=35.0)
+    ew._PRESQUARE_STREAK.clear()
+    red = _rec("RED2", -28.0, -26.0, rising=False, falling=True)
+    ok, why = ew.exhaustion_allows_buy(red, cfg, now=1_000_000.0)
+    assert ok is False and why == "exh_falling"
+    flat = _rec("FLAT2", -28.0, -26.0, rising=False, falling=False)
+    ok, why = ew.exhaustion_allows_buy(flat, cfg, now=1_000_001.0)
+    assert ok is False and why == "exh_not_rising"
+    ew._PRESQUARE_STREAK.clear()
+
+
+def test_empty_square_does_not_steal_full_square():
+    cfg = _cfg(
+        ai_watch_exh_presquare_arm=True,
+        ai_watch_square_require_rising=True,
+        ai_watch_exh_pre_thr=35.0,
+    )
+    ew._PRESQUARE_STREAK.clear()
+    rec = _rec("AIG", -8.0, -6.0)  # EXH 92 / 94, full square, rising
+    ok, why = ew.exhaustion_allows_buy(rec, cfg, now=1_000_000.0)
+    assert ok is False and why == "square_confirm"
+    ok, why = ew.exhaustion_allows_buy(rec, cfg, now=1_000_001.0)
+    assert ok is True and why == "overbought"
+    ew._PRESQUARE_STREAK.clear()
+
+
+def test_missing_presquare_key_stays_off():
+    cfg = _cfg(ai_watch_exh_pre_thr=35.0)
+    rec = _rec("PRE", -28.0, -26.0)
+    ok, why = ew.exhaustion_allows_buy(rec, cfg, now=1_000_000.0)
+    assert ok is False and why == "wait_exh"
