@@ -1168,6 +1168,17 @@ function _paintOvernight(sectionEl, book) {
         parts.push(`<span class="on-dim">since start</span> <span class="${_bpCls(d)}">${_esc(_fmtHistPl(d))}</span>`);
       }
     }
+    // The runner reads the account every 15 minutes, so say when. A reading
+    // from an earlier day carries its date (the scheduler was down).
+    if (parts.length && Number(snap.updated) > 0) {
+      let today = '';
+      try {
+        const p = _etDayFmt.formatToParts(new Date());
+        const g = k => (p.find(x => x.type === k) || {}).value;
+        today = `${g('year')}-${g('month')}-${g('day')}`;
+      } catch (e) { /* the clock alone still reads */ }
+      parts.push(`<span class="on-dim">as of ${_esc(_fmtEtClock(snap.updated, today).replace(/:\d{2}$/, ''))}</span>`);
+    }
     acctEl.innerHTML = parts.join(' · ');
   }
 
