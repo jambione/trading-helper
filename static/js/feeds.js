@@ -1070,12 +1070,49 @@ function _bpCls(v) {
   return n > 0 ? 'chg-pos' : 'chg-neg';
 }
 
+const _BOOK_SLOT_LS = 'aiBookSlotView';
+
+/** Positions and the overnight book share one slot; a tab link picks which.
+ *  The choice is a per-browser convenience, so storage failing just means the
+ *  slot opens on Positions. Overnight's tab only shows once it has a snapshot. */
+function _bindBookSlot(sectionEl, haveOvernight) {
+  const slot = sectionEl && sectionEl.querySelector('[data-ai-book-slot]');
+  if (!slot) return;
+  const onTab = slot.querySelector('[data-slot-tab="overnight"]');
+  if (onTab) onTab.hidden = !haveOvernight;
+  const apply = (view) => {
+    const v = view === 'overnight' && haveOvernight ? 'overnight' : 'positions';
+    slot.dataset.view = v;
+    slot.querySelectorAll('[data-slot-tab]').forEach((b) => {
+      const on = b.dataset.slotTab === v;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+  };
+  if (!slot.dataset.bound) {
+    slot.dataset.bound = '1';
+    slot.addEventListener('click', (ev) => {
+      const b = ev.target && ev.target.closest && ev.target.closest('[data-slot-tab]');
+      if (!b || !slot.contains(b)) return;
+      const v = b.dataset.slotTab;
+      try { localStorage.setItem(_BOOK_SLOT_LS, v); } catch (e) { /* per-browser only */ }
+      slot.dataset.want = v;
+      apply(v);
+    });
+    let saved = '';
+    try { saved = localStorage.getItem(_BOOK_SLOT_LS) || ''; } catch (e) { saved = ''; }
+    slot.dataset.want = saved || 'positions';
+  }
+  apply(slot.dataset.want);
+}
+
 /** Overnight momentum pilot: tonight's book, fills vs the auction, night scores. */
 function _paintOvernight(sectionEl, book) {
   if (!sectionEl) return;
   const root = sectionEl.querySelector('[data-ai-overnight]');
   if (!root) return;
   const snap = (book && book.overnight && typeof book.overnight === 'object') ? book.overnight : null;
+  _bindBookSlot(sectionEl, !!snap);
   if (!snap) {
     root.hidden = true;
     return;
@@ -1110,6 +1147,28 @@ function _paintOvernight(sectionEl, book) {
         ? `<span class="on-dim">no scored nights yet · backtest ${_esc(bt.toFixed(0))} bp/night</span>`
         : '';
     }
+  }
+
+  const acctEl = root.querySelector('[data-ai-overnight-acct]');
+  if (acctEl) {
+    const a = snap.account && typeof snap.account === 'object' ? snap.account : {};
+    const eq = Number(a.equity);
+    const prior = Number(a.last_equity);
+    const start = Number(a.start_equity);
+    const parts = [];
+    if (Number.isFinite(eq) && eq > 0) {
+      parts.push(`<span class="on-dim">Account</span> $${_esc(Math.round(eq).toLocaleString())}`);
+      if (Number.isFinite(prior) && prior > 0) {
+        const d = eq - prior;
+        parts.push(`<span class="on-dim">today</span> <span class="${_bpCls(d)}">${_esc(_fmtHistPl(d))}</span>`
+          + ` <span class="on-dim">${_esc(`${d >= 0 ? '+' : ''}${(d / prior * 100).toFixed(2)}%`)}</span>`);
+      }
+      if (Number.isFinite(start) && start > 0) {
+        const d = eq - start;
+        parts.push(`<span class="on-dim">since start</span> <span class="${_bpCls(d)}">${_esc(_fmtHistPl(d))}</span>`);
+      }
+    }
+    acctEl.innerHTML = parts.join(' · ');
   }
 
   const rows = Array.isArray(snap.rows) ? snap.rows : [];

@@ -2661,6 +2661,45 @@ body.mobile [data-tv-toggle-btn] {
   font-size: 11px;
   color: #8b7ab8;
 }
+/* Positions and the overnight book share one slot; the tab row picks which. */
+.panel-ai-watch .ai-book-slot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.panel-ai-watch .ai-book-slot__tabs {
+  display: flex;
+  gap: 14px;
+  padding: 5px 11px 0;
+  border-top: 1px solid rgba(167, 139, 250, 0.28);
+  background: rgba(20, 16, 36, 0.72);
+}
+.panel-ai-watch .ai-book-slot__tab {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 2px 0 3px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #8b7ab8;
+  cursor: pointer;
+}
+.panel-ai-watch .ai-book-slot__tab:hover { color: #ddd6fe; }
+.panel-ai-watch .ai-book-slot__tab.is-active { color: #ede9fe; border-bottom-color: #a78bfa; }
+.panel-ai-watch .ai-book-slot__tab[data-slot-tab="overnight"].is-active {
+  color: #e0f2fe;
+  border-bottom-color: #38bdf8;
+}
+.panel-ai-watch .ai-book-slot[data-view="positions"] .ai-book-overnight,
+.panel-ai-watch .ai-book-slot[data-view="overnight"] .ai-book-day-hist { display: none; }
+.panel-ai-watch .ai-book-slot .ai-book-day-hist,
+.panel-ai-watch .ai-book-slot .ai-book-overnight { border-top: 0; }
+.panel-ai-watch .ai-book-overnight__acct { font-weight: 700; color: #e0f2fe; }
 /* Overnight momentum pilot — its own paper account, fed by overnight_book.py. */
 .panel-ai-watch .ai-book-overnight {
   flex: 0 0 auto;

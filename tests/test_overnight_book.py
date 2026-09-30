@@ -131,3 +131,10 @@ def test_totals_headline_the_plan_and_keep_paper_beside_it():
     t = ob.build_snapshot(PLAN, [], nights, [], {}, {}, None, NOW)["totals"]
     assert t["nights"] == 1 and t["mean_bp"] == 20.0
     assert t["pnl_usd"] == 40.0 and t["paper_pnl_usd"] == -3.0
+
+
+def test_account_carries_what_the_pl_line_needs():
+    acct = {"equity": 25014.08, "cash": 17646.02, "last_equity": 25000.0}
+    a = ob.build_snapshot(PLAN, [], [], [], acct, {}, None, NOW)["account"]
+    assert a["last_equity"] == 25000.0
+    assert a["start_equity"] == ob.START_EQUITY

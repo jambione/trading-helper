@@ -82,6 +82,7 @@ LOG = OUT / "run.log"
 SNAPSHOT = OUT / "snapshot.json"
 SNAPSHOT_EVERY = 15 * 60
 BACKTEST_BP = 16.1
+START_EQUITY = 25000.0      # the overnight paper account's opening balance (PA36S0LLDMZY)
 
 TOP_N = 20
 DOLLARS = 1000.0
@@ -568,7 +569,8 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
                   "green": sum(night_bp(n) > 0 for n in done)}
     return {
         "updated": now.timestamp(),
-        "account": {"equity": account.get("equity"), "cash": account.get("cash")},
+        "account": {"equity": account.get("equity"), "cash": account.get("cash"),
+                    "last_equity": account.get("last_equity"), "start_equity": START_EQUITY},
         "plan": ({"day": plan_row.get("day"), "data_through": plan_row.get("data_through"),
                   "n_liquid": plan_row.get("n_liquid"),
                   "picks": [{"sym": r["sym"], "mom": r["mom"]} for r in plan_row.get("picks", [])]}
@@ -603,7 +605,8 @@ def write_snapshot(tc) -> None:
     now = datetime.now(ET)
     try:
         acct = tc.get_account()
-        account = {"equity": float(acct.equity), "cash": float(acct.cash)}
+        account = {"equity": float(acct.equity), "cash": float(acct.cash),
+                   "last_equity": float(acct.last_equity) if acct.last_equity else None}
         positions = [{"symbol": x.symbol, "qty": float(x.qty), "avg_entry_price": float(x.avg_entry_price),
                       "market_value": float(x.market_value or 0)} for x in tc.get_all_positions()]
     except Exception as e:  # noqa: BLE001
