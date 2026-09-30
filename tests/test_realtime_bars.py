@@ -213,8 +213,11 @@ def _ts_stub(ticker="X"):
 
 
 def _wide_frame(n=60, tag=1.0):
+    # Ends at the current minute: a seed is history up to now. Stamped hours
+    # ago, a live trade would read as a new series after a gap (FLY 9/30).
+    end = pd.Timestamp.now(tz="UTC").floor("min") - pd.Timedelta(minutes=1)
     return pd.DataFrame({
-        "time":  [f"2024-01-01T09:{m:02d}:00Z" for m in range(n)],
+        "time":  [(end - pd.Timedelta(minutes=n - 1 - m)).strftime("%Y-%m-%dT%H:%M:%SZ") for m in range(n)],
         "open":  [tag] * n, "high": [tag] * n,
         "low":   [tag] * n, "close": [tag] * n, "volume": [1.0] * n,
     })
@@ -523,3 +526,51 @@ def test_promote_noop_when_rt_stale(monkeypatch):
 
     assert eng._promote_rt_bars_if_eligible(ts) is False
     assert ts._bars_src == "alpaca"
+
+
+# ── stale seed after a drop/re-add (FLY 2026-09-30) ──────────────────────────
+
+def _seed_df(end_iso: str, n: int, px: float) -> pd.DataFrame:
+    end = pd.Timestamp(end_iso)
+    times = [(end - pd.Timedelta(minutes=n - 1 - i)).strftime("%Y-%m-%dT%H:%M:%SZ") for i in range(n)]
+    return pd.DataFrame({"time": times, "open": px, "high": px + 0.02, "low": px - 0.02,
+                         "close": px, "volume": 100.0})
+
+
+def test_seed_hours_old_is_not_a_seed_when_freshness_is_asked():
+    from realtime_bars import RealtimeBarAggregator
+    agg = RealtimeBarAggregator()
+    agg.seed("FLY", _seed_df("2026-09-30T12:37:00Z", 300, 22.86))     # 08:37 ET
+    now = pd.Timestamp("2026-09-30T16:16:00Z").timestamp()              # 12:16 ET
+    # re-added at 12:13 with the 08:37 seed still held: stale before any trade
+    assert agg.is_seeded("FLY", min_bars=40)                            # the old check: fooled
+    assert not agg.is_seeded("FLY", min_bars=40, max_gap_sec=900, now_s=now - 180)
+    for i, px in enumerate((23.90, 23.93, 23.95)):
+        agg.on_trade("FLY", px, 100, int((now - 180 + i * 60) * 1000))
+    # the first trade after the gap drops the old rows instead of splicing
+    assert agg.sealed_count("FLY") == 2
+    assert not agg.is_seeded("FLY", min_bars=40)
+    bars = agg.get_bars("FLY")
+    assert bars["low"].min() >= 23.9                                     # no 22.86 rows left
+    # re-seeded from fresh bars, it is a seed again
+    agg.seed("FLY", _seed_df("2026-09-30T16:15:00Z", 300, 23.9))
+    assert agg.is_seeded("FLY", min_bars=40, max_gap_sec=900, now_s=now)
+
+
+def test_a_live_stream_stays_seeded():
+    from realtime_bars import RealtimeBarAggregator
+    agg = RealtimeBarAggregator()
+    now = pd.Timestamp("2026-09-30T16:16:30Z").timestamp()
+    agg.seed("AAA", _seed_df("2026-09-30T16:10:00Z", 100, 10.0))
+    for i in range(6):
+        agg.on_trade("AAA", 10.0 + i * 0.01, 100, int((now - 330 + i * 60) * 1000))
+    assert agg.is_seeded("AAA", min_bars=40, max_gap_sec=900, now_s=now)
+
+
+def test_unreadable_row_time_is_not_fresh():
+    from realtime_bars import RealtimeBarAggregator
+    agg = RealtimeBarAggregator()
+    df = _seed_df("2026-09-30T16:10:00Z", 50, 10.0).drop(columns=["time"])
+    agg.seed("BBB", df)
+    assert agg.is_seeded("BBB", min_bars=40)
+    assert not agg.is_seeded("BBB", min_bars=40, max_gap_sec=900)

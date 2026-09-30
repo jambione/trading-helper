@@ -302,6 +302,10 @@ REALTIME_BARS  = os.getenv("REALTIME_BARS", "0") in ("1", "true", "yes")
 # between prints without flapping; two silent minutes used to keep publishing
 # a frozen Finnhub candle as "realtime" and the desk armed on it.
 RT_BARS_MAX_STALE = float(os.getenv("REALTIME_BARS_MAX_STALE", "30"))
+# Sealed rt history older than this is not a seed: re-seed from Alpaca. A
+# ticker dropped and re-added hours later otherwise appends new minutes to
+# its old seed (FLY 2026-09-30: %R(112) read yesterday's bars, -9.7 vs -71).
+RT_SEED_MAX_GAP_S = float(os.getenv("REALTIME_BARS_SEED_MAX_GAP", "900"))
 
 # Minimum seconds to hold a three_indicator position before a strategy reversal
 # may close it — guards against per-second buy/sell flip-flop on the forming bar.
@@ -1549,7 +1553,7 @@ class SignalEngine:
             print("[MASSIVE] API key loaded — alert tickers will try Massive bars first")
 
         # Realtime bar aggregator — fed by live trade callbacks when enabled.
-        self.rt_bars = RealtimeBarAggregator()
+        self.rt_bars = RealtimeBarAggregator(max_gap_sec=RT_SEED_MAX_GAP_S)
         # Tickers currently falling back off stale realtime bars. Transition
         # tracking only, so the log records the switch rather than every bar.
         self._rt_stale: set[str] = set()
@@ -1792,7 +1796,8 @@ class SignalEngine:
             ALPACA_RT_SKIP_REFRESH
             and REALTIME_BARS
             and ts.bars_fetched
-            and self.rt_bars.is_seeded(ts.ticker, min_bars=1)
+            and self.rt_bars.is_seeded(ts.ticker, min_bars=1,
+                                       max_gap_sec=RT_SEED_MAX_GAP_S)
         ):
             age = self.rt_bars.age_seconds(ts.ticker)
             if age is not None and age <= RT_BARS_MAX_STALE:
@@ -1920,7 +1925,7 @@ class SignalEngine:
             if REALTIME_BARS:
                 min_seed = self._macd_min_bars()
                 if len(df) >= min_seed and not self.rt_bars.is_seeded(
-                    ts.ticker, min_bars=min_seed
+                    ts.ticker, min_bars=min_seed, max_gap_sec=RT_SEED_MAX_GAP_S
                 ):
                     self.rt_bars.seed(ts.ticker, df)
                     print(
@@ -1953,6 +1958,8 @@ class SignalEngine:
             age is not None
             and age <= RT_BARS_MAX_STALE
             and n >= self._macd_min_bars()
+            and self.rt_bars.is_seeded(ticker, min_bars=1,
+                                       max_gap_sec=RT_SEED_MAX_GAP_S)
         )
         return ready, age, n
 

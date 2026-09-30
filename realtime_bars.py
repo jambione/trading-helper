@@ -30,6 +30,8 @@ import pandas as pd
 # Default rolling history kept per ticker (bars). 300 ≫ the slowest indicator
 # warmup (%R slow = 112), so indicators stay stable.
 DEFAULT_MAXLEN = 300
+# Longest silence a ticker's history may span and still be one series.
+DEFAULT_MAX_GAP_S = 900.0
 
 
 def _epoch_minute(ts_ms: int) -> int:
@@ -39,6 +41,20 @@ def _epoch_minute(ts_ms: int) -> int:
 
 def _iso_minute(minute: int) -> str:
     return pd.Timestamp(minute * 60, unit="s", tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _row_age_sec(stamp, now_s: float | None = None) -> float | None:
+    """Seconds from a bar row's start time to now; None when unreadable."""
+    if stamp is None or stamp == "":
+        return None
+    try:
+        t = pd.Timestamp(stamp)
+        if t.tzinfo is None:
+            t = t.tz_localize("UTC")
+        now = time.time() if now_s is None else float(now_s)
+        return max(0.0, now - t.timestamp())
+    except (ValueError, TypeError):
+        return None
 
 
 class _Bar:
@@ -77,8 +93,13 @@ class RealtimeBarAggregator:
         df = agg.get_bars("NVDA")              # sealed bars + live forming bar
     """
 
-    def __init__(self, maxlen: int = DEFAULT_MAXLEN):
+    def __init__(self, maxlen: int = DEFAULT_MAXLEN, max_gap_sec: float | None = DEFAULT_MAX_GAP_S):
         self._maxlen = maxlen
+        # A trade arriving this long after the last bar we hold cannot extend
+        # that history: the minutes between were never seen, and the rows are
+        # counted, not clocked. The old rows are dropped so the caller
+        # re-seeds from fresh bars. None keeps the old splice-anything rule.
+        self._max_gap_sec = max_gap_sec
         self._lock = threading.Lock()
         self._sealed: dict[str, list[dict]] = {}   # ticker → list of bar rows (oldest→newest)
         self._forming: dict[str, _Bar] = {}        # ticker → current forming bar
@@ -121,16 +142,31 @@ class RealtimeBarAggregator:
         with self._lock:
             return len(self._sealed.get(ticker, []))
 
-    def is_seeded(self, ticker: str, *, min_bars: int = 1) -> bool:
+    def is_seeded(self, ticker: str, *, min_bars: int = 1,
+                  max_gap_sec: float | None = None, now_s: float | None = None) -> bool:
         """True when sealed history has at least ``min_bars`` bars.
 
         Default min_bars=1 preserves the historical "any seed" meaning.
         Callers that need MACD-stable warmup pass min_bars=MACD_SLOW+MACD_SIG+5
         (40) so a truncated seed is treated as not ready and can be re-seeded.
+
+        With ``max_gap_sec``, the newest sealed bar must also be that recent.
+        Sealed history is a list of rows, not a clock: a ticker dropped at
+        08:52 and re-added at 12:13 kept its 08:37 seed, the new minutes were
+        appended after it, and "%R(112)" read yesterday's bars plus three new
+        ones (FLY 2026-09-30: -9.7 where the tape said -71). Stale history is
+        not a seed; the caller re-seeds from fresh bars.
         """
         need = max(1, int(min_bars or 1))
         with self._lock:
-            return len(self._sealed.get(ticker, [])) >= need
+            rows = self._sealed.get(ticker, [])
+            if len(rows) < need:
+                return False
+            newest = rows[-1].get("time") if rows else None
+        if max_gap_sec is None:
+            return True
+        age = _row_age_sec(newest, now_s)
+        return age is not None and age <= float(max_gap_sec)
 
     # ── Live trades ─────────────────────────────────────────────────────────────
 
@@ -147,6 +183,16 @@ class RealtimeBarAggregator:
                 self._last_ts[ticker] = int(ts_ms)
                 self._last_px[ticker] = float(price)
             cur = self._forming.get(ticker)
+            if self._max_gap_sec is not None:
+                last_min = cur.minute if cur is not None else None
+                if last_min is None:
+                    rows = self._sealed.get(ticker)
+                    age = _row_age_sec(rows[-1].get("time"), minute * 60) if rows else None
+                    last_min = None if age is None else minute - age / 60.0
+                if last_min is not None and (minute - last_min) * 60 > self._max_gap_sec:
+                    self._sealed[ticker] = []        # discontinuous: never splice
+                    self._forming[ticker] = _Bar(minute, price, volume)
+                    return
             if cur is None:
                 self._forming[ticker] = _Bar(minute, price, volume)
                 return
