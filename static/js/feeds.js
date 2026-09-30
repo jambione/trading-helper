@@ -1058,11 +1058,134 @@ function _paintDayHistory(sectionEl, book) {
   }).join('');
 }
 
+function _fmtBp(v, digits = 1) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '—';
+  return `${n > 0 ? '+' : ''}${n.toFixed(digits)} bp`;
+}
+
+function _bpCls(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n === 0) return '';
+  return n > 0 ? 'chg-pos' : 'chg-neg';
+}
+
+/** Overnight momentum pilot: tonight's book, fills vs the auction, night scores. */
+function _paintOvernight(sectionEl, book) {
+  if (!sectionEl) return;
+  const root = sectionEl.querySelector('[data-ai-overnight]');
+  if (!root) return;
+  const snap = (book && book.overnight && typeof book.overnight === 'object') ? book.overnight : null;
+  if (!snap) {
+    root.hidden = true;
+    return;
+  }
+  let sig = '';
+  try { sig = JSON.stringify(snap); } catch (e) { sig = String(snap.updated || ''); }
+  if (root.dataset.sig === sig && !root.hidden) return;
+  root.dataset.sig = sig;
+  root.hidden = false;
+
+  const label = root.querySelector('[data-ai-overnight-label]');
+  const score = root.querySelector('[data-ai-overnight-score]');
+  const status = root.querySelector('[data-ai-overnight-status]');
+  const list = root.querySelector('[data-ai-overnight-list]');
+  const nightsEl = root.querySelector('[data-ai-overnight-nights]');
+  const plan = snap.plan && typeof snap.plan === 'object' ? snap.plan : null;
+  const night = String(snap.book_night || (plan && plan.day) || '');
+  const labelTxt = night ? `Overnight book · ${_fmtHistDay(night)}` : 'Overnight book';
+  if (label) label.textContent = labelTxt;
+
+  const t = snap.totals && typeof snap.totals === 'object' ? snap.totals : null;
+  const bt = Number(snap.backtest_bp);
+  if (score) {
+    if (t && Number(t.nights) > 0) {
+      score.innerHTML = `${_esc(String(t.nights))} night${Number(t.nights) === 1 ? '' : 's'} · `
+        + `<span class="${_bpCls(t.mean_bp)}">${_esc(_fmtBp(t.mean_bp))}/night</span> · `
+        + `<span class="${_bpCls(t.pnl_usd)}">${_esc(_fmtHistPl(t.pnl_usd))}</span> · `
+        + `${_esc(String(t.green))}/${_esc(String(t.nights))} green`
+        + (Number.isFinite(bt) ? ` <span class="on-dim">(backtest ${_esc(bt.toFixed(0))} bp)</span>` : '');
+    } else {
+      score.innerHTML = Number.isFinite(bt)
+        ? `<span class="on-dim">no scored nights yet · backtest ${_esc(bt.toFixed(0))} bp/night</span>`
+        : '';
+    }
+  }
+
+  const rows = Array.isArray(snap.rows) ? snap.rows : [];
+  const bits = [];
+  const holding = Number(snap.holding) || 0;
+  const mv = rows.reduce((a, r) => a + (Number(r && r.market_value) || 0), 0);
+  if (holding) bits.push(`Holding ${holding}${mv > 0 ? ` · $${Math.round(mv).toLocaleString()}` : ''}`);
+  const nxt = snap.next_step && typeof snap.next_step === 'object' ? snap.next_step : null;
+  if (nxt && nxt.at) {
+    const what = { plan: 'plan', buy: 'MOC buy', sell: 'MOO sell' }[String(nxt.name)] || String(nxt.name);
+    let today = '';
+    try {
+      const parts = _etDayFmt.formatToParts(new Date());
+      const g = k => (parts.find(p => p.type === k) || {}).value;
+      today = `${g('year')}-${g('month')}-${g('day')}`;
+    } catch (e) { /* the clock alone still reads */ }
+    bits.push(`next: ${what} ${_fmtEtClock(nxt.at, today).replace(/:\d{2}$/, '')}`);
+  }
+  const errs = snap.errors && typeof snap.errors === 'object' ? Object.keys(snap.errors) : [];
+  let statusHtml = bits.map(_esc).join(' · ');
+  if (errs.length) {
+    statusHtml += `${statusHtml ? ' · ' : ''}<span class="on-err">error: ${_esc(errs.join(', '))}</span>`;
+  }
+  if (status) status.innerHTML = statusHtml;
+
+  if (list) {
+    if (rows.length) {
+      list.innerHTML = rows.map((row) => {
+        const r = row && typeof row === 'object' ? row : {};
+        const buy = r.buy_fill != null
+          ? `${_fmtHistPx(r.buy_fill)} <span class="on-dim">${_esc(_fmtBp(r.buy_vs_cross_bp, 2))} vs cross</span>`
+          : (r.error ? `<span class="on-err">${_esc(String(r.error).slice(0, 60))}</span>`
+            : `<span class="on-dim">MOC ${_esc(_fmtHistQty(r.qty) || '')} pending</span>`);
+        const sell = r.sell_fill != null ? _fmtHistPx(r.sell_fill) : '';
+        const nb = r.night_bp != null
+          ? `<span class="${_bpCls(r.night_bp)}">${_esc(_fmtBp(r.night_bp))}</span>` : '';
+        const held = r.held_qty ? `<span class="on-dim">×${_esc(_fmtHistQty(r.held_qty))}</span>` : '';
+        return `<div class="on-row">`
+          + `<span class="on-sym">${_esc(String(r.sym || ''))}</span>${held}`
+          + `<span class="on-buy">${buy}</span>`
+          + `<span class="on-sell">${sell ? `→ ${_esc(sell)}` : ''}</span>`
+          + `<span class="on-night">${nb}</span>`
+          + `</div>`;
+      }).join('');
+    } else if (plan && Array.isArray(plan.picks) && plan.picks.length) {
+      const picks = plan.picks.map((p) => {
+        const m = Number(p && p.mom);
+        return `${_esc(String((p && p.sym) || ''))}${Number.isFinite(m) ? ` <span class="on-dim">${m > 0 ? '+' : ''}${(m * 100).toFixed(0)}%</span>` : ''}`;
+      });
+      list.innerHTML = `<div class="on-picks"><span class="on-dim">Tonight's picks:</span> ${picks.join(' · ')}</div>`;
+    } else {
+      list.innerHTML = '<div class="dh-empty">No plan yet</div>';
+    }
+  }
+
+  if (nightsEl) {
+    const nights = Array.isArray(snap.nights) ? snap.nights : [];
+    nightsEl.innerHTML = nights.slice(0, 5).map((n) => {
+      const x = n && typeof n === 'object' ? n : {};
+      return `<div class="on-nightrow">`
+        + `<span>${_esc(_fmtHistDay(x.night_end))}</span>`
+        + `<span class="${_bpCls(x.mean_bp_fills)}">${_esc(_fmtBp(x.mean_bp_fills))}</span>`
+        + `<span class="on-dim">${x.mean_bp_crosses != null ? `${_esc(_fmtBp(x.mean_bp_crosses))} at cross` : ''}</span>`
+        + `<span class="${_bpCls(x.pnl_usd)}">${_esc(_fmtHistPl(x.pnl_usd))}</span>`
+        + `<span class="on-dim">${_esc(String(x.names || ''))} names</span>`
+        + `</div>`;
+    }).join('');
+  }
+}
+
 function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
   if (!rowsEl) return;
   const rows = _sortBookRows(_bookRows(book));
   try { _paintExtremeOffBook(sectionEl, book); } catch (e) { /* strip is diagnostic */ }
   try { _paintDayHistory(sectionEl, book); } catch (e) { /* history is display-only */ }
+  try { _paintOvernight(sectionEl, book); } catch (e) { /* overnight strip is display-only */ }
   _announcePositions(rows);
   const nOpen = rows.filter(r => r && r.phase === 'open').length;
   const nReady = rows.filter(r => r && r.phase === 'ready').length;

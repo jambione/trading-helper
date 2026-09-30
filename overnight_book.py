@@ -40,8 +40,11 @@ USAGE (on the mini)
   .venv/bin/python overnight_book.py sell [--dry-run]
   .venv/bin/python overnight_book.py reconcile
   .venv/bin/python overnight_book.py status
+  .venv/bin/python overnight_book.py snapshot       # refresh the dashboard file
   .venv/bin/python overnight_book.py run            # the scheduler loop
 Logs: ai_reports/overnight/ (plan_DAY.json, ledger.jsonl, nights.jsonl, run.log)
+Dashboard: snapshot.json, rewritten after every step and every 15 minutes;
+ai_trader publishes it on /api/state as "overnight" (a file read, no broker call).
 """
 from __future__ import annotations
 
@@ -68,6 +71,9 @@ LEDGER = OUT / "ledger.jsonl"
 NIGHTS = OUT / "nights.jsonl"
 STATE = OUT / "state.json"
 LOG = OUT / "run.log"
+SNAPSHOT = OUT / "snapshot.json"
+SNAPSHOT_EVERY = 15 * 60
+BACKTEST_BP = 16.1
 
 TOP_N = 20
 DOLLARS = 1000.0
@@ -418,7 +424,7 @@ def night_summary(sell_day: date) -> None:
     night = {"night_end": sell_day.isoformat(), "names": len(pairs),
              "mean_bp_fills": sum(ret_fill) / len(ret_fill),
              "mean_bp_crosses": (sum(ret_cross) / len(ret_cross)) if ret_cross else None,
-             "pnl_usd": round(pnl, 2), "backtest_expect_bp": 16.1}
+             "pnl_usd": round(pnl, 2), "backtest_expect_bp": BACKTEST_BP}
     append(NIGHTS, night)
     log(f"night ending {sell_day}: {len(pairs)} names, {night['mean_bp_fills']:+.1f} bp on fills "
         f"({night['mean_bp_crosses'] if night['mean_bp_crosses'] is None else round(night['mean_bp_crosses'], 1)} "
@@ -438,11 +444,127 @@ def status(tc) -> None:
                   f"P&L ${sum(x['pnl_usd'] for x in n):+,.2f}, green {sum(x['mean_bp_fills'] > 0 for x in n)}/{len(n)}")
 
 
+# ── dashboard snapshot ───────────────────────────────────────────────────────
+
+def _read_jsonl(path: Path) -> list[dict]:
+    try:
+        return [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+    except (OSError, ValueError):
+        return []
+
+
+def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict],
+                   positions: list[dict], account: dict, state_today: dict,
+                   next_step: dict | None, now: datetime) -> dict:
+    """What the dashboard's Overnight book strip shows. Pure: no I/O.
+
+    *ledger* rows are overnight_book's own (submit / fill events). The book
+    is the latest buy night: its orders, their fills against the official
+    cross, and the sells that closed them the next morning.
+    """
+    buys = [r for r in ledger if r.get("side") == "buy" and r.get("event") == "submit"]
+    night = max((r["night"] for r in buys if r.get("night")), default=None)
+    rows: dict[str, dict] = {}
+    if night:
+        for r in buys:
+            if r.get("night") == night:
+                rows[r["sym"]] = {"sym": r["sym"], "qty": r.get("qty"), "ref_price": r.get("ref_price"),
+                                  "error": r.get("error")}
+        fills = [r for r in ledger if r.get("event") == "fill"]
+        for r in fills:
+            if r.get("sym") not in rows:
+                continue
+            if r.get("leg") == "buy" and r.get("day") == night:
+                rows[r["sym"]].update(buy_status=r.get("status"), buy_fill=r.get("fill"),
+                                      buy_cross=r.get("cross"), buy_vs_cross_bp=r.get("fill_vs_cross_bp"),
+                                      filled_qty=r.get("filled_qty"))
+            elif r.get("leg") == "sell" and r.get("day", "") > night:
+                rows[r["sym"]].update(sell_status=r.get("status"), sell_fill=r.get("fill"),
+                                      sell_cross=r.get("cross"), sell_vs_cross_bp=r.get("fill_vs_cross_bp"))
+        for v in rows.values():
+            b, sfill = v.get("buy_fill"), v.get("sell_fill")
+            v["night_bp"] = (sfill / b - 1) * 1e4 if (b and sfill) else None
+    held = {str(x.get("symbol")): x for x in positions}
+    for sym, x in held.items():
+        row = rows.setdefault(sym, {"sym": sym})
+        row["held_qty"] = x.get("qty")
+        row["avg_price"] = x.get("avg_entry_price")
+        row["market_value"] = x.get("market_value")
+    done = [n for n in nights if n.get("mean_bp_fills") is not None]
+    totals = None
+    if done:
+        totals = {"nights": len(done),
+                  "mean_bp": sum(n["mean_bp_fills"] for n in done) / len(done),
+                  "pnl_usd": round(sum(n.get("pnl_usd") or 0 for n in done), 2),
+                  "green": sum(n["mean_bp_fills"] > 0 for n in done)}
+    return {
+        "updated": now.timestamp(),
+        "account": {"equity": account.get("equity"), "cash": account.get("cash")},
+        "plan": ({"day": plan_row.get("day"), "data_through": plan_row.get("data_through"),
+                  "n_liquid": plan_row.get("n_liquid"),
+                  "picks": [{"sym": r["sym"], "mom": r["mom"]} for r in plan_row.get("picks", [])]}
+                 if plan_row else None),
+        "book_night": night,
+        "rows": sorted(rows.values(), key=lambda r: r["sym"]),
+        "holding": len(held),
+        "nights": done[-10:][::-1],
+        "totals": totals,
+        "backtest_bp": BACKTEST_BP,
+        "next_step": next_step,
+        "errors": {k: v for k, v in (state_today or {}).items() if str(v).startswith("error")},
+    }
+
+
+def _next_step(tc, now: datetime) -> dict | None:
+    """The next scheduled step, looking up to a week ahead."""
+    for k in range(8):
+        day = now.date() + timedelta(days=k)
+        ses = session(tc, day)
+        if not ses:
+            continue
+        op, cl = ses
+        plan_at = datetime.combine(day, datetime.min.time(), ET).replace(hour=6, minute=30)
+        for name, when in (("plan", plan_at), ("sell", op - SELL_LEAD), ("buy", cl - BUY_LEAD)):
+            if when > now:
+                return {"name": name, "at": when.timestamp()}
+    return None
+
+
+def write_snapshot(tc) -> None:
+    now = datetime.now(ET)
+    try:
+        acct = tc.get_account()
+        account = {"equity": float(acct.equity), "cash": float(acct.cash)}
+        positions = [{"symbol": x.symbol, "qty": float(x.qty), "avg_entry_price": float(x.avg_entry_price),
+                      "market_value": float(x.market_value or 0)} for x in tc.get_all_positions()]
+    except Exception as e:  # noqa: BLE001
+        log(f"snapshot: account read failed: {e!s:.120}")
+        account, positions = {}, []
+    plans = sorted(OUT.glob("plan_*.json"))
+    plan_row = None
+    if plans:
+        try:
+            plan_row = json.loads(plans[-1].read_text())
+        except (OSError, ValueError):
+            plan_row = None
+    try:
+        nxt = _next_step(tc, now)
+    except Exception:  # noqa: BLE001
+        nxt = None
+    snap = build_snapshot(plan_row, _read_jsonl(LEDGER), _read_jsonl(NIGHTS), positions, account,
+                          load_state().get(now.date().isoformat(), {}), nxt, now)
+    OUT.mkdir(parents=True, exist_ok=True)
+    tmp = SNAPSHOT.with_suffix(".tmp")
+    tmp.write_text(json.dumps(snap, default=str))
+    os.replace(tmp, SNAPSHOT)
+
+
 # ── scheduler ────────────────────────────────────────────────────────────────
 
 def run() -> None:
     tc = book_client()
     log("run: overnight book scheduler started")
+    last_snap = 0.0
     while True:
         try:
             now = datetime.now(ET)
@@ -477,6 +599,10 @@ def run() -> None:
                             done[name] = f"error {e!s:.120}"
                             log(f"{name} {today}: ERROR {e!s:.200}\n{traceback.format_exc()}")
                     save_state(st)
+                    last_snap = 0.0                 # a step ran: refresh the dashboard now
+            if time.time() - last_snap >= SNAPSHOT_EVERY:
+                write_snapshot(tc)
+                last_snap = time.time()
         except Exception as e:  # noqa: BLE001
             log(f"run loop error: {e!s:.200}")
         time.sleep(30)
@@ -484,7 +610,7 @@ def run() -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("plan", "buy", "sell", "reconcile", "status", "run"))
+    ap.add_argument("cmd", choices=("plan", "buy", "sell", "reconcile", "status", "snapshot", "run"))
     ap.add_argument("--day", default=None, help="ET date, default today")
     ap.add_argument("--leg", choices=("buy", "sell"), default=None, help="reconcile one leg")
     ap.add_argument("--dry-run", action="store_true")
@@ -510,6 +636,9 @@ def main() -> None:
             reconcile(tc, day, leg)
     elif args.cmd == "status":
         status(tc)
+        write_snapshot(tc)
+    elif args.cmd == "snapshot":
+        write_snapshot(tc)
     elif args.cmd == "run":
         run()
 

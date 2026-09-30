@@ -2661,6 +2661,61 @@ body.mobile [data-tv-toggle-btn] {
   font-size: 11px;
   color: #8b7ab8;
 }
+/* Overnight momentum pilot — its own paper account, fed by overnight_book.py. */
+.panel-ai-watch .ai-book-overnight {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 11px 8px;
+  border-top: 1px solid rgba(56, 189, 248, 0.28);
+  background: rgba(10, 24, 36, 0.72);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: #cfe8f7;
+}
+.panel-ai-watch .ai-book-overnight__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.panel-ai-watch .ai-book-overnight__label {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7dd3fc;
+}
+.panel-ai-watch .ai-book-overnight__score { margin-left: auto; font-weight: 700; }
+.panel-ai-watch .ai-book-overnight__status { color: #9cc7de; }
+.panel-ai-watch .ai-book-overnight__list {
+  max-height: 9rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.panel-ai-watch .on-row {
+  display: grid;
+  grid-template-columns: 3.4rem 2.2rem minmax(0, 1fr) max-content 4.6rem;
+  gap: 6px;
+  align-items: baseline;
+}
+.panel-ai-watch .on-row .on-sym { font-weight: 700; letter-spacing: 0.04em; color: #e0f2fe; }
+.panel-ai-watch .on-row .on-buy { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-ai-watch .on-row .on-night { text-align: right; }
+.panel-ai-watch .on-picks { line-height: 1.5; }
+.panel-ai-watch .ai-book-overnight__nights { display: flex; flex-direction: column; gap: 1px; }
+.panel-ai-watch .on-nightrow {
+  display: grid;
+  grid-template-columns: 3.4rem 4.8rem minmax(0, 1fr) 4.6rem max-content;
+  gap: 6px;
+}
+.panel-ai-watch .ai-book-overnight .chg-pos { color: #4ade80; }
+.panel-ai-watch .ai-book-overnight .chg-neg { color: #f87171; }
+.panel-ai-watch .on-dim { color: #6f9bb3; font-weight: 400; }
+.panel-ai-watch .on-err { color: #fbbf24; }
 body.mobile .panel-ai-watch .ai-book-day-hist__list { max-height: 9rem; }
 @media (max-width: 620px) {
   .panel-ai-watch .dh-why { white-space: normal; }
