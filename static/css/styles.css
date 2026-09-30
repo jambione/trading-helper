@@ -2748,14 +2748,39 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .ai-book-overnight__nights { display: flex; flex-direction: column; gap: 1px; }
 .panel-ai-watch .on-nightrow {
   display: grid;
-  grid-template-columns: 3.4rem 4.8rem minmax(0, 1fr) 4.6rem max-content;
+  grid-template-columns: 3.4rem 4.8rem 4.6rem 3.6rem minmax(0, 1fr);
   gap: 6px;
+}
+.panel-ai-watch .on-nightrow > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .panel-ai-watch .ai-book-overnight .chg-pos { color: #4ade80; }
 .panel-ai-watch .ai-book-overnight .chg-neg { color: #f87171; }
 .panel-ai-watch .on-dim { color: #6f9bb3; font-weight: 400; }
 .panel-ai-watch .on-err { color: #fbbf24; }
 body.mobile .panel-ai-watch .ai-book-day-hist__list { max-height: 9rem; }
+body.mobile .panel-ai-watch .ai-book-overnight__list { max-height: 9rem; }
+/* Tabs: a thumb needs ~32px of height, not a 10px caption. */
+body.mobile .panel-ai-watch .ai-book-slot__tabs { gap: 20px; padding-top: 2px; }
+body.mobile .panel-ai-watch .ai-book-slot__tab {
+  font-size: 12px;
+  min-height: 34px;
+  padding: 8px 2px 6px;
+}
+/* A night on a phone: date, bp, $, names on one line; paper on the next. */
+body.mobile .panel-ai-watch .on-nightrow {
+  grid-template-columns: 3.4rem 4.8rem minmax(0, 1fr) max-content;
+  row-gap: 0;
+}
+body.mobile .panel-ai-watch .on-nightrow > span:last-child {
+  grid-column: 1 / -1;
+  white-space: normal;
+}
+body.mobile .panel-ai-watch .on-row {
+  grid-template-columns: 3.2rem 2rem minmax(0, 1fr) max-content 4.2rem;
+}
 @media (max-width: 620px) {
   .panel-ai-watch .dh-why { white-space: normal; }
   .panel-ai-watch .dh-leg { column-gap: 4px; }
