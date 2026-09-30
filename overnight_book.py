@@ -320,7 +320,10 @@ def buy(tc, day: date, dry: bool = False) -> None:
                 row["order_id"] = str(o.id)
             except Exception as e:  # noqa: BLE001
                 row["error"] = str(e)[:200]
-        append(LEDGER, row)
+        if dry:
+            print(f"  DRY RUN would submit: MOC buy {qty} {s} (~${qty * price:,.0f} at ${price:.2f})")
+        else:
+            append(LEDGER, row)
     log(f"buy {day}: {'DRY RUN ' if dry else ''}{len(syms)} picks, ~${total:,.0f} submitted as MOC")
 
 
@@ -345,7 +348,10 @@ def sell(tc, day: date, dry: bool = False) -> None:
                 row["order_id"] = str(o.id)
             except Exception as e:  # noqa: BLE001
                 row["error"] = str(e)[:200]
-        append(LEDGER, row)
+        if dry:
+            print(f"  DRY RUN would submit: MOO sell {qty} {x.symbol}")
+        else:
+            append(LEDGER, row)
     log(f"sell {day}: {'DRY RUN ' if dry else ''}{len(pos)} positions submitted as MOO")
 
 
