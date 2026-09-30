@@ -1169,12 +1169,21 @@ function _paintOvernight(sectionEl, book) {
     const nights = Array.isArray(snap.nights) ? snap.nights : [];
     nightsEl.innerHTML = nights.slice(0, 5).map((n) => {
       const x = n && typeof n === 'object' ? n : {};
+      // Headline = every planned name at the official crosses. Paper does not
+      // run auctions, so its fills are shown dimmed as plumbing only.
+      const planned = x.mean_bp_plan != null;
+      const bp = planned ? x.mean_bp_plan : x.mean_bp_fills;
+      const pl = planned ? x.pnl_plan_usd : x.pnl_usd;
+      const count = planned ? `${x.n_scored}/${x.n_plan}` : String(x.names || '');
+      const paper = planned
+        ? `paper ${_fmtHistPl(x.pnl_usd)} on ${String(x.names || 0)} filled`
+        : (x.mean_bp_crosses != null ? `${_fmtBp(x.mean_bp_crosses)} at cross` : '');
       return `<div class="on-nightrow">`
         + `<span>${_esc(_fmtHistDay(x.night_end))}</span>`
-        + `<span class="${_bpCls(x.mean_bp_fills)}">${_esc(_fmtBp(x.mean_bp_fills))}</span>`
-        + `<span class="on-dim">${x.mean_bp_crosses != null ? `${_esc(_fmtBp(x.mean_bp_crosses))} at cross` : ''}</span>`
-        + `<span class="${_bpCls(x.pnl_usd)}">${_esc(_fmtHistPl(x.pnl_usd))}</span>`
-        + `<span class="on-dim">${_esc(String(x.names || ''))} names</span>`
+        + `<span class="${_bpCls(bp)}">${_esc(_fmtBp(bp))}</span>`
+        + `<span class="${_bpCls(pl)}">${_esc(_fmtHistPl(pl))}</span>`
+        + `<span class="on-dim">${_esc(count)} names</span>`
+        + `<span class="on-dim">${_esc(paper)}</span>`
         + `</div>`;
     }).join('');
   }

@@ -69,3 +69,65 @@ def test_only_error_steps_are_surfaced():
     snap = ob.build_snapshot(PLAN, [], [], [], {}, state, {"name": "buy", "at": 1.0}, NOW)
     assert snap["errors"] == {"sell": "error boom"}
     assert snap["next_step"]["name"] == "buy"
+
+
+# ── scoring on the plan, not on paper fills ──────────────────────────────────
+
+def test_score_plan_uses_every_planned_name_at_the_crosses():
+    close = {"AAA": (50.0, 900), "BBB": (20.0, 500), "CCC": (10.0, 100)}
+    opn = {"AAA": (50.5, 800), "BBB": (19.8, 400)}          # CCC: no opening print
+    s = ob.score_plan(["AAA", "BBB", "CCC"], close, opn)
+    assert s["n_plan"] == 3 and s["n_scored"] == 2
+    assert s["missing"] == ["CCC"]
+    assert abs(s["mean_bp_plan"] - 0.0) < 1e-9             # +100 and -100 bp
+    assert s["pnl_plan_usd"] == 0.0
+    assert s["per_name_bp"] == {"AAA": 100.0, "BBB": -100.0}
+
+
+def test_score_plan_with_no_crosses_is_unscored_not_zero():
+    s = ob.score_plan(["AAA"], {}, {})
+    assert s["mean_bp_plan"] is None and s["pnl_plan_usd"] is None
+
+
+def _isolate_out(monkeypatch, tmp_path):
+    monkeypatch.setattr(ob, "OUT", tmp_path)
+    monkeypatch.setattr(ob, "LEDGER", tmp_path / "ledger.jsonl")
+    monkeypatch.setattr(ob, "NIGHTS", tmp_path / "nights.jsonl")
+    monkeypatch.setattr(ob, "LOG", tmp_path / "run.log")
+
+
+def test_night_is_scored_on_the_plan_even_when_paper_filled_one_name(monkeypatch, tmp_path):
+    import json
+    from datetime import date
+    _isolate_out(monkeypatch, tmp_path)
+    (tmp_path / "plan_2026-09-30.json").write_text(json.dumps(PLAN))
+    # paper filled only AAA, and at the quote rather than the cross
+    (tmp_path / "ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [
+        {"event": "fill", "day": "2026-09-30", "leg": "buy", "sym": "AAA", "fill": 50.02,
+         "cross": 50.0, "filled_qty": 20},
+        {"event": "fill", "day": "2026-10-01", "leg": "sell", "sym": "AAA", "fill": 50.48,
+         "cross": 50.5, "filled_qty": 20},
+    ]))
+    cx = {("close", "2026-09-30"): {"AAA": (50.0, 1), "BBB": (20.0, 1)},
+          ("open", "2026-10-01"): {"AAA": (50.5, 1), "BBB": (20.4, 1)}}
+    fetch = lambda syms, day, leg: cx[(leg, day.isoformat())]
+    ob.night_summary(date(2026, 10, 1), fetch=fetch)
+    ob.night_summary(date(2026, 10, 1), fetch=fetch)       # a re-score replaces, not appends
+    rows = [json.loads(x) for x in (tmp_path / "nights.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    n = rows[0]
+    assert n["plan_day"] == "2026-09-30" and n["n_scored"] == 2
+    assert abs(n["mean_bp_plan"] - 150.0) < 1e-9           # +100 and +200 bp
+    assert n["pnl_plan_usd"] == 30.0                       # $10 + $20 at $1,000 each
+    assert n["names"] == 1 and n["pnl_usd"] == 9.2         # paper: AAA only, 20 x 0.46
+
+
+def test_totals_headline_the_plan_and_keep_paper_beside_it():
+    nights = [
+        {"night_end": "2026-10-01", "mean_bp_plan": 20.0, "pnl_plan_usd": 40.0,
+         "mean_bp_fills": -5.0, "pnl_usd": -3.0},
+        {"night_end": "2026-10-02", "mean_bp_plan": None, "mean_bp_fills": None, "pnl_usd": 0.0},
+    ]
+    t = ob.build_snapshot(PLAN, [], nights, [], {}, {}, None, NOW)["totals"]
+    assert t["nights"] == 1 and t["mean_bp"] == 20.0
+    assert t["pnl_usd"] == 40.0 and t["paper_pnl_usd"] == -3.0

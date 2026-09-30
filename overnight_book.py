@@ -34,11 +34,19 @@ SCHEDULE (ET, from Alpaca's trading calendar, so holidays and early closes hold)
   sell       open - 15 min   OPG market sells of every position (cutoff 09:28)
   reconcile  close + 30 min / open + 20 min   fills vs the official auction prints
 
+SCORING
+  A night is scored on the PLAN, not on paper fills: every planned name from
+  the official closing cross to the next official opening cross, $1,000
+  each. Alpaca paper does not run auctions (it fills CLS/OPG at the quote,
+  partly, and expires the rest), so paper fills are logged beside the score
+  as plumbing, never as the result.
+
 USAGE (on the mini)
   .venv/bin/python overnight_book.py plan [--day YYYY-MM-DD]
   .venv/bin/python overnight_book.py buy  [--dry-run]
   .venv/bin/python overnight_book.py sell [--dry-run]
   .venv/bin/python overnight_book.py reconcile
+  .venv/bin/python overnight_book.py score --day SELL_DAY   # (re)score one night
   .venv/bin/python overnight_book.py status
   .venv/bin/python overnight_book.py snapshot       # refresh the dashboard file
   .venv/bin/python overnight_book.py run            # the scheduler loop
@@ -385,6 +393,8 @@ def reconcile(tc, day: date, leg: str) -> None:
     orders = [o for o in our_orders(tc, tag) if str(o.client_order_id).endswith(f"-{leg}")]
     if not orders:
         log(f"reconcile {leg} {day}: no orders")
+        if leg == "sell":
+            night_summary(day)      # the plan is scored even when paper filled nothing
         return
     syms = [o.symbol for o in orders]
     cx = crosses(syms, day, "close" if leg == "buy" else "open")
@@ -406,9 +416,45 @@ def reconcile(tc, day: date, leg: str) -> None:
         night_summary(day)
 
 
-def night_summary(sell_day: date) -> None:
-    """Pair the sells on *sell_day* with their buys and score the night."""
-    rows = [json.loads(x) for x in LEDGER.read_text().splitlines() if x.strip()]
+def score_plan(picks: list[str], close_cx: dict, open_cx: dict) -> dict:
+    """The night as the backtest measures it: every planned name, official
+    closing cross -> next official opening cross, equal DOLLARS each. Pure.
+
+    Alpaca paper does not run auctions: it fills CLS/OPG orders at the quote,
+    partly, and expires the rest (2026-09-30: 5 of 20 filled in full, 10 got
+    nothing, 1-share MU included). Paper fills therefore say which names the
+    simulator chose, not what the strategy earned, so the headline number
+    never depends on them.
+    """
+    per = {}
+    for s in picks:
+        c, o = close_cx.get(s), open_cx.get(s)
+        if c and o and c[0] > 0:
+            per[s] = (o[0] / c[0] - 1) * 1e4
+    mean = sum(per.values()) / len(per) if per else None
+    return {"n_plan": len(picks), "n_scored": len(per),
+            "missing": sorted(set(picks) - set(per)),
+            "mean_bp_plan": mean,
+            "pnl_plan_usd": round(sum(DOLLARS * bp / 1e4 for bp in per.values()), 2) if per else None,
+            "per_name_bp": {s: round(v, 1) for s, v in sorted(per.items())}}
+
+
+def night_summary(sell_day: date, fetch=None) -> None:
+    """Score the night ending *sell_day* on the plan, with paper fills beside it."""
+    fetch = fetch or crosses
+    plans = sorted(p for p in OUT.glob("plan_*.json") if p.stem[5:] < sell_day.isoformat())
+    if not plans:
+        log(f"night ending {sell_day}: no plan before it; nothing to score")
+        return
+    plan_row = json.loads(plans[-1].read_text())
+    buy_day = date.fromisoformat(plan_row["day"])
+    picks = [r["sym"] for r in plan_row.get("picks", [])]
+    night = {"night_end": sell_day.isoformat(), "plan_day": buy_day.isoformat(),
+             "backtest_expect_bp": BACKTEST_BP}
+    night.update(score_plan(picks, fetch(picks, buy_day, "close"), fetch(picks, sell_day, "open")))
+
+    # Paper fills, secondary: only names paper filled on both legs.
+    rows = _read_jsonl(LEDGER)
     fills = [r for r in rows if r.get("event") == "fill"]
     sells = {r["sym"]: r for r in fills if r["leg"] == "sell" and r["day"] == sell_day.isoformat()}
     buys = {}
@@ -416,19 +462,39 @@ def night_summary(sell_day: date) -> None:
         if r["leg"] == "buy" and r["day"] < sell_day.isoformat():
             buys[r["sym"]] = r                      # latest buy before the sell day wins
     pairs = [(buys[s], sells[s]) for s in sells if s in buys and buys[s]["fill"] and sells[s]["fill"]]
-    if not pairs:
-        return
     ret_fill = [(b2["fill"] / b1["fill"] - 1) * 1e4 for b1, b2 in pairs]
     ret_cross = [(b2["cross"] / b1["cross"] - 1) * 1e4 for b1, b2 in pairs if b1["cross"] and b2["cross"]]
-    pnl = sum((b2["fill"] - b1["fill"]) * b2["filled_qty"] for b1, b2 in pairs)
-    night = {"night_end": sell_day.isoformat(), "names": len(pairs),
-             "mean_bp_fills": sum(ret_fill) / len(ret_fill),
-             "mean_bp_crosses": (sum(ret_cross) / len(ret_cross)) if ret_cross else None,
-             "pnl_usd": round(pnl, 2), "backtest_expect_bp": BACKTEST_BP}
-    append(NIGHTS, night)
-    log(f"night ending {sell_day}: {len(pairs)} names, {night['mean_bp_fills']:+.1f} bp on fills "
-        f"({night['mean_bp_crosses'] if night['mean_bp_crosses'] is None else round(night['mean_bp_crosses'], 1)} "
-        f"on crosses), ${pnl:+.2f}")
+    night.update({
+        "names": len(pairs),
+        "mean_bp_fills": (sum(ret_fill) / len(ret_fill)) if ret_fill else None,
+        "mean_bp_crosses": (sum(ret_cross) / len(ret_cross)) if ret_cross else None,
+        "pnl_usd": round(sum((b2["fill"] - b1["fill"]) * b2["filled_qty"] for b1, b2 in pairs), 2),
+    })
+    # One row per night: a re-score (the `score` command, a rerun reconcile)
+    # replaces the earlier row instead of double-counting the night.
+    kept = [n for n in _read_jsonl(NIGHTS) if n.get("night_end") != night["night_end"]]
+    OUT.mkdir(parents=True, exist_ok=True)
+    tmp = NIGHTS.with_suffix(".tmp")
+    tmp.write_text("".join(json.dumps(n, default=str) + "\n" for n in kept + [night]))
+    os.replace(tmp, NIGHTS)
+    mp = night["mean_bp_plan"]
+    log(f"night ending {sell_day}: plan {night['n_scored']}/{night['n_plan']} names "
+        + (f"{mp:+.1f} bp at the crosses, ${night['pnl_plan_usd']:+.2f} at ${DOLLARS:,.0f}/name" if mp is not None
+           else "unscored (no crosses)")
+        + f"; paper filled {len(pairs)} names, ${night['pnl_usd']:+.2f}"
+        + (f" missing {','.join(night['missing'])}" if night["missing"] else ""))
+
+
+def night_bp(n: dict) -> float | None:
+    """A scored night's headline bp: the plan at the crosses; paper fills only
+    for nights logged before plan scoring existed."""
+    v = n.get("mean_bp_plan")
+    return v if v is not None else n.get("mean_bp_fills")
+
+
+def night_pnl(n: dict) -> float:
+    v = n.get("pnl_plan_usd")
+    return float(v if v is not None else (n.get("pnl_usd") or 0))
 
 
 def status(tc) -> None:
@@ -437,11 +503,13 @@ def status(tc) -> None:
     for x in tc.get_all_positions():
         print(f"  {x.symbol:<6} {x.qty:>6} @ {float(x.avg_entry_price):.2f}  mkt ${float(x.market_value):,.2f}")
     if NIGHTS.exists():
-        n = [json.loads(x) for x in NIGHTS.read_text().splitlines() if x.strip()]
+        n = [x for x in _read_jsonl(NIGHTS) if night_bp(x) is not None]
         if n:
-            m = sum(x["mean_bp_fills"] for x in n) / len(n)
-            print(f"nights {len(n)}: mean {m:+.1f} bp/night on fills (backtest 16.1), "
-                  f"P&L ${sum(x['pnl_usd'] for x in n):+,.2f}, green {sum(x['mean_bp_fills'] > 0 for x in n)}/{len(n)}")
+            m = sum(night_bp(x) for x in n) / len(n)
+            print(f"nights {len(n)}: mean {m:+.1f} bp/night at the crosses (backtest {BACKTEST_BP}), "
+                  f"P&L ${sum(night_pnl(x) for x in n):+,.2f} at ${DOLLARS:,.0f}/name, "
+                  f"green {sum(night_bp(x) > 0 for x in n)}/{len(n)}; "
+                  f"paper fills ${sum(x.get('pnl_usd') or 0 for x in n):+,.2f}")
 
 
 # ── dashboard snapshot ───────────────────────────────────────────────────────
@@ -490,13 +558,14 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
         row["held_qty"] = x.get("qty")
         row["avg_price"] = x.get("avg_entry_price")
         row["market_value"] = x.get("market_value")
-    done = [n for n in nights if n.get("mean_bp_fills") is not None]
+    done = [n for n in nights if night_bp(n) is not None]
     totals = None
     if done:
         totals = {"nights": len(done),
-                  "mean_bp": sum(n["mean_bp_fills"] for n in done) / len(done),
-                  "pnl_usd": round(sum(n.get("pnl_usd") or 0 for n in done), 2),
-                  "green": sum(n["mean_bp_fills"] > 0 for n in done)}
+                  "mean_bp": sum(night_bp(n) for n in done) / len(done),
+                  "pnl_usd": round(sum(night_pnl(n) for n in done), 2),
+                  "paper_pnl_usd": round(sum(n.get("pnl_usd") or 0 for n in done), 2),
+                  "green": sum(night_bp(n) > 0 for n in done)}
     return {
         "updated": now.timestamp(),
         "account": {"equity": account.get("equity"), "cash": account.get("cash")},
@@ -610,7 +679,7 @@ def run() -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("plan", "buy", "sell", "reconcile", "status", "snapshot", "run"))
+    ap.add_argument("cmd", choices=("plan", "buy", "sell", "reconcile", "score", "status", "snapshot", "run"))
     ap.add_argument("--day", default=None, help="ET date, default today")
     ap.add_argument("--leg", choices=("buy", "sell"), default=None, help="reconcile one leg")
     ap.add_argument("--dry-run", action="store_true")
@@ -625,6 +694,10 @@ def main() -> None:
             log(f"plan: {e}; using the desk's keys read-only for calendar and assets")
             tc = desk_trading_client()
         plan(tc, day)
+        return
+    if args.cmd == "score":
+        # --day is the morning the night ended (the sell day); needs no broker
+        night_summary(day)
         return
     tc = book_client()
     if args.cmd == "buy":
