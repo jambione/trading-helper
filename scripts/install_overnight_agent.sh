@@ -11,6 +11,12 @@ DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+# bootout returns before the job is gone; bootstrapping too soon fails with
+# "Bootstrap failed: 5: Input/output error". Wait for launchd to let go.
+for _ in $(seq 1 30); do
+  launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break
+  sleep 1
+done
 if [ "${1:-}" = "remove" ]; then
   rm -f "$DST"
   echo "removed $LABEL"
