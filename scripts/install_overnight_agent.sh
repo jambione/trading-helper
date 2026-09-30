@@ -6,7 +6,7 @@
 set -euo pipefail
 LABEL=com.jambi.overnight-book
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$HERE/scripts/launchd/$LABEL.plist"
+SRC="$HERE/scripts/$LABEL.plist"
 DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 
