@@ -13910,24 +13910,27 @@ def _overlay_stream_ohlc(symbol: str, cfg: dict, now: float) -> None:
     srows, sstamps = stream_bars.ohlc_with_stamps(sym)
     if len(srows) < 1 or len(srows) != len(sstamps):
         return
-    t0 = float(sstamps[0])
+    # Stream wins only the minutes it holds. Dropping every IEX bar after the
+    # stream's first stamp let one stale print (FLY 2026-09-30, 08:48) erase
+    # the whole morning of real IEX bars.
+    held = {stream_bars._bucket(float(t)) for t in sstamps}
     with _ohlc_cache_lock:
         hit = _ohlc_cache.get(sym)
         ts_hit = _ohlc_ts_cache.get(sym)
         iex_rows = list(hit[1]) if hit else []
         iex_ts = list(ts_hit[1]) if ts_hit and len(ts_hit[1]) == len(iex_rows) else []
-        kept_rows: list = []
-        kept_ts: list = []
+        pairs: list = []
         if iex_rows and iex_ts:
             for row, ts in zip(iex_rows, iex_ts):
                 try:
-                    if float(ts) < t0 - 1.0:
-                        kept_rows.append(row)
-                        kept_ts.append(float(ts))
+                    if stream_bars._bucket(float(ts)) not in held:
+                        pairs.append((float(ts), row))
                 except (TypeError, ValueError):
                     continue
-        merged_rows = kept_rows + list(srows)
-        merged_ts = kept_ts + [float(t) for t in sstamps]
+        pairs.extend((float(t), row) for t, row in zip(sstamps, srows))
+        pairs.sort(key=lambda p: p[0])
+        merged_rows = [row for _t, row in pairs]
+        merged_ts = [t for t, _row in pairs]
         if not merged_rows or len(merged_rows) != len(merged_ts):
             return
         _ohlc_cache[sym] = (now, merged_rows)

@@ -58,6 +58,11 @@ BAR_SEC = 60.0
 # Two hours of minutes. The longest window any %R length asks for is a
 # small multiple of 14, so this is generous and bounded.
 MAX_BARS = 120
+# Longest silence a close may be carried across. Thin names go quiet for
+# ten minutes; a close repeated for longer is a guess, not a bar. FLY
+# 2026-09-30: one premarket print carried to 12:13 filled ~106 of a 112-bar
+# window, so a price in the lower third of its real range read -5.6.
+MAX_CARRY_SEC = 15 * 60.0
 
 _LOCK = threading.RLock()
 # symbol -> deque[(bucket_start_ts, high, low, close, n_samples)]
@@ -230,8 +235,11 @@ def filled_clock_rows(
     the live path can stamp ``pctr_src=live`` once 21 minutes of history
     exist.
 
-    Minutes before the first observation are not invented. ``coverage()``
-    still reports empty minutes honestly; this is only the EXH window.
+    Minutes before the first observation are not invented, and neither
+    are minutes more than ``MAX_CARRY_SEC`` after the last real bar: a
+    longer silence cuts the window there, so it comes back short and the
+    caller falls back to IEX bars or no reading. ``coverage()`` still
+    reports empty minutes honestly; this is only the EXH window.
     ``slack`` is accepted so callers match ``window_rows``' signature; the
     grid is exact-length, not slack-widened.
     """
@@ -253,9 +261,11 @@ def filled_clock_rows(
         return [], None
     by_b = {float(b[0]): b for b in bars}
     carry_cl = None
+    carry_from = None
     for b in bars:
         if float(b[0]) <= oldest + 1e-9:
             carry_cl = float(b[3])
+            carry_from = float(b[0])
         else:
             break
     out: list[tuple[float, float, float]] = []
@@ -264,9 +274,13 @@ def filled_clock_rows(
         got = by_b.get(minute)
         if got is not None:
             carry_cl = float(got[3])
+            carry_from = minute
             out.append((float(got[1]), float(got[2]), carry_cl))
         elif carry_cl is not None:
-            out.append((carry_cl, carry_cl, carry_cl))
+            if minute - carry_from > MAX_CARRY_SEC + 1e-9:
+                out, carry_cl = [], None   # too stale to stand in for a bar
+            else:
+                out.append((carry_cl, carry_cl, carry_cl))
         minute += BAR_SEC
     if not out:
         return [], None

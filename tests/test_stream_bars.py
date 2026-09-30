@@ -169,6 +169,71 @@ def test_filled_clock_does_not_invent_minutes_before_the_first_print():
     assert len(filled) == 3
 
 
+def test_filled_clock_does_not_carry_a_close_across_hours():
+    """FLY 2026-09-30: one 08:48 print carried to 12:13 filled a 112-bar window.
+
+    The six real minutes then set the whole range, and a price in the lower
+    third of its true range read -5.6. A silence past MAX_CARRY_SEC cuts the
+    window; only what follows the last real bar survives.
+    """
+    sb.observe("FLY", 23.93, T0)                      # the premarket print
+    live = T0 + 205 * 60                               # ~3.4 hours later
+    for i, px in enumerate((23.81, 23.90, 23.97, 23.92, 23.96, 23.95)):
+        sb.observe("FLY", px, live + i * 60)
+    now = live + 5 * 60
+    filled, _ = sb.filled_clock_rows("FLY", now, length=112)
+    assert len(filled) == 6
+    filled21, _ = sb.filled_clock_rows("FLY", now, length=21)
+    assert len(filled21) == 6
+
+
+def test_filled_clock_still_carries_a_short_silence():
+    sb.observe("QT", 10.0, T0)
+    sb.observe("QT", 10.2, T0 + 14 * 60)
+    sb.observe("QT", 10.1, T0 + 20 * 60)
+    filled, _ = sb.filled_clock_rows("QT", T0 + 20 * 60, length=21)
+    assert len(filled) == 21
+
+
+def test_one_stale_stream_print_does_not_erase_iex_history():
+    """FLY 2026-09-30: an 08:48 stream bar dropped every IEX bar after it."""
+    import ai_entry_watch as ew
+
+    now = T0 + 205 * 60
+    iex = [(24.4 - i * 0.01, 24.3 - i * 0.01, 24.35 - i * 0.01) for i in range(60)]
+    iex_ts = [now - (60 - i) * 120.0 for i in range(60)]   # every 2 min
+    with ew._ohlc_cache_lock:
+        ew._ohlc_cache["FLYO"] = (now, list(iex))
+        ew._ohlc_ts_cache["FLYO"] = (now, list(iex_ts))
+    sb.observe("FLYO", 23.93, T0)
+    sb.observe("FLYO", 23.95, now)
+    cfg = {"ai_watch_stream_bars_live": True, "ai_watch_db_bar_refresh_sec": 120.0}
+    rows = ew.symbol_ohlc("FLYO", cfg, now)
+    assert len(rows) == 62
+    assert max(r[0] for r in rows) == pytest.approx(24.4)
+
+
+def test_a_stale_carry_gives_no_square():
+    """End to end: the FLY window must not come back as a live overbought read."""
+    import ai_entry_watch as ew
+
+    sb.observe("FLYX", 23.93, T0)
+    live = T0 + 205 * 60
+    for i, px in enumerate((23.81, 23.90, 23.97, 23.92, 23.96, 23.95)):
+        sb.observe("FLYX", px, live + i * 60)
+    now = live + 5 * 60 + 30
+    cfg = {
+        "rte_fast_length": 21,
+        "rte_slow_native_length": 112,
+        "ai_watch_db_bar_seconds": 60.0,
+        "ai_watch_stream_bars_live": True,
+        "ai_watch_db_bar_refresh_sec": 120.0,
+    }
+    pair = ew.live_exhaustion_pair("FLYX", 23.95, cfg, now)
+    assert pair is None or pair.get("slow") is None
+    assert not (pair or {}).get("ob")
+
+
 def test_the_rows_feed_the_live_percent_r_unchanged():
     """The comparison is only fair if the same function eats both sources."""
     import ai_entry_watch as ew
@@ -269,7 +334,7 @@ def test_stream_overlay_fills_a_sparse_iex_window():
 
     now = T0 + 21 * 60
     sparse = [(10.0 + i * 0.01, 9.9, 10.0) for i in range(21)]
-    sparse_ts = [T0 + i * 600.0 for i in range(21)]  # 10 min apart
+    sparse_ts = [now - (20 - i) * 600.0 for i in range(21)]  # 10 min apart
     with ew._ohlc_cache_lock:
         ew._ohlc_cache["RUM"] = (now, list(sparse))
         ew._ohlc_ts_cache["RUM"] = (now, list(sparse_ts))
