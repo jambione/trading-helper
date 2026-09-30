@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.jambi.overnight-book — the overnight momentum pilot's scheduler.
+
+  Runs `overnight_book.py run`, a loop that plans at 06:30 ET, sells at the
+  open auction, buys at the close auction, and reconciles fills, on its own
+  paper account (config/secrets.json.overnight). See overnight_book.py.
+
+  RunAtLoad and KeepAlive, unlike the desk's restart-only agent: the scheduler
+  must always be up or a night is missed. ThrottleInterval keeps a crash loop
+  (missing keys, isolation guard refusing) to one attempt every 5 minutes; the
+  reason lands in the log below.
+
+  Bootstrapped into gui/<uid> like com.jambi.trading-desk, so it is owned by
+  launchd, not by an ssh session. It needs no Keychain; the domain is for
+  consistency and so an ssh logout cannot orphan it.
+
+  The desk's `./trading restart` kills its processes by name and never matches
+  overnight_book.py, so a desk deploy does not touch this job.
+
+  Install: scripts/install_overnight_agent.sh (idempotent, safe over ssh).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jambi.overnight-book</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/jambimac/repo/trading-helper/.venv/bin/python</string>
+    <string>-u</string>
+    <string>/Users/jambimac/repo/trading-helper/overnight_book.py</string>
+    <string>run</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/jambimac/repo/trading-helper</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>300</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/overnight_book.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/overnight_book.log</string>
+</dict>
+</plist>
