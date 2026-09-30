@@ -195,6 +195,7 @@ _FINGERPRINT_KEYS = (
     "ai_watch_momentum_spread_exempt",
     "ai_watch_async_gates",
     "ai_watch_min_room_below_hod_pct",
+    "ai_watch_min_vol_now_ratio",
     # Square/triangle product vs −50 mid-rise rollback.
     "ai_watch_exh_square_arm",
     "ai_watch_square_require_rising",

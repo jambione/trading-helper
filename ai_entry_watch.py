@@ -9036,6 +9036,85 @@ def room_below_hod_refusal(record: dict, sym: str, ask, cfg: dict,
     return None
 
 
+_VOL_NOW_CACHE: dict[str, tuple[float | None, float]] = {}
+
+
+def vol_now_iex(sym: str, *, now: float | None = None, ttl: float = 30.0,
+                fetch=None) -> float | None:
+    """Volume per minute over the last 5 closed minutes / today's own pace.
+
+    Both sides are 1m IEX bars from 09:30 (one feed, no premarket). A minute
+    with no IEX bar counts as zero volume, which is the point: a name whose
+    tape went quiet reads low. 1,016 fills 08-04..09-30 on SIP: the 8% below
+    0.25x averaged -0.39%/trade vs -0.18% kept, same sign in both halves;
+    stricter cuts were flat. None when unknown or before 09:35.
+    fetch(sym) -> [(epoch_ts, volume), ...] replaces the network for tests.
+    """
+    sym = str(sym or "").upper()
+    t = float(now if now is not None else time.time())
+    hit = _VOL_NOW_CACHE.get(sym)
+    if hit is not None and t - hit[1] < ttl:
+        return hit[0]
+    val = None
+    try:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+        open_t = _dt.fromtimestamp(t, et).replace(hour=9, minute=30, second=0,
+                                                  microsecond=0).timestamp()
+        cur_min = t - (t % 60)
+        elapsed = (cur_min - open_t) / 60
+        if elapsed >= 5:
+            if fetch is not None:
+                rows = fetch(sym)
+            else:
+                import alpaca_api as aa
+                from config import load_config
+                bar_cfg = {**(load_config() or {}), "bar_timeframe": "1Min",
+                           "bar_count": 420}
+                df = aa.fetch_bars(_data_client(), sym, bar_cfg)
+                rows = ([] if df is None else
+                        [(ts.timestamp(), float(v)) for ts, v in zip(df.index, df["volume"])])
+            day = [(ts, v) for ts, v in rows if open_t <= ts < cur_min]
+            sess = sum(v for _ts, v in day) / elapsed
+            last5 = sum(v for ts, v in day if ts >= cur_min - 300) / 5
+            if sess > 0:
+                val = last5 / sess
+    except Exception:  # noqa: BLE001
+        val = None
+    _VOL_NOW_CACHE[sym] = (val, t)
+    _record_input("vol_now", sym, val, t)
+    return val
+
+
+def thin_volume_refusal(record: dict, sym: str, cfg: dict,
+                        *, now: float | None = None) -> str | None:
+    """'vol_now_thin' / 'vol_now_unknown' when ai_watch_min_vol_now_ratio is
+    on and the last 5 minutes traded under that share of today's pace."""
+    try:
+        need = float(cfg.get("ai_watch_min_vol_now_ratio", 0) or 0)
+    except (TypeError, ValueError):
+        need = 0.0
+    if need <= 0 or not sym:
+        return None
+    t = float(now if now is not None else time.time())
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+    local = _dt.fromtimestamp(t, ZoneInfo("America/New_York"))
+    if local.hour * 60 + local.minute < 9 * 60 + 35:
+        return None                      # no pace to compare against yet
+    rel = vol_now_iex(sym, now=now)
+    if isinstance(record, dict):
+        record["vol_now_ratio"] = rel
+    if rel is None:
+        return "vol_now_unknown"
+    if rel < need:
+        if isinstance(record, dict):
+            record["block_detail"] = f"last 5m volume {rel:.2f}x today's pace < {need:g}x"
+        return "vol_now_thin"
+    return None
+
+
 _ASYNC_GATES_BOUND = False
 
 
@@ -9051,14 +9130,15 @@ def bind_async_gates(*, name: str = "ew-gate-warm", max_age: float = 600.0,
     the real function for names read in the last keep_sec, so refreshes keep
     the live TTLs. Idempotent; returns True when it bound.
     """
-    global sip_spread_pct, open_gap_pct, rvol_pace_sip, day_high_iex, _ASYNC_GATES_BOUND
+    global sip_spread_pct, open_gap_pct, rvol_pace_sip, day_high_iex, vol_now_iex
+    global _ASYNC_GATES_BOUND
     if _ASYNC_GATES_BOUND:
         return False
-    real = (sip_spread_pct, open_gap_pct, rvol_pace_sip, day_high_iex)
+    real = (sip_spread_pct, open_gap_pct, rvol_pace_sip, day_high_iex, vol_now_iex)
     want: dict[str, float] = {}
     lock = threading.Lock()
 
-    def _cached(cache: dict, gap: bool):
+    def _cached(cache: dict, gap: bool, age: float = max_age):
         def _read(sym, *args, **kwargs):
             s = str(sym or "").upper()
             if not s:
@@ -9074,13 +9154,14 @@ def bind_async_gates(*, name: str = "ew-gate-warm", max_age: float = 600.0,
                 same = time.strftime("%Y-%m-%d", time.localtime(ts)) == \
                     time.strftime("%Y-%m-%d", time.localtime(t))
                 return hit[0] if same else None
-            return hit[0] if t - ts <= max_age else None
+            return hit[0] if t - ts <= age else None
         return _read
 
     sip_spread_pct = _cached(_SIP_SPREAD_CACHE, False)
     open_gap_pct = _cached(_GAP_CACHE, True)
     rvol_pace_sip = _cached(_RVOL_PACE_CACHE, False)
     day_high_iex = _cached(_DAY_HIGH_CACHE, True)          # same-day values only
+    vol_now_iex = _cached(_VOL_NOW_CACHE, False, 90.0)     # "last 5 min" goes stale fast
 
     last: dict[tuple[str, int], float] = {}
 
@@ -15536,6 +15617,10 @@ def should_arm_buy(
         _hod_why = room_below_hod_refusal(record, _gate_sym, ask, cfg, now=now)
         if _hod_why:
             return False, _hod_why
+        # Volume now vs today's own pace (off at 0): no buys into a quiet tape.
+        _vol_why = thin_volume_refusal(record, _gate_sym, cfg, now=now)
+        if _vol_why:
+            return False, _vol_why
 
     # MACD direction veto: refuse a crossed-down gap. Fail-open on missing
     # MACD so it cannot starve opens the way macd_src_unknown once did.

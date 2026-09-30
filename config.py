@@ -1258,6 +1258,9 @@ DEFAULT_CONFIG = {
     "ai_watch_bb_live_spread_exempt":  False,
     "ai_watch_async_gates": False,
     "ai_watch_min_room_below_hod_pct": 0.0,
+    # Refuse a buy when the last 5 closed minutes traded under this share of
+    # today's per-minute pace (1m IEX both sides, from 09:30). 0 = off.
+    "ai_watch_min_vol_now_ratio":      0.0,
     # RTH buy allow-list. "*" / empty / all = every source (current book).
     # A comma list (momentum,movers) refuses the buy only — seats stay.
     # Stays "*" until tools/extension_by_source.py prints PASS.
@@ -1706,6 +1709,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_bb_live_spread_exempt",
     "ai_watch_async_gates",
     "ai_watch_min_room_below_hod_pct",
+    "ai_watch_min_vol_now_ratio",
     "ai_local_trail_peak_give_pct",
     "ai_exit_limit_collar_pct",
     "ai_exit_limit_collar_wait_sec",
@@ -2169,6 +2173,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_bb_live_spread_exempt",
     "ai_watch_async_gates",
     "ai_watch_min_room_below_hod_pct",
+    "ai_watch_min_vol_now_ratio",
     "ai_breakeven_offset_px",
     "ai_book_tick_sec",
     "ai_shelf_tick_sec",
