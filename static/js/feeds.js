@@ -1189,7 +1189,8 @@ function _paintOvernight(sectionEl, book) {
   if (holding) bits.push(`Holding ${holding}${mv > 0 ? ` · $${Math.round(mv).toLocaleString()}` : ''}`);
   const nxt = snap.next_step && typeof snap.next_step === 'object' ? snap.next_step : null;
   if (nxt && nxt.at) {
-    const what = { plan: 'plan', buy: 'MOC buy', sell: 'MOO sell' }[String(nxt.name)] || String(nxt.name);
+    const auction = String(snap.order_mode || '') === 'auction';
+    const what = { plan: 'plan', buy: auction ? 'MOC buy' : 'buy', sell: auction ? 'MOO sell' : 'sell' }[String(nxt.name)] || String(nxt.name);
     let today = '';
     try {
       const parts = _etDayFmt.formatToParts(new Date());
@@ -1212,7 +1213,7 @@ function _paintOvernight(sectionEl, book) {
         const buy = r.buy_fill != null
           ? `${_fmtHistPx(r.buy_fill)} <span class="on-dim">${_esc(_fmtBp(r.buy_vs_cross_bp, 2))} vs cross</span>`
           : (r.error ? `<span class="on-err">${_esc(String(r.error).slice(0, 60))}</span>`
-            : `<span class="on-dim">MOC ${_esc(_fmtHistQty(r.qty) || '')} pending</span>`);
+            : `<span class="on-dim">${String(snap.order_mode || '') === 'auction' ? 'MOC' : 'buy'} ${_esc(_fmtHistQty(r.qty) || '')} pending</span>`);
         const sell = r.sell_fill != null ? _fmtHistPx(r.sell_fill) : '';
         const nb = r.night_bp != null
           ? `<span class="${_bpCls(r.night_bp)}">${_esc(_fmtBp(r.night_bp))}</span>` : '';

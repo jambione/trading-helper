@@ -138,3 +138,92 @@ def test_account_carries_what_the_pl_line_needs():
     a = ob.build_snapshot(PLAN, [], [], [], acct, {}, None, NOW)["account"]
     assert a["last_equity"] == 25000.0
     assert a["start_equity"] == ob.START_EQUITY
+
+
+# ── market mode: every name filled on paper ──────────────────────────────────
+
+import types  # noqa: E402
+
+OP = datetime(2026, 10, 1, 9, 30, tzinfo=ET)
+CL = datetime(2026, 10, 1, 16, 0, tzinfo=ET)
+
+
+def _o(sym, status, qty, filled=0, px=None, cid=None):
+    return types.SimpleNamespace(symbol=sym, status=status, qty=qty, filled_qty=filled,
+                                 filled_avg_price=px, filled_at=None, client_order_id=cid or f"on-x-{sym}-buy")
+
+
+def test_market_schedule_buys_two_minutes_before_the_close_with_a_topup():
+    s = dict(ob.schedule(OP, CL, "market"))
+    assert s["buy"].strftime("%H:%M:%S") == "15:58:00"
+    assert s["buy_topup"].strftime("%H:%M:%S") == "15:59:30"
+    assert s["sell"].strftime("%H:%M") == "09:31" and s["sell_topup"].strftime("%H:%M") == "09:33"
+    a = dict(ob.schedule(OP, CL, "auction"))
+    assert a["buy"].strftime("%H:%M") == "15:40" and "buy_topup" not in a
+
+
+def test_topup_resends_only_finished_short_names():
+    targets = {"AAA": 10, "BBB": 5, "CCC": 7, "DDD": 3}
+    orders = [
+        _o("AAA", "expired", 10, filled=4, px=50.0),              # short, done -> +6
+        _o("BBB", "filled", 5, filled=5, px=20.0),                # full
+        _o("CCC", "partially_filled", 7, filled=2, px=9.0),       # still working -> wait
+    ]                                                             # DDD: never placed -> +3
+    need = ob.topup_needs(targets, orders)
+    assert need == {"AAA": (6, 1), "DDD": (3, 0)}
+
+
+def test_aggregate_joins_first_order_and_topup_at_vwap():
+    orders = [_o("AAA", "expired", 10, filled=4, px=50.0, cid="on-d-AAA-buy"),
+              _o("AAA", "filled", 6, filled=6, px=51.0, cid="on-d-AAA-buy-r1")]
+    a = ob.aggregate_orders(orders)["AAA"]
+    assert a["filled_qty"] == 10 and a["orders"] == 2 and a["status"] == "filled"
+    assert abs(a["fill"] - 50.6) < 1e-9
+
+
+class _FakeTC:
+    def __init__(self, positions):
+        self.positions, self.submitted, self.cancelled = positions, [], 0
+
+    def cancel_orders(self):
+        self.cancelled += 1
+
+    def get_all_positions(self):
+        return self.positions
+
+    def submit_order(self, req):
+        self.submitted.append(req)
+        return types.SimpleNamespace(id="x")
+
+
+def _isolate_ledger(monkeypatch, tmp_path):
+    monkeypatch.setattr(ob, "OUT", tmp_path)
+    monkeypatch.setattr(ob, "LEDGER", tmp_path / "ledger.jsonl")
+    monkeypatch.setattr(ob, "LOG", tmp_path / "run.log")
+
+
+def test_sell_topup_sizes_off_qty_available_and_never_cancels(monkeypatch, tmp_path):
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "ORDER_MODE", "market")
+    pos = [types.SimpleNamespace(symbol="AAA", qty="10", qty_available="4", side="long"),
+           types.SimpleNamespace(symbol="BBB", qty="5", qty_available="0", side="long")]  # all held by a working sell
+    tc = _FakeTC(pos)
+    ob.sell(tc, date(2026, 10, 1), attempt=1)
+    assert tc.cancelled == 0
+    assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 4)]
+    assert tc.submitted[0].client_order_id.endswith("-sell-r1")
+    assert str(tc.submitted[0].time_in_force.value).lower() == "day"
+
+
+def test_buy_uses_day_market_orders_in_market_mode_and_cls_in_auction(monkeypatch, tmp_path):
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "load_plan", lambda d: PLAN)
+    monkeypatch.setattr(ob, "latest_prices", lambda syms: {"AAA": 50.0, "BBB": 20.0})
+    for mode, tif in (("market", "day"), ("auction", "cls")):
+        monkeypatch.setattr(ob, "ORDER_MODE", mode)
+        tc = _FakeTC([])
+        ob.buy(tc, date(2026, 10, 1))
+        assert {str(r.time_in_force.value).lower() for r in tc.submitted} == {tif}
+        assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 20), ("BBB", 50)]

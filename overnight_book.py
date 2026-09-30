@@ -30,8 +30,14 @@ ISOLATION
 
 SCHEDULE (ET, from Alpaca's trading calendar, so holidays and early closes hold)
   plan       06:30          picks from data through the last closed session
-  buy        close - 20 min  CLS market buys (Alpaca's MOC cutoff is 15:50)
-  sell       open - 15 min   OPG market sells of every position (cutoff 09:28)
+  OVERNIGHT_ORDER_MODE=market (default; paper does not run auctions)
+    sell        open + 1 min    market sells of every position
+    sell_topup  open + 3 min    market sells of whatever is still held
+    buy         close - 2 min   market buys
+    buy_topup   close - 30 s    the unfilled remainder of any finished buy
+  OVERNIGHT_ORDER_MODE=auction (a real account)
+    sell        open - 15 min   OPG sells (cutoff 09:28)
+    buy         close - 20 min  CLS buys (Alpaca's MOC cutoff is 15:50)
   reconcile  close + 30 min / open + 20 min   fills vs the official auction prints
 
 SCORING
@@ -45,6 +51,7 @@ USAGE (on the mini)
   .venv/bin/python overnight_book.py plan [--day YYYY-MM-DD]
   .venv/bin/python overnight_book.py buy  [--dry-run]
   .venv/bin/python overnight_book.py sell [--dry-run]
+  .venv/bin/python overnight_book.py topup --leg buy|sell [--dry-run]
   .venv/bin/python overnight_book.py reconcile
   .venv/bin/python overnight_book.py score --day SELL_DAY   # (re)score one night
   .venv/bin/python overnight_book.py status
@@ -99,6 +106,35 @@ FUNDISH = re.compile(
     r"ACQUISITION CORP|ACQUISITION CO|SPAC|CAPITAL TRUST|TRUST UNITS?|ROYALTY TRUST|CLOSED.END|MUTUAL)\b", re.I)
 BUY_LEAD = timedelta(minutes=20)
 SELL_LEAD = timedelta(minutes=15)
+# How orders go in. "auction": MOC buys / MOO sells, which a real account
+# fills at the official cross. "market": plain market orders just before the
+# close and just after the open, each with a top-up for anything unfilled.
+# Paper needs "market": Alpaca paper does not run auctions (2026-09-30: of 20
+# MOC buys 5 filled in full, 10 got nothing). The night is scored on the
+# crosses either way, so the mode changes only what the paper account holds.
+ORDER_MODE = os.getenv("OVERNIGHT_ORDER_MODE", "market").strip().lower()
+MKT_BUY_BEFORE_CLOSE = timedelta(minutes=2)
+MKT_BUY_TOPUP_BEFORE_CLOSE = timedelta(seconds=30)
+MKT_SELL_AFTER_OPEN = timedelta(minutes=1)
+MKT_SELL_TOPUP_AFTER_OPEN = timedelta(minutes=3)
+OPEN_STATUSES = {"new", "accepted", "pending_new", "partially_filled", "accepted_for_bidding",
+                 "held", "pending_replace", "pending_cancel", "calculated"}
+
+
+def schedule(op: datetime, cl: datetime, mode: str | None = None) -> list[tuple[str, datetime]]:
+    """(step, when) for one session, in the order they run. Pure."""
+    mode = (mode or ORDER_MODE)
+    if mode == "auction":
+        return [("sell", op - SELL_LEAD), ("reconcile_sell", op + timedelta(minutes=20)),
+                ("buy", cl - BUY_LEAD), ("reconcile_buy", cl + timedelta(minutes=30))]
+    return [("sell", op + MKT_SELL_AFTER_OPEN), ("sell_topup", op + MKT_SELL_TOPUP_AFTER_OPEN),
+            ("reconcile_sell", op + timedelta(minutes=20)),
+            ("buy", cl - MKT_BUY_BEFORE_CLOSE), ("buy_topup", cl - MKT_BUY_TOPUP_BEFORE_CLOSE),
+            ("reconcile_buy", cl + timedelta(minutes=30))]
+
+
+def _status(o) -> str:
+    return str(getattr(o.status, "value", o.status)).lower()
 
 
 # ── plumbing ─────────────────────────────────────────────────────────────────
@@ -330,44 +366,112 @@ def buy(tc, day: date, dry: bool = False) -> None:
                "ref_price": price, "client_order_id": cid, "dry_run": dry}
         if not dry:
             try:
+                tif = TimeInForce.CLS if ORDER_MODE == "auction" else TimeInForce.DAY
                 o = tc.submit_order(MarketOrderRequest(symbol=s, qty=qty, side=OrderSide.BUY,
-                                                       time_in_force=TimeInForce.CLS, client_order_id=cid))
+                                                       time_in_force=tif, client_order_id=cid))
                 row["order_id"] = str(o.id)
             except Exception as e:  # noqa: BLE001
                 row["error"] = str(e)[:200]
         if dry:
-            print(f"  DRY RUN would submit: MOC buy {qty} {s} (~${qty * price:,.0f} at ${price:.2f})")
+            print(f"  DRY RUN would submit: {_how('buy')} {qty} {s} (~${qty * price:,.0f} at ${price:.2f})")
         else:
             append(LEDGER, row)
-    log(f"buy {day}: {'DRY RUN ' if dry else ''}{len(syms)} picks, ~${total:,.0f} submitted as MOC")
+    log(f"buy {day}: {'DRY RUN ' if dry else ''}{len(syms)} picks, ~${total:,.0f} submitted as {_how('buy')}")
 
 
-def sell(tc, day: date, dry: bool = False) -> None:
+def _how(side: str) -> str:
+    if ORDER_MODE == "auction":
+        return "MOC" if side == "buy" else "MOO"
+    return "market"
+
+
+def buy_topup(tc, day: date, dry: bool = False) -> None:
+    """Re-send the unfilled remainder of each planned buy whose order is done.
+
+    Targets are the first submit's qty per name (the ledger). A name with an
+    order still working is left alone; paper keeps filling those.
+    """
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
-    if not dry:
+    targets = {r["sym"]: int(r["qty"]) for r in _read_jsonl(LEDGER)
+               if r.get("event") == "submit" and r.get("side") == "buy" and r.get("night") == day.isoformat()
+               and not r.get("dry_run") and r.get("client_order_id", "").endswith("-buy")}
+    orders = [o for o in our_orders(tc, f"on-{day.isoformat()}-") if "-buy" in str(o.client_order_id)]
+    need = topup_needs(targets, orders)
+    for s, (rem, n) in sorted(need.items()):
+        cid = f"on-{day.isoformat()}-{s}-buy-r{n}"
+        row = {"event": "submit", "night": day.isoformat(), "sym": s, "side": "buy", "qty": rem,
+               "client_order_id": cid, "dry_run": dry, "topup": True}
+        if dry:
+            print(f"  DRY RUN would submit: market buy remainder {rem} {s}")
+            continue
+        try:
+            o = tc.submit_order(MarketOrderRequest(symbol=s, qty=rem, side=OrderSide.BUY,
+                                                   time_in_force=TimeInForce.DAY, client_order_id=cid))
+            row["order_id"] = str(o.id)
+        except Exception as e:  # noqa: BLE001
+            row["error"] = str(e)[:200]
+        append(LEDGER, row)
+    log(f"buy_topup {day}: {'DRY RUN ' if dry else ''}"
+        + (", ".join(f"{s} +{r}" for s, (r, _n) in sorted(need.items())) if need else "nothing unfilled"))
+
+
+def topup_needs(targets: dict[str, int], orders: list) -> dict[str, tuple[int, int]]:
+    """{sym: (shares still to buy, orders so far)} for names whose orders are
+    all done and short of the target. Pure (orders only need symbol, status,
+    filled_qty)."""
+    by: dict[str, list] = {}
+    for o in orders:
+        by.setdefault(o.symbol, []).append(o)
+    out = {}
+    for s, want in targets.items():
+        mine = by.get(s, [])
+        if any(_status(o) in OPEN_STATUSES for o in mine):
+            continue                                  # still working
+        got = sum(float(o.filled_qty or 0) for o in mine)
+        rem = int(want - got)
+        if rem > 0:
+            out[s] = (rem, len(mine))
+    return out
+
+
+def sell(tc, day: date, dry: bool = False, attempt: int = 0) -> None:
+    """Sell every long position. attempt 0 is the scheduled sell; 1+ is the
+    top-up. Sells size off qty_available (shares not already held by an open
+    order), never qty: a second sell sized off qty while the first still
+    works would sell the same shares twice, and on this margin account that
+    is a short."""
+    from alpaca.trading.enums import OrderSide, TimeInForce
+    from alpaca.trading.requests import MarketOrderRequest
+    if not dry and attempt == 0:
         tc.cancel_orders()
     pos = tc.get_all_positions()
+    sent = 0
     for x in pos:
-        qty = abs(int(float(x.qty)))
+        avail = getattr(x, "qty_available", None)
+        qty = abs(int(float(avail if avail is not None else x.qty)))
         if qty == 0 or str(getattr(x.side, "value", x.side)).lower() != "long":
-            log(f"sell {day}: {x.symbol} qty {x.qty} side {x.side} left alone")
+            if qty:
+                log(f"sell {day}: {x.symbol} qty {x.qty} side {x.side} left alone")
             continue
-        cid = f"on-{day.isoformat()}-{x.symbol}-sell"
+        sent += 1
+        cid = f"on-{day.isoformat()}-{x.symbol}-sell" + (f"-r{attempt}" if attempt else "")
         row = {"event": "submit", "night_end": day.isoformat(), "sym": x.symbol, "side": "sell", "qty": qty,
                "client_order_id": cid, "dry_run": dry}
         if not dry:
             try:
+                tif = TimeInForce.OPG if ORDER_MODE == "auction" else TimeInForce.DAY
                 o = tc.submit_order(MarketOrderRequest(symbol=x.symbol, qty=qty, side=OrderSide.SELL,
-                                                       time_in_force=TimeInForce.OPG, client_order_id=cid))
+                                                       time_in_force=tif, client_order_id=cid))
                 row["order_id"] = str(o.id)
             except Exception as e:  # noqa: BLE001
                 row["error"] = str(e)[:200]
         if dry:
-            print(f"  DRY RUN would submit: MOO sell {qty} {x.symbol}")
+            print(f"  DRY RUN would submit: {_how('sell')} sell {qty} {x.symbol}")
         else:
             append(LEDGER, row)
-    log(f"sell {day}: {'DRY RUN ' if dry else ''}{len(pos)} positions submitted as MOO")
+    tag = "sell" if not attempt else "sell_topup"
+    log(f"{tag} {day}: {'DRY RUN ' if dry else ''}{sent} positions submitted as {_how('sell')}")
 
 
 # ── reconcile ────────────────────────────────────────────────────────────────
@@ -391,27 +495,27 @@ def crosses(syms: list[str], day: date, leg: str) -> dict:
 def reconcile(tc, day: date, leg: str) -> None:
     """Log fills vs the official cross for one leg ('buy' on *day*, 'sell' on *day*)."""
     tag = f"on-{day.isoformat()}-"
-    orders = [o for o in our_orders(tc, tag) if str(o.client_order_id).endswith(f"-{leg}")]
+    orders = [o for o in our_orders(tc, tag) if f"-{leg}" in str(o.client_order_id)]
     if not orders:
         log(f"reconcile {leg} {day}: no orders")
         if leg == "sell":
             night_summary(day)      # the plan is scored even when paper filled nothing
         return
-    syms = [o.symbol for o in orders]
+    syms = sorted({o.symbol for o in orders})
     cx = crosses(syms, day, "close" if leg == "buy" else "open")
-    for o in orders:
-        fill = float(o.filled_avg_price) if o.filled_avg_price else None
-        c = cx.get(o.symbol)
-        row = {"event": "fill", "day": day.isoformat(), "leg": leg, "sym": o.symbol,
-               "status": str(getattr(o.status, "value", o.status)), "qty": float(o.qty or 0),
-               "filled_qty": float(o.filled_qty or 0), "fill": fill,
-               "filled_at": str(o.filled_at) if o.filled_at else None,
+    agg = aggregate_orders(orders)
+    for s in syms:
+        a = agg[s]
+        fill, c = a["fill"], cx.get(s)
+        row = {"event": "fill", "day": day.isoformat(), "leg": leg, "sym": s,
+               "status": a["status"], "orders": a["orders"], "qty": a["qty"],
+               "filled_qty": a["filled_qty"], "fill": fill, "filled_at": a["filled_at"],
                "cross": c[0] if c else None, "cross_size": c[1] if c else None,
                "fill_vs_cross_bp": ((fill / c[0] - 1) * 1e4 if (fill and c) else None)}
         append(LEDGER, row)
-    filled = [o for o in orders if o.filled_avg_price]
-    diffs = [(float(o.filled_avg_price) / cx[o.symbol][0] - 1) * 1e4 for o in filled if o.symbol in cx]
-    log(f"reconcile {leg} {day}: {len(filled)}/{len(orders)} filled; fill vs cross "
+    filled = [s for s in syms if agg[s]["fill"]]
+    diffs = [(agg[s]["fill"] / cx[s][0] - 1) * 1e4 for s in filled if s in cx]
+    log(f"reconcile {leg} {day}: {len(filled)}/{len(syms)} names filled; fill vs cross "
         + (f"mean {sum(diffs) / len(diffs):+.2f} bp, max |{max(abs(x) for x in diffs):.2f}| bp" if diffs else "n/a"))
     if leg == "sell":
         night_summary(day)
@@ -438,6 +542,29 @@ def score_plan(picks: list[str], close_cx: dict, open_cx: dict) -> dict:
             "mean_bp_plan": mean,
             "pnl_plan_usd": round(sum(DOLLARS * bp / 1e4 for bp in per.values()), 2) if per else None,
             "per_name_bp": {s: round(v, 1) for s, v in sorted(per.items())}}
+
+
+def aggregate_orders(orders: list) -> dict[str, dict]:
+    """One row per name from all of its orders (the first plus any top-ups):
+    shares filled, their volume-weighted price, and the last order's status.
+    Pure; the first order's qty is the target."""
+    out: dict[str, dict] = {}
+    for o in sorted(orders, key=lambda o: str(o.client_order_id)):
+        a = out.setdefault(o.symbol, {"qty": float(o.qty or 0), "filled_qty": 0.0, "notional": 0.0,
+                                      "orders": 0, "status": None, "filled_at": None})
+        q = float(o.filled_qty or 0)
+        if q and o.filled_avg_price:
+            a["filled_qty"] += q
+            a["notional"] += q * float(o.filled_avg_price)
+            a["filled_at"] = str(o.filled_at) if o.filled_at else a["filled_at"]
+        a["orders"] += 1
+        a["status"] = _status(o)
+    for a in out.values():
+        a["fill"] = a["notional"] / a["filled_qty"] if a["filled_qty"] else None
+        if a["filled_qty"] >= a["qty"] > 0:
+            a["status"] = "filled"
+        del a["notional"]
+    return out
 
 
 def night_summary(sell_day: date, fetch=None) -> None:
@@ -581,6 +708,7 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
         "nights": done[-10:][::-1],
         "totals": totals,
         "backtest_bp": BACKTEST_BP,
+        "order_mode": ORDER_MODE,
         "next_step": next_step,
         "errors": {k: v for k, v in (state_today or {}).items() if str(v).startswith("error")},
     }
@@ -595,9 +723,10 @@ def _next_step(tc, now: datetime) -> dict | None:
             continue
         op, cl = ses
         plan_at = datetime.combine(day, datetime.min.time(), ET).replace(hour=6, minute=30)
-        for name, when in (("plan", plan_at), ("sell", op - SELL_LEAD), ("buy", cl - BUY_LEAD)):
+        steps = [("plan", plan_at)] + [(n, w) for n, w in schedule(op, cl) if n in ("sell", "buy")]
+        for name, when in steps:
             if when > now:
-                return {"name": name, "at": when.timestamp()}
+                return {"name": name, "at": when.timestamp(), "mode": ORDER_MODE}
     return None
 
 
@@ -646,13 +775,16 @@ def run() -> None:
             ses = session(tc, today)
             if ses:
                 op, cl = ses
-                steps = [
-                    ("plan", now.replace(hour=6, minute=30, second=0, microsecond=0), lambda: plan(tc, today)),
-                    ("sell", op - SELL_LEAD, lambda: sell(tc, today)),
-                    ("reconcile_sell", op + timedelta(minutes=20), lambda: reconcile(tc, today, "sell")),
-                    ("buy", cl - BUY_LEAD, lambda: buy(tc, today)),
-                    ("reconcile_buy", cl + timedelta(minutes=30), lambda: reconcile(tc, today, "buy")),
-                ]
+                fns = {
+                    "sell": lambda: sell(tc, today),
+                    "sell_topup": lambda: sell(tc, today, attempt=1),
+                    "reconcile_sell": lambda: reconcile(tc, today, "sell"),
+                    "buy": lambda: buy(tc, today),
+                    "buy_topup": lambda: buy_topup(tc, today),
+                    "reconcile_buy": lambda: reconcile(tc, today, "buy"),
+                }
+                steps = [("plan", now.replace(hour=6, minute=30, second=0, microsecond=0), lambda: plan(tc, today))]
+                steps += [(name, when, fns[name]) for name, when in schedule(op, cl)]
                 for name, when, fn in steps:
                     # one attempt per step per day; a step whose window passed by more
                     # than 10 minutes (the process was down) is skipped, not run late,
@@ -682,7 +814,7 @@ def run() -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("plan", "buy", "sell", "reconcile", "score", "status", "snapshot", "run"))
+    ap.add_argument("cmd", choices=("plan", "buy", "sell", "topup", "reconcile", "score", "status", "snapshot", "run"))
     ap.add_argument("--day", default=None, help="ET date, default today")
     ap.add_argument("--leg", choices=("buy", "sell"), default=None, help="reconcile one leg")
     ap.add_argument("--dry-run", action="store_true")
@@ -707,6 +839,11 @@ def main() -> None:
         buy(tc, day, dry=args.dry_run)
     elif args.cmd == "sell":
         sell(tc, day, dry=args.dry_run)
+    elif args.cmd == "topup":
+        if args.leg == "sell":
+            sell(tc, day, dry=args.dry_run, attempt=1)
+        else:
+            buy_topup(tc, day, dry=args.dry_run)
     elif args.cmd == "reconcile":
         for leg in ([args.leg] if args.leg else ["sell", "buy"]):
             reconcile(tc, day, leg)
