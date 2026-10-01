@@ -23,7 +23,7 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [x] Live mode built, off by default (21300d7), sizing fix (b98b8af), compare report + dashboard LIVE line (cec8751).
 - [x] Live keys in, read-only check passed: account ACTIVE, $100 cash, multiplier 1 (cash account), separate from desk and paper. Dry run would buy ERAS, IOVA, RLAY x1 (~$47.68) by MOC.
-- [ ] 15:40 filter validation (running).
+- [x] 15:40 filter validation: holds. OOS drop<-1% +22.2 bp/night at 15:40 vs +21.3 at 15:55 (all 20 +16.5). Auction buy stays at 15:40.
 - [x] Live agent INSTALLED, DISARMED (f09725e, 11:29): every order step logs 'LIVE not armed'.
 - [x] Self-arming set: the mini's `config/overnight_live.armed` holds `2026-10-05` (6992606), so Monday's 15:40 MOC goes in on its own. Cancel: `rm` the file. Arm now instead: empty it.
 
