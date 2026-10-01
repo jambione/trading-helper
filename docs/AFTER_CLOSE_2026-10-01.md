@@ -6,6 +6,7 @@ day's checks turn up. Newest items at the bottom of each section.
 
 ## Jonathan's observations
 
+- [ ] **Today's first 6 opens vs TradingView (Jonathan's charts, 10:21-10:37): data now matches.** Logged %R vs IEX rebuild within ~2-6 pts on all 6; squares were real (OXY red box, SNDQ pinned). 6 trades -$5.16. Losers: SNDQ at RSI2 99.7 on the top bar of a spike (out in 24 s), RKLB #2 at RSI2 97.7 at its high, XENE pre-square at RSI2 34 while fading off its 10:18 high. Test on 30 days of fills: (1) skip entries with RSI2 > ~95, (2) skip pre-square entries on a name falling from its high.
 - [x] Mobile: let the Positions/Overnight section collapse so the book gets more room (shipped ede4bed).
 
 ## From today's checks (Claude)
