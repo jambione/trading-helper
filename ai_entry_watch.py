@@ -9039,7 +9039,7 @@ def room_below_hod_refusal(record: dict, sym: str, ask, cfg: dict,
 _VOL_NOW_CACHE: dict[str, tuple[float | None, float]] = {}
 
 
-def vol_now_iex(sym: str, *, now: float | None = None, ttl: float = 30.0,
+def vol_now_iex(sym: str, *, now: float | None = None, ttl: float = 60.0,
                 fetch=None) -> float | None:
     """Volume per minute over the last 5 closed minutes / today's own pace.
 
@@ -9134,18 +9134,28 @@ def bind_async_gates(*, name: str = "ew-gate-warm", max_age: float = 600.0,
     global _ASYNC_GATES_BOUND
     if _ASYNC_GATES_BOUND:
         return False
+    # Spread first: it is the gate that refuses on unknown and fires on most
+    # arm checks. Order is the warm priority.
     real = (sip_spread_pct, open_gap_pct, rvol_pace_sip, day_high_iex, vol_now_iex)
-    want: dict[str, float] = {}
+    caches = (_SIP_SPREAD_CACHE, _GAP_CACHE, _RVOL_PACE_CACHE, _DAY_HIGH_CACHE, _VOL_NOW_CACHE)
+    # Per-input refresh floor. vol_now's window is 5 minutes, so 60 s is still
+    # current; at 30 s it was the warmer's biggest load (37.5 fetches/min on
+    # 2026-10-01) and spread fetches fell 27% behind it.
+    floor = (30.0, 30.0, 30.0, 30.0, 60.0)
+    # (input, name) -> last read. A gate that is switched off never reads its
+    # input, so it is never warmed: day_high (room gate off) cost 18
+    # fetches/min when every input was warmed for every name.
+    want: dict[tuple[int, str], float] = {}
     lock = threading.Lock()
 
-    def _cached(cache: dict, gap: bool, age: float = max_age):
+    def _cached(i: int, cache: dict, gap: bool, age: float = max_age):
         def _read(sym, *args, **kwargs):
             s = str(sym or "").upper()
             if not s:
                 return None
             t = time.time()
             with lock:
-                want[s] = t
+                want[(i, s)] = t
             hit = cache.get(s)
             if not hit or hit[0] is None:
                 return None
@@ -9157,28 +9167,33 @@ def bind_async_gates(*, name: str = "ew-gate-warm", max_age: float = 600.0,
             return hit[0] if t - ts <= age else None
         return _read
 
-    sip_spread_pct = _cached(_SIP_SPREAD_CACHE, False)
-    open_gap_pct = _cached(_GAP_CACHE, True)
-    rvol_pace_sip = _cached(_RVOL_PACE_CACHE, False)
-    day_high_iex = _cached(_DAY_HIGH_CACHE, True)          # same-day values only
-    vol_now_iex = _cached(_VOL_NOW_CACHE, False, 90.0)     # "last 5 min" goes stale fast
+    sip_spread_pct = _cached(0, _SIP_SPREAD_CACHE, False)
+    open_gap_pct = _cached(1, _GAP_CACHE, True)
+    rvol_pace_sip = _cached(2, _RVOL_PACE_CACHE, False)
+    day_high_iex = _cached(3, _DAY_HIGH_CACHE, True)          # same-day values only
+    vol_now_iex = _cached(4, _VOL_NOW_CACHE, False, 90.0)     # "last 5 min" goes stale fast
 
-    last: dict[tuple[str, int], float] = {}
+    last: dict[tuple[int, str], float] = {}
 
     def _warm() -> None:
         while True:
             t = time.time()
             with lock:
-                for s in [s for s, at in want.items() if t - at > keep_sec]:
-                    want.pop(s, None)
-                syms = sorted(want)
-            for s in syms:
-                for i, fn in enumerate(real):
+                for k in [k for k, at in want.items() if t - at > keep_sec]:
+                    want.pop(k, None)
+                pairs = list(want)
+            # Input by input in priority order; within an input, names with no
+            # value yet first, so a newly seated name gets its spread before
+            # the warm names are refreshed.
+            for i, fn in enumerate(real):
+                names = sorted((s for j, s in pairs if j == i),
+                               key=lambda s: (s in caches[i], s))
+                for s in names:
                     # Each returns from its own cache when fresh; the floor stops
                     # a name whose lookup keeps failing (gap None) re-asking every pass.
-                    if time.time() - last.get((s, i), 0.0) < 30.0:
+                    if time.time() - last.get((i, s), 0.0) < floor[i]:
                         continue
-                    last[(s, i)] = time.time()
+                    last[(i, s)] = time.time()
                     try:
                         fn(s)
                     except Exception:
