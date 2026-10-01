@@ -71,6 +71,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [ ] **Pullback entry test (Jonathan, 14:30) - tonight.** Today's opens scored trade by trade (/tmp/today_runway.py on the mini): 7 of 9 big losers never traded >0.15% above the fill in 15 min (XENE -0.03, SNDQ -0.39, RKLB#2 -0.15, LYTE -0.17/0.00, AXTI 12:43 -0.01, COHH +0.15) = bought the top tick; up-first 10 of 28 (morning 3/11, afternoon 7/6). Winners ran +0.8..+2.5% (SNXX, WULF, EFXT) and kept 25-40%. Test: instead of entering on the square, wait for the first pullback after it (e.g. first 1m close below the prior close / -0.2..-0.5% off the post-square high, within N min, skip if none) and enter there. Score on 30 days of fills vs same-name random minutes (runway_study method): up-first +/-0.5%, ret 15/30, both halves, how many entries are skipped, and what happens to today's losers and winners.
 
+- [x] **Hold until +X% profit, no stop, else sell 15:55 (Jonathan, 14:40) - FAILS.** 563 fills 9/1-9/30 (/tmp/hold_to_target.py on the mini). Desk as traded -0.24%, 31% win. +0.25%: 85% win, mean -0.25%; +0.5%: 74%, -0.31%; +1%: 59%, -0.29%; +2%: 37%, -0.40%; +5%: 14%, -0.47%. Win rate soars, mean never improves: the misses average -1.8..-3.0% at the close and the worst 5% average -7..-17%. Real collapses held through: RETO 9/16 $10.67 -> $2.03 (-81%, 6 fills), DCOY 9/22 -59%, IMCC 9/18 -52%. No live change.
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
