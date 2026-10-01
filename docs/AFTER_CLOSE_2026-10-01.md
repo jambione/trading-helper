@@ -24,6 +24,13 @@ day's checks turn up. Newest items at the bottom of each section.
 - [x] **Engine %R can leave its -100..0 range** (MNKD +21.7/+9.4 = fake full square; AI -160.9). `_check_proximity` injects the live price as the last bar's close without widening its high/low; on the Alpaca fallback the last bar can be minutes old. Fixed and shipped mid-session at Jonathan's call (6b4b50b, engine restarted 09:54).
 - [ ] Minor: dashboard.log has ~22k `socket.send() raised exception` warnings (closed browser tabs) — log noise; NLST rt age reads 5.4 years (bad trade timestamp).
 
+## Blockers, 09:30-10:00 (0 fills; 765 arm checks, 38 names)
+
+- [ ] **spread_unknown is 32% of refusals.** The spread gate reads SIP, served 16 min late: every name is unknown until 09:46, and each newly added name waits ~16 min. Spread_wide is another 23%. Options: IEX-quote fallback before SIP is served, or a pre-open seeded spread. Needs a decision.
+- [ ] **tape_only 23%:** thin names with no fresh print (EFXT, MNKD, KURA, GLOB, CMCT).
+- [ ] **SNXX armed 09:41:41, then dropped at 09:43:40 `not_uptrend` with pct_change exactly 0.0** on a movers-list name. Looks like a missing day change read as 0, not a real flat day. Check the movers admission path.
+- Note: the 09:54 mid-session restart cost ~52 checks of spread_unknown while caches refilled.
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
