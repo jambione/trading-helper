@@ -6,7 +6,7 @@ day's checks turn up. Newest items at the bottom of each section.
 
 ## Jonathan's observations
 
-_(none yet)_
+- [x] Mobile: let the Positions/Overnight section collapse so the book gets more room (shipped ede4bed).
 
 ## From today's checks (Claude)
 
@@ -23,7 +23,7 @@ _(none yet)_
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
 - [x] Item 4: engine %R in minutes (d2630f1, live pre-open).
 - [ ] Item 5: the 7 tests that were already failing. Running in a separate session (task_6be76155).
-- [~] Item 6: replay can test engine changes. Phase 1 shipped and verified (26ebb1d, `--engine recompute`): on the 9/30 FLY window, pre-item-4 vs item-4 code now differ (6 vs 7 opens, different FLY block reasons) and neither buys FLY. Phase 2 (replay the engine's realtime bar store from recorded prints, so seed/drop/re-add bugs like FLY's reproduce) not started.
+- [x] Item 6: replay tests engine changes. `--engine recompute` (26ebb1d) for indicator math; `--engine rt` (e575c9f) rebuilds the engine's bar store from recorded prints. Verified on the 9/30 FLY window: pre-fix code reproduces the fake square and buys FLY (~12:17:40, live 12:18:10); fixed code never squares.
 
 ## Context
 
