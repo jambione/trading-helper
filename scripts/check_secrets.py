@@ -40,27 +40,46 @@ def main() -> int:
         print("check_secrets: OK — no files to scan.")
         return 0
 
-    cmd = [
-        sys.executable,
-        "-m",
-        "detect_secrets.pre_commit_hook",
-        "--baseline",
-        ".secrets.baseline",
-        *files,
-    ]
-    res = subprocess.run(cmd, cwd=ROOT)
-
-    # 0 = clean pass (all secrets match baseline line numbers exactly, or none found)
-    # 3 = baseline file was updated to adjust line numbers of existing audited secrets
-    # 1 = new un-audited secret found (or syntax/execution error)
-    if res.returncode in (0, 3):
+    # Markdown is scanned without KeywordDetector. That detector is built for
+    # code (`secret_key = "..."`) and in prose it flags any mention of a
+    # credential's NAME: a brief saying keys load into `ALPACA_SECRET_KEY`
+    # failed every push from 2026-09-26 on. Auditing each hit into the
+    # baseline never stuck, because the next brief or handoff tripped it
+    # again. Every other detector still runs on markdown, so a real key
+    # pasted into a doc (AWS key, high-entropy string, private key) fails.
+    md = [f for f in files if f.lower().endswith(".md")]
+    code = [f for f in files if not f.lower().endswith(".md")]
+    worst = 0
+    # Each pass may rewrite the baseline's line numbers (exit 3); the next pass
+    # would then see an unstaged baseline and fail. Restore it after each.
+    original = BASELINE.read_bytes()
+    for group, extra in ((code, []), (md, ["--disable-plugin", "KeywordDetector"])):
+        if not group:
+            continue
+        cmd = [
+            sys.executable,
+            "-m",
+            "detect_secrets.pre_commit_hook",
+            "--baseline",
+            ".secrets.baseline",
+            *extra,
+            *group,
+        ]
+        try:
+            res = subprocess.run(cmd, cwd=ROOT)
+        finally:
+            BASELINE.write_bytes(original)
+        # 0 = clean pass (all secrets match baseline line numbers exactly, or none found)
+        # 3 = baseline file was updated to adjust line numbers of existing audited secrets
+        # 1 = new un-audited secret found (or syntax/execution error)
         if res.returncode == 3:
             print("check_secrets: OK — existing audited secrets are safe (line numbers shifted).")
-        else:
-            print("check_secrets: OK — no new secrets found.")
-        return 0
-
-    return res.returncode
+        elif res.returncode != 0:
+            worst = res.returncode
+    if worst:
+        return worst
+    print("check_secrets: OK — no new secrets found.")
+    return 0
 
 
 if __name__ == "__main__":
