@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=174" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=175" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -417,6 +417,8 @@
                     </div>
                     <div class="ai-book-overnight__acct" data-ai-overnight-acct
                          title="The overnight paper account: equity, today's P&amp;L (vs the prior close) and P&amp;L since its $25,000 start."></div>
+                    <div class="ai-book-overnight__live" data-ai-overnight-live hidden
+                         title="The real-money auction test: its own $100 account, MOC/MOO orders only, 1 share a name, every other night. Fills are compared with the official auction price and with the paper account's market-order fills of the same names."></div>
                     <div class="ai-book-overnight__status" data-ai-overnight-status></div>
                     <div class="ai-book-overnight__list" data-ai-overnight-list></div>
                     <div class="ai-book-overnight__nights" data-ai-overnight-nights></div>
@@ -842,7 +844,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=197"></script>
+        <script type="module" src="/static/js/app.js?v=198"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

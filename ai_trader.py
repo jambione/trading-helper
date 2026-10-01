@@ -362,15 +362,16 @@ def _extreme_move_pct_meta() -> float:
         return 100.0
 
 
-def _overnight_snapshot() -> dict | None:
+def _overnight_snapshot(sub: str = "overnight") -> dict | None:
     """The overnight book's own snapshot, for the dashboard strip.
 
-    overnight_book.py (a separate paper account, its own LaunchAgent) writes
-    ai_reports/overnight/snapshot.json after every step. This is a file read
-    only: the desk never calls the overnight account. Missing or unreadable
-    means the strip stays hidden.
+    overnight_book.py writes ai_reports/<sub>/snapshot.json after every step:
+    "overnight" is the paper book, "overnight_live" the real-money auction
+    test (its own account and LaunchAgent). This is a file read only: the
+    desk never calls either account. Missing or unreadable means that part of
+    the strip stays hidden.
     """
-    path = Path(__file__).resolve().parent / "ai_reports" / "overnight" / "snapshot.json"
+    path = Path(__file__).resolve().parent / "ai_reports" / sub / "snapshot.json"
     try:
         snap = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -589,6 +590,7 @@ def _positions_payload(
         "day_history": day_hist,
         # Overnight momentum pilot (its own paper account), from its snapshot file.
         "overnight": _overnight_snapshot(),
+        "overnight_live": _overnight_snapshot("overnight_live"),
         # Operator-facing liveness for the AI Watch column stamp.
         "watch_meta": {
             "updated": now,

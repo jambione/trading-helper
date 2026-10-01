@@ -388,3 +388,19 @@ def test_live_cash_uses_buying_power_not_the_zero_non_marginable_field():
     assert ob.live_cash(acct) == 100.0                      # the 2026-10-01 live account
     assert ob.live_cash(types.SimpleNamespace(buying_power="60", cash="100")) == 60.0
     assert ob.live_cash(types.SimpleNamespace(buying_power="0", cash="0")) == 0.0
+
+
+def test_compare_lines_live_auction_up_with_paper_and_the_cross():
+    paper = [{"event": "fill", "day": "2026-10-05", "leg": "buy", "sym": "IOVA", "fill": 14.62, "cross": 14.60,
+              "qty": 68, "filled_qty": 68}]
+    live = [{"event": "fill", "day": "2026-10-05", "leg": "buy", "sym": "IOVA", "fill": 14.60, "cross": 14.60,
+             "qty": 1, "filled_qty": 1, "status": "filled"},
+            {"event": "fill", "day": "2026-10-06", "leg": "sell", "sym": "IOVA", "fill": 14.70, "cross": 14.72,
+             "qty": 1, "filled_qty": 0, "status": "expired"}]
+    out = ob.compare_rows(paper, live)
+    buy, sell = out["rows"]
+    assert buy["full"] and abs(buy["live_vs_cross_bp"]) < 1e-9
+    assert abs(buy["paper_vs_cross_bp"] - (14.62 / 14.60 - 1) * 1e4) < 1e-9     # paid more = positive
+    assert sell["full"] is False                                              # expired, 0/1
+    assert abs(sell["live_vs_cross_bp"] - (14.72 / 14.70 - 1) * 1e4) < 1e-9   # got less = positive
+    assert out["totals"]["orders"] == 2 and out["totals"]["full"] == 1

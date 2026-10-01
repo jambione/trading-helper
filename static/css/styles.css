@@ -2700,6 +2700,15 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .ai-book-slot .ai-book-day-hist,
 .panel-ai-watch .ai-book-slot .ai-book-overnight { border-top: 0; }
 .panel-ai-watch .ai-book-overnight__acct { font-weight: 700; color: #e0f2fe; }
+.panel-ai-watch .ai-book-overnight__live { font-weight: 700; color: #fde68a; }
+.panel-ai-watch .on-live-tag {
+  padding: 0 5px;
+  border-radius: 3px;
+  background: #b45309;
+  color: #fff7ed;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+}
 /* Overnight momentum pilot — its own paper account, fed by overnight_book.py. */
 .panel-ai-watch .ai-book-overnight {
   flex: 0 0 auto;

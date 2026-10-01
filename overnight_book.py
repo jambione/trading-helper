@@ -108,7 +108,11 @@ LOG = OUT / "run.log"
 SNAPSHOT = OUT / "snapshot.json"
 SNAPSHOT_EVERY = 15 * 60
 BACKTEST_BP = 16.1
-START_EQUITY = 25000.0      # the overnight paper account's opening balance (PA36S0LLDMZY)
+# Opening balance, for the dashboard's "since start": the paper account
+# (PA36S0LLDMZY) opened at $25,000, the live test account at $100.
+START_EQUITY = float(os.getenv("OVERNIGHT_START_EQUITY", "100" if LIVE else "25000"))
+PAPER_OUT = ROOT / "ai_reports" / "overnight"
+LIVE_OUT = ROOT / "ai_reports" / "overnight_live"
 
 TOP_N = 20
 DOLLARS = 1000.0
@@ -940,6 +944,72 @@ def night_pnl(n: dict) -> float:
     return 0.0
 
 
+def _fill_rows(ledger: list[dict]) -> dict[tuple, dict]:
+    rows = {}
+    for r in ledger:
+        if r.get("event") == "fill":
+            rows[(r["day"], r["leg"], r["sym"])] = r          # a re-run reconcile: last wins
+    return rows
+
+
+def _vs_cross_bp(leg: str, fill, cross) -> float | None:
+    """Cost against the official cross, bp, positive = worse: a buy paid
+    more than the cross, a sell got less."""
+    if not fill or not cross:
+        return None
+    return ((fill / cross - 1) if leg == "buy" else (cross / fill - 1)) * 1e4
+
+
+def compare_rows(paper: list[dict], live: list[dict]) -> dict:
+    """Every live auction order beside the paper account's market-order fill
+    of the same name, same day, same leg. Pure.
+
+    The question the live test exists to answer is whether real MOC/MOO
+    orders fill, in full, at the official cross. Paper cannot say (it does
+    not run auctions); it does show what market orders cost on the same
+    names, which is the alternative.
+    """
+    p, l = _fill_rows(paper), _fill_rows(live)
+    rows = []
+    for (day, leg, sym), r in sorted(l.items()):
+        pr = p.get((day, leg, sym)) or {}
+        cross = r.get("cross") or pr.get("cross")
+        full = bool(r.get("fill")) and float(r.get("filled_qty") or 0) >= float(r.get("qty") or 0) > 0
+        rows.append({"day": day, "leg": leg, "sym": sym, "status": r.get("status"),
+                     "qty": r.get("qty"), "filled_qty": r.get("filled_qty"), "full": full,
+                     "live_fill": r.get("fill"), "cross": cross,
+                     "live_vs_cross_bp": _vs_cross_bp(leg, r.get("fill"), cross),
+                     "paper_fill": pr.get("fill"),
+                     "paper_vs_cross_bp": _vs_cross_bp(leg, pr.get("fill"), cross)})
+    lv = [x["live_vs_cross_bp"] for x in rows if x["live_vs_cross_bp"] is not None]
+    pv = [x["paper_vs_cross_bp"] for x in rows if x["paper_vs_cross_bp"] is not None]
+    totals = {"orders": len(rows), "full": sum(x["full"] for x in rows),
+              "live_mean_bp": (sum(lv) / len(lv)) if lv else None, "live_n": len(lv),
+              "paper_mean_bp": (sum(pv) / len(pv)) if pv else None, "paper_n": len(pv)}
+    return {"rows": rows, "totals": totals}
+
+
+def compare(print_it: bool = True) -> dict:
+    """Live vs paper vs the official cross, from both books' ledgers."""
+    out = compare_rows(_read_jsonl(PAPER_OUT / "ledger.jsonl"), _read_jsonl(LIVE_OUT / "ledger.jsonl"))
+    LIVE_OUT.mkdir(parents=True, exist_ok=True)
+    tmp = LIVE_OUT / "compare.tmp"
+    tmp.write_text(json.dumps(out, default=str))
+    os.replace(tmp, LIVE_OUT / "compare.json")
+    if print_it:
+        f = lambda v, d=1: "-" if v is None else f"{v:+.{d}f}"
+        print(f"{'day':10} {'leg':4} {'sym':6} {'status':16} {'qty':>7} {'live':>9} {'cross':>9} "
+              f"{'live bp':>8} {'paper':>9} {'paper bp':>8}")
+        for x in out["rows"]:
+            print(f"{x['day']:10} {x['leg']:4} {x['sym']:6} {str(x['status']):16} "
+                  f"{str(x['filled_qty']) + '/' + str(x['qty']):>7} {f(x['live_fill'], 2):>9} {f(x['cross'], 2):>9} "
+                  f"{f(x['live_vs_cross_bp']):>8} {f(x['paper_fill'], 2):>9} {f(x['paper_vs_cross_bp']):>8}")
+        t = out["totals"]
+        print(f"live auction orders {t['orders']}, filled in full {t['full']}; vs cross: live "
+              f"{f(t['live_mean_bp'])} bp (n={t['live_n']}), paper market {f(t['paper_mean_bp'])} bp (n={t['paper_n']})")
+    return out
+
+
 def status(tc) -> None:
     a = tc.get_account()
     print(f"account {a.account_number} equity ${float(a.equity):,.2f} cash ${float(a.cash):,.2f}")
@@ -1026,6 +1096,7 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
         "totals": totals,
         "backtest_bp": BACKTEST_BP,
         "order_mode": ORDER_MODE,
+        "account_kind": ACCOUNT,
         "intraday_min": INTRADAY_MIN,
         "next_step": next_step,
         "errors": {k: v for k, v in (state_today or {}).items() if str(v).startswith("error")},
@@ -1072,6 +1143,11 @@ def write_snapshot(tc) -> None:
         nxt = None
     snap = build_snapshot(plan_row, _read_jsonl(LEDGER), _read_jsonl(NIGHTS), positions, account,
                           load_state().get(now.date().isoformat(), {}), nxt, now)
+    if LIVE:
+        try:
+            snap["compare"] = compare(print_it=False)
+        except Exception as e:  # noqa: BLE001
+            log(f"snapshot: compare failed: {e!s:.120}")
     OUT.mkdir(parents=True, exist_ok=True)
     tmp = SNAPSHOT.with_suffix(".tmp")
     tmp.write_text(json.dumps(snap, default=str))
@@ -1137,7 +1213,7 @@ def run() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=("plan", "buy", "sell", "topup", "reconcile", "score", "status", "snapshot",
-                                    "check", "run"))
+                                    "check", "compare", "run"))
     ap.add_argument("--day", default=None, help="ET date, default today")
     ap.add_argument("--leg", choices=("buy", "sell"), default=None, help="reconcile one leg")
     ap.add_argument("--dry-run", action="store_true")
@@ -1152,6 +1228,9 @@ def main() -> None:
             log(f"plan: {e}; using the desk's keys read-only for calendar and assets")
             tc = desk_trading_client()
         plan(tc, day)
+        return
+    if args.cmd == "compare":
+        compare()
         return
     if args.cmd == "score":
         # --day is the morning the night ended (the sell day); needs no broker
