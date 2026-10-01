@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=173" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=174" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -399,6 +399,8 @@
                 <div class="ai-book-slot__tabs" role="tablist" aria-label="Positions or overnight book">
                     <button type="button" class="ai-book-slot__tab" role="tab" data-slot-tab="positions">Positions</button>
                     <button type="button" class="ai-book-slot__tab" role="tab" data-slot-tab="overnight" hidden>Overnight</button>
+                    <button type="button" class="ai-book-slot__collapse" data-slot-collapse
+                            aria-expanded="true" aria-label="Collapse positions and overnight">▾</button>
                 </div>
                 <div class="ai-book-day-hist" data-ai-book-day-hist
                      title="Today's positions. Entry, each exit, and P&amp;L. Clears at midnight ET.">
@@ -840,7 +842,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=196"></script>
+        <script type="module" src="/static/js/app.js?v=197"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

@@ -1071,6 +1071,7 @@ function _bpCls(v) {
 }
 
 const _BOOK_SLOT_LS = 'aiBookSlotView';
+const _BOOK_SLOT_COLLAPSED_LS = 'aiBookSlotCollapsed';
 
 /** Positions and the overnight book share one slot; a tab link picks which.
  *  The choice is a per-browser convenience, so storage failing just means the
@@ -1089,11 +1090,36 @@ function _bindBookSlot(sectionEl, haveOvernight) {
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
   };
+  const setCollapsed = (on) => {
+    slot.dataset.collapsed = on ? '1' : '';
+    const btn = slot.querySelector('[data-slot-collapse]');
+    if (btn) {
+      btn.textContent = on ? '▸' : '▾';
+      btn.setAttribute('aria-expanded', on ? 'false' : 'true');
+      btn.setAttribute('aria-label', on ? 'Expand positions and overnight' : 'Collapse positions and overnight');
+    }
+  };
   if (!slot.dataset.bound) {
     slot.dataset.bound = '1';
+    // Collapse is a phone convenience (the slot crowds a small screen); the
+    // button only shows under body.mobile. Remembered per browser.
+    let wasCollapsed = false;
+    try { wasCollapsed = localStorage.getItem(_BOOK_SLOT_COLLAPSED_LS) === '1'; } catch (e) { /* per-browser only */ }
+    setCollapsed(wasCollapsed);
     slot.addEventListener('click', (ev) => {
+      const c = ev.target && ev.target.closest && ev.target.closest('[data-slot-collapse]');
+      if (c && slot.contains(c)) {
+        const on = slot.dataset.collapsed !== '1';
+        try { localStorage.setItem(_BOOK_SLOT_COLLAPSED_LS, on ? '1' : '0'); } catch (e) { /* per-browser only */ }
+        setCollapsed(on);
+        return;
+      }
       const b = ev.target && ev.target.closest && ev.target.closest('[data-slot-tab]');
       if (!b || !slot.contains(b)) return;
+      if (slot.dataset.collapsed === '1') {          // tapping a tab opens it
+        try { localStorage.setItem(_BOOK_SLOT_COLLAPSED_LS, '0'); } catch (e) { /* per-browser only */ }
+        setCollapsed(false);
+      }
       const v = b.dataset.slotTab;
       try { localStorage.setItem(_BOOK_SLOT_LS, v); } catch (e) { /* per-browser only */ }
       slot.dataset.want = v;

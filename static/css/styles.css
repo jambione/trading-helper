@@ -2762,6 +2762,24 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .on-err { color: #fbbf24; }
 body.mobile .panel-ai-watch .ai-book-day-hist__list { max-height: 9rem; }
 body.mobile .panel-ai-watch .ai-book-overnight__list { max-height: 9rem; }
+/* Collapse: phone only. Hides both blocks; the tab row stays as the handle. */
+.panel-ai-watch .ai-book-slot__collapse { display: none; }
+body.mobile .panel-ai-watch .ai-book-slot__collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  min-width: 34px;
+  min-height: 34px;
+  background: none;
+  border: 0;
+  font-size: 15px;
+  color: #a78bfa;
+  cursor: pointer;
+}
+body.mobile .panel-ai-watch .ai-book-slot[data-collapsed="1"] .ai-book-day-hist,
+body.mobile .panel-ai-watch .ai-book-slot[data-collapsed="1"] .ai-book-overnight { display: none; }
+body.mobile .panel-ai-watch .ai-book-slot[data-collapsed="1"] .ai-book-slot__tab.is-active { border-bottom-color: transparent; }
 /* Tabs: a thumb needs ~32px of height, not a 10px caption. */
 body.mobile .panel-ai-watch .ai-book-slot__tabs { gap: 20px; padding-top: 2px; }
 body.mobile .panel-ai-watch .ai-book-slot__tab {
