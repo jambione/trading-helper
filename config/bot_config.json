@@ -479,5 +479,7 @@
   "ai_watch_square_min_count": 2,
   "ai_watch_square_max_age_sec": 60.0,
   "ai_exit_left_overbought_confirm_sec": 1.0,
-  "ai_watch_min_vol_now_ratio": 0.25
+  "ai_watch_min_vol_now_ratio": 0.25,
+  "ai_entry_test_arms": "ask,mid_down,bid",
+  "ai_entry_test_cross_sec": 10.0
 }
