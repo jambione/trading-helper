@@ -73,6 +73,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [x] **Hold until +X% profit, no stop, else sell 15:55 (Jonathan, 14:40) - FAILS.** 563 fills 9/1-9/30 (/tmp/hold_to_target.py on the mini). Desk as traded -0.24%, 31% win. +0.25%: 85% win, mean -0.25%; +0.5%: 74%, -0.31%; +1%: 59%, -0.29%; +2%: 37%, -0.40%; +5%: 14%, -0.47%. Win rate soars, mean never improves: the misses average -1.8..-3.0% at the close and the worst 5% average -7..-17%. Real collapses held through: RETO 9/16 $10.67 -> $2.03 (-81%, 6 fills), DCOY 9/22 -59%, IMCC 9/18 -52%. No live change.
 
+- [ ] **Target + stop grid (Jonathan, 14:50; /tmp/hold_to_target.py).** 563 fills 9/1-9/30, bar sim (same-bar tie = stop; stop fills at stop or gap open; NO exit spread, so ~5 bp optimistic). +1% target: stop -0.5 -0.12%, -1 -0.12%, -1.5 -0.14%, -2 -0.17%, -3 -0.19%, -5 -0.18% -> WIDER STOPS ARE WORSE. Best shape +2/-0.5 -0.06% (23% win). All shapes beat the desk's -0.24% by 0.05-0.18% before exit spread, but every one is negative in H2 (9/16+). Next: re-score the top 3 shapes (+2/-0.5, +1/-1, +2/-1) with the exit at the bid and the desk's real exit fills, before any live change.
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
