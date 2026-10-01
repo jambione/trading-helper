@@ -115,9 +115,13 @@ PAPER_OUT = ROOT / "ai_reports" / "overnight"
 LIVE_OUT = ROOT / "ai_reports" / "overnight_live"
 
 TOP_N = 20
-DOLLARS = 1000.0
+DOLLARS = 1000.0            # scoring unit only ("$ at $1,000/name"); paper sizing is EQUITY_FRAC
+# Paper sizing (2026-10-01, Jonathan: use the whole account every night): the
+# night's cash is split equally across the names that pass the filter. 0.98,
+# not 1.0: market buys fill a few cents off the reference price and whole-share
+# rounding can tip a name over, and a buy past cash lands on margin.
+EQUITY_FRAC = float(os.getenv("OVERNIGHT_EQUITY_FRAC", "0.98"))
 MAX_PRICE = 2000.0          # above this even one share is > 2x the target size
-MAX_BOOK = TOP_N * DOLLARS * 1.5
 MIN_PRICE = 5.0
 MIN_ADV = 50e6
 ADV_DAYS, ADV_MIN = 20, 15
@@ -366,6 +370,45 @@ def size_live(syms: list[str], prices: dict, held: set, cash: float,
     return out
 
 
+def size_paper(syms: list[str], prices: dict, held: set, budget: float,
+               max_price: float = 2000.0) -> list[tuple[str, int, float]]:
+    """[(sym, qty, price)] splitting *budget* equally across the buyable picks. Pure.
+
+    Whole shares, floored, so a name lands at or under its share. A name whose
+    one share costs more than its share still gets one share (up to
+    *max_price*) when it fits in what is left; the total never passes *budget*.
+    """
+    names = [s for s in syms if s not in held and prices.get(s) and prices[s] > 0
+             and prices[s] <= max_price]
+    if not names or budget <= 0:
+        return []
+    each = budget / len(names)
+    out, total = [], 0.0
+    for s in names:
+        p = float(prices[s])
+        qty = max(1, math.floor(each / p))
+        if total + qty * p > budget:
+            qty = math.floor((budget - total) / p)
+        if qty < 1:
+            continue
+        out.append((s, qty, p))
+        total += qty * p
+    # Whole shares leave cash behind (a $1,000 share in a $1,500 slice). Hand
+    # it out one share at a time to the name furthest under its slice, so the
+    # book uses the account rather than ~90% of it.
+    qty_of = {s: q for s, q, _ in out}
+    price_of = {s: p for s, _, p in out}
+    while True:
+        left = budget - total
+        fits = [s for s in qty_of if price_of[s] <= left + 1e-9]
+        if not fits:
+            break
+        s = min(fits, key=lambda x: (qty_of[x] * price_of[x] + price_of[x]) / each)
+        qty_of[s] += 1
+        total += price_of[s]
+    return [(s, qty_of[s], price_of[s]) for s, _, _ in out]
+
+
 def live_cash(a) -> float:
     """Money the live test may spend: buying power, never more than cash.
 
@@ -596,24 +639,25 @@ def buy(tc, day: date, dry: bool = False) -> None:
     if LIVE:
         _buy_live(tc, day, syms, px, held, dry)
         return
-    total = 0.0
     for s in syms:
         if s in held:
             log(f"buy {day}: {s} already held, skipped")
-            continue
-        price = px.get(s)
-        if not price:
+        elif not px.get(s):
             log(f"buy {day}: {s} no price, skipped")
-            continue
-        qty = math.floor(DOLLARS / price)
-        if qty == 0 and price <= MAX_PRICE:
-            qty = 1
-        if qty == 0:
-            log(f"buy {day}: {s} ${price:.2f} too high for one share, skipped")
-            continue
-        if total + qty * price > MAX_BOOK:
-            log(f"buy {day}: book cap ${MAX_BOOK:,.0f} reached at {s}, stopped")
-            break
+        elif px[s] > MAX_PRICE:
+            log(f"buy {day}: {s} ${px[s]:.2f} too high for one share, skipped")
+    a = tc.get_account()
+    try:
+        cash, equity = float(a.cash), float(a.equity)
+    except (TypeError, ValueError, AttributeError):
+        cash = equity = 0.0
+    # The whole account, never past cash on hand: buying past it is margin.
+    budget = EQUITY_FRAC * max(0.0, min(equity, cash))
+    picks = size_paper(syms, px, set(held), budget, MAX_PRICE)
+    log(f"buy {day}: sizing {EQUITY_FRAC:.0%} of ${min(equity, cash):,.0f} = ${budget:,.0f} "
+        f"over {len(picks)} names (~${budget / max(1, len(picks)):,.0f} each)")
+    total = 0.0
+    for s, qty, price in picks:
         total += qty * price
         cid = f"on-{day.isoformat()}-{s}-buy"
         row = {"event": "submit", "night": day.isoformat(), "sym": s, "side": "buy", "qty": qty,

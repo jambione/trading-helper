@@ -83,6 +83,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [x] **Decision data for #1 (spread gate) and #4 (spread unknown) - /tmp/spread_refusals.py, squares at the arm gate 9/29-10/1, one sample per name/reason per 5 min, real SIP quote at the moment, buy at ask -> sell at bid.** Armed squares (n 61): spread 0.08%, net 15m -0.15%. Refused spread_wide (n 49): real spread median 0.31% (mean 0.46%), net 15m -0.93%, and the MID fell -0.55% (worse movers, not just costlier). By band: 0.2-0.3% -0.22% (n 10), 0.3-0.4% +0.28% (n 9), 0.4-0.6% -2.58% (n 10), >1% -3.31% (n 4); 12 refused with a <0.2% SIP spread at that second still lost -0.87%. Refused spread_unknown (n 43): real spread median 0.31% (70% over 0.2%), net 15m -0.81% (09:30-09:46 -0.73%, 11:00+ -2.32%). Read: the spread gate is avoiding losers; unknown-spread names are mostly wide names. Small n (3 days).
 
+- [x] **Overnight paper uses the whole account (Jonathan, 10/1 eve).** overnight_book.size_paper: 98% of min(equity, cash) at the buy, split equally across the names that pass the filter, whole shares, leftover handed out a share at a time. Tonight's 16 names would have been $24,497 (98%) vs $16,254 (65%) at $1,000/name. OVERNIGHT_EQUITY_FRAC overrides. Live test caps unchanged (pending Jonathan).
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).

@@ -195,6 +195,9 @@ class _FakeTC:
     def get_all_positions(self):
         return self.positions
 
+    def get_account(self):
+        return types.SimpleNamespace(cash="25000", equity="25000")
+
     def submit_order(self, req):
         self.submitted.append(req)
         return types.SimpleNamespace(id="x")
@@ -231,7 +234,8 @@ def test_buy_uses_day_market_orders_in_market_mode_and_cls_in_auction(monkeypatc
         tc = _FakeTC([])
         ob.buy(tc, date(2026, 10, 1))
         assert {str(r.time_in_force.value).lower() for r in tc.submitted} == {tif}
-        assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 20), ("BBB", 50)]
+        # 98% of the $25,000 account split over 2 names
+        assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 245), ("BBB", 612)]
 
 
 
@@ -448,3 +452,22 @@ def test_a_sold_night_gives_way_to_todays_plan():
     # same-day plan (before the next morning's 06:30): the bought book shows
     snap = ob.build_snapshot(PLAN, ledger, [], [], {}, {}, None, NOW)
     assert snap["book_night"] == "2026-09-30"
+
+
+def test_paper_sizing_splits_the_budget_equally_in_whole_shares():
+    px = {"AAA": 50.0, "BBB": 20.0, "CCC": 1500.0, "DDD": 2500.0}
+    picks = ob.size_paper(["AAA", "BBB", "CCC", "DDD"], px, set(), 24500.0)
+    got = {s: q for s, q, _ in picks}
+    # DDD is over the one-share cap; 3 names share $24,500 -> ~$8,167 each.
+    # CCC's 5 shares leave it $667 short; the leftover goes to AAA and BBB.
+    assert got == {"AAA": 170, "BBB": 425, "CCC": 5}
+    assert sum(q * p for _, q, p in picks) <= 24500.0
+
+
+def test_paper_sizing_never_passes_the_budget_and_skips_held():
+    px = {"BIG": 1800.0, "A": 10.0, "B": 10.0}
+    picks = ob.size_paper(["BIG", "A", "B"], px, {"B"}, 2000.0)
+    # BIG gets its one share even though it is over its $1,000 share; A fills what is left
+    assert [(s, q) for s, q, _ in picks] == [("BIG", 1), ("A", 20)]
+    assert sum(q * p for _, q, p in picks) <= 2000.0
+    assert ob.size_paper(["A"], px, set(), 0.0) == []
