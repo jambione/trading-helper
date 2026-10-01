@@ -221,9 +221,57 @@ def test_buy_uses_day_market_orders_in_market_mode_and_cls_in_auction(monkeypatc
     _isolate_ledger(monkeypatch, tmp_path)
     monkeypatch.setattr(ob, "load_plan", lambda d: PLAN)
     monkeypatch.setattr(ob, "latest_prices", lambda syms: {"AAA": 50.0, "BBB": 20.0})
+    monkeypatch.setattr(ob, "INTRADAY_MIN", None)
     for mode, tif in (("market", "day"), ("auction", "cls")):
         monkeypatch.setattr(ob, "ORDER_MODE", mode)
         tc = _FakeTC([])
         ob.buy(tc, date(2026, 10, 1))
         assert {str(r.time_in_force.value).lower() for r in tc.submitted} == {tif}
         assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 20), ("BBB", 50)]
+
+
+
+# ── intraday filter: drop picks down > 1% open -> now ────────────────────────
+
+def test_intraday_filter_drops_losers_and_keeps_unknowns():
+    opens = {"AAA": 50.0, "BBB": 20.0, "CCC": 10.0}
+    prices = {"AAA": 50.4, "BBB": 19.7, "CCC": 9.95}            # +0.8%, -1.5%, -0.5%
+    kept, rows = ob.intraday_filter(["AAA", "BBB", "CCC", "DDD"], opens, prices, -0.01)
+    assert kept == ["AAA", "CCC", "DDD"]                       # DDD: no open -> kept, marked
+    by = {r["sym"]: r for r in rows}
+    assert by["BBB"]["kept"] is False and abs(by["BBB"]["intraday"] + 0.015) < 1e-9
+    assert by["DDD"]["unknown"] is True and by["DDD"]["kept"] is True
+    assert ob.intraday_filter(["BBB"], opens, prices, None)[0] == ["BBB"]   # off
+
+
+def test_buy_submits_only_the_names_that_pass(monkeypatch, tmp_path):
+    import json
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "ORDER_MODE", "market")
+    monkeypatch.setattr(ob, "INTRADAY_MIN", -0.01)
+    monkeypatch.setattr(ob, "load_plan", lambda d: PLAN)
+    monkeypatch.setattr(ob, "latest_prices", lambda syms: {"AAA": 50.0, "BBB": 19.0})
+    monkeypatch.setattr(ob, "session_opens", lambda syms, day: {"AAA": 49.5, "BBB": 20.0})
+    tc = _FakeTC([])
+    ob.buy(tc, date(2026, 10, 1))
+    assert [r.symbol for r in tc.submitted] == ["AAA"]
+    flt = [json.loads(x) for x in (tmp_path / "ledger.jsonl").read_text().splitlines()
+           if json.loads(x).get("event") == "filter"]
+    assert flt and flt[0]["kept"] == ["AAA"] and flt[0]["night"] == "2026-10-01"
+
+
+def test_night_headline_is_the_book_held_with_all_20_beside_it(monkeypatch, tmp_path):
+    import json
+    from datetime import date
+    _isolate_out(monkeypatch, tmp_path)
+    (tmp_path / "plan_2026-09-30.json").write_text(json.dumps(PLAN))
+    (tmp_path / "ledger.jsonl").write_text(json.dumps(
+        {"event": "filter", "night": "2026-09-30", "floor": -0.01, "kept": ["AAA"]}) + "\n")
+    cx = {("close", "2026-09-30"): {"AAA": (50.0, 1), "BBB": (20.0, 1)},
+          ("open", "2026-10-01"): {"AAA": (50.5, 1), "BBB": (19.6, 1)}}
+    ob.night_summary(date(2026, 10, 1), fetch=lambda syms, day, leg: cx[(leg, day.isoformat())])
+    n = json.loads((tmp_path / "nights.jsonl").read_text().splitlines()[0])
+    assert n["n_book"] == 1 and abs(n["mean_bp_book"] - 100.0) < 1e-9
+    assert abs(n["mean_bp_plan"] - (100.0 - 200.0) / 2) < 1e-9   # all 20 (here 2) beside it
+    assert ob.night_bp(n) == n["mean_bp_book"] and ob.night_pnl(n) == n["pnl_book_usd"]

@@ -1242,12 +1242,18 @@ function _paintOvernight(sectionEl, book) {
       const x = n && typeof n === 'object' ? n : {};
       // Headline = every planned name at the official crosses. Paper does not
       // run auctions, so its fills are shown dimmed as plumbing only.
-      const planned = x.mean_bp_plan != null;
-      const bp = planned ? x.mean_bp_plan : x.mean_bp_fills;
-      const pl = planned ? x.pnl_plan_usd : x.pnl_usd;
-      const count = planned ? `${x.n_scored}/${x.n_plan}` : String(x.names || '');
+      // Headline = the book held (picks that passed the intraday filter);
+      // all 20 and paper fills sit beside it, dimmed.
+      const book = x.mean_bp_book != null;
+      const planned = book || x.mean_bp_plan != null;
+      const bp = book ? x.mean_bp_book : (planned ? x.mean_bp_plan : x.mean_bp_fills);
+      const pl = book ? x.pnl_book_usd : (planned ? x.pnl_plan_usd : x.pnl_usd);
+      const count = book ? `${x.n_book_scored}/${x.n_book}`
+        : (planned ? `${x.n_scored}/${x.n_plan}` : String(x.names || ''));
+      const all20 = book && x.mean_bp_plan != null && x.n_book !== x.n_plan
+        ? `all 20 ${_fmtBp(x.mean_bp_plan)} · ` : '';
       const paper = planned
-        ? `paper ${_fmtHistPl(x.pnl_usd)} on ${String(x.names || 0)} filled`
+        ? `${all20}paper ${_fmtHistPl(x.pnl_usd)} on ${String(x.names || 0)} filled`
         : (x.mean_bp_crosses != null ? `${_fmtBp(x.mean_bp_crosses)} at cross` : '');
       return `<div class="on-nightrow">`
         + `<span>${_esc(_fmtHistDay(x.night_end))}</span>`

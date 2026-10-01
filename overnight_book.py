@@ -46,6 +46,10 @@ SCORING
   each. Alpaca paper does not run auctions (it fills CLS/OPG at the quote,
   partly, and expires the rest), so paper fills are logged beside the score
   as plumbing, never as the result.
+  The night's headline is the BOOK actually held: the picks that passed the
+  intraday filter (OVERNIGHT_INTRADAY_MIN, default -1%: a pick down more than
+  1% from today's open when the buy runs is not bought). All 20 are scored
+  beside it every night, so the filter's value is measured, not assumed.
 
 USAGE (on the mini)
   .venv/bin/python overnight_book.py plan [--day YYYY-MM-DD]
@@ -117,6 +121,14 @@ MKT_BUY_BEFORE_CLOSE = timedelta(minutes=2)
 MKT_BUY_TOPUP_BEFORE_CLOSE = timedelta(seconds=30)
 MKT_SELL_AFTER_OPEN = timedelta(minutes=1)
 MKT_SELL_TOPUP_AFTER_OPEN = timedelta(minutes=3)
+# Drop a pick that is down more than this open -> now when the buy runs.
+# OOS 2022+ at 15:55 (/tmp/eod_1555.py): all 20 +16.5 bp/night; dropping
+# names under -1% +21.6 bp with ~61% of names (open->15:55 quintiles
+# -2.8 .. +35.8 bp, t 5.3). Intraday losers keep losing overnight. Set
+# OVERNIGHT_INTRADAY_MIN=off to buy all 20. Validated for a 15:55 decision;
+# auction mode buys at 15:40, earlier than tested.
+_IM = os.getenv("OVERNIGHT_INTRADAY_MIN", "-0.01").strip().lower()
+INTRADAY_MIN = None if _IM in ("", "off", "none") else float(_IM)
 OPEN_STATUSES = {"new", "accepted", "pending_new", "partially_filled", "accepted_for_bidding",
                  "held", "pending_replace", "pending_cancel", "calculated"}
 
@@ -340,6 +352,39 @@ def latest_prices(syms: list[str]) -> dict[str, float]:
     return {s: float(t.price) for s, t in (got or {}).items() if t and t.price}
 
 
+def session_opens(syms: list[str], day: date) -> dict[str, float]:
+    """Today's 09:30 open per name from SIP 1m bars. SIP serves bars >= 15
+    minutes old, so by the afternoon buy the 09:30 bar is available; the
+    IEX first print can sit 0.6% off the official open."""
+    from alpaca.data.enums import DataFeed
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    st = datetime.combine(day, datetime.min.time(), ET).replace(hour=9, minute=30)
+    got = data_client().get_stock_bars(StockBarsRequest(
+        symbol_or_symbols=syms, timeframe=TimeFrame.Minute, start=st.astimezone(timezone.utc),
+        end=(st + timedelta(minutes=1)).astimezone(timezone.utc), feed=DataFeed.SIP)).data
+    return {s: float(bs[0].open) for s, bs in (got or {}).items() if bs}
+
+
+def intraday_filter(syms: list[str], opens: dict, prices: dict,
+                    floor: float | None) -> tuple[list[str], list[dict]]:
+    """(names to buy, one row per pick). Pure. A pick down more than *floor*
+    open -> now is dropped. A pick with no open or price is KEPT and marked:
+    unknown is not evidence of weakness, and keeping it is the unfiltered
+    book the backtest scores."""
+    kept, rows = [], []
+    for s in syms:
+        o, p = opens.get(s), prices.get(s)
+        chg = (p / o - 1) if (o and p) else None
+        drop = floor is not None and chg is not None and chg < floor
+        rows.append({"sym": s, "open": o, "price": p,
+                     "intraday": None if chg is None else round(chg, 5),
+                     "kept": not drop, "unknown": chg is None})
+        if not drop:
+            kept.append(s)
+    return kept, rows
+
+
 def buy(tc, day: date, dry: bool = False) -> None:
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
@@ -351,6 +396,21 @@ def buy(tc, day: date, dry: bool = False) -> None:
         log(f"buy {day}: WARNING positions still open from before: {held}")
     syms = [r["sym"] for r in p["picks"]]
     px = latest_prices(syms)
+    if INTRADAY_MIN is not None:
+        try:
+            opens = session_opens(syms, day)
+        except Exception as e:  # noqa: BLE001
+            log(f"buy {day}: opens unavailable ({e!s:.100}); intraday filter skipped, buying all")
+            opens = {}
+        syms, frows = intraday_filter(syms, opens, px, INTRADAY_MIN)
+        dropped = [r for r in frows if not r["kept"]]
+        unknown = [r["sym"] for r in frows if r["unknown"]]
+        if not dry:
+            append(LEDGER, {"event": "filter", "night": day.isoformat(), "floor": INTRADAY_MIN,
+                            "kept": syms, "rows": frows})
+        log(f"buy {day}: intraday filter {INTRADAY_MIN:+.1%}: kept {len(syms)}/{len(frows)}"
+            + (f"; dropped " + " ".join(f"{r['sym']}({r['intraday']:+.1%})" for r in dropped) if dropped else "")
+            + (f"; no open/price for {','.join(unknown)} (kept)" if unknown else ""))
     total = 0.0
     for s in syms:
         if s in held:
@@ -588,7 +648,20 @@ def night_summary(sell_day: date, fetch=None) -> None:
     picks = [r["sym"] for r in plan_row.get("picks", [])]
     night = {"night_end": sell_day.isoformat(), "plan_day": buy_day.isoformat(),
              "backtest_expect_bp": BACKTEST_BP}
-    night.update(score_plan(picks, fetch(picks, buy_day, "close"), fetch(picks, sell_day, "open")))
+    close_cx, open_cx = fetch(picks, buy_day, "close"), fetch(picks, sell_day, "open")
+    night.update(score_plan(picks, close_cx, open_cx))
+    # The book actually held: the picks that passed the intraday filter that
+    # night. Nights without a filter row (filter off, or before it existed)
+    # held all 20, so the book is the plan.
+    flt = [r for r in _read_jsonl(LEDGER) if r.get("event") == "filter" and r.get("night") == buy_day.isoformat()]
+    if flt:
+        bk = score_plan(flt[-1]["kept"], close_cx, open_cx)
+        night.update({"filter_floor": flt[-1].get("floor"), "n_book": bk["n_plan"],
+                      "n_book_scored": bk["n_scored"], "mean_bp_book": bk["mean_bp_plan"],
+                      "pnl_book_usd": bk["pnl_plan_usd"]})
+    else:
+        night.update({"filter_floor": None, "n_book": night["n_plan"], "n_book_scored": night["n_scored"],
+                      "mean_bp_book": night["mean_bp_plan"], "pnl_book_usd": night["pnl_plan_usd"]})
 
     # Paper fills, secondary: only names paper filled on both legs.
     rows = _read_jsonl(LEDGER)
@@ -614,24 +687,29 @@ def night_summary(sell_day: date, fetch=None) -> None:
     tmp = NIGHTS.with_suffix(".tmp")
     tmp.write_text("".join(json.dumps(n, default=str) + "\n" for n in kept + [night]))
     os.replace(tmp, NIGHTS)
-    mp = night["mean_bp_plan"]
-    log(f"night ending {sell_day}: plan {night['n_scored']}/{night['n_plan']} names "
-        + (f"{mp:+.1f} bp at the crosses, ${night['pnl_plan_usd']:+.2f} at ${DOLLARS:,.0f}/name" if mp is not None
+    mb, mp = night["mean_bp_book"], night["mean_bp_plan"]
+    log(f"night ending {sell_day}: book {night['n_book_scored']}/{night['n_book']} names "
+        + (f"{mb:+.1f} bp at the crosses, ${night['pnl_book_usd']:+.2f} at ${DOLLARS:,.0f}/name" if mb is not None
            else "unscored (no crosses)")
+        + (f" (all 20: {mp:+.1f} bp)" if mp is not None else "")
         + f"; paper filled {len(pairs)} names, ${night['pnl_usd']:+.2f}"
         + (f" missing {','.join(night['missing'])}" if night["missing"] else ""))
 
 
 def night_bp(n: dict) -> float | None:
-    """A scored night's headline bp: the plan at the crosses; paper fills only
-    for nights logged before plan scoring existed."""
-    v = n.get("mean_bp_plan")
-    return v if v is not None else n.get("mean_bp_fills")
+    """A scored night's headline bp: the book held, at the crosses; then the
+    whole plan; paper fills only for nights logged before plan scoring."""
+    for k in ("mean_bp_book", "mean_bp_plan", "mean_bp_fills"):
+        if n.get(k) is not None:
+            return n[k]
+    return None
 
 
 def night_pnl(n: dict) -> float:
-    v = n.get("pnl_plan_usd")
-    return float(v if v is not None else (n.get("pnl_usd") or 0))
+    for k in ("pnl_book_usd", "pnl_plan_usd", "pnl_usd"):
+        if n.get(k) is not None:
+            return float(n[k])
+    return 0.0
 
 
 def status(tc) -> None:
@@ -702,6 +780,8 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
                   "mean_bp": sum(night_bp(n) for n in done) / len(done),
                   "pnl_usd": round(sum(night_pnl(n) for n in done), 2),
                   "paper_pnl_usd": round(sum(n.get("pnl_usd") or 0 for n in done), 2),
+                  "all20_mean_bp": (sum(n["mean_bp_plan"] for n in done if n.get("mean_bp_plan") is not None)
+                                    / max(1, sum(n.get("mean_bp_plan") is not None for n in done))),
                   "green": sum(night_bp(n) > 0 for n in done)}
     return {
         "updated": now.timestamp(),
@@ -718,6 +798,7 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
         "totals": totals,
         "backtest_bp": BACKTEST_BP,
         "order_mode": ORDER_MODE,
+        "intraday_min": INTRADAY_MIN,
         "next_step": next_step,
         "errors": {k: v for k, v in (state_today or {}).items() if str(v).startswith("error")},
     }
