@@ -15,6 +15,17 @@ day's checks turn up. Newest items at the bottom of each section.
 - [x] Overnight first scored night (9/30 -> 10/1): all 20 at the crosses +25.1 bp ($+50 at $1k/name) vs backtest 16; paper +$19 on the 10 filled (+26 bp). VICR +14% carried it; 13 of 20 names were down. All 10 paper sells filled.
 - [ ] Overnight: first -1% filtered buy (15:58), every kept name filled.
 
+## Deploy after the close (needs a desk restart)
+
+- [ ] **Restart the trader after 16:00** so ai_trader publishes `overnight_live` (cec8751) and the dashboard's LIVE line can appear. Static files and overnight_book.py are already live; this is the only piece waiting.
+
+## Overnight LIVE test (Monday 10/5)
+
+- [x] Live mode built, off by default (21300d7), sizing fix (b98b8af), compare report + dashboard LIVE line (cec8751).
+- [x] Live keys in, read-only check passed: account ACTIVE, $100 cash, multiplier 1 (cash account), separate from desk and paper. Dry run would buy ERAS, IOVA, RLAY x1 (~$47.68) by MOC.
+- [ ] 15:40 filter validation (running).
+- [ ] Mon 10/5 before 15:40: `scripts/install_overnight_agent.sh live` (Jonathan's call).
+
 ## Shipped before the open (watch today)
 
 - [x] Engine %R counts minutes, not IEX rows (`rte_minute_grid`, default on). FLY 9/30 12:16 now reads -38 / -75 vs TradingView -33 / -71 (was -39 / -40). Shipped pre-open with Jonathan's OK. Watch: squares should now match the chart; arms may shift on thin names.
