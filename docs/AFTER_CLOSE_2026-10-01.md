@@ -63,8 +63,8 @@ day's checks turn up. Newest items at the bottom of each section.
 ## Today's losses (Jonathan, 13:45) — test tonight on the ~871 fills
 
 37 trades 10:21-13:44, net -$10.88. 9 losers at -0.45..-0.74% = -$21.62 (2x the net); winners top out ~+0.6%, avg ~+0.4%. No single entry feature (square type, top-of-range, TradingView indicators) separates them.
-- [ ] **Re-entry cooldown after a loss:** LYTE -2.22 then -2.56 (3 min later), TDAY -1.20 then -3.00 (4 min later); OXY traded 13x for ~-$0.55. Test: no re-entry in the same name for N min (5/10/20/30) after a losing exit — opens lost vs P&L, both halves, t-stat.
-- [ ] **Morning window:** 10:21-10:51 was -$9.94 of the -$10.88 (91%); after 11:00 ~-$0.94. Test whether 10:15-11:00 entries lose consistently across 30+ days or today was one-off. Fix only if it holds out of sample.
+- [x] **Re-entry cooldown after a loss — NOT PROVEN (13:55, /tmp/loss_patterns.py on the mini, 625 fills 9/1-10/1 and 1,189 all-time).** Re-entries within 5 min of a losing exit: -0.35% vs -0.21% (t -1.6; all-time -0.31 vs -0.20, t -1.0), worse in both halves, but no gradient: 3 min t -1.0, 7 min t +0.2, 10 min better than average. Blocking them saves ~$57 only because every trade loses on average. Side finding: re-entries after a WIN beat average (30 min: -0.05% vs -0.23%, t +2.9 all-time, both halves) — names that just worked keep working, still not profitable.
+- [x] **Morning window — today was a one-off.** 10:15-11:00 = -0.23% vs -0.22% rest (t 0.0; all-time t -0.6); per day, window minus rest averages -0.02% over 32 days. Every hour loses; afternoon (14:00+) is least bad (-0.11%, t +2.5 all-time, both halves). No live change.
 - Note: <$10 names (TDAY, COHH) were 4 trades, -$6.29 (58% of net) — matches cheap-names memory; no $10 minimum (Jonathan's call).
 
 ## Open engineering items
