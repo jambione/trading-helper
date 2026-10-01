@@ -43,9 +43,9 @@ WHAT IS REAL AND WHAT IS MODELLED
 ENGINE    --engine recompute recomputes every engine row's indicators with the
           replayed code (on --engine-bars iex|sip), keeping live's prices,
           clocks and roster, so an indicator change can be judged before it
-          ships. It does not replay the engine's realtime bar store (seeding,
-          drops/re-adds), so a bug of that kind (FLY 2026-09-30) still needs a
-          print-level engine replay.
+          ships. --engine rt also rebuilds the engine's realtime bar store
+          from the recorded prints with the replayed realtime_bars (seeding,
+          drops, re-adds), so a bar-store bug (FLY 2026-09-30) reproduces.
 FIDELITY  --fidelity replays the code that actually ran that day (read from
           the recording) and scores it against what live did: share of live
           buys reproduced within 90 s, share of replay opens live also took,
@@ -100,10 +100,12 @@ def parse_args(argv=None):
     ap.add_argument("--synth-warmup", type=float, default=30.0)
     ap.add_argument("--synth-cap", type=int, default=50)
     ap.add_argument("--no-synth", action="store_true")
-    ap.add_argument("--engine", choices=("recorded", "recompute"), default="recorded",
+    ap.add_argument("--engine", choices=("recorded", "recompute", "rt"), default="recorded",
                     help="recompute: every engine row's indicators (%%R, RSI, MACD...) come from "
                          "the REPLAYED code on historical bars, so an engine/indicator change can "
-                         "be tested; prices and clocks stay recorded. recorded: live's values")
+                         "be tested; prices and clocks stay recorded. rt: also rebuild the "
+                         "engine's realtime bar store from the recorded prints (seed / drop / "
+                         "re-add), so bar-store bugs reproduce. recorded: live's values")
     ap.add_argument("--engine-bars", choices=("iex", "sip"), default="iex",
                     help="bars for --engine recompute and synthetic rows: iex is what live "
                          "computes on; sip is the full tape")
@@ -549,16 +551,121 @@ class SynthEngine:
         return out
 
 
+class RtEngine:
+    """--engine rt: the engine's realtime bar store, rebuilt print by print.
+
+    Uses the REPLAYED code's realtime_bars, so a fix there is what gets
+    tested. Recorded prints (Finnhub stream and Alpaca poller, the engine's
+    two trade feeds) stream in time order from the start of the recording,
+    whatever --start is: FLY 2026-09-30 12:16 depended on an 08:37 seed. A
+    name is seeded from IEX bars when it is receiving prints and the replayed
+    is_seeded() says it is not (once a minute, as the engine's bar fetch
+    checks). Nothing is cleared when a name stops printing, which is what the
+    live engine did. Indicators come from the bar store when it would be
+    ready (fresh trade, >= 40 bars, and fresh seed where the replayed code
+    asks for one); otherwise from IEX bars, as the engine falls back to its
+    Alpaca frame. Volume is not in the recording; the indicators read none.
+    """
+
+    MIN_SEED = 40          # MACD_SLOW + MACD_SIG + 5
+    MAX_STALE = 30.0       # REALTIME_BARS_MAX_STALE
+    SEED_GAP = 900.0       # REALTIME_BARS_SEED_MAX_GAP (where the code has it)
+
+    def __init__(self, prints_path: Path, bars: dict, synth: "SynthEngine"):
+        import inspect
+        import realtime_bars as rb
+        self.bars, self.synth = bars, synth
+        ctor = inspect.signature(rb.RealtimeBarAggregator.__init__).parameters
+        self.agg = (rb.RealtimeBarAggregator(max_gap_sec=self.SEED_GAP) if "max_gap_sec" in ctor
+                    else rb.RealtimeBarAggregator())
+        self.gap_aware = "max_gap_sec" in inspect.signature(rb.RealtimeBarAggregator.is_seeded).parameters
+        self._fh = gzip.open(prints_path, "rt") if prints_path.exists() else None
+        self._next = None
+        self._checked: dict[str, float] = {}
+        self._cache: dict[tuple, dict | None] = {}
+        self.seeds: dict[str, list[float]] = {}
+
+    def _seeded(self, sym: str, now: float, min_bars: int) -> bool:
+        if self.gap_aware:
+            return self.agg.is_seeded(sym, min_bars=min_bars, max_gap_sec=self.SEED_GAP, now_s=now)
+        return self.agg.is_seeded(sym, min_bars=min_bars)
+
+    def _maybe_seed(self, sym: str, t: float) -> None:
+        if t - self._checked.get(sym, -1e18) < 60:
+            return
+        self._checked[sym] = t
+        if self._seeded(sym, t, self.MIN_SEED):
+            return
+        import pandas as pd
+        rows = [r for r in (self.bars.get(sym) or {}).get("iex", []) if r[0] + 60 <= t][-500:]
+        if len(rows) < self.MIN_SEED:
+            return
+        df = pd.DataFrame([r[1:] for r in rows], columns=["open", "high", "low", "close", "volume"])
+        df.insert(0, "time", [datetime.fromtimestamp(r[0], ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
+                              for r in rows])
+        self.agg.seed(sym, df)
+        self.seeds.setdefault(sym, []).append(t)
+
+    def advance(self, now: float) -> None:
+        """Fold every recorded print up to *now* into the bar store."""
+        if self._fh is None:
+            return
+        while True:
+            if self._next is None:
+                line = self._fh.readline()
+                if not line:
+                    self._fh = None
+                    return
+                try:
+                    self._next = json.loads(line)
+                except ValueError:
+                    continue
+            r = self._next
+            if float(r.get("ts") or 0) > now:
+                return
+            self._next = None
+            sym, px, tt = r.get("symbol"), r.get("price"), r.get("trade_ts")
+            if not sym or not px or not tt or sym not in self.bars:
+                continue
+            self._maybe_seed(sym, float(r["ts"]))
+            self.agg.on_trade(sym, float(px), 0.0, int(float(tt) * 1000))
+
+    def state(self, sym: str, now: float) -> dict | None:
+        age = self.agg.age_seconds(sym, now * 1000.0)
+        df = self.agg.get_bars(sym)
+        ready = (age is not None and age <= self.MAX_STALE and df is not None
+                 and len(df) >= self.MIN_SEED and (not self.gap_aware or self._seeded(sym, now, 1)))
+        if not ready:
+            st = self.synth.state(sym, now)
+            return dict(st, bars_src="alpaca") if st else None
+        key = (sym, len(df), float(df["close"].iloc[-1]), str(df["time"].iloc[-1]))
+        if key not in self._cache:
+            import strategy_three_indicator as sti
+            try:
+                a = sti.to_arrays(sti.compute_indicators(df.copy(), self.synth._p()))
+                st = sti.evaluate_state(a, len(df) - 1, self.synth._p())
+                self._cache[key] = json.loads(json.dumps(
+                    st, default=lambda o: o.item() if hasattr(o, "item") else None))
+            except Exception:  # noqa: BLE001
+                self._cache[key] = None
+        st = self._cache[key]
+        return dict(st, bars_src="realtime", rt_bar_count=len(df)) if st else None
+
+
 def build_dashboard_state(rec: Recording, now: float, synth: SynthEngine | None = None) -> dict:
     """What /api/state would have returned at ``now``."""
     sig_ts, sig = rec.get("signal_state.json")
     sig_t = (sig or {}).get("tickers") or {}
     sig_aged = {s: aged(v, now - sig_ts) for s, v in sig_t.items() if isinstance(v, dict)}
     if synth is not None and synth.recompute:
-        # --engine recompute: indicators from the replayed code; live's prices,
-        # clocks and roster stay. A name the bars cannot support keeps live's row.
+        # --engine recompute / rt: indicators from the replayed code; live's
+        # prices, clocks and roster stay. A name the bars cannot support keeps
+        # live's row.
+        rt = getattr(synth, "rt", None)
+        if rt is not None:
+            rt.advance(now)
         for s in list(sig_aged):
-            st = synth.state(s, now)
+            st = rt.state(s, now) if rt is not None else synth.state(s, now)
             if st:
                 sig_aged[s] = {**sig_aged[s], **st, "recomputed": True}
     api_ts, api = rec.get("api/state")
@@ -1191,8 +1298,10 @@ def run_inside(args) -> int:
     push_max = int(cfg.get("ai_watch_engine_push_max", 0) or 0)
     synth = SynthEngine(bars, args.day, args.synth_warmup,
                         min(args.synth_cap, push_max) if push_max > 0 else args.synth_cap,
-                        enabled=not args.no_synth, recompute=args.engine == "recompute",
-                        feed=args.engine_bars if args.engine == "recompute" else "sip")
+                        enabled=not args.no_synth, recompute=args.engine in ("recompute", "rt"),
+                        feed=args.engine_bars if args.engine in ("recompute", "rt") else "sip")
+    if args.engine == "rt":
+        synth.rt = RtEngine(snap_dir / "recorder_prints.jsonl.gz", bars, synth)
     synth_box["synth"] = synth
 
     if args.warm_book:
