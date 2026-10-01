@@ -40,6 +40,12 @@ WHAT IS REAL AND WHAT IS MODELLED
             rows are rebuilt from the engine's signal_state prices, with no
             Momentum-panel flags or dashboard pct/rvol.
 
+ENGINE    --engine recompute recomputes every engine row's indicators with the
+          replayed code (on --engine-bars iex|sip), keeping live's prices,
+          clocks and roster, so an indicator change can be judged before it
+          ships. It does not replay the engine's realtime bar store (seeding,
+          drops/re-adds), so a bug of that kind (FLY 2026-09-30) still needs a
+          print-level engine replay.
 FIDELITY  --fidelity replays the code that actually ran that day (read from
           the recording) and scores it against what live did: share of live
           buys reproduced within 90 s, share of replay opens live also took,
@@ -94,6 +100,13 @@ def parse_args(argv=None):
     ap.add_argument("--synth-warmup", type=float, default=30.0)
     ap.add_argument("--synth-cap", type=int, default=50)
     ap.add_argument("--no-synth", action="store_true")
+    ap.add_argument("--engine", choices=("recorded", "recompute"), default="recorded",
+                    help="recompute: every engine row's indicators (%%R, RSI, MACD...) come from "
+                         "the REPLAYED code on historical bars, so an engine/indicator change can "
+                         "be tested; prices and clocks stay recorded. recorded: live's values")
+    ap.add_argument("--engine-bars", choices=("iex", "sip"), default="iex",
+                    help="bars for --engine recompute and synthetic rows: iex is what live "
+                         "computes on; sip is the full tape")
     ap.add_argument("--no-paint", action="store_true",
                     help="skip the trader's book paint (live runs it every publish)")
     ap.add_argument("--fidelity", action="store_true",
@@ -440,8 +453,10 @@ def aged(row: dict, dt: float) -> dict:
 class SynthEngine:
     """Engine rows for names the replayed code asked for but live never watched."""
 
-    def __init__(self, bars: dict, day: str, warmup: float, cap: int, enabled: bool = True):
+    def __init__(self, bars: dict, day: str, warmup: float, cap: int, enabled: bool = True,
+                 recompute: bool = False, feed: str = "sip"):
         self.bars, self.day = bars, day
+        self.recompute, self.feed = recompute, feed
         self.warmup, self.cap, self.enabled = warmup, cap, enabled
         self.requested: dict[str, float] = {}
         self.last_req: dict[str, float] = {}
@@ -469,12 +484,18 @@ class SynthEngine:
             self._params = sti.params(rte_require_slow=False)
         return self._params
 
-    def row(self, sym: str, now: float) -> dict | None:
+    def _seq(self, sym: str, now: float) -> list:
+        """Completed 1m bars up to *now*: IEX premarket, then the session on
+        self.feed ("sip" full tape, "iex" what the live engine sees)."""
         b = self.bars.get(sym) or {}
         open_t = at(self.day, "09:30")
         seq = [r for r in b.get("iex", []) if r[0] < open_t]
-        seq += [r for r in b.get("s", []) if r[0] >= open_t]
-        seq = [r for r in seq if r[0] + 60 <= now][-300:]
+        seq += [r for r in b.get("s" if self.feed == "sip" else "iex", []) if r[0] >= open_t]
+        return [r for r in seq if r[0] + 60 <= now][-300:]
+
+    def state(self, sym: str, now: float) -> dict | None:
+        """The replayed code's evaluate_state for *sym* at *now*, or None."""
+        seq = self._seq(sym, now)
         if len(seq) < 40:
             return None
         key = (sym, seq[-1][0])
@@ -483,6 +504,10 @@ class SynthEngine:
             import strategy_three_indicator as sti
             df = pd.DataFrame([r[1:] for r in seq],
                               columns=["open", "high", "low", "close", "volume"])
+            # The live engine's frames carry `time`; without it signals'
+            # minute grid (d2630f1) falls back to counting rows.
+            df.insert(0, "time", [datetime.fromtimestamp(r[0], ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
+                                  for r in seq])
             try:
                 a = sti.to_arrays(sti.compute_indicators(df, self._p()))
                 st = sti.evaluate_state(a, len(seq) - 1, self._p())
@@ -492,9 +517,13 @@ class SynthEngine:
                     st, default=lambda o: o.item() if hasattr(o, "item") else None))
             except Exception:  # noqa: BLE001
                 self._cache[key] = None
-        st = self._cache[key]
+        return self._cache[key]
+
+    def row(self, sym: str, now: float) -> dict | None:
+        st = self.state(sym, now)
         if st is None:
             return None
+        seq = self._seq(sym, now)
         px = seq[-1][4]
         age = round(now - (seq[-1][0] + 60), 1)
         sp = dict(st, rt_price=px, rt_price_age_sec=age, price=px, bars_src="realtime",
@@ -525,6 +554,13 @@ def build_dashboard_state(rec: Recording, now: float, synth: SynthEngine | None 
     sig_ts, sig = rec.get("signal_state.json")
     sig_t = (sig or {}).get("tickers") or {}
     sig_aged = {s: aged(v, now - sig_ts) for s, v in sig_t.items() if isinstance(v, dict)}
+    if synth is not None and synth.recompute:
+        # --engine recompute: indicators from the replayed code; live's prices,
+        # clocks and roster stay. A name the bars cannot support keeps live's row.
+        for s in list(sig_aged):
+            st = synth.state(s, now)
+            if st:
+                sig_aged[s] = {**sig_aged[s], **st, "recomputed": True}
     api_ts, api = rec.get("api/state")
     if api:
         state = dict(api)
@@ -1155,7 +1191,8 @@ def run_inside(args) -> int:
     push_max = int(cfg.get("ai_watch_engine_push_max", 0) or 0)
     synth = SynthEngine(bars, args.day, args.synth_warmup,
                         min(args.synth_cap, push_max) if push_max > 0 else args.synth_cap,
-                        enabled=not args.no_synth)
+                        enabled=not args.no_synth, recompute=args.engine == "recompute",
+                        feed=args.engine_bars if args.engine == "recompute" else "sip")
     synth_box["synth"] = synth
 
     if args.warm_book:
