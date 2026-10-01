@@ -11,7 +11,8 @@ day's checks turn up. Newest items at the bottom of each section.
 ## From today's checks (Claude)
 
 - [ ] Engine FLY fix (681c933) first live day: compare logged %R with IEX-rebuilt %R at every fill (`pctr_check.py` in the scratchpad / `/tmp/pctr_check.py` on the mini).
-- [ ] Overnight: first scored night (~09:50), first -1% filtered buy (15:58), every kept name filled.
+- [x] Overnight first scored night (9/30 -> 10/1): all 20 at the crosses +25.1 bp ($+50 at $1k/name) vs backtest 16; paper +$19 on the 10 filled (+26 bp). VICR +14% carried it; 13 of 20 names were down. All 10 paper sells filled.
+- [ ] Overnight: first -1% filtered buy (15:58), every kept name filled.
 
 ## Shipped before the open (watch today)
 
@@ -20,7 +21,7 @@ day's checks turn up. Newest items at the bottom of each section.
 
 ## Found in today's data check (09:47)
 
-- [ ] **Engine %R can leave its -100..0 range** (MNKD +21.7/+9.4 = fake full square; AI -160.9). `_check_proximity` injects the live price as the last bar's close without widening its high/low; on the Alpaca fallback the last bar can be minutes old. Fix: high=max(high,px), low=min(low,px) on inject. Awaiting Jonathan: now vs after close.
+- [x] **Engine %R can leave its -100..0 range** (MNKD +21.7/+9.4 = fake full square; AI -160.9). `_check_proximity` injects the live price as the last bar's close without widening its high/low; on the Alpaca fallback the last bar can be minutes old. Fixed and shipped mid-session at Jonathan's call (6b4b50b, engine restarted 09:54).
 - [ ] Minor: dashboard.log has ~22k `socket.send() raised exception` warnings (closed browser tabs) — log noise; NLST rt age reads 5.4 years (bad trade timestamp).
 
 ## Open engineering items
