@@ -77,6 +77,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [x] **Big size, 5-second hold (Jonathan, 15:00; /tmp/hold5s.py, real SIP quotes) - FAILS.** 178 fills 9/22-10/1, buy at the fill, sell at the SIP bid 5 s later: -12.0 bp/trade, win 7% (H1 -18.8 / H2 -6.6). The mid moves -1.6 bp in 5 s (median |move| 0.9 bp; unchanged on 47%) vs 10.4 bp to cross the spread both ways. Share count scales $ both ways, never the bp; bigger size also eats past the touch. Longer holds (/tmp/holdNs.py, 119 fills with 30 s of quotes): 5s -13.3, 10s -11.2, 15s -12.1, 20s -9.0, 25s -8.1 bp; win 7->27%; mid move never significant (|t|<=1). 30 s + tight stop on the SIP bid (/tmp/hold30stop.py): none -10.3, -0.05% -10.7 (83% stopped), -0.10% -11.0, -0.20% -10.5, -0.50% -10.2 bp - every stop ~-10 bp; tight stops fire on the spread itself (bought at the ask, bid already ~10 bp below).
 
+- [ ] **Overnight panel shows last night all day (Jonathan, 15:40 screenshot).** build_snapshot picks `book_night` = latest night with buy submits, so from the 09:31 sell until the 15:58 buy it shows SEP 30's rows (already sold; ERAS/MU/MXL say "buy ..." but they EXPIRED unfilled 9/30) while today's plan (plan_2026-10-01.json, 20 picks) sits unused. Fix after the 15:58 buy (no agent restart before it): once last night is sold and holding 0, show "TONIGHT - OCT 1" = today's 20 picks with open->now %, kept/dropped by the -1% filter, and the buy time; last night stays in the history row. Expired buys render "not filled". Same for overnight_live.
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
