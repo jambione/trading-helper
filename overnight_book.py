@@ -283,6 +283,23 @@ def plan(tc, day: date) -> dict:
     uni = universe(tc)
     log(f"plan {day}: universe {len(uni)} names; fetching {len(keys)} sessions of daily bars")
     bars = daily_closes(sorted(uni), prior[0], prior[-1])
+    rows = rank(bars, keys)
+    if len(rows) < 30:
+        raise RuntimeError(f"only {len(rows)} liquid names; refusing to plan")
+    p = {"day": day.isoformat(), "made": datetime.now(ET).isoformat(), "data_through": keys[-1],
+         "n_liquid": len(rows), "picks": rows[:TOP_N]}
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / f"plan_{day.isoformat()}.json").write_text(json.dumps(p, indent=1))
+    log(f"plan {day}: {len(rows)} liquid names; picks "
+        + " ".join(f"{r['sym']}({r['mom']:+.0%})" for r in rows[:TOP_N]))
+    return p
+
+
+def rank(bars: dict, keys: list[str]) -> list[dict]:
+    """Liquid names ranked by 12-1 momentum, best first. Pure: *bars* is
+    {sym: {YYYY-MM-DD: (adj close, adj volume)}}, *keys* the sessions the
+    plan may see (oldest first, ending the session before the buy day).
+    tools/studies/overnight_plan_replay.py replays this on past days."""
     rows = []
     for s, by in bars.items():
         cf, last, series = [], None, []
@@ -303,16 +320,8 @@ def plan(tc, day: date) -> dict:
         if px < MIN_PRICE or adv < MIN_ADV:
             continue
         rows.append({"sym": s, "mom": cf[-SKIP] / cf[-LOOK] - 1, "adv20": adv, "last_close": px})
-    if len(rows) < 30:
-        raise RuntimeError(f"only {len(rows)} liquid names; refusing to plan")
     rows.sort(key=lambda r: -r["mom"])
-    p = {"day": day.isoformat(), "made": datetime.now(ET).isoformat(), "data_through": keys[-1],
-         "n_liquid": len(rows), "picks": rows[:TOP_N]}
-    OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / f"plan_{day.isoformat()}.json").write_text(json.dumps(p, indent=1))
-    log(f"plan {day}: {len(rows)} liquid names; picks "
-        + " ".join(f"{r['sym']}({r['mom']:+.0%})" for r in rows[:TOP_N]))
-    return p
+    return rows
 
 
 def load_plan(day: date) -> dict | None:
