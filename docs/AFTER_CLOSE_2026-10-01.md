@@ -26,7 +26,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 ## Blockers, 09:30-10:00 (0 fills; 765 arm checks, 38 names)
 
-- [ ] **spread_unknown is 32% of refusals.** The spread gate reads SIP, served 16 min late: every name is unknown until 09:46, and each newly added name waits ~16 min. Spread_wide is another 23%. Options: IEX-quote fallback before SIP is served, or a pre-open seeded spread. Needs a decision.
+- [ ] **spread_unknown root cause (traced 10:20):** the async gate warmer is one serial thread calling all 5 input fns per name. vol_now (added 9/30, ttl 30s) is now its biggest load at 37.5 fetches/min; spread fetches fell 20.2 -> 14.7/min vs 9/30; day_high (gate OFF) still costs 18/min. Plus ~32 names where the SIP spread fetch itself returned None (no quotes in the delayed minute, or an errored/429 request cached as None for 180s). Proposed: warm only enabled gates, spread first, vol_now ttl 60s (~111 -> ~70/min). Awaiting Jonathan: now vs after close.
+- [ ] (earlier note) **spread_unknown is 32% of refusals.** The spread gate reads SIP, served 16 min late: every name is unknown until 09:46, and each newly added name waits ~16 min. Spread_wide is another 23%. Options: IEX-quote fallback before SIP is served, or a pre-open seeded spread. Needs a decision.
 - [ ] **tape_only 23%:** thin names with no fresh print (EFXT, MNKD, KURA, GLOB, CMCT).
 - [x] **SNXX 0.0% — traced, NOT a data bug.** SNXX faded from +1.58% (09:39) to a real print at $16.74 = yesterday's close at 09:43:38 (live, 1.6s old), then -0.15%, then back to +0.5%. The `not_uptrend` drop (roster row, live desk quote) was correct. My first read (stale price) came from 1-minute bar closes hiding the tick.
 - [ ] Design question (Jonathan): the uptrend re-gate uses the instantaneous day change, so a name chopping around flat can be dropped on one tick and re-qualify a second later. Smooth it (e.g. below flat for 30-60s)?
