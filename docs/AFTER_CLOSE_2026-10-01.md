@@ -13,11 +13,11 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [ ] Engine FLY fix (681c933) first live day: compare logged %R with IEX-rebuilt %R at every fill (`pctr_check.py` in the scratchpad / `/tmp/pctr_check.py` on the mini).
 - [x] Overnight first scored night (9/30 -> 10/1): all 20 at the crosses +25.1 bp ($+50 at $1k/name) vs backtest 16; paper +$19 on the 10 filled (+26 bp). VICR +14% carried it; 13 of 20 names were down. All 10 paper sells filled.
-- [ ] Overnight: first -1% filtered buy (15:58), every kept name filled.
+- [x] Overnight: first -1% filtered buy (15:58): kept 16/20 (dropped SLS -6.5, VICR -6.7, IOVA -3.1, TWST -2.6), ALL 16 FILLED, top-up had nothing left.
 
 ## Deploy after the close (needs a desk restart)
 
-- [ ] **Restart the trader after 16:00** so ai_trader publishes `overnight_live` (cec8751) and the dashboard's LIVE line can appear. Static files and overnight_book.py are already live; this is the only piece waiting.
+- [x] **Restart the trader after 16:00** (done 16:1x with the a53e4a4 deploy; agy_auth=ok) so ai_trader publishes `overnight_live` (cec8751) and the dashboard's LIVE line can appear. Static files and overnight_book.py are already live; this is the only piece waiting.
 
 ## Overnight LIVE test (Monday 10/5)
 
@@ -58,7 +58,7 @@ day's checks turn up. Newest items at the bottom of each section.
 
 ## Tonight's build (Jonathan, 11:40)
 
-- [ ] **Three-arm entry test on paper:** rotate entries across (1) control: market at the ask, (2) limit at the mid rounded DOWN to the cent (= bid on 1c spreads), (3) limit at the bid; arms 2-3 cross to the ask after 10 s if unfilled. Log arm, limit price, fill time, filled-passive vs crossed, entry vs SIP mid, P&L. Report after 1-2 weeks. Deploy after the close.
+- [x] **Three-arm entry test on paper (BUILT + ON, a53e4a4/2d71fca, live from 10/2 open):** rotate entries across (1) control: market at the ask, (2) limit at the mid rounded DOWN to the cent (= bid on 1c spreads), (3) limit at the bid; arms 2-3 cross to the ask after 10 s if unfilled. Log arm, limit price, fill time, filled-passive vs crossed, entry vs SIP mid, P&L. Report after 1-2 weeks. Deploy after the close.
 
 ## Today's losses (Jonathan, 13:45) — test tonight on the ~871 fills
 
@@ -77,7 +77,7 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [x] **Big size, 5-second hold (Jonathan, 15:00; /tmp/hold5s.py, real SIP quotes) - FAILS.** 178 fills 9/22-10/1, buy at the fill, sell at the SIP bid 5 s later: -12.0 bp/trade, win 7% (H1 -18.8 / H2 -6.6). The mid moves -1.6 bp in 5 s (median |move| 0.9 bp; unchanged on 47%) vs 10.4 bp to cross the spread both ways. Share count scales $ both ways, never the bp; bigger size also eats past the touch. Longer holds (/tmp/holdNs.py, 119 fills with 30 s of quotes): 5s -13.3, 10s -11.2, 15s -12.1, 20s -9.0, 25s -8.1 bp; win 7->27%; mid move never significant (|t|<=1). 30 s + tight stop on the SIP bid (/tmp/hold30stop.py): none -10.3, -0.05% -10.7 (83% stopped), -0.10% -11.0, -0.20% -10.5, -0.50% -10.2 bp - every stop ~-10 bp; tight stops fire on the spread itself (bought at the ask, bid already ~10 bp below).
 
-- [ ] **Overnight panel shows last night all day (Jonathan, 15:40 screenshot).** build_snapshot picks `book_night` = latest night with buy submits, so from the 09:31 sell until the 15:58 buy it shows SEP 30's rows (already sold; ERAS/MU/MXL say "buy ..." but they EXPIRED unfilled 9/30) while today's plan (plan_2026-10-01.json, 20 picks) sits unused. Fix after the 15:58 buy (no agent restart before it): once last night is sold and holding 0, show "TONIGHT - OCT 1" = today's 20 picks with open->now %, kept/dropped by the -1% filter, and the buy time; last night stays in the history row. Expired buys render "not filled". Same for overnight_live.
+- [x] **Overnight panel shows last night all day (Jonathan, 15:40 screenshot).** build_snapshot picks `book_night` = latest night with buy submits, so from the 09:31 sell until the 15:58 buy it shows SEP 30's rows (already sold; ERAS/MU/MXL say "buy ..." but they EXPIRED unfilled 9/30) while today's plan (plan_2026-10-01.json, 20 picks) sits unused. Fix after the 15:58 buy (no agent restart before it): once last night is sold and holding 0, show "TONIGHT - OCT 1" = today's 20 picks with open->now %, kept/dropped by the -1% filter, and the buy time; last night stays in the history row. Expired buys render "not filled". Same for overnight_live.
 
 - [x] **Ratchet too fast? (Jonathan, 15:40) - NO.** leash_replay.py --set timing, 207 fills 9/23-9/30, live trail code on 1 s SIP prints, exit at the bid (live booked -19.6; replay live config -13.0 bp, hold 106 s). Slower is worse at every step: idle 15 s -14.2, 30 s -16.2, 60 s -18.6, decay off -20.0. Faster/bigger steps marginally better: idle 4 s -12.2, step 0.10R -11.9. Min hold: 30 s -14.0, 60 s -13.4, 90 s -14.2, 120 s -15.7, 180 s -15.0, 300 s -20.4, 600 s -29.5. Give 0.20R -11.6 (= 0.30R: give_max_pct/peak_give_pct cap binds). All gains ~1 bp, inside noise. No change.
 

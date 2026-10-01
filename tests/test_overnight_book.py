@@ -428,3 +428,23 @@ def test_arm_file_with_a_start_date_arms_from_that_day(monkeypatch, tmp_path):
     assert ob.live_armed(date(2026, 10, 6)) is False
     f.unlink()
     assert ob.live_armed(date(2026, 10, 6)) is False      # deleted: cancelled
+
+
+def test_a_sold_night_gives_way_to_todays_plan():
+    ledger = [
+        {"event": "submit", "night": "2026-09-30", "sym": "AAA", "side": "buy", "qty": 20},
+        {"event": "fill", "day": "2026-09-30", "leg": "buy", "sym": "AAA", "status": "filled",
+         "fill": 50.0, "filled_qty": 20},
+        {"event": "fill", "day": "2026-10-01", "leg": "sell", "sym": "AAA", "status": "filled", "fill": 50.5},
+    ]
+    today = dict(PLAN, day="2026-10-01")
+    snap = ob.build_snapshot(today, ledger, [], [], {}, {}, None, NOW)
+    assert snap["book_night"] is None and snap["rows"] == []
+    assert snap["plan"]["day"] == "2026-10-01"
+    # still holding (the sell has not gone in): last night stays on screen
+    pos = [{"symbol": "AAA", "qty": 20.0}]
+    snap = ob.build_snapshot(today, ledger, [], pos, {}, {}, None, NOW)
+    assert snap["book_night"] == "2026-09-30"
+    # same-day plan (before the next morning's 06:30): the bought book shows
+    snap = ob.build_snapshot(PLAN, ledger, [], [], {}, {}, None, NOW)
+    assert snap["book_night"] == "2026-09-30"

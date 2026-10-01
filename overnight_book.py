@@ -1114,6 +1114,13 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
             b, sfill = v.get("buy_fill"), v.get("sell_fill")
             v["night_bp"] = (sfill / b - 1) * 1e4 if (b and sfill) else None
     held = {str(x.get("symbol")): x for x in positions}
+    # Once last night is sold and today's plan is newer, the strip is about
+    # tonight: drop the finished night's rows (its score is in the nights
+    # history) so the dashboard shows today's picks instead of yesterday's book
+    # until the buy goes in.
+    plan_day = str((plan_row or {}).get("day") or "")
+    if night and plan_day > night and not held:
+        night, rows = None, {}
     for sym, x in held.items():
         row = rows.setdefault(sym, {"sym": sym})
         row["held_qty"] = x.get("qty")

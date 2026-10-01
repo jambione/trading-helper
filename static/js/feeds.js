@@ -1192,7 +1192,9 @@ function _paintOvernight(sectionEl, book) {
   const nightsEl = root.querySelector('[data-ai-overnight-nights]');
   const plan = snap.plan && typeof snap.plan === 'object' ? snap.plan : null;
   const night = String(snap.book_night || (plan && plan.day) || '');
-  const labelTxt = night ? `Overnight book · ${_fmtHistDay(night)}` : 'Overnight book';
+  // No bought night on screen = the strip is about tonight's plan.
+  const labelTxt = !night ? 'Overnight book'
+    : (snap.book_night ? `Overnight book · ${_fmtHistDay(night)}` : `Tonight · ${_fmtHistDay(night)}`);
   if (label) label.textContent = labelTxt;
 
   const t = snap.totals && typeof snap.totals === 'object' ? snap.totals : null;
@@ -1277,6 +1279,7 @@ function _paintOvernight(sectionEl, book) {
         const buy = r.buy_fill != null
           ? `${_fmtHistPx(r.buy_fill)} <span class="on-dim">${_esc(_fmtBp(r.buy_vs_cross_bp, 2))} vs cross</span>`
           : (r.error ? `<span class="on-err">${_esc(String(r.error).slice(0, 60))}</span>`
+            : /expired|cancel|rejected/i.test(String(r.buy_status || '')) ? '<span class="on-dim">not filled</span>'
             : `<span class="on-dim">${String(snap.order_mode || '') === 'auction' ? 'MOC' : 'buy'} ${_esc(_fmtHistQty(r.qty) || '')} pending</span>`);
         const sell = r.sell_fill != null ? _fmtHistPx(r.sell_fill) : '';
         const nb = r.night_bp != null
@@ -1294,7 +1297,10 @@ function _paintOvernight(sectionEl, book) {
         const m = Number(p && p.mom);
         return `${_esc(String((p && p.sym) || ''))}${Number.isFinite(m) ? ` <span class="on-dim">${m > 0 ? '+' : ''}${(m * 100).toFixed(0)}%</span>` : ''}`;
       });
-      list.innerHTML = `<div class="on-picks"><span class="on-dim">Tonight's picks:</span> ${picks.join(' · ')}</div>`;
+      const cut = Number(snap.intraday_min);
+      const rule = Number.isFinite(cut) && cut < 0
+        ? ` <span class="on-dim">(drops any down more than ${_esc((-cut * 100).toFixed(0))}% since the open at the buy)</span>` : '';
+      list.innerHTML = `<div class="on-picks"><span class="on-dim">Tonight's picks:</span> ${picks.join(' · ')}${rule}</div>`;
     } else {
       list.innerHTML = '<div class="dh-empty">No plan yet</div>';
     }
