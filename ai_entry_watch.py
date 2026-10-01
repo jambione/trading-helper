@@ -3578,6 +3578,60 @@ _PROTECTED_DEAD_CLASSES = frozenset({
 })
 
 
+def _maybe_spread_wide_evict(
+    rec: dict,
+    *,
+    sym: str,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    gt,
+) -> bool:
+    """Free a seat whose arm has been refused spread_wide for
+    ``ai_watch_spread_wide_evict_sec`` straight (0 = off).
+
+    SDEV held one of 12 seats for 15 minutes on 2026-10-01 while every arm
+    check refused spread_wide (65 in a row). A name that cannot be bought at
+    a sane cost is not a candidate, square or not; admission's own spread
+    gate keeps it out until the spread comes in. The clock is
+    ``spread_wide_since`` (block_ts is restamped every poll) and resets the
+    moment any other block, or none, is seen.
+    """
+    try:
+        limit = float(cfg.get("ai_watch_spread_wide_evict_sec", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        limit = 0.0
+    if limit <= 0 or not isinstance(rec, dict):
+        return False
+    if str(rec.get("status") or "").lower().strip() != "watching":
+        return False
+    if str(rec.get("block_code") or "").strip().lower() != "spread_wide":
+        rec.pop("spread_wide_since", None)
+        return False
+    try:
+        if gt is not None and gt.has_open_position(sym):
+            return False
+    except Exception:
+        pass
+    since = _f_or_none(rec.get("spread_wide_since"))
+    if since is None or since <= 0 or since > float(now):
+        rec["spread_wide_since"] = float(now)
+        return False
+    if (float(now) - float(since)) < limit:
+        return False
+    try:
+        events.append(cp.log_event(
+            "watch_drop", symbol=sym, reason="spread_wide_seat",
+            elapsed_sec=round(float(now) - float(since), 1),
+            seat_role=str(rec.get("seat_role") or "") or None,
+        ))
+    except Exception:  # noqa: BLE001
+        events.append({"kind": "watch_drop", "symbol": sym, "reason": "spread_wide_seat"})
+    drop_watch_symbols([sym])
+    return True
+
+
 def _maybe_dead_unknown_evict(
     rec: dict,
     *,
@@ -9467,6 +9521,31 @@ def admit_arm_gates(row: dict, cfg: dict | None, *, now: float | None = None,
     return True, ""
 
 
+# Last time each symbol read up on the day. A name chopping around flat
+# (SNXX 2026-10-01: +1.6% -> one print at yesterday's close -> +0.5%) was
+# dropped on a single tick and re-qualified seconds later.
+# ai_watch_uptrend_grace_sec keeps a name that was up within that window.
+_UPTREND_LAST_UP: dict[str, float] = {}
+
+
+def uptrend_note_up(sym: str, now: float | None = None) -> None:
+    if sym:
+        _UPTREND_LAST_UP[sym] = float(now if now is not None else time.time())
+
+
+def uptrend_in_grace(sym: str, cfg: dict | None, now: float | None = None) -> bool:
+    """True when *sym* read up on the day within ai_watch_uptrend_grace_sec (0 = off)."""
+    try:
+        grace = float((cfg or {}).get("ai_watch_uptrend_grace_sec", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        grace = 0.0
+    last = _UPTREND_LAST_UP.get(sym or "")
+    if grace <= 0 or last is None:
+        return False
+    t = float(now if now is not None else time.time())
+    return 0 <= t - last <= grace
+
+
 def passes_inclusion(
     row: dict,
     cfg: dict,
@@ -9670,15 +9749,20 @@ def passes_inclusion(
 
     if bool(cfg.get("ai_watch_require_uptrend", True)):
         pct = _pct_change_value(row.get("pct_change"))
+        if pct is not None and pct > 0:
+            uptrend_note_up(sym)
         if is_research:
-            if pct is not None and pct <= 0:
+            if pct is not None and pct <= 0 and not uptrend_in_grace(sym, cfg):
                 return False, met, "not_uptrend"
             if pct is not None and pct > 0:
                 met.append("uptrend")
         else:
-            if pct is None or pct <= 0:
+            if pct is not None and pct <= 0 and uptrend_in_grace(sym, cfg):
+                met.append("uptrend_grace")
+            elif pct is None or pct <= 0:
                 return False, met, "not_uptrend"
-            met.append("uptrend")
+            else:
+                met.append("uptrend")
 
     # Known-thin RVOL refuses; unknown abstains. Momentum, trending, movers
     # and research share this — a 0.72x name occupying the book is a slot
@@ -16912,6 +16996,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             ):
                 continue
             if _maybe_dead_unknown_evict(
+                rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
+            ):
+                continue
+            if _maybe_spread_wide_evict(
                 rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
             ):
                 continue

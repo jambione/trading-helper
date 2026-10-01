@@ -11,7 +11,7 @@ day's checks turn up. Newest items at the bottom of each section.
 
 ## From today's checks (Claude)
 
-- [ ] Engine FLY fix (681c933) first live day: compare logged %R with IEX-rebuilt %R at every fill (`pctr_check.py` in the scratchpad / `/tmp/pctr_check.py` on the mini).
+- [x] (10/1: 1 of 73 fills off >25 pts - XENE 10:21, half-filled slow window; 9/30 was 4 of 36) Engine FLY fix (681c933) first live day: compare logged %R with IEX-rebuilt %R at every fill (`pctr_check.py` in the scratchpad / `/tmp/pctr_check.py` on the mini).
 - [x] Overnight first scored night (9/30 -> 10/1): all 20 at the crosses +25.1 bp ($+50 at $1k/name) vs backtest 16; paper +$19 on the 10 filled (+26 bp). VICR +14% carried it; 13 of 20 names were down. All 10 paper sells filled.
 - [x] Overnight: first -1% filtered buy (15:58): kept 16/20 (dropped SLS -6.5, VICR -6.7, IOVA -3.1, TWST -2.6), ALL 16 FILLED, top-up had nothing left.
 
@@ -43,7 +43,7 @@ day's checks turn up. Newest items at the bottom of each section.
 - [ ] (earlier note) **spread_unknown is 32% of refusals.** The spread gate reads SIP, served 16 min late: every name is unknown until 09:46, and each newly added name waits ~16 min. Spread_wide is another 23%. Options: IEX-quote fallback before SIP is served, or a pre-open seeded spread. Needs a decision.
 - [ ] **tape_only 23%:** thin names with no fresh print (EFXT, MNKD, KURA, GLOB, CMCT).
 - [x] **SNXX 0.0% — traced, NOT a data bug.** SNXX faded from +1.58% (09:39) to a real print at $16.74 = yesterday's close at 09:43:38 (live, 1.6s old), then -0.15%, then back to +0.5%. The `not_uptrend` drop (roster row, live desk quote) was correct. My first read (stale price) came from 1-minute bar closes hiding the tick.
-- [ ] Design question (Jonathan): the uptrend re-gate uses the instantaneous day change, so a name chopping around flat can be dropped on one tick and re-qualify a second later. Smooth it (e.g. below flat for 30-60s)?
+- [x] (SHIPPED 10/1 eve: ai_watch_uptrend_grace_sec 60 - a name up within the last 60 s survives a flat tick) Design question (Jonathan): the uptrend re-gate uses the instantaneous day change, so a name chopping around flat can be dropped on one tick and re-qualify a second later. Smooth it (e.g. below flat for 30-60s)?
 - Note: the 09:54 mid-session restart cost ~52 checks of spread_unknown while caches refilled.
 
 ## No opens through 10:20 (yesterday: 7-10 by then)
@@ -52,7 +52,7 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [ ] **More names on the book?** Cap is 12 seats (book server live); held 7-8, all movers. Admission refused 1,709 times on 87 names since the open: spread_wide 644, no_tape/stale_tape 608, float>800M 189, not_uptrend 100, gapped_down 88. After close: replay today with seats 12->20, spread gate 0.2/0.3/0.4%, float cap lifted / bigger movers list, and show opens AND gross/net side by side (memory: full book = opens, not profit; spread gate cut cost 0.112% -> 0.071%).
 
-- [ ] **Seat held by a name that can't trade:** SDEV was refused spread_wide 65 times in 15 min (10:12-10:27) while holding one of the 12 seats. Should a seat be released after N consecutive spread_wide refusals? (Opens resumed after the 10:12 warmer fix: XENE 10:21, OXY 10:23, SNDQ 10:23.)
+- [x] **(SHIPPED 10/1 eve: ai_watch_spread_wide_evict_sec 120) Seat held by a name that can't trade:** SDEV was refused spread_wide 65 times in 15 min (10:12-10:27) while holding one of the 12 seats. Should a seat be released after N consecutive spread_wide refusals? (Opens resumed after the 10:12 warmer fix: XENE 10:21, OXY 10:23, SNDQ 10:23.)
 
 - [ ] **Positions open already down (Jonathan: LYTE -$0.70 at open).** LYTE: IEX quote at decision 25.44/25.445, fill 25.46875 x16, marked ~25.425. Two parts: (1) the spread (buy at ask, marked at bid), (2) IEX's quote was not the real market - fill came 2.4c above the IEX ask (memory: fills land at the SIP NBBO touch, 0 excess). Known cost ~10 bp round trip, ~half the desk's loss 9/23-9/29. Test after close: mid-price / bid-resting entry limits on recent entries with historical SIP quotes - fill rate within 10-30 s AND outcome of filled vs unfilled (adverse selection).
 

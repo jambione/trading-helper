@@ -481,5 +481,7 @@
   "ai_exit_left_overbought_confirm_sec": 1.0,
   "ai_watch_min_vol_now_ratio": 0.25,
   "ai_entry_test_arms": "ask,mid_down,bid",
-  "ai_entry_test_cross_sec": 10.0
+  "ai_entry_test_cross_sec": 10.0,
+  "ai_watch_spread_wide_evict_sec": 120.0,
+  "ai_watch_uptrend_grace_sec": 60.0
 }
