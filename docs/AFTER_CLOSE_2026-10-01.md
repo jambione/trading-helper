@@ -25,7 +25,7 @@ day's checks turn up. Newest items at the bottom of each section.
 - [x] Live keys in, read-only check passed: account ACTIVE, $100 cash, multiplier 1 (cash account), separate from desk and paper. Dry run would buy ERAS, IOVA, RLAY x1 (~$47.68) by MOC.
 - [ ] 15:40 filter validation (running).
 - [x] Live agent INSTALLED, DISARMED (f09725e, 11:29): every order step logs 'LIVE not armed'.
-- [ ] Mon 10/5 before 15:40: `touch ~/repo/trading-helper/config/overnight_live.armed` to arm (rm to disarm).
+- [x] Self-arming set: the mini's `config/overnight_live.armed` holds `2026-10-05` (6992606), so Monday's 15:40 MOC goes in on its own. Cancel: `rm` the file. Arm now instead: empty it.
 
 ## Shipped before the open (watch today)
 
