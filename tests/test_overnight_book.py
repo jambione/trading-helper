@@ -338,3 +338,46 @@ def test_fifo_prices_leftover_shares_at_their_own_buy():
     assert sum(x["qty"] * (x["sell"] - x["buy"]) for x in m) == 4 * 11 + 10 * 1     # not 14 x $1
     first = ob.fifo_matches(ledger, "2026-10-02")
     assert [(x["qty"], x["buy"]) for x in first] == [(6.0, 50.0)]
+
+
+# ── live mode: off by default, hard caps, settlement ─────────────────────────
+
+def test_live_is_off_by_default():
+    assert ob.LIVE is False and ob.OUT.name == "overnight"
+
+
+def test_live_client_refuses_without_the_enable_switch(monkeypatch):
+    import pytest
+    monkeypatch.delenv("OVERNIGHT_LIVE_ENABLE", raising=False)
+    with pytest.raises(SystemExit, match="OVERNIGHT_LIVE_ENABLE"):
+        ob.live_client()
+
+
+def test_live_client_refuses_desk_or_paper_keys(monkeypatch):
+    import pytest
+    monkeypatch.setenv("OVERNIGHT_LIVE_ENABLE", "yes")
+    monkeypatch.setattr(ob, "desk_keys", lambda: ("DESK", "x"))
+    monkeypatch.setattr(ob, "overnight_keys", lambda: ("PAPER", "y"))
+    monkeypatch.setattr(ob, "live_keys", lambda: ("PAPER", "y"))
+    with pytest.raises(SystemExit, match="REFUSED"):
+        ob.live_client()
+    monkeypatch.setattr(ob, "live_keys", lambda: ("", ""))
+    with pytest.raises(SystemExit, match="no live keys"):
+        ob.live_client()
+
+
+def test_size_live_whole_shares_under_every_cap():
+    syms = ["SNDK", "IOVA", "SLS", "MU", "RLAY", "ERAS", "TWST"]
+    px = {"SNDK": 1742.0, "IOVA": 14.8, "SLS": 12.4, "MU": 1065.0, "RLAY": 18.1, "ERAS": 14.7, "TWST": 193.0}
+    picks = ob.size_live(syms, px, held={"ERAS"}, cash=1000.0, max_book=40.0, max_order=25.0, max_shares=1)
+    assert picks == [("IOVA", 1, 14.8), ("SLS", 1, 12.4)]          # RLAY would pass $40 -> skipped
+    assert sum(q * p for _s, q, p in picks) <= 40.0
+    assert ob.size_live(syms, px, set(), cash=10.0, max_book=100.0, max_order=25.0, max_shares=1) == []  # cash binds
+
+
+def test_live_skips_buying_on_a_day_it_sold():
+    from datetime import date
+    led = [{"event": "submit", "side": "sell", "night_end": "2026-10-05", "sym": "IOVA"}]
+    assert ob.sold_today(led, date(2026, 10, 5)) is True
+    assert ob.sold_today(led, date(2026, 10, 6)) is False
+    assert ob.sold_today([dict(led[0], error="rejected")], date(2026, 10, 5)) is False

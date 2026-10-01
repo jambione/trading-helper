@@ -1,10 +1,15 @@
 #!/bin/bash
 # Install or reinstall the overnight book scheduler as a LaunchAgent in the
 # console user's GUI session. Idempotent and safe over ssh.
-#   scripts/install_overnight_agent.sh          install / restart with the repo's plist
-#   scripts/install_overnight_agent.sh remove   stop and uninstall
+#   scripts/install_overnight_agent.sh               install / restart the paper book
+#   scripts/install_overnight_agent.sh remove        stop and uninstall the paper book
+#   scripts/install_overnight_agent.sh live          install the REAL-MONEY test (the switch)
+#   scripts/install_overnight_agent.sh remove live   stop and uninstall the real-money test
 set -euo pipefail
+ACTION=install
+[ "${1:-}" = "remove" ] && { ACTION=remove; shift; }
 LABEL=com.jambi.overnight-book
+[ "${1:-}" = "live" ] && LABEL=com.jambi.overnight-live
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$HERE/scripts/$LABEL.plist"
 DST="$HOME/Library/LaunchAgents/$LABEL.plist"
@@ -17,7 +22,7 @@ for _ in $(seq 1 30); do
   launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break
   sleep 1
 done
-if [ "${1:-}" = "remove" ]; then
+if [ "$ACTION" = "remove" ]; then
   rm -f "$DST"
   echo "removed $LABEL"
   exit 0

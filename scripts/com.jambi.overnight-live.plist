@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.jambi.overnight-live — the overnight book's REAL-MONEY auction test.
+
+  Same scheduler as com.jambi.overnight-book, run with OVERNIGHT_ACCOUNT=live:
+  MOC buys / MOO sells only, hard caps (OVERNIGHT_LIVE_MAX_BOOK $100,
+  _MAX_ORDER $25, _MAX_SHARES 1), every other night (cash-account
+  settlement), its own ledger in ai_reports/overnight_live/.
+
+  NOT installed by default. Installing it is the switch:
+      scripts/install_overnight_agent.sh live
+  and it still refuses to trade unless config/secrets.json.live holds keys
+  that are neither the desk's nor the paper book's, and the account is
+  ACTIVE. Run `OVERNIGHT_ACCOUNT=live OVERNIGHT_LIVE_ENABLE=yes
+  .venv/bin/python overnight_book.py check` first (read-only).
+  Remove: scripts/install_overnight_agent.sh remove live
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jambi.overnight-live</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/jambimac/repo/trading-helper/.venv/bin/python</string>
+    <string>-u</string>
+    <string>/Users/jambimac/repo/trading-helper/overnight_book.py</string>
+    <string>run</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OVERNIGHT_ACCOUNT</key>
+    <string>live</string>
+    <key>OVERNIGHT_LIVE_ENABLE</key>
+    <string>yes</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/jambimac/repo/trading-helper</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>300</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/overnight_live.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/overnight_live.log</string>
+</dict>
+</plist>

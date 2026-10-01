@@ -65,6 +65,10 @@ USAGE (on the mini)
   .venv/bin/python overnight_book.py status
   .venv/bin/python overnight_book.py snapshot       # refresh the dashboard file
   .venv/bin/python overnight_book.py run            # the scheduler loop
+  OVERNIGHT_ACCOUNT=live OVERNIGHT_LIVE_ENABLE=yes .venv/bin/python overnight_book.py check
+                                                   # read-only look at the LIVE test account
+LIVE (real money, off by default): see ACCOUNT / live_client() / _buy_live() and
+scripts/com.jambi.overnight-live.plist. Auctions only, hard caps, every other night.
 Logs: ai_reports/overnight/ (plan_DAY.json, ledger.jsonl, nights.jsonl, run.log)
 Dashboard: snapshot.json, rewritten after every step and every 15 minutes;
 ai_trader publishes it on /api/state as "overnight" (a file read, no broker call).
@@ -89,7 +93,14 @@ sys.path.insert(0, str(ROOT / "tools" / "studies"))
 from ticker_filters import is_common, is_levered_etp  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
-OUT = ROOT / "ai_reports" / "overnight"
+# Which account this process runs. "paper" (the default) is the pilot.
+# "live" is the real-money auction test and is OFF unless all three hold:
+# OVERNIGHT_ACCOUNT=live, OVERNIGHT_LIVE_ENABLE=yes, and keys in
+# config/secrets.json.live that are neither the desk's nor the paper book's.
+# Live keeps its own ledger, nights, state and log, so the two never mix.
+ACCOUNT = os.getenv("OVERNIGHT_ACCOUNT", "paper").strip().lower()
+LIVE = ACCOUNT == "live"
+OUT = ROOT / "ai_reports" / ("overnight_live" if LIVE else "overnight")
 LEDGER = OUT / "ledger.jsonl"
 NIGHTS = OUT / "nights.jsonl"
 STATE = OUT / "state.json"
@@ -121,6 +132,15 @@ SELL_LEAD = timedelta(minutes=15)
 # MOC buys 5 filled in full, 10 got nothing). The night is scored on the
 # crosses either way, so the mode changes only what the paper account holds.
 ORDER_MODE = os.getenv("OVERNIGHT_ORDER_MODE", "market").strip().lower()
+# Real money only ever trades the auctions: market orders cost ~31 bp a round
+# trip (2026-10-01 SIP-quote study), more than the ~16 bp edge.
+if LIVE:
+    ORDER_MODE = "auction"
+# Live caps. One share per name, $25 per order, $100 per night by default:
+# the test is whether auction orders fill at the cross, not what they earn.
+LIVE_MAX_BOOK = float(os.getenv("OVERNIGHT_LIVE_MAX_BOOK", "100"))
+LIVE_MAX_ORDER = float(os.getenv("OVERNIGHT_LIVE_MAX_ORDER", "25"))
+LIVE_MAX_SHARES = int(os.getenv("OVERNIGHT_LIVE_MAX_SHARES", "1"))
 MKT_BUY_BEFORE_CLOSE = timedelta(minutes=2)
 MKT_BUY_TOPUP_BEFORE_CLOSE = timedelta(seconds=30)
 MKT_SELL_AFTER_OPEN = timedelta(minutes=1)
@@ -194,6 +214,18 @@ def overnight_keys() -> tuple[str, str]:
     return "", ""
 
 
+def live_keys() -> tuple[str, str]:
+    api = (os.getenv("OVERNIGHT_LIVE_ALPACA_API_KEY") or "").strip()
+    sec = (os.getenv("OVERNIGHT_LIVE_ALPACA_SECRET_KEY") or "").strip()
+    if api and sec:
+        return api, sec
+    p = ROOT / "config" / "secrets.json.live"
+    if p.exists():
+        d = json.loads(p.read_text())
+        return str(d.get("api_key") or ""), str(d.get("secret_key") or "")
+    return "", ""
+
+
 def data_client():
     from alpaca.data.historical import StockHistoricalDataClient
     return StockHistoricalDataClient(*desk_keys())
@@ -205,8 +237,11 @@ def desk_trading_client():
 
 
 def book_client():
-    """The overnight paper account, after the isolation guard."""
+    """The overnight paper account (or, in live mode, the live test account),
+    after the isolation guard."""
     from alpaca.trading.client import TradingClient
+    if LIVE:
+        return live_client()
     api, sec = overnight_keys()
     if not api or not sec:
         raise SystemExit("no overnight keys: put them in config/secrets.json.overnight")
@@ -221,6 +256,72 @@ def book_client():
     if desk and mine == desk:
         raise SystemExit("REFUSED: the overnight keys reach the desk's account")
     return tc
+
+
+def live_client():
+    """The real-money test account. Refuses unless every lock is open."""
+    from alpaca.trading.client import TradingClient
+    if os.getenv("OVERNIGHT_LIVE_ENABLE", "").strip().lower() != "yes":
+        raise SystemExit("REFUSED: live mode needs OVERNIGHT_LIVE_ENABLE=yes")
+    api, sec = live_keys()
+    if not api or not sec:
+        raise SystemExit("no live keys: put them in config/secrets.json.live")
+    if api in (desk_keys()[0], overnight_keys()[0]):
+        raise SystemExit("REFUSED: the live keys are the desk's or the paper book's")
+    tc = TradingClient(api, sec, paper=False)
+    a = tc.get_account()
+    if str(getattr(a.status, "value", a.status)).upper() != "ACTIVE":
+        raise SystemExit(f"REFUSED: live account status is {a.status}")
+    if getattr(a, "trading_blocked", False) or getattr(a, "account_blocked", False):
+        raise SystemExit("REFUSED: live account is blocked")
+    others = set()
+    for mk in (desk_trading_client,):
+        try:
+            others.add(mk().get_account().account_number)
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        api_p, sec_p = overnight_keys()
+        if api_p:
+            others.add(TradingClient(api_p, sec_p, paper=True).get_account().account_number)
+    except Exception:  # noqa: BLE001
+        pass
+    if a.account_number in others:
+        raise SystemExit("REFUSED: the live keys reach the desk's or the paper book's account")
+    return tc
+
+
+def size_live(syms: list[str], prices: dict, held: set, cash: float,
+              max_book: float, max_order: float, max_shares: int) -> list[tuple[str, int, float]]:
+    """[(sym, qty, price)] for the live test, in pick order. Pure.
+
+    Whole shares only (Alpaca takes no fractional auction orders), at most
+    *max_shares* and *max_order* per name, never past *max_book* or the cash
+    on hand. A pick that does not fit is skipped, not resized, so the next
+    cheaper name can still go in.
+    """
+    out, total = [], 0.0
+    room = min(max_book, max(0.0, cash))
+    for s in syms:
+        p = prices.get(s)
+        if s in held or not p or p <= 0:
+            continue
+        qty = min(max_shares, math.floor(max_order / p))
+        if qty < 1 or total + qty * p > room:
+            continue
+        out.append((s, qty, p))
+        total += qty * p
+    return out
+
+
+def sold_today(ledger: list[dict], day: date) -> bool:
+    """True when this account submitted a sell on *day*. Pure. A small live
+    account is cash-only: the morning's proceeds settle T+1, so buying with
+    them the same afternoon risks a good-faith violation. Live therefore
+    trades every other night."""
+    return any(r.get("event") == "submit" and r.get("side") == "sell"
+               and r.get("night_end") == day.isoformat() and not r.get("dry_run")
+               and not r.get("error") for r in ledger)
 
 
 def calendar(tc, start: date, end: date) -> list:
@@ -423,6 +524,9 @@ def buy(tc, day: date, dry: bool = False) -> None:
         log(f"buy {day}: intraday filter {INTRADAY_MIN:+.1%}: kept {len(syms)}/{len(frows)}"
             + (f"; dropped " + " ".join(f"{r['sym']}({r['intraday']:+.1%})" for r in dropped) if dropped else "")
             + (f"; no open/price for {','.join(unknown)} (kept)" if unknown else ""))
+    if LIVE:
+        _buy_live(tc, day, syms, px, held, dry)
+        return
     total = 0.0
     for s in syms:
         if s in held:
@@ -458,6 +562,55 @@ def buy(tc, day: date, dry: bool = False) -> None:
         else:
             append(LEDGER, row)
     log(f"buy {day}: {'DRY RUN ' if dry else ''}{len(syms)} picks, ~${total:,.0f} submitted as {_how('buy')}")
+
+
+def _buy_live(tc, day: date, syms: list[str], px: dict, held: dict, dry: bool) -> None:
+    """Live test: settlement check, hard caps, MOC only."""
+    from alpaca.trading.enums import OrderSide, TimeInForce
+    from alpaca.trading.requests import MarketOrderRequest
+    if sold_today(_read_jsonl(LEDGER), day):
+        log(f"buy {day}: LIVE settlement: sold this morning, proceeds settle T+1; no buy tonight")
+        return
+    a = tc.get_account()
+    cash = float(getattr(a, "non_marginable_buying_power", None) or a.cash or 0)
+    picks = size_live(syms, px, set(held), cash, LIVE_MAX_BOOK, LIVE_MAX_ORDER, LIVE_MAX_SHARES)
+    if not dry:
+        # The book actually held is what gets scored (night_summary reads the
+        # last filter row of the night).
+        append(LEDGER, {"event": "filter", "night": day.isoformat(), "floor": INTRADAY_MIN,
+                        "kept": [s for s, _q, _p in picks], "live_caps": {
+                            "max_book": LIVE_MAX_BOOK, "max_order": LIVE_MAX_ORDER,
+                            "max_shares": LIVE_MAX_SHARES, "cash": cash}})
+    for s, qty, price in picks:
+        cid = f"on-{day.isoformat()}-{s}-buy"
+        row = {"event": "submit", "night": day.isoformat(), "sym": s, "side": "buy", "qty": qty,
+               "ref_price": price, "client_order_id": cid, "dry_run": dry, "live": True}
+        if dry:
+            print(f"  DRY RUN would submit LIVE: MOC buy {qty} {s} (~${qty * price:,.2f})")
+            continue
+        try:
+            o = tc.submit_order(MarketOrderRequest(symbol=s, qty=qty, side=OrderSide.BUY,
+                                                   time_in_force=TimeInForce.CLS, client_order_id=cid))
+            row["order_id"] = str(o.id)
+        except Exception as e:  # noqa: BLE001
+            row["error"] = str(e)[:200]
+        append(LEDGER, row)
+    log(f"buy {day}: LIVE {'DRY RUN ' if dry else ''}{len(picks)} names "
+        f"{' '.join(f'{s}x{q}' for s, q, _p in picks)} ~${sum(q * p for _s, q, p in picks):,.2f} "
+        f"(cash ${cash:,.2f}, caps ${LIVE_MAX_BOOK:g}/${LIVE_MAX_ORDER:g}/{LIVE_MAX_SHARES} sh) as MOC")
+
+
+def check(tc, day: date) -> None:
+    """Read-only first look: account, positions, and tonight's buy as a dry run."""
+    a = tc.get_account()
+    print(f"account {a.account_number} ({ACCOUNT}) status {a.status} equity ${float(a.equity):,.2f} "
+          f"cash ${float(a.cash):,.2f} buying power ${float(a.buying_power):,.2f}")
+    for x in tc.get_all_positions():
+        print(f"  holding {x.symbol} {x.qty} @ {float(x.avg_entry_price):.2f}")
+    print(f"order mode {ORDER_MODE}; schedule: "
+          + ", ".join(f"{n} {w:%H:%M}" for n, w in schedule(*session(tc, day)))
+          if session(tc, day) else "market closed today")
+    buy(tc, day, dry=True)
 
 
 def _how(side: str) -> str:
@@ -967,7 +1120,8 @@ def run() -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("plan", "buy", "sell", "topup", "reconcile", "score", "status", "snapshot", "run"))
+    ap.add_argument("cmd", choices=("plan", "buy", "sell", "topup", "reconcile", "score", "status", "snapshot",
+                                    "check", "run"))
     ap.add_argument("--day", default=None, help="ET date, default today")
     ap.add_argument("--leg", choices=("buy", "sell"), default=None, help="reconcile one leg")
     ap.add_argument("--dry-run", action="store_true")
@@ -1000,6 +1154,8 @@ def main() -> None:
     elif args.cmd == "reconcile":
         for leg in ([args.leg] if args.leg else ["sell", "buy"]):
             reconcile(tc, day, leg)
+    elif args.cmd == "check":
+        check(tc, day)
     elif args.cmd == "status":
         status(tc)
         write_snapshot(tc)
