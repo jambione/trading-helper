@@ -24,7 +24,8 @@ day's checks turn up. Newest items at the bottom of each section.
 - [x] Live mode built, off by default (21300d7), sizing fix (b98b8af), compare report + dashboard LIVE line (cec8751).
 - [x] Live keys in, read-only check passed: account ACTIVE, $100 cash, multiplier 1 (cash account), separate from desk and paper. Dry run would buy ERAS, IOVA, RLAY x1 (~$47.68) by MOC.
 - [ ] 15:40 filter validation (running).
-- [ ] Mon 10/5 before 15:40: `scripts/install_overnight_agent.sh live` (Jonathan's call).
+- [x] Live agent INSTALLED, DISARMED (f09725e, 11:29): every order step logs 'LIVE not armed'.
+- [ ] Mon 10/5 before 15:40: `touch ~/repo/trading-helper/config/overnight_live.armed` to arm (rm to disarm).
 
 ## Shipped before the open (watch today)
 
