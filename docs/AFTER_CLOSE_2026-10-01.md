@@ -67,6 +67,8 @@ day's checks turn up. Newest items at the bottom of each section.
 - [x] **Morning window — today was a one-off.** 10:15-11:00 = -0.23% vs -0.22% rest (t 0.0; all-time t -0.6); per day, window minus rest averages -0.02% over 32 days. Every hour loses; afternoon (14:00+) is least bad (-0.11%, t +2.5 all-time, both halves). No live change.
 - Note: <$10 names (TDAY, COHH) were 4 trades, -$6.29 (58% of net) — matches cheap-names memory; no $10 minimum (Jonathan's call).
 
+- [x] **Do opens have timing + runway? (14:20, tools/runway_study.py --since 2026-09-15, 489 fills vs 8,582 same-name minutes after first fill.)** Runway exists (median +0.31% up within 15m, 19% reach +1%) but the drop is bigger (median -0.45%). Timing is slightly WORSE than a random minute in the same name: +0.5% before -0.5% 41% vs 48% (~2.8 sigma; part is the ~5 bp half-spread, fills scored from the ask); 30m return -0.48% vs -0.24%. Mean up_15 +0.45pp (t 3.65) but median -0.02pp = a few volatile outliers. What predicts runway (big day change, high vol, cheap, wide spread) also predicts the worse 30m return = volatility, not direction.
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
