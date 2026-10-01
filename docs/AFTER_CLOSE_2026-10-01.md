@@ -75,6 +75,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [ ] **Target + stop grid (Jonathan, 14:50; /tmp/hold_to_target.py).** 563 fills 9/1-9/30, bar sim (same-bar tie = stop; stop fills at stop or gap open; NO exit spread, so ~5 bp optimistic). +1% target: stop -0.5 -0.12%, -1 -0.12%, -1.5 -0.14%, -2 -0.17%, -3 -0.19%, -5 -0.18% -> WIDER STOPS ARE WORSE. Best shape +2/-0.5 -0.06% (23% win). All shapes beat the desk's -0.24% by 0.05-0.18% before exit spread, but every one is negative in H2 (9/16+). Next: re-score the top 3 shapes (+2/-0.5, +1/-1, +2/-1) with the exit at the bid and the desk's real exit fills, before any live change.
 
+- [x] **Big size, 5-second hold (Jonathan, 15:00; /tmp/hold5s.py, real SIP quotes) - FAILS.** 178 fills 9/22-10/1, buy at the fill, sell at the SIP bid 5 s later: -12.0 bp/trade, win 7% (H1 -18.8 / H2 -6.6). The mid moves -1.6 bp in 5 s (median |move| 0.9 bp; unchanged on 47%) vs 10.4 bp to cross the spread both ways. Share count scales $ both ways, never the bp; bigger size also eats past the touch.
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
