@@ -884,6 +884,27 @@ def _append_log(entry: dict):
 
 # ── Per-ticker state ──────────────────────────────────────────────────────────
 
+def inject_live_price(df: pd.DataFrame, price: float) -> pd.DataFrame:
+    """A copy of *df* whose last bar has *price* as its close, with the bar's
+    high and low widened to contain it.
+
+    Setting only the close let it sit outside its own bar's range: Williams
+    %R then left -100..0 (2026-10-01 09:47, MNKD +21.7 / +9.4 read as a full
+    overbought square, AI -160.9). On the Alpaca fallback the last bar is a
+    closed minute that can be minutes old, so a live price outside it is
+    common. A forming bar always contains its latest price.
+    """
+    out = df.copy()
+    last = out.index[-1]
+    px = float(price)
+    out.at[last, "close"] = px
+    if "high" in out.columns:
+        out.at[last, "high"] = max(float(out.at[last, "high"]), px)
+    if "low" in out.columns:
+        out.at[last, "low"] = min(float(out.at[last, "low"]), px)
+    return out
+
+
 class TickerState:
     """
     All state tracked for one active ticker.
@@ -2117,8 +2138,7 @@ class SignalEngine:
             if price_moved:
                 try:
                     ts._last_computed_price = ts.last_price
-                    df_live = ts.cached_df.copy()
-                    df_live.at[df_live.index[-1], "close"] = ts.last_price
+                    df_live = inject_live_price(ts.cached_df, ts.last_price)
                     (rsi_live, hist_live, atr_live, vwap_live, rvol_live,
                      cm_rsi_live, obv_live) = compute_indicators(df_live)
                     ts.last_rsi       = rsi_live
