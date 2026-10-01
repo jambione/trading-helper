@@ -36,8 +36,12 @@ SCHEDULE (ET, from Alpaca's trading calendar, so holidays and early closes hold)
     buy         close - 2 min   market buys
     buy_topup   close - 30 s    the unfilled remainder of any finished buy
   OVERNIGHT_ORDER_MODE=auction (a real account)
-    sell        open - 15 min   OPG sells (cutoff 09:28)
-    buy         close - 20 min  CLS buys (Alpaca's MOC cutoff is 15:50)
+    sell           open - 15 min   OPG sells (cutoff 09:28)
+    sell_check     open - 5 min    OPG for any position no accepted sell covers
+    sell_fallback  open + 1 min    market sell of anything still held
+    buy            close - 20 min  CLS buys (Alpaca's MOC cutoff is 15:50)
+    buy_check      close - 15 min  CLS for any name missing / rejected
+    buy_fallback   close - 2 min   market buy of any name still uncovered
   reconcile  close + 30 min / open + 20 min   fills vs the official auction prints
 
 SCORING
@@ -137,8 +141,16 @@ def schedule(op: datetime, cl: datetime, mode: str | None = None) -> list[tuple[
     """(step, when) for one session, in the order they run. Pure."""
     mode = (mode or ORDER_MODE)
     if mode == "auction":
-        return [("sell", op - SELL_LEAD), ("reconcile_sell", op + timedelta(minutes=20)),
-                ("buy", cl - BUY_LEAD), ("reconcile_buy", cl + timedelta(minutes=30))]
+        # check: re-send anything missing/rejected as an auction order before
+        # the cutoff (MOO 09:28, MOC 15:50); fallback: whatever is still
+        # uncovered goes as a market order, so no name sits out the night
+        # because one order bounced. A halted name cannot be helped.
+        return [("sell", op - SELL_LEAD), ("sell_check", op - timedelta(minutes=5)),
+                ("sell_fallback", op + MKT_SELL_AFTER_OPEN),
+                ("reconcile_sell", op + timedelta(minutes=20)),
+                ("buy", cl - BUY_LEAD), ("buy_check", cl - timedelta(minutes=15)),
+                ("buy_fallback", cl - MKT_BUY_BEFORE_CLOSE),
+                ("reconcile_buy", cl + timedelta(minutes=30))]
     return [("sell", op + MKT_SELL_AFTER_OPEN), ("sell_topup", op + MKT_SELL_TOPUP_AFTER_OPEN),
             ("reconcile_sell", op + timedelta(minutes=20)),
             ("buy", cl - MKT_BUY_BEFORE_CLOSE), ("buy_topup", cl - MKT_BUY_TOPUP_BEFORE_CLOSE),
@@ -454,11 +466,13 @@ def _how(side: str) -> str:
     return "market"
 
 
-def buy_topup(tc, day: date, dry: bool = False) -> None:
+def buy_topup(tc, day: date, dry: bool = False, auction: bool = False, tag: str = "buy_topup") -> None:
     """Re-send the unfilled remainder of each planned buy whose order is done.
 
-    Targets are the first submit's qty per name (the ledger). A name with an
-    order still working is left alone; paper keeps filling those.
+    Targets are the first submit's qty per name (the ledger), so a submit
+    that errored still counts. A name with an order still working (an
+    accepted MOC waits as "new" until 16:00) is left alone. *auction* sends
+    the remainder as MOC (the 15:45 check), else as a market order.
     """
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
@@ -470,18 +484,19 @@ def buy_topup(tc, day: date, dry: bool = False) -> None:
     for s, (rem, n) in sorted(need.items()):
         cid = f"on-{day.isoformat()}-{s}-buy-r{n}"
         row = {"event": "submit", "night": day.isoformat(), "sym": s, "side": "buy", "qty": rem,
-               "client_order_id": cid, "dry_run": dry, "topup": True}
+               "client_order_id": cid, "dry_run": dry, "topup": True, "step": tag}
         if dry:
-            print(f"  DRY RUN would submit: market buy remainder {rem} {s}")
+            print(f"  DRY RUN would submit: {'MOC' if auction else 'market'} buy remainder {rem} {s}")
             continue
         try:
             o = tc.submit_order(MarketOrderRequest(symbol=s, qty=rem, side=OrderSide.BUY,
-                                                   time_in_force=TimeInForce.DAY, client_order_id=cid))
+                                                   time_in_force=TimeInForce.CLS if auction else TimeInForce.DAY,
+                                                   client_order_id=cid))
             row["order_id"] = str(o.id)
         except Exception as e:  # noqa: BLE001
             row["error"] = str(e)[:200]
         append(LEDGER, row)
-    log(f"buy_topup {day}: {'DRY RUN ' if dry else ''}"
+    log(f"{tag} {day}: {'DRY RUN ' if dry else ''}"
         + (", ".join(f"{s} +{r}" for s, (r, _n) in sorted(need.items())) if need else "nothing unfilled"))
 
 
@@ -504,7 +519,8 @@ def topup_needs(targets: dict[str, int], orders: list) -> dict[str, tuple[int, i
     return out
 
 
-def sell(tc, day: date, dry: bool = False, attempt: int = 0) -> None:
+def sell(tc, day: date, dry: bool = False, attempt: int = 0, tif: str | None = None,
+         tag: str | None = None) -> None:
     """Sell every long position. attempt 0 is the scheduled sell; 1+ is the
     top-up. Sells size off qty_available (shares not already held by an open
     order), never qty: a second sell sized off qty while the first still
@@ -529,9 +545,10 @@ def sell(tc, day: date, dry: bool = False, attempt: int = 0) -> None:
                "client_order_id": cid, "dry_run": dry}
         if not dry:
             try:
-                tif = TimeInForce.OPG if ORDER_MODE == "auction" else TimeInForce.DAY
+                kind = tif or ("opg" if ORDER_MODE == "auction" else "day")
                 o = tc.submit_order(MarketOrderRequest(symbol=x.symbol, qty=qty, side=OrderSide.SELL,
-                                                       time_in_force=tif, client_order_id=cid))
+                                                       time_in_force=TimeInForce.OPG if kind == "opg"
+                                                       else TimeInForce.DAY, client_order_id=cid))
                 row["order_id"] = str(o.id)
             except Exception as e:  # noqa: BLE001
                 row["error"] = str(e)[:200]
@@ -539,8 +556,9 @@ def sell(tc, day: date, dry: bool = False, attempt: int = 0) -> None:
             print(f"  DRY RUN would submit: {_how('sell')} sell {qty} {x.symbol}")
         else:
             append(LEDGER, row)
-    tag = "sell" if not attempt else "sell_topup"
-    log(f"{tag} {day}: {'DRY RUN ' if dry else ''}{sent} positions submitted as {_how('sell')}")
+    tag = tag or ("sell" if not attempt else "sell_topup")
+    how = {"opg": "MOO", "day": "market"}.get(tif or "", _how("sell"))
+    log(f"{tag} {day}: {'DRY RUN ' if dry else ''}{sent} positions submitted as {how}")
 
 
 # ── reconcile ────────────────────────────────────────────────────────────────
@@ -871,6 +889,10 @@ def run() -> None:
                     "reconcile_sell": lambda: reconcile(tc, today, "sell"),
                     "buy": lambda: buy(tc, today),
                     "buy_topup": lambda: buy_topup(tc, today),
+                    "buy_check": lambda: buy_topup(tc, today, auction=True, tag="buy_check"),
+                    "buy_fallback": lambda: buy_topup(tc, today, tag="buy_fallback"),
+                    "sell_check": lambda: sell(tc, today, attempt=1, tif="opg", tag="sell_check"),
+                    "sell_fallback": lambda: sell(tc, today, attempt=2, tif="day", tag="sell_fallback"),
                     "reconcile_buy": lambda: reconcile(tc, today, "buy"),
                 }
                 steps = [("plan", now.replace(hour=6, minute=30, second=0, microsecond=0), lambda: plan(tc, today))]

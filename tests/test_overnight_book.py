@@ -160,6 +160,10 @@ def test_market_schedule_buys_two_minutes_before_the_close_with_a_topup():
     assert s["sell"].strftime("%H:%M") == "09:31" and s["sell_topup"].strftime("%H:%M") == "09:33"
     a = dict(ob.schedule(OP, CL, "auction"))
     assert a["buy"].strftime("%H:%M") == "15:40" and "buy_topup" not in a
+    assert a["buy_check"].strftime("%H:%M") == "15:45"         # before the 15:50 MOC cutoff
+    assert a["buy_fallback"].strftime("%H:%M") == "15:58"
+    assert a["sell_check"].strftime("%H:%M") == "09:25"        # before the 09:28 MOO cutoff
+    assert a["sell_fallback"].strftime("%H:%M") == "09:31"
 
 
 def test_topup_resends_only_finished_short_names():
@@ -275,3 +279,45 @@ def test_night_headline_is_the_book_held_with_all_20_beside_it(monkeypatch, tmp_
     assert n["n_book"] == 1 and abs(n["mean_bp_book"] - 100.0) < 1e-9
     assert abs(n["mean_bp_plan"] - (100.0 - 200.0) / 2) < 1e-9   # all 20 (here 2) beside it
     assert ob.night_bp(n) == n["mean_bp_book"] and ob.night_pnl(n) == n["pnl_book_usd"]
+
+
+
+# ── auction-mode safety checks ───────────────────────────────────────────────
+
+class _OrdersTC(_FakeTC):
+    def __init__(self, orders, positions=()):
+        super().__init__(list(positions))
+        self.orders = orders
+
+    def get_orders(self, req):
+        return self.orders
+
+
+def test_buy_check_resends_rejected_moc_as_moc_and_leaves_accepted_alone(monkeypatch, tmp_path):
+    import json
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    (tmp_path / "ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [
+        {"event": "submit", "night": "2026-10-01", "sym": "AAA", "side": "buy", "qty": 20,
+         "client_order_id": "on-2026-10-01-AAA-buy"},
+        {"event": "submit", "night": "2026-10-01", "sym": "BBB", "side": "buy", "qty": 50,
+         "client_order_id": "on-2026-10-01-BBB-buy"},
+        {"event": "submit", "night": "2026-10-01", "sym": "CCC", "side": "buy", "qty": 9,
+         "client_order_id": "on-2026-10-01-CCC-buy", "error": "rate limited"},    # never reached Alpaca
+    ]))
+    tc = _OrdersTC([_o("AAA", "new", 20, cid="on-2026-10-01-AAA-buy"),           # accepted MOC, waiting
+                    _o("BBB", "rejected", 50, cid="on-2026-10-01-BBB-buy")])
+    ob.buy_topup(tc, date(2026, 10, 1), auction=True, tag="buy_check")
+    sent = {r.symbol: (r.qty, str(r.time_in_force.value).lower()) for r in tc.submitted}
+    assert sent == {"BBB": (50, "cls"), "CCC": (9, "cls")}
+
+
+def test_sell_check_skips_positions_an_accepted_moo_already_covers(monkeypatch, tmp_path):
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    pos = [types.SimpleNamespace(symbol="AAA", qty="10", qty_available="0", side="long"),    # MOO accepted
+           types.SimpleNamespace(symbol="BBB", qty="5", qty_available="5", side="long")]     # MOO rejected
+    tc = _FakeTC(pos)
+    ob.sell(tc, date(2026, 10, 1), attempt=1, tif="opg", tag="sell_check")
+    assert tc.cancelled == 0
+    assert [(r.symbol, r.qty, str(r.time_in_force.value).lower()) for r in tc.submitted] == [("BBB", 5, "opg")]
