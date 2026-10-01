@@ -314,6 +314,23 @@ def size_live(syms: list[str], prices: dict, held: set, cash: float,
     return out
 
 
+def live_cash(a) -> float:
+    """Money the live test may spend: buying power, never more than cash.
+
+    Not non_marginable_buying_power: on the $100 cash account (multiplier 1)
+    Alpaca reports it as 0 (2026-10-01 check), which sized every pick to
+    nothing. Alpaca's fields are strings, and "0" is truthy, so the old
+    `x or cash` fallback never fell back.
+    """
+    def f(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+    bp, cash = f(getattr(a, "buying_power", 0)), f(getattr(a, "cash", 0))
+    return max(0.0, min(bp, cash) if cash > 0 else bp)
+
+
 def sold_today(ledger: list[dict], day: date) -> bool:
     """True when this account submitted a sell on *day*. Pure. A small live
     account is cash-only: the morning's proceeds settle T+1, so buying with
@@ -571,8 +588,7 @@ def _buy_live(tc, day: date, syms: list[str], px: dict, held: dict, dry: bool) -
     if sold_today(_read_jsonl(LEDGER), day):
         log(f"buy {day}: LIVE settlement: sold this morning, proceeds settle T+1; no buy tonight")
         return
-    a = tc.get_account()
-    cash = float(getattr(a, "non_marginable_buying_power", None) or a.cash or 0)
+    cash = live_cash(tc.get_account())
     picks = size_live(syms, px, set(held), cash, LIVE_MAX_BOOK, LIVE_MAX_ORDER, LIVE_MAX_SHARES)
     if not dry:
         # The book actually held is what gets scored (night_summary reads the

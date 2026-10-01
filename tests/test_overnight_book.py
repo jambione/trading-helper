@@ -381,3 +381,10 @@ def test_live_skips_buying_on_a_day_it_sold():
     assert ob.sold_today(led, date(2026, 10, 5)) is True
     assert ob.sold_today(led, date(2026, 10, 6)) is False
     assert ob.sold_today([dict(led[0], error="rejected")], date(2026, 10, 5)) is False
+
+
+def test_live_cash_uses_buying_power_not_the_zero_non_marginable_field():
+    acct = types.SimpleNamespace(buying_power="100", cash="100", non_marginable_buying_power="0")
+    assert ob.live_cash(acct) == 100.0                      # the 2026-10-01 live account
+    assert ob.live_cash(types.SimpleNamespace(buying_power="60", cash="100")) == 60.0
+    assert ob.live_cash(types.SimpleNamespace(buying_power="0", cash="0")) == 0.0
