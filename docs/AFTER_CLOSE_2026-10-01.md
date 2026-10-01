@@ -28,7 +28,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [ ] **spread_unknown is 32% of refusals.** The spread gate reads SIP, served 16 min late: every name is unknown until 09:46, and each newly added name waits ~16 min. Spread_wide is another 23%. Options: IEX-quote fallback before SIP is served, or a pre-open seeded spread. Needs a decision.
 - [ ] **tape_only 23%:** thin names with no fresh print (EFXT, MNKD, KURA, GLOB, CMCT).
-- [ ] **SNXX armed 09:41:41, then dropped at 09:43:40 `not_uptrend` with pct_change exactly 0.0** on a movers-list name. Looks like a missing day change read as 0, not a real flat day. Check the movers admission path.
+- [x] **SNXX 0.0% — traced, NOT a data bug.** SNXX faded from +1.58% (09:39) to a real print at $16.74 = yesterday's close at 09:43:38 (live, 1.6s old), then -0.15%, then back to +0.5%. The `not_uptrend` drop (roster row, live desk quote) was correct. My first read (stale price) came from 1-minute bar closes hiding the tick.
+- [ ] Design question (Jonathan): the uptrend re-gate uses the instantaneous day change, so a name chopping around flat can be dropped on one tick and re-qualify a second later. Smooth it (e.g. below flat for 30-60s)?
 - Note: the 09:54 mid-session restart cost ~52 checks of spread_unknown while caches refilled.
 
 ## Open engineering items
