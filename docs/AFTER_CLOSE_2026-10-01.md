@@ -42,6 +42,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [ ] **Seat held by a name that can't trade:** SDEV was refused spread_wide 65 times in 15 min (10:12-10:27) while holding one of the 12 seats. Should a seat be released after N consecutive spread_wide refusals? (Opens resumed after the 10:12 warmer fix: XENE 10:21, OXY 10:23, SNDQ 10:23.)
 
+- [ ] **Positions open already down (Jonathan: LYTE -$0.70 at open).** LYTE: IEX quote at decision 25.44/25.445, fill 25.46875 x16, marked ~25.425. Two parts: (1) the spread (buy at ask, marked at bid), (2) IEX's quote was not the real market - fill came 2.4c above the IEX ask (memory: fills land at the SIP NBBO touch, 0 excess). Known cost ~10 bp round trip, ~half the desk's loss 9/23-9/29. Test after close: mid-price / bid-resting entry limits on recent entries with historical SIP quotes - fill rate within 10-30 s AND outcome of filled vs unfilled (adverse selection).
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
