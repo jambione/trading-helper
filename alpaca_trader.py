@@ -820,6 +820,86 @@ def buy_market_shares(
         return {"ok": False, "order_id": None, "status": "error", "note": str(e)}
 
 
+def _status_is(o: Optional[dict], *words: str) -> bool:
+    s = str((o or {}).get("status") or "").lower()
+    return any(w in s for w in words)
+
+
+def buy_limit_then_market(
+    ticker: str,
+    qty: float,
+    limit_px: float,
+    *,
+    ref_price: float,
+    wait_sec: float = 10.0,
+    poll_sec: float = 0.5,
+    note: str = "entry_test",
+    _sleep=time.sleep,
+    _clock=time.time,
+) -> dict:
+    """BUY qty: rest a DAY limit for wait_sec, then cancel and buy the rest at market.
+
+    The entry-cost test's passive arms. Blocks up to wait_sec plus a few
+    seconds of cancel/fill confirmation, so call it off the book thread.
+    Returns the usual {"ok", "order_id", ...} plus passive_qty, crossed_qty,
+    fill_px (blended average when both legs filled) and waited_sec. order_id
+    is the leg that carried the most shares.
+    """
+    lim = buy_limit_at_price(ticker, limit_px, qty=qty, note=note)
+    if not lim.get("ok"):
+        return lim
+    oid = lim["order_id"]
+    sub_qty = float(lim.get("qty") or qty)
+    t0 = _clock()
+    o: dict = {}
+    while _clock() - t0 < wait_sec:
+        o = get_order(oid) or {}
+        if _status_is(o, "filled") and not _status_is(o, "partial"):
+            break
+        _sleep(poll_sec)
+    waited = round(_clock() - t0, 1)
+    if _status_is(o, "filled") and not _status_is(o, "partial"):
+        return {**lim, "passive_qty": sub_qty, "crossed_qty": 0.0,
+                "fill_px": o.get("filled_avg_price"), "waited_sec": waited,
+                "limit_px": float(limit_px)}
+    cancel_order_id(oid)
+    for _ in range(12):                      # ~3 s for the cancel to land
+        o = get_order(oid) or o
+        if _status_is(o, "cancel", "expired", "rejected") or (
+                _status_is(o, "filled") and not _status_is(o, "partial")):
+            break
+        _sleep(0.25)
+    passive = float(o.get("filled_qty") or 0.0)
+    passive_px = o.get("filled_avg_price")
+    rest = round(sub_qty - passive, 6)
+    if rest <= 1e-6:
+        return {**lim, "passive_qty": passive, "crossed_qty": 0.0,
+                "fill_px": passive_px, "waited_sec": waited, "limit_px": float(limit_px)}
+    mk = buy_market_shares(ticker, ref_price, qty=rest)
+    if not mk.get("ok"):
+        if passive > 0:
+            return {**lim, "passive_qty": passive, "crossed_qty": 0.0, "fill_px": passive_px,
+                    "waited_sec": waited, "limit_px": float(limit_px),
+                    "note": f"cross failed: {mk.get('note') or mk.get('status')}"}
+        return mk
+    mo: dict = {}
+    for _ in range(12):
+        mo = get_order(mk["order_id"]) or {}
+        if _status_is(mo, "filled") and not _status_is(mo, "partial"):
+            break
+        _sleep(0.25)
+    cross_px = mo.get("filled_avg_price")
+    crossed = float(mo.get("filled_qty") or rest)
+    fill = None
+    if cross_px and (passive <= 0 or passive_px):
+        fill = ((passive * float(passive_px or 0)) + crossed * float(cross_px)) / (passive + crossed)
+    out = dict(mk if crossed >= passive else lim)
+    out.update(passive_qty=passive, crossed_qty=crossed, fill_px=fill, waited_sec=waited,
+               limit_px=float(limit_px), limit_order_id=oid, market_order_id=mk["order_id"],
+               qty=passive + crossed)
+    return out
+
+
 def sell(ticker: str, price: float, rsi: float, hist: float,
          buy_price: Optional[float] = None) -> dict:
     """

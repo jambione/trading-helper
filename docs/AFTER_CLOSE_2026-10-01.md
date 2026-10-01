@@ -79,6 +79,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [ ] **Overnight panel shows last night all day (Jonathan, 15:40 screenshot).** build_snapshot picks `book_night` = latest night with buy submits, so from the 09:31 sell until the 15:58 buy it shows SEP 30's rows (already sold; ERAS/MU/MXL say "buy ..." but they EXPIRED unfilled 9/30) while today's plan (plan_2026-10-01.json, 20 picks) sits unused. Fix after the 15:58 buy (no agent restart before it): once last night is sold and holding 0, show "TONIGHT - OCT 1" = today's 20 picks with open->now %, kept/dropped by the -1% filter, and the buy time; last night stays in the history row. Expired buys render "not filled". Same for overnight_live.
 
+- [x] **Ratchet too fast? (Jonathan, 15:40) - NO.** leash_replay.py --set timing, 207 fills 9/23-9/30, live trail code on 1 s SIP prints, exit at the bid (live booked -19.6; replay live config -13.0 bp, hold 106 s). Slower is worse at every step: idle 15 s -14.2, 30 s -16.2, 60 s -18.6, decay off -20.0. Faster/bigger steps marginally better: idle 4 s -12.2, step 0.10R -11.9. Min hold: 30 s -14.0, 60 s -13.4, 90 s -14.2, 120 s -15.7, 180 s -15.0, 300 s -20.4, 600 s -29.5. Give 0.20R -11.6 (= 0.30R: give_max_pct/peak_give_pct cap binds). All gains ~1 bp, inside noise. No change.
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).

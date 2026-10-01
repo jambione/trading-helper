@@ -1163,6 +1163,44 @@ def _entry_limit_price(
 
 
 
+# Entry-cost A/B (ai_entry_test_arms). The counter rotates arms across
+# entries in this process; a restart starts the rotation over, which only
+# shuffles the order. _ENTRY_PENDING holds symbols whose entry is still
+# resting so adoption does not mistake a part-filled limit for an orphan.
+_ENTRY_TEST_N = [0]
+_ENTRY_PENDING: set[str] = set()
+ENTRY_TEST_ARMS = ("ask", "mid_down", "bid")
+
+
+def entry_test_limit(arm: str, bid: float | None, ask: float | None) -> float | None:
+    """Limit price for a passive arm, or None (control, or no usable quote)."""
+    if arm == "ask":
+        return None
+    try:
+        b, a = float(bid or 0), float(ask or 0)
+    except (TypeError, ValueError):
+        return None
+    if not 0 < b < a:
+        return None
+    if arm == "bid":
+        return round(b, 2)
+    # Mid rounded DOWN to the cent: on a 1c spread this is the bid.
+    return math.floor((b + a) / 2.0 * 100.0 + 1e-9) / 100.0
+
+
+def entry_test_plan(cfg: dict | None, bid: float | None, ask: float | None) -> dict | None:
+    """Next arm in the rotation and its limit, or None when the test is off."""
+    raw = str((cfg or {}).get("ai_entry_test_arms") or "")
+    arms = [a.strip().lower() for a in raw.split(",") if a.strip().lower() in ENTRY_TEST_ARMS]
+    if not arms:
+        return None
+    arm = arms[_ENTRY_TEST_N[0] % len(arms)]
+    _ENTRY_TEST_N[0] += 1
+    lim = entry_test_limit(arm, bid, ask)
+    return {"arm": arm, "limit": lim, "bid": _num(bid), "ask": _num(ask),
+            "fallback": bool(arm != "ask" and lim is None)}
+
+
 def _marketable_local_limit(
     current_ask: float | None,
     cfg: dict[str, Any] | None = None,
@@ -1817,12 +1855,33 @@ def place_scaled_entry(
         else ("LIMIT" if (placed_entry_limit or entry_limit) else "MARKET")
     )
 
+    entry_test = (entry_test_plan(cfg, current_bid, current_ask)
+                  if use_market_entry else None)
+
     def _place_parent():
         if not broker_stop:
             if use_market_entry:
                 ref = float(current_ask or sizing_entry or 0)
                 if ref <= 0:
                     return {"ok": False, "status": "no_price"}
+                if entry_test and entry_test.get("limit"):
+                    _ENTRY_PENDING.add(str(ticker).upper())
+                    try:
+                        out = alpaca_trader.buy_limit_then_market(
+                            ticker, parent_qty, float(entry_test["limit"]), ref_price=ref,
+                            wait_sec=float(cfg.get("ai_entry_test_cross_sec", 10.0) or 10.0),
+                        ) or {}
+                    finally:
+                        _ENTRY_PENDING.discard(str(ticker).upper())
+                    if out.get("ok"):
+                        out["buy_order_id"] = out.get("order_id")
+                        out["stop_order_id"] = None
+                        out["target_order_id"] = None
+                        out["order_type"] = "MARKET"
+                        entry_test.update(
+                            passive_qty=out.get("passive_qty"), crossed_qty=out.get("crossed_qty"),
+                            waited_sec=out.get("waited_sec"), fill=_num(out.get("fill_px")))
+                    return out
                 # Exact share count — do not re-derive via dollar//price (that
                 # re-truncates fractionals). +0.01 cushion kept only as a
                 # dollar_amount fallback when qty is omitted.
@@ -1981,6 +2040,8 @@ def place_scaled_entry(
             else (placed_entry_limit if not broker_stop else entry_limit)
         ),
         "entry_order_type": entry_order_type,
+        # Entry-cost A/B: arm, limit, quote at send, passive vs crossed shares.
+        "entry_test": dict(entry_test) if entry_test else None,
         "tranche_a_order_id": result_a.get("buy_order_id"),
         # The take-profit leg — NOT the parent buy. "Has tranche A scaled out?"
         # must key off this; the parent fills at entry. Dual path attaches this
@@ -5430,7 +5491,7 @@ def _adopt_unmanaged(
         return events
     for sym in unmanaged:
         s = str(sym or "").upper()
-        if not s or s in state:
+        if not s or s in state or s in _ENTRY_PENDING:
             continue
         live = detail.get(s) or detail.get(sym) or {}
         try:
@@ -6022,6 +6083,9 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         # Cost of crossing on the way in, in R. None until a fill is observed
         # against a limit — never estimated from a quote.
         "entry_slippage_r": pos.get("entry_slippage_r"),
+        # Entry-cost A/B (ai_entry_test_arms): arm, limit, quote at send,
+        # passive vs crossed shares, seconds rested, blended fill.
+        "entry_test": pos.get("entry_test"),
         # ...and on the way out. Only meaningful for a shelf exit, where the
         # shelf is the price we intended to get: negative means the fill
         # landed BELOW the shelf, which is the ratchet's real cost and was
@@ -6317,7 +6381,11 @@ def manage_open_positions(
                 # First sighting: replace the submit-time ask with what the
                 # order actually filled at, so realized R is measured against
                 # the real basis rather than an estimate.
-                fill = _order_fill_price(pos.get("tranche_a_order_id"))
+                # A split entry-test fill (part limit, part market) has no
+                # single order that prices it; the blended fill comes first.
+                fill = _num((pos.get("entry_test") or {}).get("fill"))
+                if fill is None:
+                    fill = _order_fill_price(pos.get("tranche_a_order_id"))
                 if fill is None:
                     fill = _num(live.get("avg_entry_price"))
                 if fill and fill > 0:

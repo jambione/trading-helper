@@ -175,6 +175,24 @@ def live_armed(today: date | None = None) -> bool:
     except ValueError:
         return False
     return (today or datetime.now(ET).date()) >= start
+
+
+def arm_status() -> str:
+    """Why live is or isn't armed, for the log line."""
+    if not ARMED_FILE.exists():
+        return f"{ARMED_FILE.name} absent"
+    try:
+        txt = ARMED_FILE.read_text().strip()
+    except OSError:
+        return f"{ARMED_FILE.name} unreadable"
+    if not txt:
+        return "armed"
+    try:
+        return f"arms on {date.fromisoformat(txt.split()[0]).isoformat()}"
+    except ValueError:
+        return f"{ARMED_FILE.name} has a bad date {txt[:20]!r}"
+
+
 MKT_BUY_BEFORE_CLOSE = timedelta(minutes=2)
 MKT_BUY_TOPUP_BEFORE_CLOSE = timedelta(seconds=30)
 MKT_SELL_AFTER_OPEN = timedelta(minutes=1)
@@ -1219,7 +1237,7 @@ def run() -> None:
                         # Not "late": a disarmed step is skipped on purpose and
                         # logged once, so the ledger says why no order went in.
                         done[name] = f"skipped: live not armed at {now:%H:%M}"
-                        log(f"{name} {today}: LIVE not armed ({ARMED_FILE.name} absent); no order")
+                        log(f"{name} {today}: LIVE not armed ({arm_status()}); no order")
                         save_state(st)
                         continue
                     # one attempt per step per day; a step whose window passed by more

@@ -289,6 +289,13 @@ DEFAULT_CONFIG = {
     # resting while the zone re-anchors away from it. Distinct from
     # ai_entry_unconfirmed_ttl_sec, which covers a *filled* but unconfirmed fill.
     "ai_entry_limit_ttl_sec":     30.0,
+    # Entry-cost A/B (2026-10-01): rotate Plan A market entries across arms.
+    # Comma list of "ask" (control: market at the ask), "mid_down" (limit at
+    # the IEX mid rounded DOWN to the cent; = bid on 1c spreads) and "bid"
+    # (limit at the bid). Non-control arms rest ai_entry_test_cross_sec, then
+    # cancel and buy what is left at market. "" = off (plain market entries).
+    "ai_entry_test_arms":         "",
+    "ai_entry_test_cross_sec":    10.0,
     # Atomic confirm→submit (Package B): refuse place if send-ask moved more
     # than this from the streak-pass print (pct OR absolute cents).
     # Mid-session 2026-09-18 post-10:57 quality: tighter confirm slip.
@@ -1793,6 +1800,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_zone_mode",
     "ai_eod_liquidate_time",
     "ai_entry_order_style",
+    "ai_entry_test_arms",
     "ai_entry_confirm_max_slip_pct",
     "ai_entry_confirm_max_slip_px",
 )
@@ -2299,6 +2307,8 @@ SAFE_CONFIG_KEYS = [
     "ai_entry_limit_pad_pct",
     "ai_entry_marketable_pad_max_px",
     "ai_entry_limit_ttl_sec",
+    "ai_entry_test_arms",
+    "ai_entry_test_cross_sec",
     "ai_entry_confirm_max_slip_pct",
     "ai_entry_confirm_max_slip_px",
     "ai_stop_use_market",
