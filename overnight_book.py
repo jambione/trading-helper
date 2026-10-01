@@ -654,6 +654,42 @@ def aggregate_orders(orders: list) -> dict[str, dict]:
     return out
 
 
+def fifo_matches(ledger: list[dict], sell_day: str) -> list[dict]:
+    """Paper sells on *sell_day* matched first-in-first-out to the buy lots
+    they closed. Pure.
+
+    A sell that only partly fills leaves shares that a later morning's sell
+    closes; pairing by "latest buy before the sell day" priced those shares
+    at the next night's buy. Lots carry their own price and day here. One
+    fill row per (day, leg, sym) counts: a re-run reconcile appends a
+    duplicate, and the last one wins.
+    """
+    rows: dict[tuple, dict] = {}
+    for r in ledger:
+        if r.get("event") == "fill" and r.get("fill") and float(r.get("filled_qty") or 0) > 0:
+            rows[(r["day"], r["leg"], r["sym"])] = r
+    out = []
+    for sym in sorted({k[2] for k in rows}):
+        lots = []                                   # [buy_day, qty left, px, cross]
+        for (day, leg, s), r in sorted(rows.items(), key=lambda kv: (kv[0][0], kv[0][1] == "buy")):
+            if s != sym or day > sell_day:
+                continue
+            q = float(r["filled_qty"])
+            if leg == "buy":
+                lots.append([day, q, float(r["fill"]), r.get("cross")])
+                continue
+            while q > 1e-9 and lots:                # sells close the oldest lots first
+                take = min(q, lots[0][1])
+                if day == sell_day:
+                    out.append({"sym": sym, "qty": take, "buy": lots[0][2], "sell": float(r["fill"]),
+                                "buy_day": lots[0][0], "buy_cross": lots[0][3], "sell_cross": r.get("cross")})
+                lots[0][1] -= take
+                q -= take
+                if lots[0][1] <= 1e-9:
+                    lots.pop(0)
+    return out
+
+
 def night_summary(sell_day: date, fetch=None) -> None:
     """Score the night ending *sell_day* on the plan, with paper fills beside it."""
     fetch = fetch or crosses
@@ -681,22 +717,26 @@ def night_summary(sell_day: date, fetch=None) -> None:
         night.update({"filter_floor": None, "n_book": night["n_plan"], "n_book_scored": night["n_scored"],
                       "mean_bp_book": night["mean_bp_plan"], "pnl_book_usd": night["pnl_plan_usd"]})
 
-    # Paper fills, secondary: only names paper filled on both legs.
-    rows = _read_jsonl(LEDGER)
-    fills = [r for r in rows if r.get("event") == "fill"]
-    sells = {r["sym"]: r for r in fills if r["leg"] == "sell" and r["day"] == sell_day.isoformat()}
-    buys = {}
-    for r in fills:
-        if r["leg"] == "buy" and r["day"] < sell_day.isoformat():
-            buys[r["sym"]] = r                      # latest buy before the sell day wins
-    pairs = [(buys[s], sells[s]) for s in sells if s in buys and buys[s]["fill"] and sells[s]["fill"]]
-    ret_fill = [(b2["fill"] / b1["fill"] - 1) * 1e4 for b1, b2 in pairs]
-    ret_cross = [(b2["cross"] / b1["cross"] - 1) * 1e4 for b1, b2 in pairs if b1["cross"] and b2["cross"]]
+    # Paper fills, secondary: what the paper account actually earned on the
+    # shares it sold this morning, each matched to the lot it came from.
+    lots = fifo_matches(_read_jsonl(LEDGER), sell_day.isoformat())
+    by_sym: dict[str, list] = {}
+    for m in lots:
+        by_sym.setdefault(m["sym"], []).append(m)
+    ret_fill, ret_cross = [], []
+    for ms in by_sym.values():
+        q = sum(m["qty"] for m in ms)
+        cost = sum(m["qty"] * m["buy"] for m in ms)
+        ret_fill.append((sum(m["qty"] * m["sell"] for m in ms) / cost - 1) * 1e4)
+        if all(m["buy_cross"] and m["sell_cross"] for m in ms):
+            ret_cross.append((sum(m["qty"] * m["sell_cross"] for m in ms)
+                              / sum(m["qty"] * m["buy_cross"] for m in ms) - 1) * 1e4)
     night.update({
-        "names": len(pairs),
+        "names": len(by_sym),
         "mean_bp_fills": (sum(ret_fill) / len(ret_fill)) if ret_fill else None,
         "mean_bp_crosses": (sum(ret_cross) / len(ret_cross)) if ret_cross else None,
-        "pnl_usd": round(sum((b2["fill"] - b1["fill"]) * b2["filled_qty"] for b1, b2 in pairs), 2),
+        "pnl_usd": round(sum(m["qty"] * (m["sell"] - m["buy"]) for m in lots), 2),
+        "carried_lots": sorted({m["sym"] for m in lots if m["buy_day"] != night["plan_day"]}),
     })
     # One row per night: a re-score (the `score` command, a rerun reconcile)
     # replaces the earlier row instead of double-counting the night.
@@ -710,7 +750,8 @@ def night_summary(sell_day: date, fetch=None) -> None:
         + (f"{mb:+.1f} bp at the crosses, ${night['pnl_book_usd']:+.2f} at ${DOLLARS:,.0f}/name" if mb is not None
            else "unscored (no crosses)")
         + (f" (all 20: {mp:+.1f} bp)" if mp is not None else "")
-        + f"; paper filled {len(pairs)} names, ${night['pnl_usd']:+.2f}"
+        + f"; paper filled {night['names']} names, ${night['pnl_usd']:+.2f}"
+        + (f" (carried lots: {','.join(night['carried_lots'])})" if night["carried_lots"] else "")
         + (f" missing {','.join(night['missing'])}" if night["missing"] else ""))
 
 

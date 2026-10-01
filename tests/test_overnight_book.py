@@ -321,3 +321,20 @@ def test_sell_check_skips_positions_an_accepted_moo_already_covers(monkeypatch, 
     ob.sell(tc, date(2026, 10, 1), attempt=1, tif="opg", tag="sell_check")
     assert tc.cancelled == 0
     assert [(r.symbol, r.qty, str(r.time_in_force.value).lower()) for r in tc.submitted] == [("BBB", 5, "opg")]
+
+
+# ── paper P&L: leftover shares keep their own buy price ──────────────────────
+
+def test_fifo_prices_leftover_shares_at_their_own_buy():
+    ledger = [
+        {"event": "fill", "day": "2026-10-01", "leg": "buy", "sym": "AAA", "fill": 50.0, "filled_qty": 10},
+        {"event": "fill", "day": "2026-10-02", "leg": "sell", "sym": "AAA", "fill": 51.0, "filled_qty": 6},  # 4 left
+        {"event": "fill", "day": "2026-10-02", "leg": "buy", "sym": "AAA", "fill": 60.0, "filled_qty": 10},
+        {"event": "fill", "day": "2026-10-03", "leg": "sell", "sym": "AAA", "fill": 61.0, "filled_qty": 14},
+        {"event": "fill", "day": "2026-10-03", "leg": "sell", "sym": "AAA", "fill": 61.0, "filled_qty": 14},  # re-run dup
+    ]
+    m = ob.fifo_matches(ledger, "2026-10-03")
+    assert [(x["qty"], x["buy"], x["buy_day"]) for x in m] == [(4.0, 50.0, "2026-10-01"), (10.0, 60.0, "2026-10-02")]
+    assert sum(x["qty"] * (x["sell"] - x["buy"]) for x in m) == 4 * 11 + 10 * 1     # not 14 x $1
+    first = ob.fifo_matches(ledger, "2026-10-02")
+    assert [(x["qty"], x["buy"]) for x in first] == [(6.0, 50.0)]
