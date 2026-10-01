@@ -404,3 +404,13 @@ def test_compare_lines_live_auction_up_with_paper_and_the_cross():
     assert sell["full"] is False                                              # expired, 0/1
     assert abs(sell["live_vs_cross_bp"] - (14.72 / 14.70 - 1) * 1e4) < 1e-9   # got less = positive
     assert out["totals"]["orders"] == 2 and out["totals"]["full"] == 1
+
+
+def test_live_needs_the_arm_file_paper_never_does(monkeypatch, tmp_path):
+    monkeypatch.setattr(ob, "ARMED_FILE", tmp_path / "overnight_live.armed")
+    monkeypatch.setattr(ob, "LIVE", False)
+    assert ob.live_armed() is True                       # paper is always armed
+    monkeypatch.setattr(ob, "LIVE", True)
+    assert ob.live_armed() is False                      # installed, disarmed
+    (tmp_path / "overnight_live.armed").touch()
+    assert ob.live_armed() is True                       # armed

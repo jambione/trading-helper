@@ -145,6 +145,18 @@ if LIVE:
 LIVE_MAX_BOOK = float(os.getenv("OVERNIGHT_LIVE_MAX_BOOK", "100"))
 LIVE_MAX_ORDER = float(os.getenv("OVERNIGHT_LIVE_MAX_ORDER", "25"))
 LIVE_MAX_SHARES = int(os.getenv("OVERNIGHT_LIVE_MAX_SHARES", "1"))
+# The arm switch, separate from installing the live agent: an installed but
+# disarmed live scheduler plans, reads the account and refreshes the
+# dashboard, and skips every order step. `touch` this file to arm, `rm` to
+# disarm; checked before each order step, so no restart either way.
+ARMED_FILE = ROOT / "config" / "overnight_live.armed"
+ORDER_STEPS = frozenset({"sell", "sell_check", "sell_fallback", "sell_topup",
+                         "buy", "buy_check", "buy_fallback", "buy_topup"})
+
+
+def live_armed() -> bool:
+    """Paper is always armed. Live only while the arm file exists."""
+    return (not LIVE) or ARMED_FILE.exists()
 MKT_BUY_BEFORE_CLOSE = timedelta(minutes=2)
 MKT_BUY_TOPUP_BEFORE_CLOSE = timedelta(seconds=30)
 MKT_SELL_AFTER_OPEN = timedelta(minutes=1)
@@ -1184,6 +1196,14 @@ def run() -> None:
                 steps = [("plan", now.replace(hour=6, minute=30, second=0, microsecond=0), lambda: plan(tc, today))]
                 steps += [(name, when, fns[name]) for name, when in schedule(op, cl)]
                 for name, when, fn in steps:
+                    if (name in ORDER_STEPS and name not in done and now >= when
+                            and not live_armed()):
+                        # Not "late": a disarmed step is skipped on purpose and
+                        # logged once, so the ledger says why no order went in.
+                        done[name] = f"skipped: live not armed at {now:%H:%M}"
+                        log(f"{name} {today}: LIVE not armed ({ARMED_FILE.name} absent); no order")
+                        save_state(st)
+                        continue
                     # one attempt per step per day; a step whose window passed by more
                     # than 10 minutes (the process was down) is skipped, not run late,
                     # except reconcile, which is safe any time later that day
@@ -1237,6 +1257,9 @@ def main() -> None:
         night_summary(day)
         return
     tc = book_client()
+    if (LIVE and args.cmd in ("buy", "sell", "topup") and not args.dry_run
+            and not live_armed()):
+        raise SystemExit(f"REFUSED: live not armed (touch {ARMED_FILE} to arm)")
     if args.cmd == "buy":
         buy(tc, day, dry=args.dry_run)
     elif args.cmd == "sell":

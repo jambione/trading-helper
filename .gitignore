@@ -180,3 +180,6 @@ benchmarks/entry_ab/phase_a_top.json
 # this box is allowed to trade, so it must NOT travel with a deploy: a config
 # push can then never arm a machine that was not armed by hand. See live_arm.py.
 config/live_armed.json
+
+# overnight live arm switch (operational flag, never committed)
+config/overnight_live.armed
