@@ -60,6 +60,13 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [ ] **Three-arm entry test on paper:** rotate entries across (1) control: market at the ask, (2) limit at the mid rounded DOWN to the cent (= bid on 1c spreads), (3) limit at the bid; arms 2-3 cross to the ask after 10 s if unfilled. Log arm, limit price, fill time, filled-passive vs crossed, entry vs SIP mid, P&L. Report after 1-2 weeks. Deploy after the close.
 
+## Today's losses (Jonathan, 13:45) — test tonight on the ~871 fills
+
+37 trades 10:21-13:44, net -$10.88. 9 losers at -0.45..-0.74% = -$21.62 (2x the net); winners top out ~+0.6%, avg ~+0.4%. No single entry feature (square type, top-of-range, TradingView indicators) separates them.
+- [ ] **Re-entry cooldown after a loss:** LYTE -2.22 then -2.56 (3 min later), TDAY -1.20 then -3.00 (4 min later); OXY traded 13x for ~-$0.55. Test: no re-entry in the same name for N min (5/10/20/30) after a losing exit — opens lost vs P&L, both halves, t-stat.
+- [ ] **Morning window:** 10:21-10:51 was -$9.94 of the -$10.88 (91%); after 11:00 ~-$0.94. Test whether 10:15-11:00 entries lose consistently across 30+ days or today was one-off. Fix only if it holds out of sample.
+- Note: <$10 names (TDAY, COHH) were 4 trades, -$6.29 (58% of net) — matches cheap-names memory; no $10 minimum (Jonathan's call).
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
