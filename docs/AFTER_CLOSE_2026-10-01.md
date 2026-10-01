@@ -37,6 +37,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [ ] Squares were MORE common today (300 overbought checks vs 222 on 9/30) but only 3 armed (vs 35). 74% of today's squares died on spread_wide (87), spread_unknown (69), tape_only (65); yesterday ~33%. Today's book is thin names (KORU, EFXT, GLOB, NOWL, CNXC, TDAY) and only 7-15 names. spread_unknown doubled vs 9/30 (161 -> 296) = the warmer slowdown, fixed 10:12. Question for Jonathan: is the 0.2% spread gate right on thin-name days, or is the issue which names reach the book?
 
+- [ ] **More names on the book?** Cap is 12 seats (book server live); held 7-8, all movers. Admission refused 1,709 times on 87 names since the open: spread_wide 644, no_tape/stale_tape 608, float>800M 189, not_uptrend 100, gapped_down 88. After close: replay today with seats 12->20, spread gate 0.2/0.3/0.4%, float cap lifted / bigger movers list, and show opens AND gross/net side by side (memory: full book = opens, not profit; spread gate cut cost 0.112% -> 0.071%).
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
