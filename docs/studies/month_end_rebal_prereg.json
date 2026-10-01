@@ -1,0 +1,29 @@
+{
+ "study": "Month-end pension rebalancing flow: does the month's stock-minus-bond return predict SPY over the last sessions of the month (opposite sign)?",
+ "registered_at": "2026-10-01T18:45-04:00",
+ "registered_before_results": true,
+ "hypothesis": "Balanced funds rebalance to fixed weights at month end. When stocks beat bonds during the month they sell stocks (and buy bonds) into the close of the month, and the reverse. So the month-to-date SPY-minus-TLT return should predict the last-k-session return with the OPPOSITE sign.",
+ "data": {
+  "primary": "Alpaca SIP daily bars, split+dividend adjusted (ai_reports/edge5/daily_long.pkl on the mini), SPY and TLT, 2016-01 -> 2026-09-25. Close-to-close only.",
+  "second_oos": "Yahoo adjusted daily closes (yfinance, free) SPY and TLT from TLT inception (2002-07-30) through 2015-12. Run once, after the Alpaca results, only to confirm or reject. Overlap 2016+ used only to check Yahoo and Alpaca returns agree."
+ },
+ "definitions": {
+  "month": "calendar month with trading sessions d1..dT; d0 = last session of the prior month",
+  "signal": "S = rSPY - rTLT from close(d0) to close(d_{T-k})",
+  "trade_window": "enter close(d_{T-k}), exit close(dT): the last k sessions of the month",
+  "k": "primary 3; secondary 1 and 5",
+  "position": "-sign(S)"
+ },
+ "strategies": {
+  "A_spy_dir": "SPY only, long or short by -sign(S); net = -sign(S) * rSPY(window) - cost",
+  "B_pair": "dollar-neutral SPY vs TLT by -sign(S); net = -sign(S) * (rSPY - rTLT)(window) - cost",
+  "C_long_only": "long SPY over the window only when S < 0, flat otherwise; reported per trade and vs the mean of all SPY k-session windows",
+  "strong_half": "info: A and B restricted to |S| above the tune-period median |S|"
+ },
+ "costs": "closing-auction round trip per instrument = modeled median spread (SPY 0.26 bp, TLT 1.17 bp, round-2 SpreadModel) + 2 bp. A, C: 2.26 bp. B: 5.43 bp.",
+ "placebo": "the same rule on every non-month-end window: for each session t that is not in the last 5 or first 3 sessions of a month, S = rSPY - rTLT over the 15 sessions ending at t, trade t -> t+k. Excess = strategy mean - placebo mean (Welch t). Separates a month-end flow from generic short-term stock/bond reversal.",
+ "info_only": ["reversal: same -sign(S) position over the first 3 sessions of the next month", "quarter-end months vs other months", "Spearman correlation of S with the window return"],
+ "splits": "Alpaca months by time: oldest 60% tune, next 20% validate, newest 20% holdout. Second OOS = Yahoo 2002-08..2015-12.",
+ "promotion": "A or B at k=3: net > 0 on tune AND validate, pooled tune+validate t >= 2, and excess vs placebo > 0 on both. A candidate must then be net > 0 on the holdout AND the pre-2016 period. k=1 and k=5 are reported but cannot promote on their own.",
+ "power_note": "about 128 Alpaca months (~77/25/25) plus ~161 Yahoo months. With a monthly sd of ~150 bp over 3 sessions, a 20 bp edge needs ~200 months for t=2. Expect single-split t < 2 even if the effect is real."
+}
