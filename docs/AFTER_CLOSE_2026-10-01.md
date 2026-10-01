@@ -69,6 +69,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [x] **Do opens have timing + runway? (14:20, tools/runway_study.py --since 2026-09-15, 489 fills vs 8,582 same-name minutes after first fill.)** Runway exists (median +0.31% up within 15m, 19% reach +1%) but the drop is bigger (median -0.45%). Timing is slightly WORSE than a random minute in the same name: +0.5% before -0.5% 41% vs 48% (~2.8 sigma; part is the ~5 bp half-spread, fills scored from the ask); 30m return -0.48% vs -0.24%. Mean up_15 +0.45pp (t 3.65) but median -0.02pp = a few volatile outliers. What predicts runway (big day change, high vol, cheap, wide spread) also predicts the worse 30m return = volatility, not direction.
 
+- [ ] **Pullback entry test (Jonathan, 14:30) - tonight.** Today's opens scored trade by trade (/tmp/today_runway.py on the mini): 7 of 9 big losers never traded >0.15% above the fill in 15 min (XENE -0.03, SNDQ -0.39, RKLB#2 -0.15, LYTE -0.17/0.00, AXTI 12:43 -0.01, COHH +0.15) = bought the top tick; up-first 10 of 28 (morning 3/11, afternoon 7/6). Winners ran +0.8..+2.5% (SNXX, WULF, EFXT) and kept 25-40%. Test: instead of entering on the square, wait for the first pullback after it (e.g. first 1m close below the prior close / -0.2..-0.5% off the post-square high, within N min, skip if none) and enter there. Score on 30 days of fills vs same-name random minutes (runway_study method): up-first +/-0.5%, ret 15/30, both halves, how many entries are skipped, and what happens to today's losers and winners.
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
