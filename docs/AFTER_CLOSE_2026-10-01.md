@@ -33,6 +33,10 @@ day's checks turn up. Newest items at the bottom of each section.
 - [ ] Design question (Jonathan): the uptrend re-gate uses the instantaneous day change, so a name chopping around flat can be dropped on one tick and re-qualify a second later. Smooth it (e.g. below flat for 30-60s)?
 - Note: the 09:54 mid-session restart cost ~52 checks of spread_unknown while caches refilled.
 
+## No opens through 10:20 (yesterday: 7-10 by then)
+
+- [ ] Squares were MORE common today (300 overbought checks vs 222 on 9/30) but only 3 armed (vs 35). 74% of today's squares died on spread_wide (87), spread_unknown (69), tape_only (65); yesterday ~33%. Today's book is thin names (KORU, EFXT, GLOB, NOWL, CNXC, TDAY) and only 7-15 names. spread_unknown doubled vs 9/30 (161 -> 296) = the warmer slowdown, fixed 10:12. Question for Jonathan: is the 0.2% spread gate right on thin-name days, or is the issue which names reach the book?
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
