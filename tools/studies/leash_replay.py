@@ -84,8 +84,11 @@ TIMING_VARIANTS = [
     ("g.20 give 0.20R", {"ai_local_trail_give_r": 0.20}),
     ("g.30 give 0.30R", {"ai_local_trail_give_r": 0.30}),
     ("h30  min hold 30s", {"_min_hold": 30.0}),
+    ("h60  min hold 60s", {"_min_hold": 60.0}),
+    ("h120 min hold 120s", {"_min_hold": 120.0}),
     ("h180 min hold 180s", {"_min_hold": 180.0}),
     ("h300 min hold 300s", {"_min_hold": 300.0}),
+    ("h600 min hold 600s", {"_min_hold": 600.0}),
 ]
 
 
