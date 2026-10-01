@@ -39,6 +39,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [ ] **More names on the book?** Cap is 12 seats (book server live); held 7-8, all movers. Admission refused 1,709 times on 87 names since the open: spread_wide 644, no_tape/stale_tape 608, float>800M 189, not_uptrend 100, gapped_down 88. After close: replay today with seats 12->20, spread gate 0.2/0.3/0.4%, float cap lifted / bigger movers list, and show opens AND gross/net side by side (memory: full book = opens, not profit; spread gate cut cost 0.112% -> 0.071%).
 
+- [ ] **Seat held by a name that can't trade:** SDEV was refused spread_wide 65 times in 15 min (10:12-10:27) while holding one of the 12 seats. Should a seat be released after N consecutive spread_wide refusals? (Opens resumed after the 10:12 warmer fix: XENE 10:21, OXY 10:23, SNDQ 10:23.)
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
