@@ -5,11 +5,13 @@
 #   scripts/install_overnight_agent.sh remove        stop and uninstall the paper book
 #   scripts/install_overnight_agent.sh live          install the REAL-MONEY test (the switch)
 #   scripts/install_overnight_agent.sh remove live   stop and uninstall the real-money test
+#   scripts/install_overnight_agent.sh monthend      install / restart the month-end pilot (remove monthend: uninstall)
 set -euo pipefail
 ACTION=install
 [ "${1:-}" = "remove" ] && { ACTION=remove; shift; }
 LABEL=com.jambi.overnight-book
 [ "${1:-}" = "live" ] && LABEL=com.jambi.overnight-live
+[ "${1:-}" = "monthend" ] && LABEL=com.jambi.month-end-book
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$HERE/scripts/$LABEL.plist"
 DST="$HOME/Library/LaunchAgents/$LABEL.plist"

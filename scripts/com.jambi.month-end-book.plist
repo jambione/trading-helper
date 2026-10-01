@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.jambi.month-end-book — the month-end rebalancing pilot's scheduler.
+
+  Runs `month_end_book.py run`: on the month's second-to-last session it
+  decides SPY long/short from the month's SPY-minus-TLT return and enters
+  near the close; on the last session it exits near the close; both days it
+  scores the plan on the official closing crosses. Orders go only to its own
+  paper account (config/secrets.json.monthend); without those keys it runs
+  score-only. See month_end_book.py and docs/studies/MONTH_END_REBAL_2026-10-01.md.
+
+  Same shape as com.jambi.overnight-book: RunAtLoad + KeepAlive, throttled,
+  bootstrapped into gui/<uid>. The desk's `./trading restart` never matches
+  month_end_book.py.
+
+  Install: scripts/install_overnight_agent.sh monthend
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jambi.month-end-book</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/jambimac/repo/trading-helper/.venv/bin/python</string>
+    <string>-u</string>
+    <string>/Users/jambimac/repo/trading-helper/month_end_book.py</string>
+    <string>run</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/jambimac/repo/trading-helper</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>300</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/month_end_book.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/month_end_book.log</string>
+</dict>
+</plist>
