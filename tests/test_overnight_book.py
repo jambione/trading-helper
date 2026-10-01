@@ -414,3 +414,17 @@ def test_live_needs_the_arm_file_paper_never_does(monkeypatch, tmp_path):
     assert ob.live_armed() is False                      # installed, disarmed
     (tmp_path / "overnight_live.armed").touch()
     assert ob.live_armed() is True                       # armed
+
+
+def test_arm_file_with_a_start_date_arms_from_that_day(monkeypatch, tmp_path):
+    from datetime import date
+    f = tmp_path / "overnight_live.armed"
+    monkeypatch.setattr(ob, "ARMED_FILE", f)
+    monkeypatch.setattr(ob, "LIVE", True)
+    f.write_text("2026-10-05\n")
+    assert ob.live_armed(date(2026, 10, 2)) is False      # Friday: not yet
+    assert ob.live_armed(date(2026, 10, 5)) is True       # Monday: armed
+    f.write_text("10/5")                                  # unreadable: stay disarmed
+    assert ob.live_armed(date(2026, 10, 6)) is False
+    f.unlink()
+    assert ob.live_armed(date(2026, 10, 6)) is False      # deleted: cancelled

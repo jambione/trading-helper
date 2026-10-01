@@ -148,15 +148,33 @@ LIVE_MAX_SHARES = int(os.getenv("OVERNIGHT_LIVE_MAX_SHARES", "1"))
 # The arm switch, separate from installing the live agent: an installed but
 # disarmed live scheduler plans, reads the account and refreshes the
 # dashboard, and skips every order step. `touch` this file to arm, `rm` to
-# disarm; checked before each order step, so no restart either way.
+# disarm; checked before each order step, so no restart either way. Writing
+# a start date into it (`echo 2026-10-05 > ...`) arms it from that day.
 ARMED_FILE = ROOT / "config" / "overnight_live.armed"
 ORDER_STEPS = frozenset({"sell", "sell_check", "sell_fallback", "sell_topup",
                          "buy", "buy_check", "buy_fallback", "buy_topup"})
 
 
-def live_armed() -> bool:
-    """Paper is always armed. Live only while the arm file exists."""
-    return (not LIVE) or ARMED_FILE.exists()
+def live_armed(today: date | None = None) -> bool:
+    """Paper is always armed. Live only while the arm file exists, and, if
+    the file holds a YYYY-MM-DD start date, only from that day on (so the
+    mini arms itself on schedule; deleting the file still cancels). An
+    unreadable date stays disarmed: a typo must not arm real money early."""
+    if not LIVE:
+        return True
+    if not ARMED_FILE.exists():
+        return False
+    try:
+        txt = ARMED_FILE.read_text().strip()
+    except OSError:
+        return False
+    if not txt:
+        return True
+    try:
+        start = date.fromisoformat(txt.split()[0])
+    except ValueError:
+        return False
+    return (today or datetime.now(ET).date()) >= start
 MKT_BUY_BEFORE_CLOSE = timedelta(minutes=2)
 MKT_BUY_TOPUP_BEFORE_CLOSE = timedelta(seconds=30)
 MKT_SELL_AFTER_OPEN = timedelta(minutes=1)
