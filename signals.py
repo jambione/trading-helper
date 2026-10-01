@@ -218,6 +218,54 @@ def _resampled_percent_r(df: pd.DataFrame, timeframe: str,
     return None if not out.notna().any() else out
 
 
+MINUTE_GAP_FILL_MAX = 15   # minutes; longer silences (overnight, halts) stay gaps
+
+
+def _minute_grid_pr(df: pd.DataFrame, length: int, span: int) -> pd.Series | None:
+    """%R(length) EMA(span) counted in MINUTES, aligned to df's rows.
+
+    IEX prints a few percent of the tape, so a thin name has no bar for many
+    minutes and "%R over 112 bars" reaches back well past 112 minutes: FLY
+    2026-09-30 12:16 read slow -40 on IEX rows where the full tape (and
+    TradingView) said -71. Each minute missing inside a session gets a flat
+    bar at the previous close, which is what the full tape shows for a name
+    that did not trade, then the line is computed and read back at df's own
+    rows. Gaps longer than MINUTE_GAP_FILL_MAX stay gaps: overnight and
+    halts are not minutes anyone traded through, and TradingView spans them
+    too. None when df has no usable `time` column (callers fall back to rows).
+    """
+    if df.empty or "time" not in df.columns:
+        return None
+    try:
+        t = pd.to_datetime(df["time"], utc=True, format="mixed")
+    except Exception:
+        try:
+            t = pd.to_datetime(df["time"], utc=True)
+        except Exception:
+            return None
+    if t.isna().any() or not t.is_monotonic_increasing:
+        return None
+    t = t.dt.floor("min")
+    if t.duplicated().any():
+        return None
+    hi, lo, cl = (df[c].to_numpy(dtype=float) for c in ("high", "low", "close"))
+    times, H, L, C, orig = [], [], [], [], []
+    prev = None
+    for k, ts in enumerate(t):
+        if prev is not None:
+            gap = int((ts - prev).total_seconds() // 60)
+            if 1 < gap <= MINUTE_GAP_FILL_MAX:
+                for m in range(1, gap):
+                    times.append(prev + pd.Timedelta(minutes=m))
+                    H.append(C[-1]); L.append(C[-1]); C.append(C[-1])
+        orig.append(len(times))
+        times.append(ts); H.append(hi[k]); L.append(lo[k]); C.append(cl[k])
+        prev = ts
+    pr = williams_pr(pd.Series(H), pd.Series(L), pd.Series(C), int(length))
+    sm = pr.ewm(span=max(1, int(span)), adjust=False).mean()
+    return pd.Series(sm.to_numpy()[orig], index=df.index)
+
+
 def compute_percent_r_exhaustion(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     """
     %R Trend Exhaustion Logic (Updated for Multiple Oversold Support):
@@ -231,11 +279,17 @@ def compute_percent_r_exhaustion(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
 
     threshold = cfg.get("rte_threshold", 20)
 
+    # Both lines count minutes, not rows, when the frame carries times
+    # (rte_minute_grid, default on): see _minute_grid_pr.
+    grid = bool(cfg.get("rte_minute_grid", True))
+
     # Fast line: native bars. This is the short scale.
     fast_span = max(1, int(cfg.get("rte_fast_ewm_span", 7) or 7))
-    s_pr = williams_pr(df["high"], df["low"], df["close"],
-                       int(cfg.get("rte_fast_length", 21)))
-    s_percentR = s_pr.ewm(span=fast_span, adjust=False).mean()
+    fast_len = int(cfg.get("rte_fast_length", 21))
+    s_percentR = _minute_grid_pr(df, fast_len, fast_span) if grid else None
+    if s_percentR is None:
+        s_pr = williams_pr(df["high"], df["low"], df["close"], fast_len)
+        s_percentR = s_pr.ewm(span=fast_span, adjust=False).mean()
 
     # Slow line matches TradingView %R Trend Exhaustion [upslidedown]:
     # %R(112) EMA(3) on the SAME bars as the fast line. A coarser resample
@@ -249,9 +303,11 @@ def compute_percent_r_exhaustion(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     l_percentR = None
     if slow_tf:
         l_percentR = _resampled_percent_r(df, slow_tf, slow_len)
+    slow_native = int(cfg.get("rte_slow_native_length", 112))
+    if l_percentR is None and grid:
+        l_percentR = _minute_grid_pr(df, slow_native, slow_span)
     if l_percentR is None:
-        l_pr = williams_pr(df["high"], df["low"], df["close"],
-                           int(cfg.get("rte_slow_native_length", 112)))
+        l_pr = williams_pr(df["high"], df["low"], df["close"], slow_native)
         l_percentR = l_pr.ewm(span=slow_span, adjust=False).mean()
 
     df["s_percentR"] = s_percentR

@@ -13,9 +13,10 @@ _(none yet)_
 - [ ] Engine FLY fix (681c933) first live day: compare logged %R with IEX-rebuilt %R at every fill (`pctr_check.py` in the scratchpad / `/tmp/pctr_check.py` on the mini).
 - [ ] Overnight: first scored night (~09:50), first -1% filtered buy (15:58), every kept name filled.
 
-## Built today, deploy after the close
+## Shipped before the open (watch today)
 
-- [ ] Item 4 — engine slow %R measured over 112 *minutes*, not 112 rows (thin IEX names reached back further than TradingView: FLY -40 vs -71). Trading-logic change.
+- [x] Engine %R counts minutes, not IEX rows (`rte_minute_grid`, default on). FLY 9/30 12:16 now reads -38 / -75 vs TradingView -33 / -71 (was -39 / -40). Shipped pre-open with Jonathan's OK. Watch: squares should now match the chart; arms may shift on thin names.
+- [x] Overnight paper P&L matched first-in-first-out (leftover shares keep their own buy price).
 
 ## Context
 
