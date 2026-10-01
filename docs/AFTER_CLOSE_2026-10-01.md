@@ -85,6 +85,8 @@ day's checks turn up. Newest items at the bottom of each section.
 
 - [x] **Overnight paper uses the whole account (Jonathan, 10/1 eve).** overnight_book.size_paper: 98% of min(equity, cash) at the buy, split equally across the names that pass the filter, whole shares, leftover handed out a share at a time. Tonight's 16 names would have been $24,497 (98%) vs $16,254 (65%) at $1,000/name. OVERNIGHT_EQUITY_FRAC overrides. Live test caps unchanged: Jonathan 10/1 eve - keep live as a small test ($100 book, $25/order, 1 share) for its first week (10/5-10/9); revisit full-equity live after that week.
 
+- [x] **Counterfactual: today's day-trades (10/1 eve).** As traded: 73 trades -$20.67, -7.2 bp/trade (best day in a while; Sept avg ~-24). Exits (leash_replay --set timing --days 2026-10-01, 1 s SIP, exit at bid): live -6.2 bp; every variant -4.8 (give 0.20R) .. -9.2 (decay off), h600 -13.5 = noise band. Entries (/tmp/entry_arms_today.py, real SIP NBBO, passive fill if a print trades at/under the limit within 10 s else ask at +10 s, exits unchanged, 70 fills): market -$17.13; mid_down -$10.48 (+$6.65, 67% passive); bid -$9.93 (+$7.20, 63% passive) = ~2.5 bp/trade saved; bid shows no adverse selection today (filled -6.1 vs crossed -6.2 bp), mid_down some (-8.7 vs -0.7). Name filters (hindsight, one day): <$10 skip -$13.18, after 12:00 only -$7.67, no 5-min re-entry after loss -$15.30. Best plausible combo today (bid entry + 0.20R give) ~ -2 bp/trade: still negative.
+
 ## Open engineering items
 
 - [x] Item 3: overnight paper P&L first-in-first-out (d8b1c8b, live).
