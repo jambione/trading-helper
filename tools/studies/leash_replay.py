@@ -67,6 +67,27 @@ VARIANTS = [
                              "ai_local_trail_peak_give_pct": 2.0}),
 ]
 
+# --set timing: how fast the ratchet tightens. Live (bot_config.json, 10/1):
+# idle 8 s, green step 0.05R, red step 0 (off since 9/30), give 0.12R.
+TIMING_VARIANTS = [
+    ("A  live config", {}),
+    ("A' live + 90s min hold", {"_min_hold": 90.0}),
+    ("i4   idle 4s", {"ai_local_trail_decay_idle_sec": 4.0}),
+    ("i15  idle 15s", {"ai_local_trail_decay_idle_sec": 15.0}),
+    ("i30  idle 30s", {"ai_local_trail_decay_idle_sec": 30.0}),
+    ("i60  idle 60s", {"ai_local_trail_decay_idle_sec": 60.0}),
+    ("i120 idle 120s", {"ai_local_trail_decay_idle_sec": 120.0}),
+    ("s.025 step 0.025R", {"ai_local_trail_decay_step_r": 0.025}),
+    ("s.10 step 0.10R", {"ai_local_trail_decay_step_r": 0.10}),
+    ("i30+s.025 slow both", {"ai_local_trail_decay_idle_sec": 30.0, "ai_local_trail_decay_step_r": 0.025}),
+    ("off  time decay off", {"ai_local_trail_time_decay_enabled": False}),
+    ("g.20 give 0.20R", {"ai_local_trail_give_r": 0.20}),
+    ("g.30 give 0.30R", {"ai_local_trail_give_r": 0.30}),
+    ("h30  min hold 30s", {"_min_hold": 30.0}),
+    ("h180 min hold 180s", {"_min_hold": 180.0}),
+    ("h300 min hold 300s", {"_min_hold": 300.0}),
+]
+
 
 def load_cache():
     try:
@@ -178,7 +199,12 @@ def walk(f, secs, cfg, ring):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", required=True, help="comma-separated ET dates")
+    ap.add_argument("--set", choices=("default", "timing"), default="default",
+                    help="timing = sweep how fast the ratchet tightens")
     args = ap.parse_args()
+    global VARIANTS
+    if args.set == "timing":
+        VARIANTS = TIMING_VARIANTS
     days = set(args.days.split(","))
     base = load_config()
     ring = max(2, int(base.get("ai_local_trail_print_ring", 3) or 3))
