@@ -70,7 +70,7 @@ USAGE (on the mini)
 LIVE (real money, off by default): see ACCOUNT / live_client() / _buy_live() and
 scripts/com.jambi.overnight-live.plist. Auctions only, hard caps, every other night.
 Logs: ai_reports/overnight/ (plan_DAY.json, ledger.jsonl, nights.jsonl, run.log)
-Dashboard: snapshot.json, rewritten after every step and every 15 minutes;
+Dashboard: snapshot.json, rewritten after every step and every 5 minutes;
 ai_trader publishes it on /api/state as "overnight" (a file read, no broker call).
 """
 from __future__ import annotations
@@ -106,7 +106,7 @@ NIGHTS = OUT / "nights.jsonl"
 STATE = OUT / "state.json"
 LOG = OUT / "run.log"
 SNAPSHOT = OUT / "snapshot.json"
-SNAPSHOT_EVERY = 15 * 60
+SNAPSHOT_EVERY = 5 * 60
 BACKTEST_BP = 16.1
 # Opening balance, for the dashboard's "since start": the paper account
 # (PA36S0LLDMZY) opened at $25,000, the live test account at $100.
