@@ -37,6 +37,7 @@ data available at the arm minute.
 | R1 | **Room below the high of day, replicated** | % below today's high | Resolve the conflict on post-$10-floor arms only |
 | M1 | **Market tide** | SPY and QQQ 15m and 30m return at the arm; share of the day's admitted names up in the last 15 m (a free $TICK proxy) | Only a daily regime filter was tested |
 | M2 | **Relative strength vs SPY, intraday** | Name return minus SPY return since the open and over the last 30 m | Daily RS exists (`rs_screener.py`); intraday never tested |
+| L5 | **Ported open-source S/R indicators** (added 10/2 15:50 ET, before any result) | LuxAlgo "Support and Resistance Levels with Breaks": last confirmed 15/15 swing high/low and whether price is above, inside or below them. LonesomeTheBlue "Support Resistance Channels": 10/10 pivots in 290 bars, channel width 5% of the 300-bar range, strength = pivots×20 + touches, top 6; % to the nearest channel above/below, inside a channel | The user's TradingView S/R tools, ported from their published logic; pivots are used only once confirmed |
 | S1 | **Squeeze release event** | First bar Bollinger(20,2) leaves Keltner(20,1.5) with LazyBear momentum > 0 and rising, 1m and 5m | Only the squeeze level was tested, never the release |
 
 ## Rules (fixed before any result)
@@ -48,7 +49,7 @@ data available at the arm minute.
   (`combined-score-positive-held-out` failed exactly there). Promote only if it holds there.
 - **Pass bar:** better net than the control by ≥ 5 bp with day-clustered t ≥ 2 in both halves and on the 60 days, n ≥ 100.
   Name selection that lifts the win rate but not the mean does not pass (`name-selection-lifts-win-rate-not-mean`).
-- **Multiple comparisons:** about 9 tests × 3 cuts × 2 outcomes ≈ 54 cells. Expect 2–3 false positives at t 2. Only the 60-day check counts.
+- **Multiple comparisons:** about 10 tests × 3 cuts × 2 outcomes ≈ 60 cells (L5 adds about 20 more). Expect 2–3 false positives at t 2. Only the 60-day check counts.
 - **Log `n` and decision counts first**: a cell with 0 trades is not a verdict (`replay-verdicts-were-vacuous`).
 - **Data:** free feeds only. Off-hours fetches on the mini, under the Alpaca rate limit; record 429 drops (`rvol-pace-gate-graded-2026-10-01`).
 
