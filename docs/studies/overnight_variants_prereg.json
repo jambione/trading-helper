@@ -1,0 +1,26 @@
+{
+ "registered_at": "2026-10-02 evening ET, before any variant was computed",
+ "question": "Does any one-parameter change to the live overnight book beat the live configuration on the 10-year panel?",
+ "panel": "~/lh_cache/panel.npz (SIP daily bars 2016..2026-09, ~6.2k names), lh_core.load + lh_strat.returns",
+ "split": {"IS": "2016-01-01..2021-12-31", "OOS": "2022-01-01..panel end"},
+ "base_live_config": {
+  "rank": "12-1 momentum cf[t-21]/cf[t-252]-1, chosen at the close of t, held close t -> open t+1 (ON[t+1])",
+  "universe": "raw close >= $5, ADV20 >= $50M (P['liquid'])",
+  "top_n": 20, "weight": "equal",
+  "intraday_filter": "drop picks with c[t]/o[t]-1 < -1% (live uses the 15:40 price; the close is a slight look-ahead, same for every variant); dropped names are not replaced"
+ },
+ "cost": "2 bp per side (auction), 4 bp per night on the deployed book; identical across variants, so ranking uses gross",
+ "variants": {
+  "N5": "top 5", "N10": "top 10", "N30": "top 30", "N40": "top 40",
+  "L6": "6-1 momentum (126/21)", "L9": "9-1 (189/21)", "L3": "3-1 (63/21)", "L12_0": "12-0, no skip (252/1)",
+  "ADV20M": "ADV >= $20M", "ADV100M": "ADV >= $100M", "ADV250M": "ADV >= $250M",
+  "PX10": "raw close >= $10",
+  "IVOL": "weights proportional to 1 / 60-day sd of daily returns",
+  "F_OFF": "no intraday filter", "F_M2": "filter at -2%", "F_0": "keep only names up on the day (>= 0%)",
+  "SPY_SKIP": "hold nothing on nights when SPY's day (open->close) is below -1%"
+ },
+ "statistic": "paired nightly difference variant minus base (bp/night, gross), mean and t over nights; SPY_SKIP scored as 0 on skipped nights",
+ "pass": "OOS mean diff >= +2 bp/night with t >= 3.0 (Bonferroni for 17 variants) AND IS diff same sign with t >= 1.5",
+ "lean": "OOS t >= 2.0 and IS same sign: report, do not ship; re-check on the next 6 months",
+ "also_report": "per-variant gross/net bp/night IS and OOS, % green nights, worst night, names held"
+}
