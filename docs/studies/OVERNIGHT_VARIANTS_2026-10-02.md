@@ -15,7 +15,7 @@ on nights with a book. Diff = variant − base, paired by night.
 - **The −1% intraday filter:** +4.1 bp IS (t 1.7) but +0.9 bp OOS (t 0.4) over no filter. Weaker than the 10/1 estimate, still not
   harmful. It holds 12.2 names on average vs 20 (it uses the full-day close; live uses 15:40, so live drops fewer, e.g. 15/20 on 10/2).
 - **Tail risk:** the base book's worst OOS night was **−12.5%**, and N5's was −30%. This is the cost of an unhedged overnight book;
-  more names (N30/N40) cut the worst night to −10%/−9.7% at no OOS cost, which is a risk choice, not an edge.
+  more names (N30/N40) cut the OOS worst night to −10.5%/−9.7%, but not in 2017–21 and at −1.5/−2.2 bp/night; see OVERNIGHT_BOOK_SIZE_2026-10-02 (stay at 20).
 
 ## Table
 ```
