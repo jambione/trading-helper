@@ -1,0 +1,16 @@
+{
+ "study": "Short the desk's own entry signals: does selling at the square (and at the desk's real fills) pay after costs and squeezes?",
+ "registered_at": "2026-10-02",
+ "registered_before_results": true,
+ "motivation": "Operator: 'we can always find a downturn when we are entering on squares.' Desk fills 9/23-9/29 drift -9/-28/-43 bp at 5/15/30 m; full squares on 9/29 bought the box top. The earlier short_fade_study (admitted names, 2nd-bar open, to close) was a coin flip that failed held-out, with a p99 +90% squeeze tail.",
+ "populations": {
+  "A_squares": "every square event (first bar where both %R lines are >= -20 and tight; signals.compute_percent_r_exhaustion with the live config, as in tools/studies/signal_timing.py) on names the book admitted that day (admit_funnel kept_symbols), 2026-09-04 .. 2026-10-02, 09:45-15:30 ET (the desk's entry window from 2026-10-05), at most one per name per 15 min. SIP 1m bars with extended hours from 04:00 so the 112-bar slow line is valid at the open.",
+  "B_fills": "every filled desk BUY on the paper account 2026-09-23 .. 2026-10-02 (broker filled orders), flipped to a short at the same moment."
+ },
+ "trade": "short at the open of the first 1m bar starting after the signal bar closes (A) / after the fill (B). Cover at the close of the bar 5, 15 or 30 minutes later, or 15:55. Buy-stops at +1/+2/+3/+5% above entry, filled at max(stop, that bar's open) + 0.10% slippage.",
+ "costs": "round trip by price tier as short_fade_study: $10+ 0.20%, $5-10 0.40%, <$5 1.00%; plus borrow 0.0 (easy-to-borrow names; flagged as optimistic).",
+ "shortability": "primary = names Alpaca marks shortable AND easy_to_borrow today (survivorship-like caveat: today's flags), and not in short-sale restriction at entry (price >= 10% below the prior SIP close is excluded). Also reported: all events.",
+ "splits": "A by date: tune 09-04..09-17, validate 09-18..09-25, holdout 09-28..10-02 (holdout read once). B: 09-23..09-28 vs 09-29..10-02.",
+ "report": "per horizon x stop: n, mean, median, win rate, p5/p1 (worst outcomes), t, per split; squeeze distribution (max high after entry within the hold).",
+ "promotion": "A, primary set: one pre-chosen cell (30 m, +3% stop) mean net > 0 on tune AND validate with pooled t >= 2, then mean > 0 and median > 0 on the holdout. B is supporting evidence only (short window). Anything else = no edge; report the best cells as information."
+}
