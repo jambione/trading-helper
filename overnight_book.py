@@ -168,6 +168,8 @@ def live_armed(today: date | None = None) -> bool:
         return True
     if not ARMED_FILE.exists():
         return False
+    if (ROOT / "config" / "live_mirror.armed").exists():
+        return False                    # the day-trading mirror owns the live account
     try:
         txt = ARMED_FILE.read_text().strip()
     except OSError:
@@ -185,6 +187,8 @@ def arm_status() -> str:
     """Why live is or isn't armed, for the log line."""
     if not ARMED_FILE.exists():
         return f"{ARMED_FILE.name} absent"
+    if (ROOT / "config" / "live_mirror.armed").exists():
+        return "live_mirror.armed present (the day-trading mirror owns the account)"
     try:
         txt = ARMED_FILE.read_text().strip()
     except OSError:

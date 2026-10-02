@@ -138,6 +138,11 @@ def init_for_ai(
     )
     _ready = alpaca_trader.is_active()
     _mode = (("live" if want_live else "paper") if _ready else "off")
+    if _ready and _mode == "paper":
+        # Copies paper orders to the small live account at 1 share while
+        # config/live_mirror.armed says so (live_mirror.py). Never raises.
+        import live_mirror
+        live_mirror.attach(alpaca_trader)
 
     # The assertion the desk never had. init() builds its client with
     # `paper = (_mode == "paper")` and never checks what came back, so a wrong
