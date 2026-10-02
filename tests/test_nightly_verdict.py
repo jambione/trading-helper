@@ -64,11 +64,14 @@ def test_pre_recorder_day_with_fills_is_legacy(repo):
 def test_verdict_words():
     assert nightly.verdict({"skip": "weekend"}) == ("SKIP", "weekend")
     assert nightly.verdict({"exact": {"ok": True, "verdict": "PASS"}})[0] == "PASS"
-    drift = {"exact": {"ok": True, "verdict": "FAIL", "misses": 0, "errors": {},
-                       "decision_agreement": 0.9, "buy_recall": 0.5}}
-    assert nightly.verdict(drift)[0] == "DRIFT"
-    broken = {"exact": {"ok": True, "verdict": "FAIL", "misses": 12, "errors": {}}}
-    assert nightly.verdict(broken)[0] == "FAIL"
+    # Since 2026-10-02 the exact replay emits DRIFT itself (a score under its
+    # floor) and FAIL only when the replay broke; read misses never decide it.
+    drift = {"exact": {"ok": True, "verdict": "DRIFT", "misses": 12, "errors": {},
+                       "verdict_why": "same_seat_agreement_tol 0.80 < 0.90"}}
+    assert nightly.verdict(drift) == ("DRIFT", "same_seat_agreement_tol 0.80 < 0.90")
+    broken = {"exact": {"ok": True, "verdict": "FAIL", "misses": 0,
+                        "errors": {"sync: TypeError": 3}, "verdict_why": "pass errors"}}
+    assert nightly.verdict(broken) == ("FAIL", "pass errors")
     assert nightly.verdict({"exact": {"ok": False, "why": "no boot"}})[0] == "FAIL"
     legacy = {"legacy": True, "fidelity_json": {"recall": 0.62, "precision": 0.2}}
     assert nightly.verdict(legacy)[0] == "DRIFT"

@@ -105,7 +105,24 @@ Measured on 10/1 09:30–11:00 (value-level inputs on):
 
 Total about 8–10 hours of work, plus re-runs after the close.
 
-## Is the pass bar realistic?
+## Scoring changed (2026-10-02, shipped)
+
+The exact replay now reports three scores, strict and within ±2 polls: **seat overlap**, **same-seat decision agreement**, and **buy recall** (5 s and 60 s). Read misses are informational.
+
+| Verdict | Meaning |
+|---|---|
+| FAIL | The replay broke: pass errors, or live polled and nothing was scored |
+| DRIFT | A score is under its floor |
+| PASS | Otherwise |
+
+Floors (`replay_session.EXACT_FLOORS`) come from 10/1 09:30–11:00 at ±2 polls, which measured seat overlap 70.0% and same-seat agreement 94.0%:
+- seat overlap ≥ 0.60
+- same-seat agreement ≥ 0.90
+- buy recall: no floor until a week of nightlies sets one
+
+These are a regression net, not a fidelity claim. Recalibrate after a week.
+
+## Is the pass bar realistic? (original analysis)
 
 - **0 misses: no, as written.** Any read the replay makes that live didn't (a different seat, a retry) is a miss by definition. Better: 0 misses **for reads live made**, and report the rest as "replay-only reads".
 - **≥ 99% decisions: probably not.** Thread timing in a multi-threaded desk (warmer, dash fetcher, polls) can't be reproduced to the millisecond. A realistic target after the steps above is **≥ 90–95%** on names seated on both sides, with seating overlap reported separately.

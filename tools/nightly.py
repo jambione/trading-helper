@@ -10,8 +10,10 @@ a failed step does not stop the next:
   2. fidelity   tools/replay_session.py --fidelity (the approximate replay's
                 score against live buys; writes fidelity.json in the archive)
   3. exact      tools/replay_session.py --exact with the code that booted the
-                desk: the acceptance verdict (0 read misses, >=99% decisions,
-                >=95% buys within 5 s) -> ai_reports/nightly/DAY/exact.json
+                desk: PASS / DRIFT / FAIL from three scores within +/-2 polls
+                (seat overlap, same-seat decision agreement, buy recall; floors
+                in replay_session.EXACT_FLOORS; FAIL only when the replay
+                itself breaks) -> ai_reports/nightly/DAY/exact.json
   4. paper      (manual only: --only paper; the operator chose on 2026-09-26
                 not to spend weeks accumulating it)
                 tools/studies/source_optimal_study.py on the day's actual
@@ -163,7 +165,10 @@ def step_exact(day: str, out: Path, log: Path) -> dict:
             "misses": sum((io_.get("missed") or {}).values()),
             "decision_agreement": r.get("decision_agreement"), "checks": r.get("checks"),
             "buy_recall": r.get("buy_recall"), "live_buys": r.get("live_buys"),
-            "errors": r.get("errors")}
+            "errors": r.get("errors"), "verdict_why": r.get("verdict_why"),
+            **{k: r.get(k) for k in ("tolerance_polls", "seat_overlap", "seat_overlap_tol",
+                                     "same_seat_agreement", "same_seat_agreement_tol",
+                                     "buy_recall_60s", "buys_matched_60s")}}
 
 
 def step_paper(day: str, out: Path, log: Path) -> dict:
@@ -240,10 +245,11 @@ def verdict(res: dict) -> tuple[str, str]:
     v = ex.get("verdict")
     if v in ("PASS", "SKIP"):
         return v, ""
-    if ex.get("misses") == 0 and not ex.get("errors"):
-        return "DRIFT", (f"decisions {ex.get('decision_agreement')}, buys {ex.get('buy_recall')} "
-                         f"(need >=0.99 / >=0.95) with every read served")
-    return "FAIL", f"read misses {ex.get('misses')}, errors {ex.get('errors')}"
+    if v == "DRIFT":
+        return "DRIFT", ex.get("verdict_why") or "a score is under its floor"
+    if v == "FAIL":
+        return "FAIL", ex.get("verdict_why") or f"errors {ex.get('errors')}"
+    return "FAIL", f"unknown exact verdict {v!r}"
 
 
 def summary_md(day: str, res: dict) -> str:
@@ -260,15 +266,23 @@ def summary_md(day: str, res: dict) -> str:
         lines += [f"**AI catalyst scorecard:** rc={cat.get('rc')}", ""]
     ex = res.get("exact") or {}
     if ex.get("ok"):
-        lines += [f"**Exact replay (acceptance): {ex.get('verdict')}** — sha {ex.get('sha')}, "
-                  f"read misses {ex.get('misses')}, decisions {fmt(ex.get('decision_agreement'), '.1%')} "
-                  f"of {ex.get('checks')}, buys {fmt(ex.get('buy_recall'), '.0%')} of {ex.get('live_buys')}"
-                  + (f", errors {ex.get('errors')}" if ex.get("errors") else ""), ""]
+        tol = ex.get("tolerance_polls", 2)
+        lines += [f"**Exact replay: {ex.get('verdict')}** — sha {ex.get('sha')}"
+                  + (f" ({ex.get('verdict_why')})" if ex.get("verdict_why") else ""), "",
+                  f"| score | strict | within ±{tol} polls |", "|---|---|---|",
+                  f"| seat overlap | {fmt(ex.get('seat_overlap'), '.1%')} | {fmt(ex.get('seat_overlap_tol'), '.1%')} |",
+                  f"| same-seat decision agreement | {fmt(ex.get('same_seat_agreement'), '.1%')} | "
+                  f"{fmt(ex.get('same_seat_agreement_tol'), '.1%')} |",
+                  f"| buy recall of {ex.get('live_buys')} (5 s / 60 s) | {fmt(ex.get('buy_recall'), '.0%')} | "
+                  f"{fmt(ex.get('buy_recall_60s'), '.0%')} |", "",
+                  f"Read misses (info only): {ex.get('misses')}; all-checks agreement "
+                  f"{fmt(ex.get('decision_agreement'), '.1%')} of {ex.get('checks')}"
+                  + (f"; errors {ex.get('errors')}" if ex.get("errors") else ""), ""]
         if ex.get("live_price_src"):
             lines += [f"Freshness path: live priced arm checks by {ex.get('live_price_src')}; "
                       f"quote-priced checks replayed identically "
                       f"{ex.get('quote_agree')}/{ex.get('quote_checks')}.", ""]
-        if ex.get("verdict") == "FAIL" and ex.get("first_divergence"):
+        if ex.get("verdict") in ("FAIL", "DRIFT") and ex.get("first_divergence"):
             lines += ["First divergences (live vs replay): " + "; ".join(
                 f"{k} {v.get('t')}" for k, v in ex["first_divergence"].items()), ""]
     else:

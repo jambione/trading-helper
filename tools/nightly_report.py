@@ -149,9 +149,11 @@ def replay_verdict(day: str, wait_sec: float = 2400.0) -> str:
     head = f"**{v}** (exact replay)" + (f" — {why}" if why else "")
     if v == "SKIP":
         return head
-    detail = (f"sha {ex.get('sha')}, read misses {ex.get('misses')}, decisions "
-              f"{ex.get('decision_agreement')} of {ex.get('checks')}, buys {ex.get('buy_recall')} "
-              f"of {ex.get('live_buys')}; live price sources {ex.get('live_price_src')}, "
+    pc = lambda v: "-" if v is None else f"{v:.1%}"  # noqa: E731
+    detail = (f"sha {ex.get('sha')}; within ±{ex.get('tolerance_polls', 2)} polls: seat overlap "
+              f"{pc(ex.get('seat_overlap_tol'))}, same-seat agreement {pc(ex.get('same_seat_agreement_tol'))}, "
+              f"buy recall (60 s) {pc(ex.get('buy_recall_60s'))} of {ex.get('live_buys')}; read misses "
+              f"{ex.get('misses')} (info); live price sources {ex.get('live_price_src')}, "
               f"quote-priced checks replayed identically {ex.get('quote_agree')}/{ex.get('quote_checks')}")
     return f"{head}\n\n{detail}\n\nApproximate replay (secondary): " + fidelity_verdict(day, wait_sec=0)
 

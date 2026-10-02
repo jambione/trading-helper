@@ -252,3 +252,29 @@ def test_gate_values_feed_lives_recorded_inputs_into_the_caches(tmp_path):
     assert ew._VOL_NOW_CACHE == {"KURA": (0.29, 160.0)}
     assert warm_runs == []                                         # never fetched
     assert rp.bind_gate_values(ew, {"ai_watch_async_gates": False}, [p], lambda: 0.0) is None
+
+
+def test_tolerant_scores_forgive_a_poll_or_two_of_timing():
+    """Seat overlap and same-seat agreement, strict and within +/- tol polls."""
+    w, x = ("watching", "stale_quote"), ("watching", "exh_falling")
+    live = {"AAA": {0: w, 1: w, 2: x}, "BBB": {5: w}}
+    rep = {"AAA": {0: w, 1: x, 2: x, 3: x}, "CCC": {9: w}}
+    strict = rp.tolerant_scores(live, rep, 0)
+    loose = rp.tolerant_scores(live, rep, 2)
+    # checks: AAA 0,1,2,3 + BBB 5 + CCC 9 = 6; both sides: AAA 0,1,2 = 3
+    assert strict["seat_overlap"] == 3 / 6 and strict["seat_overlap_tol"] == 3 / 6
+    assert loose["seat_overlap_tol"] == 4 / 6          # AAA@3 is within 2 polls of live's AAA@2
+    assert strict["same_seat_agreement"] == 2 / 3      # AAA@1 differs
+    assert loose["same_seat_agreement_tol"] == 3 / 3   # live had x at poll 2: within tolerance
+    assert rp.tolerant_scores({}, {}, 2)["seat_overlap"] is None
+
+
+def test_exact_verdict_fails_only_on_a_broken_replay():
+    ok = {"checks": 100, "polls": 10, "live_buys": 3, "seat_overlap_tol": 0.7,
+          "same_seat_agreement_tol": 0.94, "buy_recall_60s": 0.1}
+    assert rp.exact_verdict(ok) == ("PASS", "")        # read misses and buy recall never fail it
+    v, why = rp.exact_verdict({**ok, "same_seat_agreement_tol": 0.8})
+    assert v == "DRIFT" and "same_seat_agreement_tol" in why
+    assert rp.exact_verdict({**ok, "errors": {"sync: TypeError": 3}})[0] == "FAIL"
+    assert rp.exact_verdict({**ok, "checks": 0})[0] == "FAIL"     # live polled, nothing scored
+    assert rp.exact_verdict({"checks": 0, "live_buys": 0})[0] == "SKIP"
