@@ -4777,3 +4777,15 @@ body.engine-visible .engine-bar                         { display: none !importa
 .cell-exh.exh--os        { color: #22d3ee; font-weight: 700; }      /* ▲ oversold */
 
 
+
+/* Book "Buy?" button: logs the operator's call, never trades. */
+.book-call-btn {
+  margin-left: 6px; padding: 0 5px; font-size: 10px; line-height: 15px;
+  border: 1px solid var(--border, #444); border-radius: 3px;
+  background: transparent; color: var(--text-dim, #9aa); cursor: pointer;
+  vertical-align: middle;
+}
+.book-call-btn:hover { color: var(--text, #fff); border-color: var(--accent, #4caf50); }
+.book-call-btn.is-logged { color: #4caf50; border-color: #4caf50; }
+.book-call-btn.is-failed { color: #e57373; border-color: #e57373; }
+.book-call-btn:disabled { cursor: default; }

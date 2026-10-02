@@ -4467,6 +4467,54 @@ async def api_ai_desk_click(request: Request):
     return JSONResponse(out, status_code=status)
 
 
+MY_CALLS_PATH = Path(__file__).resolve().parent / "ai_reports" / "my_calls.jsonl"
+_my_calls_lock = threading.Lock()
+
+
+@app.post("/api/ai/my-call")
+async def api_ai_my_call(request: Request):
+    """Book "Buy?" button: log that the operator would buy this name now.
+
+    Log only. It never places, changes or cancels an order (that is
+    /api/ai/desk-click). tools/studies/my_calls_score.py scores the calls
+    against random minutes in the same name, after costs.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    ticker = str(body.get("ticker") or "").strip().upper()
+    if not ticker or not ticker.replace(".", "").isalpha() or len(ticker) > 6:
+        return JSONResponse({"ok": False, "error": "ticker required"}, status_code=400)
+
+    def _num(v):
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            return None
+        return x if x == x and abs(x) != float("inf") else None
+
+    now = time.time()
+    rec = {
+        "ts": round(now, 3),
+        "at": datetime.fromtimestamp(now).astimezone().isoformat(timespec="seconds"),
+        "symbol": ticker,
+        "shown_price": _num(body.get("price")),
+        "shown_status": str(body.get("status") or "")[:40] or None,
+        "shown_exh": str(body.get("exh") or "")[:40] or None,
+        "is_open": bool(body.get("is_open")),
+        "note": str(body.get("note") or "")[:200] or None,
+    }
+    try:
+        MY_CALLS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _my_calls_lock, open(MY_CALLS_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+    except OSError as e:
+        return JSONResponse({"ok": False, "error": str(e)[:200]}, status_code=500)
+    return JSONResponse({"ok": True, **rec})
+
+
 @app.get("/api/claude/positions")
 async def api_claude_positions():
     """Legacy alias for /api/ai/positions."""

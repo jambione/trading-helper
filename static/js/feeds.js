@@ -8,7 +8,7 @@
  */
 
 import { subscribe, get } from './store.js?v=134';
-import { api }       from './api.js?v=183';
+import { api }       from './api.js?v=184';
 import { copyTicker, isTvClickOpenEnabled } from './tickers.js?v=149';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=136';
 import * as notifications from './notifications.js?v=133';
@@ -1455,6 +1455,13 @@ function _createBookRow(r, owner) {
   if (statusEl0) {
     statusEl0.title = _bookBlockerTitle(r);
   }
+  const callBtn = el.querySelector('.book-call-btn');
+  if (callBtn) {
+    callBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      _logMyCall(callBtn, el, sym);
+    });
+  }
   const tickerCell = el.querySelector('.cell-ticker');
   if (tickerCell) {
     tickerCell.title = isTvClickOpenEnabled()
@@ -1661,7 +1668,7 @@ function _updateBookRow(el, r) {
       span.className = 'bro-badge';
       span.title = 'Trader Bro called this one out';
       span.textContent = 'BRO';
-      tickerCell.appendChild(span);
+      tickerCell.insertBefore(span, tickerCell.querySelector('.book-call-btn'));
     } else if (!r.bro_call && badge) {
       badge.remove();
     }
@@ -1809,7 +1816,7 @@ function _bookRowHtml(r) {
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}${r.bro_call
       ? `<span class="bro-badge" title="Trader Bro called this one out">BRO</span>`
-      : ''}</div>`
+      : ''}<button type="button" class="book-call-btn" title="Log that I would buy ${_esc(sym)} now (log only, never trades)">Buy?</button></div>`
     + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-chg${chgMod ? ` ${chgMod}` : ''}">${_esc(chgTxt || '\u2014')}</div>`
@@ -2637,6 +2644,44 @@ function _median(nums) {
   const s = [...nums].sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+/** "Buy?" on a book row: record that the operator would buy now. Log only —
+ *  the server never trades on it (that is the row's desk-click path).
+ *  tools/studies/my_calls_score.py scores the calls after costs. */
+const _myCallLast = Object.create(null);
+async function _logMyCall(btn, rowEl, sym) {
+  const now = Date.now();
+  if (_myCallLast[sym] && now - _myCallLast[sym] < 5000) return;   // double-click guard
+  _myCallLast[sym] = now;
+  const txt = q => {
+    const c = rowEl.querySelector(q);
+    return c ? String(c.textContent || '').trim() : '';
+  };
+  const px = Number(txt('.cell-price').replace(/[$,]/g, ''));
+  btn.disabled = true;
+  try {
+    const out = await api.logMyCall({
+      ticker: sym,
+      price: Number.isFinite(px) ? px : null,
+      status: txt('.ai-book-status'),
+      exh: txt('.cell-exh'),
+      is_open: rowEl.classList.contains('feed-row--ai-open'),
+    });
+    const t = out && out.at ? String(out.at).slice(11, 19) : '';
+    btn.textContent = `\u2713 ${t}`;
+    btn.classList.add('is-logged');
+  } catch (err) {
+    console.error('[feeds] my-call log failed', err);
+    btn.textContent = 'failed';
+    btn.classList.add('is-failed');
+  } finally {
+    setTimeout(() => {
+      btn.textContent = 'Buy?';
+      btn.classList.remove('is-logged', 'is-failed');
+      btn.disabled = false;
+    }, 4000);
+  }
 }
 
 async function _add(el, symbol) {

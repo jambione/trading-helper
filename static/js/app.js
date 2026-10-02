@@ -5,9 +5,9 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=183';
+import { connect, on, api }                      from './api.js?v=184';
 import { subscribe, set, selectTicker }          from './store.js?v=134';
-import { init as initFeeds }                     from './feeds.js?v=197';
+import { init as initFeeds }                     from './feeds.js?v=198';
 import { init as initTickers }                   from './tickers.js?v=149';
 import { init as initTradingView }               from './tradingview.js?v=134';
 import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=133';

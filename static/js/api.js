@@ -134,6 +134,7 @@ export const api = {
   getConfig:       ()       => request('GET',  '/api/config'),
   saveConfig:      cfg      => request('POST', '/api/config', cfg),
   addTicker:       ticker   => request('POST', '/api/tickers/add',      { ticker }),
+  logMyCall:       body     => request('POST', '/api/ai/my-call',        body),
   removeTicker:    ticker   => request('POST', '/api/tickers/remove',   { ticker }),
   addBulk:         tickers  => request('POST', '/api/tickers/add-bulk', { tickers }),
   addToAgentWb:     ticker   => request('POST', '/api/tickers/add-wb',    { ticker }),
