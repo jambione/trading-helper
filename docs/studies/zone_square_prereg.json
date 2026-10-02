@@ -1,0 +1,17 @@
+{
+ "registered_at": "2026-10-02 evening ET, before any zone/square computation",
+ "question": "Do %R squares that come AFTER price dipped into a zone below the book-entry price beat other squares and random minutes?",
+ "data": "the indicator-levels study's cached rows and bars (ai_reports/indicator_levels/rows.json, ext.pkl): admitted name-days 2026-09-04..10-02, price >= $10, SIP 1m bars with extended hours",
+ "book_entry": "first admit_funnel event of the day whose kept_symbols holds the name (events.jsonl); entry price = close of the last SIP 1m bar completed at that moment",
+ "zones": "entry price x (1 - z), z = 0.5%, 1.0%, 1.5%; touched = any 1m low <= zone after the book entry",
+ "arms": {
+  "SQ_ALL": "every square after the book entry (09:40-15:30, 1 per 15 min, as in the levels study)",
+  "SQ_ZONE_z": "squares whose bar closes after the zone was first touched",
+  "SQ_NOZONE_z": "squares before any touch, or on name-days never touched",
+  "ZONE_ONLY_z": "the original desk rule: buy at the zone price on the first touch (a 1m low strictly below the zone), 09:40-15:30"
+ },
+ "outcome": "net15: 15 min after entry (cap 15:55) minus 0.20% round trip. Squares enter at the next bar's open; ZONE_ONLY fills at the zone price. Lift = net15 minus the mean of random control minutes in the same name-day and clock hour, after the book entry",
+ "split": "alternate trading days A/B (same as the levels study)",
+ "pass": "SQ_ZONE_z lift >= +5 bp with day-clustered t >= 2 in BOTH halves, n >= 100 per half, AND above SQ_NOZONE_z in both halves",
+ "also_report": "ZONE_ONLY_z lift and net, the share of name-days touching each zone, and gross"
+}
