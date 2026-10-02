@@ -1,0 +1,23 @@
+{
+ "study": "Volatility risk premium: is selling S&P 500 option insurance a separate return from just owning stocks, after the crashes?",
+ "registered_at": "2026-10-02",
+ "registered_before_results": true,
+ "hypothesis": "Index options are priced above the volatility that follows (people overpay for insurance). Selling them earns a premium that is not just equity beta, and enough of it survives 2008, 2020 and 2022 to beat simply holding SPX.",
+ "data": {
+  "cboe": "free daily index histories from cdn.cboe.com/api/global/us_indices/daily_prices/<SYM>_History.csv: PUT (monthly ATM put-write, T-bill collateral) 2007+, WPUT (weekly put-write) 2006+, BXM (ATM covered call) 2002+, CNDR (iron condor) 1986+, PPUT (5% OTM protective put; the buyer's side, expected to show negative alpha) 1986+, VIX 1990+, VIX3M 2009+, SPX price 1975+",
+  "yahoo": "^SP500TR (SPX total return) 1988+, ^IRX (13-week T-bill yield) for the risk-free rate",
+  "alpaca": "SPY option bars/quotes where the free feed serves them (Q4 only)"
+ },
+ "Q1_premium_exists": "VIX at each month-end close vs the realized vol of SPX daily log returns over the next 21 sessions (annualized, x100). Report mean VIX - RV, median, % of months positive, and the worst months, overall and per period 1990-2006 / 2007-2016 / 2017-2026. Information: establishes the premium, not tradable by itself.",
+ "Q2_separate_from_beta": {
+  "returns": "calendar-month total returns of each index, excess over the T-bill (^IRX/12 of the prior month-end)",
+  "model": "OLS of index excess return on SPX TR excess return: alpha (annualized), beta, t(alpha) with Newey-West 3 lags",
+  "also": "annualized return, vol, Sharpe, max drawdown, worst month, vs SPX TR over the same months",
+  "periods": "PUT/WPUT/BXM: 2007-2012 / 2013-2019 / 2020-2026 (2002-2006 extra for BXM). CNDR/PPUT: 1987-2006 / 2007-2016 / 2017-2026",
+  "primary": "PUT"
+ },
+ "Q3_timing_info_only": "Does a pre-set rule improve PUT? (a) sell only when the prior month-end VIX3M > VIX (contango), 2009+; (b) sell only when the prior month-end VIX > the prior 21-session realized vol. Report alpha and Sharpe of in-the-market months vs always-on. Information only: cannot promote.",
+ "Q4_retail_cost": "On SPY options from Alpaca's free feed (2024+ if served): the bid-ask spread of the ~1-month ATM put at month-end roll times, as % of premium and bp of SPY notional. Compare a round trip with PUT's monthly alpha. Also report the cash-secured collateral of one SPY contract.",
+ "promotion": "PUT alpha > 0 in all three periods AND pooled t(alpha) >= 2 AND the Q4 retail round-trip cost < half the monthly alpha. Otherwise report it as beta with a different shape (a lower-vol stock holding), not an edge.",
+ "caveats_known_in_advance": "CBOE indices assume fills at a VWAP/mark with no commissions or spread. PUT is SPX (European, cash-settled); retail would use SPY (American, physically settled, ~100x smaller notional per contract than SPX). Index history is not survivorship-biased (one underlying)."
+}
