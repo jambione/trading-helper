@@ -46,6 +46,23 @@ def fake_urlopen(url, *, data=None, method=None):
     return Resp(json.dumps(payload).encode())
 
 ew._dash_urlopen = fake_urlopen
+
+# What ai_trader's boot (ai_trading.init) leaves behind on the paper desk, as
+# tools/replay_session.arm_trader rebuilds it. Without it poll_once returned
+# 'trader_not_ready' before the arm pass here and in every nightly exact
+# replay (9/28-10/1). The broker is canned, never the network.
+def fake_broker(self, method, path, data=None, base_url=None, api_version=None):
+    if path.endswith("/clock"):
+        return {"timestamp": "2026-10-01T10:00:00-04:00", "is_open": True,
+                "next_open": "2026-10-02T09:30:00-04:00",
+                "next_close": "2026-10-01T16:00:00-04:00"}
+    return []
+desk_io._orig_request = fake_broker
+import ai_trading as gt, alpaca_trader as at
+from alpaca.trading.client import TradingClient
+at._client = TradingClient("test", "test", paper=True)
+at._mode = "paper"
+gt._ready, gt._mode = True, "paper"
 cfg = config.load_config()
 session_recorder.record_config_snap(cfg, git_sha="test")
 for _ in range(6):

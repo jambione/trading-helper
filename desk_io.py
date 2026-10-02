@@ -333,18 +333,37 @@ class DeltaEncoder:
 
 
 class DeltaDecoder:
-    """Rebuilds each recorded document from its deltas."""
+    """Rebuilds each recorded document from its deltas.
+
+    A chain is only decodable from its writer's reset (every encoder's first
+    record). Deltas before any reset belong to a writer whose reset is in an
+    earlier file — a desk process that ran across midnight writes its first
+    rows of the new day as bare deltas — so they are skipped and the document
+    is unknown (``known`` False) until the next reset. Regression: 2026-10-01
+    the exact replay applied the 9/30 process's 00:00 delta of
+    entry_watch_state.json to an empty base, raised TypeError, never advanced
+    past it, and failed every sync and paint of the day.
+    """
 
     def __init__(self):
         self.node: Any = None
+        self.known = False
 
     def apply(self, rec: dict) -> None:
         if rec.get("reset"):
             self.node = None
+            self.known = True
+        if not self.known:
+            return
         if "d" in rec:
-            self.node = _dec(self.node, rec["d"])
+            try:
+                self.node = _dec(self.node, rec["d"])
+            except (TypeError, KeyError, AttributeError):
+                self.node, self.known = None, False  # broken chain: wait for a reset
 
     def document(self, t: float) -> Any:
+        if not self.known:
+            return None
         return _from_epochs(_materialize(self.node), t)
 
     payload = document
@@ -778,6 +797,8 @@ def _file_at(rec: "Recording", rel: str, t: float, pt: float | None = None) -> d
         return {"absent": True}
     if "raw" in st:
         return {"data": st["raw"].encode("utf-8"), "mt": st.get("mt")}
+    if not dec.known:
+        return None  # only deltas of a writer whose reset is in an earlier file
     return {"data": json.dumps(dec.document(t)).encode("utf-8"), "mt": st.get("mt")}
 
 

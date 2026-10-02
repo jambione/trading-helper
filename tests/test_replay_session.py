@@ -131,3 +131,71 @@ def test_fidelity_picks_the_build_that_ran_longest_not_the_most_records(tmp_path
     sha, dirty, since = rp.live_code_sha(day, tmp_path, "09:00", "15:50")
     assert sha == "b739543" and dirty is False
     assert since == ts(11, 52)
+
+
+def test_exact_replay_arms_the_trader_and_its_reads_stay_on_the_recording(monkeypatch, tmp_path):
+    """9/28-10/1 every exact-replay poll returned 'trader_not_ready' before
+    the arm pass (ai_trading.init only runs at ai_trader boot), so the replay
+    scored 0 decisions with no error. arm_trader must leave is_ready() True,
+    and the client it builds must read through desk_io, never the network."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import ai_trading as gt
+    import alpaca_trader as at
+    import desk_io
+    for mod, name in ((gt, "_ready"), (gt, "_mode"), (at, "_client"), (at, "_mode")):
+        monkeypatch.setattr(mod, name, getattr(mod, name))
+    monkeypatch.setattr(at, "_host_allowed", lambda: True, raising=False)
+    rp.arm_trader()
+    assert gt.is_ready() and gt.mode() == "paper" and at.is_active()
+
+    wire = tmp_path / "wire.jsonl.gz"
+    with gzip.open(wire, "wt") as f:
+        f.write(json.dumps({"ts": 1.0, "ch": "boot"}) + "\n")
+    desk_io.missed.clear()
+    desk_io.install_replay(wire, clock=lambda: 2.0, root=tmp_path)
+    try:
+        assert at.market_is_open() is False  # unrecorded clock: a counted miss
+    finally:
+        desk_io.uninstall()
+    assert any("/v2/clock" in k for k in desk_io.missed), dict(desk_io.missed)
+    desk_io.missed.clear()
+
+
+def test_gate_warmer_runs_one_iteration_of_the_desks_own_loop(monkeypatch):
+    """With ai_watch_async_gates the desk's gates read a cache that a daemon
+    thread fills (ew.bind_async_gates at ai_trader boot). The exact replay
+    must bind the same wrappers, never start the thread, and run exactly one
+    pass of its loop per step, untagged, on the simulated clock."""
+    import threading
+    import types
+    calls, started = [], []
+
+    class Clock:
+        def time(self):
+            return 100.0
+
+        def sleep(self, _s):
+            return None
+
+    ew = types.SimpleNamespace(time=Clock())
+
+    def bind_async_gates(*, idle_sec=2.0):
+        def _warm():
+            while True:
+                calls.append(ew.time.time())
+                ew.time.sleep(idle_sec)
+        t = threading.Thread(target=_warm, daemon=True)
+        t.start()
+        started.append(t)
+        ew.bound = True
+        return True
+
+    ew.bind_async_gates = bind_async_gates
+    assert rp.bind_gate_warmer(ew, {"ai_watch_async_gates": False}) is None
+    step = rp.bind_gate_warmer(ew, {"ai_watch_async_gates": True})
+    assert step is not None and ew.bound
+    assert not any(isinstance(t, threading.Thread) for t in started)  # never a real thread
+    step()
+    step()
+    assert calls == [100.0, 100.0]
+    assert ew.time.sleep(2.0) is None  # the clock's own sleep is restored

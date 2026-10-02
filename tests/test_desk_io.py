@@ -76,6 +76,29 @@ def test_dash_restart_resets_decoder():
     assert dec.payload(t + 1) == {"tickers": [{"ticker": "NEW", "price": 2.0}]}
 
 
+def test_deltas_before_a_reset_are_unknown_not_a_crash(tmp_path):
+    """2026-10-01: the 9/30 desk process ran past midnight, so the day's wire
+    began with bare deltas of entry_watch_state.json whose reset was in the
+    9/30 file. The decoder applied one to an empty base, raised TypeError,
+    never advanced, and every exact-replay sync and paint failed all day.
+    Pre-reset deltas must read as unrecorded, and the 05:41 boot's reset must
+    still be served."""
+    old = desk_io.DeltaEncoder()
+    old.encode({"rows": [{"symbol": "AAA", "x": 1}, {"symbol": "BBB", "x": 1}]}, 0.0)  # 9/30 file
+    carried = old.encode({"rows": [{"symbol": "AAA", "x": 2}, {"symbol": "BBB", "x": 1}]}, 10.0)
+    assert "reset" not in carried and "d" in carried
+    boot = desk_io.DeltaEncoder()
+    fresh = boot.encode({"rows": [{"symbol": "CCC", "x": 3}]}, 200.0)
+    path = tmp_path / "wire.jsonl.gz"
+    with gzip.open(path, "wt") as f:
+        for ts, r in ((100.0, carried), (200.0, fresh)):
+            f.write(json.dumps({"ts": ts, "ch": "file", "f": "state.json", "mt": ts, **r}) + "\n")
+    rec = desk_io.Recording(path)
+    assert desk_io._file_at(rec, "state.json", 150.0) is None
+    got = desk_io._file_at(rec, "state.json", 250.0)
+    assert json.loads(got["data"]) == {"rows": [{"symbol": "CCC", "x": 3}]}
+
+
 def test_alpaca_key_ignores_time_params_only():
     k1 = desk_io.alpaca_key("GET", "/v2/stocks/bars",
                             {"symbols": "AAA", "start": "a", "end": "b", "feed": "iex"})

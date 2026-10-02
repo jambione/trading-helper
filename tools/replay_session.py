@@ -68,6 +68,7 @@ import subprocess
 import sys
 import tempfile
 import time as _real_time
+import traceback
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -1530,6 +1531,89 @@ def _gz_rows(path: Path):
                 continue
 
 
+def arm_trader() -> None:
+    """Put the trader in the state the paper desk booted into.
+
+    Live, ai_trader's ai_trading.init() builds the Alpaca client and sets
+    _ready; the exact replay never runs that boot, so is_ready() was False and
+    every replayed poll returned 'trader_not_ready' before the arm pass —
+    9/28-10/1 scored 0 decisions with no error. The client is real but holds
+    no keys: every call it makes goes through desk_io's replay hook (served
+    from the recording or a counted miss) and the network guard.
+    """
+    import ai_trading as gt
+    import alpaca_trader as at
+    from alpaca.trading.client import TradingClient
+    at._client = TradingClient("replay", "replay", paper=True)
+    at._mode = "paper"
+    gt._ready, gt._mode = True, "paper"
+
+
+class _WarmPassDone(Exception):
+    pass
+
+
+def bind_gate_warmer(ew, cfg: dict):
+    """The desk's async gate inputs, stepped on the replay clock.
+
+    With ai_watch_async_gates on, ai_trader's boot calls
+    ew.bind_async_gates(): the arm gates (SIP spread, open gap, volume pace,
+    day high, vol-now) read only a cache, and a daemon thread does the Alpaca
+    reads. The exact replay never ran that boot, so its passes fetched inline
+    at the wrong moments (the reads live made on the warm thread carry no pass
+    tag), missed ~40k of them on 2026-10-01, and never saw live's "cold cache
+    -> unknown". This binds the same wrappers, keeps the warm thread from
+    starting, and returns a step() that runs one iteration of live's own loop
+    body; call it before each pass. None when the desk did not bind.
+    """
+    import threading
+    import desk_io
+    if not cfg.get("ai_watch_async_gates") or not hasattr(ew, "bind_async_gates"):
+        return None
+    targets = []
+
+    class _Held:
+        def __init__(self, *a, target=None, **k):
+            targets.append(target)
+
+        def start(self):
+            pass
+
+    real_thread = threading.Thread
+    threading.Thread = _Held
+    try:
+        ew.bind_async_gates()
+    finally:
+        threading.Thread = real_thread
+    if not targets or targets[0] is None:
+        return None
+    warm = targets[0]
+    cells = dict(zip(warm.__code__.co_freevars, warm.__closure__ or ()))
+    idle = cells["idle_sec"].cell_contents if "idle_sec" in cells else None
+
+    def step() -> None:
+        desk_io.set_pass(None)  # live's warm thread carried no pass tag
+        clock_mod = ew.time
+        if clock_mod is _real_time:
+            raise RuntimeError("gate warmer needs the simulated clock (patch_clocks first)")
+
+        def _stop(s):
+            if idle is None or s == idle:
+                raise _WarmPassDone
+        clock_mod.sleep = _stop
+        try:
+            warm()
+        except _WarmPassDone:
+            pass
+        finally:
+            try:
+                del clock_mod.sleep
+            except AttributeError:
+                pass
+
+    return step
+
+
 def run_exact(args) -> int:
     """Replay the desk from its own recording, and diff it against live.
 
@@ -1647,14 +1731,26 @@ def run_exact(args) -> int:
                 "target_1": d.get("target_1")}
 
     cp.place_scaled_entry = place
+    arm_trader()
+    warm_gates = bind_gate_warmer(ew, load_config())
+    if warm_gates:
+        print("[exact] gate inputs async, as the desk booted: warm step before each pass")
 
     wall0 = _real_time.time()
     errors: Counter = Counter()
+    error_tb: dict[str, str] = {}
     for t, ev in events:
         clock.t = t
         follow_config(t)
         patch_clocks(clock, root, patched, advance=desk_io.pass_clock)
         cfg = load_config()
+        if warm_gates:
+            try:
+                warm_gates()
+            except Exception as e:  # noqa: BLE001
+                k = f"warm: {type(e).__name__}: {str(e)[:80]}"
+                errors[k] += 1
+                error_tb.setdefault(k, traceback.format_exc(limit=8)[-2000:])
         try:
             if ev == "sync":
                 ew.sync_watch_from_source_panels(cfg, now=t)
@@ -1663,12 +1759,16 @@ def run_exact(args) -> int:
             else:
                 ew.poll_once(cfg=cfg, now=t)
         except Exception as e:  # noqa: BLE001
-            errors[f"{ev}: {type(e).__name__}: {str(e)[:80]}"] += 1
+            k = f"{ev}: {type(e).__name__}: {str(e)[:80]}"
+            errors[k] += 1
+            if k not in error_tb:  # the first traceback of each kind, for the report
+                error_tb[k] = traceback.format_exc(limit=8)[-2000:]
 
     out = exact_score(events, live_arms, replay_polls, entries, wire, t_start, t_end)
     out.update({"day": args.day, "window": f"{args.start}-{args.end}",
                 "sha": os.getenv("REPLAY_SHA"), "boot": t_boot, "io": desk_io.report(),
-                "errors": dict(errors), "blocked_network": dict(blocked),
+                "errors": dict(errors), "error_tracebacks": error_tb,
+                "blocked_network": dict(blocked),
                 "wall_sec": round(_real_time.time() - wall0, 1)})
     print_exact(out)
     path = Path(args.out) if args.out else Path(os.environ.get("REPLAY_WORK", ".")) / "exact.json"
@@ -1771,6 +1871,8 @@ def print_exact(o: dict) -> None:
           f" ({'-' if br is None else f'{br:.0%}'}); replay entries {o['replay_entries']}")
     if o.get("errors"):
         print(f"  pass errors: {o['errors']}")
+        for k, tb in (o.get("error_tracebacks") or {}).items():
+            print(f"  first {k}\n" + "\n".join("    " + ln for ln in tb.rstrip().splitlines()))
     if o.get("blocked_network"):
         print(f"  blocked network: {o['blocked_network']}")
     ok = (n_miss == 0 and da is not None and da >= 0.99
