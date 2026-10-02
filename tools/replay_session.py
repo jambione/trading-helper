@@ -1614,6 +1614,57 @@ def bind_gate_warmer(ew, cfg: dict):
     return step
 
 
+# Live's recorded gate inputs (session inputs.jsonl.gz, written by
+# ai_entry_watch._record_input beside each cache write) -> the cache it wrote.
+GATE_INPUT_CACHES = {"sip_spread": "_SIP_SPREAD_CACHE", "open_gap": "_GAP_CACHE",
+                     "rvol_pace": "_RVOL_PACE_CACHE", "day_high": "_DAY_HIGH_CACHE",
+                     "vol_now": "_VOL_NOW_CACHE"}
+
+
+def bind_gate_values(ew, cfg: dict, inputs_paths, clock):
+    """The desk's async gate inputs, replayed as the VALUES live computed.
+
+    Live's warm thread fetches inputs for whatever names live's gates asked
+    about, on its own schedule; the gates read only the cache. Re-fetching in
+    the replay (bind_gate_warmer) asks for whatever the REPLAY's book asks
+    about, so once the two books differ by a seat it requests reads live never
+    made, misses, reads "unknown" and keeps or admits names live refused
+    (2026-10-01: AXTI/DT/KURA held at spread_unknown while live had 0.3-0.7%).
+    This binds the same cache-reading wrappers (no thread, no fetches) and
+    returns a step() that writes every value live recorded up to the replay
+    clock into its cache, with live's own timestamp, so freshness checks age
+    it exactly as live did. None when the desk did not bind async gates or no
+    inputs were recorded (callers fall back to bind_gate_warmer).
+    """
+    rows = []
+    for p in inputs_paths:
+        p = Path(p)
+        if not p.exists():
+            continue
+        for r in _gz_rows(p):
+            k = r.get("kind")
+            if k in GATE_INPUT_CACHES and r.get("symbol"):
+                rows.append((float(r["ts"]), k, str(r["symbol"]).upper(), r.get("value"), r.get("src")))
+    if not rows or bind_gate_warmer(ew, cfg) is None:   # binds the wrappers, thread held
+        return None
+    rows.sort(key=lambda x: x[0])
+    caches = {k: getattr(ew, name) for k, name in GATE_INPUT_CACHES.items()}
+    pos = {"i": 0}
+
+    def step() -> int:
+        t, i, n = clock(), pos["i"], 0
+        while i < len(rows) and rows[i][0] <= t:
+            ts, k, sym, val, src = rows[i]
+            caches[k][sym] = (val, ts, src or "sip") if k == "open_gap" else (val, ts)
+            i += 1
+            n += 1
+        pos["i"] = i
+        return n
+
+    step.rows = len(rows)
+    return step
+
+
 def run_exact(args) -> int:
     """Replay the desk from its own recording, and diff it against live.
 
@@ -1735,9 +1786,19 @@ def run_exact(args) -> int:
 
     cp.place_scaled_entry = place
     arm_trader()
-    warm_gates = bind_gate_warmer(ew, load_config())
-    if warm_gates:
-        print("[exact] gate inputs async, as the desk booted: warm step before each pass")
+    # Gate inputs: live's recorded values by default (REPLAY_GATE_INPUTS=fetch
+    # re-fetches through the warm loop instead, the pre-2026-10-02 behavior).
+    warm_gates = None
+    if (os.getenv("REPLAY_GATE_INPUTS") or "values").strip().lower() != "fetch":
+        warm_gates = bind_gate_values(ew, load_config(), [d / "inputs.jsonl.gz" for d in dirs],
+                                      lambda: clock.t)
+        if warm_gates:
+            print(f"[exact] gate inputs async, as the desk booted: live's {warm_gates.rows} "
+                  "recorded values fed before each pass (no gate fetches)")
+    if warm_gates is None:
+        warm_gates = bind_gate_warmer(ew, load_config())
+        if warm_gates:
+            print("[exact] gate inputs async, as the desk booted: warm step before each pass")
 
     wall0 = _real_time.time()
     errors: Counter = Counter()

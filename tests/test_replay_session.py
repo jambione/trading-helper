@@ -199,3 +199,56 @@ def test_gate_warmer_runs_one_iteration_of_the_desks_own_loop(monkeypatch):
     step()
     assert calls == [100.0, 100.0]
     assert ew.time.sleep(2.0) is None  # the clock's own sleep is restored
+
+
+def test_gate_values_feed_lives_recorded_inputs_into_the_caches(tmp_path):
+    """Exact replay default: the async gate caches get the values live
+    recorded (inputs.jsonl.gz), with live's timestamps, up to the replay
+    clock. No warm thread and no fetch: the warm loop never runs."""
+    import threading
+    import types
+    p = tmp_path / "inputs.jsonl.gz"
+    with gzip.open(p, "wt") as f:
+        for r in ({"ts": 100.0, "kind": "sip_spread", "symbol": "dt", "value": 0.31},
+                  {"ts": 101.0, "kind": "open_gap", "symbol": "DT", "value": 2.25, "src": "iex"},
+                  {"ts": 102.0, "kind": "clock_restamp", "symbol": "DT", "value": None},
+                  {"ts": 150.0, "kind": "sip_spread", "symbol": "DT", "value": None},
+                  {"ts": 160.0, "kind": "vol_now", "symbol": "KURA", "value": 0.29}):
+            f.write(json.dumps(r) + "\n")
+    warm_runs, started = [], []
+
+    class Clock:
+        def time(self):
+            return 0.0
+
+        def sleep(self, _s):
+            return None
+
+    ew = types.SimpleNamespace(time=Clock(), _SIP_SPREAD_CACHE={}, _GAP_CACHE={}, _RVOL_PACE_CACHE={},
+                               _DAY_HIGH_CACHE={}, _VOL_NOW_CACHE={})
+
+    def bind_async_gates(*, idle_sec=2.0):
+        def _warm():
+            while True:
+                warm_runs.append(1)
+                ew.time.sleep(idle_sec)
+        t = threading.Thread(target=_warm, daemon=True)
+        t.start()
+        started.append(t)
+        return True
+
+    ew.bind_async_gates = bind_async_gates
+    now = {"t": 120.0}
+    step = rp.bind_gate_values(ew, {"ai_watch_async_gates": True}, [p, tmp_path / "missing.gz"],
+                               lambda: now["t"])
+    assert step is not None and step.rows == 4                     # clock_restamp is not a gate input
+    assert not any(isinstance(t, threading.Thread) for t in started)
+    assert step() == 2
+    assert ew._SIP_SPREAD_CACHE == {"DT": (0.31, 100.0)}
+    assert ew._GAP_CACHE == {"DT": (2.25, 101.0, "iex")}
+    now["t"] = 200.0
+    assert step() == 2
+    assert ew._SIP_SPREAD_CACHE["DT"] == (None, 150.0)            # live's later "unknown" too
+    assert ew._VOL_NOW_CACHE == {"KURA": (0.29, 160.0)}
+    assert warm_runs == []                                         # never fetched
+    assert rp.bind_gate_values(ew, {"ai_watch_async_gates": False}, [p], lambda: 0.0) is None
