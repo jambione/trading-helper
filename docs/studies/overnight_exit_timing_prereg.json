@@ -1,0 +1,10 @@
+{
+ "study": "Overnight book exit timing: sell at the opening auction (live) or later in the morning?",
+ "registered_at": "2026-10-02",
+ "registered_before_results": true,
+ "population": "each session t in the last ~500 sessions of the longer-holds panel (/tmp/lh/panel.npz, to 2026-09-25): the top 20 liquid names by 12-1 momentum (momd = cf[t-21]/cf[t-252]-1, liquid = elig & adv20 >= $50M), the overnight book's rule. Bought at close t.",
+ "exits": "open (official open, as live) and the close of the 09:35, 09:45, 10:00, 10:30 ET SIP 1m bars on t+1. Return = (1 + overnight close->open from the panel) x (1 + open->X from the minute bars, both raw within the day) - 1.",
+ "costs": "open exit: 2 bp (auction leg, as the backtest's cost B). Later exits: half the name's modeled 09:35 quoted spread (panel spr_o, the quote-calibrated model), applied to every later exit as a conservative bound.",
+ "report": "per exit: mean per-night basket return gross and net, the increment vs the open exit, win rate, t; by halves (older / newer 250 sessions).",
+ "decision": "a later exit is worth a live change only if its net increment over the open exit is > 0 in BOTH halves with pooled t >= 2. Otherwise keep the opening auction."
+}
