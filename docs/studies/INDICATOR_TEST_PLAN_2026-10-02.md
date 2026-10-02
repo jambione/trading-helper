@@ -40,6 +40,18 @@ data available at the arm minute.
 | L5 | **Ported open-source S/R indicators** (added 10/2 15:50 ET, before any result) | LuxAlgo "Support and Resistance Levels with Breaks": last confirmed 15/15 swing high/low and whether price is above, inside or below them. LonesomeTheBlue "Support Resistance Channels": 10/10 pivots in 290 bars, channel width 5% of the 300-bar range, strength = pivots×20 + touches, top 6; % to the nearest channel above/below, inside a channel | The user's TradingView S/R tools, ported from their published logic; pivots are used only once confirmed |
 | S1 | **Squeeze release event** | First bar Bollinger(20,2) leaves Keltner(20,1.5) with LazyBear momentum > 0 and rising, 1m and 5m | Only the squeeze level was tested, never the release |
 
+## Additions before the first run (10/2, 16:00–16:10 ET, before any result)
+
+- **L5 also ports Bjorgum Key Levels and ChartPrime High Volume Boxes** ("SR Breaks and Retests" on the user's chart), from their
+  published source and default inputs. Bjorgum: Heikin-Ashi body pivots 20 left / 15 right, 4 zones a side, half-width
+  min(0.5 ATR30, 5% of close)/2, overlapping zones aligned. ChartPrime: close pivots 20/20 kept only with the signed-volume filter,
+  ATR(200) box depth, break_res / sup_holds / res_holds / break_sup events.
+- **The user's two hypotheses**, scored on every S/R indicator (pivots, LuxAlgo, SR channels, Bjorgum, ChartPrime, PDH/PMH, VWAP):
+  - **H1:** breaking through resistance is bullish.
+  - **H2:** price sitting right on support (within 0.3%) is the ideal spot for a run.
+- **"Best one" rule:** rank each indicator's H1/H2 cell by the weaker half's matched-control lift. The best indicator is the
+  top-ranked cell that passes. If none passes, there is no best one, and the report says so rather than naming the top of a failing list.
+
 ## Rules (fixed before any result)
 
 - **Outcome:** net return to the live exit (replay of the live leash) and a fixed 15-minute hold, after the full quoted SIP spread.

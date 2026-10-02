@@ -28,6 +28,11 @@ FEATURES (only data available at the decision minute; SIP 1m bars with extended 
   L5 lux_res / lux_sup / lux_state   last confirmed 15/15 swing high / low (LuxAlgo "S&R Levels with Breaks")
      ch_res / ch_sup / ch_inside      LonesomeTheBlue "Support Resistance Channels": 10/10 pivots in 290 bars,
                                       width 5% of the 300-bar range, strength pivots*20 + touches, top 6 non-overlapping
+     bj_res / bj_sup / bj_inside      Bjorgum Key Levels: Heikin-Ashi body pivots 20/15, 4 zones a side, band
+                                      min(0.5 ATR30, 5% close)/2, overlapping zones aligned
+     cp_res / cp_sup / cp_event       ChartPrime High Volume Boxes ("SR Breaks and Retests"): close pivots 20/20 with the
+                                      signed-volume filter, ATR(200) boxes, break_res / sup_holds / res_holds / break_sup
+  HYP the user's H1 (broke resistance) and H2 (sitting on support, <= 0.3%) per indicator, ranked
   S1 sqz1 / sqz5  LazyBear squeeze released in the last 3 bars (1m) / 2 bars (5m) with momentum > 0 and rising
 
 SPLIT  alternate trading days A/B; tercile cut points come from half A and are applied to both.
@@ -301,6 +306,107 @@ class NameDay:
             return out
         self.lux_ph, self.lux_pl = piv(H, 15, 15, True), piv(L, 15, 15, False)
         self.ch_ph, self.ch_pl = piv(H, 10, 10, True), piv(L, 10, 10, False)
+        if prev is not None and len(prev):
+            O = np.concatenate([prev["open"].to_numpy(dtype=float), self.o])
+            V = np.concatenate([prev["volume"].to_numpy(dtype=float), self.v])
+        else:
+            O, V = self.o, self.v
+        n = len(C)
+
+        def rma_atr(length):
+            tr = np.maximum(H - L, np.maximum(np.abs(H - np.r_[C[0], C[:-1]]), np.abs(L - np.r_[C[0], C[:-1]])))
+            out = np.full(n, np.nan)
+            if n >= length:
+                out[length - 1] = tr[:length].mean()
+                for k in range(length, n):
+                    out[k] = (out[k - 1] * (length - 1) + tr[k]) / length
+            return out
+
+        # Bjorgum Key Levels (published defaults): Heikin-Ashi body pivots, left 20 / right 15, 4 zones per side,
+        # band = min(0.5 * ATR30, 5% of close) taken `right` bars back, halved; overlapping zones adopt the old bounds.
+        hc = (O + H + L + C) / 4
+        ho = np.empty(n)
+        ho[0] = (O[0] + C[0]) / 2
+        for k in range(1, n):
+            ho[k] = (ho[k - 1] + hc[k - 1]) / 2
+        bh, bl = np.maximum(ho, hc), np.minimum(ho, hc)
+        atr30 = rma_atr(30)
+        band = np.minimum(atr30 * 0.5, C * 0.05)
+        highs, lows, snaps = [], [], []
+        piv_h = {a: lvl for a, _k, lvl in piv(bh, 20, 15, True)}
+        piv_l = {a: lvl for a, _k, lvl in piv(bl, 20, 15, False)}
+        for g in sorted(set(piv_h) | set(piv_l)):
+            b = band[g - 15] / 2 if g >= 15 and not math.isnan(band[g - 15]) else None
+            if b is None:
+                continue
+            for lvl, arr in ((piv_h.get(g), highs), (piv_l.get(g), lows)):
+                if lvl is None:
+                    continue
+                arr.insert(0, [lvl + b, lvl - b])
+                del arr[4:]
+                for ref in (highs, lows):
+                    for z in ref:
+                        if z is arr[0]:
+                            continue
+                        T, B = arr[0]
+                        t_, b_ = z
+                        if (b_ < T < t_) or (b_ < B < t_) or (T > t_ and B < b_) or (B > b_ and T < t_):
+                            arr[0] = [t_, b_]
+            snaps.append((g, [tuple(z) for z in highs + lows]))
+        self.bj_snaps = snaps
+
+        # ChartPrime "Support and Resistance (High Volume Boxes)" a.k.a. "SR Breaks and Retests" (published defaults):
+        # close pivots 20/20; signed bar volume; support box at a pivot low when Vol > highest(Vol/2.5, 2), resistance
+        # box at a pivot high when Vol < lowest(Vol/2.5, 2); box depth = ATR(200).
+        sign, buy = np.empty(n), True
+        for k in range(n):
+            if C[k] > O[k]:
+                buy = True
+            elif C[k] < O[k]:
+                buy = False
+            sign[k] = V[k] if buy else -V[k]
+        q = sign / 2.5
+        atr200 = rma_atr(200)
+        cph = {a: lvl for a, _k, lvl in piv(C, 20, 20, True)}
+        cpl = {a: lvl for a, _k, lvl in piv(C, 20, 20, False)}
+        sup = sup1 = res = res1 = np.nan
+        res_is_sup = sup_is_res = None
+        self.cp = [None] * n
+        last_evt = (None, -999)
+        for k in range(n):
+            vh = q[max(0, k - 1):k + 1].max()
+            vl = q[max(0, k - 1):k + 1].min()
+            w = atr200[k]
+            if k in cpl and sign[k] > vh and not math.isnan(w):
+                sup, sup1 = cpl[k], cpl[k] - w
+            if k in cph and sign[k] < vl and not math.isnan(w):
+                res, res1 = cph[k], cph[k] + w
+            evt = None
+            if k >= 1:
+                br = L[k] > res1 and L[k - 1] <= res1 if not math.isnan(res1) else False
+                rh = H[k] < res and H[k - 1] >= res if not math.isnan(res) else False
+                sh = L[k] > sup and L[k - 1] <= sup if not math.isnan(sup) else False
+                bs = H[k] < sup1 and H[k - 1] >= sup1 if not math.isnan(sup1) else False
+                prev_ris, prev_sir = res_is_sup, sup_is_res
+                if br:
+                    res_is_sup = True
+                elif rh:
+                    res_is_sup = False
+                if bs:
+                    sup_is_res = True
+                elif sh:
+                    sup_is_res = False
+                if br and not prev_ris:
+                    evt = "break_res"
+                elif sh or (br and prev_ris):
+                    evt = "sup_holds"
+                elif rh or (bs and prev_sir):
+                    evt = "res_holds"
+                elif bs and not prev_sir:
+                    evt = "break_sup"
+            if evt:
+                last_evt = (evt, k)
+            self.cp[k] = (sup, res, res_is_sup, last_evt)
 
     def pivot_features(self, i: int, px: float) -> dict:
         g = i + self.off                          # index into the joined series
@@ -338,6 +444,25 @@ class NameDay:
             f["ch_res"] = (min(above) / px - 1) * 100 if above else None
             f["ch_sup"] = (1 - max(below) / px) * 100 if below else None
             f["ch_inside"] = any(bot <= px <= top for _, bot, top in keep)
+        # Bjorgum zones as of bar g
+        zs = None
+        for kn, z in self.bj_snaps:
+            if kn > g:
+                break
+            zs = z
+        f["bj_res"] = f["bj_sup"] = f["bj_inside"] = None
+        if zs:
+            above = [b for t, b in zs if b > px]
+            below = [t for t, b in zs if t < px]
+            f["bj_res"] = (min(above) / px - 1) * 100 if above else None
+            f["bj_sup"] = (1 - max(below) / px) * 100 if below else None
+            f["bj_inside"] = any(b <= px <= t for t, b in zs)
+        # ChartPrime state at bar g
+        sup, res, ris, (evt, ek) = self.cp[g]
+        f["cp_res"] = (res / px - 1) * 100 if not math.isnan(res) else None
+        f["cp_sup"] = (1 - sup / px) * 100 if not math.isnan(sup) else None
+        f["cp_event"] = evt if evt and g - ek <= 5 else "none"
+        f["cp_res_is_sup"] = ris
         return f
 
     def idx_before(self, ts: float) -> int:
@@ -535,13 +660,33 @@ def collect():
 
 
 NUM = ["res_pct", "res_pdh", "res_pmh", "res_hod", "res_dollar", "sup_pct", "rr", "hvn_above", "hvn_below",
-       "vwap_pct", "min_since_reclaim", "hod_room", "lux_res", "lux_sup", "ch_res", "ch_sup", "spy15", "spy30", "qqq15", "breadth15", "rs_open", "rs30"]
-CAT = ["pdh_state", "pmh_state", "sqz1", "sqz5", "lux_state", "ch_inside"]
+       "vwap_pct", "min_since_reclaim", "hod_room", "lux_res", "lux_sup", "ch_res", "ch_sup",
+       "bj_res", "bj_sup", "cp_res", "cp_sup", "spy15", "spy30", "qqq15", "breadth15", "rs_open", "rs30"]
+CAT = ["pdh_state", "pmh_state", "sqz1", "sqz5", "lux_state", "ch_inside", "bj_inside", "cp_event", "cp_res_is_sup"]
 TEST = {"res_pct": "L1", "res_pdh": "L1", "res_pmh": "L1", "res_hod": "L1", "res_dollar": "L1", "sup_pct": "L2",
         "rr": "L2", "pdh_state": "L3", "pmh_state": "L3", "hvn_above": "L4", "hvn_below": "L4", "vwap_pct": "V1",
         "min_since_reclaim": "V1", "hod_room": "R1", "spy15": "M1", "spy30": "M1", "qqq15": "M1", "breadth15": "M1",
         "rs_open": "M2", "rs30": "M2", "sqz1": "S1", "sqz5": "S1", "lux_res": "L5", "lux_sup": "L5",
-        "lux_state": "L5", "ch_res": "L5", "ch_sup": "L5", "ch_inside": "L5"}
+        "lux_state": "L5", "ch_res": "L5", "ch_sup": "L5", "ch_inside": "L5", "bj_res": "L5", "bj_sup": "L5",
+        "bj_inside": "L5", "cp_res": "L5", "cp_sup": "L5", "cp_event": "L5", "cp_res_is_sup": "L5"}
+
+# The user's two hypotheses (stated 10/2 before any result), one cell per indicator.
+# H1 "breaking through resistance is bullish"; H2 "right next to support is ideal for a run" (support within 0.3%).
+NEAR = 0.3
+HYP = {
+    "levels (PDH/PMH)": (lambda r: r.get("pdh_state") in ("just_broke", "held") or r.get("pmh_state") in ("just_broke", "held"),
+                         lambda r: r.get("sup_pct") is not None and r["sup_pct"] <= NEAR),
+    "LuxAlgo S/R breaks": (lambda r: r.get("lux_state") == "above_res",
+                           lambda r: r.get("lux_sup") is not None and 0 <= r["lux_sup"] <= NEAR),
+    "SR channels": (lambda r: r.get("ch_sup") is not None and r["ch_sup"] <= NEAR and not r.get("ch_inside"),
+                    lambda r: r.get("ch_sup") is not None and r["ch_sup"] <= NEAR),
+    "Bjorgum zones": (lambda r: r.get("bj_sup") is not None and r["bj_sup"] <= NEAR and (r.get("bj_res") is None or r["bj_res"] > NEAR),
+                      lambda r: (r.get("bj_sup") is not None and r["bj_sup"] <= NEAR) or bool(r.get("bj_inside"))),
+    "ChartPrime boxes": (lambda r: r.get("cp_event") == "break_res" or r.get("cp_res_is_sup") is True,
+                         lambda r: r.get("cp_event") == "sup_holds" or (r.get("cp_sup") is not None and 0 <= r["cp_sup"] <= NEAR)),
+    "VWAP": (lambda r: r.get("min_since_reclaim") is not None and r["min_since_reclaim"] <= 15,
+             lambda r: r.get("vwap_pct") is not None and 0 <= r["vwap_pct"] <= NEAR),
+}
 
 
 def dct(per_day: dict) -> tuple[float | None, float | None, int]:
@@ -580,7 +725,7 @@ def report(days, rows):
             lines.append(f"- half {h}: all, lift vs matched control {P(m)} bp (t {T(t)}, n {n})")
         if pop == "F":
             rz = [r["realized"] for r in rs_ if r.get("realized") is not None]
-            lines.append(f"- realized round trip, all fills: {P(statistics.mean(rz))} bp (n {len(rz)})")
+            lines.append(f"- realized round trip, all fills: {P(statistics.mean(rz) if rz else None)} bp (n {len(rz)})")
         lines.append("\n| test | feature | cell | A lift bp (t, n) | B lift bp (t, n) | A net15 | B net15 |"
                      + (" realized A/B |" if pop == "F" else "") + " pass |")
         lines.append("|---|---|---|---|---|---|---|" + ("---|" if pop == "F" else "") + "---|")
@@ -622,6 +767,27 @@ def report(days, rows):
                 if pop == "F":
                     row += f" {P(out[0][2])} / {P(out[1][2])} |"
                 lines.append(row + (" **PASS** |" if ok else " |"))
+    for pop, name in (("E", "square events"), ("F", "desk fills")):
+        rs_ = [r for r in rows if r["pop"] == pop and r.get("lift") is not None]
+        lines.append(f"\n## User hypotheses, {name} (ranked by the weaker half's lift)")
+        lines.append("| indicator | hypothesis | A lift bp (t, n) | B lift bp (t, n) | pass |")
+        lines.append("|---|---|---|---|---|")
+        ranked = []
+        for ind, (h1, h2) in HYP.items():
+            for hname, fn in (("H1 broke resistance", h1), ("H2 on support", h2)):
+                res_ = []
+                for h in "AB":
+                    pd_ = collections.defaultdict(list)
+                    for r in rs_:
+                        if half[r["day"]] == h and fn(r):
+                            pd_[r["day"]].append(r["lift"])
+                    res_.append(dct(pd_))
+                (ma, ta, na), (mb, tb, nb) = res_
+                ok = all(m is not None and m >= 5e-4 and t is not None and t >= 2 and n >= 100 for m, t, n in res_)
+                worst = min(x if x is not None else -1 for x in (ma, mb))
+                ranked.append((worst, f"| {ind} | {hname} | {P(ma)} ({T(ta)}, {na}) | {P(mb)} ({T(tb)}, {nb}) |"
+                                      + (" **PASS** |" if ok else " |")))
+        lines += [r for _, r in sorted(ranked, reverse=True)]
     txt = "\n".join(lines)
     open(os.path.join(OUT, "report.md"), "w").write(txt)
     print(txt)
