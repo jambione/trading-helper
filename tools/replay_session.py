@@ -1694,7 +1694,10 @@ def run_exact(args) -> int:
     follow_config(t_boot)
 
     import desk_io
-    desk_io.install_replay(wires, clock=lambda: clock.t, root=root)
+    # REPLAY_MAX_AGE: how old a recorded read may be when served by time (no
+    # pass match). Diagnostic knob; 600 s is the default the nightly uses.
+    desk_io.install_replay(wires, clock=lambda: clock.t, root=root,
+                           max_age=float(os.getenv("REPLAY_MAX_AGE") or 600.0))
     import session_recorder
     replay_polls: dict[float, list] = {}
     _append = session_recorder._append

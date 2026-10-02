@@ -20,29 +20,27 @@ Tonight's mini run (16:01, `ai_reports/nightly/2026-10-01/exact_rerun.json`) wil
 
 ## Gap A — seating (73% of mismatches): fix first
 
-### Cause 1 (high confidence): the replay can't serve reads that live made once and then cached
+### Cause 1 — measured and FALSIFIED: the 10-minute serving window
 
-- Read misses: ~40,000, of which **33,146 are Alpaca bar reads from `ai_entry_watch._gap_inputs_sip`** (the open-gap gate). Then quotes/latest 2,584 (`_latest_ask`), quotes 1,794 (`sip_spread_pct`), trades/latest 1,109 and snapshots 569.
-- Live recorded only 8,699 bar reads for 264 (symbol, timeframe) keys, mostly 1–5 per key per day. **Daily bars were first fetched at 09:46 or later (median 09:56)**, because the gap value is cached for the day once the SIP 09:30 bar is servable.
-- The replay serves a read made outside a decision pass by timestamp only: the latest recorded read at or before the replay clock, **if under 10 minutes old** (`Recording.alpaca_at`, `max_age=600`). 80% of bar reads were made outside a pass (6,950 / 8,699) by the background gate warmer. So the replay misses on every ask before live's first fetch, and again on every ask more than 10 minutes after it. The warmer retries every 30 s per name, all day.
-- A missed gap, spread or volume-pace read leaves that input empty. The book server's `seat_priority` uses volume pace and %R, and admission requires arm-ready gates (`ai_watch_admit_require_arm_ready`). So misses change which names get seated.
+Hypothesis: the replay misses reads that live made once and cached, because it serves timestamp-matched reads only up to 600 s old.
+Test (2026-10-02, 10/1 10:00–10:20, all three fixes, `REPLAY_MAX_AGE` 600 vs 86,400):
 
-**Fix:** serve **immutable** reads with no age limit. A request whose time window ended before it was recorded (daily bars, the 09:30 minute bar) returns the same bytes whenever it's asked, so the replay can serve the earliest recorded response at or after the window's end. For reads that change over time (latest quote or trade), serve the nearest recorded read and record its age instead of refusing. Also serve a read the replay asks *before* live first did, if live's first read came within a few seconds (warmer timing jitter).
-- Files: `desk_io.py` (`Recording.alpaca_at`, `alpaca_key`: carry the original time params on the record). Replay only; **no change to the live desk.**
-- Effort: about 3–4 hours with tests.
-- Expected: most of the 33k bar misses and a share of the quote misses disappear. Seating should converge noticeably, but how much needs one re-run to measure.
+| read age limit | misses | decisions agree | live-only names | replay-only names |
+|---|---|---|---|---|
+| 600 s (nightly default) | 771 | 61.5% | 85 | 104 |
+| 86,400 s | 683 | 61.3% | 90 | 96 |
 
-### Cause 2 (medium confidence): process-local timers start at a different moment
+No real effect. The remaining misses are reads live **never made**: a symbol or parameters it never asked for. Also, the 33,146 `_gap_inputs_sip` misses quoted above came from the run *before* the gate-warmer fix (fix 3). With it, this window has ~770 misses in 20 minutes, spread across `vol_now_iex` 243, `_gap_inputs_sip` 143, `_latest_ask` 132, `prime_quotes` 89, `day_high_iex` 70 and `_rvol_pace_inputs` 46.
 
-- Live booted at 05:41; the replay starts cold at 09:30. Process-local cadences (the soft seed's 300 s interval, `_SOFT_SEED_LAST_TS`; stream-strike grace; scout TTLs) and in-memory caches (spread, gap, volume pace, square streaks) therefore run on a different phase and start empty, so admissions happen at different moments.
+**Next diagnostic (about 1 hour):** log the symbol and parameters on each miss, then split the misses into (a) names seated on the replay side only, which are a *consequence* of seating, and (b) names seated on both sides, which would be a *cause*. Separately, log each name's first divergence from seating (admit vs drop and the reason) to find the first decision that splits. Seating's root cause stays open until then.
 
-**Fix:** pre-roll the replay from the desk's boot time (or 09:00) with decisions not scored, so timers and caches are in phase at 09:30.
-- Files: `tools/replay_session.py` (`--exact`: a pre-roll window, score from 09:30).
-- Effort: about 2 hours. Cost: a longer replay, but premarket is quiet (the desk doesn't trade premarket).
+### Cause 2 — already handled: the replay pre-rolls from the desk's boot
 
-### Cause 3 (to verify first, 30 min): does the warmer read the replay clock or the real one?
+Checked 2026-10-02: `run_exact` already replays every recorded pass from the desk's last boot (05:41 on 10/1; `[exact] boot ... 10654 recorded passes to 09:50`) and scores only from `--start`. Process-local timers and caches are in phase by 09:30. No work needed.
 
-The gate warmer's `_cached._read` and `_warm` loop call `time.time()`. If the replay doesn't patch that clock for the warmer, then the "same day" checks compare 10/1 cache stamps against today's date. Every cached value would read as expired and be re-fetched forever, which would fit the size of the 33k. Check: run the 09:30–09:50 slice with a print of `time.time()` inside `_read`. If confirmed, the fix is a one-line clock injection.
+### Cause 3 — ruled out: the replay clock reaches the gate warmer
+
+Checked 2026-10-02: `patch_clocks` swaps the `time` module in every desk module, so `time.time()` inside the warmer's `_cached._read` and `_warm` reads the replay clock. `_gap_inputs_sip` takes `t` explicitly and doesn't fetch before 09:46. No desk-path call reads the real clock through `strftime`/`localtime` without a timestamp. The only real-clock reads are harmless: `book_server.py:456` (shadow-log folder name) and `ai_entry_watch.py:16600` (entries-today count for a per-name cap that is off, `ai_watch_max_entries_per_symbol_day=0`). The second is still a latent replay bug if that cap is ever turned on.
 
 ## Gap B — price freshness (≥ 1,130 same-name mismatches)
 
@@ -61,12 +59,11 @@ Recording the Finnhub stream itself (the original idea) isn't needed for the des
 
 ## Recommended order
 
-1. **Cause 3 check** (30 min). It could explain most of the misses by itself.
-2. **Gap A cause 1:** immutable and nearest reads (3–4 h). Re-run 10/1 and 10/2.
-3. **Gap A cause 2:** pre-roll from boot (2 h). Re-run.
-4. **Gap B:** dash fetch sequencing (4–6 h + one recorded day).
+1. ~~Cause 3 check~~: done, ruled out. ~~Cause 2 pre-roll~~: already in place.
+2. ~~Gap A cause 1 (serving window)~~: falsified by measurement. **Next: miss and seating attribution** (about 1 h), then fix whatever it points to.
+3. **Gap B:** dash fetch sequencing (4–6 h + one recorded day).
 
-Total about 10–13 hours of work, plus re-runs after the close.
+Total about 8–10 hours of work, plus re-runs after the close.
 
 ## Is the pass bar realistic?
 
