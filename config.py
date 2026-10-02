@@ -299,6 +299,12 @@ DEFAULT_CONFIG = {
     # the IEX mid rounded DOWN to the cent; = bid on 1c spreads) and "bid"
     # (limit at the bid). Non-control arms rest ai_entry_test_cross_sec, then
     # cancel and buy what is left at market. "" = off (plain market entries).
+    # Earliest ET time the desk may open a position (poll entries and the
+    # open-bell entries). Watching, seeding and admission are unaffected.
+    # "09:30" = from the open. Operator 2026-10-02: wait to 09:45 (the open's
+    # spreads run ~2x and the SIP gap / volume-pace gates read None until
+    # ~09:46, when the 15-minute-delayed SIP plan serves the 09:30 bar).
+    "ai_entry_earliest_time":     "09:30",
     "ai_entry_test_arms":         "",
     "ai_entry_test_cross_sec":    10.0,
     # Atomic confirm→submit (Package B): refuse place if send-ask moved more
@@ -1808,6 +1814,7 @@ _EFFECTIVE_KEYS = (
     "ai_eod_liquidate_time",
     "ai_entry_order_style",
     "ai_entry_test_arms",
+    "ai_entry_earliest_time",
     "ai_entry_confirm_max_slip_pct",
     "ai_entry_confirm_max_slip_px",
 )
@@ -2317,6 +2324,7 @@ SAFE_CONFIG_KEYS = [
     "ai_entry_marketable_pad_max_px",
     "ai_entry_limit_ttl_sec",
     "ai_entry_test_arms",
+    "ai_entry_earliest_time",
     "ai_entry_test_cross_sec",
     "ai_entry_confirm_max_slip_pct",
     "ai_entry_confirm_max_slip_px",

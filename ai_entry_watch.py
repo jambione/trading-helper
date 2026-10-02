@@ -6051,6 +6051,29 @@ def sod_liquidate_done(cfg: dict | None, now: float | None = None) -> bool:
         return False
 
 
+def entry_window_open(cfg: dict | None, now: float | None = None) -> bool:
+    """True once the ET clock reaches ``ai_entry_earliest_time`` (default
+    09:30). Gates new positions only, never watching or admission. An
+    unreadable value fails closed to 09:45, the operator's setting."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    raw = str(cfg.get("ai_entry_earliest_time") or "09:30").strip()
+    try:
+        hh, mm = raw.split(":")
+        h, m = int(hh), int(mm)
+    except (TypeError, ValueError):
+        h, m = 9, 45
+    if (h, m) <= (9, 30):
+        return True                      # from the open: no gate, no clock math
+    t = float(now if now is not None else time.time())
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _Z
+    try:
+        et = _dt.fromtimestamp(t, tz=_Z("America/New_York"))
+    except (OverflowError, OSError, ValueError):
+        return False                     # an unreadable clock never opens the window
+    return (et.hour, et.minute) >= (h, m)
+
+
 def trading_hours_active(
     cfg: dict | None,
     now: float | None = None,
@@ -16821,7 +16844,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         market_open = bool(gt.market_is_open())
     except Exception:
         market_open = False
-    allow_buys = trading_hours_active(cfg, t0, market_open=market_open)
+    allow_buys = (trading_hours_active(cfg, t0, market_open=market_open)
+                  and entry_window_open(cfg, t0))
 
     try:
         ready = bool(gt.is_ready())

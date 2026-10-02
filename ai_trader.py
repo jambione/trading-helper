@@ -905,6 +905,13 @@ def _open_bell_due(cfg: dict, now: float) -> bool:
         bell_h, bell_m = 9, 35
     if (dt.hour, dt.minute) < (bell_h, bell_m):
         return False
+    # The bell opens positions, so it waits for the earliest entry time too.
+    try:
+        import ai_entry_watch as _ew
+        if not _ew.entry_window_open(cfg, now):
+            return False
+    except Exception:  # noqa: BLE001
+        return False
     day_key = dt.strftime("%Y-%m-%d")
     try:
         prev = json.loads(ai_positions.OPEN_BELL_STATE_PATH.read_text(
