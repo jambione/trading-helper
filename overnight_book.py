@@ -430,11 +430,17 @@ def live_cash(a) -> float:
     return max(0.0, min(bp, cash) if cash > 0 else bp)
 
 
+# Skip the close buy on a day the account sold that morning (every-other-night
+# trading). Off by default since 2026-10-02: Alpaca has no cash accounts; every
+# account is margin or limited-margin (< $2,000 equity, multiplier 1, as the
+# live test account is), and Alpaca covers settlement, so sale proceeds can buy
+# again the same day with no good-faith-violation risk. "yes" restores the wait.
+LIVE_SETTLE_WAIT = os.getenv("OVERNIGHT_LIVE_SETTLE_WAIT", "no").strip().lower() == "yes"
+
+
 def sold_today(ledger: list[dict], day: date) -> bool:
-    """True when this account submitted a sell on *day*. Pure. A small live
-    account is cash-only: the morning's proceeds settle T+1, so buying with
-    them the same afternoon risks a good-faith violation. Live therefore
-    trades every other night."""
+    """True when this account submitted a sell on *day*. Pure. Used only when
+    LIVE_SETTLE_WAIT is on (a true cash account would wait for T+1)."""
     return any(r.get("event") == "submit" and r.get("side") == "sell"
                and r.get("night_end") == day.isoformat() and not r.get("dry_run")
                and not r.get("error") for r in ledger)
@@ -685,7 +691,7 @@ def _buy_live(tc, day: date, syms: list[str], px: dict, held: dict, dry: bool) -
     """Live test: settlement check, hard caps, MOC only."""
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
-    if sold_today(_read_jsonl(LEDGER), day):
+    if LIVE_SETTLE_WAIT and sold_today(_read_jsonl(LEDGER), day):
         log(f"buy {day}: LIVE settlement: sold this morning, proceeds settle T+1; no buy tonight")
         return
     cash = live_cash(tc.get_account())

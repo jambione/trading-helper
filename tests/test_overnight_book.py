@@ -506,3 +506,27 @@ def test_order_audit_records_status_and_fills(tmp_path, monkeypatch):
     assert row["event"] == "orders" and row["step"] == "reconcile_buy"
     assert row["orders"][0]["time_in_force"] == "cls" and row["orders"][0]["status"] == "filled"
     assert row["orders"][0]["filled_avg_price"] == "50.01"
+
+
+def test_live_buys_the_same_day_it_sold_unless_the_settle_wait_is_on(monkeypatch, tmp_path):
+    """Alpaca has no cash accounts: a limited-margin account (< $2,000) may buy
+    with the morning's unsettled proceeds, so live trades every night unless
+    OVERNIGHT_LIVE_SETTLE_WAIT=yes."""
+    import json
+    from datetime import date as _d
+    from types import SimpleNamespace as NS
+    monkeypatch.setattr(ob, "OUT", tmp_path)
+    monkeypatch.setattr(ob, "LOG", tmp_path / "run.log")
+    monkeypatch.setattr(ob, "LEDGER", tmp_path / "ledger.jsonl")
+    (tmp_path / "ledger.jsonl").write_text(json.dumps(
+        {"event": "submit", "side": "sell", "night_end": "2026-10-05", "dry_run": False}) + "\n")
+    sized = []
+    monkeypatch.setattr(ob, "live_cash", lambda a: 100.0)
+    monkeypatch.setattr(ob, "size_live", lambda *a, **k: sized.append(1) or [])
+    tc = NS(get_account=lambda: NS())
+    monkeypatch.setattr(ob, "LIVE_SETTLE_WAIT", False)
+    ob._buy_live(tc, _d(2026, 10, 5), ["AAA"], {"AAA": 20.0}, {}, True)
+    assert sized == [1]                        # went on to size tonight's buy
+    monkeypatch.setattr(ob, "LIVE_SETTLE_WAIT", True)
+    ob._buy_live(tc, _d(2026, 10, 5), ["AAA"], {"AAA": 20.0}, {}, True)
+    assert sized == [1]                        # the wait skipped it
