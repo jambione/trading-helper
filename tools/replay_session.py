@@ -1767,6 +1767,11 @@ def run_exact(args) -> int:
             if k not in error_tb:  # the first traceback of each kind, for the report
                 error_tb[k] = traceback.format_exc(limit=8)[-2000:]
 
+    # REPLAY_DUMP_POLLS=path: write the replay's arm-poll rows (diagnostics).
+    if os.getenv("REPLAY_DUMP_POLLS"):
+        with gzip.open(os.environ["REPLAY_DUMP_POLLS"], "wt") as fh:
+            for k_, rows_ in sorted(replay_polls.items()):
+                fh.write(json.dumps({"ts": k_, "rows": rows_}, default=str) + "\n")
     out = exact_score(events, live_arms, replay_polls, entries, wire, t_start, t_end)
     out.update({"day": args.day, "window": f"{args.start}-{args.end}",
                 "sha": os.getenv("REPLAY_SHA"), "boot": t_boot, "io": desk_io.report(),
@@ -1792,6 +1797,9 @@ def exact_score(events, live_arms, replay_polls, entries, wire: Path,
     # and whether the replay agreed on the names live priced by quote.
     src_n: Counter = Counter()
     quote_checks = quote_agree = 0
+    # Per name: polls seen live-only / replay-only / both, disagreements, and
+    # the first and last poll each side had it, to attribute seating gaps.
+    names: dict[str, dict] = {}
     for t, ev in events:
         if ev != "poll" or not (t_start <= t <= t_end):
             continue
@@ -1806,6 +1814,19 @@ def exact_score(events, live_arms, replay_polls, entries, wire: Path,
         for s_ in set(live) | set(rep):
             checks += 1
             a, b = live.get(s_), rep.get(s_)
+            nm = names.setdefault(s_, {"lo": 0, "ro": 0, "both": 0, "dis": 0})
+            for side, row in (("live", a), ("rep", b)):
+                if row is not None:
+                    nm.setdefault(f"{side}_first", round(t, 3))
+                    nm[f"{side}_last"] = round(t, 3)
+            if a is None:
+                nm["ro"] += 1
+            elif b is None:
+                nm["lo"] += 1
+            else:
+                nm["both"] += 1
+                if key(a) != key(b):
+                    nm["dis"] += 1
             if a is not None and str(a.get("src") or "") == "quote":
                 quote_checks += 1
                 if b is not None and key(a) == key(b) and b.get("src") == "quote":
@@ -1848,7 +1869,7 @@ def exact_score(events, live_arms, replay_polls, entries, wire: Path,
             "divergence_kinds": dict(by_block.most_common(15)),
             "first_divergence": dict(sorted(first_div.items(), key=lambda kv: kv[1]["t"])[:25]),
             "live_buys": len(buys), "replay_entries": len(rep_e), "buys_matched_5s": matched,
-            "buy_recall": buy_rate}
+            "buy_recall": buy_rate, "names": names}
 
 
 def print_exact(o: dict) -> None:

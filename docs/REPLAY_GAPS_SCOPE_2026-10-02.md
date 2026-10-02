@@ -57,7 +57,29 @@ Checked 2026-10-02: `patch_clocks` swaps the `time` module in every desk module,
 
 Recording the Finnhub stream itself (the original idea) isn't needed for the desk process and would add ~10⁵–10⁶ prints a day to the recording for no gain.
 
-## Recommended order
+
+## Attribution results (2026-10-02, 10/1 09:30–11:00, MacBook, all fixes)
+
+Decisions agree 1,434 / 3,275 (43.8%); buys 2 / 8; misses 14,566. The new diagnostics (`desk_io` `miss_symbols`/`miss_first`, per-name `names` in the exact score, `REPLAY_DUMP_POLLS`) give:
+
+1. **Seating differs in timing, not membership.** 41 of the 49 names that reached an arm poll were seated by both sides at some point; 4 live-only, 1 replay-only. First seat time matches (median gap 0 s); last seat time differs by a median of 57 s.
+2. **One-sided checks split three ways:**
+
+| one-sided run length | checks | share | reading |
+|---|---|---|---|
+| 1–3 polls | 413 | 29% | flicker: ordering of sync/paint/poll (live's book maintenance runs on its own thread; the replay runs them serially) |
+| 4–20 polls | 376 | 27% | drop timers (dead-seat/unarmable 30 s, stale-tape window) firing a few polls apart |
+| > 20 polls (11 stretches) | 625 | 44% | real keep/admit disagreements |
+
+3. **The long stretches are mostly the gate-input feedback loop.** In 4 of the 5 "replay kept, live didn't" stretches (AXTI, DT, KURA, BMNR), the replay held the name at `spread_unknown` while live had a real spread (AXTI 0.34%, DT 0.31%, KURA 0.73%: all over the 0.2% gate, so live refused them). Live fetched DT's spread once (09:48:35); the replay missed 566 reads for DT. The warmer fetches inputs for whatever the *replay* has seated or warming, so once seats differ the replay asks for reads live never made, gets unknown inputs, and keeps or admits names live refused. Misses mostly hit names both sides seated (8,939 of 14,566), plus 4,236 for names never in an arm poll (warming/scout seats).
+
+## Revised recommendation
+
+1. **Replay the gate inputs at the value level, not the request level** (3–4 h, replay only). Live logs every spread, gap, volume-now, volume-pace and day-high value it computed (`inputs.jsonl.gz`: symbol, value, time). The live warmer is asynchronous, so what matters is the cached value at time *t*, not which request ran when. In exact mode, fill the async gate caches from live's recorded values at their timestamps instead of re-fetching through Alpaca. That breaks the feedback loop: the replay sees exactly the inputs live had, and the request-level misses for these callers disappear by construction. Expected: most of the 44% long stretches, plus the `spread_unknown`/`gap_unknown` same-name divergences. Not exact for names live never computed, but those are then genuinely replay-only.
+2. **Score with a small timing tolerance** for flicker (29%): count a check as agreeing if the other side had the same name and decision within ±2 polls. Report it separately; don't try to reproduce thread interleaving.
+3. **Gap B (price freshness)** as scoped above, after 1. Re-measure first: some `stale_quote` divergences may be downstream of different seats.
+
+## Recommended order (superseded by the revised recommendation above)
 
 1. ~~Cause 3 check~~: done, ruled out. ~~Cause 2 pre-roll~~: already in place.
 2. ~~Gap A cause 1 (serving window)~~: falsified by measurement. **Next: miss and seating attribution** (about 1 h), then fix whatever it points to.

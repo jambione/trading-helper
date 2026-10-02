@@ -60,6 +60,10 @@ _clock: Callable[[], float] = time.time
 served: Counter = Counter()
 missed: Counter = Counter()
 miss_callers: Counter = Counter()
+# Per symbol: how many reads missed, and the replay time of the first one, so
+# a miss can be told apart as a cause of seating divergence or its consequence.
+miss_syms: Counter = Counter()
+miss_first: dict[str, float] = {}
 
 
 class ReplayMiss(Exception):
@@ -867,12 +871,30 @@ def _miss(channel: str, what: str) -> ReplayMiss:
     return ReplayMiss(f"replay has no recorded {channel} read for {what}")
 
 
+def _miss_symbols(path: str, data: Any) -> list[str]:
+    """Symbols a request was about: the symbols param, or a /positions/SYM path."""
+    out: list[str] = []
+    if isinstance(data, dict):
+        for k in ("symbols", "symbol", "symbol_or_symbols"):
+            v = data.get(k)
+            if isinstance(v, str):
+                out += [x.strip().upper() for x in v.split(",") if x.strip()]
+            elif isinstance(v, (list, tuple)):
+                out += [str(x).upper() for x in v]
+    if not out and "/positions/" in path:
+        out = [path.rsplit("/", 1)[-1].upper()]
+    return out
+
+
 def _replay_request(self, method, path, data=None, base_url=None, api_version=None):
     base = str(base_url or getattr(self, "_base_url", "") or "")
     full = f"{base}/{api_version or getattr(self, '_api_version', '')}{path}"
     key = alpaca_key(method, _path_only(full), _jsonable(data) if isinstance(data, dict) else data)
     hit = _rec.alpaca_at(key, _clock(), _current_pass()) if _rec is not None else None
     if hit is None:
+        for sym in _miss_symbols(_path_only(full), data):
+            miss_syms[sym] += 1
+            miss_first.setdefault(sym, _clock())
         raise _miss("alpaca", f"{str(method).upper()} {_path_only(full)}")
     served[f"alpaca {_path_only(full)}"] += 1
     if "err" in hit:
@@ -929,4 +951,6 @@ def uninstall() -> None:
 def report() -> dict:
     return {"mode": MODE, "served": dict(served), "missed": dict(missed),
             "rewinds": getattr(_rec, "rewinds", 0),
-            "miss_callers": dict(miss_callers.most_common(20))}
+            "miss_callers": dict(miss_callers.most_common(20)),
+            "miss_symbols": dict(miss_syms.most_common()),
+            "miss_first": {k: round(v, 3) for k, v in miss_first.items()}}
