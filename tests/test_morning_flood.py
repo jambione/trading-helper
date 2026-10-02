@@ -166,14 +166,22 @@ def test_square_arm_still_refuses_non_ob_tight_morning_seats():
     assert ok is False
     assert why in ("exh_not_tight", "wait_exh", "exh_not_ob", "not_overbought")
 
-    square = {"indicator": {
+    # Since 38ece6b a square opens on the second consecutive square poll
+    # (ai_watch_square_min_count=2), so the streak needs a symbol and two polls.
+    ew._SQUARE_STREAK.pop("SQR", None)
+    square = {"symbol": "SQR", "indicator": {
         "pctr": -13.0, "pctr_slow": -4.0,
         "pctr_rising": True, "pctr_slow_rising": True,
         "pctr_ob": True, "pctr_tight": True,
         "pctr_falling": False,
     }}
-    ok, why = ew.exhaustion_allows_buy(square, cfg)
-    assert ok is True and why == "overbought"
+    try:
+        ok, why = ew.exhaustion_allows_buy(square, cfg, now=1000.0)
+        assert ok is False and why == "square_confirm"
+        ok, why = ew.exhaustion_allows_buy(square, cfg, now=1001.0)
+        assert ok is True and why == "overbought"
+    finally:
+        ew._SQUARE_STREAK.pop("SQR", None)
 
 
 def test_inclusion_below_min_price_unchanged():

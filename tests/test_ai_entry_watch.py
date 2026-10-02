@@ -3814,7 +3814,10 @@ def test_ensure_live_exhaustion_stamps_pctr_for_the_buy_gate(monkeypatch):
     import ai_entry_watch as ew
 
     now = 1_700_000_000.0
-    filled = _synthetic_ohlc()
+    # The square arm (default on since e5339b9) reads BOTH %R lines, and the
+    # slow line needs rte_slow_native_length (112) bars. 40 bars stamps only
+    # the fast line, and the square honestly refuses no_exhaustion_data.
+    filled = _synthetic_ohlc(130)
 
     def fake_fetch(symbol, cfg, t):
         with ew._ohlc_cache_lock:
@@ -3827,6 +3830,7 @@ def test_ensure_live_exhaustion_stamps_pctr_for_the_buy_gate(monkeypatch):
     with ew._ohlc_cache_lock:
         ew._ohlc_cache.pop("SMCI", None)
         ew._ohlc_ts_cache.pop("SMCI", None)
+    ew._SQUARE_STREAK.pop("SMCI", None)
 
     rec = {"symbol": "SMCI"}
     cfg = {
@@ -3840,6 +3844,7 @@ def test_ensure_live_exhaustion_stamps_pctr_for_the_buy_gate(monkeypatch):
     assert ew.ensure_live_exhaustion(rec, px, cfg, now) is True
     assert rec["indicator"]["pctr"] is not None
     assert rec["indicator"]["pctr_src"] == "live"
+    assert rec["indicator"]["pctr_slow"] is not None
     state = ew.exhaustion_state(rec, cfg)
     assert state in ("overbought", "heating", "cooling", "flat")
     ok, why = ew.exhaustion_allows_buy(rec, cfg)
@@ -3852,6 +3857,8 @@ def test_ensure_live_exhaustion_stamps_pctr_for_the_buy_gate(monkeypatch):
             "not_rising_cooling", "not_rising_flat",
             "not_rising_overbought", "not_rising_heating",
             "exh_falling", "exh_not_rising",
+            # Square arm: one poll is a confirm, not an open.
+            "square_confirm", "wait_square", "exh_not_tight", "wait_exh",
         )
     )
 

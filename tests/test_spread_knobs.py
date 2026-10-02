@@ -113,7 +113,8 @@ def test_open_seed_gate_is_wired_into_the_soft_seed_path():
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "ai_entry_watch.py"),
         encoding="utf-8").read()
-    assert 'cfg.get("ai_watch_open_seed_min_pct", 0.0)' in src
+    # _cfg_float since 11efe6c: an explicit 0 must disable, not read as missing.
+    assert '_cfg_float(cfg, "ai_watch_open_seed_min_pct", 0.0)' in src
     # Gate compares against need_pct; 0 disables (open_seed_min_pct <= 0).
     assert "if open_seed_min_pct <= 0:" in src
     assert "need_pct = open_seed_min_pct" in src

@@ -11936,7 +11936,10 @@ def _square_streak_note(
     if not sym:
         return 0
     if not is_square:
-        _SQUARE_STREAK.pop(sym, None)
+        # Paint peek must not reset either: a paint row that disagrees with
+        # the poll for one publish would wipe the streak between two polls.
+        if not getattr(_MID_RISE_PEEK, "on", False):
+            _SQUARE_STREAK.pop(sym, None)
         return 0
     prev_n, prev_t = _SQUARE_STREAK.get(sym, (0, 0.0))
     if getattr(_MID_RISE_PEEK, "on", False):
@@ -12031,12 +12034,13 @@ def _presquare_streak_note(
     *,
     now: float | None = None,
 ) -> int:
-    """Consecutive empty-square polls. Paint peek does not advance."""
+    """Consecutive empty-square polls. Paint peek neither advances nor resets."""
     sym = str(sym or "").upper()
     if not sym:
         return 0
     if not is_pre:
-        _PRESQUARE_STREAK.pop(sym, None)
+        if not getattr(_MID_RISE_PEEK, "on", False):
+            _PRESQUARE_STREAK.pop(sym, None)
         return 0
     prev_n, prev_t = _PRESQUARE_STREAK.get(sym, (0, 0.0))
     if getattr(_MID_RISE_PEEK, "on", False):
@@ -12136,12 +12140,13 @@ def _os_streak_note(
     *,
     now: float | None = None,
 ) -> int:
-    """Consecutive oversold-triangle polls. Paint peek does not advance."""
+    """Consecutive oversold-triangle polls. Paint peek neither advances nor resets."""
     sym = str(sym or "").upper()
     if not sym:
         return 0
     if not in_triangle:
-        _OS_STREAK.pop(sym, None)
+        if not getattr(_MID_RISE_PEEK, "on", False):
+            _OS_STREAK.pop(sym, None)
         return 0
     prev_n, prev_t = _OS_STREAK.get(sym, (0, 0.0))
     if getattr(_MID_RISE_PEEK, "on", False):

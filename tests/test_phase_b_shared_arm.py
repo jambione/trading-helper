@@ -40,6 +40,9 @@ def _cfg(**over):
         "rte_require_tight": True,
         "ai_watch_exhaustion_rules": True,
         "ai_watch_require_exh_rising": True,
+        # These tests are about the lanes sharing one gate, not the square's
+        # consecutive-poll confirm (38ece6b, live 2); one poll decides here.
+        "ai_watch_square_min_count": 1,
     }
     cfg.update(over)
     return cfg
@@ -51,6 +54,13 @@ def _rec(**ind):
             "cm_rsi": 35.0, "cm_rsi_rising": True}
     base.update(ind)
     return {"symbol": "AAA", "indicator": base}
+
+
+@pytest.fixture(autouse=True)
+def _fresh_square_streak():
+    ew._SQUARE_STREAK.pop("AAA", None)
+    yield
+    ew._SQUARE_STREAK.pop("AAA", None)
 
 
 @pytest.fixture(autouse=True)

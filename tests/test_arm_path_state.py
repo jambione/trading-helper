@@ -22,6 +22,12 @@ ALLOWED = {
     "_MID_RISE_STATE": "decision state; paint is read-only via _MID_RISE_PEEK",
     "_SQUARE_STREAK": "square consecutive-poll count; paint is read-only via "
                       "_MID_RISE_PEEK (same peek flag)",
+    "_PRESQUARE_STREAK": "empty-square consecutive-poll count; same peek rule",
+    "_OS_STREAK": "oversold-triangle consecutive-poll count; same peek rule",
+    "_OS_QUALIFIED": "oversold latch; written only when not peeking (the "
+                     "record rehydration needs os_qualified, which paint rows "
+                     "do not carry)",
+    "_OS_LEFT": "oversold leave clock; same as _OS_QUALIFIED",
     "_LAST_QUOTE_TS": "decision state (price clock); paint restamps it — open "
                       "question in docs/AFTER_CLOSE_2026-09-25.md item 21",
     "_GAP_CACHE": "data cache",
@@ -117,3 +123,33 @@ def test_the_book_paint_leaves_the_latch_alone(monkeypatch):
         ew._MID_RISE_STATE.clear()
     assert reached, "the paint must reach the arm check for this test to mean anything"
     assert after == before
+
+
+def test_the_book_paint_does_not_reset_the_square_streaks():
+    """A paint row that disagrees with the poll (here: no slow line) used to
+    pop the streak, so a confirmed square never reached its second poll."""
+    cfg = {"ai_watch_exh_square_arm": True, "ai_watch_square_min_count": 2,
+           "rte_threshold": 20, "rte_confluence_max": 15,
+           "ai_watch_require_exh_rising": True}
+    square = {"symbol": "SQP", "indicator": {
+        "pctr": -5.0, "pctr_slow": -8.0, "pctr_rising": True, "pctr_falling": False}}
+    paint = {"symbol": "SQP", "indicator": {"pctr": -5.0, "pctr_rising": True}}
+    for d in (ew._SQUARE_STREAK, ew._PRESQUARE_STREAK, ew._OS_STREAK):
+        d.pop("SQP", None)
+    try:
+        assert ew.exhaustion_allows_buy(dict(square), cfg, now=100.0) == (
+            False, "square_confirm")
+        ew._MID_RISE_PEEK.on = True
+        try:
+            ew.exhaustion_allows_buy(paint, cfg, now=100.5)
+            for note in (ew._square_streak_note, ew._presquare_streak_note,
+                         ew._os_streak_note):
+                note("SQP", False, now=100.6)
+        finally:
+            ew._MID_RISE_PEEK.on = False
+        assert ew._SQUARE_STREAK["SQP"][0] == 1
+        assert ew.exhaustion_allows_buy(dict(square), cfg, now=101.0) == (
+            True, "overbought")
+    finally:
+        for d in (ew._SQUARE_STREAK, ew._PRESQUARE_STREAK, ew._OS_STREAK):
+            d.pop("SQP", None)
