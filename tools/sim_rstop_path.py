@@ -54,6 +54,21 @@ def path_cfg(**over) -> dict[str, Any]:
     except Exception:
         cfg = {}
     cfg.update({
+        # Synthetic bars have no signal engine: the live heartbeat check reads
+        # signal_state.json's mtime against the wall clock, so with the live
+        # 60 s setting the sim refused every arm (engine_stale) unless an
+        # engine had written that file in the last minute on this machine.
+        "ai_watch_engine_stale_max_sec": 0.0,
+        # Live-data arm gates the sim cannot feed (SIP gap, SIP spread, IEX
+        # vol-now, SIP volume pace, day high). They read Alpaca at the real
+        # wall clock, and the SIP ones only engage once that clock is past
+        # ~09:46 ET, so with live settings the sim passed before the open and
+        # refused every arm (gap_unknown, spread_unknown) during the session.
+        "ai_watch_gap_down_block_pct": 0.0,
+        "ai_watch_max_sip_spread_pct": 0.0,
+        "ai_watch_min_vol_now_ratio": 0.0,
+        "ai_watch_min_rvol_pace": 0.0,
+        "ai_watch_min_room_below_hod_pct": 0.0,
         "ai_watch_arm_mode": "last",
         "ai_watch_tv_exh_rsi": True,
         "ai_watch_exhaustion_rules": True,
