@@ -1,0 +1,26 @@
+{
+ "study": "Forced index flows: S&P 500 additions and deletions. Does the forced buying/selling by index funds leave a tradable drift or reversal?",
+ "registered_at": "2026-10-02",
+ "registered_before_results": true,
+ "hypothesis": "Index funds must buy additions (and sell deletions) at the close before the effective date, whatever the price. Prices should drift toward that close after the announcement and partly reverse after it, and deletions should rebound once the forced selling is done.",
+ "data": {
+  "events": "Wikipedia 'List of S&P 500 companies' change table, revision 1368675864 (2026-08-10, the last revision before the table was removed). Effective dates 2016-01..2026-08.",
+  "announcements": "Alpaca news (v1beta1/news, free) per ticker from 45 days before the effective date: the first headline containing 'S&P 500' with join/replace/added/addition/inclusion/removed/deleted. A = that headline's timestamp. No headline -> the event has no A and is excluded from W1/W4 only.",
+  "prices": "the longer-holds panel on the mini (/tmp/lh/panel.npz: Alpaca SIP adjusted daily bars 2016-01..2026-09-25, active AND inactive names) and SPY from the same panel"
+ },
+ "definitions": {
+  "E": "effective date (changes take effect before the open on E)",
+  "C": "the last session before E: index funds trade at C's closing auction",
+  "entry_after_A": "the open of the first session whose 09:30 is after A",
+  "mapping_check": "an event is kept only if the panel symbol has a close on C and on the next 20 sessions (adds) and C's volume >= 3x its prior 20-session median (the index-fund close). This catches ticker renames and reuse without looking at returns. Report how many events it drops."
+ },
+ "windows": {
+  "W1_add_drift": "long the add from entry_after_A to the close of C (skip if entry is after C)",
+  "W2_add_reversal": "short the add from the close of C to the close of C+5",
+  "W3_delete_rebound": "long the deleted name from the close of C to the close of C+5 (only deletions that keep trading: a close on C+20)",
+  "info_only": ["W2 and W3 to C+20", "W4: short the deletion from entry_after_A to the close of C", "announcement jump: the close before A -> entry_after_A open (not tradable)"]
+ },
+ "measure": "return minus SPY's return over the same window (excess), net of costs: 2 bp per auction leg + 10 bp round trip for adds and 20 bp for deletions (half-spread allowance). Per-event mean, t = mean / (sd / sqrt n).",
+ "splits": "by effective date: tune 2016-2020, validate 2021-2023, holdout 2024-2026-08 (holdout read once).",
+ "promotion": "a window (W1, W2 or W3) with net excess > 0 on tune AND validate, pooled tune+validate t >= 2, then net > 0 on the holdout. ~20 adds a year, so expect wide intervals."
+}
