@@ -1,0 +1,16 @@
+{
+ "study": "Is round-5 T1's 12-1 momentum excess (top 5 of ~108 mega-caps, 20-day hold) real, or survivorship?",
+ "registered_at": "2026-10-02",
+ "registered_before_results": true,
+ "prior": "LONGER_HOLDS_2026-09-27 already found no alpha for monthly 12-1 momentum on the ~900-name liquid point-in-time universe (OOS alpha +1.4..+3.3%/yr, t <= 0.3). This test isolates survivorship at T1's own scale.",
+ "data": "/tmp/lh/panel.npz on the mini via lh_core.load (Alpaca SIP adjusted daily 2016-01..2026-09-25, active + inactive names; inactive coverage from 2018; delisted names held at their last close).",
+ "universes": {
+  "PIT100": "each month-end t: the 100 names with the highest 20-day average dollar volume among eligible (price >= $5) names with 252 sessions of history, using data through t only",
+  "SURV100": "the same ranking but restricted to names that are still active today (status == active): the survivorship-biased analogue of T1's list"
+ },
+ "rule": "at each month-end close t, rank the universe by 12-1 momentum (close t-21 / close t-252 - 1); hold the top 5 and top 10 equal-weight to the next month-end close",
+ "baseline": "the equal-weight universe over the same month (T1's 'random picks') and SPY",
+ "cost": "10 bp per month (round trip on full turnover at liquid-name spreads + 2 bp auction legs)",
+ "splits": "IS 2017-2021, OOS 2022-2026-09 (the longer-holds split)",
+ "promotion": "PIT100 top-5 excess vs its own universe > 0 in IS and OOS with pooled t >= 2. The SURV100 minus PIT100 gap estimates the survivorship lift in T1."
+}
