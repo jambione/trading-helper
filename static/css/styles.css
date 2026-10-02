@@ -4789,3 +4789,6 @@ body.engine-visible .engine-bar                         { display: none !importa
 .book-call-btn.is-logged { color: #4caf50; border-color: #4caf50; }
 .book-call-btn.is-failed { color: #e57373; border-color: #e57373; }
 .book-call-btn:disabled { cursor: default; }
+
+/* Desktop only: the Buy? call button is hidden on the mobile layout. */
+body.mobile .book-call-btn { display: none; }
