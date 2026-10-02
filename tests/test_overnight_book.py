@@ -471,3 +471,38 @@ def test_paper_sizing_never_passes_the_budget_and_skips_held():
     assert [(s, q) for s, q, _ in picks] == [("BIG", 1), ("A", 20)]
     assert sum(q * p for _, q, p in picks) <= 2000.0
     assert ob.size_paper(["A"], px, set(), 0.0) == []
+
+
+class _BoomClient:
+    def get_orders(self, *_a, **_k):
+        raise RuntimeError("broker down")
+
+    def get_account(self):
+        raise RuntimeError("broker down")
+
+
+def test_audits_never_raise(tmp_path, monkeypatch):
+    monkeypatch.setattr(ob, "OUT", tmp_path)
+    monkeypatch.setattr(ob, "LOG", tmp_path / "run.log")
+    monkeypatch.setattr(ob, "LEDGER", tmp_path / "ledger.jsonl")
+    ob.order_audit(_BoomClient(), NOW.date(), "buy")
+    ob.account_audit(_BoomClient(), NOW.date(), "reconcile_buy")
+    assert "broker down" in (tmp_path / "run.log").read_text()
+    assert not (tmp_path / "ledger.jsonl").exists()
+
+
+def test_order_audit_records_status_and_fills(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace as NS
+    monkeypatch.setattr(ob, "OUT", tmp_path)
+    monkeypatch.setattr(ob, "LEDGER", tmp_path / "ledger.jsonl")
+    o = NS(id="x1", client_order_id="on-2026-10-01-AAA-buy", symbol="AAA", side=NS(value="buy"), type="market",
+           time_in_force=NS(value="cls"), status=NS(value="filled"), qty="1", filled_qty="1",
+           filled_avg_price="50.01", submitted_at=NOW, filled_at=NOW, canceled_at=None, expired_at=None,
+           failed_at=None)
+    monkeypatch.setattr(ob, "our_orders", lambda _tc, prefix: [o] if prefix == "on-2026-10-01-" else [])
+    ob.order_audit(object(), NOW.date(), "reconcile_buy")
+    row = json.loads((tmp_path / "ledger.jsonl").read_text())
+    assert row["event"] == "orders" and row["step"] == "reconcile_buy"
+    assert row["orders"][0]["time_in_force"] == "cls" and row["orders"][0]["status"] == "filled"
+    assert row["orders"][0]["filled_avg_price"] == "50.01"

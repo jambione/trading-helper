@@ -835,6 +835,54 @@ def our_orders(tc, prefix: str) -> list:
     return [o for o in got if str(o.client_order_id or "").startswith(prefix)]
 
 
+ORDER_AUDIT_FIELDS = ("id", "client_order_id", "symbol", "side", "type", "time_in_force", "status", "qty",
+                      "filled_qty", "filled_avg_price", "submitted_at", "filled_at", "canceled_at",
+                      "expired_at", "failed_at")
+
+
+def _plain(v):
+    v = getattr(v, "value", v)
+    return v if v is None or isinstance(v, (int, float, str, bool)) else str(v)
+
+
+def order_audit(tc, day: date, step: str) -> None:
+    """Append every order of *day* (status, fills, timestamps) to the ledger.
+    Run after each order step and reconcile, so an order that is accepted and
+    later cancelled or rejected leaves a trail. Never raises."""
+    try:
+        rows = [{f: _plain(getattr(o, f, None)) for f in ORDER_AUDIT_FIELDS}
+                for o in our_orders(tc, f"on-{day.isoformat()}-")]
+        append(LEDGER, {"event": "orders", "day": day.isoformat(), "step": step,
+                        "at": datetime.now(ET).isoformat(), "orders": rows})
+    except Exception as e:  # noqa: BLE001
+        log(f"order_audit {step} {day}: {e!s:.150}")
+
+
+def account_audit(tc, day: date, step: str) -> None:
+    """Append the account's cash/equity, positions and the day's activities
+    (fills and FEE rows: regulatory fees are cents, which is bp on 1-share
+    trades) to the ledger. Never raises."""
+    try:
+        a = tc.get_account()
+        try:
+            acts = tc.get("/account/activities", {"date": day.isoformat()}) or []
+        except Exception as e:  # noqa: BLE001
+            acts = [{"error": str(e)[:150]}]
+        fees = sum(float(x.get("net_amount") or 0) for x in acts
+                   if isinstance(x, dict) and x.get("activity_type") in ("FEE", "PTC"))
+        append(LEDGER, {
+            "event": "account", "day": day.isoformat(), "step": step, "at": datetime.now(ET).isoformat(),
+            **{k: _plain(getattr(a, k, None)) for k in ("account_number", "cash", "equity", "buying_power",
+                                                         "non_marginable_buying_power", "last_equity")},
+            "positions": [{"sym": x.symbol, "qty": _plain(x.qty), "avg_entry": _plain(x.avg_entry_price),
+                           "market_value": _plain(x.market_value)} for x in tc.get_all_positions()],
+            "activities": acts, "fees_today": fees})
+        log(f"account {step} {day}: cash ${float(a.cash):,.2f} equity ${float(a.equity):,.2f}, "
+            f"{len(acts)} activities, fees ${fees:+.2f}")
+    except Exception as e:  # noqa: BLE001
+        log(f"account_audit {step} {day}: {e!s:.150}")
+
+
 def crosses(syms: list[str], day: date, leg: str) -> dict:
     import auction_print_check as apc  # puts tools/ on sys.path for its own imports
     cl = data_client()
@@ -1307,6 +1355,10 @@ def run() -> None:
                         except Exception as e:  # noqa: BLE001
                             done[name] = f"error {e!s:.120}"
                             log(f"{name} {today}: ERROR {e!s:.200}\n{traceback.format_exc()}")
+                        if name in ORDER_STEPS or name.startswith("reconcile"):
+                            order_audit(tc, today, name)
+                        if name.startswith("reconcile"):
+                            account_audit(tc, today, name)
                     save_state(st)
                     last_snap = 0.0                 # a step ran: refresh the dashboard now
             if time.time() - last_snap >= SNAPSHOT_EVERY:
