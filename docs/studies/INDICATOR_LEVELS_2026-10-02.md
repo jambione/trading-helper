@@ -23,6 +23,24 @@ Outcome: 15 minutes after entry, minus 0.20% round-trip cost. Lift = event minus
    Bjorgum on the arms, and SR channels on the fills.
 6. Market tide, relative strength vs SPY, the squeeze release, and high-volume nodes: no passing cell either.
 
+## Correction the same evening: the "least bad" ranking depends on the yardstick
+The lift above compares each arm with random minutes in the **same name and hour**. The question a skip rule faces is different:
+is this arm worse than the **other arms**? Re-cut by half, with day-paired differences against the rest of the arms:
+
+| cell (square arms) | half A in / vs rest (t) | half B in / vs rest (t) |
+|---|---|---|
+| near support (< 0.6%) | −9.2 / −7.2 (−0.5) | −21.2 / −18.6 (−1.4) |
+| near VWAP (< 0.8%) | −14.9 / −15.5 (−1.5) | −15.7 / −13.1 (−0.8) |
+| stretched above VWAP (≥ 1.75%) | +2.7 / +27.5 (+1.6) | −10.2 / +17.5 (+0.7) |
+| far from support (≥ 1.5%) | −2.3 / +24.4 (+1.1) | −11.8 / +9.6 (+0.5) |
+| any resistance break (H1) | −8.0 / +3.1 (+0.7) | −9.9 / +9.9 (+0.8) |
+| just under the prior-day high (< 1%) | −25.2 / −10.9 (−1.7) | −19.7 / +6.6 (+0.8) |
+
+Against the other arms, near-support/near-VWAP arms are no better, and stretched or breakout arms are no worse. The H1/H2 ordering
+in the bottom line holds only against same-hour random minutes, because a running name's random minutes are also high.
+**No cell is a reliable skip rule:** each flips sign or has t < 2 in a half. On fills, the only same-sign cell is
+"just under the prior-day high" (−14 / −74 bp vs the rest, t −2.8 / −2.2), but on n = 22 / 15 over 4 days a half it is a watch item, not a gate.
+
 ## Port check (RKLB 10/2 vs the user's screenshots)
 - ChartPrime HV boxes: the resistance box matches to the cent (74.06, depth to 74.22). The Break Res and hold events land
   2–4 minutes later than on TradingView, probably from ATR(200) seeding: our history starts at the prior day's 04:00, while
