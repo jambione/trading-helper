@@ -328,3 +328,23 @@ def test_research_output_written_in_process_is_still_an_input(isolated, monkeypa
         desk_io.uninstall()
     rows = [json.loads(l) for l in gzip.open(_wire_file(isolated), "rt")]
     assert [r["f"] for r in rows if r.get("ch") == "file"] == ["seed_rank_gx.json"]
+
+
+
+def test_in_pass_dash_fetch_is_chosen_by_time_not_sequence(tmp_path):
+    """Live refetches /api/state whenever its 0.25 s cache expires. Serving
+    the k-th recorded fetch to the replay's k-th request ran ahead of live;
+    the replay must get the latest fetch at or before its pass clock."""
+    enc = desk_io.DeltaEncoder()
+    path = tmp_path / "wire.jsonl.gz"
+    with gzip.open(path, "wt") as f:
+        for ts, px in ((10.1, 1.0), (13.0, 2.0), (16.0, 3.0)):
+            doc = {"tickers": [{"ticker": "AAA", "price": px}]}
+            f.write(json.dumps({"ts": ts, "ch": "dash", "pt": 10.0, **enc.encode(doc, ts)}) + "\n")
+    rec = desk_io.Recording(path)
+    desk_io.set_pass(10.0)
+    price = lambda t: rec.dash_at(t, 10.0)["tickers"][0]["price"]  # noqa: E731
+    assert price(10.0) == 1.0          # before the first fetch: the first
+    assert price(10.0) == 1.0          # asked again at the same moment: not the next one
+    assert price(14.0) == 2.0
+    assert price(16.5) == 3.0

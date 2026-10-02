@@ -77,6 +77,20 @@ Decisions agree 1,434 / 3,275 (43.8%); buys 2 / 8; misses 14,566. The new diagno
 
 `bind_gate_values` (exact-replay default; `REPLAY_GATE_INPUTS=fetch` for the old path) fills the five async gate caches from live's recorded values. 10/1 09:30–11:00: **misses 12,170 → 1,486 (−88%)**, with no gate-input misses left (the rest are `_latest_ask`, `prime_quotes` and `_has_open_position`). But decisions only went 43.8% → 45.9%, and long one-sided stretches 625 → 581 checks. **The feedback loop was not the main seating driver.** The remaining long stretches follow *trades*: live bought OXY, EFXT and XENE and kept them seated afterward, while the replay didn't; the replay bought CTSH, FIG and SNXX, which live didn't (replay entries 21 vs live 8). Buy decisions split on price freshness (`stale_quote` at arm time), so **gap B is now the lead for seating too.**
 
+## Price freshness: traced to live's in-poll network latency (2026-10-02)
+
+Measured on 10/1 09:30–11:00 (value-level inputs on):
+- On the 193 checks where exactly one side said `stale_quote`, the replay's price was younger in 192 (median about 15 s), and the price itself differed in 112.
+- **Ruled out by measurement:**
+  - the replay clock (it reaches every desk module);
+  - the 600 s serving window (no effect);
+  - per-name timing marks: synthesized from live's first per-name read, then a throwaway commit of the 10/1 code + hook, which changed nothing;
+  - time-aligned dash serving: 193 → 192 one-sided `stale_quote`, decisions 45.9% → 46.4%. Kept anyway, since it's correct in principle (in-pass `/api/state` served by time, not sequence; `test_in_pass_dash_fetch_is_chosen_by_time_not_sequence`).
+- **Cause, from one traced case** (MNKD, poll 09:30:26.974; 9 dash fetches in the pass):
+  - Live reached MNKD at about 27.6 s, made a `quotes/latest MNKD` broker call that completed at 30.87 s (about 3.2 s), and only then read the dashboard: $3.98 at 24.1 s, so stale.
+  - The replay serves broker reads instantly, so in-pass timing compresses differently and each name lands on a different dashboard copy. The variable is **live's network latency inside the poll**, which the replay doesn't reproduce.
+- **Fix, if wanted:** drive in-pass serving by each read's recorded completion time, so the replay's in-pass clock follows live's latency exactly. That's a redesign of the pass-matching in `desk_io.Recording` (roughly 2–4 h) with uncertain payoff. **Not recommended now.** Score with tolerance instead (below), and treat seating and buy disagreements that trace to `stale_quote` at the 15 s ceiling as timing noise, not logic differences.
+
 ## Revised recommendation (before the measurement above)
 
 1. **Replay the gate inputs at the value level, not the request level** (3–4 h, replay only). Live logs every spread, gap, volume-now, volume-pace and day-high value it computed (`inputs.jsonl.gz`: symbol, value, time). The live warmer is asynchronous, so what matters is the cached value at time *t*, not which request ran when. In exact mode, fill the async gate caches from live's recorded values at their timestamps instead of re-fetching through Alpaca. That breaks the feedback loop: the replay sees exactly the inputs live had, and the request-level misses for these callers disappear by construction. Expected: most of the 44% long stretches, plus the `spread_unknown`/`gap_unknown` same-name divergences. Not exact for names live never computed, but those are then genuinely replay-only.

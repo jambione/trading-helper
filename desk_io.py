@@ -745,7 +745,19 @@ class Recording:
         fetch than one already applied gets the newer state (counted)."""
         same = self.dash_pt.get(pt) if pt is not None else None
         if same:
-            i = same[self._next_in_pass(("d", pt), len(same))]
+            # By time, not by sequence: the fetch live had at this moment of
+            # the pass. Live refetches whenever its 0.25 s cache expires, ~dozens
+            # of times in an 11 s poll; serving the k-th fetch to the k-th
+            # request jumped the replay clock to each fetch's time, expired the
+            # replay's cache at once and ran ahead through live's fetches, so
+            # early names read prices live only saw seconds later (2026-10-01:
+            # replay younger on 192 of 193 one-sided stale_quote checks). The
+            # pass clock picks the fetch; before the first one, the first is
+            # served. (Residual gap: live's in-pass broker latency, e.g. a 3 s
+            # quotes call before a name's dash read, isn't reproduced.)
+            now_in_pass = max(t, pass_clock() or t)
+            ok = [i for i in same if self.dash_ts[i] <= now_in_pass]
+            i = ok[-1] if ok else same[0]
             n, t_at = i + 1, self.dash_ts[i]
             _advance(t_at)
         else:
