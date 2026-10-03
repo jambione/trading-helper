@@ -1609,9 +1609,11 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
         "next_step": next_step,
         # A step skipped late is a problem too (a missed sell held the book
         # all day, 2026-10-03 review), and so is anything that raised an ALERT;
-        # a disarmed skip is deliberate and stays off the list.
+        # a disarmed skip is deliberate and stays off the list, and so does a
+        # late PLAN step (any restart after 06:40): buy() re-plans (round 2).
         "errors": {k: v for k, v in (state_today or {}).items()
-                   if str(v).startswith(("error", "skipped late", "ALERT"))},
+                   if str(v).startswith(("error", "ALERT"))
+                   or (str(v).startswith("skipped late") and k != "plan")},
     }
 
 

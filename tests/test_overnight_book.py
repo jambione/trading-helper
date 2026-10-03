@@ -68,7 +68,8 @@ def test_errors_missed_windows_and_alerts_are_surfaced_but_not_disarmed_skips():
     # 2026-10-03 skeptic review #1: a step skipped late is a problem (a missed
     # sell holds the book through the day), so the dashboard shows it; a
     # deliberate disarmed skip is not.
-    state = {"plan": "ok 06:30", "sell": "error boom", "sell_topup": "skipped late at 09:50",
+    # R2-5: a late PLAN is not a problem (buy() re-plans); a late order step is.
+    state = {"plan": "skipped late at 09:50", "sell": "error boom", "sell_topup": "skipped late at 09:50",
              "buy": "skipped: live not armed at 15:40",
              "sell_catchup": "ALERT 3 names held past the open, sold 09:50"}
     snap = ob.build_snapshot(PLAN, [], [], [], {}, state, {"name": "buy", "at": 1.0}, NOW)
