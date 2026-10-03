@@ -104,7 +104,8 @@ def test_clean_fingerprint_raises_nothing(monkeypatch):
 
 def test_exempt_list_is_narrow():
     """Exemptions are how an audit quietly stops auditing."""
-    assert len(sa.FINGERPRINT_EXEMPT) <= 8
+    # 8 machinery knobs + the 3 exit-cost A/B knobs (operator 2026-10-03).
+    assert len(sa.FINGERPRINT_EXEMPT) <= 11
     for k in sa.FINGERPRINT_EXEMPT:
         assert "give" not in k and "min_hold" not in k, (
             f"{k} affects the shelf and must not be exempt")

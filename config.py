@@ -298,7 +298,9 @@ DEFAULT_CONFIG = {
     # Comma list of "ask" (control: market at the ask), "mid_down" (limit at
     # the IEX mid rounded DOWN to the cent; = bid on 1c spreads) and "bid"
     # (limit at the bid). Non-control arms rest ai_entry_test_cross_sec, then
-    # cancel and buy what is left at market. "" = off (plain market entries).
+    # cancel and buy what is left at market. "wait" (market once a wide spread
+    # tightens; see ai_entry_wait_*) may be added as a fourth arm.
+    # "" = off (plain market entries).
     # Earliest ET time the desk may open a position (poll entries and the
     # open-bell entries). Watching, seeding and admission are unaffected.
     # "09:30" = from the open. Operator 2026-10-02: wait to 09:45 (the open's
@@ -307,6 +309,32 @@ DEFAULT_CONFIG = {
     "ai_entry_earliest_time":     "09:30",
     "ai_entry_test_arms":         "",
     "ai_entry_test_cross_sec":    10.0,
+    # "wait" arm (2026-10-03): when the decision spread is over
+    # ai_entry_wait_min_bp, wait up to ai_entry_test_cross_sec for the spread to
+    # tighten to ai_entry_wait_ratio x, then buy at market (else at the
+    # deadline). At or under the floor it buys at once. Always crosses.
+    "ai_entry_wait_ratio":        0.75,
+    "ai_entry_wait_min_bp":       5.0,
+    # Seconds between the wait arm's quote reads (one REST call each, on the
+    # Alpaca data budget the live desk shares); doubles to 3 s after a failed
+    # read. Floor 0.25 s. 1.0 = ~10 calls per 10 s wait (round 2 review).
+    "ai_entry_wait_poll_sec":     1.0,
+    # Exit-cost A/B (2026-10-03): rotate local-trail exits across "market"
+    # (control: sell at market, as today) and "mid" (rest a DAY sell limit at
+    # the mid rounded UP to the cent; after ai_exit_test_cross_sec, or at once
+    # if a print falls ai_exit_test_floor_pct under the limit, cancel and sell
+    # what is left at market). The resting limit never blocks the shelf tick.
+    # It is settled on the book tick (manage pass 2, every ai_book_tick_sec,
+    # ~2 s), not the 0.25 s shelf tick, which skips closing positions: the
+    # real wait is cross_sec to cross_sec + one book tick (10-12 s at
+    # defaults) and the floor is checked once per book tick.
+    # Only RTH local-trail exits take part: stops, flattens, extended-hours
+    # trail hits and every other exit stay market. "" = off. Sim
+    # (tools/studies/passive_exit_sim.py, 9/29-10/2): mid + 10 s saved
+    # +3.7 bp per exit vs market (t 4.9).
+    "ai_exit_test_arms":          "",
+    "ai_exit_test_cross_sec":     10.0,
+    "ai_exit_test_floor_pct":     0.5,
     # Atomic confirm→submit (Package B): refuse place if send-ask moved more
     # than this from the streak-pass print (pct OR absolute cents).
     # Mid-session 2026-09-18 post-10:57 quality: tighter confirm slip.
@@ -1814,6 +1842,7 @@ _EFFECTIVE_KEYS = (
     "ai_eod_liquidate_time",
     "ai_entry_order_style",
     "ai_entry_test_arms",
+    "ai_exit_test_arms",
     "ai_entry_earliest_time",
     "ai_entry_confirm_max_slip_pct",
     "ai_entry_confirm_max_slip_px",
@@ -2326,6 +2355,12 @@ SAFE_CONFIG_KEYS = [
     "ai_entry_test_arms",
     "ai_entry_earliest_time",
     "ai_entry_test_cross_sec",
+    "ai_entry_wait_ratio",
+    "ai_entry_wait_min_bp",
+    "ai_entry_wait_poll_sec",
+    "ai_exit_test_arms",
+    "ai_exit_test_cross_sec",
+    "ai_exit_test_floor_pct",
     "ai_entry_confirm_max_slip_pct",
     "ai_entry_confirm_max_slip_px",
     "ai_stop_use_market",

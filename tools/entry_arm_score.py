@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """entry_arm_score.py — grade the three-arm entry test (ai_entry_test_arms) against the SIP mid.
 
-Each closed day trade whose outcome carries ``entry_test`` (arm = ask | mid_down | bid) is priced
-against the consolidated SIP NBBO at the moment its first buy order was sent (exec_report.nbbo_at).
+Each closed day trade whose outcome carries ``entry_test`` (arm = ask | mid_down | bid | wait) is priced
+against the consolidated SIP NBBO at the moment the desk decided to buy (exec_report.nbbo_at):
+entry_test.t_decide, stamped before any arm waits. The wait arm's first buy is sent up to
+ai_entry_test_cross_sec after that, so pricing it at its submit would drop the move during the
+wait from its cost (review 2026-10-03). Outcomes from before t_decide existed use the first buy
+submit, minus waited_sec for the wait arm.
 The arms' own limits use the IEX quote, which overstates spreads, so the SIP mid is the fair yardstick.
 
 Per trade, in bp:
@@ -40,7 +44,7 @@ sys.path.insert(0, ROOT)
 import bars  # noqa: E402
 import exec_report as xr  # noqa: E402
 
-ARMS = ("ask", "mid_down", "bid")
+ARMS = ("ask", "mid_down", "bid", "wait")
 CACHE = os.path.join(ROOT, "ai_reports", "entry_arm_score_cache.json")
 SEND_WINDOW = (-120.0, 5.0)   # first buy submit within this many seconds of the outcome's entry_time
 CROSS_GAP = 30.0              # a passive arm's market cross follows its limit within this many seconds
@@ -62,6 +66,20 @@ def outcomes(lo: str, hi: str) -> list[dict]:
         if lo <= day <= hi:
             out.append({**r, "_day": day})
     return out
+
+
+def ref_time(entry_test: dict, t_send: float) -> float:
+    """When the arm's cost clock starts: the decision, not the (possibly delayed) first submit."""
+    et = entry_test or {}
+    try:
+        if et.get("t_decide"):
+            return float(et["t_decide"])
+        if et.get("arm") == "wait":
+            # Pre-t_decide outcomes: the wait arm's only submit came after the wait.
+            return t_send - float(et.get("waited_sec") or 0.0)
+    except (TypeError, ValueError):
+        pass
+    return t_send
 
 
 def buys_by_symbol(day: str) -> dict[str, list[dict]]:
@@ -120,7 +138,7 @@ def main():
         if near:
             near = [b for b in near if b["ts"] - near[0]["ts"] <= CROSS_GAP]
             used.update((sym, b["ts"]) for b in near)
-        t_send = near[0]["ts"] if near else t_entry
+        t_send = ref_time(r["entry_test"], near[0]["ts"] if near else t_entry)
         key = f"{sym}|{t_send:.3f}"
         if key not in cache:
             cl = cl or bars.client()
@@ -145,7 +163,7 @@ def main():
     json.dump(cache, open(CACHE, "w"))
 
     days = sorted({x["day"] for x in rows})
-    print(f"ENTRY ARM SCORE {args.lo}..{args.hi}  ({len(rows)} trades, {len(days)} day(s); bp vs SIP mid at send)\n")
+    print(f"ENTRY ARM SCORE {args.lo}..{args.hi}  ({len(rows)} trades, {len(days)} day(s); bp vs SIP mid at decision)\n")
     if not rows:
         return
     unmatched = sum(1 for x in rows if not x["matched"])
