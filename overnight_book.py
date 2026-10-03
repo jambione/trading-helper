@@ -50,10 +50,11 @@ SCORING
   each. Alpaca paper does not run auctions (it fills CLS/OPG at the quote,
   partly, and expires the rest), so paper fills are logged beside the score
   as plumbing, never as the result.
-  The night's headline is the BOOK actually held: the picks that passed the
-  intraday filter (OVERNIGHT_INTRADAY_MIN, default -1%: a pick down more than
-  1% from today's open when the buy runs is not bought). All 20 are scored
-  beside it every night, so the filter's value is measured, not assumed.
+  The night's headline is the BOOK actually held. The intraday filter
+  (OVERNIGHT_INTRADAY_MIN, e.g. -0.01: a pick down more than 1% from today's
+  open when the buy runs is not bought) is OFF by default since 2026-10-03;
+  the names it would drop are still logged as a "filter_shadow" row each
+  night, so its value stays measurable.
 
 USAGE (on the mini)
   .venv/bin/python overnight_book.py plan [--day YYYY-MM-DD]
@@ -211,8 +212,14 @@ MKT_SELL_TOPUP_AFTER_OPEN = timedelta(minutes=3)
 # -2.8 .. +35.8 bp, t 5.3). Intraday losers keep losing overnight. Set
 # OVERNIGHT_INTRADAY_MIN=off to buy all 20. Validated for a 15:55 decision;
 # auction mode buys at 15:40, earlier than tested.
-_IM = os.getenv("OVERNIGHT_INTRADAY_MIN", "-0.01").strip().lower()
+# OFF by default since 2026-10-03: on 10 years it ties no filter (+0.9 bp OOS,
+# t 0.4; OVERNIGHT_VARIANTS F_OFF) and its backtest used the full-day close,
+# and it cuts the book from 20 names to ~12.6 (docs/studies/
+# SKEPTIC_REVIEW_2026-10-02.md). The would-be drops at SHADOW_INTRADAY_MIN are
+# still logged every night.
+_IM = os.getenv("OVERNIGHT_INTRADAY_MIN", "off").strip().lower()
 INTRADAY_MIN = None if _IM in ("", "off", "none") else float(_IM)
+SHADOW_INTRADAY_MIN = -0.01
 OPEN_STATUSES = {"new", "accepted", "pending_new", "partially_filled", "accepted_for_bidding",
                  "held", "pending_replace", "pending_cancel", "calculated"}
 
@@ -646,6 +653,8 @@ def buy(tc, day: date, dry: bool = False) -> None:
         log(f"buy {day}: intraday filter {INTRADAY_MIN:+.1%}: kept {len(syms)}/{len(frows)}"
             + (f"; dropped " + " ".join(f"{r['sym']}({r['intraday']:+.1%})" for r in dropped) if dropped else "")
             + (f"; no open/price for {','.join(unknown)} (kept)" if unknown else ""))
+    else:
+        _log_filter_shadow(day, syms, px, dry)
     if LIVE:
         _buy_live(tc, day, syms, px, held, dry)
         return
@@ -685,6 +694,22 @@ def buy(tc, day: date, dry: bool = False) -> None:
         else:
             append(LEDGER, row)
     log(f"buy {day}: {'DRY RUN ' if dry else ''}{len(syms)} picks, ~${total:,.0f} submitted as {_how('buy')}")
+
+
+def _log_filter_shadow(day: date, syms: list[str], px: dict, dry: bool) -> None:
+    """Filter off: record what SHADOW_INTRADAY_MIN would have dropped; buys are unchanged."""
+    try:
+        opens = session_opens(syms, day)
+    except Exception as e:  # noqa: BLE001
+        log(f"buy {day}: filter shadow skipped, opens unavailable ({e!s:.100})")
+        return
+    kept, frows = intraday_filter(syms, opens, px, SHADOW_INTRADAY_MIN)
+    would = [r for r in frows if not r["kept"]]
+    if not dry:
+        append(LEDGER, {"event": "filter_shadow", "night": day.isoformat(), "floor": SHADOW_INTRADAY_MIN,
+                        "would_keep": kept, "rows": frows})
+    log(f"buy {day}: filter off (shadow {SHADOW_INTRADAY_MIN:+.1%} would keep {len(kept)}/{len(frows)}"
+        + (f"; would drop " + " ".join(f"{r['sym']}({r['intraday']:+.1%})" for r in would) if would else "") + ")")
 
 
 def _buy_live(tc, day: date, syms: list[str], px: dict, held: dict, dry: bool) -> None:

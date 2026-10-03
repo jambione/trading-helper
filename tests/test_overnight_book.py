@@ -229,6 +229,7 @@ def test_buy_uses_day_market_orders_in_market_mode_and_cls_in_auction(monkeypatc
     monkeypatch.setattr(ob, "load_plan", lambda d: PLAN)
     monkeypatch.setattr(ob, "latest_prices", lambda syms: {"AAA": 50.0, "BBB": 20.0})
     monkeypatch.setattr(ob, "INTRADAY_MIN", None)
+    monkeypatch.setattr(ob, "session_opens", lambda syms, day: {})
     for mode, tif in (("market", "day"), ("auction", "cls")):
         monkeypatch.setattr(ob, "ORDER_MODE", mode)
         tc = _FakeTC([])
@@ -267,6 +268,24 @@ def test_buy_submits_only_the_names_that_pass(monkeypatch, tmp_path):
     flt = [json.loads(x) for x in (tmp_path / "ledger.jsonl").read_text().splitlines()
            if json.loads(x).get("event") == "filter"]
     assert flt and flt[0]["kept"] == ["AAA"] and flt[0]["night"] == "2026-10-01"
+
+
+def test_filter_off_buys_all_and_logs_the_shadow_drops(monkeypatch, tmp_path):
+    import json
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "ORDER_MODE", "market")
+    monkeypatch.setattr(ob, "INTRADAY_MIN", None)
+    monkeypatch.setattr(ob, "load_plan", lambda d: PLAN)
+    monkeypatch.setattr(ob, "latest_prices", lambda syms: {"AAA": 50.0, "BBB": 19.0})
+    monkeypatch.setattr(ob, "session_opens", lambda syms, day: {"AAA": 49.5, "BBB": 20.0})
+    tc = _FakeTC([])
+    ob.buy(tc, date(2026, 10, 1))
+    assert sorted(r.symbol for r in tc.submitted) == ["AAA", "BBB"]          # nothing dropped
+    rows = [json.loads(x) for x in (tmp_path / "ledger.jsonl").read_text().splitlines()]
+    assert not [r for r in rows if r.get("event") == "filter"]               # the book is the plan
+    sh = [r for r in rows if r.get("event") == "filter_shadow"]
+    assert sh and sh[0]["would_keep"] == ["AAA"] and sh[0]["floor"] == ob.SHADOW_INTRADAY_MIN
 
 
 def test_night_headline_is_the_book_held_with_all_20_beside_it(monkeypatch, tmp_path):
