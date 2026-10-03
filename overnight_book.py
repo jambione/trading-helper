@@ -316,30 +316,45 @@ def log(msg: str) -> None:
         f.write(line + "\n")
 
 
-# Alert hook (2026-10-03 skeptic review #1: a missed sell raised nothing).
+# Alerts (2026-10-03 skeptic review #1: a missed sell raised nothing).
 # Every alert is a loud "ALERT" log line and shows on the dashboard through
-# the state file. OVERNIGHT_ALERT_CMD, if set, is also run with the message
-# as its last argument, e.g. a macOS banner on the mini:
-#   osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title "overnight"' -e 'end run'
-# or a curl to a push service. Off by default (the channel is the user's
-# choice); a failing or slow hook is logged and never breaks the runner.
+# the state file. It is also pushed: by default a Notification Center banner
+# on the mini (user decision 2026-10-03), skipped off macOS and under pytest.
+# OVERNIGHT_ALERT_CMD, if set, replaces the banner: it is run with the
+# message as its last argument (e.g. a curl to a push service). A failing or
+# hung push (15 s timeout) is logged and never breaks the runner.
 ALERT_CMD = os.getenv("OVERNIGHT_ALERT_CMD", "").strip()
+ALERT_MAX_CHARS = 200
 _ALERTED: set = set()
 
 
+def _banner_argv(msg: str) -> list[str]:
+    """osascript argv for a banner. Pure. The message is cut to
+    ALERT_MAX_CHARS first, then escaped for an AppleScript string literal
+    (backslash, double quote; newlines become spaces), and passed as one
+    argument: no shell ever parses it."""
+    s = " ".join(msg[:ALERT_MAX_CHARS].splitlines())
+    s = s.replace("\\", "\\\\").replace('"', '\\"')
+    return ["osascript", "-e", f'display notification "{s}" with title "Overnight book"']
+
+
 def alert(msg: str, key: str | None = None) -> None:
-    """Log *msg* loudly and run the alert hook, once per *key* per process."""
+    """Log *msg* loudly and push it, once per *key* per process."""
     if key is not None:
         if key in _ALERTED:
             return
         _ALERTED.add(key)
     log(f"ALERT {msg}")
-    if not ALERT_CMD:
-        return
     try:
         import shlex
         import subprocess
-        subprocess.run(shlex.split(ALERT_CMD) + [msg], timeout=15, check=False,
+        if ALERT_CMD:
+            argv = shlex.split(ALERT_CMD) + [msg]
+        elif sys.platform == "darwin" and not os.getenv("PYTEST_CURRENT_TEST"):
+            argv = _banner_argv(msg)
+        else:
+            return
+        subprocess.run(argv, timeout=15, check=False,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:  # noqa: BLE001
         log(f"alert hook failed: {e!s:.150}")

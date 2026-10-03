@@ -950,3 +950,47 @@ def test_a_plan_refused_at_buy_time_is_alerted(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError):
         ob.buy(_FakeTC([]), date(2026, 10, 1))
     assert len(_alerts(tmp_path)) == 1 and "refusing to plan" in _alerts(tmp_path)[0]
+
+
+# ── alert channel (user decision 2026-10-03): macOS banner by default ────────
+
+def test_banner_argv_escapes_for_applescript_and_truncates():
+    argv = ob._banner_argv('sell "AAA" failed: C:\\x\nnext line')
+    assert argv[:2] == ["osascript", "-e"] and len(argv) == 3                # an argument list, no shell
+    assert argv[2] == ('display notification "sell \\"AAA\\" failed: C:\\\\x next line" '
+                       'with title "Overnight book"')
+    long = ob._banner_argv('"' * 500)[2]
+    assert long.count('\\"') == 200                                          # cut to 200 before escaping
+
+
+def test_alert_shows_a_banner_by_default_on_macos_only(monkeypatch, tmp_path):
+    import subprocess
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    monkeypatch.setattr(ob, "ALERT_CMD", "")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    ran = []
+    monkeypatch.setattr(subprocess, "run", lambda argv, **k: ran.append((argv, k)))
+    monkeypatch.setattr(ob.sys, "platform", "darwin")
+    ob.alert("sell missed")
+    assert ran and ran[0][0][0] == "osascript" and ran[0][1]["timeout"] == 15
+    assert "shell" not in ran[0][1]
+    ran.clear()
+    monkeypatch.setattr(ob.sys, "platform", "linux")
+    ob.alert("sell missed again")
+    assert ran == []                                                         # not macOS: log only
+
+
+def test_a_failing_or_hung_osascript_never_raises(monkeypatch, tmp_path):
+    import subprocess
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    monkeypatch.setattr(ob, "ALERT_CMD", "")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(ob.sys, "platform", "darwin")
+    for exc in (subprocess.TimeoutExpired("osascript", 15), FileNotFoundError("osascript"), RuntimeError("x")):
+        def run(argv, _e=exc, **k):
+            raise _e
+        monkeypatch.setattr(subprocess, "run", run)
+        ob.alert(f"boom {type(exc).__name__}")
+    assert (tmp_path / "run.log").read_text().count("alert hook failed") == 3
