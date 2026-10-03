@@ -879,3 +879,21 @@ def test_no_buy_is_submitted_in_the_last_15_seconds_or_after_the_close(monkeypat
     monkeypatch.setattr(ob, "session", lambda tc, d: (now - timedelta(hours=6), now + timedelta(minutes=2)))
     ob.buy_topup(tc, date(2026, 10, 1), tag="buy_topup")                 # in time: it goes
     assert [r.symbol for r in tc.submitted] == ["AAA"]
+
+
+def test_live_rerun_of_a_missing_buy_is_opt_in_paper_always_reruns(monkeypatch, tmp_path):
+    """R2-3: live is auctions-only; a whole-book market buy at 15:58 waits for
+    the user's OVERNIGHT_LIVE_REBUY_FALLBACK=yes."""
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "load_plan", lambda d: PLAN)
+    ran = []
+    monkeypatch.setattr(ob, "buy", lambda tc, day, dry=False, market=False: ran.append(market))
+    for live, opt_in, expect in ((True, False, []), (True, True, [True]), (False, False, [True])):
+        monkeypatch.setattr(ob, "_ALERTED", set())
+        monkeypatch.setattr(ob, "LIVE", live)
+        monkeypatch.setattr(ob, "LIVE_REBUY_FALLBACK", opt_in)
+        ran.clear()
+        ob.buy_topup(_OrdersTC([]), date(2026, 10, 1), tag="buy_fallback")
+        assert ran == expect, (live, opt_in)
+    assert "buy never submitted" in (tmp_path / "run.log").read_text()

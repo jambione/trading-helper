@@ -530,6 +530,12 @@ def live_cash(a) -> float:
 # live test account is), and Alpaca covers settlement, so sale proceeds can buy
 # again the same day with no good-faith-violation risk. "yes" restores the wait.
 LIVE_SETTLE_WAIT = os.getenv("OVERNIGHT_LIVE_SETTLE_WAIT", "no").strip().lower() == "yes"
+# When the live buy never submitted (buy() raised first), re-run it from
+# buy_check / buy_fallback? Off by default (user decision 2026-10-03): live
+# is auctions-only, and buy_fallback's re-run would be a whole-book market buy
+# at close - 2 min (~31 bp round trip vs a ~16 bp edge). Off, live alerts
+# "buy never submitted" and buys nothing; paper always re-runs.
+LIVE_REBUY_FALLBACK = os.getenv("OVERNIGHT_LIVE_REBUY_FALLBACK", "no").strip().lower() == "yes"
 
 
 def sold_today(ledger: list[dict], day: date) -> bool:
@@ -923,6 +929,10 @@ def buy_topup(tc, day: date, dry: bool = False, auction: bool = False, tag: str 
         if load_plan(day) is None:
             alert(f"overnight {ACCOUNT}: {tag} {day}: no buy was submitted and there is no plan; "
                   f"no buy tonight", key=f"nobuy-{day}")
+            return
+        if LIVE and not LIVE_REBUY_FALLBACK:
+            alert(f"overnight live: {tag} {day}: buy never submitted; no re-run "
+                  f"(OVERNIGHT_LIVE_REBUY_FALLBACK off), no buy tonight", key=f"nobuy-{day}")
             return
         log(f"{tag} {day}: no buy was submitted today; running the buy now")
         buy(tc, day, dry=dry, market=not auction)
