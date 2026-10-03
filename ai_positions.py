@@ -1423,10 +1423,18 @@ def _exit_test_settle(ticker: str, pos: dict, trigger: float | None,
         # on the next tick (the limit is already cancelled, so it reads dead).
         log_event("exit_test_cross_failed", symbol=ticker, why=why, note=note[:160])
         return True
-    elif passive > 0:
-        # The limit filled during the cancel race and nothing was left to
-        # cross: the whole exit is the limit's fill (review 2026-10-03).
-        xt.update(fill=_num(o2.get("filled_avg_price")), crossed_qty=0.0)
+    else:
+        # Nothing left to sell. Only a FULLY filled limit sold the position
+        # (it filled during the cancel race): then the whole exit is its fill.
+        # A part-filled limit means something else (EOD sweep, a manual
+        # liquidation) sold the rest, so its price must not stand in for the
+        # whole exit — superseded, no fill, as _exit_test_final does
+        # (review 2026-10-03, round 2).
+        st2 = str(o2.get("status") or "").lower()
+        if passive > 0 and "filled" in st2 and "partial" not in st2:
+            xt.update(fill=_num(o2.get("filled_avg_price")), crossed_qty=0.0)
+        else:
+            xt["superseded"] = True
     pos.pop("exit_test_pending", None)
     log_event("exit_test_crossed", symbol=ticker, why=why, limit=pend.get("limit"),
               passive_qty=passive, waited_sec=waited, market_order_id=out.get("order_id"))

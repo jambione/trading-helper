@@ -376,3 +376,15 @@ def test_plan_stamps_the_trail_hit_time(monkeypatch):
     t0 = time.time()
     p = cp.exit_test_plan({"ai_exit_test_arms": "market"}, 10.0, 10.04)
     assert t0 - 1 <= p["t_decide"] <= time.time() + 1
+
+
+def test_partial_limit_then_outside_sweep_is_not_booked_as_the_whole_exit(monkeypatch):
+    # Skeptic round 2: the limit sold 30/100 at 10.02, then an EOD/manual sweep cancelled it
+    # and sold the other 70; settle's close_out finds no position. 30 shares must not price 100.
+    Broker(monkeypatch, {"status": "OrderStatus.CANCELED", "filled_qty": 30, "filled_avg_price": 10.02},
+           close_reply={"ok": False, "order_id": None, "note": "no position (canceled 0 open orders)"})
+    p = _pending()
+    cp._exit_test_settle("AAA", p, 10.01, NOW + 1)
+    final = cp._exit_test_final(p)
+    assert final.get("fill") is None and final["superseded"] is True
+    assert final["passive_qty"] == 30 and final["passive_px"] == 10.02
