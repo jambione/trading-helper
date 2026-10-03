@@ -218,3 +218,48 @@ def test_pending_exit_settles_on_the_next_tick(monkeypatch):
     _ch, closed = cp.apply_local_trail("AAA", p, 9.99, [], {})
     assert b.closed == 1 and "exit_test_pending" not in p and p["exit_test"]["cross_why"] == "deadline"
     assert closed is False                                     # raise-only while closing: no second sell
+
+
+# ── the outcome path (manage_open_positions pass 1) ───────────────────────
+
+def _manage_stub(monkeypatch, tmp_path, fills, qtys, **pos_fields):
+    """A flat position seeded through test_ai_positions' harness, with filled_qty per order."""
+    from test_ai_positions import _StubBrokerManage, _seed_state, _outcomes_path
+
+    class Stub(_StubBrokerManage):
+        def get_order(self, order_id):
+            out = super().get_order(order_id)
+            if order_id in qtys:
+                out["filled_qty"] = qtys[order_id]
+            return out
+
+    monkeypatch.setattr(cp, "refresh_open_position_quotes", lambda *_a, **_k: 0)
+    _seed_state(tmp_path, monkeypatch, tranche_a_target_order_id=None,
+                tranche_b_stop_order_id=None, closing_reason="local_trail",
+                last_seen_price=40.4, **pos_fields)
+    stub = Stub(position_open=False, fills=fills, order_status="filled")
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    return lambda: __import__("json").loads(_outcomes_path(tmp_path).read_text().strip())
+
+
+def test_split_exit_outcome_is_priced_at_the_blended_fill(tmp_path, monkeypatch):
+    # 70 shares rested at 40.60, 30 crossed at 40.00: the limit is close_order_id
+    # (the larger leg), so resolve_exit alone would book 40.60 for all 100.
+    outcome = _manage_stub(
+        monkeypatch, tmp_path, fills={"L": 40.60, "M": 40.00}, qtys={"L": 70, "M": 30},
+        close_order_id="L",
+        exit_test={"arm": "mid", "limit": 40.60, "passive_qty": 70.0, "passive_px": 40.60,
+                   "market_order_id": "M", "cross_why": "deadline"})
+    cp.manage_open_positions(now=1_000_010.0)
+    o = outcome()
+    assert abs(o["exit_price"] - 40.42) < 1e-9
+    assert o["exit_test"]["crossed_qty"] == 30 and abs(o["exit_test"]["fill"] - 40.42) < 1e-9
+    assert abs(o["realized_r_multiple"] - (40.42 - 40.5) / 2.5) < 1e-6
+
+
+def test_market_arm_outcome_still_prices_from_the_close_order(tmp_path, monkeypatch):
+    outcome = _manage_stub(
+        monkeypatch, tmp_path, fills={"close_1": 40.30}, qtys={"close_1": 100},
+        close_order_id="close_1", exit_test={"arm": "market", "limit": None})
+    cp.manage_open_positions(now=1_000_010.0)
+    assert outcome()["exit_price"] == 40.30

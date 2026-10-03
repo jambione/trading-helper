@@ -6887,6 +6887,18 @@ def manage_open_positions(
         # the actual exit print, so an outcome built from it is a plausible
         # wrong number — and realized_r_today feeds the daily-loss gate.
         exit_price, observed_reason = resolve_exit(pos, ticker)
+        # A split exit-test sell (part resting limit, part market cross) has no
+        # single order that prices it: close_order_id is whichever leg holds
+        # the larger share, so resolve_exit reads one leg's price. The blended
+        # fill comes first, as entry_test.fill does on the way in (review
+        # 2026-10-03). Stored back so _record_outcome reuses the read.
+        if isinstance(pos.get("exit_test"), dict):
+            _xt_final = _exit_test_final(pos)
+            if _xt_final is not None:
+                pos["exit_test"] = _xt_final
+                _xt_fill = _num(_xt_final.get("fill"))
+                if _xt_fill and _xt_fill > 0:
+                    exit_price = _xt_fill
         # An explicit closing_reason is the desk saying why IT closed this
         # (time_stop, thesis_break, ...) and outranks forensics. Otherwise take
         # what actually filled — including "unknown".
