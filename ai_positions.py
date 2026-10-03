@@ -2242,7 +2242,9 @@ def place_scaled_entry(
                         out["order_type"] = "MARKET"
                         entry_test.update(
                             passive_qty=out.get("passive_qty"), crossed_qty=out.get("crossed_qty"),
-                            waited_sec=out.get("waited_sec"), fill=_num(out.get("fill_px")))
+                            waited_sec=out.get("waited_sec"), fill=_num(out.get("fill_px")),
+                            # each leg's own price, so a scorer never backs one out of the blend
+                            passive_px=_num(out.get("passive_px")), crossed_px=_num(out.get("crossed_px")))
                     return out
                 # Exact share count — do not re-derive via dollar//price (that
                 # re-truncates fractionals). +0.01 cushion kept only as a

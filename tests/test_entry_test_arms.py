@@ -101,6 +101,8 @@ def test_partial_fill_blends(monkeypatch):
     assert out["passive_qty"] == 40 and out["crossed_qty"] == 60 and out["qty"] == 100
     assert abs(out["fill_px"] - 10.012) < 1e-9
     assert out["order_id"] == "M" and out["limit_order_id"] == "L"
+    # each leg's own price is recorded, so a scorer never backs one out of the blend
+    assert out["passive_px"] == 10.0 and out["crossed_px"] == 10.02
 
 
 # ── the "wait" arm: buy at market once a wide spread tightens ─────────────

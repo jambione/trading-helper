@@ -860,8 +860,8 @@ def buy_limit_then_market(
     waited = round(_clock() - t0, 1)
     if _status_is(o, "filled") and not _status_is(o, "partial"):
         return {**lim, "passive_qty": sub_qty, "crossed_qty": 0.0,
-                "fill_px": o.get("filled_avg_price"), "waited_sec": waited,
-                "limit_px": float(limit_px)}
+                "fill_px": o.get("filled_avg_price"), "passive_px": o.get("filled_avg_price"),
+                "waited_sec": waited, "limit_px": float(limit_px)}
     cancel_order_id(oid)
     for _ in range(12):                      # ~3 s for the cancel to land
         o = get_order(oid) or o
@@ -874,12 +874,13 @@ def buy_limit_then_market(
     rest = round(sub_qty - passive, 6)
     if rest <= 1e-6:
         return {**lim, "passive_qty": passive, "crossed_qty": 0.0,
-                "fill_px": passive_px, "waited_sec": waited, "limit_px": float(limit_px)}
+                "fill_px": passive_px, "passive_px": passive_px, "waited_sec": waited,
+                "limit_px": float(limit_px)}
     mk = buy_market_shares(ticker, ref_price, qty=rest)
     if not mk.get("ok"):
         if passive > 0:
             return {**lim, "passive_qty": passive, "crossed_qty": 0.0, "fill_px": passive_px,
-                    "waited_sec": waited, "limit_px": float(limit_px),
+                    "passive_px": passive_px, "waited_sec": waited, "limit_px": float(limit_px),
                     "note": f"cross failed: {mk.get('note') or mk.get('status')}"}
         return mk
     mo: dict = {}
@@ -895,6 +896,7 @@ def buy_limit_then_market(
         fill = ((passive * float(passive_px or 0)) + crossed * float(cross_px)) / (passive + crossed)
     out = dict(mk if crossed >= passive else lim)
     out.update(passive_qty=passive, crossed_qty=crossed, fill_px=fill, waited_sec=waited,
+               passive_px=passive_px, crossed_px=cross_px,
                limit_px=float(limit_px), limit_order_id=oid, market_order_id=mk["order_id"],
                qty=passive + crossed)
     return out

@@ -17,8 +17,10 @@ Per trade, in bp:
   trade  exit / entry - 1                         the desk's own P&L view
   passive  a limit buy for the trade filled (some shares rested rather than crossed)
 
-The verdict line compares each passive arm with the ask (control) arm on e2e, day by day; the t is
-across days (each day = mean(arm) - mean(ask)), so it means nothing until ~10 sessions.
+The verdict compares each arm with the ask (control) arm on net = (exit - entry) / SIP mid at decision, day by
+day (e2e alone leaves out the entry price, which is what the arms change); the t is across days, so it means
+nothing until ~10 sessions. Paper passive fills are also checked against the SIP tape (tools/tape_check.py)
+and an "honest" net is reported beside the paper one.
 
 USAGE (on the mini, after the close; SIP quotes are free once 15 minutes old)
     .venv/bin/python tools/entry_arm_score.py                       # every day with arm data
@@ -109,33 +111,46 @@ def buys_by_symbol(day: str) -> dict[str, list[dict]]:
     return out
 
 
-def tape_honest_entry(et: dict, sym: str, t: float, ep: float, quote, prints) -> tuple[str | None, float]:
-    """(tape verdict, live-equivalent entry price) for one entry.
+CROSS_SEC = 10.0   # ai_entry_test_cross_sec default: how long a live passive buy would have rested
 
-    Only a passive arm (bid / mid_down) whose limit bought shares on paper is checked: was there a SIP print
-    below the limit while it rested? If not (or only a touch), the passive shares are re-priced at the SIP ask
-    when the arm would have crossed (decision + waited_sec, else + ai_entry_test_cross_sec 10 s).
+
+def tape_honest_entry(et: dict, sym: str, t_submit: float, ep: float, quote,
+                      prints) -> tuple[str | None, float | None]:
+    """(tape status, live-equivalent entry price) for one entry.
+
+    Only a passive arm (bid / mid_down) whose limit bought shares on paper is checked: did SIP round lots print
+    below the limit, totalling our passive shares, while a live order would have rested? The window starts at the
+    limit's submit (not the decision) and runs the arm's whole cross time for a full paper fill, or waited_sec when
+    the limit really timed out and crossed. If not confirmed (a touch or nothing), the passive shares are
+    re-priced at the SIP ask at the end of that window; the crossed leg keeps its own price (crossed_px, else
+    backed out of the blended fill with passive_px). Status None = nothing to check; "unchecked" = could not be
+    judged (tape or quote unavailable, leg prices unknown) and the price is None — never a guess.
     """
     pq = float(et.get("passive_qty") or 0)
     lim = et.get("limit")
-    if et.get("arm") not in ("bid", "mid_down") or pq <= 0 or not lim or prints is None:
+    if et.get("arm") not in ("bid", "mid_down") or pq <= 0 or not lim:
         return None, ep
-    wait = float(et.get("waited_sec") or 10.0)
-    pr = prints(sym, t, t + wait)
-    if pr is None:                       # tape unavailable: leave the paper price, unchecked
-        return None, ep
-    verdict = tc.tape_verdict("buy", float(lim), pr)
+    if prints is None:
+        return "unchecked", None
+    cq = float(et.get("crossed_qty") or 0)
+    rest = CROSS_SEC if cq <= 0 else float(et.get("waited_sec") or CROSS_SEC)
+    pr = prints(sym, t_submit, t_submit + rest)
+    if pr is None:
+        return "unchecked", None
+    verdict = tc.tape_verdict("buy", float(lim), pr, pq)
     if verdict == "confirmed":
         return verdict, ep
-    h = tc.honest_price("buy", verdict, float(lim), quote(sym, t + wait))
+    h = tc.honest_price("buy", verdict, float(lim), quote(sym, t_submit + rest))
     if h is None:
-        return verdict, ep
-    cq = float(et.get("crossed_qty") or 0)
+        return "unchecked", None
     if cq > 0:
-        # the crossed leg's own price, backed out of the blended fill
-        fill = float(et.get("fill") or ep)
-        cpx = (fill * (pq + cq) - pq * float(lim)) / cq
-        return verdict, (pq * h + cq * cpx) / (pq + cq)
+        cpx = et.get("crossed_px")
+        if not cpx:
+            fill, ppx = et.get("fill"), et.get("passive_px")
+            if fill is None or ppx is None:
+                return "unchecked", None
+            cpx = (float(fill) * (pq + cq) - pq * float(ppx)) / cq
+        return verdict, (pq * h + cq * float(cpx)) / (pq + cq)
     return verdict, h
 
 
@@ -164,7 +179,9 @@ def main():
             cl[0] = cl[0] or bars.client()
             q = xr.nbbo_at(cl[0], sym, datetime.fromtimestamp(t, timezone.utc))
             time.sleep(0.3)   # the live engine shares these data keys
-            cache[key] = list(q) if q else None
+            if not q:
+                return None          # not cached: a 429 or a gap must not stick as "no quote" forever
+            cache[key] = list(q)
         return cache[key]
 
     def prints(sym, t0, t1):
@@ -175,6 +192,7 @@ def main():
                 cache[key] = tc.regular_prints(cl[0], sym, t0, t1)
             except Exception as e:  # noqa: BLE001
                 print(f"  prints fail {sym}: {str(e)[:60]}", file=sys.stderr)
+                time.sleep(2.0)      # back off: a burst of 429s must not cascade
                 return None
             time.sleep(0.3)
         return cache[key]
@@ -200,9 +218,10 @@ def main():
         if mid <= 0:
             continue
         ep, xp = float(r["entry_price"]), float(r["exit_price"])
-        tape, hep = tape_honest_entry(r["entry_test"], sym, t_send, ep, quote, prints)
+        tape, hep = tape_honest_entry(r["entry_test"], sym, near[0]["ts"] if near else t_send, ep, quote, prints)
         rows.append({"day": day, "sym": sym, "arm": r["entry_test"]["arm"], "t": t_send,
-                     "tape": tape, "net": (xp - ep) / mid * 1e4, "honest_net": (xp - hep) / mid * 1e4,
+                     "tape": tape, "net": (xp - ep) / mid * 1e4,
+                     "honest_net": None if hep is None else (xp - hep) / mid * 1e4,
                      "matched": bool(near),
                      "passive": any(b["type"] == "limit" and b["filled_qty"] > 0 for b in near),
                      "half": (ask - bid) / 2 / mid * 1e4,
@@ -218,13 +237,15 @@ def main():
     unmatched = sum(1 for x in rows if not x["matched"])
     if unmatched:
         print(f"  note: {unmatched} trade(s) had no buy submit near entry_time; priced at entry_time instead\n")
-    print(f"  {'arm':<10}{'n':>5}{'passive%':>10}{'tape ok':>9}{'half spr':>10}{'cost':>9}{'e2e':>9}{'net':>9}"
+    print(f"  {'arm':<10}{'n':>5}{'passive%':>10}{'tape ok/chk u':>14}{'half spr':>10}{'cost':>9}{'e2e':>9}{'net':>9}"
           f"{'net - ask':>12}{'t(days)':>9}{'honest':>9}{'hon - ask':>11}{'t(days)':>9}")
     by = defaultdict(lambda: defaultdict(list))
     for x in rows:
         by[x["arm"]][x["day"]].append(x)
     ask_day = {d: statistics.mean(v["net"] for v in xs) for d, xs in by["ask"].items()}
-    ask_hon = {d: statistics.mean(v["honest_net"] for v in xs) for d, xs in by["ask"].items()}
+    hmean = lambda xs: (statistics.mean(v) if (v := [x["honest_net"] for x in xs if x["honest_net"] is not None])
+                        else None)
+    ask_hon = {d: hmean(xs) for d, xs in by["ask"].items() if hmean(xs) is not None}
     for arm in ARMS:
         xs = [x for v in by[arm].values() for x in v]
         if not xs:
@@ -233,27 +254,34 @@ def main():
         diff = {d: [statistics.mean(x["net"] for x in v) - ask_day[d]]
                 for d, v in by[arm].items() if d in ask_day} if arm != "ask" else {}
         dm, dt, _, nd = dct(diff) if diff else (None, None, 0, 0)
-        hdiff = {d: [statistics.mean(x["honest_net"] for x in v) - ask_hon[d]]
-                 for d, v in by[arm].items() if d in ask_hon} if arm != "ask" else {}
+        hdiff = {d: [hmean(v) - ask_hon[d]]
+                 for d, v in by[arm].items() if d in ask_hon and hmean(v) is not None} if arm != "ask" else {}
         hm, ht, _, _ = dct(hdiff) if hdiff else (None, None, 0, 0)
-        checked = [x for x in xs if x["tape"] is not None]
-        ok = (f"{100 * sum(x['tape'] == 'confirmed' for x in checked) / len(checked):>8.0f}%"
-              if checked else f"{'—':>9}")
+        checked = [x for x in xs if x["tape"] not in (None, "unchecked")]
+        unchecked = sum(1 for x in xs if x["tape"] == "unchecked")
+        ok = (f"{sum(x['tape'] == 'confirmed' for x in checked):>4}/{len(checked):<3}u{unchecked:<2}"
+              if checked or unchecked else f"{'—':>11}")
         print(f"  {arm:<10}{len(xs):>5}{100 * sum(x['passive'] for x in xs) / len(xs):>9.0f}%{ok}"
               f"{m('half'):>10.1f}{m('cost'):>+9.1f}{m('e2e'):>+9.1f}{m('net'):>+9.1f}"
               + (f"{dm:>+12.1f}{(f'{dt:+.2f}' if dt is not None else '—'):>9}" if dm is not None else f"{'—':>12}{'—':>9}")
-              + f"{m('honest_net'):>+9.1f}"
+              + (f"{hmean(xs):>+9.1f}" if hmean(xs) is not None else f"{'—':>9}")
               + (f"{hm:>+11.1f}{(f'{ht:+.2f}' if ht is not None else '—'):>9}" if hm is not None else f"{'—':>11}{'—':>9}"))
     print("\n  net = (exit - entry) / SIP mid at decision: the whole trade from one reference (e2e alone leaves out the"
           "\n  entry price, which is what the arms change). net - ask is the mean of daily (arm - ask) differences."
-          "\n  tape ok = share of paper passive fills with a SIP print below the limit while it rested; honest = net"
-          "\n  with unconfirmed passive fills re-priced at the ask when the arm crosses. t needs ~10 days.")
+          "\n  tape ok/chk u = passive paper fills confirmed by SIP round lots printing below the limit (our size) while"
+          "\n  a live order would have rested / fills checked, u = unchecked (tape or prices unavailable; left out of"
+          "\n  honest). honest = net with unconfirmed passive fills re-priced at the SIP ask when the arm would have"
+          "\n  crossed; the exit is held fixed (live levels key off the fill, so this is an approximation), and the"
+          "\n  control's cost is a paper market fill. t needs ~10 days.")
     if args.detail:
-        print(f"\n  {'day':<11}{'time':<9}{'sym':<7}{'arm':<10}{'pass':>5}{'half':>7}{'cost':>8}{'e2e':>8}{'trade':>8}")
+        print(f"\n  {'day':<11}{'time':<9}{'sym':<7}{'arm':<10}{'pass':>5}{'half':>7}{'cost':>8}{'net':>8}{'honest':>8}"
+              f"{'tape':>11}")
         for x in sorted(rows, key=lambda x: x["t"]):
             tt = datetime.fromtimestamp(x["t"], bars.ET).strftime("%H:%M:%S")
             print(f"  {x['day']:<11}{tt:<9}{x['sym']:<7}{x['arm']:<10}{'y' if x['passive'] else '':>5}"
-                  f"{x['half']:>7.1f}{x['cost']:>+8.1f}{x['e2e']:>+8.1f}{x['trade']:>+8.1f}")
+                  f"{x['half']:>7.1f}{x['cost']:>+8.1f}{x['net']:>+8.1f}"
+                  + (f"{x['honest_net']:>+8.1f}" if x['honest_net'] is not None else f"{'—':>8}")
+                  + f"{(x['tape'] or ''):>11}")
 
 
 if __name__ == "__main__":

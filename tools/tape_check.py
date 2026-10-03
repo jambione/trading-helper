@@ -9,17 +9,22 @@ exactly at the limit is a "touch" (maybe filled, maybe not); no print at or thro
 For a fill that is not confirmed, the live-equivalent price is what the arm does when its limit does not fill:
 cross at market when the wait runs out (buy at the SIP ask, sell at the SIP bid at that moment). Scorers report
 the paper result and this tape-honest result side by side. Added 2026-10-03 (user: can paper data stand for live?).
+
+Review 2026-10-03: odd lots (condition I) are excluded — they are not protected quotes and can print through the
+NBBO without reaching the round-lot queue — and confirmation needs the through-prints' total size to cover our
+quantity, so one 5-share print cannot confirm a 100-share fill. The window is the whole time a live order would
+have rested (submit to submit + the arm's cross time), not the shorter time paper took to fill.
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-# Trade conditions that are not regular-session prints at the NBBO (as in the 1-cent stop study).
-BAD_CONDITIONS = set("TUZBGW479CHMNPQRV")
+# Trade conditions that are not regular-session prints at the NBBO (as in the 1-cent stop study), plus odd lots.
+BAD_CONDITIONS = set("TUZBGW479CHMNPQRVI")
 
 
-def regular_prints(cl, sym: str, t0: float, t1: float) -> list[tuple[float, float]]:
-    """[(epoch, price)] of regular SIP trades in [t0, t1]."""
+def regular_prints(cl, sym: str, t0: float, t1: float) -> list[tuple[float, float, float]]:
+    """[(epoch, price, size)] of regular round-lot SIP trades in [t0, t1]."""
     from alpaca.data.enums import DataFeed
     from alpaca.data.requests import StockTradesRequest
     q = cl.get_stock_trades(StockTradesRequest(
@@ -30,24 +35,28 @@ def regular_prints(cl, sym: str, t0: float, t1: float) -> list[tuple[float, floa
     for r in q.data.get(sym) or []:
         if set(getattr(r, "conditions", None) or []) & BAD_CONDITIONS:
             continue
-        out.append((r.timestamp.timestamp(), float(r.price)))
+        out.append((r.timestamp.timestamp(), float(r.price), float(getattr(r, "size", 0) or 0)))
     return out
 
 
-def tape_verdict(side: str, limit: float, prints: list[tuple[float, float]]) -> str:
-    """"confirmed" (a print through the limit), "touch" (only at it) or "none"."""
+def tape_verdict(side: str, limit: float, prints, qty: float | None = None) -> str:
+    """"confirmed" (prints through the limit totalling >= qty shares), "touch" (any print at or through it,
+    but not enough size) or "none". prints are (epoch, price[, size]); a missing size counts as 0."""
     lim = float(limit)
-    if side == "buy":
-        if any(p < lim - 1e-9 for _, p in prints):
-            return "confirmed"
-        if any(abs(p - lim) <= 1e-9 for _, p in prints):
-            return "touch"
-    else:
-        if any(p > lim + 1e-9 for _, p in prints):
-            return "confirmed"
-        if any(abs(p - lim) <= 1e-9 for _, p in prints):
-            return "touch"
-    return "none"
+    need = float(qty) if qty and qty > 0 else 100.0
+    through, at = 0.0, False
+    for p in prints:
+        px = float(p[1])
+        sz = float(p[2]) if len(p) > 2 else 0.0
+        beyond = px < lim - 1e-9 if side == "buy" else px > lim + 1e-9
+        if beyond:
+            through += sz
+            at = True
+        elif abs(px - lim) <= 1e-9:
+            at = True
+    if through >= need:
+        return "confirmed"
+    return "touch" if at else "none"
 
 
 def honest_price(side: str, verdict: str, paper_px: float, cross_quote) -> float | None:
