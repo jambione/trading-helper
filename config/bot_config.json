@@ -473,7 +473,7 @@
   "ai_watch_day_roster": true,
   "ai_watch_slot_priority": true,
   "ai_watch_momentum_min_price": 10.0,
-  "ai_watch_momentum_spread_exempt": true,
+  "ai_watch_momentum_spread_exempt": false,
   "ai_watch_async_gates": true,
   "ai_watch_exh_heating_with_square": false,
   "ai_watch_square_min_count": 2,
