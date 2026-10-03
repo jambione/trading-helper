@@ -298,7 +298,9 @@ DEFAULT_CONFIG = {
     # Comma list of "ask" (control: market at the ask), "mid_down" (limit at
     # the IEX mid rounded DOWN to the cent; = bid on 1c spreads) and "bid"
     # (limit at the bid). Non-control arms rest ai_entry_test_cross_sec, then
-    # cancel and buy what is left at market. "" = off (plain market entries).
+    # cancel and buy what is left at market. "wait" (market once a wide spread
+    # tightens; see ai_entry_wait_*) may be added as a fourth arm.
+    # "" = off (plain market entries).
     # Earliest ET time the desk may open a position (poll entries and the
     # open-bell entries). Watching, seeding and admission are unaffected.
     # "09:30" = from the open. Operator 2026-10-02: wait to 09:45 (the open's
@@ -307,6 +309,12 @@ DEFAULT_CONFIG = {
     "ai_entry_earliest_time":     "09:30",
     "ai_entry_test_arms":         "",
     "ai_entry_test_cross_sec":    10.0,
+    # "wait" arm (2026-10-03): when the decision spread is over
+    # ai_entry_wait_min_bp, wait up to ai_entry_test_cross_sec for the spread to
+    # tighten to ai_entry_wait_ratio x, then buy at market (else at the
+    # deadline). At or under the floor it buys at once. Always crosses.
+    "ai_entry_wait_ratio":        0.75,
+    "ai_entry_wait_min_bp":       5.0,
     # Exit-cost A/B (2026-10-03): rotate local-trail exits across "market"
     # (control: sell at market, as today) and "mid" (rest a DAY sell limit at
     # the mid rounded UP to the cent; after ai_exit_test_cross_sec, or at once
@@ -2338,6 +2346,8 @@ SAFE_CONFIG_KEYS = [
     "ai_entry_test_arms",
     "ai_entry_earliest_time",
     "ai_entry_test_cross_sec",
+    "ai_entry_wait_ratio",
+    "ai_entry_wait_min_bp",
     "ai_exit_test_arms",
     "ai_exit_test_cross_sec",
     "ai_exit_test_floor_pct",

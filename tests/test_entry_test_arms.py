@@ -101,3 +101,57 @@ def test_partial_fill_blends(monkeypatch):
     assert out["passive_qty"] == 40 and out["crossed_qty"] == 60 and out["qty"] == 100
     assert abs(out["fill_px"] - 10.012) < 1e-9
     assert out["order_id"] == "M" and out["limit_order_id"] == "L"
+
+
+# ── the "wait" arm: buy at market once a wide spread tightens ─────────────
+
+def test_wait_arm_has_no_limit_and_is_not_a_fallback(monkeypatch):
+    monkeypatch.setattr(cp, "_ENTRY_TEST_N", [0])
+    assert cp.entry_test_limit("wait", 10.00, 10.04) is None
+    p = cp.entry_test_plan({"ai_entry_test_arms": "wait"}, 10.00, 10.04)
+    assert p["arm"] == "wait" and p["limit"] is None and p["fallback"] is False
+    monkeypatch.setattr(cp, "_ENTRY_TEST_N", [0])
+    arms = [cp.entry_test_plan({"ai_entry_test_arms": "ask,mid_down,bid,wait"}, 10, 10.04)["arm"]
+            for _ in range(4)]
+    assert arms == ["ask", "mid_down", "bid", "wait"]
+
+
+def _clock():
+    t = [0.0]
+
+    def clock():
+        return t[0]
+
+    def sleep(s):
+        t[0] += s
+    return clock, sleep
+
+
+def test_wait_arm_buys_at_once_on_a_tight_spread():
+    clock, sleep = _clock()
+    p = cp.entry_wait_for_spread("XYZ", {"arm": "wait", "bid": 100.00, "ask": 100.02}, {},
+                                 book=lambda s: (_ for _ in ()).throw(AssertionError("polled")),
+                                 _sleep=sleep, _clock=clock)
+    assert p["tight"] is True and p["waited_sec"] == 0.0     # 2 bp spread: no wait
+
+
+def test_wait_arm_buys_when_the_spread_tightens():
+    clock, sleep = _clock()
+    quotes = iter([(10.00, 10.10), (10.02, 10.08), (10.03, 10.07)])
+    p = cp.entry_wait_for_spread("XYZ", {"arm": "wait", "bid": 10.00, "ask": 10.10},
+                                 {"ai_entry_test_cross_sec": 10, "ai_entry_wait_ratio": 0.5},
+                                 book=lambda s: next(quotes), _sleep=sleep, _clock=clock)
+    assert p["tightened"] is True and p["buy_ask"] == 10.07 and p["waited_sec"] == 0.8
+
+
+def test_wait_arm_buys_at_the_deadline_when_it_never_tightens():
+    clock, sleep = _clock()
+    p = cp.entry_wait_for_spread("XYZ", {"arm": "wait", "bid": 10.00, "ask": 10.10},
+                                 {"ai_entry_test_cross_sec": 2},
+                                 book=lambda s: (10.01, 10.12), _sleep=sleep, _clock=clock)
+    assert p["tightened"] is False and p["buy_ask"] == 10.12 and p["waited_sec"] >= 2
+
+
+def test_wait_arm_without_a_quote_buys_now():
+    p = cp.entry_wait_for_spread("XYZ", {"arm": "wait", "bid": None, "ask": 10.1}, {})
+    assert p["waited_sec"] == 0.0 and p["note"] == "no quote"

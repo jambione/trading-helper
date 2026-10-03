@@ -1169,12 +1169,12 @@ def _entry_limit_price(
 # resting so adoption does not mistake a part-filled limit for an orphan.
 _ENTRY_TEST_N = [0]
 _ENTRY_PENDING: set[str] = set()
-ENTRY_TEST_ARMS = ("ask", "mid_down", "bid")
+ENTRY_TEST_ARMS = ("ask", "mid_down", "bid", "wait")
 
 
 def entry_test_limit(arm: str, bid: float | None, ask: float | None) -> float | None:
-    """Limit price for a passive arm, or None (control, or no usable quote)."""
-    if arm == "ask":
+    """Limit price for a passive arm, or None (control, the wait arm, or no usable quote)."""
+    if arm not in ("bid", "mid_down"):
         return None
     try:
         b, a = float(bid or 0), float(ask or 0)
@@ -1198,7 +1198,56 @@ def entry_test_plan(cfg: dict | None, bid: float | None, ask: float | None) -> d
     _ENTRY_TEST_N[0] += 1
     lim = entry_test_limit(arm, bid, ask)
     return {"arm": arm, "limit": lim, "bid": _num(bid), "ask": _num(ask),
-            "fallback": bool(arm != "ask" and lim is None)}
+            "fallback": bool(arm not in ("ask", "wait") and lim is None)}
+
+
+def entry_wait_for_spread(ticker: str, plan: dict, cfg: dict | None, *,
+                          book=None, _sleep=time.sleep, _clock=time.time) -> dict:
+    """The "wait" arm: buy at market once the spread tightens, at most ai_entry_test_cross_sec later.
+
+    Only a wide spread is worth waiting on: at or under ai_entry_wait_min_bp the
+    arm buys at once (tight=True). Otherwise it polls the quote until the spread
+    is <= ai_entry_wait_ratio x the decision spread (or one cent) and buys then,
+    or buys at the deadline. It always crosses; it only picks a cheaper moment.
+    Sim (tools/studies/spread_wait_sim.py, 509 buys 9/16-10/2): +4.2 bp on
+    wide-spread buys (t 3.4). Updates and returns plan. Blocks up to the wait,
+    like the passive arms, on the entry path.
+    """
+    cfg = cfg or {}
+    book = book or _premarket_book
+    try:
+        wait = float(cfg.get("ai_entry_test_cross_sec", 10.0) or 10.0)
+        ratio = float(cfg.get("ai_entry_wait_ratio", 0.75) or 0.75)
+        min_bp = float(cfg.get("ai_entry_wait_min_bp", 5.0) or 0.0)
+    except (TypeError, ValueError):
+        wait, ratio, min_bp = 10.0, 0.75, 5.0
+    b0, a0 = _num(plan.get("bid")), _num(plan.get("ask"))
+    if not b0 or not a0 or a0 <= b0:
+        plan.update(waited_sec=0.0, tightened=False, tight=None, note="no quote")
+        return plan
+    s0 = a0 - b0
+    spr_bp = s0 / ((a0 + b0) / 2.0) * 1e4
+    plan["spread_bp"] = round(spr_bp, 2)
+    if spr_bp <= min_bp:
+        plan.update(waited_sec=0.0, tightened=False, tight=True)
+        return plan
+    t0 = _clock()
+    bid, ask = b0, a0
+    tightened = False
+    while _clock() - t0 < wait:
+        _sleep(0.25)
+        try:
+            nb, na = book(ticker)
+        except Exception:
+            nb, na = None, None
+        if nb and na and na > nb:
+            bid, ask = float(nb), float(na)
+            if ask - bid <= max(ratio * s0, 0.01 + 1e-9):
+                tightened = True
+                break
+    plan.update(waited_sec=round(_clock() - t0, 1), tightened=tightened, tight=False,
+                buy_bid=_num(bid), buy_ask=_num(ask))
+    return plan
 
 
 # Exit-cost A/B (ai_exit_test_arms). Local-trail exits only: "market" is the
@@ -2017,6 +2066,9 @@ def place_scaled_entry(
                 ref = float(current_ask or sizing_entry or 0)
                 if ref <= 0:
                     return {"ok": False, "status": "no_price"}
+                if entry_test and entry_test.get("arm") == "wait":
+                    entry_wait_for_spread(ticker, entry_test, cfg)
+                    ref = float(entry_test.get("buy_ask") or ref)
                 if entry_test and entry_test.get("limit"):
                     _ENTRY_PENDING.add(str(ticker).upper())
                     try:
