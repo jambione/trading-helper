@@ -42,10 +42,12 @@ sys.path.insert(0, ROOT)
 import bars  # noqa: E402
 import exec_report as xr  # noqa: E402
 from entry_arm_score import dct  # noqa: E402
+import tape_check as tc  # noqa: E402
 
 ARMS = ("market", "mid")
 CACHE = os.path.join(ROOT, "ai_reports", "exit_arm_score_cache.json")
 SEND_WINDOW = (-120.0, 5.0)   # first sell submit within this many seconds of the outcome's exit_time
+CROSS_SEC = 10.0              # ai_exit_test_cross_sec default: when an unfilled limit would have crossed
 
 
 def outcomes(lo: str, hi: str) -> list[dict]:
@@ -99,8 +101,36 @@ def ref_time(r: dict, sells: dict[str, list[float]]) -> tuple[float, bool]:
     return (near[0], True) if near else (t_exit, False)
 
 
-def score(rows_in: list[dict], quote) -> list[dict]:
-    """Per-trade rows; quote(sym, t) -> (bid, ask) or None."""
+def tape_honest_exit(r: dict, t: float, xp: float, quote, prints) -> tuple[str | None, float]:
+    """(tape verdict, live-equivalent exit price) for one outcome.
+
+    Only a mid-arm exit whose limit sold shares on paper is checked: was there a SIP print above the limit
+    while it rested? If not (or only a touch), the passive shares are re-priced at the SIP bid when the arm
+    would have crossed (decision + waited_sec, else + CROSS_SEC). Market exits and crossed legs are unchanged.
+    """
+    xt = r.get("exit_test") or {}
+    pq = float(xt.get("passive_qty") or 0)
+    lim = xt.get("limit")
+    if xt.get("arm") != "mid" or pq <= 0 or not lim or prints is None:
+        return None, xp
+    wait = float(xt.get("waited_sec") or CROSS_SEC)
+    pr = prints(r["symbol"], t, t + wait)
+    if pr is None:                       # tape unavailable: leave the paper price, unchecked
+        return None, xp
+    verdict = tc.tape_verdict("sell", float(lim), pr)
+    if verdict == "confirmed":
+        return verdict, xp
+    h = tc.honest_price("sell", verdict, float(lim), quote(r["symbol"], t + wait))
+    if h is None:
+        return verdict, xp
+    cq, cpx = float(xt.get("crossed_qty") or 0), xt.get("crossed_px")
+    if cq > 0 and cpx:
+        return verdict, (pq * h + cq * float(cpx)) / (pq + cq)
+    return verdict, h
+
+
+def score(rows_in: list[dict], quote, prints=None) -> list[dict]:
+    """Per-trade rows; quote(sym, t) -> (bid, ask) or None; prints(sym, t0, t1) -> [(t, px)] or None."""
     rows, sells = [], {}
     for r in sorted(rows_in, key=lambda r: float(r["exit_time"])):
         day = r["_day"]
@@ -116,7 +146,9 @@ def score(rows_in: list[dict], quote) -> list[dict]:
             continue
         xt = r["exit_test"]
         xp = float(r["exit_price"])
+        tape, hx = tape_honest_exit(r, t, xp, quote, prints)
         rows.append({"day": day, "sym": r["symbol"], "arm": xt["arm"], "t": t, "matched": matched,
+                     "tape": tape, "honest_cost": (1 - hx / mid) * 1e4,
                      "passive": bool(xt.get("arm") == "mid" and xt.get("fill") is not None
                                      and not xt.get("crossed_qty")),
                      "fallback": bool(xt.get("fallback")), "superseded": bool(xt.get("superseded")),
@@ -132,12 +164,13 @@ def report(rows: list[dict], lo: str, hi: str, detail: bool = False) -> None:
     unmatched = sum(1 for x in rows if not x["matched"])
     if unmatched:
         print(f"  note: {unmatched} trade(s) had no t_decide and no sell submit near exit_time; priced at exit_time\n")
-    print(f"  {'arm':<8}{'n':>5}{'passive%':>10}{'fallbk':>8}{'supersd':>9}{'half spr':>10}{'cost':>9}"
-          f"{'cost - mkt':>12}{'t(days)':>9}")
+    print(f"  {'arm':<8}{'n':>5}{'passive%':>10}{'tape ok':>9}{'fallbk':>8}{'supersd':>9}{'half spr':>10}{'cost':>9}"
+          f"{'cost - mkt':>12}{'t(days)':>9}{'honest':>9}{'hon - mkt':>11}{'t(days)':>9}")
     by = defaultdict(lambda: defaultdict(list))
     for x in rows:
         by[x["arm"]][x["day"]].append(x)
     mkt_day = {d: statistics.mean(v["cost"] for v in xs) for d, xs in by["market"].items()}
+    mkt_hon = {d: statistics.mean(v["honest_cost"] for v in xs) for d, xs in by["market"].items()}
     for arm in ARMS:
         xs = [x for v in by[arm].values() for x in v]
         if not xs:
@@ -145,12 +178,22 @@ def report(rows: list[dict], lo: str, hi: str, detail: bool = False) -> None:
         diff = {d: [statistics.mean(x["cost"] for x in v) - mkt_day[d]]
                 for d, v in by[arm].items() if d in mkt_day} if arm != "market" else {}
         dm, dt, _, _ = dct(diff) if diff else (None, None, 0, 0)
-        print(f"  {arm:<8}{len(xs):>5}{100 * sum(x['passive'] for x in xs) / len(xs):>9.0f}%"
+        hdiff = {d: [statistics.mean(x["honest_cost"] for x in v) - mkt_hon[d]]
+                 for d, v in by[arm].items() if d in mkt_hon} if arm != "market" else {}
+        hm, ht, _, _ = dct(hdiff) if hdiff else (None, None, 0, 0)
+        checked = [x for x in xs if x["tape"] is not None]
+        ok = (f"{100 * sum(x['tape'] == 'confirmed' for x in checked) / len(checked):>8.0f}%"
+              if checked else f"{'—':>9}")
+        fmt = lambda m_, t_: (f"{m_:>+12.1f}{(f'{t_:+.2f}' if t_ is not None else '—'):>9}" if m_ is not None
+                              else f"{'—':>12}{'—':>9}")
+        print(f"  {arm:<8}{len(xs):>5}{100 * sum(x['passive'] for x in xs) / len(xs):>9.0f}%{ok}"
               f"{sum(x['fallback'] for x in xs):>8}{sum(x['superseded'] for x in xs):>9}"
               f"{statistics.mean(x['half'] for x in xs):>10.1f}{statistics.mean(x['cost'] for x in xs):>+9.1f}"
-              + (f"{dm:>+12.1f}{(f'{dt:+.2f}' if dt is not None else '—'):>9}" if dm is not None
-                 else f"{'—':>12}{'—':>9}"))
+              + fmt(dm, dt) + f"{statistics.mean(x['honest_cost'] for x in xs):>+9.1f}"
+              + (f"{hm:>+11.1f}{(f'{ht:+.2f}' if ht is not None else '—'):>9}" if hm is not None else f"{'—':>11}{'—':>9}"))
     print("\n  cost - mkt is the mean of daily (mid - market) cost differences; negative = mid saved."
+          "\n  tape ok = share of paper passive fills with a SIP print above the limit while it rested (live would"
+          "\n  plausibly fill); honest = cost with unconfirmed passive fills re-priced at the bid when the arm crosses."
           "\n  t needs ~10 days to mean anything.")
     if detail:
         print(f"\n  {'day':<11}{'time':<9}{'sym':<7}{'arm':<8}{'pass':>5}{'half':>7}{'cost':>8}")
@@ -179,7 +222,19 @@ def main():
             cache[key] = list(q) if q else None
         return cache[key]
 
-    rows = score(outcomes(args.lo, args.hi), quote)
+    def prints(sym, t0, t1):
+        key = f"P|{sym}|{t0:.3f}|{t1:.3f}"
+        if key not in cache:
+            cl[0] = cl[0] or bars.client()
+            try:
+                cache[key] = tc.regular_prints(cl[0], sym, t0, t1)
+            except Exception as e:  # noqa: BLE001
+                print(f"  prints fail {sym}: {str(e)[:60]}", file=sys.stderr)
+                return None
+            time.sleep(0.3)
+        return cache[key]
+
+    rows = score(outcomes(args.lo, args.hi), quote, prints)
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
     json.dump(cache, open(CACHE, "w"))
     report(rows, args.lo, args.hi, args.detail)

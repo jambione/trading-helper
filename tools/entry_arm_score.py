@@ -43,6 +43,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, ROOT)
 import bars  # noqa: E402
 import exec_report as xr  # noqa: E402
+import tape_check as tc  # noqa: E402
 
 ARMS = ("ask", "mid_down", "bid", "wait")
 CACHE = os.path.join(ROOT, "ai_reports", "entry_arm_score_cache.json")
@@ -108,6 +109,36 @@ def buys_by_symbol(day: str) -> dict[str, list[dict]]:
     return out
 
 
+def tape_honest_entry(et: dict, sym: str, t: float, ep: float, quote, prints) -> tuple[str | None, float]:
+    """(tape verdict, live-equivalent entry price) for one entry.
+
+    Only a passive arm (bid / mid_down) whose limit bought shares on paper is checked: was there a SIP print
+    below the limit while it rested? If not (or only a touch), the passive shares are re-priced at the SIP ask
+    when the arm would have crossed (decision + waited_sec, else + ai_entry_test_cross_sec 10 s).
+    """
+    pq = float(et.get("passive_qty") or 0)
+    lim = et.get("limit")
+    if et.get("arm") not in ("bid", "mid_down") or pq <= 0 or not lim or prints is None:
+        return None, ep
+    wait = float(et.get("waited_sec") or 10.0)
+    pr = prints(sym, t, t + wait)
+    if pr is None:                       # tape unavailable: leave the paper price, unchecked
+        return None, ep
+    verdict = tc.tape_verdict("buy", float(lim), pr)
+    if verdict == "confirmed":
+        return verdict, ep
+    h = tc.honest_price("buy", verdict, float(lim), quote(sym, t + wait))
+    if h is None:
+        return verdict, ep
+    cq = float(et.get("crossed_qty") or 0)
+    if cq > 0:
+        # the crossed leg's own price, backed out of the blended fill
+        fill = float(et.get("fill") or ep)
+        cpx = (fill * (pq + cq) - pq * float(lim)) / cq
+        return verdict, (pq * h + cq * cpx) / (pq + cq)
+    return verdict, h
+
+
 def dct(vals_by_day: dict[str, list[float]]):
     """Mean of all values, and t across day means."""
     allv = [x for v in vals_by_day.values() for x in v]
@@ -125,7 +156,29 @@ def main():
     args = ap.parse_args()
 
     cache = json.load(open(CACHE)) if os.path.exists(CACHE) else {}
-    cl = None
+    cl = [None]
+
+    def quote(sym, t):
+        key = f"{sym}|{t:.3f}"
+        if key not in cache:
+            cl[0] = cl[0] or bars.client()
+            q = xr.nbbo_at(cl[0], sym, datetime.fromtimestamp(t, timezone.utc))
+            time.sleep(0.3)   # the live engine shares these data keys
+            cache[key] = list(q) if q else None
+        return cache[key]
+
+    def prints(sym, t0, t1):
+        key = f"P|{sym}|{t0:.3f}|{t1:.3f}"
+        if key not in cache:
+            cl[0] = cl[0] or bars.client()
+            try:
+                cache[key] = tc.regular_prints(cl[0], sym, t0, t1)
+            except Exception as e:  # noqa: BLE001
+                print(f"  prints fail {sym}: {str(e)[:60]}", file=sys.stderr)
+                return None
+            time.sleep(0.3)
+        return cache[key]
+
     rows, buys, used = [], {}, set()
     for r in sorted(outcomes(args.lo, args.hi), key=lambda r: float(r["entry_time"])):
         sym, day, t_entry = r["symbol"], r["_day"], float(r["entry_time"])
@@ -139,13 +192,7 @@ def main():
             near = [b for b in near if b["ts"] - near[0]["ts"] <= CROSS_GAP]
             used.update((sym, b["ts"]) for b in near)
         t_send = ref_time(r["entry_test"], near[0]["ts"] if near else t_entry)
-        key = f"{sym}|{t_send:.3f}"
-        if key not in cache:
-            cl = cl or bars.client()
-            q = xr.nbbo_at(cl, sym, datetime.fromtimestamp(t_send, timezone.utc))
-            time.sleep(0.3)   # the live engine shares these data keys
-            cache[key] = list(q) if q else None
-        q = cache[key]
+        q = quote(sym, t_send)
         if not q:
             continue
         bid, ask = q
@@ -153,7 +200,9 @@ def main():
         if mid <= 0:
             continue
         ep, xp = float(r["entry_price"]), float(r["exit_price"])
+        tape, hep = tape_honest_entry(r["entry_test"], sym, t_send, ep, quote, prints)
         rows.append({"day": day, "sym": sym, "arm": r["entry_test"]["arm"], "t": t_send,
+                     "tape": tape, "net": (xp - ep) / mid * 1e4, "honest_net": (xp - hep) / mid * 1e4,
                      "matched": bool(near),
                      "passive": any(b["type"] == "limit" and b["filled_qty"] > 0 for b in near),
                      "half": (ask - bid) / 2 / mid * 1e4,
@@ -169,24 +218,36 @@ def main():
     unmatched = sum(1 for x in rows if not x["matched"])
     if unmatched:
         print(f"  note: {unmatched} trade(s) had no buy submit near entry_time; priced at entry_time instead\n")
-    print(f"  {'arm':<10}{'n':>5}{'passive%':>10}{'half spr':>10}{'cost':>9}{'e2e':>9}{'trade':>9}"
-          f"{'e2e - ask':>12}{'t(days)':>9}")
+    print(f"  {'arm':<10}{'n':>5}{'passive%':>10}{'tape ok':>9}{'half spr':>10}{'cost':>9}{'e2e':>9}{'net':>9}"
+          f"{'net - ask':>12}{'t(days)':>9}{'honest':>9}{'hon - ask':>11}{'t(days)':>9}")
     by = defaultdict(lambda: defaultdict(list))
     for x in rows:
         by[x["arm"]][x["day"]].append(x)
-    ask_day = {d: statistics.mean(v["e2e"] for v in xs) for d, xs in by["ask"].items()}
+    ask_day = {d: statistics.mean(v["net"] for v in xs) for d, xs in by["ask"].items()}
+    ask_hon = {d: statistics.mean(v["honest_net"] for v in xs) for d, xs in by["ask"].items()}
     for arm in ARMS:
         xs = [x for v in by[arm].values() for x in v]
         if not xs:
             continue
         m = lambda k: statistics.mean(x[k] for x in xs)
-        diff = {d: [statistics.mean(x["e2e"] for x in v) - ask_day[d]]
+        diff = {d: [statistics.mean(x["net"] for x in v) - ask_day[d]]
                 for d, v in by[arm].items() if d in ask_day} if arm != "ask" else {}
         dm, dt, _, nd = dct(diff) if diff else (None, None, 0, 0)
-        print(f"  {arm:<10}{len(xs):>5}{100 * sum(x['passive'] for x in xs) / len(xs):>9.0f}%"
-              f"{m('half'):>10.1f}{m('cost'):>+9.1f}{m('e2e'):>+9.1f}{m('trade'):>+9.1f}"
-              + (f"{dm:>+12.1f}{(f'{dt:+.2f}' if dt is not None else '—'):>9}" if dm is not None else f"{'—':>12}{'—':>9}"))
-    print(f"\n  e2e - ask is the mean of daily (arm - ask) differences; t needs ~10 days to mean anything.")
+        hdiff = {d: [statistics.mean(x["honest_net"] for x in v) - ask_hon[d]]
+                 for d, v in by[arm].items() if d in ask_hon} if arm != "ask" else {}
+        hm, ht, _, _ = dct(hdiff) if hdiff else (None, None, 0, 0)
+        checked = [x for x in xs if x["tape"] is not None]
+        ok = (f"{100 * sum(x['tape'] == 'confirmed' for x in checked) / len(checked):>8.0f}%"
+              if checked else f"{'—':>9}")
+        print(f"  {arm:<10}{len(xs):>5}{100 * sum(x['passive'] for x in xs) / len(xs):>9.0f}%{ok}"
+              f"{m('half'):>10.1f}{m('cost'):>+9.1f}{m('e2e'):>+9.1f}{m('net'):>+9.1f}"
+              + (f"{dm:>+12.1f}{(f'{dt:+.2f}' if dt is not None else '—'):>9}" if dm is not None else f"{'—':>12}{'—':>9}")
+              + f"{m('honest_net'):>+9.1f}"
+              + (f"{hm:>+11.1f}{(f'{ht:+.2f}' if ht is not None else '—'):>9}" if hm is not None else f"{'—':>11}{'—':>9}"))
+    print("\n  net = (exit - entry) / SIP mid at decision: the whole trade from one reference (e2e alone leaves out the"
+          "\n  entry price, which is what the arms change). net - ask is the mean of daily (arm - ask) differences."
+          "\n  tape ok = share of paper passive fills with a SIP print below the limit while it rested; honest = net"
+          "\n  with unconfirmed passive fills re-priced at the ask when the arm crosses. t needs ~10 days.")
     if args.detail:
         print(f"\n  {'day':<11}{'time':<9}{'sym':<7}{'arm':<10}{'pass':>5}{'half':>7}{'cost':>8}{'e2e':>8}{'trade':>8}")
         for x in sorted(rows, key=lambda x: x["t"]):
