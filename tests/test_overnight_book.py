@@ -754,3 +754,25 @@ def test_closing_cross_window_follows_an_early_close(monkeypatch):
     ob.crosses(["AAA"], date(2026, 10, 1), "open")
     assert calls == [("2026-11-27", 12, 59, 13, 2), ("2026-10-01", 15, 59, 16, 2),
                      ("2026-10-01", 9, 29, 9, 32)]
+
+
+# ── 2026-10-03 skeptic review #7: a buy that never submitted still gets bought ─
+
+def test_buy_check_and_fallback_buy_the_plan_when_buy_never_submitted(monkeypatch, tmp_path):
+    from datetime import date
+    monkeypatch.setattr(ob, "load_plan", lambda d: PLAN)
+    monkeypatch.setattr(ob, "latest_prices", lambda syms: {"AAA": 50.0, "BBB": 20.0})
+    monkeypatch.setattr(ob, "INTRADAY_MIN", None)
+    monkeypatch.setattr(ob, "session_opens", lambda syms, day: {})
+    monkeypatch.setattr(ob, "ORDER_MODE", "auction")
+    for tag, auction, tif in (("buy_check", True, "cls"), ("buy_fallback", False, "day")):
+        _isolate_ledger(monkeypatch, tmp_path / tag)
+        tc = _OrdersTC([])                                   # buy() raised before any submit
+        ob.buy_topup(tc, date(2026, 10, 1), auction=auction, tag=tag)
+        assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 245), ("BBB", 612)], tag   # buy()'s sizing
+        assert {str(r.time_in_force.value).lower() for r in tc.submitted} == {tif}, tag
+    # orders on the broker but no ledger rows: never buy a second time
+    _isolate_ledger(monkeypatch, tmp_path / "seen")
+    tc = _OrdersTC([_o("AAA", "new", 245, cid="on-2026-10-01-AAA-buy")])
+    ob.buy_topup(tc, date(2026, 10, 1), auction=True, tag="buy_check")
+    assert tc.submitted == []

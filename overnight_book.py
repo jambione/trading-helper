@@ -728,7 +728,10 @@ def intraday_filter(syms: list[str], opens: dict, prices: dict,
     return kept, rows
 
 
-def buy(tc, day: date, dry: bool = False) -> None:
+def buy(tc, day: date, dry: bool = False, market: bool = False) -> None:
+    """Buy the plan. *market* sends plain market (DAY) orders even in auction
+    mode: buy_fallback's late re-run of a buy that never submitted (past the
+    MOC cutoff)."""
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
     p = load_plan(day)
@@ -757,7 +760,7 @@ def buy(tc, day: date, dry: bool = False) -> None:
     else:
         _log_filter_shadow(day, syms, px, dry)
     if LIVE:
-        _buy_live(tc, day, syms, px, held, dry)
+        _buy_live(tc, day, syms, px, held, dry, market=market)
         return
     for s in syms:
         if s in held:
@@ -784,17 +787,17 @@ def buy(tc, day: date, dry: bool = False) -> None:
                "ref_price": price, "client_order_id": cid, "dry_run": dry}
         if not dry:
             try:
-                tif = TimeInForce.CLS if ORDER_MODE == "auction" else TimeInForce.DAY
+                tif = TimeInForce.CLS if ORDER_MODE == "auction" and not market else TimeInForce.DAY
                 o = tc.submit_order(MarketOrderRequest(symbol=s, qty=qty, side=OrderSide.BUY,
                                                        time_in_force=tif, client_order_id=cid))
                 row["order_id"] = str(o.id)
             except Exception as e:  # noqa: BLE001
                 row["error"] = str(e)[:200]
         if dry:
-            print(f"  DRY RUN would submit: {_how('buy')} {qty} {s} (~${qty * price:,.0f} at ${price:.2f})")
+            print(f"  DRY RUN would submit: {'market' if market else _how('buy')} {qty} {s} (~${qty * price:,.0f} at ${price:.2f})")
         else:
             append(LEDGER, row)
-    log(f"buy {day}: {'DRY RUN ' if dry else ''}{len(syms)} picks, ~${total:,.0f} submitted as {_how('buy')}")
+    log(f"buy {day}: {'DRY RUN ' if dry else ''}{len(syms)} picks, ~${total:,.0f} submitted as {'market' if market else _how('buy')}")
 
 
 def _log_filter_shadow(day: date, syms: list[str], px: dict, dry: bool) -> None:
@@ -813,8 +816,10 @@ def _log_filter_shadow(day: date, syms: list[str], px: dict, dry: bool) -> None:
         + (f"; would drop " + " ".join(f"{r['sym']}({r['intraday']:+.1%})" for r in would) if would else "") + ")")
 
 
-def _buy_live(tc, day: date, syms: list[str], px: dict, held: dict, dry: bool) -> None:
-    """Live test: settlement check, hard caps, MOC only."""
+def _buy_live(tc, day: date, syms: list[str], px: dict, held: dict, dry: bool, market: bool = False) -> None:
+    """Live test: settlement check, hard caps, MOC only (market only for the
+    buy_fallback re-run of a buy that never submitted, as buy_fallback's own
+    top-ups already are)."""
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
     if LIVE_SETTLE_WAIT and sold_today(_read_jsonl(LEDGER), day):
@@ -834,18 +839,20 @@ def _buy_live(tc, day: date, syms: list[str], px: dict, held: dict, dry: bool) -
         row = {"event": "submit", "night": day.isoformat(), "sym": s, "side": "buy", "qty": qty,
                "ref_price": price, "client_order_id": cid, "dry_run": dry, "live": True}
         if dry:
-            print(f"  DRY RUN would submit LIVE: MOC buy {qty} {s} (~${qty * price:,.2f})")
+            print(f"  DRY RUN would submit LIVE: {'market' if market else 'MOC'} buy {qty} {s} (~${qty * price:,.2f})")
             continue
         try:
             o = tc.submit_order(MarketOrderRequest(symbol=s, qty=qty, side=OrderSide.BUY,
-                                                   time_in_force=TimeInForce.CLS, client_order_id=cid))
+                                                   time_in_force=TimeInForce.DAY if market else TimeInForce.CLS,
+                                                   client_order_id=cid))
             row["order_id"] = str(o.id)
         except Exception as e:  # noqa: BLE001
             row["error"] = str(e)[:200]
         append(LEDGER, row)
     log(f"buy {day}: LIVE {'DRY RUN ' if dry else ''}{len(picks)} names "
         f"{' '.join(f'{s}x{q}' for s, q, _p in picks)} ~${sum(q * p for _s, q, p in picks):,.2f} "
-        f"(cash ${cash:,.2f}, caps ${LIVE_MAX_BOOK:g}/${LIVE_MAX_ORDER:g}/{LIVE_MAX_SHARES} sh) as MOC")
+        f"(cash ${cash:,.2f}, caps ${LIVE_MAX_BOOK:g}/${LIVE_MAX_ORDER:g}/{LIVE_MAX_SHARES} sh) "
+        f"as {'market' if market else 'MOC'}")
 
 
 def check(tc, day: date) -> None:
@@ -881,6 +888,15 @@ def buy_topup(tc, day: date, dry: bool = False, auction: bool = False, tag: str 
                if r.get("event") == "submit" and r.get("side") == "buy" and r.get("night") == day.isoformat()
                and not r.get("dry_run") and r.get("client_order_id", "").endswith("-buy")}
     orders = [o for o in our_orders(tc, f"on-{day.isoformat()}-") if "-buy" in str(o.client_order_id)]
+    if not targets and not orders:
+        # buy() raised before its first submit (2026-10-03 skeptic review #7):
+        # no ledger rows means no targets, so the check and the fallback did
+        # nothing and the night went unbought. Nothing was sent, so running
+        # buy() now (same plan, caps, filter and sizing) cannot double up.
+        # Orders on the broker with no ledger rows are never re-bought.
+        log(f"{tag} {day}: no buy was submitted today; running the buy now")
+        buy(tc, day, dry=dry, market=not auction)
+        return
     need = topup_needs(targets, orders)
     for s, (rem, n) in sorted(need.items()):
         cid = f"on-{day.isoformat()}-{s}-buy-r{n}"
