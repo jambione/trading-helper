@@ -64,10 +64,16 @@ def test_totals_average_the_scored_nights_and_list_newest_first():
     assert [n["night_end"] for n in snap["nights"]] == ["2026-10-02", "2026-10-01"]
 
 
-def test_only_error_steps_are_surfaced():
-    state = {"plan": "ok 06:30", "sell": "error boom", "buy": "skipped late at 15:55"}
+def test_errors_missed_windows_and_alerts_are_surfaced_but_not_disarmed_skips():
+    # 2026-10-03 skeptic review #1: a step skipped late is a problem (a missed
+    # sell holds the book through the day), so the dashboard shows it; a
+    # deliberate disarmed skip is not.
+    state = {"plan": "ok 06:30", "sell": "error boom", "sell_topup": "skipped late at 09:50",
+             "buy": "skipped: live not armed at 15:40",
+             "sell_catchup": "ALERT 3 names held past the open, sold 09:50"}
     snap = ob.build_snapshot(PLAN, [], [], [], {}, state, {"name": "buy", "at": 1.0}, NOW)
-    assert snap["errors"] == {"sell": "error boom"}
+    assert snap["errors"] == {"sell": "error boom", "sell_topup": "skipped late at 09:50",
+                              "sell_catchup": "ALERT 3 names held past the open, sold 09:50"}
     assert snap["next_step"]["name"] == "buy"
 
 
@@ -590,3 +596,57 @@ def test_disarmed_sell_touches_only_the_books_names_and_never_cancels_all(monkey
     ob.sell(tc, date(2026, 10, 2), only={"AAA": 1.0})
     assert tc.cancelled == 0
     assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 1)]
+
+
+# ── 2026-10-03 skeptic review #1: a missed sell is caught up, loudly ─────────
+
+def test_catchup_window_runs_after_the_last_sell_step_until_the_first_buy():
+    lo, hi = ob.catchup_window(OP, CL, "market")
+    assert lo.strftime("%H:%M") == "09:35" and hi.strftime("%H:%M") == "15:57"   # topup 09:33, buy 15:58
+    lo, hi = ob.catchup_window(OP, CL, "auction")
+    assert lo.strftime("%H:%M") == "09:33" and hi.strftime("%H:%M") == "15:39"   # fallback 09:31, buy 15:40
+    half = CL.replace(hour=13)
+    assert ob.catchup_window(OP, half, "auction")[1].strftime("%H:%M") == "12:39"
+
+
+def test_sell_catchup_sells_held_names_at_market_unless_a_sell_is_working(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "ORDER_MODE", "auction")
+    pos = [types.SimpleNamespace(symbol="AAA", qty="2", qty_available="2", side="long"),
+           types.SimpleNamespace(symbol="BBB", qty="1", qty_available="1", side="long"),
+           types.SimpleNamespace(symbol="CCC", qty="4", qty_available="0", side="long")]   # held by an order
+    tc = _OrdersTC([_o("BBB", "new", 1, cid="on-2026-10-02-BBB-sell-r2")], pos)           # still working
+    n = ob.sell_catchup(tc, date(2026, 10, 2), OP + timedelta(minutes=20), OP)
+    assert n == 1
+    assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 2)]
+    r = tc.submitted[0]
+    assert str(r.time_in_force.value).lower() == "day" and str(r.side.value).lower() == "sell"
+    assert r.client_order_id == "on-2026-10-02-AAA-sell-r120"                  # unique per minute
+    assert tc.cancelled == 0
+    empty = _OrdersTC([], [])
+    assert ob.sell_catchup(empty, date(2026, 10, 2), OP + timedelta(minutes=20), OP) == 0
+    assert empty.submitted == []
+
+
+def test_sell_catchup_respects_the_disarmed_scope(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    _isolate_ledger(monkeypatch, tmp_path)
+    pos = [types.SimpleNamespace(symbol="AAA", qty="2", qty_available="2", side="long"),
+           types.SimpleNamespace(symbol="MIR", qty="9", qty_available="9", side="long")]
+    tc = _OrdersTC([], pos)
+    assert ob.sell_catchup(tc, date(2026, 10, 2), OP + timedelta(minutes=20), OP, only={"AAA": 1.0}) == 1
+    assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 1)]
+
+
+def test_alert_logs_runs_the_hook_once_and_never_raises(monkeypatch, tmp_path):
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    out = tmp_path / "hook.txt"
+    monkeypatch.setattr(ob, "ALERT_CMD", f"sh -c 'echo \"$0\" >> {out}'")
+    ob.alert("sell missed", key="k1")
+    ob.alert("sell missed", key="k1")                     # same key: once
+    assert out.read_text().strip() == "sell missed"
+    monkeypatch.setattr(ob, "ALERT_CMD", "/nonexistent/notify")
+    ob.alert("still fine", key="k2")                       # a broken hook never breaks the runner
+    assert (tmp_path / "run.log").read_text().count("ALERT") == 2

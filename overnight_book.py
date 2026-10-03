@@ -43,6 +43,12 @@ SCHEDULE (ET, from Alpaca's trading calendar, so holidays and early closes hold)
     buy_check      close - 15 min  CLS for any name missing / rejected
     buy_fallback   close - 2 min   market buy of any name still uncovered
   reconcile  close + 30 min / open + 20 min   fills vs the official auction prints
+  sell catch-up  every 5 min from the last sell step + 2 min to the first buy
+             step - 1 min: market-sells anything still held with no sell
+             working (a step > 10 min late is skipped, so a process that was
+             down through the morning would otherwise hold the book all day);
+             missed steps and catch-ups ALERT (log, dashboard, optional
+             OVERNIGHT_ALERT_CMD hook)
 
 SCORING
   A night is scored on the PLAN, not on paper fills: every planned name from
@@ -307,6 +313,35 @@ def log(msg: str) -> None:
     print(line, flush=True)
     with open(LOG, "a") as f:
         f.write(line + "\n")
+
+
+# Alert hook (2026-10-03 skeptic review #1: a missed sell raised nothing).
+# Every alert is a loud "ALERT" log line and shows on the dashboard through
+# the state file. OVERNIGHT_ALERT_CMD, if set, is also run with the message
+# as its last argument, e.g. a macOS banner on the mini:
+#   osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title "overnight"' -e 'end run'
+# or a curl to a push service. Off by default (the channel is the user's
+# choice); a failing or slow hook is logged and never breaks the runner.
+ALERT_CMD = os.getenv("OVERNIGHT_ALERT_CMD", "").strip()
+_ALERTED: set = set()
+
+
+def alert(msg: str, key: str | None = None) -> None:
+    """Log *msg* loudly and run the alert hook, once per *key* per process."""
+    if key is not None:
+        if key in _ALERTED:
+            return
+        _ALERTED.add(key)
+    log(f"ALERT {msg}")
+    if not ALERT_CMD:
+        return
+    try:
+        import shlex
+        import subprocess
+        subprocess.run(shlex.split(ALERT_CMD) + [msg], timeout=15, check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:  # noqa: BLE001
+        log(f"alert hook failed: {e!s:.150}")
 
 
 def append(path: Path, row: dict) -> None:
@@ -918,6 +953,45 @@ def sell(tc, day: date, dry: bool = False, attempt: int = 0, tif: str | None = N
     log(f"{tag} {day}: {'DRY RUN ' if dry else ''}{sent} positions submitted as {how}")
 
 
+# The sell catch-up (2026-10-03 skeptic review #1). Each sell step runs once,
+# and a step more than 10 minutes late is skipped, so a process that was down
+# through the morning steps held the book all day and into the next night,
+# silently. From just after the last scheduled sell step until just before
+# the first buy step, anything the book still holds with no sell working is
+# sold at market, the same order the sell_fallback step sends.
+CATCHUP_EVERY = 5 * 60
+
+
+def catchup_window(op: datetime, cl: datetime, mode: str | None = None) -> tuple[datetime, datetime]:
+    """(from, until) for the sell catch-up on one session. Pure."""
+    steps = schedule(op, cl, mode)
+    last_sell = max(w for n, w in steps if n in ORDER_STEPS and n.startswith("sell"))
+    first_buy = min(w for n, w in steps if n in BUY_STEPS)
+    return last_sell + timedelta(minutes=2), first_buy - timedelta(minutes=1)
+
+
+def sell_catchup(tc, day: date, now: datetime, op: datetime, only: dict[str, float] | None = None) -> int:
+    """Market-sell every long position (within *only*, see sell_scope) that
+    has shares free and no sell order of ours working. Returns how many
+    names it sent. The attempt number is minutes since the open, so each
+    pass's client order ids are new."""
+    working = {o.symbol for o in our_orders(tc, "on-")
+               if "-sell" in str(o.client_order_id) and _status(o) in OPEN_STATUSES}
+    targets: dict[str, float] = {}
+    for x in tc.get_all_positions():
+        avail = getattr(x, "qty_available", None)
+        qty = abs(int(float(avail if avail is not None else x.qty)))
+        if (qty == 0 or str(getattr(x.side, "value", x.side)).lower() != "long" or x.symbol in working
+                or (only is not None and x.symbol not in only)):
+            continue
+        targets[x.symbol] = min(qty, only[x.symbol]) if only is not None else qty
+    if not targets:
+        return 0
+    attempt = 100 + int((now - op).total_seconds() // 60)
+    sell(tc, day, attempt=attempt, tif="day", tag="sell_catchup", only=targets)
+    return len(targets)
+
+
 # ── reconcile ────────────────────────────────────────────────────────────────
 
 def our_orders(tc, prefix: str) -> list:
@@ -1338,7 +1412,11 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
         "account_kind": ACCOUNT,
         "intraday_min": INTRADAY_MIN,
         "next_step": next_step,
-        "errors": {k: v for k, v in (state_today or {}).items() if str(v).startswith("error")},
+        # A step skipped late is a problem too (a missed sell held the book
+        # all day, 2026-10-03 review), and so is anything that raised an ALERT;
+        # a disarmed skip is deliberate and stays off the list.
+        "errors": {k: v for k, v in (state_today or {}).items()
+                   if str(v).startswith(("error", "skipped late", "ALERT"))},
     }
 
 
@@ -1398,7 +1476,7 @@ def write_snapshot(tc) -> None:
 def run() -> None:
     tc = book_client()
     log("run: overnight book scheduler started")
-    last_snap = 0.0
+    last_snap = last_catchup = 0.0
     while True:
         try:
             now = datetime.now(ET)
@@ -1440,7 +1518,11 @@ def run() -> None:
                         continue
                     if act == "late":
                         done[name] = f"skipped late at {now:%H:%M}"
-                        log(f"{name} {today}: window missed, skipped")
+                        log(f"{name} {today}: WARNING window {when:%H:%M} missed, skipped"
+                            + ("; the sell catch-up sells whatever is still held" if name.startswith("sell") else ""))
+                        if name in ORDER_STEPS:
+                            alert(f"overnight {ACCOUNT}: {name} {today} missed its {when:%H:%M} window",
+                                  key=f"late-{today}-{name}")
                     else:
                         try:
                             fn()
@@ -1454,6 +1536,22 @@ def run() -> None:
                             account_audit(tc, today, name)
                     save_state(st)
                     last_snap = 0.0                 # a step ran: refresh the dashboard now
+                lo, hi = catchup_window(op, cl)
+                if lo <= now < hi and time.time() - last_catchup >= CATCHUP_EVERY:
+                    last_catchup = time.time()
+                    try:
+                        n = sell_catchup(tc, today, now, op, sell_scope())
+                        if n:
+                            done["sell_catchup"] = f"ALERT {n} names held past the open, sold {now:%H:%M}"
+                            alert(f"overnight {ACCOUNT}: {n} names still held at {now:%H:%M} {today}; "
+                                  f"sell catch-up sent market sells", key=f"catchup-{today}")
+                            order_audit(tc, today, "sell_catchup")
+                            save_state(st)
+                            last_snap = 0.0
+                    except Exception as e:  # noqa: BLE001
+                        done["sell_catchup"] = f"error {e!s:.120}"
+                        log(f"sell_catchup {today}: ERROR {e!s:.200}\n{traceback.format_exc()}")
+                        save_state(st)
             if time.time() - last_snap >= SNAPSHOT_EVERY:
                 write_snapshot(tc)
                 last_snap = time.time()
