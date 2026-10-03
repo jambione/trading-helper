@@ -583,8 +583,11 @@ def universe(tc) -> dict[str, str]:
     return out
 
 
-def daily_closes(syms: list[str], start: date, end: date) -> dict[str, dict[str, tuple[float, float]]]:
-    """{sym: {YYYY-MM-DD: (adj close, adj volume)}} from SIP daily bars."""
+def daily_closes(syms: list[str], start: date, end: date,
+                 failed: list | None = None) -> dict[str, dict[str, tuple[float, float]]]:
+    """{sym: {YYYY-MM-DD: (adj close, adj volume)}} from SIP daily bars.
+    A chunk that fails all three tries is left out; its start index is
+    appended to *failed* so the caller can refuse a partial answer."""
     from alpaca.data.enums import Adjustment, DataFeed
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
@@ -604,6 +607,8 @@ def daily_closes(syms: list[str], start: date, end: date) -> dict[str, dict[str,
                 log(f"bars chunk {i}: {e!s:.120} (try {attempt + 1})")
                 time.sleep(5)
         else:
+            if failed is not None:
+                failed.append(i)
             continue
         for s, bs in (got or {}).items():
             out[s] = {b.timestamp.astimezone(ET).strftime("%Y-%m-%d"): (float(b.close), float(b.volume))
@@ -622,7 +627,17 @@ def plan(tc, day: date) -> dict:
     keys = [d.isoformat() for d in prior]
     uni = universe(tc)
     log(f"plan {day}: universe {len(uni)} names; fetching {len(keys)} sessions of daily bars")
-    bars = daily_closes(sorted(uni), prior[0], prior[-1])
+    # A failed bars chunk is up to 200 names the ranking never sees, and any
+    # of them may belong in the top 20, so a partial universe is a wrong plan,
+    # not a smaller one (2026-10-03 skeptic review #4). Refuse, as a short
+    # universe already is: the run loop marks the plan step "error" (on the
+    # dashboard) and the buy step re-plans from scratch; if that fails too, no
+    # buy goes in that night.
+    failed: list = []
+    bars = daily_closes(sorted(uni), prior[0], prior[-1], failed=failed)
+    if failed:
+        raise RuntimeError(f"{len(failed)} of {math.ceil(len(uni) / 200)} daily-bars chunks failed "
+                           f"(starting at {failed}); refusing to plan on a partial universe")
     rows = rank(bars, keys)
     if len(rows) < 30:
         raise RuntimeError(f"only {len(rows)} liquid names; refusing to plan")

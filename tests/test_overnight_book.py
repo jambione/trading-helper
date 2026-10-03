@@ -690,3 +690,41 @@ def test_alert_logs_runs_the_hook_once_and_never_raises(monkeypatch, tmp_path):
     monkeypatch.setattr(ob, "ALERT_CMD", "/nonexistent/notify")
     ob.alert("still fine", key="k2")                       # a broken hook never breaks the runner
     assert (tmp_path / "run.log").read_text().count("ALERT") == 2
+
+
+# ── 2026-10-03 skeptic review #4: no plan from a partial universe ────────────
+
+def test_daily_closes_reports_a_chunk_that_failed_every_try(monkeypatch, tmp_path):
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob.time, "sleep", lambda s: None)
+
+    class _DC:
+        def get_stock_bars(self, req):
+            if "S0200" in req.symbol_or_symbols:
+                raise RuntimeError("429")
+            return types.SimpleNamespace(data={})
+
+    monkeypatch.setattr(ob, "data_client", lambda: _DC())
+    failed = []
+    ob.daily_closes([f"S{i:04d}" for i in range(450)], date(2026, 9, 1), date(2026, 9, 30), failed=failed)
+    assert failed == [200]
+
+
+def test_plan_refuses_when_any_bars_chunk_failed(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    import pytest
+    _isolate_ledger(monkeypatch, tmp_path)
+    day = date(2026, 10, 2)
+    sessions = [types.SimpleNamespace(date=day - timedelta(days=k)) for k in range(400, -1, -1)]
+    monkeypatch.setattr(ob, "calendar", lambda tc, a, b: sessions)
+    monkeypatch.setattr(ob, "universe", lambda tc: {"AAA": "A Corp"})
+    monkeypatch.setattr(ob, "rank", lambda bars, keys: [{"sym": f"S{i}", "mom": 0.1} for i in range(40)])
+
+    def partial(syms, start, end, failed=None):
+        failed.append(200)
+        return {}
+    monkeypatch.setattr(ob, "daily_closes", partial)
+    with pytest.raises(RuntimeError, match="chunk"):
+        ob.plan(object(), day)
+    assert not (tmp_path / f"plan_{day.isoformat()}.json").exists()
