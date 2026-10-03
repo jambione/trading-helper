@@ -128,6 +128,17 @@ def test_night_is_scored_on_the_plan_even_when_paper_filled_one_name(monkeypatch
     assert n["names"] == 1 and n["pnl_usd"] == 9.2         # paper: AAA only, 20 x 0.46
     # paper, filter off: no filter row by design, so the book is the plan
     assert n["n_book"] == 2 and ob.night_bp(n) == n["mean_bp_plan"] and ob.night_pnl(n) == 30.0
+    assert n["days_held"] == 1                             # review #11: calendar days buy -> sell
+
+
+def test_days_held_counts_calendar_days_over_a_weekend(monkeypatch, tmp_path):
+    import json
+    from datetime import date
+    _isolate_out(monkeypatch, tmp_path)
+    (tmp_path / "plan_2026-10-02.json").write_text(json.dumps({**PLAN, "day": "2026-10-02"}))  # Friday
+    ob.night_summary(date(2026, 10, 5), fetch=lambda syms, day, leg: {})                    # Monday
+    n = json.loads((tmp_path / "nights.jsonl").read_text())
+    assert n["days_held"] == 3
 
 
 def _live_night(monkeypatch, tmp_path, ledger):

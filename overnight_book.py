@@ -75,7 +75,8 @@ USAGE (on the mini)
   OVERNIGHT_ACCOUNT=live OVERNIGHT_LIVE_ENABLE=yes .venv/bin/python overnight_book.py check
                                                    # read-only look at the LIVE test account
 LIVE (real money, off by default): see ACCOUNT / live_client() / _buy_live() and
-scripts/com.jambi.overnight-live.plist. Auctions only, hard caps, every other night.
+scripts/com.jambi.overnight-live.plist. Auctions only, hard caps, every night
+(OVERNIGHT_LIVE_SETTLE_WAIT=yes restores the old every-other-night settlement wait).
 Logs: ai_reports/overnight/ (plan_DAY.json, ledger.jsonl, nights.jsonl, run.log)
 Dashboard: snapshot.json, rewritten after every step and every 5 minutes;
 ai_trader publishes it on /api/state as "overnight" (a file read, no broker call).
@@ -1226,8 +1227,11 @@ def night_summary(sell_day: date, fetch=None) -> None:
     plan_row = json.loads(plans[-1].read_text())
     buy_day = date.fromisoformat(plan_row["day"])
     picks = [r["sym"] for r in plan_row.get("picks", [])]
+    # days_held: calendar days from the buy session to the sell session (1 on
+    # a weeknight, 3 over a weekend), so a weekend or holiday night can be
+    # told apart from a one-night hold (2026-10-03 skeptic review #11).
     night = {"night_end": sell_day.isoformat(), "plan_day": buy_day.isoformat(),
-             "backtest_expect_bp": BACKTEST_BP}
+             "days_held": (sell_day - buy_day).days, "backtest_expect_bp": BACKTEST_BP}
     flt = [r for r in _read_jsonl(LEDGER) if r.get("event") == "filter" and r.get("night") == buy_day.isoformat()]
     if LIVE:
         # Live (2026-10-03 skeptic review #3): the live buy path writes a
