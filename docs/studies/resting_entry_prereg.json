@@ -1,0 +1,23 @@
+{
+ "study": "Resting entries: instead of buying at market (paying the spread), rest a buy limit and skip the trade if it does not fill. Does the spread saved beat the adverse selection (fills on dips, missed runners)?",
+ "registered_at": "2026-10-03, before any data for this study",
+ "registered_before_results": true,
+ "data": {
+  "signals": "desk day-trade entries with entry_price >= $10 from ai_reports/outcomes.jsonl (hold_days 0, deduplicated), entry days 2026-09-16..2026-10-02; signal time = entry_test.t_decide when present, else entry_time",
+  "random": "2 random entry minutes per desk signal, same name and day, 09:45-15:30 (seed 13), each given the paired desk trade's hold time",
+  "tape": "Alpaca SIP quotes (NBBO at a time, exec_report.nbbo_at) and regular round-lot SIP trades (tools/tape_check.regular_prints) — never paper fills"
+ },
+ "definitions": {
+  "qty": "shares = $1,000 / ask at the signal (the desk's trade size)",
+  "market_baseline": "buy at the SIP ask at the signal; sell at the SIP bid at signal + hold, hold = the desk trade's own hold (exit_time - entry_time)",
+  "resting": "buy limit at L in {bid, mid rounded down to the cent} of the SIP quote at the signal, resting W in {10, 30, 60, 120} s; FILLED at L at the moment round-lot SIP trades strictly below L have totalled >= qty; then sell at the SIP bid at fill + hold. Not filled within W: no trade, P&L 0",
+  "per_signal": "net per signal counts unfilled signals as 0 (the honest economics of skipping)",
+  "missed": "for unfilled signals, the market baseline's net (were the missed trades winners?)"
+ },
+ "arms": {"PRIMARY": "limit at the bid, W = 30 s", "REPORTED": "bid and mid x W 10/30/60/120"},
+ "split": "by date: 9/16-9/25 (before the 9/29 gates) and 9/29-10/2 (current gates)",
+ "statistic": "per signal (bp of $1,000), t clustered by day",
+ "pass": "PRIMARY on desk signals: (a) net per signal minus the market baseline per signal >= +3 bp with day-clustered t >= 2 over all days, n >= 300 signals, AND (b) resting net per signal > 0 in BOTH date halves. Random-entry results, fill rates and the missed trades' baseline are reported but do not gate.",
+ "if_pass": "a live arm: resting buy limit that cancels (no cross) — then graded with the tape-honest scorer",
+ "caveats": ["through-prints are a conservative fill rule (a touch is not a fill)", "the desk's exit logic keys off the fill; holding the same duration from the fill is an approximation", "the 9/29+ half is only 4 days"]
+}
