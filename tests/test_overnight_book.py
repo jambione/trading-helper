@@ -549,3 +549,44 @@ def test_live_buys_the_same_day_it_sold_unless_the_settle_wait_is_on(monkeypatch
     monkeypatch.setattr(ob, "LIVE_SETTLE_WAIT", True)
     ob._buy_live(tc, _d(2026, 10, 5), ["AAA"], {"AAA": 20.0}, {}, True)
     assert sized == [1]                        # the wait skipped it
+
+
+# ── 2026-10-03 skeptic review #2: disarming must never strand a position ─────
+
+def test_disarm_gates_only_buy_steps_sells_always_run():
+    from datetime import timedelta
+    at = OP + timedelta(minutes=1)
+    for name in ("sell", "sell_check", "sell_fallback", "sell_topup"):
+        assert ob.step_action(name, at, at, {}, armed=False) == "run", name
+    for name in ("buy", "buy_check", "buy_fallback", "buy_topup"):
+        assert ob.step_action(name, at, at, {}, armed=False) == "disarmed", name
+        assert ob.step_action(name, at, at, {}, armed=True) == "run", name
+    assert ob.step_action("sell", at, at, {"sell": "ok 09:31"}, armed=False) is None       # done
+    assert ob.step_action("sell", at, at - timedelta(seconds=1), {}, armed=False) is None  # not yet
+    assert ob.step_action("sell", at, at + timedelta(minutes=11), {}, armed=True) == "late"
+    assert ob.step_action("reconcile_sell", at, at + timedelta(hours=3), {}, armed=True) == "run"
+
+
+def test_book_positions_are_net_fills_plus_the_latest_buy_night():
+    ledger = [
+        {"event": "fill", "day": "2026-09-29", "leg": "buy", "sym": "OLD", "fill": 10.0, "filled_qty": 3},
+        {"event": "fill", "day": "2026-09-30", "leg": "sell", "sym": "OLD", "fill": 10.1, "filled_qty": 3},
+        {"event": "fill", "day": "2026-09-30", "leg": "buy", "sym": "AAA", "fill": 20.0, "filled_qty": 1},
+        {"event": "submit", "night": "2026-09-30", "sym": "AAA", "side": "buy", "qty": 1},
+        # the newest night, not reconciled yet: its submits count
+        {"event": "submit", "night": "2026-10-01", "sym": "BBB", "side": "buy", "qty": 2},
+        {"event": "submit", "night": "2026-10-01", "sym": "ERR", "side": "buy", "qty": 1, "error": "x"},
+        {"event": "submit", "night": "2026-10-01", "sym": "DRY", "side": "buy", "qty": 1, "dry_run": True},
+    ]
+    assert ob.book_positions(ledger) == {"AAA": 1.0, "BBB": 2.0}
+
+
+def test_disarmed_sell_touches_only_the_books_names_and_never_cancels_all(monkeypatch, tmp_path):
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    pos = [types.SimpleNamespace(symbol="AAA", qty="3", qty_available="3", side="long"),   # 1 is ours
+           types.SimpleNamespace(symbol="MIR", qty="5", qty_available="5", side="long")]   # someone else's
+    tc = _FakeTC(pos)
+    ob.sell(tc, date(2026, 10, 2), only={"AAA": 1.0})
+    assert tc.cancelled == 0
+    assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 1)]

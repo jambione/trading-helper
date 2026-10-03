@@ -152,12 +152,17 @@ LIVE_MAX_ORDER = float(os.getenv("OVERNIGHT_LIVE_MAX_ORDER", "25"))
 LIVE_MAX_SHARES = int(os.getenv("OVERNIGHT_LIVE_MAX_SHARES", "1"))
 # The arm switch, separate from installing the live agent: an installed but
 # disarmed live scheduler plans, reads the account and refreshes the
-# dashboard, and skips every order step. `touch` this file to arm, `rm` to
-# disarm; checked before each order step, so no restart either way. Writing
+# dashboard, and skips every BUY step; it still sells the shares its own
+# ledger says it holds (BUY_STEPS below). `touch` this file to arm, `rm` to
+# disarm; checked before each buy step, so no restart either way. Writing
 # a start date into it (`echo 2026-10-05 > ...`) arms it from that day.
 ARMED_FILE = ROOT / "config" / "overnight_live.armed"
 ORDER_STEPS = frozenset({"sell", "sell_check", "sell_fallback", "sell_topup",
                          "buy", "buy_check", "buy_fallback", "buy_topup"})
+# Only BUY steps wait for the arm switch (2026-10-03 skeptic review): gating
+# the sells too meant disarming while shares were held left them held, with
+# no step ever selling them. A disarmed book still sells what it bought.
+BUY_STEPS = frozenset(s for s in ORDER_STEPS if s.startswith("buy"))
 
 
 def live_armed(today: date | None = None) -> bool:
@@ -242,6 +247,52 @@ def schedule(op: datetime, cl: datetime, mode: str | None = None) -> list[tuple[
             ("reconcile_sell", op + timedelta(minutes=20)),
             ("buy", cl - MKT_BUY_BEFORE_CLOSE), ("buy_topup", cl - MKT_BUY_TOPUP_BEFORE_CLOSE),
             ("reconcile_buy", cl + timedelta(minutes=30))]
+
+
+def step_action(name: str, when: datetime, now: datetime, done: dict, armed: bool) -> str | None:
+    """What the scheduler does with one step right now. Pure.
+
+    None: already done today, or not due yet. "disarmed": a BUY step on a
+    disarmed live book (sells always run, so disarming never strands shares).
+    "late": the window passed by more than 10 minutes (the process was
+    down); reconcile is safe any time later that day, so it is never late.
+    "run": run it.
+    """
+    if name in done or now < when:
+        return None
+    if name in BUY_STEPS and not armed:
+        return "disarmed"
+    if now - when > timedelta(minutes=10) and not name.startswith("reconcile"):
+        return "late"
+    return "run"
+
+
+def book_positions(ledger: list[dict]) -> dict[str, float]:
+    """{sym: shares} the overnight book holds by its own ledger. Pure.
+
+    Net reconciled fills (buys minus sells), plus the newest buy night's
+    submits that have no buy fill row yet (reconcile_buy has not run). Used
+    to sell only the book's own shares when the live account is not ours
+    to sweep (disarmed, or the day-trading mirror holds the arm).
+    """
+    net: dict[str, float] = {}
+    for (_day, leg, sym), r in _fill_rows(ledger).items():
+        q = float(r.get("filled_qty") or 0) if r.get("fill") else 0.0
+        net[sym] = net.get(sym, 0.0) + (q if leg == "buy" else -q)
+    subs = [r for r in ledger if r.get("event") == "submit" and r.get("side") == "buy" and r.get("night")
+            and not r.get("dry_run") and not r.get("error")]
+    night = max((r["night"] for r in subs), default=None)
+    filled = {k[2] for k in _fill_rows(ledger) if k[0] == night and k[1] == "buy"}
+    for r in subs:
+        if r["night"] == night and r["sym"] not in filled and str(r.get("client_order_id", "-buy")).endswith("-buy"):
+            net[r["sym"]] = net.get(r["sym"], 0.0) + float(r.get("qty") or 0)
+    return {s: q for s, q in sorted(net.items()) if q > 1e-9}
+
+
+def sell_scope() -> dict[str, float] | None:
+    """None = sell every long position (the account is the book's). A
+    disarmed live book sells only what its ledger says it holds."""
+    return None if live_armed() else book_positions(_read_jsonl(LEDGER))
 
 
 def _status(o) -> str:
@@ -820,21 +871,27 @@ def topup_needs(targets: dict[str, int], orders: list) -> dict[str, tuple[int, i
 
 
 def sell(tc, day: date, dry: bool = False, attempt: int = 0, tif: str | None = None,
-         tag: str | None = None) -> None:
+         tag: str | None = None, only: dict[str, float] | None = None) -> None:
     """Sell every long position. attempt 0 is the scheduled sell; 1+ is the
     top-up. Sells size off qty_available (shares not already held by an open
     order), never qty: a second sell sized off qty while the first still
     works would sell the same shares twice, and on this margin account that
-    is a short."""
+    is a short. *only* ({sym: shares}, see sell_scope) limits the sell to
+    those names and sizes, and skips the account-wide cancel: the account
+    may hold orders and shares that are not the book's."""
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
-    if not dry and attempt == 0:
+    if not dry and attempt == 0 and only is None:
         tc.cancel_orders()
     pos = tc.get_all_positions()
     sent = 0
     for x in pos:
+        if only is not None and x.symbol not in only:
+            continue
         avail = getattr(x, "qty_available", None)
         qty = abs(int(float(avail if avail is not None else x.qty)))
+        if only is not None:
+            qty = min(qty, int(only[x.symbol]))
         if qty == 0 or str(getattr(x.side, "value", x.side)).lower() != "long":
             if qty:
                 log(f"sell {day}: {x.symbol} qty {x.qty} side {x.side} left alone")
@@ -1352,35 +1409,36 @@ def run() -> None:
             if ses:
                 op, cl = ses
                 fns = {
-                    "sell": lambda: sell(tc, today),
-                    "sell_topup": lambda: sell(tc, today, attempt=1),
+                    "sell": lambda: sell(tc, today, only=sell_scope()),
+                    "sell_topup": lambda: sell(tc, today, attempt=1, only=sell_scope()),
                     "reconcile_sell": lambda: reconcile(tc, today, "sell"),
                     "buy": lambda: buy(tc, today),
                     "buy_topup": lambda: buy_topup(tc, today),
                     "buy_check": lambda: buy_topup(tc, today, auction=True, tag="buy_check"),
                     "buy_fallback": lambda: buy_topup(tc, today, tag="buy_fallback"),
-                    "sell_check": lambda: sell(tc, today, attempt=1, tif="opg", tag="sell_check"),
-                    "sell_fallback": lambda: sell(tc, today, attempt=2, tif="day", tag="sell_fallback"),
+                    "sell_check": lambda: sell(tc, today, attempt=1, tif="opg", tag="sell_check",
+                                               only=sell_scope()),
+                    "sell_fallback": lambda: sell(tc, today, attempt=2, tif="day", tag="sell_fallback",
+                                                  only=sell_scope()),
                     "reconcile_buy": lambda: reconcile(tc, today, "buy"),
                 }
                 steps = [("plan", now.replace(hour=6, minute=30, second=0, microsecond=0), lambda: plan(tc, today))]
                 steps += [(name, when, fns[name]) for name, when in schedule(op, cl)]
                 for name, when, fn in steps:
-                    if (name in ORDER_STEPS and name not in done and now >= when
-                            and not live_armed()):
-                        # Not "late": a disarmed step is skipped on purpose and
+                    # one attempt per step per day; a step whose window passed by more
+                    # than 10 minutes (the process was down) is skipped, not run late,
+                    # except reconcile, which is safe any time later that day
+                    act = step_action(name, when, now, done, live_armed() if name in BUY_STEPS else True)
+                    if act is None:
+                        continue
+                    if act == "disarmed":
+                        # Not "late": a disarmed buy is skipped on purpose and
                         # logged once, so the ledger says why no order went in.
                         done[name] = f"skipped: live not armed at {now:%H:%M}"
                         log(f"{name} {today}: LIVE not armed ({arm_status()}); no order")
                         save_state(st)
                         continue
-                    # one attempt per step per day; a step whose window passed by more
-                    # than 10 minutes (the process was down) is skipped, not run late,
-                    # except reconcile, which is safe any time later that day
-                    late = now - when > timedelta(minutes=10) and not name.startswith("reconcile")
-                    if name in done or now < when:
-                        continue
-                    if late:
+                    if act == "late":
                         done[name] = f"skipped late at {now:%H:%M}"
                         log(f"{name} {today}: window missed, skipped")
                     else:
@@ -1431,16 +1489,17 @@ def main() -> None:
         night_summary(day)
         return
     tc = book_client()
-    if (LIVE and args.cmd in ("buy", "sell", "topup") and not args.dry_run
+    # Only buys need the arm: a disarmed book may still sell what it holds.
+    if (LIVE and (args.cmd == "buy" or (args.cmd == "topup" and args.leg != "sell")) and not args.dry_run
             and not live_armed()):
         raise SystemExit(f"REFUSED: live not armed (touch {ARMED_FILE} to arm)")
     if args.cmd == "buy":
         buy(tc, day, dry=args.dry_run)
     elif args.cmd == "sell":
-        sell(tc, day, dry=args.dry_run)
+        sell(tc, day, dry=args.dry_run, only=sell_scope())
     elif args.cmd == "topup":
         if args.leg == "sell":
-            sell(tc, day, dry=args.dry_run, attempt=1)
+            sell(tc, day, dry=args.dry_run, attempt=1, only=sell_scope())
         else:
             buy_topup(tc, day, dry=args.dry_run)
     elif args.cmd == "reconcile":
