@@ -323,3 +323,20 @@ def test_eod_sweep_during_a_rest_does_not_book_the_limit_as_the_fill(tmp_path, m
     cp.manage_open_positions(now=1_000_005.0)
     xt = outcome()["exit_test"]
     assert xt.get("fill") is None and xt["superseded"] is True and xt["passive_qty"] == 30
+
+
+def test_limit_filled_in_the_cancel_race_keeps_its_fill(monkeypatch):
+    b = Broker(monkeypatch, {"status": "OrderStatus.NEW", "filled_qty": 0},
+               close_reply={"ok": False, "order_id": None, "note": "no position (canceled 0 open orders)"})
+    p = _pending()
+    # Unfilled when settle looks, filled by the time close_out finds nothing to sell.
+    orig_close = b._close
+
+    def close(t, *a, **k):
+        b.limit_reply = {"status": "OrderStatus.FILLED", "filled_qty": 100, "filled_avg_price": 10.02}
+        return orig_close(t, *a, **k)
+    sys.modules["alpaca_trader"].close_out = close
+    assert cp._exit_test_settle("AAA", p, 10.01, NOW + 10) is True
+    xt = cp._exit_test_final(p)
+    assert xt["fill"] == 10.02 and xt["crossed_qty"] == 0.0 and xt["passive_qty"] == 100
+    assert "market_order_id" not in xt and p["close_order_id"] == "L"
