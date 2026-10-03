@@ -1056,6 +1056,12 @@ def pre_entry_gate(
     state = _load_state()
     if sym in state and not state[sym].get("closing_reason"):
         return False, "already_managed"
+    # A resting exit-test sell limit (ai_exit_test_arms) is still the desk's
+    # exit: place_scaled_entry's pre-clear would cancel it, and the settle
+    # would then cross it as "dead" — a market exit counted in the passive arm
+    # (review 2026-10-03).
+    if sym in state and state[sym].get("exit_test_pending"):
+        return False, "already_managed"
 
     return True, ""
 
@@ -1824,6 +1830,16 @@ def place_scaled_entry(
             pass
         return 0.0
 
+    # Same guard as pre_entry_gate, for the paths that skip it: the pre-clear
+    # below would cancel a resting exit-test sell limit (review 2026-10-03).
+    try:
+        _prev = _load_state().get(str(ticker).upper())
+    except Exception:  # noqa: BLE001
+        _prev = None
+    if isinstance(_prev, dict) and _prev.get("exit_test_pending"):
+        err = "refused: exit-test sell limit still resting"
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err, "ticker": ticker}
     _clear_open(ticker)
     # Refuse a second long while shares (or a residual close) are still live.
     # 2026-08-11: wash-fail path kept calling place while a prior fill sat open,

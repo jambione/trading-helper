@@ -340,3 +340,32 @@ def test_limit_filled_in_the_cancel_race_keeps_its_fill(monkeypatch):
     xt = cp._exit_test_final(p)
     assert xt["fill"] == 10.02 and xt["crossed_qty"] == 0.0 and xt["passive_qty"] == 100
     assert "market_order_id" not in xt and p["close_order_id"] == "L"
+
+
+def test_same_symbol_entry_is_refused_while_an_exit_rests(tmp_path, monkeypatch):
+    from test_ai_positions import _use_tmp_state, _state_path
+    import json
+    _use_tmp_state(tmp_path, monkeypatch)
+    kw = dict(bid=40.0, max_spread_pct=1.0, daily_loss_limit_r=99.0, max_open_risk_pct=99.0)
+    _state_path(tmp_path).write_text(json.dumps({"NVDA": {
+        "entry_confirmed": True, "closing_reason": "local_trail", **_resting()}}))
+    assert cp.pre_entry_gate("NVDA", 40.1, 50_000.0, **kw) == (False, "already_managed")
+    # An ordinary closing position is still let through, as before.
+    _state_path(tmp_path).write_text(json.dumps({"NVDA": {
+        "entry_confirmed": True, "closing_reason": "local_trail", "close_order_id": "M"}}))
+    assert cp.pre_entry_gate("NVDA", 40.1, 50_000.0, **kw) == (True, "")
+
+
+def test_place_scaled_entry_does_not_cancel_a_resting_exit(tmp_path, monkeypatch):
+    from test_ai_positions import _use_tmp_state, _state_path, _StubBroker, _buy_decision
+    import json
+    _use_tmp_state(tmp_path, monkeypatch)
+    _state_path(tmp_path).write_text(json.dumps({"NVDA": {
+        "entry_confirmed": True, "closing_reason": "local_trail", **_resting()}}))
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {"ai_max_position_pct": 25.0})
+    stub = _StubBroker()
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    out = cp.place_scaled_entry("nvda", _buy_decision(), account_equity=50_000.0,
+                                risk_pct=1.0, current_ask=40.5)
+    assert out["ok"] is False and "exit-test" in out["error"]
+    assert stub.cancel_calls == [] and stub.calls == []
