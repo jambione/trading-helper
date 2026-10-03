@@ -185,7 +185,7 @@ def main():
         return cache[key]
 
     def prints(sym, t0, t1):
-        key = f"P|{sym}|{t0:.3f}|{t1:.3f}"
+        key = f"P2|{sym}|{t0:.3f}|{t1:.3f}"   # P2: (t, px, size); P| rows had no size
         if key not in cache:
             cl[0] = cl[0] or bars.client()
             try:
