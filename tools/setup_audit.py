@@ -58,6 +58,12 @@ FINGERPRINT_EXEMPT = {
     # (and reset every measurement pool) on a logging or latency tweak.
     "ai_phase_b_ledger_enabled", "ai_phase_b_working_sell",
     "ai_phase_b_chase_step_sec", "ai_phase_b_min_price",
+    # Exit-cost A/B (operator 2026-10-03): which arm a trade drew is recorded on
+    # its own outcome (exit_test), and the knobs only change how an already
+    # decided exit order fills. Fingerprinting them would reset every evidence
+    # pool each time the test is switched on or off. The entry-cost knobs
+    # (ai_entry_test_*, ai_entry_wait_*) are unfingerprinted for the same reason.
+    "ai_exit_test_arms", "ai_exit_test_cross_sec", "ai_exit_test_floor_pct",
 }
 
 # Fields the screens join on. (file, field, floor%) — floor is the coverage
