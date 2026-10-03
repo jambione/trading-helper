@@ -5,8 +5,9 @@
 
   Same scheduler as com.jambi.overnight-book, run with OVERNIGHT_ACCOUNT=live:
   MOC buys / MOO sells only, hard caps (OVERNIGHT_LIVE_MAX_BOOK $100,
-  _MAX_ORDER $25, _MAX_SHARES 1), every other night (cash-account
-  settlement), its own ledger in ai_reports/overnight_live/.
+  _MAX_ORDER $25, _MAX_SHARES 1), every night (the account is
+  limited-margin, so no settlement wait; OVERNIGHT_LIVE_SETTLE_WAIT=yes
+  restores every-other-night), its own ledger in ai_reports/overnight_live/.
 
   NOT installed by default. Installing it is the switch:
       scripts/install_overnight_agent.sh live

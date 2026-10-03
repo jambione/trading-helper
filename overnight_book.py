@@ -43,6 +43,12 @@ SCHEDULE (ET, from Alpaca's trading calendar, so holidays and early closes hold)
     buy_check      close - 15 min  CLS for any name missing / rejected
     buy_fallback   close - 2 min   market buy of any name still uncovered
   reconcile  close + 30 min / open + 20 min   fills vs the official auction prints
+  sell catch-up  every 5 min from the last sell step + 2 min to the first buy
+             step - 1 min: market-sells anything still held with no sell
+             working (a step > 10 min late is skipped, so a process that was
+             down through the morning would otherwise hold the book all day);
+             missed steps and catch-ups ALERT (log, dashboard, optional
+             OVERNIGHT_ALERT_CMD hook)
 
 SCORING
   A night is scored on the PLAN, not on paper fills: every planned name from
@@ -69,7 +75,8 @@ USAGE (on the mini)
   OVERNIGHT_ACCOUNT=live OVERNIGHT_LIVE_ENABLE=yes .venv/bin/python overnight_book.py check
                                                    # read-only look at the LIVE test account
 LIVE (real money, off by default): see ACCOUNT / live_client() / _buy_live() and
-scripts/com.jambi.overnight-live.plist. Auctions only, hard caps, every other night.
+scripts/com.jambi.overnight-live.plist. Auctions only, hard caps, every night
+(OVERNIGHT_LIVE_SETTLE_WAIT=yes restores the old every-other-night settlement wait).
 Logs: ai_reports/overnight/ (plan_DAY.json, ledger.jsonl, nights.jsonl, run.log)
 Dashboard: snapshot.json, rewritten after every step and every 5 minutes;
 ai_trader publishes it on /api/state as "overnight" (a file read, no broker call).
@@ -152,12 +159,17 @@ LIVE_MAX_ORDER = float(os.getenv("OVERNIGHT_LIVE_MAX_ORDER", "25"))
 LIVE_MAX_SHARES = int(os.getenv("OVERNIGHT_LIVE_MAX_SHARES", "1"))
 # The arm switch, separate from installing the live agent: an installed but
 # disarmed live scheduler plans, reads the account and refreshes the
-# dashboard, and skips every order step. `touch` this file to arm, `rm` to
-# disarm; checked before each order step, so no restart either way. Writing
+# dashboard, and skips every BUY step; it still sells the shares its own
+# ledger says it holds (BUY_STEPS below). `touch` this file to arm, `rm` to
+# disarm; checked before each buy step, so no restart either way. Writing
 # a start date into it (`echo 2026-10-05 > ...`) arms it from that day.
 ARMED_FILE = ROOT / "config" / "overnight_live.armed"
 ORDER_STEPS = frozenset({"sell", "sell_check", "sell_fallback", "sell_topup",
                          "buy", "buy_check", "buy_fallback", "buy_topup"})
+# Only BUY steps wait for the arm switch (2026-10-03 skeptic review): gating
+# the sells too meant disarming while shares were held left them held, with
+# no step ever selling them. A disarmed book still sells what it bought.
+BUY_STEPS = frozenset(s for s in ORDER_STEPS if s.startswith("buy"))
 
 
 def live_armed(today: date | None = None) -> bool:
@@ -244,6 +256,52 @@ def schedule(op: datetime, cl: datetime, mode: str | None = None) -> list[tuple[
             ("reconcile_buy", cl + timedelta(minutes=30))]
 
 
+def step_action(name: str, when: datetime, now: datetime, done: dict, armed: bool) -> str | None:
+    """What the scheduler does with one step right now. Pure.
+
+    None: already done today, or not due yet. "disarmed": a BUY step on a
+    disarmed live book (sells always run, so disarming never strands shares).
+    "late": the window passed by more than 10 minutes (the process was
+    down); reconcile is safe any time later that day, so it is never late.
+    "run": run it.
+    """
+    if name in done or now < when:
+        return None
+    if name in BUY_STEPS and not armed:
+        return "disarmed"
+    if now - when > timedelta(minutes=10) and not name.startswith("reconcile"):
+        return "late"
+    return "run"
+
+
+def book_positions(ledger: list[dict]) -> dict[str, float]:
+    """{sym: shares} the overnight book holds by its own ledger. Pure.
+
+    Net reconciled fills (buys minus sells), plus the newest buy night's
+    submits that have no buy fill row yet (reconcile_buy has not run). Used
+    to sell only the book's own shares when the live account is not ours
+    to sweep (disarmed, or the day-trading mirror holds the arm).
+    """
+    net: dict[str, float] = {}
+    for (_day, leg, sym), r in _fill_rows(ledger).items():
+        q = float(r.get("filled_qty") or 0) if r.get("fill") else 0.0
+        net[sym] = net.get(sym, 0.0) + (q if leg == "buy" else -q)
+    subs = [r for r in ledger if r.get("event") == "submit" and r.get("side") == "buy" and r.get("night")
+            and not r.get("dry_run") and not r.get("error")]
+    night = max((r["night"] for r in subs), default=None)
+    filled = {k[2] for k in _fill_rows(ledger) if k[0] == night and k[1] == "buy"}
+    for r in subs:
+        if r["night"] == night and r["sym"] not in filled and str(r.get("client_order_id", "-buy")).endswith("-buy"):
+            net[r["sym"]] = net.get(r["sym"], 0.0) + float(r.get("qty") or 0)
+    return {s: q for s, q in sorted(net.items()) if q > 1e-9}
+
+
+def sell_scope() -> dict[str, float] | None:
+    """None = sell every long position (the account is the book's). A
+    disarmed live book sells only what its ledger says it holds."""
+    return None if live_armed() else book_positions(_read_jsonl(LEDGER))
+
+
 def _status(o) -> str:
     return str(getattr(o.status, "value", o.status)).lower()
 
@@ -256,6 +314,50 @@ def log(msg: str) -> None:
     print(line, flush=True)
     with open(LOG, "a") as f:
         f.write(line + "\n")
+
+
+# Alerts (2026-10-03 skeptic review #1: a missed sell raised nothing).
+# Every alert is a loud "ALERT" log line and shows on the dashboard through
+# the state file. It is also pushed: by default a Notification Center banner
+# on the mini (user decision 2026-10-03), skipped off macOS and under pytest.
+# OVERNIGHT_ALERT_CMD, if set, replaces the banner: it is run with the
+# message as its last argument (e.g. a curl to a push service). A failing or
+# hung push (15 s timeout) is logged and never breaks the runner.
+ALERT_CMD = os.getenv("OVERNIGHT_ALERT_CMD", "").strip()
+ALERT_MAX_CHARS = 200
+_ALERTED: set = set()
+
+
+def _banner_argv(msg: str) -> list[str]:
+    """osascript argv for a banner. Pure. The message is cut to
+    ALERT_MAX_CHARS first, then escaped for an AppleScript string literal
+    (backslash, double quote; newlines become spaces), and passed as one
+    argument: no shell ever parses it."""
+    s = " ".join(msg[:ALERT_MAX_CHARS].splitlines())
+    s = s.replace("\\", "\\\\").replace('"', '\\"')
+    return ["osascript", "-e", f'display notification "{s}" with title "Overnight book"']
+
+
+def alert(msg: str, key: str | None = None) -> None:
+    """Log *msg* loudly and push it, once per *key* per process."""
+    if key is not None:
+        if key in _ALERTED:
+            return
+        _ALERTED.add(key)
+    log(f"ALERT {msg}")
+    try:
+        import shlex
+        import subprocess
+        if ALERT_CMD:
+            argv = shlex.split(ALERT_CMD) + [msg]
+        elif sys.platform == "darwin" and not os.getenv("PYTEST_CURRENT_TEST"):
+            argv = _banner_argv(msg)
+        else:
+            return
+        subprocess.run(argv, timeout=15, check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:  # noqa: BLE001
+        log(f"alert hook failed: {e!s:.150}")
 
 
 def append(path: Path, row: dict) -> None:
@@ -443,6 +545,12 @@ def live_cash(a) -> float:
 # live test account is), and Alpaca covers settlement, so sale proceeds can buy
 # again the same day with no good-faith-violation risk. "yes" restores the wait.
 LIVE_SETTLE_WAIT = os.getenv("OVERNIGHT_LIVE_SETTLE_WAIT", "no").strip().lower() == "yes"
+# When the live buy never submitted (buy() raised first), re-run it from
+# buy_check / buy_fallback? Off by default (user decision 2026-10-03): live
+# is auctions-only, and buy_fallback's re-run would be a whole-book market buy
+# at close - 2 min (~31 bp round trip vs a ~16 bp edge). Off, live alerts
+# "buy never submitted" and buys nothing; paper always re-runs.
+LIVE_REBUY_FALLBACK = os.getenv("OVERNIGHT_LIVE_REBUY_FALLBACK", "no").strip().lower() == "yes"
 
 
 def sold_today(ledger: list[dict], day: date) -> bool:
@@ -497,8 +605,11 @@ def universe(tc) -> dict[str, str]:
     return out
 
 
-def daily_closes(syms: list[str], start: date, end: date) -> dict[str, dict[str, tuple[float, float]]]:
-    """{sym: {YYYY-MM-DD: (adj close, adj volume)}} from SIP daily bars."""
+def daily_closes(syms: list[str], start: date, end: date,
+                 failed: list | None = None) -> dict[str, dict[str, tuple[float, float]]]:
+    """{sym: {YYYY-MM-DD: (adj close, adj volume)}} from SIP daily bars.
+    A chunk that fails all three tries is left out; its start index is
+    appended to *failed* so the caller can refuse a partial answer."""
     from alpaca.data.enums import Adjustment, DataFeed
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
@@ -518,6 +629,8 @@ def daily_closes(syms: list[str], start: date, end: date) -> dict[str, dict[str,
                 log(f"bars chunk {i}: {e!s:.120} (try {attempt + 1})")
                 time.sleep(5)
         else:
+            if failed is not None:
+                failed.append(i)
             continue
         for s, bs in (got or {}).items():
             out[s] = {b.timestamp.astimezone(ET).strftime("%Y-%m-%d"): (float(b.close), float(b.volume))
@@ -536,7 +649,17 @@ def plan(tc, day: date) -> dict:
     keys = [d.isoformat() for d in prior]
     uni = universe(tc)
     log(f"plan {day}: universe {len(uni)} names; fetching {len(keys)} sessions of daily bars")
-    bars = daily_closes(sorted(uni), prior[0], prior[-1])
+    # A failed bars chunk is up to 200 names the ranking never sees, and any
+    # of them may belong in the top 20, so a partial universe is a wrong plan,
+    # not a smaller one (2026-10-03 skeptic review #4). Refuse, as a short
+    # universe already is: the run loop marks the plan step "error" (on the
+    # dashboard) and the buy step re-plans from scratch; if that fails too, no
+    # buy goes in that night.
+    failed: list = []
+    bars = daily_closes(sorted(uni), prior[0], prior[-1], failed=failed)
+    if failed:
+        raise RuntimeError(f"{len(failed)} of {math.ceil(len(uni) / 200)} daily-bars chunks failed "
+                           f"(starting at {failed}); refusing to plan on a partial universe")
     rows = rank(bars, keys)
     if len(rows) < 30:
         raise RuntimeError(f"only {len(rows)} liquid names; refusing to plan")
@@ -627,12 +750,40 @@ def intraday_filter(syms: list[str], opens: dict, prices: dict,
     return kept, rows
 
 
-def buy(tc, day: date, dry: bool = False) -> None:
+# No buy goes in within 15 s of the close or after it (round-2 verification
+# of the 2026-10-03 review): Alpaca queues a DAY market buy sent after 16:00
+# for the next open, which would buy at the open and sell straight away.
+BUY_CUTOFF_BEFORE_CLOSE = timedelta(seconds=15)
+
+
+def buy_too_late(tc, day: date) -> bool:
+    """True once now >= *day*'s close - 15 s, or when *day* has no session.
+    An unreadable calendar is logged and allowed: the scheduler read it
+    moments ago to decide this step was due."""
+    try:
+        ses = session(tc, day)
+    except Exception as e:  # noqa: BLE001
+        log(f"buy {day}: calendar unreadable ({e!s:.100}); close cutoff not checked")
+        return False
+    if not ses:
+        return True
+    return datetime.now(ET) >= ses[1] - BUY_CUTOFF_BEFORE_CLOSE
+
+
+def buy(tc, day: date, dry: bool = False, market: bool = False) -> None:
+    """Buy the plan. *market* sends plain market (DAY) orders even in auction
+    mode: buy_fallback's late re-run of a buy that never submitted (past the
+    MOC cutoff)."""
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
     p = load_plan(day)
     if not p:
-        p = plan(tc, day)
+        try:
+            p = plan(tc, day)
+        except Exception as e:
+            # a refused plan (#4) means no buy tonight: say so, loudly
+            alert(f"overnight {ACCOUNT}: buy {day}: no plan ({e!s:.150}); no buy tonight", key=f"plan-{day}")
+            raise
     held = {x.symbol: float(x.qty) for x in tc.get_all_positions()}
     if held:
         log(f"buy {day}: WARNING positions still open from before: {held}")
@@ -655,8 +806,11 @@ def buy(tc, day: date, dry: bool = False) -> None:
             + (f"; no open/price for {','.join(unknown)} (kept)" if unknown else ""))
     else:
         _log_filter_shadow(day, syms, px, dry)
+    if not dry and buy_too_late(tc, day):
+        log(f"buy {day}: past the close cutoff ({BUY_CUTOFF_BEFORE_CLOSE.seconds} s before the close); no buy")
+        return
     if LIVE:
-        _buy_live(tc, day, syms, px, held, dry)
+        _buy_live(tc, day, syms, px, held, dry, market=market)
         return
     for s in syms:
         if s in held:
@@ -683,17 +837,17 @@ def buy(tc, day: date, dry: bool = False) -> None:
                "ref_price": price, "client_order_id": cid, "dry_run": dry}
         if not dry:
             try:
-                tif = TimeInForce.CLS if ORDER_MODE == "auction" else TimeInForce.DAY
+                tif = TimeInForce.CLS if ORDER_MODE == "auction" and not market else TimeInForce.DAY
                 o = tc.submit_order(MarketOrderRequest(symbol=s, qty=qty, side=OrderSide.BUY,
                                                        time_in_force=tif, client_order_id=cid))
                 row["order_id"] = str(o.id)
             except Exception as e:  # noqa: BLE001
                 row["error"] = str(e)[:200]
         if dry:
-            print(f"  DRY RUN would submit: {_how('buy')} {qty} {s} (~${qty * price:,.0f} at ${price:.2f})")
+            print(f"  DRY RUN would submit: {'market' if market else _how('buy')} {qty} {s} (~${qty * price:,.0f} at ${price:.2f})")
         else:
             append(LEDGER, row)
-    log(f"buy {day}: {'DRY RUN ' if dry else ''}{len(syms)} picks, ~${total:,.0f} submitted as {_how('buy')}")
+    log(f"buy {day}: {'DRY RUN ' if dry else ''}{len(syms)} picks, ~${total:,.0f} submitted as {'market' if market else _how('buy')}")
 
 
 def _log_filter_shadow(day: date, syms: list[str], px: dict, dry: bool) -> None:
@@ -712,8 +866,10 @@ def _log_filter_shadow(day: date, syms: list[str], px: dict, dry: bool) -> None:
         + (f"; would drop " + " ".join(f"{r['sym']}({r['intraday']:+.1%})" for r in would) if would else "") + ")")
 
 
-def _buy_live(tc, day: date, syms: list[str], px: dict, held: dict, dry: bool) -> None:
-    """Live test: settlement check, hard caps, MOC only."""
+def _buy_live(tc, day: date, syms: list[str], px: dict, held: dict, dry: bool, market: bool = False) -> None:
+    """Live test: settlement check, hard caps, MOC only (market only for the
+    buy_fallback re-run of a buy that never submitted, as buy_fallback's own
+    top-ups already are)."""
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
     if LIVE_SETTLE_WAIT and sold_today(_read_jsonl(LEDGER), day):
@@ -733,18 +889,20 @@ def _buy_live(tc, day: date, syms: list[str], px: dict, held: dict, dry: bool) -
         row = {"event": "submit", "night": day.isoformat(), "sym": s, "side": "buy", "qty": qty,
                "ref_price": price, "client_order_id": cid, "dry_run": dry, "live": True}
         if dry:
-            print(f"  DRY RUN would submit LIVE: MOC buy {qty} {s} (~${qty * price:,.2f})")
+            print(f"  DRY RUN would submit LIVE: {'market' if market else 'MOC'} buy {qty} {s} (~${qty * price:,.2f})")
             continue
         try:
             o = tc.submit_order(MarketOrderRequest(symbol=s, qty=qty, side=OrderSide.BUY,
-                                                   time_in_force=TimeInForce.CLS, client_order_id=cid))
+                                                   time_in_force=TimeInForce.DAY if market else TimeInForce.CLS,
+                                                   client_order_id=cid))
             row["order_id"] = str(o.id)
         except Exception as e:  # noqa: BLE001
             row["error"] = str(e)[:200]
         append(LEDGER, row)
     log(f"buy {day}: LIVE {'DRY RUN ' if dry else ''}{len(picks)} names "
         f"{' '.join(f'{s}x{q}' for s, q, _p in picks)} ~${sum(q * p for _s, q, p in picks):,.2f} "
-        f"(cash ${cash:,.2f}, caps ${LIVE_MAX_BOOK:g}/${LIVE_MAX_ORDER:g}/{LIVE_MAX_SHARES} sh) as MOC")
+        f"(cash ${cash:,.2f}, caps ${LIVE_MAX_BOOK:g}/${LIVE_MAX_ORDER:g}/{LIVE_MAX_SHARES} sh) "
+        f"as {'market' if market else 'MOC'}")
 
 
 def check(tc, day: date) -> None:
@@ -780,7 +938,29 @@ def buy_topup(tc, day: date, dry: bool = False, auction: bool = False, tag: str 
                if r.get("event") == "submit" and r.get("side") == "buy" and r.get("night") == day.isoformat()
                and not r.get("dry_run") and r.get("client_order_id", "").endswith("-buy")}
     orders = [o for o in our_orders(tc, f"on-{day.isoformat()}-") if "-buy" in str(o.client_order_id)]
+    if not targets and not orders:
+        # buy() raised before its first submit (2026-10-03 skeptic review #7):
+        # no ledger rows means no targets, so the check and the fallback did
+        # nothing and the night went unbought. Nothing was sent, so running
+        # buy() now (same plan, caps, filter and sizing) cannot double up.
+        # Orders on the broker with no ledger rows are never re-bought.
+        # Never plan here (round 2): a full-universe bars fetch with retry
+        # sleeps at close - 2 min would submit after the close.
+        if load_plan(day) is None:
+            alert(f"overnight {ACCOUNT}: {tag} {day}: no buy was submitted and there is no plan; "
+                  f"no buy tonight", key=f"nobuy-{day}")
+            return
+        if LIVE and not LIVE_REBUY_FALLBACK:
+            alert(f"overnight live: {tag} {day}: buy never submitted; no re-run "
+                  f"(OVERNIGHT_LIVE_REBUY_FALLBACK off), no buy tonight", key=f"nobuy-{day}")
+            return
+        log(f"{tag} {day}: no buy was submitted today; running the buy now")
+        buy(tc, day, dry=dry, market=not auction)
+        return
     need = topup_needs(targets, orders)
+    if need and not dry and buy_too_late(tc, day):
+        log(f"{tag} {day}: past the close cutoff; not sending {', '.join(sorted(need))}")
+        return
     for s, (rem, n) in sorted(need.items()):
         cid = f"on-{day.isoformat()}-{s}-buy-r{n}"
         row = {"event": "submit", "night": day.isoformat(), "sym": s, "side": "buy", "qty": rem,
@@ -820,21 +1000,27 @@ def topup_needs(targets: dict[str, int], orders: list) -> dict[str, tuple[int, i
 
 
 def sell(tc, day: date, dry: bool = False, attempt: int = 0, tif: str | None = None,
-         tag: str | None = None) -> None:
+         tag: str | None = None, only: dict[str, float] | None = None) -> dict[str, str]:
     """Sell every long position. attempt 0 is the scheduled sell; 1+ is the
     top-up. Sells size off qty_available (shares not already held by an open
     order), never qty: a second sell sized off qty while the first still
     works would sell the same shares twice, and on this margin account that
-    is a short."""
+    is a short. *only* ({sym: shares}, see sell_scope) limits the sell to
+    those names and sizes, and skips the account-wide cancel: the account
+    may hold orders and shares that are not the book's."""
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
-    if not dry and attempt == 0:
+    if not dry and attempt == 0 and only is None:
         tc.cancel_orders()
     pos = tc.get_all_positions()
-    sent = 0
+    sent, failed = 0, {}
     for x in pos:
+        if only is not None and x.symbol not in only:
+            continue
         avail = getattr(x, "qty_available", None)
         qty = abs(int(float(avail if avail is not None else x.qty)))
+        if only is not None:
+            qty = min(qty, int(only[x.symbol]))
         if qty == 0 or str(getattr(x.side, "value", x.side)).lower() != "long":
             if qty:
                 log(f"sell {day}: {x.symbol} qty {x.qty} side {x.side} left alone")
@@ -852,13 +1038,103 @@ def sell(tc, day: date, dry: bool = False, attempt: int = 0, tif: str | None = N
                 row["order_id"] = str(o.id)
             except Exception as e:  # noqa: BLE001
                 row["error"] = str(e)[:200]
+                failed[x.symbol] = row["error"]
         if dry:
             print(f"  DRY RUN would submit: {_how('sell')} sell {qty} {x.symbol}")
         else:
             append(LEDGER, row)
     tag = tag or ("sell" if not attempt else "sell_topup")
     how = {"opg": "MOO", "day": "market"}.get(tif or "", _how("sell"))
-    log(f"{tag} {day}: {'DRY RUN ' if dry else ''}{sent} positions submitted as {how}")
+    log(f"{tag} {day}: {'DRY RUN ' if dry else ''}{sent} positions submitted as {how}"
+        + (f"; FAILED {', '.join(sorted(failed))}" if failed else ""))
+    return failed
+
+
+# The sell catch-up (2026-10-03 skeptic review #1). Each sell step runs once,
+# and a step more than 10 minutes late is skipped, so a process that was down
+# through the morning steps held the book all day and into the next night,
+# silently. From just after the last scheduled sell step until just before
+# the first buy step, anything the book still holds with no sell working is
+# sold at market, the same order the sell_fallback step sends.
+CATCHUP_EVERY = 5 * 60
+
+
+def catchup_window(op: datetime, cl: datetime, mode: str | None = None) -> tuple[datetime, datetime]:
+    """(from, until) for the sell catch-up on one session. Pure."""
+    steps = schedule(op, cl, mode)
+    last_sell = max(w for n, w in steps if n in ORDER_STEPS and n.startswith("sell"))
+    first_buy = min(w for n, w in steps if n in BUY_STEPS)
+    return last_sell + timedelta(minutes=2), first_buy - timedelta(minutes=1)
+
+
+def sell_catchup(tc, day: date, now: datetime, op: datetime, only: dict[str, float] | None = None) -> int:
+    """Market-sell every long position (within *only*, see sell_scope) that
+    has shares free and no sell order of ours working. Returns how many
+    names it sent. The attempt number is minutes since the open, so each
+    pass's client order ids are new."""
+    working = {o.symbol for o in our_orders(tc, "on-")
+               if "-sell" in str(o.client_order_id) and _status(o) in OPEN_STATUSES}
+    targets: dict[str, float] = {}
+    for x in tc.get_all_positions():
+        avail = getattr(x, "qty_available", None)
+        qty = abs(int(float(avail if avail is not None else x.qty)))
+        if (qty == 0 or str(getattr(x.side, "value", x.side)).lower() != "long" or x.symbol in working
+                or (only is not None and x.symbol not in only)):
+            continue
+        targets[x.symbol] = min(qty, only[x.symbol]) if only is not None else qty
+    if not targets:
+        return 0
+    attempt = 100 + int((now - op).total_seconds() // 60)
+    failed = sell(tc, day, attempt=attempt, tif="day", tag="sell_catchup", only=targets)
+    for s, err in sorted(failed.items()):
+        # once per symbol per day: a halted name fails every 5-minute pass
+        alert(f"overnight {ACCOUNT}: sell catch-up of {s} {day} failed: {err:.120}",
+              key=f"catchup-err-{day}-{s}")
+    return len(targets)
+
+
+# The morning's one reconcile_sell runs at open + 20 min, so a catch-up sell
+# after it was never reconciled: no sell fill row, the FIFO lot stayed open,
+# the live fill headline missed it, and book_positions kept the shares
+# forever (round-2 verification of the 2026-10-03 review). After a catch-up
+# submits, reconcile_sell runs again a few minutes later, and again while
+# any of the day's sells still works. A re-run is safe: aggregate_orders
+# joins every sell order of the day per name, and _fill_rows / fifo_matches
+# keep the last fill row per (day, leg, sym).
+CATCHUP_RECONCILE_AFTER = timedelta(minutes=3)
+
+
+def sell_catchup_pass(tc, day: date, now: datetime, op: datetime, done: dict) -> bool:
+    """One catch-up pass for the scheduler: sell, alert, audit, and queue a
+    reconcile. Returns True when it sent orders (the state changed)."""
+    n = sell_catchup(tc, day, now, op, sell_scope())
+    if not n:
+        return False
+    done["sell_catchup"] = f"ALERT {n} names held past the open, sold {now:%H:%M}"
+    done["reconcile_catchup_due"] = (now + CATCHUP_RECONCILE_AFTER).isoformat()
+    alert(f"overnight {ACCOUNT}: {n} names still held at {now:%H:%M} {day}; "
+          f"sell catch-up sent market sells", key=f"catchup-{day}")
+    order_audit(tc, day, "sell_catchup")
+    return True
+
+
+def reconcile_catchup(tc, day: date, now: datetime, done: dict) -> bool:
+    """Reconcile the day's sells once a queued catch-up reconcile is due;
+    re-queue while a sell of ours still works. Returns True when it ran."""
+    due = done.get("reconcile_catchup_due")
+    if not due or now < datetime.fromisoformat(due):
+        return False
+    reconcile(tc, day, "sell")
+    order_audit(tc, day, "reconcile_catchup")
+    account_audit(tc, day, "reconcile_catchup")
+    working = [o for o in our_orders(tc, f"on-{day.isoformat()}-")
+               if "-sell" in str(o.client_order_id) and _status(o) in OPEN_STATUSES]
+    if working:
+        done["reconcile_catchup_due"] = (now + CATCHUP_RECONCILE_AFTER).isoformat()
+    else:
+        done.pop("reconcile_catchup_due", None)
+        done["reconcile_catchup"] = f"ok {now:%H:%M}"
+    return True
 
 
 # ── reconcile ────────────────────────────────────────────────────────────────
@@ -918,12 +1194,27 @@ def account_audit(tc, day: date, step: str) -> None:
         log(f"account_audit {step} {day}: {e!s:.150}")
 
 
-def crosses(syms: list[str], day: date, leg: str) -> dict:
+def crosses(syms: list[str], day: date, leg: str, close: datetime | None = None) -> dict:
+    """{sym: (price, size)} of the official cross. The closing window is the
+    session's own close -1/+2 min (2026-10-03 skeptic review #5: a hardcoded
+    15:59-16:02 left every half-day unscored). *close* comes from Alpaca's
+    calendar, the same one the order schedule uses; looked up with the
+    desk's read-only client when not given."""
     import auction_print_check as apc  # puts tools/ on sys.path for its own imports
     cl = data_client()
     d = day.isoformat()
     if leg == "close":
-        return apc.auction_prints(cl, syms, d, 15, 59, 16, 2, apc.CLOSE_CODES, prefer="M")
+        if close is None:
+            try:
+                ses = session(desk_trading_client(), day)
+                close = ses[1] if ses else None
+            except Exception as e:  # noqa: BLE001
+                log(f"crosses {day}: calendar unavailable ({e!s:.100}); assuming a 16:00 close")
+            if close is None:
+                close = datetime.combine(day, datetime.min.time(), ET).replace(hour=16)
+        t0, t1 = close - timedelta(minutes=1), close + timedelta(minutes=2)
+        return apc.auction_prints(cl, syms, d, t0.hour, t0.minute, t1.hour, t1.minute,
+                                  apc.CLOSE_CODES, prefer="M")
     return apc.auction_prints(cl, syms, d, 9, 29, 9, 32, apc.OPEN_CODES, prefer="Q")
 
 
@@ -937,7 +1228,8 @@ def reconcile(tc, day: date, leg: str) -> None:
             night_summary(day)      # the plan is scored even when paper filled nothing
         return
     syms = sorted({o.symbol for o in orders})
-    cx = crosses(syms, day, "close" if leg == "buy" else "open")
+    ses = session(tc, day) if leg == "buy" else None
+    cx = crosses(syms, day, "close" if leg == "buy" else "open", close=ses[1] if ses else None)
     agg = aggregate_orders(orders)
     for s in syms:
         a = agg[s]
@@ -1048,14 +1340,31 @@ def night_summary(sell_day: date, fetch=None) -> None:
     plan_row = json.loads(plans[-1].read_text())
     buy_day = date.fromisoformat(plan_row["day"])
     picks = [r["sym"] for r in plan_row.get("picks", [])]
+    # days_held: calendar days from the buy session to the sell session (1 on
+    # a weeknight, 3 over a weekend), so a weekend or holiday night can be
+    # told apart from a one-night hold (2026-10-03 skeptic review #11).
     night = {"night_end": sell_day.isoformat(), "plan_day": buy_day.isoformat(),
-             "backtest_expect_bp": BACKTEST_BP}
+             "days_held": (sell_day - buy_day).days, "backtest_expect_bp": BACKTEST_BP}
+    flt = [r for r in _read_jsonl(LEDGER) if r.get("event") == "filter" and r.get("night") == buy_day.isoformat()]
+    if LIVE:
+        # Live (2026-10-03 skeptic review #3): the live buy path writes a
+        # filter row with live_caps for every night it actually buys. With no
+        # such row the account bought nothing (disarmed, or no buy ran), and
+        # scoring the plan at $1,000/name booked a P&L the account never had
+        # (10/2: "-20.6 bp, $-41.12" on an empty account). Such a night is
+        # recorded unscored; a scored one is headlined by its own fills.
+        night["account"] = "live"
+        flt = [r for r in flt if r.get("live_caps")]
+        if not flt:
+            night["unscored"] = "no live buy that night (no live_caps filter row)"
+            _write_night(night)
+            log(f"night ending {sell_day}: LIVE account bought nothing on {buy_day}; unscored")
+            return
     close_cx, open_cx = fetch(picks, buy_day, "close"), fetch(picks, sell_day, "open")
     night.update(score_plan(picks, close_cx, open_cx))
     # The book actually held: the picks that passed the intraday filter that
-    # night. Nights without a filter row (filter off, or before it existed)
-    # held all 20, so the book is the plan.
-    flt = [r for r in _read_jsonl(LEDGER) if r.get("event") == "filter" and r.get("night") == buy_day.isoformat()]
+    # night. Paper nights without a filter row (filter off, or before it
+    # existed) held all 20, so the book is the plan.
     if flt:
         bk = score_plan(flt[-1]["kept"], close_cx, open_cx)
         night.update({"filter_floor": flt[-1].get("floor"), "n_book": bk["n_plan"],
@@ -1086,14 +1395,14 @@ def night_summary(sell_day: date, fetch=None) -> None:
         "pnl_usd": round(sum(m["qty"] * (m["sell"] - m["buy"]) for m in lots), 2),
         "carried_lots": sorted({m["sym"] for m in lots if m["buy_day"] != night["plan_day"]}),
     })
-    # One row per night: a re-score (the `score` command, a rerun reconcile)
-    # replaces the earlier row instead of double-counting the night.
-    kept = [n for n in _read_jsonl(NIGHTS) if n.get("night_end") != night["night_end"]]
-    OUT.mkdir(parents=True, exist_ok=True)
-    tmp = NIGHTS.with_suffix(".tmp")
-    tmp.write_text("".join(json.dumps(n, default=str) + "\n" for n in kept + [night]))
-    os.replace(tmp, NIGHTS)
+    _write_night(night)
     mb, mp = night["mean_bp_book"], night["mean_bp_plan"]
+    if LIVE:
+        mf = night["mean_bp_fills"]
+        log(f"night ending {sell_day}: LIVE fills {night['names']} names "
+            + (f"{mf:+.1f} bp, ${night['pnl_usd']:+.2f}" if mf is not None else "unscored (no matched fills)")
+            + (f"; its book at the crosses {mb:+.1f} bp" if mb is not None else ""))
+        return
     log(f"night ending {sell_day}: book {night['n_book_scored']}/{night['n_book']} names "
         + (f"{mb:+.1f} bp at the crosses, ${night['pnl_book_usd']:+.2f} at ${DOLLARS:,.0f}/name" if mb is not None
            else "unscored (no crosses)")
@@ -1103,9 +1412,22 @@ def night_summary(sell_day: date, fetch=None) -> None:
         + (f" missing {','.join(night['missing'])}" if night["missing"] else ""))
 
 
+def _write_night(night: dict) -> None:
+    """One row per night: a re-score (the `score` command, a rerun reconcile)
+    replaces the earlier row instead of double-counting the night."""
+    kept = [n for n in _read_jsonl(NIGHTS) if n.get("night_end") != night["night_end"]]
+    OUT.mkdir(parents=True, exist_ok=True)
+    tmp = NIGHTS.with_suffix(".tmp")
+    tmp.write_text("".join(json.dumps(n, default=str) + "\n" for n in kept + [night]))
+    os.replace(tmp, NIGHTS)
+
+
 def night_bp(n: dict) -> float | None:
     """A scored night's headline bp: the book held, at the crosses; then the
-    whole plan; paper fills only for nights logged before plan scoring."""
+    whole plan; paper fills only for nights logged before plan scoring. A
+    live night's headline is its own FIFO fills (None when unscored)."""
+    if n.get("account") == "live":
+        return n.get("mean_bp_fills")
     for k in ("mean_bp_book", "mean_bp_plan", "mean_bp_fills"):
         if n.get(k) is not None:
             return n[k]
@@ -1113,6 +1435,8 @@ def night_bp(n: dict) -> float | None:
 
 
 def night_pnl(n: dict) -> float:
+    if n.get("account") == "live":
+        return float(n.get("pnl_usd") or 0.0)
     for k in ("pnl_book_usd", "pnl_plan_usd", "pnl_usd"):
         if n.get(k) is not None:
             return float(n[k])
@@ -1194,8 +1518,10 @@ def status(tc) -> None:
         n = [x for x in _read_jsonl(NIGHTS) if night_bp(x) is not None]
         if n:
             m = sum(night_bp(x) for x in n) / len(n)
-            print(f"nights {len(n)}: mean {m:+.1f} bp/night at the crosses (backtest {BACKTEST_BP}), "
-                  f"P&L ${sum(night_pnl(x) for x in n):+,.2f} at ${DOLLARS:,.0f}/name, "
+            print(f"nights {len(n)}: mean {m:+.1f} bp/night "
+                  f"{'on the live fills' if LIVE else 'at the crosses'} (backtest {BACKTEST_BP}), "
+                  f"P&L ${sum(night_pnl(x) for x in n):+,.2f} "
+                  f"{'in the account' if LIVE else f'at ${DOLLARS:,.0f}/name'}, "
                   f"green {sum(night_bp(x) > 0 for x in n)}/{len(n)}; "
                   f"paper fills ${sum(x.get('pnl_usd') or 0 for x in n):+,.2f}")
 
@@ -1281,7 +1607,13 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
         "account_kind": ACCOUNT,
         "intraday_min": INTRADAY_MIN,
         "next_step": next_step,
-        "errors": {k: v for k, v in (state_today or {}).items() if str(v).startswith("error")},
+        # A step skipped late is a problem too (a missed sell held the book
+        # all day, 2026-10-03 review), and so is anything that raised an ALERT;
+        # a disarmed skip is deliberate and stays off the list, and so does a
+        # late PLAN step (any restart after 06:40): buy() re-plans (round 2).
+        "errors": {k: v for k, v in (state_today or {}).items()
+                   if str(v).startswith(("error", "ALERT"))
+                   or (str(v).startswith("skipped late") and k != "plan")},
     }
 
 
@@ -1338,10 +1670,27 @@ def write_snapshot(tc) -> None:
 
 # ── scheduler ────────────────────────────────────────────────────────────────
 
+def run_step(tc, today: date, name: str, fn, now: datetime, done: dict) -> None:
+    """Run one due step, record it in *done*, audit it. An order step that
+    raises is ALERTed (round 2: errors were only logged, never pushed)."""
+    try:
+        fn()
+        done[name] = f"ok {now:%H:%M}"
+    except Exception as e:  # noqa: BLE001
+        done[name] = f"error {e!s:.120}"
+        log(f"{name} {today}: ERROR {e!s:.200}\n{traceback.format_exc()}")
+        if name in ORDER_STEPS:
+            alert(f"overnight {ACCOUNT}: {name} {today} failed: {e!s:.120}", key=f"err-{today}-{name}")
+    if name in ORDER_STEPS or name.startswith("reconcile"):
+        order_audit(tc, today, name)
+    if name.startswith("reconcile"):
+        account_audit(tc, today, name)
+
+
 def run() -> None:
     tc = book_client()
     log("run: overnight book scheduler started")
-    last_snap = 0.0
+    last_snap = last_catchup = 0.0
     while True:
         try:
             now = datetime.now(ET)
@@ -1352,50 +1701,68 @@ def run() -> None:
             if ses:
                 op, cl = ses
                 fns = {
-                    "sell": lambda: sell(tc, today),
-                    "sell_topup": lambda: sell(tc, today, attempt=1),
+                    "sell": lambda: sell(tc, today, only=sell_scope()),
+                    "sell_topup": lambda: sell(tc, today, attempt=1, only=sell_scope()),
                     "reconcile_sell": lambda: reconcile(tc, today, "sell"),
                     "buy": lambda: buy(tc, today),
                     "buy_topup": lambda: buy_topup(tc, today),
                     "buy_check": lambda: buy_topup(tc, today, auction=True, tag="buy_check"),
                     "buy_fallback": lambda: buy_topup(tc, today, tag="buy_fallback"),
-                    "sell_check": lambda: sell(tc, today, attempt=1, tif="opg", tag="sell_check"),
-                    "sell_fallback": lambda: sell(tc, today, attempt=2, tif="day", tag="sell_fallback"),
+                    "sell_check": lambda: sell(tc, today, attempt=1, tif="opg", tag="sell_check",
+                                               only=sell_scope()),
+                    "sell_fallback": lambda: sell(tc, today, attempt=2, tif="day", tag="sell_fallback",
+                                                  only=sell_scope()),
                     "reconcile_buy": lambda: reconcile(tc, today, "buy"),
                 }
                 steps = [("plan", now.replace(hour=6, minute=30, second=0, microsecond=0), lambda: plan(tc, today))]
                 steps += [(name, when, fns[name]) for name, when in schedule(op, cl)]
                 for name, when, fn in steps:
-                    if (name in ORDER_STEPS and name not in done and now >= when
-                            and not live_armed()):
-                        # Not "late": a disarmed step is skipped on purpose and
+                    # one attempt per step per day; a step whose window passed by more
+                    # than 10 minutes (the process was down) is skipped, not run late,
+                    # except reconcile, which is safe any time later that day
+                    act = step_action(name, when, now, done, live_armed() if name in BUY_STEPS else True)
+                    if act is None:
+                        continue
+                    if act == "disarmed":
+                        # Not "late": a disarmed buy is skipped on purpose and
                         # logged once, so the ledger says why no order went in.
                         done[name] = f"skipped: live not armed at {now:%H:%M}"
                         log(f"{name} {today}: LIVE not armed ({arm_status()}); no order")
                         save_state(st)
                         continue
-                    # one attempt per step per day; a step whose window passed by more
-                    # than 10 minutes (the process was down) is skipped, not run late,
-                    # except reconcile, which is safe any time later that day
-                    late = now - when > timedelta(minutes=10) and not name.startswith("reconcile")
-                    if name in done or now < when:
-                        continue
-                    if late:
+                    if act == "late":
                         done[name] = f"skipped late at {now:%H:%M}"
-                        log(f"{name} {today}: window missed, skipped")
+                        log(f"{name} {today}: WARNING window {when:%H:%M} missed, skipped"
+                            + ("; the sell catch-up sells whatever is still held" if name.startswith("sell") else ""))
+                        if name in ORDER_STEPS:
+                            alert(f"overnight {ACCOUNT}: {name} {today} missed its {when:%H:%M} window",
+                                  key=f"late-{today}-{name}")
                     else:
-                        try:
-                            fn()
-                            done[name] = f"ok {now:%H:%M}"
-                        except Exception as e:  # noqa: BLE001
-                            done[name] = f"error {e!s:.120}"
-                            log(f"{name} {today}: ERROR {e!s:.200}\n{traceback.format_exc()}")
-                        if name in ORDER_STEPS or name.startswith("reconcile"):
-                            order_audit(tc, today, name)
-                        if name.startswith("reconcile"):
-                            account_audit(tc, today, name)
+                        run_step(tc, today, name, fn, now, done)
                     save_state(st)
                     last_snap = 0.0                 # a step ran: refresh the dashboard now
+                lo, hi = catchup_window(op, cl)
+                if lo <= now < hi and time.time() - last_catchup >= CATCHUP_EVERY:
+                    last_catchup = time.time()
+                    try:
+                        if sell_catchup_pass(tc, today, now, op, done):
+                            save_state(st)
+                            last_snap = 0.0
+                    except Exception as e:  # noqa: BLE001
+                        done["sell_catchup"] = f"error {e!s:.120}"
+                        log(f"sell_catchup {today}: ERROR {e!s:.200}\n{traceback.format_exc()}")
+                        alert(f"overnight {ACCOUNT}: sell catch-up {today} failed: {e!s:.120}",
+                              key=f"catchup-exc-{today}")
+                        save_state(st)
+                try:
+                    if reconcile_catchup(tc, today, now, done):
+                        save_state(st)
+                        last_snap = 0.0
+                except Exception as e:  # noqa: BLE001
+                    done.pop("reconcile_catchup_due", None)
+                    done["reconcile_catchup"] = f"error {e!s:.120}"
+                    log(f"reconcile_catchup {today}: ERROR {e!s:.200}\n{traceback.format_exc()}")
+                    save_state(st)
             if time.time() - last_snap >= SNAPSHOT_EVERY:
                 write_snapshot(tc)
                 last_snap = time.time()
@@ -1431,16 +1798,17 @@ def main() -> None:
         night_summary(day)
         return
     tc = book_client()
-    if (LIVE and args.cmd in ("buy", "sell", "topup") and not args.dry_run
+    # Only buys need the arm: a disarmed book may still sell what it holds.
+    if (LIVE and (args.cmd == "buy" or (args.cmd == "topup" and args.leg != "sell")) and not args.dry_run
             and not live_armed()):
         raise SystemExit(f"REFUSED: live not armed (touch {ARMED_FILE} to arm)")
     if args.cmd == "buy":
         buy(tc, day, dry=args.dry_run)
     elif args.cmd == "sell":
-        sell(tc, day, dry=args.dry_run)
+        sell(tc, day, dry=args.dry_run, only=sell_scope())
     elif args.cmd == "topup":
         if args.leg == "sell":
-            sell(tc, day, dry=args.dry_run, attempt=1)
+            sell(tc, day, dry=args.dry_run, attempt=1, only=sell_scope())
         else:
             buy_topup(tc, day, dry=args.dry_run)
     elif args.cmd == "reconcile":

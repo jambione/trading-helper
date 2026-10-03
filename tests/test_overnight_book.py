@@ -64,10 +64,17 @@ def test_totals_average_the_scored_nights_and_list_newest_first():
     assert [n["night_end"] for n in snap["nights"]] == ["2026-10-02", "2026-10-01"]
 
 
-def test_only_error_steps_are_surfaced():
-    state = {"plan": "ok 06:30", "sell": "error boom", "buy": "skipped late at 15:55"}
+def test_errors_missed_windows_and_alerts_are_surfaced_but_not_disarmed_skips():
+    # 2026-10-03 skeptic review #1: a step skipped late is a problem (a missed
+    # sell holds the book through the day), so the dashboard shows it; a
+    # deliberate disarmed skip is not.
+    # R2-5: a late PLAN is not a problem (buy() re-plans); a late order step is.
+    state = {"plan": "skipped late at 09:50", "sell": "error boom", "sell_topup": "skipped late at 09:50",
+             "buy": "skipped: live not armed at 15:40",
+             "sell_catchup": "ALERT 3 names held past the open, sold 09:50"}
     snap = ob.build_snapshot(PLAN, [], [], [], {}, state, {"name": "buy", "at": 1.0}, NOW)
-    assert snap["errors"] == {"sell": "error boom"}
+    assert snap["errors"] == {"sell": "error boom", "sell_topup": "skipped late at 09:50",
+                              "sell_catchup": "ALERT 3 names held past the open, sold 09:50"}
     assert snap["next_step"]["name"] == "buy"
 
 
@@ -120,6 +127,57 @@ def test_night_is_scored_on_the_plan_even_when_paper_filled_one_name(monkeypatch
     assert abs(n["mean_bp_plan"] - 150.0) < 1e-9           # +100 and +200 bp
     assert n["pnl_plan_usd"] == 30.0                       # $10 + $20 at $1,000 each
     assert n["names"] == 1 and n["pnl_usd"] == 9.2         # paper: AAA only, 20 x 0.46
+    # paper, filter off: no filter row by design, so the book is the plan
+    assert n["n_book"] == 2 and ob.night_bp(n) == n["mean_bp_plan"] and ob.night_pnl(n) == 30.0
+    assert n["days_held"] == 1                             # review #11: calendar days buy -> sell
+
+
+def test_days_held_counts_calendar_days_over_a_weekend(monkeypatch, tmp_path):
+    import json
+    from datetime import date
+    _isolate_out(monkeypatch, tmp_path)
+    (tmp_path / "plan_2026-10-02.json").write_text(json.dumps({**PLAN, "day": "2026-10-02"}))  # Friday
+    ob.night_summary(date(2026, 10, 5), fetch=lambda syms, day, leg: {})                    # Monday
+    n = json.loads((tmp_path / "nights.jsonl").read_text())
+    assert n["days_held"] == 3
+
+
+def _live_night(monkeypatch, tmp_path, ledger):
+    import json
+    from datetime import date
+    _isolate_out(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "LIVE", True)
+    (tmp_path / "plan_2026-10-01.json").write_text(json.dumps({**PLAN, "day": "2026-10-01"}))
+    (tmp_path / "ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in ledger))
+    cx = {("close", "2026-10-01"): {"AAA": (50.0, 1), "BBB": (20.0, 1)},
+          ("open", "2026-10-02"): {"AAA": (50.5, 1), "BBB": (19.0, 1)}}
+    ob.night_summary(date(2026, 10, 2), fetch=lambda syms, day, leg: cx[(leg, day.isoformat())])
+    rows = [json.loads(x) for x in (tmp_path / "nights.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    return rows[0]
+
+
+def test_live_night_without_a_live_buy_is_not_scored_on_the_plan(monkeypatch, tmp_path):
+    # 2026-10-03 skeptic review #3: live 10/2 read "book 20/20 -20.6 bp, $-41.12"
+    # while the disarmed account held nothing.
+    n = _live_night(monkeypatch, tmp_path, [])
+    assert n["account"] == "live" and n.get("unscored")
+    assert ob.night_bp(n) is None and ob.night_pnl(n) == 0.0
+    assert "mean_bp_book" not in n and "pnl_book_usd" not in n
+
+
+def test_live_night_headline_is_the_fifo_fill_pnl(monkeypatch, tmp_path):
+    n = _live_night(monkeypatch, tmp_path, [
+        {"event": "filter", "night": "2026-10-01", "floor": None, "kept": ["AAA"],
+         "live_caps": {"max_book": 100, "max_order": 25, "max_shares": 1, "cash": 100}},
+        {"event": "fill", "day": "2026-10-01", "leg": "buy", "sym": "AAA", "fill": 50.0, "cross": 50.0,
+         "filled_qty": 1},
+        {"event": "fill", "day": "2026-10-02", "leg": "sell", "sym": "AAA", "fill": 50.25, "cross": 50.5,
+         "filled_qty": 1},
+    ])
+    assert n["account"] == "live" and n["n_book"] == 1
+    assert abs(n["mean_bp_book"] - 100.0) < 1e-9                    # crosses, beside
+    assert abs(ob.night_bp(n) - 50.0) < 1e-9 and ob.night_pnl(n) == 0.25   # the account's own fills
 
 
 def test_totals_headline_the_plan_and_keep_paper_beside_it():
@@ -549,3 +607,391 @@ def test_live_buys_the_same_day_it_sold_unless_the_settle_wait_is_on(monkeypatch
     monkeypatch.setattr(ob, "LIVE_SETTLE_WAIT", True)
     ob._buy_live(tc, _d(2026, 10, 5), ["AAA"], {"AAA": 20.0}, {}, True)
     assert sized == [1]                        # the wait skipped it
+
+
+# ── 2026-10-03 skeptic review #2: disarming must never strand a position ─────
+
+def test_disarm_gates_only_buy_steps_sells_always_run():
+    from datetime import timedelta
+    at = OP + timedelta(minutes=1)
+    for name in ("sell", "sell_check", "sell_fallback", "sell_topup"):
+        assert ob.step_action(name, at, at, {}, armed=False) == "run", name
+    for name in ("buy", "buy_check", "buy_fallback", "buy_topup"):
+        assert ob.step_action(name, at, at, {}, armed=False) == "disarmed", name
+        assert ob.step_action(name, at, at, {}, armed=True) == "run", name
+    assert ob.step_action("sell", at, at, {"sell": "ok 09:31"}, armed=False) is None       # done
+    assert ob.step_action("sell", at, at - timedelta(seconds=1), {}, armed=False) is None  # not yet
+    assert ob.step_action("sell", at, at + timedelta(minutes=11), {}, armed=True) == "late"
+    assert ob.step_action("reconcile_sell", at, at + timedelta(hours=3), {}, armed=True) == "run"
+
+
+def test_book_positions_are_net_fills_plus_the_latest_buy_night():
+    ledger = [
+        {"event": "fill", "day": "2026-09-29", "leg": "buy", "sym": "OLD", "fill": 10.0, "filled_qty": 3},
+        {"event": "fill", "day": "2026-09-30", "leg": "sell", "sym": "OLD", "fill": 10.1, "filled_qty": 3},
+        {"event": "fill", "day": "2026-09-30", "leg": "buy", "sym": "AAA", "fill": 20.0, "filled_qty": 1},
+        {"event": "submit", "night": "2026-09-30", "sym": "AAA", "side": "buy", "qty": 1},
+        # the newest night, not reconciled yet: its submits count
+        {"event": "submit", "night": "2026-10-01", "sym": "BBB", "side": "buy", "qty": 2},
+        {"event": "submit", "night": "2026-10-01", "sym": "ERR", "side": "buy", "qty": 1, "error": "x"},
+        {"event": "submit", "night": "2026-10-01", "sym": "DRY", "side": "buy", "qty": 1, "dry_run": True},
+    ]
+    assert ob.book_positions(ledger) == {"AAA": 1.0, "BBB": 2.0}
+
+
+def test_disarmed_sell_touches_only_the_books_names_and_never_cancels_all(monkeypatch, tmp_path):
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    pos = [types.SimpleNamespace(symbol="AAA", qty="3", qty_available="3", side="long"),   # 1 is ours
+           types.SimpleNamespace(symbol="MIR", qty="5", qty_available="5", side="long")]   # someone else's
+    tc = _FakeTC(pos)
+    ob.sell(tc, date(2026, 10, 2), only={"AAA": 1.0})
+    assert tc.cancelled == 0
+    assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 1)]
+
+
+# ── 2026-10-03 skeptic review #1: a missed sell is caught up, loudly ─────────
+
+def test_catchup_window_runs_after_the_last_sell_step_until_the_first_buy():
+    lo, hi = ob.catchup_window(OP, CL, "market")
+    assert lo.strftime("%H:%M") == "09:35" and hi.strftime("%H:%M") == "15:57"   # topup 09:33, buy 15:58
+    lo, hi = ob.catchup_window(OP, CL, "auction")
+    assert lo.strftime("%H:%M") == "09:33" and hi.strftime("%H:%M") == "15:39"   # fallback 09:31, buy 15:40
+    half = CL.replace(hour=13)
+    assert ob.catchup_window(OP, half, "auction")[1].strftime("%H:%M") == "12:39"
+
+
+def test_sell_catchup_sells_held_names_at_market_unless_a_sell_is_working(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "ORDER_MODE", "auction")
+    pos = [types.SimpleNamespace(symbol="AAA", qty="2", qty_available="2", side="long"),
+           types.SimpleNamespace(symbol="BBB", qty="1", qty_available="1", side="long"),
+           types.SimpleNamespace(symbol="CCC", qty="4", qty_available="0", side="long")]   # held by an order
+    tc = _OrdersTC([_o("BBB", "new", 1, cid="on-2026-10-02-BBB-sell-r2")], pos)           # still working
+    n = ob.sell_catchup(tc, date(2026, 10, 2), OP + timedelta(minutes=20), OP)
+    assert n == 1
+    assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 2)]
+    r = tc.submitted[0]
+    assert str(r.time_in_force.value).lower() == "day" and str(r.side.value).lower() == "sell"
+    assert r.client_order_id == "on-2026-10-02-AAA-sell-r120"                  # unique per minute
+    assert tc.cancelled == 0
+    empty = _OrdersTC([], [])
+    assert ob.sell_catchup(empty, date(2026, 10, 2), OP + timedelta(minutes=20), OP) == 0
+    assert empty.submitted == []
+
+
+def test_sell_catchup_respects_the_disarmed_scope(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    _isolate_ledger(monkeypatch, tmp_path)
+    pos = [types.SimpleNamespace(symbol="AAA", qty="2", qty_available="2", side="long"),
+           types.SimpleNamespace(symbol="MIR", qty="9", qty_available="9", side="long")]
+    tc = _OrdersTC([], pos)
+    assert ob.sell_catchup(tc, date(2026, 10, 2), OP + timedelta(minutes=20), OP, only={"AAA": 1.0}) == 1
+    assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 1)]
+
+
+def test_alert_logs_runs_the_hook_once_and_never_raises(monkeypatch, tmp_path):
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    out = tmp_path / "hook.txt"
+    monkeypatch.setattr(ob, "ALERT_CMD", f"sh -c 'echo \"$0\" >> {out}'")
+    ob.alert("sell missed", key="k1")
+    ob.alert("sell missed", key="k1")                     # same key: once
+    assert out.read_text().strip() == "sell missed"
+    monkeypatch.setattr(ob, "ALERT_CMD", "/nonexistent/notify")
+    ob.alert("still fine", key="k2")                       # a broken hook never breaks the runner
+    assert (tmp_path / "run.log").read_text().count("ALERT") == 2
+
+
+# ── 2026-10-03 skeptic review #4: no plan from a partial universe ────────────
+
+def test_daily_closes_reports_a_chunk_that_failed_every_try(monkeypatch, tmp_path):
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob.time, "sleep", lambda s: None)
+
+    class _DC:
+        def get_stock_bars(self, req):
+            if "S0200" in req.symbol_or_symbols:
+                raise RuntimeError("429")
+            return types.SimpleNamespace(data={})
+
+    monkeypatch.setattr(ob, "data_client", lambda: _DC())
+    failed = []
+    ob.daily_closes([f"S{i:04d}" for i in range(450)], date(2026, 9, 1), date(2026, 9, 30), failed=failed)
+    assert failed == [200]
+
+
+def test_plan_refuses_when_any_bars_chunk_failed(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    import pytest
+    _isolate_ledger(monkeypatch, tmp_path)
+    day = date(2026, 10, 2)
+    sessions = [types.SimpleNamespace(date=day - timedelta(days=k)) for k in range(400, -1, -1)]
+    monkeypatch.setattr(ob, "calendar", lambda tc, a, b: sessions)
+    monkeypatch.setattr(ob, "universe", lambda tc: {"AAA": "A Corp"})
+    monkeypatch.setattr(ob, "rank", lambda bars, keys: [{"sym": f"S{i}", "mom": 0.1} for i in range(40)])
+
+    def partial(syms, start, end, failed=None):
+        failed.append(200)
+        return {}
+    monkeypatch.setattr(ob, "daily_closes", partial)
+    with pytest.raises(RuntimeError, match="chunk"):
+        ob.plan(object(), day)
+    assert not (tmp_path / f"plan_{day.isoformat()}.json").exists()
+
+
+# ── 2026-10-03 skeptic review #5: half-days use the session's own close ──────
+
+def _fake_apc(monkeypatch):
+    import sys
+    calls = []
+    fake = types.SimpleNamespace(CLOSE_CODES={"M"}, OPEN_CODES={"Q"},
+                                 auction_prints=lambda cl, syms, d, h0, m0, h1, m1, codes, prefer=None:
+                                 calls.append((d, h0, m0, h1, m1)) or {})
+    monkeypatch.setitem(sys.modules, "auction_print_check", fake)
+    monkeypatch.setattr(ob, "data_client", lambda: object())
+    return calls
+
+
+def test_closing_cross_window_follows_an_early_close(monkeypatch):
+    from datetime import date
+    calls = _fake_apc(monkeypatch)
+    half = datetime(2026, 11, 27, 13, 0, tzinfo=ET)                  # day after Thanksgiving
+    monkeypatch.setattr(ob, "desk_trading_client", lambda: object())
+    monkeypatch.setattr(ob, "session", lambda tc, d: (half.replace(hour=9, minute=30), half))
+    ob.crosses(["AAA"], date(2026, 11, 27), "close")                 # looks the close up
+    ob.crosses(["AAA"], date(2026, 10, 1), "close", close=CL)        # or takes it
+    ob.crosses(["AAA"], date(2026, 10, 1), "open")
+    assert calls == [("2026-11-27", 12, 59, 13, 2), ("2026-10-01", 15, 59, 16, 2),
+                     ("2026-10-01", 9, 29, 9, 32)]
+
+
+# ── 2026-10-03 skeptic review #7: a buy that never submitted still gets bought ─
+
+def test_buy_check_and_fallback_buy_the_plan_when_buy_never_submitted(monkeypatch, tmp_path):
+    from datetime import date
+    monkeypatch.setattr(ob, "load_plan", lambda d: PLAN)
+    monkeypatch.setattr(ob, "latest_prices", lambda syms: {"AAA": 50.0, "BBB": 20.0})
+    monkeypatch.setattr(ob, "INTRADAY_MIN", None)
+    monkeypatch.setattr(ob, "session_opens", lambda syms, day: {})
+    monkeypatch.setattr(ob, "ORDER_MODE", "auction")
+    for tag, auction, tif in (("buy_check", True, "cls"), ("buy_fallback", False, "day")):
+        _isolate_ledger(monkeypatch, tmp_path / tag)
+        tc = _OrdersTC([])                                   # buy() raised before any submit
+        ob.buy_topup(tc, date(2026, 10, 1), auction=auction, tag=tag)
+        assert [(r.symbol, r.qty) for r in tc.submitted] == [("AAA", 245), ("BBB", 612)], tag   # buy()'s sizing
+        assert {str(r.time_in_force.value).lower() for r in tc.submitted} == {tif}, tag
+    # orders on the broker but no ledger rows: never buy a second time
+    _isolate_ledger(monkeypatch, tmp_path / "seen")
+    tc = _OrdersTC([_o("AAA", "new", 245, cid="on-2026-10-01-AAA-buy")])
+    ob.buy_topup(tc, date(2026, 10, 1), auction=True, tag="buy_check")
+    assert tc.submitted == []
+
+
+# ── round 2 (verification of overnight-fixes) ────────────────────────────────
+
+def test_a_catchup_sell_after_the_morning_reconcile_is_reconciled(monkeypatch, tmp_path):
+    """R2-1: process down all morning; the 09:50 reconcile_sell found nothing;
+    the 10:30 catch-up sells AAA; its fill must reach the ledger, close the
+    FIFO lot and leave book_positions empty."""
+    import json
+    from datetime import date, timedelta
+    _isolate_out(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    monkeypatch.setattr(ob, "LIVE", False)
+    monkeypatch.setattr(ob, "crosses", lambda syms, day, leg, close=None: {})
+    (tmp_path / "ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [
+        {"event": "submit", "night": "2026-10-01", "sym": "AAA", "side": "buy", "qty": 2,
+         "client_order_id": "on-2026-10-01-AAA-buy"},
+        {"event": "fill", "day": "2026-10-01", "leg": "buy", "sym": "AAA", "fill": 50.0, "filled_qty": 2},
+    ]))
+    day = date(2026, 10, 2)
+    tc = _OrdersTC([], [types.SimpleNamespace(symbol="AAA", qty="2", qty_available="2", side="long")])
+    done = {"sell": "skipped late at 10:30", "reconcile_sell": "ok 09:50"}
+    now = OP.replace(day=2) + timedelta(hours=1)
+    assert ob.sell_catchup_pass(tc, day, now, OP.replace(day=2), done) is True
+    assert [r.symbol for r in tc.submitted] == ["AAA"]
+    assert done["sell_catchup"].startswith("ALERT") and "reconcile_catchup_due" in done
+    # not due yet: nothing reconciled
+    assert ob.reconcile_catchup(tc, day, now + timedelta(minutes=1), done) is False
+    # the market sell fills; the position is gone
+    cid = tc.submitted[0].client_order_id
+    tc.orders = [_o("AAA", "filled", 2, filled=2, px=51.0, cid=cid)]
+    tc.positions = []
+    assert ob.reconcile_catchup(tc, day, now + timedelta(minutes=4), done) is True
+    assert "reconcile_catchup_due" not in done
+    ledger = ob._read_jsonl(tmp_path / "ledger.jsonl")
+    assert [m["sell"] for m in ob.fifo_matches(ledger, "2026-10-02")] == [51.0]
+    assert ob.book_positions(ledger) == {}
+
+
+def test_reconcile_catchup_waits_while_the_catchup_sell_still_works(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    _isolate_out(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "crosses", lambda syms, day, leg, close=None: {})
+    now = OP.replace(day=2) + timedelta(hours=1)
+    done = {"reconcile_catchup_due": now.isoformat()}
+    tc = _OrdersTC([_o("AAA", "new", 2, cid="on-2026-10-02-AAA-sell-r120")])
+    assert ob.reconcile_catchup(tc, date(2026, 10, 2), now, done) is True
+    assert done["reconcile_catchup_due"] > now.isoformat()            # re-queued
+
+
+def _no_plan_allowed(*_a, **_k):
+    raise AssertionError("plan() must not run in the check/fallback path")
+
+
+def test_rerun_never_plans_at_the_close_it_alerts_instead(monkeypatch, tmp_path):
+    """R2-2: no plan file at buy_fallback -> no full-universe fetch at 15:58."""
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    monkeypatch.setattr(ob, "LIVE", False)
+    monkeypatch.setattr(ob, "load_plan", lambda d: None)
+    monkeypatch.setattr(ob, "plan", _no_plan_allowed)
+    tc = _OrdersTC([])
+    ob.buy_topup(tc, date(2026, 10, 1), tag="buy_fallback")
+    assert tc.submitted == []
+    assert "ALERT" in (tmp_path / "run.log").read_text()
+
+
+def test_no_buy_is_submitted_in_the_last_15_seconds_or_after_the_close(monkeypatch, tmp_path):
+    """R2-2: a DAY market buy sent after 16:00 is queued for the next open."""
+    import json
+    from datetime import date, timedelta
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "LIVE", False)
+    monkeypatch.setattr(ob, "ORDER_MODE", "market")
+    monkeypatch.setattr(ob, "load_plan", lambda d: PLAN)
+    monkeypatch.setattr(ob, "latest_prices", lambda syms: {"AAA": 50.0, "BBB": 20.0})
+    monkeypatch.setattr(ob, "INTRADAY_MIN", None)
+    monkeypatch.setattr(ob, "session_opens", lambda syms, day: {})
+    now = datetime.now(ET)
+    monkeypatch.setattr(ob, "session", lambda tc, d: (now - timedelta(hours=6), now + timedelta(seconds=10)))
+    tc = _OrdersTC([])
+    ob.buy(tc, date(2026, 10, 1))
+    assert tc.submitted == []
+    (tmp_path / "ledger.jsonl").write_text(json.dumps(
+        {"event": "submit", "night": "2026-10-01", "sym": "AAA", "side": "buy", "qty": 20,
+         "client_order_id": "on-2026-10-01-AAA-buy", "error": "x"}) + "\n")
+    ob.buy_topup(tc, date(2026, 10, 1), tag="buy_topup")
+    assert tc.submitted == []
+    monkeypatch.setattr(ob, "session", lambda tc, d: (now - timedelta(hours=6), now + timedelta(minutes=2)))
+    ob.buy_topup(tc, date(2026, 10, 1), tag="buy_topup")                 # in time: it goes
+    assert [r.symbol for r in tc.submitted] == ["AAA"]
+
+
+def test_live_rerun_of_a_missing_buy_is_opt_in_paper_always_reruns(monkeypatch, tmp_path):
+    """R2-3: live is auctions-only; a whole-book market buy at 15:58 waits for
+    the user's OVERNIGHT_LIVE_REBUY_FALLBACK=yes."""
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "load_plan", lambda d: PLAN)
+    ran = []
+    monkeypatch.setattr(ob, "buy", lambda tc, day, dry=False, market=False: ran.append(market))
+    for live, opt_in, expect in ((True, False, []), (True, True, [True]), (False, False, [True])):
+        monkeypatch.setattr(ob, "_ALERTED", set())
+        monkeypatch.setattr(ob, "LIVE", live)
+        monkeypatch.setattr(ob, "LIVE_REBUY_FALLBACK", opt_in)
+        ran.clear()
+        ob.buy_topup(_OrdersTC([]), date(2026, 10, 1), tag="buy_fallback")
+        assert ran == expect, (live, opt_in)
+    assert "buy never submitted" in (tmp_path / "run.log").read_text()
+
+
+def _alerts(tmp_path):
+    return [x for x in (tmp_path / "run.log").read_text().splitlines() if " ALERT " in x]
+
+
+def test_an_order_step_error_is_alerted_once(monkeypatch, tmp_path):
+    """R2-4: errors were logged, never pushed."""
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    monkeypatch.setattr(ob, "our_orders", lambda tc, prefix: [])
+
+    def boom():
+        raise RuntimeError("insufficient buying power")
+    done = {}
+    ob.run_step(object(), date(2026, 10, 1), "buy", boom, NOW, done)
+    assert done["buy"].startswith("error")
+    ob.run_step(object(), date(2026, 10, 1), "plan", boom, NOW, {})      # not an order step: log only
+    assert len(_alerts(tmp_path)) == 1 and "insufficient buying power" in _alerts(tmp_path)[0]
+
+
+def test_a_catchup_sell_that_keeps_failing_alerts_once_per_symbol(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+
+    class _HaltTC(_OrdersTC):
+        def submit_order(self, req):
+            if req.symbol == "HLT":
+                raise RuntimeError("asset halted")
+            return super().submit_order(req)
+    pos = [types.SimpleNamespace(symbol="HLT", qty="1", qty_available="1", side="long")]
+    tc = _HaltTC([], pos)
+    for k in range(3):                                                    # three 5-minute passes
+        ob.sell_catchup(tc, date(2026, 10, 2), OP + timedelta(minutes=20 + 5 * k), OP)
+    a = _alerts(tmp_path)
+    assert len(a) == 1 and "HLT" in a[0] and "asset halted" in a[0]
+
+
+def test_a_plan_refused_at_buy_time_is_alerted(monkeypatch, tmp_path):
+    from datetime import date
+    import pytest
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    monkeypatch.setattr(ob, "load_plan", lambda d: None)
+
+    def refuse(tc, day):
+        raise RuntimeError("2 of 60 daily-bars chunks failed; refusing to plan")
+    monkeypatch.setattr(ob, "plan", refuse)
+    with pytest.raises(RuntimeError):
+        ob.buy(_FakeTC([]), date(2026, 10, 1))
+    assert len(_alerts(tmp_path)) == 1 and "refusing to plan" in _alerts(tmp_path)[0]
+
+
+# ── alert channel (user decision 2026-10-03): macOS banner by default ────────
+
+def test_banner_argv_escapes_for_applescript_and_truncates():
+    argv = ob._banner_argv('sell "AAA" failed: C:\\x\nnext line')
+    assert argv[:2] == ["osascript", "-e"] and len(argv) == 3                # an argument list, no shell
+    assert argv[2] == ('display notification "sell \\"AAA\\" failed: C:\\\\x next line" '
+                       'with title "Overnight book"')
+    long = ob._banner_argv('"' * 500)[2]
+    assert long.count('\\"') == 200                                          # cut to 200 before escaping
+
+
+def test_alert_shows_a_banner_by_default_on_macos_only(monkeypatch, tmp_path):
+    import subprocess
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    monkeypatch.setattr(ob, "ALERT_CMD", "")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    ran = []
+    monkeypatch.setattr(subprocess, "run", lambda argv, **k: ran.append((argv, k)))
+    monkeypatch.setattr(ob.sys, "platform", "darwin")
+    ob.alert("sell missed")
+    assert ran and ran[0][0][0] == "osascript" and ran[0][1]["timeout"] == 15
+    assert "shell" not in ran[0][1]
+    ran.clear()
+    monkeypatch.setattr(ob.sys, "platform", "linux")
+    ob.alert("sell missed again")
+    assert ran == []                                                         # not macOS: log only
+
+
+def test_a_failing_or_hung_osascript_never_raises(monkeypatch, tmp_path):
+    import subprocess
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    monkeypatch.setattr(ob, "ALERT_CMD", "")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(ob.sys, "platform", "darwin")
+    for exc in (subprocess.TimeoutExpired("osascript", 15), FileNotFoundError("osascript"), RuntimeError("x")):
+        def run(argv, _e=exc, **k):
+            raise _e
+        monkeypatch.setattr(subprocess, "run", run)
+        ob.alert(f"boom {type(exc).__name__}")
+    assert (tmp_path / "run.log").read_text().count("alert hook failed") == 3
