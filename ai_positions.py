@@ -4650,8 +4650,12 @@ def apply_local_trail(
         # Exit-cost A/B (ai_exit_test_arms, default off). The "mid" arm rests a
         # sell limit and returns; _exit_test_settle crosses at market when the
         # wait is over or the print breaks the floor. A failed placement falls
-        # through to the market sell below, marked as a fallback.
-        _xt = exit_test_plan(_cfg_all(), *_premarket_book(ticker))
+        # through to the market sell below, marked as a fallback. RTH only
+        # (review 2026-10-03): the resting limit is a regular-session DAY order
+        # and the study measured RTH sells; outside RTH a trail hit sells as
+        # it always has, with no exit_test and no rotation step.
+        _xt = (exit_test_plan(_cfg_all(), *_premarket_book(ticker))
+               if _rth_now(now) else None)
         if _xt is not None:
             pos["exit_test"] = _xt
             if _xt.get("limit"):

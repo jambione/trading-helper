@@ -171,6 +171,7 @@ def _cfg(monkeypatch, arms):
     monkeypatch.setattr(cp, "_premarket_working_sell_on", lambda now=None: False)
     monkeypatch.setattr(cp, "_premarket_book", lambda s: (10.00, 10.04))
     monkeypatch.setattr(cp, "_EXIT_TEST_N", [0])
+    monkeypatch.setattr(cp, "_rth_now", lambda now: True)
 
 
 def _open_pos():
@@ -206,6 +207,17 @@ def test_off_by_default_leaves_no_trace(monkeypatch):
     p = _open_pos()
     cp.apply_local_trail("AAA", p, 9.00, [], {})
     assert b.closed == 1 and not b.limits and "exit_test" not in p
+
+
+def test_outside_rth_a_trail_hit_sells_at_market_with_no_exit_test(monkeypatch):
+    _cfg(monkeypatch, "mid")
+    monkeypatch.setattr(cp, "_rth_now", lambda now: False)
+    b = Broker(monkeypatch, {"status": "OrderStatus.NEW", "filled_qty": 0})
+    p = _open_pos()
+    _ch, closed = cp.apply_local_trail("AAA", p, 9.00, [], {})
+    assert closed is True and b.closed == 1 and not b.limits
+    assert "exit_test" not in p and "exit_test_pending" not in p
+    assert cp._EXIT_TEST_N == [0]                              # the rotation did not step
 
 
 def test_pending_exit_settles_on_the_next_tick(monkeypatch):

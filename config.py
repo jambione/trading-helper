@@ -320,8 +320,8 @@ DEFAULT_CONFIG = {
     # the mid rounded UP to the cent; after ai_exit_test_cross_sec, or at once
     # if a print falls ai_exit_test_floor_pct under the limit, cancel and sell
     # what is left at market). The resting limit never blocks the shelf tick.
-    # Only local-trail exits take part: stops, flattens and every other exit
-    # stay market. "" = off. Sim (tools/studies/passive_exit_sim.py, 9/29-10/2):
+    # Only RTH local-trail exits take part: stops, flattens, extended-hours
+    # trail hits and every other exit stay market. "" = off. Sim (tools/studies/passive_exit_sim.py, 9/29-10/2):
     # mid + 10 s saved +3.7 bp per exit vs market (t 4.9).
     "ai_exit_test_arms":          "",
     "ai_exit_test_cross_sec":     10.0,
