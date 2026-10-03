@@ -1394,6 +1394,7 @@ def _exit_test_rest(ticker: str, pos: dict, plan: dict, now: float) -> str | Non
         extended_hours=False, note=f"exit_test mid lmt={lim}") or {}
     if not out.get("ok") or not out.get("order_id"):
         return None
+    plan["limit_order_id"] = str(out["order_id"])
     pos["exit_test_pending"] = {
         "order_id": str(out["order_id"]), "limit": lim, "qty": _num(out.get("qty")),
         "t0": now, "deadline": now + max(0.0, wait),
@@ -1475,6 +1476,39 @@ def _exit_test_settle(ticker: str, pos: dict, trigger: float | None,
     log_event("exit_test_crossed", symbol=ticker, why=why, limit=pend.get("limit"),
               passive_qty=passive, waited_sec=waited, market_order_id=out.get("order_id"))
     return True
+
+
+def _superseded_exit_price(ticker: str, pos: dict, xt: dict) -> float | None:
+    """Blended exit for a part-filled exit-test limit whose rest another exit sold.
+
+    The limit's shares at its average, plus the latest broker SELL fill that is
+    not the limit itself (the sweep). None when either side is missing — a
+    partial's price standing in for the whole exit is a plausible wrong number.
+    """
+    pq, pp = _num(xt.get("passive_qty")) or 0.0, _num(xt.get("passive_px"))
+    lim_ids = {str(x) for x in (xt.get("limit_order_id"), pos.get("close_order_id")) if x}
+    try:
+        import alpaca_trader
+        best, best_ts = None, -1.0
+        since = _num(pos.get("entry_time"))
+        for f in alpaca_trader.get_filled_orders(limit=200, days=2) or []:
+            if (str(f.get("symbol") or "").upper() != str(ticker).upper()
+                    or str(f.get("side") or "").lower() != "sell"
+                    or str(f.get("id") or "") in lim_ids):
+                continue
+            ts = _fill_ts(f.get("filled_at"))
+            if since and ts and ts < since:
+                continue
+            if ts is None or ts > best_ts:
+                best, best_ts = f, (ts if ts is not None else best_ts)
+    except Exception:
+        best = None
+    if not best or pq <= 0 or not pp:
+        return None
+    bq, bp = _num(best.get("filled_qty")), _num(best.get("filled_avg_price"))
+    if not bq or not bp or bq <= 0 or bp <= 0:
+        return None
+    return (pq * float(pp) + bq * bp) / (pq + bq)
 
 
 def _exit_test_final(pos: dict) -> dict | None:
@@ -7025,6 +7059,15 @@ def manage_open_positions(
                 _xt_fill = _num(_xt_final.get("fill"))
                 if _xt_fill and _xt_fill > 0:
                     exit_price = _xt_fill
+                elif (_xt_final.get("superseded")
+                      and (_num(_xt_final.get("passive_qty")) or 0) > 0):
+                    # Another exit (EOD sweep, manual liquidation) sold the
+                    # rest of a part-filled limit. close_order_id is still the
+                    # limit, so resolve_exit priced every share at the
+                    # partial's average. Blend the limit's part with the
+                    # broker's sweep fill; without the sweep fill, no price
+                    # (review 2026-10-03, round 2).
+                    exit_price = _superseded_exit_price(ticker, pos, _xt_final)
         # An explicit closing_reason is the desk saying why IT closed this
         # (time_stop, thesis_break, ...) and outranks forensics. Otherwise take
         # what actually filled — including "unknown".

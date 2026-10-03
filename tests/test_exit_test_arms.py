@@ -388,3 +388,35 @@ def test_partial_limit_then_outside_sweep_is_not_booked_as_the_whole_exit(monkey
     final = cp._exit_test_final(p)
     assert final.get("fill") is None and final["superseded"] is True
     assert final["passive_qty"] == 30 and final["passive_px"] == 10.02
+
+
+def _swept(monkeypatch, tmp_path, broker_fills):
+    outcome = _manage_stub(monkeypatch, tmp_path, fills={"L": 40.60}, qtys={"L": 30}, **_resting())
+    stub = sys.modules["alpaca_trader"]
+    stub.order_status = "canceled"
+    stub.get_filled_orders = lambda limit=200, days=2: list(broker_fills)
+    return outcome
+
+
+def test_eod_sweep_after_a_partial_prices_the_exit_from_both_fills(tmp_path, monkeypatch):
+    # Round 2 review C: close_order_id is the part-filled limit; its 30-share average
+    # must not price all 100. The sweep's 70 at 40.00 come from the broker's history.
+    outcome = _swept(monkeypatch, tmp_path, [
+        {"id": "L", "symbol": "NVDA", "side": "sell", "type": "limit", "filled_qty": 30,
+         "filled_avg_price": 40.60, "filled_at": 1_000_003.0},
+        {"id": "E", "symbol": "NVDA", "side": "sell", "type": "market", "filled_qty": 70,
+         "filled_avg_price": 40.00, "filled_at": 1_000_004.0},
+    ])
+    cp.manage_open_positions(now=1_000_005.0)
+    assert abs(outcome()["exit_price"] - 40.18) < 1e-9
+
+
+def test_eod_sweep_after_a_partial_without_the_sweep_fill_leaves_no_exit_price(tmp_path, monkeypatch):
+    # Only the limit's own partial is on record: no number beats a wrong one.
+    outcome = _swept(monkeypatch, tmp_path, [
+        {"id": "L", "symbol": "NVDA", "side": "sell", "type": "limit", "filled_qty": 30,
+         "filled_avg_price": 40.60, "filled_at": 1_000_003.0},
+    ])
+    cp.manage_open_positions(now=1_000_005.0)
+    o = outcome()
+    assert o["exit_price"] is None and o.get("realized_r_multiple") is None
