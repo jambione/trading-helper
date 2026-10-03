@@ -1969,6 +1969,7 @@ def place_limit_sell(
     *,
     time_in_force: str = "gtc",
     extended_hours: bool | None = None,
+    note: str | None = None,
 ) -> dict:
     """Resting limit SELL for a partial (or full) long — e.g. dual-tranche T1.
 
@@ -2032,7 +2033,7 @@ def place_limit_sell(
             "SELL_LIMIT", ticker, lim, 0.0, 0.0,
             qty=sell_qty, order_id=str(order.id),
             order_status=str(order.status),
-            note=f"partial_t1 lmt={lim}",
+            note=note or f"partial_t1 lmt={lim}",
         )
         return {
             "ok": True, "order_id": str(order.id),

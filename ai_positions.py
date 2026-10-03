@@ -1201,6 +1201,159 @@ def entry_test_plan(cfg: dict | None, bid: float | None, ask: float | None) -> d
             "fallback": bool(arm != "ask" and lim is None)}
 
 
+# Exit-cost A/B (ai_exit_test_arms). Local-trail exits only: "market" is the
+# control, "mid" rests a DAY sell limit at the mid rounded UP to the cent and is
+# settled on later shelf ticks by _exit_test_settle (cross at market after
+# ai_exit_test_cross_sec, or at once on a print ai_exit_test_floor_pct under the
+# limit), so the shelf tick never blocks on it.
+_EXIT_TEST_N = [0]
+EXIT_TEST_ARMS = ("market", "mid")
+
+
+def exit_test_limit(arm: str, bid: float | None, ask: float | None) -> float | None:
+    """Sell limit for a passive exit arm, or None (control, or no usable quote)."""
+    if arm != "mid":
+        return None
+    try:
+        b, a = float(bid or 0), float(ask or 0)
+    except (TypeError, ValueError):
+        return None
+    if not 0 < b < a:
+        return None
+    # Mid rounded UP to the cent: on a 1c spread this is the ask.
+    return math.ceil((b + a) / 2.0 * 100.0 - 1e-9) / 100.0
+
+
+def exit_test_plan(cfg: dict | None, bid: float | None, ask: float | None) -> dict | None:
+    """Next exit arm in the rotation and its limit, or None when the test is off."""
+    raw = str((cfg or {}).get("ai_exit_test_arms") or "")
+    arms = [a.strip().lower() for a in raw.split(",") if a.strip().lower() in EXIT_TEST_ARMS]
+    if not arms:
+        return None
+    arm = arms[_EXIT_TEST_N[0] % len(arms)]
+    _EXIT_TEST_N[0] += 1
+    lim = exit_test_limit(arm, bid, ask)
+    return {"arm": arm, "limit": lim, "bid": _num(bid), "ask": _num(ask),
+            "fallback": bool(arm != "market" and lim is None)}
+
+
+def _exit_test_rest(ticker: str, pos: dict, plan: dict, now: float) -> str | None:
+    """Rest the passive arm's sell limit for the whole position. Order id, or None."""
+    import alpaca_trader
+    cfg = _cfg_all()
+    try:
+        wait = float(cfg.get("ai_exit_test_cross_sec", 10.0) or 10.0)
+        floor_pct = float(cfg.get("ai_exit_test_floor_pct", 0.5) or 0.0)
+    except (TypeError, ValueError):
+        wait, floor_pct = 10.0, 0.5
+    lim = float(plan["limit"])
+    # Like close_out, sell everything held: place_limit_sell clamps to the
+    # broker's quantity, so a stale total_qty after a scale-out cannot leave
+    # shares behind.
+    out = alpaca_trader.place_limit_sell(
+        ticker, 1e9, lim, time_in_force="day",
+        extended_hours=False, note=f"exit_test mid lmt={lim}") or {}
+    if not out.get("ok") or not out.get("order_id"):
+        return None
+    pos["exit_test_pending"] = {
+        "order_id": str(out["order_id"]), "limit": lim, "qty": _num(out.get("qty")),
+        "t0": now, "deadline": now + max(0.0, wait),
+        "floor": round(lim * (1.0 - floor_pct / 100.0), 4) if floor_pct > 0 else None,
+    }
+    return str(out["order_id"])
+
+
+def _exit_test_settle(ticker: str, pos: dict, trigger: float | None,
+                      now: float) -> bool:
+    """Finish a resting passive exit: done if filled, else cross at market when due.
+
+    Due = the wait is over, the print fell through the floor, or the broker
+    killed the limit. close_out cancels the limit and sells whatever is still
+    held, so a partial fill is handled by the position, not by arithmetic here.
+    Returns True when the position dict changed.
+    """
+    import alpaca_trader
+    pend = pos.get("exit_test_pending")
+    xt = pos.get("exit_test") if isinstance(pos.get("exit_test"), dict) else {}
+    if not isinstance(pend, dict) or not pend.get("order_id"):
+        pos.pop("exit_test_pending", None)
+        return True
+    oid = str(pend["order_id"])
+    if str(pos.get("close_order_id") or "") != oid:
+        # Another exit (stop, flatten, EOD) took the position over; its
+        # close_out already cancelled the resting limit.
+        pos.pop("exit_test_pending", None)
+        xt["superseded"] = True
+        return True
+    o = alpaca_trader.get_order(oid) or {}
+    st = str(o.get("status") or "").lower()
+    waited = round(now - float(pend.get("t0") or now), 1)
+    if "filled" in st and "partial" not in st:
+        xt.update(passive_qty=_num(o.get("filled_qty")), crossed_qty=0.0,
+                  fill=_num(o.get("filled_avg_price")), waited_sec=waited)
+        pos.pop("exit_test_pending", None)
+        log_event("exit_test_filled", symbol=ticker, limit=pend.get("limit"),
+                  fill=xt.get("fill"), waited_sec=waited)
+        return True
+    dead = any(w in st for w in ("cancel", "expired", "rejected"))
+    floor = _num(pend.get("floor"))
+    broke = trigger is not None and floor is not None and float(trigger) <= floor
+    if not (dead or broke or now >= float(pend.get("deadline") or 0)):
+        return False
+    why = "dead" if dead else ("floor" if broke else "deadline")
+    out = alpaca_trader.close_out(ticker) or {}
+    o2 = alpaca_trader.get_order(oid) or o
+    passive = _num(o2.get("filled_qty")) or 0.0
+    xt.update(passive_qty=passive, passive_px=_num(o2.get("filled_avg_price")),
+              waited_sec=waited, cross_why=why)
+    note = str(out.get("note") or "")
+    if out.get("order_id"):
+        xt["market_order_id"] = str(out["order_id"])
+        held = _num(pend.get("qty")) or 0.0
+        if held <= 0 or passive < held / 2.0:
+            pos["close_order_id"] = str(out["order_id"])
+    elif not note.startswith("no position"):
+        # The market leg did not land and the position is still held: retry
+        # on the next tick (the limit is already cancelled, so it reads dead).
+        log_event("exit_test_cross_failed", symbol=ticker, why=why, note=note[:160])
+        return True
+    pos.pop("exit_test_pending", None)
+    log_event("exit_test_crossed", symbol=ticker, why=why, limit=pend.get("limit"),
+              passive_qty=passive, waited_sec=waited, market_order_id=out.get("order_id"))
+    return True
+
+
+def _exit_test_final(pos: dict) -> dict | None:
+    """The exit_test record for the outcome, with the market leg's fill read back."""
+    xt = pos.get("exit_test")
+    if not isinstance(xt, dict):
+        return None
+    xt = dict(xt)
+    pend = pos.get("exit_test_pending")
+    if isinstance(pend, dict) and pend.get("order_id") and xt.get("fill") is None:
+        # Went flat on the resting limit before a settle tick saw it.
+        try:
+            import alpaca_trader
+            o = alpaca_trader.get_order(pend["order_id"]) or {}
+            if _num(o.get("filled_qty")):
+                xt.update(passive_qty=_num(o.get("filled_qty")), crossed_qty=0.0,
+                          fill=_num(o.get("filled_avg_price")))
+        except Exception:
+            pass
+    if xt.get("market_order_id") and xt.get("crossed_qty") is None:
+        try:
+            import alpaca_trader
+            m = alpaca_trader.get_order(xt["market_order_id"]) or {}
+            cq, cp_ = _num(m.get("filled_qty")), _num(m.get("filled_avg_price"))
+            pq, pp = _num(xt.get("passive_qty")) or 0.0, _num(xt.get("passive_px"))
+            xt["crossed_qty"], xt["crossed_px"] = cq, cp_
+            if cq and cp_ and (pq <= 0 or pp):
+                xt["fill"] = (pq * float(pp or 0) + cq * cp_) / (pq + cq)
+        except Exception:
+            pass
+    return xt
+
+
 def _marketable_local_limit(
     current_ask: float | None,
     cfg: dict[str, Any] | None = None,
@@ -4332,6 +4485,10 @@ def apply_local_trail(
 
     now = time.time()
     changed = False
+    if pos.get("exit_test_pending"):
+        # A resting passive exit (ai_exit_test_arms) is finished here, one tick
+        # at a time, so waiting on it never blocks the shelf.
+        changed = _exit_test_settle(ticker, pos, trigger, now) or changed
     if pos.get("closing_reason"):
         # A position on its way out must not SELL again from here — that is
         # the close's job and a second close_out would be a duplicate order.
@@ -4433,6 +4590,31 @@ def apply_local_trail(
             )
             return True, False
         alpaca_trader.cancel_open_orders(ticker)
+        # Exit-cost A/B (ai_exit_test_arms, default off). The "mid" arm rests a
+        # sell limit and returns; _exit_test_settle crosses at market when the
+        # wait is over or the print breaks the floor. A failed placement falls
+        # through to the market sell below, marked as a fallback.
+        _xt = exit_test_plan(_cfg_all(), *_premarket_book(ticker))
+        if _xt is not None:
+            pos["exit_test"] = _xt
+            if _xt.get("limit"):
+                _xoid = _exit_test_rest(ticker, pos, _xt, now)
+                if _xoid:
+                    pos["close_order_id"] = _xoid
+                    pos["closing_reason"] = "local_trail"
+                    exit_why[ticker] = "local_trail"
+                    events.append({
+                        "ticker": ticker, "event": "local_trail_passive",
+                        "last": last, "stop": loc, "limit": _xt["limit"],
+                        "peak": pos.get("peak_price"), "order_id": _xoid,
+                    })
+                    log_event(
+                        "local_trail_passive", symbol=ticker, last=last, stop=loc,
+                        limit=_xt["limit"], bid=_xt.get("bid"), ask=_xt.get("ask"),
+                        peak=pos.get("peak_price"), order_id=_xoid,
+                    )
+                    return True, True
+                _xt["fallback"] = True
         # Capped sell (ai_exit_limit_collar_pct, 0 = plain market): a
         # marketable limit that cannot fill more than the collar under the
         # print that hit the stop, then market for any remainder after
@@ -6086,6 +6268,9 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         # Entry-cost A/B (ai_entry_test_arms): arm, limit, quote at send,
         # passive vs crossed shares, seconds rested, blended fill.
         "entry_test": pos.get("entry_test"),
+        # Exit-cost A/B (ai_exit_test_arms): arm, limit, quote at send, passive
+        # vs crossed shares, seconds rested, why it crossed, blended fill.
+        "exit_test": _exit_test_final(pos),
         # ...and on the way out. Only meaningful for a shelf exit, where the
         # shelf is the price we intended to get: negative means the fill
         # landed BELOW the shelf, which is the ratchet's real cost and was
