@@ -787,3 +787,51 @@ def test_buy_check_and_fallback_buy_the_plan_when_buy_never_submitted(monkeypatc
     tc = _OrdersTC([_o("AAA", "new", 245, cid="on-2026-10-01-AAA-buy")])
     ob.buy_topup(tc, date(2026, 10, 1), auction=True, tag="buy_check")
     assert tc.submitted == []
+
+
+# ── round 2 (verification of overnight-fixes) ────────────────────────────────
+
+def test_a_catchup_sell_after_the_morning_reconcile_is_reconciled(monkeypatch, tmp_path):
+    """R2-1: process down all morning; the 09:50 reconcile_sell found nothing;
+    the 10:30 catch-up sells AAA; its fill must reach the ledger, close the
+    FIFO lot and leave book_positions empty."""
+    import json
+    from datetime import date, timedelta
+    _isolate_out(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    monkeypatch.setattr(ob, "LIVE", False)
+    monkeypatch.setattr(ob, "crosses", lambda syms, day, leg, close=None: {})
+    (tmp_path / "ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [
+        {"event": "submit", "night": "2026-10-01", "sym": "AAA", "side": "buy", "qty": 2,
+         "client_order_id": "on-2026-10-01-AAA-buy"},
+        {"event": "fill", "day": "2026-10-01", "leg": "buy", "sym": "AAA", "fill": 50.0, "filled_qty": 2},
+    ]))
+    day = date(2026, 10, 2)
+    tc = _OrdersTC([], [types.SimpleNamespace(symbol="AAA", qty="2", qty_available="2", side="long")])
+    done = {"sell": "skipped late at 10:30", "reconcile_sell": "ok 09:50"}
+    now = OP.replace(day=2) + timedelta(hours=1)
+    assert ob.sell_catchup_pass(tc, day, now, OP.replace(day=2), done) is True
+    assert [r.symbol for r in tc.submitted] == ["AAA"]
+    assert done["sell_catchup"].startswith("ALERT") and "reconcile_catchup_due" in done
+    # not due yet: nothing reconciled
+    assert ob.reconcile_catchup(tc, day, now + timedelta(minutes=1), done) is False
+    # the market sell fills; the position is gone
+    cid = tc.submitted[0].client_order_id
+    tc.orders = [_o("AAA", "filled", 2, filled=2, px=51.0, cid=cid)]
+    tc.positions = []
+    assert ob.reconcile_catchup(tc, day, now + timedelta(minutes=4), done) is True
+    assert "reconcile_catchup_due" not in done
+    ledger = ob._read_jsonl(tmp_path / "ledger.jsonl")
+    assert [m["sell"] for m in ob.fifo_matches(ledger, "2026-10-02")] == [51.0]
+    assert ob.book_positions(ledger) == {}
+
+
+def test_reconcile_catchup_waits_while_the_catchup_sell_still_works(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    _isolate_out(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "crosses", lambda syms, day, leg, close=None: {})
+    now = OP.replace(day=2) + timedelta(hours=1)
+    done = {"reconcile_catchup_due": now.isoformat()}
+    tc = _OrdersTC([_o("AAA", "new", 2, cid="on-2026-10-02-AAA-sell-r120")])
+    assert ob.reconcile_catchup(tc, date(2026, 10, 2), now, done) is True
+    assert done["reconcile_catchup_due"] > now.isoformat()            # re-queued

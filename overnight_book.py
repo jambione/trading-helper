@@ -1024,6 +1024,50 @@ def sell_catchup(tc, day: date, now: datetime, op: datetime, only: dict[str, flo
     return len(targets)
 
 
+# The morning's one reconcile_sell runs at open + 20 min, so a catch-up sell
+# after it was never reconciled: no sell fill row, the FIFO lot stayed open,
+# the live fill headline missed it, and book_positions kept the shares
+# forever (round-2 verification of the 2026-10-03 review). After a catch-up
+# submits, reconcile_sell runs again a few minutes later, and again while
+# any of the day's sells still works. A re-run is safe: aggregate_orders
+# joins every sell order of the day per name, and _fill_rows / fifo_matches
+# keep the last fill row per (day, leg, sym).
+CATCHUP_RECONCILE_AFTER = timedelta(minutes=3)
+
+
+def sell_catchup_pass(tc, day: date, now: datetime, op: datetime, done: dict) -> bool:
+    """One catch-up pass for the scheduler: sell, alert, audit, and queue a
+    reconcile. Returns True when it sent orders (the state changed)."""
+    n = sell_catchup(tc, day, now, op, sell_scope())
+    if not n:
+        return False
+    done["sell_catchup"] = f"ALERT {n} names held past the open, sold {now:%H:%M}"
+    done["reconcile_catchup_due"] = (now + CATCHUP_RECONCILE_AFTER).isoformat()
+    alert(f"overnight {ACCOUNT}: {n} names still held at {now:%H:%M} {day}; "
+          f"sell catch-up sent market sells", key=f"catchup-{day}")
+    order_audit(tc, day, "sell_catchup")
+    return True
+
+
+def reconcile_catchup(tc, day: date, now: datetime, done: dict) -> bool:
+    """Reconcile the day's sells once a queued catch-up reconcile is due;
+    re-queue while a sell of ours still works. Returns True when it ran."""
+    due = done.get("reconcile_catchup_due")
+    if not due or now < datetime.fromisoformat(due):
+        return False
+    reconcile(tc, day, "sell")
+    order_audit(tc, day, "reconcile_catchup")
+    account_audit(tc, day, "reconcile_catchup")
+    working = [o for o in our_orders(tc, f"on-{day.isoformat()}-")
+               if "-sell" in str(o.client_order_id) and _status(o) in OPEN_STATUSES]
+    if working:
+        done["reconcile_catchup_due"] = (now + CATCHUP_RECONCILE_AFTER).isoformat()
+    else:
+        done.pop("reconcile_catchup_due", None)
+        done["reconcile_catchup"] = f"ok {now:%H:%M}"
+    return True
+
+
 # ── reconcile ────────────────────────────────────────────────────────────────
 
 def our_orders(tc, prefix: str) -> list:
@@ -1622,18 +1666,22 @@ def run() -> None:
                 if lo <= now < hi and time.time() - last_catchup >= CATCHUP_EVERY:
                     last_catchup = time.time()
                     try:
-                        n = sell_catchup(tc, today, now, op, sell_scope())
-                        if n:
-                            done["sell_catchup"] = f"ALERT {n} names held past the open, sold {now:%H:%M}"
-                            alert(f"overnight {ACCOUNT}: {n} names still held at {now:%H:%M} {today}; "
-                                  f"sell catch-up sent market sells", key=f"catchup-{today}")
-                            order_audit(tc, today, "sell_catchup")
+                        if sell_catchup_pass(tc, today, now, op, done):
                             save_state(st)
                             last_snap = 0.0
                     except Exception as e:  # noqa: BLE001
                         done["sell_catchup"] = f"error {e!s:.120}"
                         log(f"sell_catchup {today}: ERROR {e!s:.200}\n{traceback.format_exc()}")
                         save_state(st)
+                try:
+                    if reconcile_catchup(tc, today, now, done):
+                        save_state(st)
+                        last_snap = 0.0
+                except Exception as e:  # noqa: BLE001
+                    done.pop("reconcile_catchup_due", None)
+                    done["reconcile_catchup"] = f"error {e!s:.120}"
+                    log(f"reconcile_catchup {today}: ERROR {e!s:.200}\n{traceback.format_exc()}")
+                    save_state(st)
             if time.time() - last_snap >= SNAPSHOT_EVERY:
                 write_snapshot(tc)
                 last_snap = time.time()
