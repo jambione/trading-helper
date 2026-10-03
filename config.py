@@ -315,6 +315,10 @@ DEFAULT_CONFIG = {
     # deadline). At or under the floor it buys at once. Always crosses.
     "ai_entry_wait_ratio":        0.75,
     "ai_entry_wait_min_bp":       5.0,
+    # Seconds between the wait arm's quote reads (one REST call each, on the
+    # Alpaca data budget the live desk shares); doubles to 3 s after a failed
+    # read. Floor 0.25 s. 1.0 = ~10 calls per 10 s wait (round 2 review).
+    "ai_entry_wait_poll_sec":     1.0,
     # Exit-cost A/B (2026-10-03): rotate local-trail exits across "market"
     # (control: sell at market, as today) and "mid" (rest a DAY sell limit at
     # the mid rounded UP to the cent; after ai_exit_test_cross_sec, or at once
@@ -2353,6 +2357,7 @@ SAFE_CONFIG_KEYS = [
     "ai_entry_test_cross_sec",
     "ai_entry_wait_ratio",
     "ai_entry_wait_min_bp",
+    "ai_entry_wait_poll_sec",
     "ai_exit_test_arms",
     "ai_exit_test_cross_sec",
     "ai_exit_test_floor_pct",

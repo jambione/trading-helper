@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import sys
 import threading
@@ -1212,24 +1213,49 @@ def entry_test_plan(cfg: dict | None, bid: float | None, ask: float | None) -> d
             "t_decide": round(time.time(), 3)}
 
 
+# One data client for the wait arm, built on first use and reused: building a
+# client per poll was one more cost on a data budget the live desk shares.
+_WAIT_QUOTE_CLIENT: list = [None]
+
+
 def _one_quote_book(symbol: str) -> tuple[float | None, float | None, float | None]:
-    """(bid, ask, age_sec) from ONE fresh IEX quote, or Nones.
+    """(bid, ask, age_sec) from ONE IEX latest quote, or Nones.
 
     _premarket_book reads bid and ask through separate paths with a ~3 s
     cache, so a "tightening" could be a bid and an ask from different quotes,
-    or the same cached pair for 3 s. One forced quote keeps both sides one
-    event (review 2026-10-03). One REST call per poll — fewer than the two
-    the split reads make once the cache has expired.
+    or the same cached pair for 3 s. One quote keeps both sides one event
+    (review 2026-10-03). Each call is one REST request on the shared Alpaca
+    data budget (the L2 panel alone uses about half of it), so the caller
+    paces it with ai_entry_wait_poll_sec and backs off on failures. The age
+    is the quote's own timestamp, None when it has none.
     """
     try:
-        import ai_trading as gt
-        if not gt.refresh_quotes_now([symbol]):
+        cl = _WAIT_QUOTE_CLIENT[0]
+        if cl is None:
+            import ai_trading as gt
+            gt._load_env()
+            api = os.getenv("ALPACA_API_KEY", "")
+            sec = os.getenv("ALPACA_SECRET_KEY", "")
+            if not api or not sec:
+                return None, None, None
+            from alpaca.data.historical import StockHistoricalDataClient
+            cl = _WAIT_QUOTE_CLIENT[0] = StockHistoricalDataClient(api, sec)
+        from alpaca.data.requests import StockLatestQuoteRequest
+        from alpaca.data.enums import DataFeed
+        q = cl.get_stock_latest_quote(
+            StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX))
+        quote = q.get(symbol) if isinstance(q, dict) else q
+        if quote is None:
             return None, None, None
-        hit = gt._cached_quote(symbol)
-        if not hit:
-            return None, None, None
-        ask, bid = hit
-        return _num(bid), _num(ask), gt.cached_quote_age_sec(symbol)
+        age = None
+        ts = getattr(quote, "timestamp", None)
+        if ts is not None:
+            try:
+                age = max(0.0, time.time() - float(ts.timestamp()))
+            except (TypeError, ValueError, AttributeError):
+                age = None
+        return (_num(getattr(quote, "bid_price", None)) or None,
+                _num(getattr(quote, "ask_price", None)) or None, age)
     except Exception:
         return None, None, None
 
@@ -1246,7 +1272,9 @@ def entry_wait_for_spread(ticker: str, plan: dict, cfg: dict | None, *,
     wide-spread buys (t 3.4). Updates and returns plan. Blocks up to the wait,
     like the passive arms, on the entry path.
 
-    Polls read bid and ask from one quote (_one_quote_book); the plan records
+    Polls every ai_entry_wait_poll_sec (default 1 s, so ~10 REST calls per
+    full wait), backing off to 3 s after failed reads, and read bid and ask
+    from one quote (_one_quote_book); the plan records
     quote_src and the age of the quote it bought on (buy_quote_age_sec). The
     DECISION spread (plan bid/ask) is the caller's, read before this runs and
     possibly from separate bid/ask reads. The entry confirm/slip guard
@@ -1262,8 +1290,9 @@ def entry_wait_for_spread(ticker: str, plan: dict, cfg: dict | None, *,
         wait = float(cfg.get("ai_entry_test_cross_sec", 10.0) or 10.0)
         ratio = float(cfg.get("ai_entry_wait_ratio", 0.75) or 0.75)
         min_bp = float(cfg.get("ai_entry_wait_min_bp", 5.0) or 0.0)
+        poll = max(0.25, float(cfg.get("ai_entry_wait_poll_sec", 1.0) or 1.0))
     except (TypeError, ValueError):
-        wait, ratio, min_bp = 10.0, 0.75, 5.0
+        wait, ratio, min_bp, poll = 10.0, 0.75, 5.0, 1.0
     b0, a0 = _num(plan.get("bid")), _num(plan.get("ask"))
     if not b0 or not a0 or a0 <= b0:
         plan.update(waited_sec=0.0, tightened=False, tight=None, note="no quote")
@@ -1278,8 +1307,12 @@ def entry_wait_for_spread(ticker: str, plan: dict, cfg: dict | None, *,
     bid, ask = b0, a0
     age = None
     tightened = False
+    # One quote read per `delay` seconds: ai_entry_wait_poll_sec, doubled
+    # after a failed read (429, no quote) up to 3 s, back to the knob after a
+    # good one — the data budget is shared with the live desk (round 2 review).
+    delay = poll
     while _clock() - t0 < wait:
-        _sleep(0.25)
+        _sleep(max(0.0, min(delay, wait - (_clock() - t0))))
         try:
             got = tuple(book(ticker))
             nb, na = got[0], got[1]
@@ -1287,10 +1320,13 @@ def entry_wait_for_spread(ticker: str, plan: dict, cfg: dict | None, *,
         except Exception:
             nb, na, nage = None, None, None
         if nb and na and na > nb:
+            delay = poll
             bid, ask, age = float(nb), float(na), nage
             if ask - bid <= max(ratio * s0, 0.01 + 1e-9):
                 tightened = True
                 break
+        else:
+            delay = min(max(delay, poll) * 2.0, max(3.0, poll))
     plan.update(waited_sec=round(_clock() - t0, 1), tightened=tightened, tight=False,
                 buy_bid=_num(bid), buy_ask=_num(ask),
                 buy_quote_age_sec=(round(float(age), 2) if age is not None else None))
