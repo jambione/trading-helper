@@ -1181,12 +1181,26 @@ def night_summary(sell_day: date, fetch=None) -> None:
     picks = [r["sym"] for r in plan_row.get("picks", [])]
     night = {"night_end": sell_day.isoformat(), "plan_day": buy_day.isoformat(),
              "backtest_expect_bp": BACKTEST_BP}
+    flt = [r for r in _read_jsonl(LEDGER) if r.get("event") == "filter" and r.get("night") == buy_day.isoformat()]
+    if LIVE:
+        # Live (2026-10-03 skeptic review #3): the live buy path writes a
+        # filter row with live_caps for every night it actually buys. With no
+        # such row the account bought nothing (disarmed, or no buy ran), and
+        # scoring the plan at $1,000/name booked a P&L the account never had
+        # (10/2: "-20.6 bp, $-41.12" on an empty account). Such a night is
+        # recorded unscored; a scored one is headlined by its own fills.
+        night["account"] = "live"
+        flt = [r for r in flt if r.get("live_caps")]
+        if not flt:
+            night["unscored"] = "no live buy that night (no live_caps filter row)"
+            _write_night(night)
+            log(f"night ending {sell_day}: LIVE account bought nothing on {buy_day}; unscored")
+            return
     close_cx, open_cx = fetch(picks, buy_day, "close"), fetch(picks, sell_day, "open")
     night.update(score_plan(picks, close_cx, open_cx))
     # The book actually held: the picks that passed the intraday filter that
-    # night. Nights without a filter row (filter off, or before it existed)
-    # held all 20, so the book is the plan.
-    flt = [r for r in _read_jsonl(LEDGER) if r.get("event") == "filter" and r.get("night") == buy_day.isoformat()]
+    # night. Paper nights without a filter row (filter off, or before it
+    # existed) held all 20, so the book is the plan.
     if flt:
         bk = score_plan(flt[-1]["kept"], close_cx, open_cx)
         night.update({"filter_floor": flt[-1].get("floor"), "n_book": bk["n_plan"],
@@ -1217,14 +1231,14 @@ def night_summary(sell_day: date, fetch=None) -> None:
         "pnl_usd": round(sum(m["qty"] * (m["sell"] - m["buy"]) for m in lots), 2),
         "carried_lots": sorted({m["sym"] for m in lots if m["buy_day"] != night["plan_day"]}),
     })
-    # One row per night: a re-score (the `score` command, a rerun reconcile)
-    # replaces the earlier row instead of double-counting the night.
-    kept = [n for n in _read_jsonl(NIGHTS) if n.get("night_end") != night["night_end"]]
-    OUT.mkdir(parents=True, exist_ok=True)
-    tmp = NIGHTS.with_suffix(".tmp")
-    tmp.write_text("".join(json.dumps(n, default=str) + "\n" for n in kept + [night]))
-    os.replace(tmp, NIGHTS)
+    _write_night(night)
     mb, mp = night["mean_bp_book"], night["mean_bp_plan"]
+    if LIVE:
+        mf = night["mean_bp_fills"]
+        log(f"night ending {sell_day}: LIVE fills {night['names']} names "
+            + (f"{mf:+.1f} bp, ${night['pnl_usd']:+.2f}" if mf is not None else "unscored (no matched fills)")
+            + (f"; its book at the crosses {mb:+.1f} bp" if mb is not None else ""))
+        return
     log(f"night ending {sell_day}: book {night['n_book_scored']}/{night['n_book']} names "
         + (f"{mb:+.1f} bp at the crosses, ${night['pnl_book_usd']:+.2f} at ${DOLLARS:,.0f}/name" if mb is not None
            else "unscored (no crosses)")
@@ -1234,9 +1248,22 @@ def night_summary(sell_day: date, fetch=None) -> None:
         + (f" missing {','.join(night['missing'])}" if night["missing"] else ""))
 
 
+def _write_night(night: dict) -> None:
+    """One row per night: a re-score (the `score` command, a rerun reconcile)
+    replaces the earlier row instead of double-counting the night."""
+    kept = [n for n in _read_jsonl(NIGHTS) if n.get("night_end") != night["night_end"]]
+    OUT.mkdir(parents=True, exist_ok=True)
+    tmp = NIGHTS.with_suffix(".tmp")
+    tmp.write_text("".join(json.dumps(n, default=str) + "\n" for n in kept + [night]))
+    os.replace(tmp, NIGHTS)
+
+
 def night_bp(n: dict) -> float | None:
     """A scored night's headline bp: the book held, at the crosses; then the
-    whole plan; paper fills only for nights logged before plan scoring."""
+    whole plan; paper fills only for nights logged before plan scoring. A
+    live night's headline is its own FIFO fills (None when unscored)."""
+    if n.get("account") == "live":
+        return n.get("mean_bp_fills")
     for k in ("mean_bp_book", "mean_bp_plan", "mean_bp_fills"):
         if n.get(k) is not None:
             return n[k]
@@ -1244,6 +1271,8 @@ def night_bp(n: dict) -> float | None:
 
 
 def night_pnl(n: dict) -> float:
+    if n.get("account") == "live":
+        return float(n.get("pnl_usd") or 0.0)
     for k in ("pnl_book_usd", "pnl_plan_usd", "pnl_usd"):
         if n.get(k) is not None:
             return float(n[k])
@@ -1325,8 +1354,10 @@ def status(tc) -> None:
         n = [x for x in _read_jsonl(NIGHTS) if night_bp(x) is not None]
         if n:
             m = sum(night_bp(x) for x in n) / len(n)
-            print(f"nights {len(n)}: mean {m:+.1f} bp/night at the crosses (backtest {BACKTEST_BP}), "
-                  f"P&L ${sum(night_pnl(x) for x in n):+,.2f} at ${DOLLARS:,.0f}/name, "
+            print(f"nights {len(n)}: mean {m:+.1f} bp/night "
+                  f"{'on the live fills' if LIVE else 'at the crosses'} (backtest {BACKTEST_BP}), "
+                  f"P&L ${sum(night_pnl(x) for x in n):+,.2f} "
+                  f"{'in the account' if LIVE else f'at ${DOLLARS:,.0f}/name'}, "
                   f"green {sum(night_bp(x) > 0 for x in n)}/{len(n)}; "
                   f"paper fills ${sum(x.get('pnl_usd') or 0 for x in n):+,.2f}")
 

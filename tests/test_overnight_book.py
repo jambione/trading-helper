@@ -126,6 +126,46 @@ def test_night_is_scored_on_the_plan_even_when_paper_filled_one_name(monkeypatch
     assert abs(n["mean_bp_plan"] - 150.0) < 1e-9           # +100 and +200 bp
     assert n["pnl_plan_usd"] == 30.0                       # $10 + $20 at $1,000 each
     assert n["names"] == 1 and n["pnl_usd"] == 9.2         # paper: AAA only, 20 x 0.46
+    # paper, filter off: no filter row by design, so the book is the plan
+    assert n["n_book"] == 2 and ob.night_bp(n) == n["mean_bp_plan"] and ob.night_pnl(n) == 30.0
+
+
+def _live_night(monkeypatch, tmp_path, ledger):
+    import json
+    from datetime import date
+    _isolate_out(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "LIVE", True)
+    (tmp_path / "plan_2026-10-01.json").write_text(json.dumps({**PLAN, "day": "2026-10-01"}))
+    (tmp_path / "ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in ledger))
+    cx = {("close", "2026-10-01"): {"AAA": (50.0, 1), "BBB": (20.0, 1)},
+          ("open", "2026-10-02"): {"AAA": (50.5, 1), "BBB": (19.0, 1)}}
+    ob.night_summary(date(2026, 10, 2), fetch=lambda syms, day, leg: cx[(leg, day.isoformat())])
+    rows = [json.loads(x) for x in (tmp_path / "nights.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    return rows[0]
+
+
+def test_live_night_without_a_live_buy_is_not_scored_on_the_plan(monkeypatch, tmp_path):
+    # 2026-10-03 skeptic review #3: live 10/2 read "book 20/20 -20.6 bp, $-41.12"
+    # while the disarmed account held nothing.
+    n = _live_night(monkeypatch, tmp_path, [])
+    assert n["account"] == "live" and n.get("unscored")
+    assert ob.night_bp(n) is None and ob.night_pnl(n) == 0.0
+    assert "mean_bp_book" not in n and "pnl_book_usd" not in n
+
+
+def test_live_night_headline_is_the_fifo_fill_pnl(monkeypatch, tmp_path):
+    n = _live_night(monkeypatch, tmp_path, [
+        {"event": "filter", "night": "2026-10-01", "floor": None, "kept": ["AAA"],
+         "live_caps": {"max_book": 100, "max_order": 25, "max_shares": 1, "cash": 100}},
+        {"event": "fill", "day": "2026-10-01", "leg": "buy", "sym": "AAA", "fill": 50.0, "cross": 50.0,
+         "filled_qty": 1},
+        {"event": "fill", "day": "2026-10-02", "leg": "sell", "sym": "AAA", "fill": 50.25, "cross": 50.5,
+         "filled_qty": 1},
+    ])
+    assert n["account"] == "live" and n["n_book"] == 1
+    assert abs(n["mean_bp_book"] - 100.0) < 1e-9                    # crosses, beside
+    assert abs(ob.night_bp(n) - 50.0) < 1e-9 and ob.night_pnl(n) == 0.25   # the account's own fills
 
 
 def test_totals_headline_the_plan_and_keep_paper_beside_it():
