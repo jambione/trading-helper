@@ -4,8 +4,8 @@
  "registered_before_results": true,
  "origin": "wr_trigger_study 9/16-9/25 (SIP 1m, $20-100): volume > 3x 20-min mean + close > 15-min high, fwd15 +9.4 bp gross (t 3.1); on IEX ~0; on the paper book net negative because bursts carried 23-34 bp spreads. Those days are excluded here.",
  "data": {
-  "universe": "per day d, from the all-symbol daily panel (ai_reports/allsym/daily_2025-09-01_2026-10-02.pkl): common stock with open >= $10, prior-day dollar volume >= $20M, gap open/prior close - 1 >= +2%; at most the 150 largest gaps per day",
-  "period": "2026-04-01..2026-09-12 (held out; ends before the 9/16-9/25 discovery window)",
+  "universe": "per day d, from the all-symbol daily panel (ai_reports/allsym/daily_2025-09-01_2026-10-02.pkl): common stock with open >= $10, prior-day dollar volume >= $20M, gap open/prior close - 1 >= +2%; at most the 40 largest gaps per day",
+  "period": "2026-05-01..2026-09-12 (held out; ends before the 9/16-9/25 discovery window)",
   "bars": "Alpaca SIP 1-minute RTH bars (open, high, close, volume), split-adjusted",
   "quotes": "Alpaca SIP NBBO at each entry time (historical, free once 15 min old)"
  },
@@ -15,7 +15,7 @@
   "exit": "close of the bar 15 minutes after entry (also 30, reported), capped at 15:55",
   "cost": "the full SIP quoted spread at the entry time, charged once per round trip (half in, half out), as in the strategy-edge studies",
   "capped": "the subset whose SIP spread at entry <= 5 bp (the desk's live cap since 10/3)",
-  "control": "5 random entry minutes per signal in the same name-day (09:45..15:30), same horizon, same spread rule (capped controls must also be <= 5 bp)",
+  "control": "1 random entry minute per signal in the same name-day (09:45..15:30), same horizon, same spread rule (capped controls must also be <= 5 bp)",
   "quiet_tape": "secondary filter (real-time SIP only): exclude signals whose last 5 closed minutes' volume < 0.25 x the session's per-minute pace so far"
  },
  "split": "by date, first half / second half",
@@ -23,5 +23,6 @@
  "pass": "CAPPED arm: net15 >= +5 bp with day-clustered t >= 2 in BOTH halves, n >= 100 per half, AND net15 above the capped random control in both halves. Gross, net30, the uncapped arm and the quiet-tape-filtered arm are reported but do not gate.",
  "if_pass": "the evidence to buy real-time SIP: then a live A/B of the breakout trigger on SIP vs the IEX desk",
  "if_fail": "real-time SIP is not worth buying for this signal family; stage 2 (order-book depth sample) is the remaining paid-data question",
- "note": "premarket is not retested: premarket_burst study already found premarket spikes fade like RTH on SIP history"
+ "note": "premarket is not retested: premarket_burst study already found premarket spikes fade like RTH on SIP history",
+ "amended": "2026-10-03, before any data was fetched: 150 -> 40 names/day, period from 4/1 to 5/1, 5 -> 1 control per signal, so SIP quote lookups (~14k) fit the shared rate limit"
 }
