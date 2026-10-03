@@ -288,3 +288,38 @@ def test_pending_exit_still_settles_with_the_trail_turned_off(monkeypatch):
     changed, closed = cp.apply_local_trail("AAA", p, 9.99, [], {})
     assert changed is True and closed is False
     assert b.closed == 1 and "exit_test_pending" not in p and p["exit_test"]["cross_why"] == "deadline"
+
+
+def _resting(**over):
+    xt = {"arm": "mid", "limit": 40.60, "bid": 40.5, "ask": 40.7}
+    pend = {"order_id": "L", "limit": 40.60, "qty": 250.0, "t0": 1_000_000.0,
+            "deadline": 1_000_010.0, "floor": 40.40}
+    return dict(close_order_id="L", exit_test=xt, exit_test_pending=pend, **over)
+
+
+def test_restart_resumes_a_pending_exit_through_manage(tmp_path, monkeypatch):
+    # State file written mid-rest, process restarted: the next book tick crosses it.
+    from test_ai_positions import _StubBrokerManage, _seed_state
+    monkeypatch.setattr(cp, "refresh_open_position_quotes", lambda *_a, **_k: 0)
+    monkeypatch.setattr(cp.time, "time", lambda: 1_000_020.0)
+    _seed_state(tmp_path, monkeypatch, closing_reason="local_trail", last_seen_price=40.55,
+                local_stop_price=40.6, **_resting())
+    stub = _StubBrokerManage(position_open=True, current_price=40.55, order_status="new")
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    cp.manage_open_positions(now=1_000_020.0)
+    st = cp._load_state()["NVDA"]
+    assert stub.closed == ["NVDA"]
+    assert "exit_test_pending" not in st and st["exit_test"]["cross_why"] == "deadline"
+    assert st["close_order_id"] == "close_1"
+
+
+def test_eod_sweep_during_a_rest_does_not_book_the_limit_as_the_fill(tmp_path, monkeypatch):
+    # liquidate_all cancelled the half-filled limit and sold the rest at market;
+    # the position is flat before a settle tick ran.
+    outcome = _manage_stub(monkeypatch, tmp_path, fills={"L": 40.60}, qtys={"L": 30},
+                           **_resting())
+    stub = sys.modules["alpaca_trader"]
+    stub.order_status = "canceled"
+    cp.manage_open_positions(now=1_000_005.0)
+    xt = outcome()["exit_test"]
+    assert xt.get("fill") is None and xt["superseded"] is True and xt["passive_qty"] == 30

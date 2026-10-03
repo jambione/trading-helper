@@ -1385,13 +1385,21 @@ def _exit_test_final(pos: dict) -> dict | None:
     xt = dict(xt)
     pend = pos.get("exit_test_pending")
     if isinstance(pend, dict) and pend.get("order_id") and xt.get("fill") is None:
-        # Went flat on the resting limit before a settle tick saw it.
+        # Went flat while the limit was still resting. Only a FULLY filled
+        # limit sold the position; anything else means another exit (the EOD
+        # sweep cancels the limit and sells the rest) took over, and the
+        # limit's price must not stand in for the whole exit — pass 1 books
+        # exit_test.fill as the exit price (review 2026-10-03).
         try:
             import alpaca_trader
             o = alpaca_trader.get_order(pend["order_id"]) or {}
-            if _num(o.get("filled_qty")):
+            st = str(o.get("status") or "").lower()
+            if "filled" in st and "partial" not in st and _num(o.get("filled_qty")):
                 xt.update(passive_qty=_num(o.get("filled_qty")), crossed_qty=0.0,
                           fill=_num(o.get("filled_avg_price")))
+            else:
+                xt.update(passive_qty=_num(o.get("filled_qty")) or 0.0,
+                          passive_px=_num(o.get("filled_avg_price")), superseded=True)
         except Exception:
             pass
     if xt.get("market_order_id") and xt.get("crossed_qty") is None:
