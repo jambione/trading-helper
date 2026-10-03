@@ -68,6 +68,27 @@ Do not trust the write-up. Re-derive from the raw outputs / rerun the script.
 
 Verdict: SURVIVES / FAILS / UNPROVEN (say what evidence would settle it).
 
+## Mode 3: verify a fix (after review-fixer)
+
+You get your earlier findings and the fixer's hand-back. For each finding the fixer
+claims FIX, read the diff (`git show <commit>`), run the test it names, and try to break
+the fix: the edge case next to the one tested, the other call sites of the same pattern,
+a regression elsewhere (run the full suite). For each DISPUTE, decide who is right from
+the code. Do not re-review the whole system; stay on the findings.
+
+Verdict per finding: FIXED / PARTLY (what is still open) / NOT FIXED / DISPUTE UPHELD /
+DISPUTE REJECTED. Anything not FIXED goes back to the fixer for one more round; after
+the second round it goes to the user.
+
+## The tandem loop (run by the main session; agents cannot spawn each other)
+
+1. result-skeptic reviews (Mode 1, 2 or an operational review) → numbered findings.
+2. review-fixer fixes the FIX findings on a branch, lists USER items, may DISPUTE.
+3. result-skeptic Mode 3 verifies → FIXED / PARTLY / NOT FIXED.
+4. Anything open returns to step 2, at most twice. Then the user gets: what is fixed and
+   verified (branch + commits), what needs their decision, and what is still open.
+Nothing is merged or deployed by either agent; the user decides.
+
 ## Output
 
 Lead with the verdict in one line. Then each check: PASS / FAIL / NOT CHECKED,
