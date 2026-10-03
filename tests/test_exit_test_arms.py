@@ -275,3 +275,16 @@ def test_market_arm_outcome_still_prices_from_the_close_order(tmp_path, monkeypa
         close_order_id="close_1", exit_test={"arm": "market", "limit": None})
     cp.manage_open_positions(now=1_000_010.0)
     assert outcome()["exit_price"] == 40.30
+
+
+def test_pending_exit_still_settles_with_the_trail_turned_off(monkeypatch):
+    _cfg(monkeypatch, "mid")
+    b = Broker(monkeypatch, {"status": "OrderStatus.NEW", "filled_qty": 0})
+    p = _open_pos()
+    cp.apply_local_trail("AAA", p, 9.00, [], {})
+    assert "exit_test_pending" in p
+    monkeypatch.setattr(cp, "_cfg_flag", lambda k, d=True: {"ai_local_trail_enabled": False}.get(k, d))
+    p["exit_test_pending"]["deadline"] = time.time() - 1
+    changed, closed = cp.apply_local_trail("AAA", p, 9.99, [], {})
+    assert changed is True and closed is False
+    assert b.closed == 1 and "exit_test_pending" not in p and p["exit_test"]["cross_why"] == "deadline"

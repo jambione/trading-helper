@@ -4536,16 +4536,20 @@ def apply_local_trail(
     except Exception:
         pass
 
-    if not (pos.get("entry_confirmed")
-            and _cfg_flag("ai_local_trail_enabled", True)):
-        return False, False
-
     now = time.time()
     changed = False
     if pos.get("exit_test_pending"):
-        # A resting passive exit (ai_exit_test_arms) is finished here, one tick
-        # at a time, so waiting on it never blocks the shelf.
+        # A resting passive exit (ai_exit_test_arms) is finished here, one book
+        # tick at a time, so waiting on it never blocks the shelf. Before the
+        # trail-enabled guard (review 2026-10-03): turning
+        # ai_local_trail_enabled off mid-rest must still cross the limit, or
+        # it is orphaned — unstrand will not touch a set close_order_id.
         changed = _exit_test_settle(ticker, pos, trigger, now) or changed
+
+    if not (pos.get("entry_confirmed")
+            and _cfg_flag("ai_local_trail_enabled", True)):
+        return changed, False
+
     if pos.get("closing_reason"):
         # A position on its way out must not SELL again from here — that is
         # the close's job and a second close_out would be a duplicate order.
