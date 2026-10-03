@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""exit_arm_score.py — grade the exit-cost A/B (ai_exit_test_arms) against the SIP mid.
+
+Each closed day trade whose outcome carries ``exit_test`` (arm = market | mid) is priced against
+the consolidated SIP NBBO at the trail hit (exit_test.t_decide, stamped before either arm sends;
+older outcomes fall back to the first SELL submit near exit_time). The mid arm's own limit uses the
+IEX quote, which overstates spreads, so the SIP mid is the fair yardstick. Sibling of
+entry_arm_score.py (review 2026-10-03: the exit arm shipped with no scorer).
+
+Per trade, in bp:
+  cost   1 - exit fill / SIP mid at decision     what the exit gave up (+ = paid)
+  half   SIP half-spread at decision            what a market sell at the bid would pay
+  passive%  the mid arm's limit sold every share (crossed_qty 0)
+
+Intention to treat: a mid-arm exit that fell back to market (no quote), crossed, or was
+superseded by another exit (stop, EOD) still counts as the mid arm — the arm is what was drawn.
+The exit fill is the outcome's exit_price, which is exit_test.fill (both legs blended) when set.
+
+The verdict compares mid with market day by day; the t is across days (each day = mean(mid) -
+mean(market)), so it means nothing until ~10 sessions.
+
+USAGE (on the mini, after the close; SIP quotes are free once 15 minutes old)
+    .venv/bin/python tools/exit_arm_score.py
+    .venv/bin/python tools/exit_arm_score.py --from 2026-10-05 --detail
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import statistics
+import sys
+import time
+from collections import defaultdict
+from datetime import datetime, timezone
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if not os.path.isdir(os.path.join(ROOT, "ai_reports")):
+    ROOT = os.getcwd()
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, ROOT)
+import bars  # noqa: E402
+import exec_report as xr  # noqa: E402
+from entry_arm_score import dct  # noqa: E402
+
+ARMS = ("market", "mid")
+CACHE = os.path.join(ROOT, "ai_reports", "exit_arm_score_cache.json")
+SEND_WINDOW = (-120.0, 5.0)   # first sell submit within this many seconds of the outcome's exit_time
+
+
+def outcomes(lo: str, hi: str) -> list[dict]:
+    out = []
+    for line in open(os.path.join(ROOT, "ai_reports", "outcomes.jsonl")):
+        try:
+            r = json.loads(line)
+        except Exception:  # noqa: BLE001
+            continue
+        xt = r.get("exit_test") or {}
+        if xt.get("arm") not in ARMS or not r.get("exit_time") or not r.get("exit_price"):
+            continue
+        if (r.get("hold_days") or 0) > 0:
+            continue
+        day = bars.day_of(float(r["exit_time"]))
+        if lo <= day <= hi:
+            out.append({**r, "_day": day})
+    return out
+
+
+def sell_submits(day: str) -> dict[str, list[float]]:
+    """SELL submit times for the day, by symbol."""
+    path = os.path.join(ROOT, "ai_reports", "fills", f"{day}.jsonl")
+    out = defaultdict(list)
+    if not os.path.exists(path):
+        return {}
+    for line in open(path):
+        try:
+            r = json.loads(line)
+        except Exception:  # noqa: BLE001
+            continue
+        if (r.get("event") == "submit" and str(r.get("action") or "").upper().startswith("SELL")
+                and r.get("order_id") and r.get("symbol")):
+            out[str(r["symbol"]).upper()].append(float(r["ts"]))
+    for v in out.values():
+        v.sort()
+    return out
+
+
+def ref_time(r: dict, sells: dict[str, list[float]]) -> tuple[float, bool]:
+    """(decision time, matched) for one outcome."""
+    xt = r.get("exit_test") or {}
+    try:
+        if xt.get("t_decide"):
+            return float(xt["t_decide"]), True
+    except (TypeError, ValueError):
+        pass
+    t_exit = float(r["exit_time"])
+    near = [t for t in sells.get(str(r["symbol"]).upper(), [])
+            if SEND_WINDOW[0] <= t - t_exit <= SEND_WINDOW[1]]
+    return (near[0], True) if near else (t_exit, False)
+
+
+def score(rows_in: list[dict], quote) -> list[dict]:
+    """Per-trade rows; quote(sym, t) -> (bid, ask) or None."""
+    rows, sells = [], {}
+    for r in sorted(rows_in, key=lambda r: float(r["exit_time"])):
+        day = r["_day"]
+        if day not in sells:
+            sells[day] = sell_submits(day)
+        t, matched = ref_time(r, sells[day])
+        q = quote(r["symbol"], t)
+        if not q:
+            continue
+        bid, ask = q
+        mid = (bid + ask) / 2
+        if mid <= 0:
+            continue
+        xt = r["exit_test"]
+        xp = float(r["exit_price"])
+        rows.append({"day": day, "sym": r["symbol"], "arm": xt["arm"], "t": t, "matched": matched,
+                     "passive": bool(xt.get("arm") == "mid" and xt.get("fill") is not None
+                                     and not xt.get("crossed_qty")),
+                     "fallback": bool(xt.get("fallback")), "superseded": bool(xt.get("superseded")),
+                     "half": (ask - bid) / 2 / mid * 1e4, "cost": (1 - xp / mid) * 1e4})
+    return rows
+
+
+def report(rows: list[dict], lo: str, hi: str, detail: bool = False) -> None:
+    days = sorted({x["day"] for x in rows})
+    print(f"EXIT ARM SCORE {lo}..{hi}  ({len(rows)} trades, {len(days)} day(s); bp vs SIP mid at the trail hit)\n")
+    if not rows:
+        return
+    unmatched = sum(1 for x in rows if not x["matched"])
+    if unmatched:
+        print(f"  note: {unmatched} trade(s) had no t_decide and no sell submit near exit_time; priced at exit_time\n")
+    print(f"  {'arm':<8}{'n':>5}{'passive%':>10}{'fallbk':>8}{'supersd':>9}{'half spr':>10}{'cost':>9}"
+          f"{'cost - mkt':>12}{'t(days)':>9}")
+    by = defaultdict(lambda: defaultdict(list))
+    for x in rows:
+        by[x["arm"]][x["day"]].append(x)
+    mkt_day = {d: statistics.mean(v["cost"] for v in xs) for d, xs in by["market"].items()}
+    for arm in ARMS:
+        xs = [x for v in by[arm].values() for x in v]
+        if not xs:
+            continue
+        diff = {d: [statistics.mean(x["cost"] for x in v) - mkt_day[d]]
+                for d, v in by[arm].items() if d in mkt_day} if arm != "market" else {}
+        dm, dt, _, _ = dct(diff) if diff else (None, None, 0, 0)
+        print(f"  {arm:<8}{len(xs):>5}{100 * sum(x['passive'] for x in xs) / len(xs):>9.0f}%"
+              f"{sum(x['fallback'] for x in xs):>8}{sum(x['superseded'] for x in xs):>9}"
+              f"{statistics.mean(x['half'] for x in xs):>10.1f}{statistics.mean(x['cost'] for x in xs):>+9.1f}"
+              + (f"{dm:>+12.1f}{(f'{dt:+.2f}' if dt is not None else '—'):>9}" if dm is not None
+                 else f"{'—':>12}{'—':>9}"))
+    print("\n  cost - mkt is the mean of daily (mid - market) cost differences; negative = mid saved."
+          "\n  t needs ~10 days to mean anything.")
+    if detail:
+        print(f"\n  {'day':<11}{'time':<9}{'sym':<7}{'arm':<8}{'pass':>5}{'half':>7}{'cost':>8}")
+        for x in sorted(rows, key=lambda x: x["t"]):
+            tt = datetime.fromtimestamp(x["t"], bars.ET).strftime("%H:%M:%S")
+            print(f"  {x['day']:<11}{tt:<9}{x['sym']:<7}{x['arm']:<8}{'y' if x['passive'] else '':>5}"
+                  f"{x['half']:>7.1f}{x['cost']:>+8.1f}")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--from", dest="lo", default="2026-10-05")
+    ap.add_argument("--to", dest="hi", default=datetime.now(bars.ET).strftime("%Y-%m-%d"))
+    ap.add_argument("--detail", action="store_true")
+    args = ap.parse_args()
+
+    cache = json.load(open(CACHE)) if os.path.exists(CACHE) else {}
+    cl = [None]
+
+    def quote(sym, t):
+        key = f"{sym}|{t:.3f}"
+        if key not in cache:
+            cl[0] = cl[0] or bars.client()
+            q = xr.nbbo_at(cl[0], sym, datetime.fromtimestamp(t, timezone.utc))
+            time.sleep(0.3)   # the live engine shares these data keys
+            cache[key] = list(q) if q else None
+        return cache[key]
+
+    rows = score(outcomes(args.lo, args.hi), quote)
+    os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+    json.dump(cache, open(CACHE, "w"))
+    report(rows, args.lo, args.hi, args.detail)
+
+
+if __name__ == "__main__":
+    main()

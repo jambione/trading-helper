@@ -1333,8 +1333,11 @@ def exit_test_plan(cfg: dict | None, bid: float | None, ask: float | None) -> di
     arm = arms[_EXIT_TEST_N[0] % len(arms)]
     _EXIT_TEST_N[0] += 1
     lim = exit_test_limit(arm, bid, ask)
+    # t_decide: the trail hit, before either arm sends; tools/exit_arm_score.py
+    # prices both arms against the SIP mid here.
     return {"arm": arm, "limit": lim, "bid": _num(bid), "ask": _num(ask),
-            "fallback": bool(arm != "market" and lim is None)}
+            "fallback": bool(arm != "market" and lim is None),
+            "t_decide": round(time.time(), 3)}
 
 
 def _exit_test_rest(ticker: str, pos: dict, plan: dict, now: float) -> str | None:

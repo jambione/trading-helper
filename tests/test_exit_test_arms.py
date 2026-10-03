@@ -369,3 +369,10 @@ def test_place_scaled_entry_does_not_cancel_a_resting_exit(tmp_path, monkeypatch
                                 risk_pct=1.0, current_ask=40.5)
     assert out["ok"] is False and "exit-test" in out["error"]
     assert stub.cancel_calls == [] and stub.calls == []
+
+
+def test_plan_stamps_the_trail_hit_time(monkeypatch):
+    monkeypatch.setattr(cp, "_EXIT_TEST_N", [0])
+    t0 = time.time()
+    p = cp.exit_test_plan({"ai_exit_test_arms": "market"}, 10.0, 10.04)
+    assert t0 - 1 <= p["t_decide"] <= time.time() + 1
