@@ -40,7 +40,8 @@ def spearman(x, y):
 
 def month_events(ds, s, t, k):
     """One row per month: (month, S, spy_ret, tlt_ret, next3_spy, next3_tlt)."""
-    ends = [i for i in range(len(ds) - 1) if ds[i][:7] != ds[i + 1][:7]] + [len(ds) - 1]
+    # The last bar is not a known month end (the data can stop mid-month), so it never closes a month.
+    ends = [i for i in range(len(ds) - 1) if ds[i][:7] != ds[i + 1][:7]]
     rows = []
     for a, b in zip(ends, ends[1:]):  # a = last session of prior month, b = last session of this month
         if b - k <= a:
@@ -165,8 +166,10 @@ def main():
           f"TLT {np.corrcoef(rta, rty)[0, 1]:.4f}; median |diff| SPY {np.median(abs(ra - ry)) * 1e4:.2f} bp, "
           f"TLT {np.median(abs(rta - rty)) * 1e4:.2f} bp")
     cut = [i for i, d in enumerate(yd) if d < "2016-01-01"]
-    yd2, ys2, yt2 = yd[:cut[-1] + 1], ys[:cut[-1] + 1], yt[:cut[-1] + 1]
-    ym = sorted({d[:7] for d in yd2})[1:]
+    # Keep the first 2016 bar so that 2015-12-31 is seen as a month end (month_events never closes a month on
+    # the last bar).
+    yd2, ys2, yt2 = yd[:cut[-1] + 2], ys[:cut[-1] + 2], yt[:cut[-1] + 2]
+    ym = sorted({d[:7] for d in yd2 if d < "2016-01-01"})[1:]
     report("YAHOO pre-2016 (second OOS; strong-half threshold from Alpaca tune)", yd2, ys2, yt2,
            [("pre2016", ym[0], ym[-1])], thresholds=med)
 

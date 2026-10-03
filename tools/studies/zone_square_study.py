@@ -78,7 +78,7 @@ def main():
         px0 = float(c[i0])
         if px0 < 10:
             continue
-        rec = {"ts0": ts0, "px0": px0, "touch": {}, "zfill": {}}
+        rec = {"ts0": ts0, "px0": px0, "touch": {}, "zfill": {}, "zfix": {}, "gap": {}}
         for zz in ZONES:
             lvl = px0 * (1 - zz)
             hit = np.nonzero((np.arange(len(t)) > i0) & (l <= lvl))[0]
@@ -95,6 +95,15 @@ def main():
                 j = int(np.searchsorted(t, tx, side="right")) - 1
                 if j > k:
                     rec["zfill"][zz] = (float(t[k]) + 60, float(c[j]) / lvl - 1 - COST)
+                    # ZONE_FIX (post-review, not pre-registered): a resting limit fills at the bar open when the bar
+                    # gaps through the zone, and a name already through the zone before 09:40 would have filled
+                    # outside the window, so it is skipped.
+                    early = any(bars.et_minutes(t[q]) < 9 * 60 + 40
+                                for q in np.nonzero((np.arange(len(t)) > i0) & (l < lvl))[0])
+                    if not early:
+                        fill = min(float(o[k]), lvl)
+                        rec["zfix"][zz] = (float(t[k]) + 60, float(c[j]) / fill - 1 - COST)
+                        rec["gap"][zz] = (o[k] < lvl, lvl / float(o[k]) - 1)
         nd[(s, d)] = rec
 
     rows = [r for r in z["rows"] if r["net15"] is not None and (r["sym"], r["day"]) in nd
@@ -151,6 +160,15 @@ def main():
         zo = [(d, lift(s, d, v["zfill"][zz][0], v["zfill"][zz][1]), v["zfill"][zz][1])
               for (s, d), v in nd.items() if zz in v["zfill"]]
         report(f"ZONE_ONLY {zz:.1%}", zo)
+        zf = [(d, lift(s, d, v["zfix"][zz][0], v["zfix"][zz][1]), v["zfix"][zz][1])
+              for (s, d), v in nd.items() if zz in v["zfix"]]
+        report(f"ZONE_FIX {zz:.1%}", zf)
+        g = [v["gap"][zz] for v in nd.values() if zz in v["gap"]]
+        if g:
+            gaps = [x for through, x in g if through]
+            print(f"  ZONE_FIX {zz:.1%}: {len(g)} fills, {len(gaps)} ({len(gaps) / len(g):.0%}) gapped through the zone"
+                  + (f", mean gap {statistics.mean(gaps) * 1e4:.1f} bp" if gaps else "")
+                  + f"; {sum(1 for v in nd.values() if zz in v['zfill']) - len(g)} skipped (through before 09:40)")
 
 
 if __name__ == "__main__":

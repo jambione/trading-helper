@@ -1,5 +1,10 @@
 # Overnight book: account size vs whole-share auction orders (2026-10-02, for the 10/9 review)
 
+> **Skeptic review 2026-10-03** ([SKEPTIC_REVIEW_2026-10-02.md](SKEPTIC_REVIEW_2026-10-02.md) §5): this study charged no costs
+> or fees, used a sizer that is not the live one, and its "~1,000 nights" used a 120-night sd (253 bp). The settling rerun
+> (live `size_paper`, auction cost + sell fees, 10 years) gives ~620-710 nights for t=2 at $1k and ~565 at $2.5k+, and puts
+> the smallest size that runs the real strategy at ~$1k (worst night −14% vs −28% at ≤$250). See §5 for the table.
+
 Script: `tools/studies/overnight_account_size.py` (read-only). The live picker (overnight_book.rank) was replayed on the last
 120 buy days (to 10/1), and each night's 20 picks were sized into whole shares (auction orders cannot be fractional; Alpaca fractional
 orders are time_in_force=day only). Returns are close→next open from adjusted SIP daily bars; share prices are the raw close.

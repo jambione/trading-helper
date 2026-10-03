@@ -1,5 +1,11 @@
 # Overnight book exit timing (2026-10-02)
 
+> **Skeptic review 2026-10-03** ([SKEPTIC_REVIEW_2026-10-02.md](SKEPTIC_REVIEW_2026-10-02.md) §3): the verdict stands, but
+> read it as **no later exit is better gross (t −0.6 to −1.4, not significant); market sells after the open add spread on
+> top. Keep the auction.** The net t −2.9..−3.7 comes from charging the 09:35 half-spread (~14.7 bp) at every later time,
+> and "monotone giveback" is one cumulative path. The gross column was not produced by the committed script. Limit/hybrid
+> exits were not tested.
+
 Pre-registration: `docs/studies/overnight_exit_timing_prereg.json` (98bdd00). Script: `tools/studies/overnight_exit_timing.py` (mini). 500 nights 2024-09-27..2026-09-25, top-20 liquid 12-1 momentum picks bought at the close, SIP 1m bars 09:30–10:30 on the next morning.
 
 **Verdict: keep selling at the opening auction.** No later exit beats it, before or after costs.

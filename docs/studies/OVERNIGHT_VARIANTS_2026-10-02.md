@@ -1,5 +1,11 @@
 # Overnight book: one-parameter variants on the 10-year panel (2026-10-02)
 
+> **Skeptic review 2026-10-03** ([SKEPTIC_REVIEW_2026-10-02.md](SKEPTIC_REVIEW_2026-10-02.md) §2): read "already optimal"
+> as **no variant shows a large gain; 3-1 and 6-1 are worse**. The pass bar (+2 bp, t ≥ 3) could only detect gains of ~4-17
+> bp/night, so 2-4 bp gains (F_OFF, N10, SPY_SKIP, ADV250M) are not ruled out; the base was chosen with the 2022-26 window
+> visible. The −1% filter **ties no filter** (+0.9 bp, t 0.4) and its backtest uses the full-day close (look-ahead at the
+> MOC cutoff). **The live filter was switched off on 2026-10-03** (shadow-logged nightly).
+
 Pre-registered: `overnight_variants_prereg.json` (dcb9856, before any result). Script: `tools/studies/overnight_variants.py`.
 Base = the live config (top-20 12-1 momentum, ≥ $5, ADV ≥ $50M, equal weight, drop picks down > 1% on the day).
 IS 2017-01-13..2021-12-31 (1,251 nights), OOS 2022-01-03..2026-09-24 (1,186 nights). Gross bp/night; net = gross − 4 bp

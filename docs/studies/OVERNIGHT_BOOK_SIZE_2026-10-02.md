@@ -1,5 +1,11 @@
 # Overnight book: 20 vs 30 vs 40 names, risk and whole shares (2026-10-02, for the 10/9 review)
 
+> **Skeptic review 2026-10-03** ([SKEPTIC_REVIEW_2026-10-02.md](SKEPTIC_REVIEW_2026-10-02.md) §4): **"stay at 20" is a default,
+> not a finding** — no decision rule was fixed in advance, and 30/40 names do not lose in both halves (N30 −2.2/−0.7, N40
+> −1.2/−3.3 bp). Tail metrics are single observations and reverse between halves. Holds: the tail is market beta (~1.4);
+> the lever for it is a SPY overnight hedge (untested). Beta 1.44 here vs 0.6 in LONGER_HOLDS: different benchmarks (SPY
+> overnight vs close→close); alpha after beta and cost ≈ +8-9 bp/night.
+
 Script: `tools/studies/overnight_book_size.py` (measures committed before the run, d7f2584). Live rules otherwise:
 12-1, ≥ $5, ADV ≥ $50M, equal weight, −1% intraday filter (so N20/N30/N40 hold 12.2/18.7/25.3 names on average).
 

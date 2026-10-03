@@ -1,5 +1,11 @@
 # Month-end rebalancing flow on SPY/TLT (2026-10-01)
 
+> **Skeptic review 2026-10-03** ([SKEPTIC_REVIEW_2026-10-02.md](SKEPTIC_REVIEW_2026-10-02.md) §6): fixed a bug that counted
+> the last data bar (2026-09-25) as a month end — a fake −56 bp trade in the holdout and pooled numbers. Rerun: k=1 holdout
+> A +36.3 bp (t 2.11, n 25; was +32.7, t 1.93); pre-2016 unchanged (+21.1, t 2.73, 161 months). k=1 was chosen after all four
+> periods (including pre-2016) were seen, so it is still a post-hoc pick: **unproven until forward months score**. The
+> pilot's market mode is deliberate on paper (no paper auction); its score uses the official crosses.
+
 Pre-registration: `docs/studies/month_end_rebal_prereg.json` (commit 73418b7, before any results).
 Script: `tools/studies/month_end_rebal.py`. Data: Alpaca SIP adjusted daily bars 2016-01 → 2026-09-25 (primary, 128 months),
 Yahoo adjusted closes 2002-08 → 2015-12 (second out-of-sample, 161 months). Yahoo matches Alpaca on the 2016+ overlap
