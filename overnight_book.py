@@ -1064,12 +1064,27 @@ def account_audit(tc, day: date, step: str) -> None:
         log(f"account_audit {step} {day}: {e!s:.150}")
 
 
-def crosses(syms: list[str], day: date, leg: str) -> dict:
+def crosses(syms: list[str], day: date, leg: str, close: datetime | None = None) -> dict:
+    """{sym: (price, size)} of the official cross. The closing window is the
+    session's own close -1/+2 min (2026-10-03 skeptic review #5: a hardcoded
+    15:59-16:02 left every half-day unscored). *close* comes from Alpaca's
+    calendar, the same one the order schedule uses; looked up with the
+    desk's read-only client when not given."""
     import auction_print_check as apc  # puts tools/ on sys.path for its own imports
     cl = data_client()
     d = day.isoformat()
     if leg == "close":
-        return apc.auction_prints(cl, syms, d, 15, 59, 16, 2, apc.CLOSE_CODES, prefer="M")
+        if close is None:
+            try:
+                ses = session(desk_trading_client(), day)
+                close = ses[1] if ses else None
+            except Exception as e:  # noqa: BLE001
+                log(f"crosses {day}: calendar unavailable ({e!s:.100}); assuming a 16:00 close")
+            if close is None:
+                close = datetime.combine(day, datetime.min.time(), ET).replace(hour=16)
+        t0, t1 = close - timedelta(minutes=1), close + timedelta(minutes=2)
+        return apc.auction_prints(cl, syms, d, t0.hour, t0.minute, t1.hour, t1.minute,
+                                  apc.CLOSE_CODES, prefer="M")
     return apc.auction_prints(cl, syms, d, 9, 29, 9, 32, apc.OPEN_CODES, prefer="Q")
 
 
@@ -1083,7 +1098,8 @@ def reconcile(tc, day: date, leg: str) -> None:
             night_summary(day)      # the plan is scored even when paper filled nothing
         return
     syms = sorted({o.symbol for o in orders})
-    cx = crosses(syms, day, "close" if leg == "buy" else "open")
+    ses = session(tc, day) if leg == "buy" else None
+    cx = crosses(syms, day, "close" if leg == "buy" else "open", close=ses[1] if ses else None)
     agg = aggregate_orders(orders)
     for s in syms:
         a = agg[s]

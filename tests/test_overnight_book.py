@@ -728,3 +728,29 @@ def test_plan_refuses_when_any_bars_chunk_failed(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="chunk"):
         ob.plan(object(), day)
     assert not (tmp_path / f"plan_{day.isoformat()}.json").exists()
+
+
+# ── 2026-10-03 skeptic review #5: half-days use the session's own close ──────
+
+def _fake_apc(monkeypatch):
+    import sys
+    calls = []
+    fake = types.SimpleNamespace(CLOSE_CODES={"M"}, OPEN_CODES={"Q"},
+                                 auction_prints=lambda cl, syms, d, h0, m0, h1, m1, codes, prefer=None:
+                                 calls.append((d, h0, m0, h1, m1)) or {})
+    monkeypatch.setitem(sys.modules, "auction_print_check", fake)
+    monkeypatch.setattr(ob, "data_client", lambda: object())
+    return calls
+
+
+def test_closing_cross_window_follows_an_early_close(monkeypatch):
+    from datetime import date
+    calls = _fake_apc(monkeypatch)
+    half = datetime(2026, 11, 27, 13, 0, tzinfo=ET)                  # day after Thanksgiving
+    monkeypatch.setattr(ob, "desk_trading_client", lambda: object())
+    monkeypatch.setattr(ob, "session", lambda tc, d: (half.replace(hour=9, minute=30), half))
+    ob.crosses(["AAA"], date(2026, 11, 27), "close")                 # looks the close up
+    ob.crosses(["AAA"], date(2026, 10, 1), "close", close=CL)        # or takes it
+    ob.crosses(["AAA"], date(2026, 10, 1), "open")
+    assert calls == [("2026-11-27", 12, 59, 13, 2), ("2026-10-01", 15, 59, 16, 2),
+                     ("2026-10-01", 9, 29, 9, 32)]
