@@ -1263,9 +1263,13 @@ def entry_wait_for_spread(ticker: str, plan: dict, cfg: dict | None, *,
 
 # Exit-cost A/B (ai_exit_test_arms). Local-trail exits only: "market" is the
 # control, "mid" rests a DAY sell limit at the mid rounded UP to the cent and is
-# settled on later shelf ticks by _exit_test_settle (cross at market after
-# ai_exit_test_cross_sec, or at once on a print ai_exit_test_floor_pct under the
-# limit), so the shelf tick never blocks on it.
+# settled by _exit_test_settle (cross at market after ai_exit_test_cross_sec, or
+# at once on a print ai_exit_test_floor_pct under the limit), so the shelf tick
+# never blocks on it. The settle runs on the BOOK tick (manage_open_positions
+# pass 2, every ai_book_tick_sec ~2 s): tick_local_trail skips closing
+# positions. So the real wait is cross_sec plus up to one book tick (10-12 s at
+# defaults), and the floor is tested against that tick's flatten print, once
+# per book tick, not every shelf print (review 2026-10-03).
 _EXIT_TEST_N = [0]
 EXIT_TEST_ARMS = ("market", "mid")
 
@@ -1326,6 +1330,9 @@ def _exit_test_rest(ticker: str, pos: dict, plan: dict, now: float) -> str | Non
 def _exit_test_settle(ticker: str, pos: dict, trigger: float | None,
                       now: float) -> bool:
     """Finish a resting passive exit: done if filled, else cross at market when due.
+
+    Called from apply_local_trail on the book tick (~ai_book_tick_sec), not
+    the shelf tick, so "due" is noticed up to one book tick late.
 
     Due = the wait is over, the print fell through the floor, or the broker
     killed the limit. close_out cancels the limit and sells whatever is still
