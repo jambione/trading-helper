@@ -835,3 +835,47 @@ def test_reconcile_catchup_waits_while_the_catchup_sell_still_works(monkeypatch,
     tc = _OrdersTC([_o("AAA", "new", 2, cid="on-2026-10-02-AAA-sell-r120")])
     assert ob.reconcile_catchup(tc, date(2026, 10, 2), now, done) is True
     assert done["reconcile_catchup_due"] > now.isoformat()            # re-queued
+
+
+def _no_plan_allowed(*_a, **_k):
+    raise AssertionError("plan() must not run in the check/fallback path")
+
+
+def test_rerun_never_plans_at_the_close_it_alerts_instead(monkeypatch, tmp_path):
+    """R2-2: no plan file at buy_fallback -> no full-universe fetch at 15:58."""
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    monkeypatch.setattr(ob, "LIVE", False)
+    monkeypatch.setattr(ob, "load_plan", lambda d: None)
+    monkeypatch.setattr(ob, "plan", _no_plan_allowed)
+    tc = _OrdersTC([])
+    ob.buy_topup(tc, date(2026, 10, 1), tag="buy_fallback")
+    assert tc.submitted == []
+    assert "ALERT" in (tmp_path / "run.log").read_text()
+
+
+def test_no_buy_is_submitted_in_the_last_15_seconds_or_after_the_close(monkeypatch, tmp_path):
+    """R2-2: a DAY market buy sent after 16:00 is queued for the next open."""
+    import json
+    from datetime import date, timedelta
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "LIVE", False)
+    monkeypatch.setattr(ob, "ORDER_MODE", "market")
+    monkeypatch.setattr(ob, "load_plan", lambda d: PLAN)
+    monkeypatch.setattr(ob, "latest_prices", lambda syms: {"AAA": 50.0, "BBB": 20.0})
+    monkeypatch.setattr(ob, "INTRADAY_MIN", None)
+    monkeypatch.setattr(ob, "session_opens", lambda syms, day: {})
+    now = datetime.now(ET)
+    monkeypatch.setattr(ob, "session", lambda tc, d: (now - timedelta(hours=6), now + timedelta(seconds=10)))
+    tc = _OrdersTC([])
+    ob.buy(tc, date(2026, 10, 1))
+    assert tc.submitted == []
+    (tmp_path / "ledger.jsonl").write_text(json.dumps(
+        {"event": "submit", "night": "2026-10-01", "sym": "AAA", "side": "buy", "qty": 20,
+         "client_order_id": "on-2026-10-01-AAA-buy", "error": "x"}) + "\n")
+    ob.buy_topup(tc, date(2026, 10, 1), tag="buy_topup")
+    assert tc.submitted == []
+    monkeypatch.setattr(ob, "session", lambda tc, d: (now - timedelta(hours=6), now + timedelta(minutes=2)))
+    ob.buy_topup(tc, date(2026, 10, 1), tag="buy_topup")                 # in time: it goes
+    assert [r.symbol for r in tc.submitted] == ["AAA"]

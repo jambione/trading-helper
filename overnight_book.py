@@ -729,6 +729,26 @@ def intraday_filter(syms: list[str], opens: dict, prices: dict,
     return kept, rows
 
 
+# No buy goes in within 15 s of the close or after it (round-2 verification
+# of the 2026-10-03 review): Alpaca queues a DAY market buy sent after 16:00
+# for the next open, which would buy at the open and sell straight away.
+BUY_CUTOFF_BEFORE_CLOSE = timedelta(seconds=15)
+
+
+def buy_too_late(tc, day: date) -> bool:
+    """True once now >= *day*'s close - 15 s, or when *day* has no session.
+    An unreadable calendar is logged and allowed: the scheduler read it
+    moments ago to decide this step was due."""
+    try:
+        ses = session(tc, day)
+    except Exception as e:  # noqa: BLE001
+        log(f"buy {day}: calendar unreadable ({e!s:.100}); close cutoff not checked")
+        return False
+    if not ses:
+        return True
+    return datetime.now(ET) >= ses[1] - BUY_CUTOFF_BEFORE_CLOSE
+
+
 def buy(tc, day: date, dry: bool = False, market: bool = False) -> None:
     """Buy the plan. *market* sends plain market (DAY) orders even in auction
     mode: buy_fallback's late re-run of a buy that never submitted (past the
@@ -760,6 +780,9 @@ def buy(tc, day: date, dry: bool = False, market: bool = False) -> None:
             + (f"; no open/price for {','.join(unknown)} (kept)" if unknown else ""))
     else:
         _log_filter_shadow(day, syms, px, dry)
+    if not dry and buy_too_late(tc, day):
+        log(f"buy {day}: past the close cutoff ({BUY_CUTOFF_BEFORE_CLOSE.seconds} s before the close); no buy")
+        return
     if LIVE:
         _buy_live(tc, day, syms, px, held, dry, market=market)
         return
@@ -895,10 +918,19 @@ def buy_topup(tc, day: date, dry: bool = False, auction: bool = False, tag: str 
         # nothing and the night went unbought. Nothing was sent, so running
         # buy() now (same plan, caps, filter and sizing) cannot double up.
         # Orders on the broker with no ledger rows are never re-bought.
+        # Never plan here (round 2): a full-universe bars fetch with retry
+        # sleeps at close - 2 min would submit after the close.
+        if load_plan(day) is None:
+            alert(f"overnight {ACCOUNT}: {tag} {day}: no buy was submitted and there is no plan; "
+                  f"no buy tonight", key=f"nobuy-{day}")
+            return
         log(f"{tag} {day}: no buy was submitted today; running the buy now")
         buy(tc, day, dry=dry, market=not auction)
         return
     need = topup_needs(targets, orders)
+    if need and not dry and buy_too_late(tc, day):
+        log(f"{tag} {day}: past the close cutoff; not sending {', '.join(sorted(need))}")
+        return
     for s, (rem, n) in sorted(need.items()):
         cid = f"on-{day.isoformat()}-{s}-buy-r{n}"
         row = {"event": "submit", "night": day.isoformat(), "sym": s, "side": "buy", "qty": rem,
