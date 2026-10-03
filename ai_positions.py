@@ -1197,8 +1197,13 @@ def entry_test_plan(cfg: dict | None, bid: float | None, ask: float | None) -> d
     arm = arms[_ENTRY_TEST_N[0] % len(arms)]
     _ENTRY_TEST_N[0] += 1
     lim = entry_test_limit(arm, bid, ask)
+    # t_decide: the moment the quote above was read, before any arm waits. The
+    # wait arm's first buy submit comes up to ai_entry_test_cross_sec later, so
+    # benchmarking at the submit would leave the move during the wait out of
+    # its cost (review 2026-10-03); tools/entry_arm_score.py prices every arm here.
     return {"arm": arm, "limit": lim, "bid": _num(bid), "ask": _num(ask),
-            "fallback": bool(arm not in ("ask", "wait") and lim is None)}
+            "fallback": bool(arm not in ("ask", "wait") and lim is None),
+            "t_decide": round(time.time(), 3)}
 
 
 def entry_wait_for_spread(ticker: str, plan: dict, cfg: dict | None, *,

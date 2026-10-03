@@ -155,3 +155,12 @@ def test_wait_arm_buys_at_the_deadline_when_it_never_tightens():
 def test_wait_arm_without_a_quote_buys_now():
     p = cp.entry_wait_for_spread("XYZ", {"arm": "wait", "bid": None, "ask": 10.1}, {})
     assert p["waited_sec"] == 0.0 and p["note"] == "no quote"
+
+
+def test_plan_stamps_the_decision_time(monkeypatch):
+    # tools/entry_arm_score.py prices every arm here, not at the wait arm's delayed submit.
+    import time
+    monkeypatch.setattr(cp, "_ENTRY_TEST_N", [0])
+    t0 = time.time()
+    p = cp.entry_test_plan({"ai_entry_test_arms": "wait"}, 10.00, 10.04)
+    assert t0 - 1 <= p["t_decide"] <= time.time() + 1
