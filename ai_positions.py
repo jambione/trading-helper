@@ -1212,6 +1212,28 @@ def entry_test_plan(cfg: dict | None, bid: float | None, ask: float | None) -> d
             "t_decide": round(time.time(), 3)}
 
 
+def _one_quote_book(symbol: str) -> tuple[float | None, float | None, float | None]:
+    """(bid, ask, age_sec) from ONE fresh IEX quote, or Nones.
+
+    _premarket_book reads bid and ask through separate paths with a ~3 s
+    cache, so a "tightening" could be a bid and an ask from different quotes,
+    or the same cached pair for 3 s. One forced quote keeps both sides one
+    event (review 2026-10-03). One REST call per poll — fewer than the two
+    the split reads make once the cache has expired.
+    """
+    try:
+        import ai_trading as gt
+        if not gt.refresh_quotes_now([symbol]):
+            return None, None, None
+        hit = gt._cached_quote(symbol)
+        if not hit:
+            return None, None, None
+        ask, bid = hit
+        return _num(bid), _num(ask), gt.cached_quote_age_sec(symbol)
+    except Exception:
+        return None, None, None
+
+
 def entry_wait_for_spread(ticker: str, plan: dict, cfg: dict | None, *,
                           book=None, _sleep=time.sleep, _clock=time.time) -> dict:
     """The "wait" arm: buy at market once the spread tightens, at most ai_entry_test_cross_sec later.
@@ -1223,9 +1245,19 @@ def entry_wait_for_spread(ticker: str, plan: dict, cfg: dict | None, *,
     Sim (tools/studies/spread_wait_sim.py, 509 buys 9/16-10/2): +4.2 bp on
     wide-spread buys (t 3.4). Updates and returns plan. Blocks up to the wait,
     like the passive arms, on the entry path.
+
+    Polls read bid and ask from one quote (_one_quote_book); the plan records
+    quote_src and the age of the quote it bought on (buy_quote_age_sec). The
+    DECISION spread (plan bid/ask) is the caller's, read before this runs and
+    possibly from separate bid/ask reads. The entry confirm/slip guard
+    (ai_entry_confirm_max_slip_*) runs before the wait, as for the passive
+    arms, and is not re-checked after it: the arm can buy up to
+    ai_entry_test_cross_sec after the price was confirmed.
     """
     cfg = cfg or {}
-    book = book or _premarket_book
+    if book is None:
+        book = _one_quote_book
+        plan["quote_src"] = "iex_one_quote"
     try:
         wait = float(cfg.get("ai_entry_test_cross_sec", 10.0) or 10.0)
         ratio = float(cfg.get("ai_entry_wait_ratio", 0.75) or 0.75)
@@ -1244,20 +1276,24 @@ def entry_wait_for_spread(ticker: str, plan: dict, cfg: dict | None, *,
         return plan
     t0 = _clock()
     bid, ask = b0, a0
+    age = None
     tightened = False
     while _clock() - t0 < wait:
         _sleep(0.25)
         try:
-            nb, na = book(ticker)
+            got = tuple(book(ticker))
+            nb, na = got[0], got[1]
+            nage = got[2] if len(got) > 2 else None
         except Exception:
-            nb, na = None, None
+            nb, na, nage = None, None, None
         if nb and na and na > nb:
-            bid, ask = float(nb), float(na)
+            bid, ask, age = float(nb), float(na), nage
             if ask - bid <= max(ratio * s0, 0.01 + 1e-9):
                 tightened = True
                 break
     plan.update(waited_sec=round(_clock() - t0, 1), tightened=tightened, tight=False,
-                buy_bid=_num(bid), buy_ask=_num(ask))
+                buy_bid=_num(bid), buy_ask=_num(ask),
+                buy_quote_age_sec=(round(float(age), 2) if age is not None else None))
     return plan
 
 

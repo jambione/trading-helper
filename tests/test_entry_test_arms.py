@@ -164,3 +164,29 @@ def test_plan_stamps_the_decision_time(monkeypatch):
     t0 = time.time()
     p = cp.entry_test_plan({"ai_entry_test_arms": "wait"}, 10.00, 10.04)
     assert t0 - 1 <= p["t_decide"] <= time.time() + 1
+
+
+def test_wait_arm_reads_bid_and_ask_from_one_quote(monkeypatch):
+    # Default book: one forced IEX quote per poll, never the split bid/ask cache reads.
+    import ai_trading as gt
+    quotes = iter([(10.10, 10.00), (10.07, 10.03)])           # (ask, bid) as the cache stores it
+    cache = {}
+    monkeypatch.setattr(gt, "refresh_quotes_now", lambda syms: cache.update(q=next(quotes)) or 1)
+    monkeypatch.setattr(gt, "_cached_quote", lambda s: cache["q"])
+    monkeypatch.setattr(gt, "cached_quote_age_sec", lambda s, now=None: 0.4)
+    monkeypatch.setattr(cp, "_premarket_book", lambda s: (_ for _ in ()).throw(AssertionError("split read")))
+    clock, sleep = _clock()
+    p = cp.entry_wait_for_spread("XYZ", {"arm": "wait", "bid": 10.00, "ask": 10.10},
+                                 {"ai_entry_test_cross_sec": 10, "ai_entry_wait_ratio": 0.5},
+                                 _sleep=sleep, _clock=clock)
+    assert p["tightened"] is True and (p["buy_bid"], p["buy_ask"]) == (10.03, 10.07)
+    assert p["quote_src"] == "iex_one_quote" and p["buy_quote_age_sec"] == 0.4
+
+
+def test_wait_arm_skips_polls_with_no_quote(monkeypatch):
+    import ai_trading as gt
+    monkeypatch.setattr(gt, "refresh_quotes_now", lambda syms: 0)
+    clock, sleep = _clock()
+    p = cp.entry_wait_for_spread("XYZ", {"arm": "wait", "bid": 10.00, "ask": 10.10},
+                                 {"ai_entry_test_cross_sec": 1}, _sleep=sleep, _clock=clock)
+    assert p["tightened"] is False and p["buy_ask"] == 10.10 and p["buy_quote_age_sec"] is None
