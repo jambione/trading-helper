@@ -897,3 +897,56 @@ def test_live_rerun_of_a_missing_buy_is_opt_in_paper_always_reruns(monkeypatch, 
         ob.buy_topup(_OrdersTC([]), date(2026, 10, 1), tag="buy_fallback")
         assert ran == expect, (live, opt_in)
     assert "buy never submitted" in (tmp_path / "run.log").read_text()
+
+
+def _alerts(tmp_path):
+    return [x for x in (tmp_path / "run.log").read_text().splitlines() if " ALERT " in x]
+
+
+def test_an_order_step_error_is_alerted_once(monkeypatch, tmp_path):
+    """R2-4: errors were logged, never pushed."""
+    from datetime import date
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    monkeypatch.setattr(ob, "our_orders", lambda tc, prefix: [])
+
+    def boom():
+        raise RuntimeError("insufficient buying power")
+    done = {}
+    ob.run_step(object(), date(2026, 10, 1), "buy", boom, NOW, done)
+    assert done["buy"].startswith("error")
+    ob.run_step(object(), date(2026, 10, 1), "plan", boom, NOW, {})      # not an order step: log only
+    assert len(_alerts(tmp_path)) == 1 and "insufficient buying power" in _alerts(tmp_path)[0]
+
+
+def test_a_catchup_sell_that_keeps_failing_alerts_once_per_symbol(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+
+    class _HaltTC(_OrdersTC):
+        def submit_order(self, req):
+            if req.symbol == "HLT":
+                raise RuntimeError("asset halted")
+            return super().submit_order(req)
+    pos = [types.SimpleNamespace(symbol="HLT", qty="1", qty_available="1", side="long")]
+    tc = _HaltTC([], pos)
+    for k in range(3):                                                    # three 5-minute passes
+        ob.sell_catchup(tc, date(2026, 10, 2), OP + timedelta(minutes=20 + 5 * k), OP)
+    a = _alerts(tmp_path)
+    assert len(a) == 1 and "HLT" in a[0] and "asset halted" in a[0]
+
+
+def test_a_plan_refused_at_buy_time_is_alerted(monkeypatch, tmp_path):
+    from datetime import date
+    import pytest
+    _isolate_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(ob, "_ALERTED", set())
+    monkeypatch.setattr(ob, "load_plan", lambda d: None)
+
+    def refuse(tc, day):
+        raise RuntimeError("2 of 60 daily-bars chunks failed; refusing to plan")
+    monkeypatch.setattr(ob, "plan", refuse)
+    with pytest.raises(RuntimeError):
+        ob.buy(_FakeTC([]), date(2026, 10, 1))
+    assert len(_alerts(tmp_path)) == 1 and "refusing to plan" in _alerts(tmp_path)[0]

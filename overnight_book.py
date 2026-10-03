@@ -763,7 +763,12 @@ def buy(tc, day: date, dry: bool = False, market: bool = False) -> None:
     from alpaca.trading.requests import MarketOrderRequest
     p = load_plan(day)
     if not p:
-        p = plan(tc, day)
+        try:
+            p = plan(tc, day)
+        except Exception as e:
+            # a refused plan (#4) means no buy tonight: say so, loudly
+            alert(f"overnight {ACCOUNT}: buy {day}: no plan ({e!s:.150}); no buy tonight", key=f"plan-{day}")
+            raise
     held = {x.symbol: float(x.qty) for x in tc.get_all_positions()}
     if held:
         log(f"buy {day}: WARNING positions still open from before: {held}")
@@ -980,7 +985,7 @@ def topup_needs(targets: dict[str, int], orders: list) -> dict[str, tuple[int, i
 
 
 def sell(tc, day: date, dry: bool = False, attempt: int = 0, tif: str | None = None,
-         tag: str | None = None, only: dict[str, float] | None = None) -> None:
+         tag: str | None = None, only: dict[str, float] | None = None) -> dict[str, str]:
     """Sell every long position. attempt 0 is the scheduled sell; 1+ is the
     top-up. Sells size off qty_available (shares not already held by an open
     order), never qty: a second sell sized off qty while the first still
@@ -993,7 +998,7 @@ def sell(tc, day: date, dry: bool = False, attempt: int = 0, tif: str | None = N
     if not dry and attempt == 0 and only is None:
         tc.cancel_orders()
     pos = tc.get_all_positions()
-    sent = 0
+    sent, failed = 0, {}
     for x in pos:
         if only is not None and x.symbol not in only:
             continue
@@ -1018,13 +1023,16 @@ def sell(tc, day: date, dry: bool = False, attempt: int = 0, tif: str | None = N
                 row["order_id"] = str(o.id)
             except Exception as e:  # noqa: BLE001
                 row["error"] = str(e)[:200]
+                failed[x.symbol] = row["error"]
         if dry:
             print(f"  DRY RUN would submit: {_how('sell')} sell {qty} {x.symbol}")
         else:
             append(LEDGER, row)
     tag = tag or ("sell" if not attempt else "sell_topup")
     how = {"opg": "MOO", "day": "market"}.get(tif or "", _how("sell"))
-    log(f"{tag} {day}: {'DRY RUN ' if dry else ''}{sent} positions submitted as {how}")
+    log(f"{tag} {day}: {'DRY RUN ' if dry else ''}{sent} positions submitted as {how}"
+        + (f"; FAILED {', '.join(sorted(failed))}" if failed else ""))
+    return failed
 
 
 # The sell catch-up (2026-10-03 skeptic review #1). Each sell step runs once,
@@ -1062,7 +1070,11 @@ def sell_catchup(tc, day: date, now: datetime, op: datetime, only: dict[str, flo
     if not targets:
         return 0
     attempt = 100 + int((now - op).total_seconds() // 60)
-    sell(tc, day, attempt=attempt, tif="day", tag="sell_catchup", only=targets)
+    failed = sell(tc, day, attempt=attempt, tif="day", tag="sell_catchup", only=targets)
+    for s, err in sorted(failed.items()):
+        # once per symbol per day: a halted name fails every 5-minute pass
+        alert(f"overnight {ACCOUNT}: sell catch-up of {s} {day} failed: {err:.120}",
+              key=f"catchup-err-{day}-{s}")
     return len(targets)
 
 
@@ -1641,6 +1653,23 @@ def write_snapshot(tc) -> None:
 
 # ── scheduler ────────────────────────────────────────────────────────────────
 
+def run_step(tc, today: date, name: str, fn, now: datetime, done: dict) -> None:
+    """Run one due step, record it in *done*, audit it. An order step that
+    raises is ALERTed (round 2: errors were only logged, never pushed)."""
+    try:
+        fn()
+        done[name] = f"ok {now:%H:%M}"
+    except Exception as e:  # noqa: BLE001
+        done[name] = f"error {e!s:.120}"
+        log(f"{name} {today}: ERROR {e!s:.200}\n{traceback.format_exc()}")
+        if name in ORDER_STEPS:
+            alert(f"overnight {ACCOUNT}: {name} {today} failed: {e!s:.120}", key=f"err-{today}-{name}")
+    if name in ORDER_STEPS or name.startswith("reconcile"):
+        order_audit(tc, today, name)
+    if name.startswith("reconcile"):
+        account_audit(tc, today, name)
+
+
 def run() -> None:
     tc = book_client()
     log("run: overnight book scheduler started")
@@ -1692,16 +1721,7 @@ def run() -> None:
                             alert(f"overnight {ACCOUNT}: {name} {today} missed its {when:%H:%M} window",
                                   key=f"late-{today}-{name}")
                     else:
-                        try:
-                            fn()
-                            done[name] = f"ok {now:%H:%M}"
-                        except Exception as e:  # noqa: BLE001
-                            done[name] = f"error {e!s:.120}"
-                            log(f"{name} {today}: ERROR {e!s:.200}\n{traceback.format_exc()}")
-                        if name in ORDER_STEPS or name.startswith("reconcile"):
-                            order_audit(tc, today, name)
-                        if name.startswith("reconcile"):
-                            account_audit(tc, today, name)
+                        run_step(tc, today, name, fn, now, done)
                     save_state(st)
                     last_snap = 0.0                 # a step ran: refresh the dashboard now
                 lo, hi = catchup_window(op, cl)
@@ -1714,6 +1734,8 @@ def run() -> None:
                     except Exception as e:  # noqa: BLE001
                         done["sell_catchup"] = f"error {e!s:.120}"
                         log(f"sell_catchup {today}: ERROR {e!s:.200}\n{traceback.format_exc()}")
+                        alert(f"overnight {ACCOUNT}: sell catch-up {today} failed: {e!s:.120}",
+                              key=f"catchup-exc-{today}")
                         save_state(st)
                 try:
                     if reconcile_catchup(tc, today, now, done):
