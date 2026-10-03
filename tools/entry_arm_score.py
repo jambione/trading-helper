@@ -40,7 +40,7 @@ sys.path.insert(0, ROOT)
 import bars  # noqa: E402
 import exec_report as xr  # noqa: E402
 
-ARMS = ("ask", "mid_down", "bid")
+ARMS = ("ask", "mid_down", "bid", "wait")
 CACHE = os.path.join(ROOT, "ai_reports", "entry_arm_score_cache.json")
 SEND_WINDOW = (-120.0, 5.0)   # first buy submit within this many seconds of the outcome's entry_time
 CROSS_GAP = 30.0              # a passive arm's market cross follows its limit within this many seconds
