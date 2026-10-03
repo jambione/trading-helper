@@ -1,0 +1,27 @@
+{
+ "study": "Volatility-halt reopenings: does buying a momentum name at its LULD reopening (an auction: no spread paid on entry) and holding 5-30 minutes make money after the exit spread?",
+ "registered_at": "2026-10-03, before any halt data was fetched",
+ "registered_before_results": true,
+ "data": {
+  "candidates": "name-days from the all-symbol daily panel (market_temperature study's fetch): common stock, open >= $1, (high - low) / prior close >= 15%, 2025-10-01..2026-10-02",
+  "bars": "Alpaca SIP 1-minute RTH bars for each candidate name-day",
+  "quotes": "Alpaca SIP NBBO at each exit time (historical, free once 15 min old)"
+ },
+ "definitions": {
+  "halt": "a run of >= 5 consecutive minutes with no 1-minute bar between 09:35 and 15:45, in a name that printed a bar in each of the 5 minutes before the gap (so a quiet name is not mistaken for a halt)",
+  "direction": "UP halt: close of the last bar before the gap >= +5% vs the close 10 minutes earlier; DOWN halt: <= -5%; others discarded",
+  "entry": "the open of the first bar after the gap (proxy for the reopening cross; no entry spread charged)",
+  "exits": "close of the bar at +5, +15 and +30 minutes after the reopen bar, capped at 15:55; a later halt inside the hold exits at the last bar before it",
+  "cost": "exit pays the SIP half-spread measured at the exit time (sell at the bid) plus a 10 bp slippage allowance; no entry cost",
+  "multiple_halts": "every halt counts; reported also as first-halt-of-the-day only"
+ },
+ "arms": {
+  "PRIMARY": "long UP halts (continuation)",
+  "SECONDARY": "long DOWN halts (reversal)"
+ },
+ "split": "events by date: first half / second half",
+ "statistic": "mean net bp per event; t clustered by day (mean of daily means / its standard error)",
+ "pass": "PRIMARY at +15 min: net >= +50 bp with day-clustered t >= 2 in BOTH halves and n >= 100 events per half. Also reported by price bucket ($1-5, $5-10, $10+), at +5 and +30 min, and gross.",
+ "if_pass": "feasibility next, not a deploy: whether Alpaca orders entered during a halt participate in the reopening cross (unverified), then a paper test",
+ "caveats": ["halts are inferred from missing minutes, not from the official halt feed", "the reopen bar's open is not guaranteed to equal the cross price", "most halts are in sub-$10 names, below the desk's $10 floor"]
+}

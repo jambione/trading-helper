@@ -1,0 +1,23 @@
+{
+ "study": "Market temperature (Bullish Bob 2026-10-02 lesson): are 'hot' mornings — many stocks gapping up big — better days for momentum long entries, enough to be worth trading only then?",
+ "registered_at": "2026-10-03, before any all-symbol data was fetched",
+ "registered_before_results": true,
+ "data": {
+  "universe": "every Alpaca US_EQUITY asset, active AND inactive (limits survivorship), common stock only (ticker_filters.is_common and not is_levered_etp)",
+  "bars": "Alpaca SIP daily bars, raw (split-adjusted) OHLCV, 2025-09-01..2026-10-02; the first 21 sessions are warm-up for the dollar-volume filter",
+  "liquid_floor": "a name counts on day d only if its prior-day dollar volume (close x volume) >= $250k and prior close >= $1"
+ },
+ "definitions": {
+  "gap": "open(d) / close(d-1) - 1",
+  "temperature": "T20(d) = number of counted names with gap >= 20%; T50 and T100 likewise (reported)",
+  "hot_cold": "terciles of T20 with cutoffs fixed on the FIRST half and applied unchanged to both halves: COLD <= 33.3rd pct, HOT >= 66.7th pct",
+  "outcome_bob": "Bob's universe: names with gap >= 20% and open >= $1; per day the mean open->close return; also mean open->high (room, info only)",
+  "outcome_desk": "desk-like universe: open >= $10, gap >= 3%, prior-day dollar volume >= $20M; per day the mean open->close return",
+  "desk_days": "info only: the desk's own >= $10 fills 9/16..10/2 (outcomes.jsonl), mean P&L per day next to that day's T20"
+ },
+ "split": "sessions by date: first half / second half",
+ "statistic": "day-level means; HOT minus COLD Welch t across days",
+ "pass": "BOTH: (a) outcome_desk HOT - COLD >= +15 bp with Welch t >= 2 in BOTH halves AND HOT-day mean >= +20 bp in both halves (positive after a ~20 bp round trip); (b) reported alongside: outcome_bob HOT - COLD >= +50 bp with t >= 2 in both halves. (a) is the desk decision; (b) answers Bob's claim for his own universe.",
+ "if_pass": "a day-level throttle: trade only (or trade more) on HOT mornings; a live gate needs a 7 AM premarket count, which this daily-open proxy does not test",
+ "caveats": ["the gap is measured at the 09:30 open, not 7 AM premarket", "open->close holds the whole session; the desk holds minutes", "one year of data"]
+}

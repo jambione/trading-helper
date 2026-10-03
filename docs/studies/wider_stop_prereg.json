@@ -1,0 +1,21 @@
+{
+ "study": "Wider-stop lead: does a 0.25% initial stop with a 0.35%-from-peak trail beat the live exits on desk entries, out of sample?",
+ "registered_at": "2026-10-03, before any held-out result",
+ "registered_before_results": true,
+ "origin": "best of 24 exit variants in the 1-cent-stop skeptic test on 9/29-10/2 (desk -2.5 bp vs live -8.8; >= $10 -1.3 vs -6.0). Chosen on those days, so they are excluded here.",
+ "data": {
+  "trades": "desk day trades with entry >= $10 from ai_reports/outcomes.jsonl (hold_days 0, deduplicated), entry days 2026-09-16..2026-09-26 (held out: the lead was selected on 9/29-10/2)",
+  "random": "5 random entries per desk trade, same name and day, 09:45-15:30 (seed 11)",
+  "ticks": "Alpaca SIP trades (regular prints) and quotes from entry to +60 min or 15:55, via the same simulator as the 1-cent test (scratchpad onecent_stop.py)"
+ },
+ "simulation": "buy at the SIP ask at entry; initial stop = fill x (1 - 0.25%); once a print is above the fill, stop = max(stop, peak x (1 - 0.35%)); triggers on the first regular print at or below the stop; exits at the SIP bid at that moment; time exit at +60 min or 15:55 at the bid",
+ "arms": {
+  "PRIMARY": "0.25% initial stop + 0.35% trail, print trigger",
+  "REPORTED": "0.50% + 0.35% trail; 1c + last-1c (the user's original idea, as a control); the same on random entries"
+ },
+ "comparison": "paired per trade: simulated net (exit bid / entry ask - 1) minus the live outcome's own net (exit_price / entry_price - 1)",
+ "statistic": "mean paired difference, t clustered by day",
+ "pass": "PRIMARY paired improvement >= +3 bp with day-clustered t >= 2 on the held-out days, n >= 100 trades. Absolute net, win rate, median hold and the random-entry result are reported but do not gate.",
+ "if_pass": "a replay_session.py check with the live exit code configured to match, then a live exit A/B arm; not a direct config change",
+ "caveats": ["the simulator's stop is not the desk's local shelf (no min-hold, decay leash or broker latency)", "held-out days ran an older config (give_r 0.35 before 9/29), so the live baseline differs from today's"]
+}
