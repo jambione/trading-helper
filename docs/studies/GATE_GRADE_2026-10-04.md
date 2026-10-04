@@ -1,5 +1,24 @@
 # Grading the gap-down and range-position gates on post-live refusals (2026-10-04)
 
+> **Correction after the skeptic review (same day): the range-cap result is REJECTED; keep the cap at 90.**
+> 1. **The cap delays names; it does not refuse them.** 303 of the 335 refused name-days were admitted later the same
+>    day (298 at inclusion). The median delay was 1.3 minutes (mean 6.9). Comparing each name's 30-minute return
+>    from its first refusal with the return from its actual later admission (next-bar open): +6.3 bp mean,
+>    median 0.0, t 0.44. Removing the cap would buy almost nothing. The +107 bp compared *different names*
+>    (those that ever touched the cap vs those that never did); it did not measure what the gate does.
+> 2. **The entry leaked part of the move.** The price that set range_pos sat +37 bp (mean) above the last completed
+>    1-minute close used as the entry. Entering at the next bar's open instead, the refused mean falls from
+>    +47.8 to +6.8 bp, and every comparison fails the 2.24 bar (same-stage t 1.84; ≥ $10 t 1.76–1.87).
+> 3. **It depends on which refusal you time from.** Refused name-days were refused a median of 4 times. Timed from
+>    the last refusal, the diff is +24.6 bp, t 0.58.
+> 4. Kept names under $10 (−313 bp) drive much of the gap. The same-stage check is fragile: the skeptic got kept n 87,
+>    diff +134 vs this doc's 88 / +170; one name moves the kept mean by about 36 bp.
+>
+> **Net:** the cap is roughly inert. Its in-sample basis ("range position predicts the fade") is not supported out of
+> sample, but removing it would change little. No config change. If it is ever re-graded, the honest test is a
+> costed `replay_session.py --set ai_watch_admit_max_range_pos=0` over 9/16–10/2 with each day's own config.
+> The tables below are kept as originally written, for the record.
+
 Ideas list #11. Pre-registration: the docstring of `tools/studies/gate_grade.py`, committed before any outcome.
 Post-hoc check (written after the first results, labelled as such): `tools/studies/gate_grade_inclusion.py`.
 Data: `ai_reports/proposal_ledger/` on the mini, RTH decisions 09:45–15:00, free SIP 1-minute bars. Outcomes are
@@ -20,7 +39,7 @@ Data: `ai_reports/proposal_ledger/` on the mini, RTH decisions 09:45–15:00, fr
 - 30-minute mean by range position at the gate: 0–50 −133 bp (n 74), 50–75 −57 (11), 75–90 −28 (7), 90–95 −28 (98),
   **95–100 +35 (220)**. The names at the very top of their range did best, which matches
   "buying the top is not the loss" (fills at the high did best, 871 fills).
-- **Pre-registered reading: COSTS OPENS** (t 2.80 ≥ 2.24 Bonferroni). Out of sample, the gate removes names that went
+- **Pre-registered reading (superseded, see the correction at the top): COSTS OPENS** (t 2.80 ≥ 2.24 Bonferroni). Out of sample, the gate removes names that went
   on to do better over the next 30 minutes than the names it let in. The in-sample basis
   ("range position predicts the fade") does not hold on the 13 later days.
 
