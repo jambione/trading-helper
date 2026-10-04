@@ -183,7 +183,7 @@ def build():
     return A
 
 
-def derive(A):
+def derive(A, clip50=False, badyr_on=True):
     """ON with dividends and the bad-data rules (applied to all names and SPY), ADV20, momentum, bad name-years."""
     o, c, h, l, v = A["o"], A["c"], A["h"], A["l"], A["v"]
     T, N = c.shape
@@ -199,7 +199,11 @@ def derive(A):
     drops["stale_bar"] = int((stale & had).sum())
     drops["abs_on_gt_50pct"] = int((big & had).sum())
     drops["split_pm1"] = int((spl & had).sum())
-    ON[bad_px | stale | big | spl] = np.nan
+    if clip50:                                 # sensitivity: clip |ON| > 50% to +/-50% instead of dropping
+        ON = np.where(big & ~(bad_px | stale | spl), np.clip(ON, -0.5, 0.5), ON)
+        ON[bad_px | stale | spl] = np.nan
+    else:
+        ON[bad_px | stale | big | spl] = np.nan
     # name-years with > 25% ON == 0
     yr = pd.DatetimeIndex(A["dates"]).year.values
     badyr = np.zeros((T, N), bool)
@@ -213,7 +217,8 @@ def derive(A):
         badyr[r] |= bad[None, :]
         zshare[int(y)] = share
     drops["bad_name_year_nights"] = int((badyr & np.isfinite(ON)).sum())
-    ON[badyr] = np.nan
+    if badyr_on:
+        ON[badyr] = np.nan
     spy_on = np.full(T, np.nan)
     with np.errstate(all="ignore"):
         spy_on[1:] = (A["spy_o"][1:] + A["spy_div"][1:]) / A["spy_c"][:-1] - 1
@@ -298,14 +303,28 @@ def check():
     with np.errstate(all="ignore"):
         pm[252:] = pcf[252 - 21:len(pd_) - 21] / pcf[:len(pd_) - 252] - 1
     pspy = np.r_[np.nan, Pn["spy_o"][1:] / Pn["spy_c"][:-1] - 1]
-    pdf = book_series(pd_, Pn["rc"][:, pj], Pn["adv20"][:, pj], pm, pcf, Pn["ON"][:, pj], pspy, *CHK)
+    # identical masks (amended check): a name-night counts only if it passes every Yahoo rule AND Alpaca ON is
+    # finite with |ON| <= 50%; dates aligned through the shared calendar
+    pON = Pn["ON"][:, pj].copy()
+    yON = X["ON"][:, yj].copy()
+    yi = {d: i for i, d in enumerate(dates)}
+    for tp, d in enumerate(pd_):
+        ty = yi.get(d)
+        if ty is None:
+            pON[tp] = np.nan
+            continue
+        ok = np.isfinite(yON[ty]) & np.isfinite(pON[tp]) & (np.abs(pON[tp]) <= 0.5)
+        pON[tp, ~ok] = np.nan
+        yON[ty, ~ok] = np.nan
+    ydf = book_series(dates, A["rc"][:, yj], X["adv"][:, yj], X["m"][:, yj], X["cf"][:, yj], yON, X["spy_on"], *CHK)
+    pdf = book_series(pd_, Pn["rc"][:, pj], Pn["adv20"][:, pj], pm, pcf, pON, pspy, *CHK)
     j = ydf.join(pdf, lsuffix="_y", rsuffix="_p", how="inner").dropna(subset=["picks_y", "picks_p"])
     dif = (j["picks_y"] - j["picks_p"]).values * 1e4
     ov = [len(set(np.array(common)[a]) & set(np.array(common)[b])) / TOP for a, b in zip(j["pick_y"], j["pick_p"])
           if a is not None and b is not None]
     corr = float(np.corrcoef(j["picks_y"], j["picks_p"])[0, 1])
     tdif = float(dif.mean() / (dif.std(ddof=1) / math.sqrt(len(dif))))
-    res["data_source_check"] = {"nights": int(len(j)), "common_symbols": len(common), "mean_diff_bp": round(float(dif.mean()), 2),
+    res["data_source_check"] = {"check": "AMENDED: identical masks on both sides", "nights": int(len(j)), "common_symbols": len(common), "mean_diff_bp": round(float(dif.mean()), 2),
                                 "t_diff": round(tdif, 2), "corr": round(corr, 3), "pick_overlap_mean": round(float(np.mean(ov)), 3),
                                 "univ_mean_diff_bp": round(float(((j["univ_y"] - j["univ_p"]).values * 1e4).mean()), 2),
                                 "univ_corr": round(float(np.corrcoef(j["univ_y"].fillna(0), j["univ_p"].fillna(0))[0, 1]), 3),
@@ -327,7 +346,8 @@ def check():
         "full": {"S1": f1, "S2": f2}, "survivors_only": {"S1": s1, "S2": s2}, "yahoo_served_only": {"S1": y1, "S2": y2},
         "gap_S1_bp": round(s1["alpha_bp"] - f1["alpha_bp"], 2), "gap_S2_bp": round(s2["alpha_bp"] - f2["alpha_bp"], 2),
         "gap_yahoo_S1_bp": round(y1["alpha_bp"] - f1["alpha_bp"], 2), "gap_yahoo_S2_bp": round(y2["alpha_bp"] - f2["alpha_bp"], 2),
-        "survivor_share_of_symbols": round(float(surv.mean()), 3), "yahoo_share_of_symbols": round(float(ysv.mean()), 3)}
+        "survivor_share_of_symbols": round(float(surv.mean()), 3), "yahoo_share_of_symbols": round(float(ysv.mean()), 3),
+        "note": "calibration uses the panel's UNMASKED ON"}
     json.dump(res, open(os.path.join(WORK, "check.json"), "w"), indent=1, default=str)
     P_(json.dumps(res, indent=1, default=str))
 
@@ -362,13 +382,30 @@ def score():
     worst = lambda k: max(abs(surv[f"gap_{k}_bp"]), abs(surv[f"gap_yahoo_{k}_bp"]))
     crit = {"EDGE_REPLICATES (S2)": decided("S2", worst("S2")), "ALPHA (S1)": decided("S1", worst("S1"))}
     res["criteria"] = crit
+    # MASK SENSITIVITY (decision-gating): |ON| > 50% clipped, bad-name-year rule off, split rule on
+    Xs = derive(A, clip50=True, badyr_on=False)
+    ds = book_series(dates, A["rc"], Xs["adv"], Xs["m"], Xs["cf"], Xs["ON"], Xs["spy_on"], P_FIRST, pd.Timestamp(PRE_END))
+    ds = ds.dropna(subset=["picks", "univ", "spy"])
+    sen = dict(zip(("S1", "S2"), s1_s2(ds)))
+    res["mask_sensitivity"] = sen
+    sens_ok = {s: (sen[s]["t"] >= 2.0 and np.sign(sen[s]["alpha_bp"]) == np.sign(T["all"][s]["alpha_bp"])) for s in ("S1", "S2")}
+    res["mask_sensitivity_ok"] = sens_ok
     if "verdict" not in res:
         if not ck["data_source_check"]["pass"]:
             res["verdict"] = "NO VERDICT: the 2017-2021 data-source check failed"
         else:
-            e, a = all(crit["EDGE_REPLICATES (S2)"].values()), all(crit["ALPHA (S1)"].values())
-            res["verdict"] = {(True, True): "EDGE_REPLICATES + ALPHA", (True, False): "EDGE_REPLICATES only",
-                              (False, True): "ALPHA only: UNEXPLAINED", (False, False): "NEITHER (or underpowered)"}[(e, a)]
+            def label(prim, s):
+                if prim and sens_ok[s]:
+                    return "PASS"
+                if prim or sens_ok[s]:
+                    return "UNPROVEN (mask-dependent)"
+                return "FAIL"
+            ls = {"S2 EDGE_REPLICATES": label(all(crit["EDGE_REPLICATES (S2)"].values()), "S2"),
+                  "S1 ALPHA": label(all(crit["ALPHA (S1)"].values()), "S1")}
+            for s_ in ("S1", "S2"):
+                if not pw[s_]["powered"]:
+                    ls[[k for k in ls if k.startswith(s_)][0]] = "UNDERPOWERED"
+            res["verdict"] = {k: v + " (amended check)" for k, v in ls.items()}
     # information
     book = d["picks"].values - COST
     info = {"unhedged_net_bp": round(float(np.mean(book)) * 1e4, 2),
@@ -394,6 +431,20 @@ def score():
     info["per_year"] = {int(y): {"S1": s1_s2(g)[0]["alpha_bp"], "S2": s1_s2(g)[1]["alpha_bp"], "n": int(len(g))}
                         for y, g in d.groupby(d.index.year) if len(g) > 30}
     info["n_elig_median"] = int(df["n_elig"].median())
+    srt = d.assign(b=d["picks"]).sort_values("b")
+    trim = srt.iloc[5:-5].sort_index()
+    t1, t2 = s1_s2(trim)
+    info["concentration_drop_5_best_5_worst_nights"] = {"S1": t1, "S2": t2}
+    big = {}
+    for y, g in d.groupby(d.index.year):
+        n = 0
+        for t_, row in g.iterrows():
+            pk = row["pick"]
+            ti = dates.get_loc(t_)
+            if pk is not None:
+                n += int((np.abs(X["ON"][ti + 1, pk]) > 0.2).sum())
+        big[int(y)] = n
+    info["pick_slots_abs_ON_gt_20pct_by_year"] = big
     res["information"] = info
     json.dump(res, open(os.path.join(WORK, "result.json"), "w"), indent=1, default=str)
     P_(json.dumps(res, indent=1, default=str))
