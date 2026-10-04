@@ -1,4 +1,11 @@
-# Premarket depth test: STOPPED, Databento returned 402 account_insufficient_funds (2026-10-04)
+# Premarket depth test: CLOSED, no result (operator decision 2026-10-04)
+
+**Final:** the operator chose to stop here rather than raise the Databento spend limit. The test is closed with
+**no result**. The 106 fetched name-days are a partial sample and must **not** be scored as this test. A serial
+$0.014 retry at 14:30 ET also returned 402, which is consistent with an account spend limit the operator set to
+keep the free credit.
+
+## History: STOPPED, Databento returned 402 account_insufficient_funds
 
 Pre-registration: [`premarket_depth_prereg.json`](premarket_depth_prereg.json) (f7a0e2d). Script:
 `tools/studies/premarket_depth_probe.py`. Data (git-ignored, mini only): `data/databento/xnas_premarket_2026-06_08/`.

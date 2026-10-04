@@ -1,4 +1,4 @@
-> **Premarket depth test (2026-10-04): STOPPED, no result.** Databento returned 402 account_insufficient_funds
+> **Premarket depth test (2026-10-04): CLOSED by the operator, no result; do not score the partial sample.** Databento returned 402 account_insufficient_funds
 > mid-fetch (106/797 name-days in). Check the Billing page before resuming
 > ([`docs/studies/PREMARKET_DEPTH_STATUS_2026-10-04.md`](docs/studies/PREMARKET_DEPTH_STATUS_2026-10-04.md)).
 >
