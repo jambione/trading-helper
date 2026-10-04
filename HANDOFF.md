@@ -1,3 +1,7 @@
+> **Premarket depth test (2026-10-04): STOPPED, no result.** Databento returned 402 account_insufficient_funds
+> mid-fetch (106/797 name-days in). Check the Billing page before resuming
+> ([`docs/studies/PREMARKET_DEPTH_STATUS_2026-10-04.md`](docs/studies/PREMARKET_DEPTH_STATUS_2026-10-04.md)).
+>
 > **Depth data (2026-10-04):** Databento XNAS.ITCH mbp-10 for 7,353 random entries in the top-40 gappers,
 > 6/1-8/28, is on the mini in `data/databento/xnas_itch_mbp10_2026-06_08/` (git-ignored, $6.27 of the free credit).
 > The stage-2 depth gate test came out UNDERPOWERED/no verdict, with negative point estimates in both halves

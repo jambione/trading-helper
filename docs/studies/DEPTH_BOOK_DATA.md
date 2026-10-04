@@ -69,3 +69,10 @@ and refused if the cumulative quoted total would pass the cap.
 
 Size on disk: ~92 MB. Survivors after book drops: 7,261 (drops: no_book 54, stale 28, halt 10).
 Result of the pre-registered test: [`DEPTH_BOOK_RESULT_2026-10-04.md`](DEPTH_BOOK_RESULT_2026-10-04.md).
+
+## Premarket set (2026-10-04, incomplete)
+
+`data/databento/xnas_premarket_2026-06_08/`: XNAS.ITCH mbp-10 per name-day for the window [qualify−10 min, 09:41 ET]
+(`book/{DAY}_{SYM}.dbn.zst`), status per day, plus the Alpaca raw daily, 30-min scan and 1-minute caches (`rawdaily.pkl`,
+`scan/`, `minute/`), `plan.json`, `quote.json` and `spend_log.csv`. 106 of 797 name-days were fetched before Databento
+returned 402 account_insufficient_funds; see [`PREMARKET_DEPTH_STATUS_2026-10-04.md`](PREMARKET_DEPTH_STATUS_2026-10-04.md).
