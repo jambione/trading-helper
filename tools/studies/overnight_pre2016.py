@@ -70,41 +70,74 @@ def panel_syms():
     return [str(s) for s in z["syms"]]
 
 
+def _one(s):
+    """Single-symbol retry: DataFrame, 'not_found', or 'error:<msg>' (yf.download swallows 429s as empty frames)."""
+    import yfinance as yf
+    msg = ""
+    for att in range(5):
+        try:
+            df = yf.Ticker(s.replace(".", "-")).history(start=START, auto_adjust=False, actions=True, repair=False,
+                                                         raise_errors=True, timeout=60)
+            return df if len(df) else "not_found"
+        except Exception as e:  # noqa: BLE001
+            msg = f"{type(e).__name__}: {str(e)[:120]}"
+            low = msg.lower()
+            if ("delisted" in low or "no data found" in low or "no price data" in low or "pricesmissing" in low
+                    or "tzmissing" in low or "no timezone" in low):
+                return "not_found"
+            time.sleep(15 * (att + 1))
+    return "error:" + msg
+
+
 def fetch():
     import yfinance as yf
     os.makedirs(os.path.join(WORK, "raw"), exist_ok=True)
+    stp = os.path.join(WORK, "status.json")
+    status = json.load(open(stp)) if os.path.exists(stp) else {}
     syms = sorted(set(panel_syms()) | {"SPY"})
-    fails = []
-    for i in range(0, len(syms), 100):
+    for i in range(0, len(syms), 50):
         fp = os.path.join(WORK, "raw", f"b{i:05d}.pkl")
+        batch = syms[i:i + 50]
         if os.path.exists(fp):
-            continue
-        batch = syms[i:i + 100]
-        ymap = {s.replace(".", "-"): s for s in batch}
-        out = None
-        for att in range(5):
+            out = pickle.load(open(fp, "rb"))
+            todo = [s for s in batch if str(status.get(s, "error")).startswith("error")]
+            if not todo:
+                continue
+        else:
+            out = {}
+            ymap = {s.replace(".", "-"): s for s in batch}
             try:
                 df = yf.download(list(ymap), start=START, end=None, auto_adjust=False, actions=True, repair=False,
-                                 group_by="ticker", threads=True, progress=False, timeout=60)
-                out = {}
-                for ys, s in ymap.items():
+                                 group_by="ticker", threads=False, progress=False, timeout=60)
+            except Exception as e:  # noqa: BLE001
+                P_(f"  batch {i} download failed ({type(e).__name__}); retrying per symbol")
+                df = None
+            for ys, s in ymap.items():
+                sub = None
+                if df is not None:
                     try:
                         sub = df[ys].dropna(how="all")
                     except KeyError:
                         sub = None
-                    out[s] = sub if sub is not None and len(sub) else None
-                break
-            except Exception as e:  # noqa: BLE001
-                P_(f"  batch {i} try {att}: {type(e).__name__} {str(e)[:120]}")
-                time.sleep(30 * (att + 1))
-        if out is None:
-            fails.append(i)
-            P_(f"  batch {i} FAILED")
-            continue
+                if sub is not None and len(sub):
+                    out[s], status[s] = sub, "ok"
+            todo = [s for s in batch if s not in out]
+        for s in todo:
+            r = _one(s)
+            if isinstance(r, str):
+                out[s], status[s] = None, r
+            else:
+                out[s], status[s] = r, "ok"
         pickle.dump(out, open(fp, "wb"))
-        P_(f"fetch {i + len(batch)}/{len(syms)}: {sum(v is not None for v in out.values())} with data")
-        time.sleep(2)
-    P_(f"fetch done; failed batches {fails}")
+        json.dump(status, open(stp, "w"))
+        arr = os.path.join(WORK, "arrays.pkl")
+        if os.path.exists(arr):
+            os.remove(arr)            # raw data changed: the built arrays are stale
+        c = {k: sum(1 for x in batch if str(status.get(x, "")).startswith(k)) for k in ("ok", "not_found", "error")}
+        P_(f"fetch {i + len(batch)}/{len(syms)}: {c}")
+        time.sleep(1)
+    tot = {k: sum(1 for v in status.values() if str(v).startswith(k)) for k in ("ok", "not_found", "error")}
+    P_(f"fetch done; status counts {tot} (rerun fetch to retry errors)")
 
 
 # ------------------------------------------------------------------ build arrays
@@ -139,8 +172,9 @@ def build():
     A["rc"] = A["c"] * fac
     A["split_near"] = np.zeros((T, N), bool)
     hit = A["spl"] > 0
-    for sh in (-1, 0, 1):
-        A["split_near"] |= np.roll(hit, sh, 0)
+    A["split_near"] |= hit
+    A["split_near"][1:] |= hit[:-1]
+    A["split_near"][:-1] |= hit[1:]
     sdf = spy.set_axis(dates)
     A["spy_o"], A["spy_c"] = sdf["Open"].values, sdf["Close"].values
     A["spy_div"] = np.nan_to_num(sdf["Dividends"].values) if "Dividends" in sdf else np.zeros(T)
@@ -183,7 +217,9 @@ def derive(A):
     spy_on = np.full(T, np.nan)
     with np.errstate(all="ignore"):
         spy_on[1:] = (A["spy_o"][1:] + A["spy_div"][1:]) / A["spy_c"][:-1] - 1
-    spy_on[np.abs(spy_on) > 0.5] = np.nan
+    so, sc = A["spy_o"], A["spy_c"]
+    spy_bad = np.r_[True, ~(np.isfinite(so[1:]) & np.isfinite(sc[:-1]) & (so[1:] > 0) & (sc[:-1] > 0))]
+    spy_on[spy_bad | (np.abs(spy_on) > 0.5)] = np.nan
     adv = pd.DataFrame(c * v).rolling(20, min_periods=15).mean().values
     cf = pd.DataFrame(A["ac"]).ffill().values
     m = np.full((T, N), np.nan)
@@ -192,7 +228,7 @@ def derive(A):
     return {"ON": ON, "spy_on": spy_on, "adv": adv, "cf": cf, "m": m, "drops": drops, "zshare": zshare, "badyr": badyr}
 
 
-def book_series(dates, rc, adv, m, cf, ON, spy_on, t_lo, t_hi, keep=None):
+def book_series(dates, rc, adv, m, cf, ON, spy_on, t_lo, t_hi, keep=None, badyr=None):
     """Nightly picks/universe overnight means for buy dates t in [t_lo, t_hi]; same rule as overnight_hedge_intraday."""
     D = pd.DatetimeIndex(dates)
     rows = []
@@ -204,20 +240,21 @@ def book_series(dates, rc, adv, m, cf, ON, spy_on, t_lo, t_hi, keep=None):
             ok &= keep
         idx = np.where(ok)[0]
         if len(idx) < MIN_ELIG:
-            rows.append((D[t], np.nan, np.nan, np.nan, len(idx), None))
+            rows.append((D[t], np.nan, np.nan, np.nan, len(idx), None, 0))
             continue
         pick = idx[np.argsort(-m[t, idx])][:TOP]
         on_p, on_u = ON[t + 1, pick], ON[t + 1, idx]
+        nmask = int(badyr[t + 1, pick].sum()) if badyr is not None else 0
         rows.append((D[t], np.nanmean(on_p) if np.isfinite(on_p).any() else np.nan,
-                     np.nanmean(on_u) if np.isfinite(on_u).any() else np.nan, spy_on[t + 1], len(idx), pick))
-    df = pd.DataFrame(rows, columns=["date", "picks", "univ", "spy", "n_elig", "pick"]).set_index("date")
+                     np.nanmean(on_u) if np.isfinite(on_u).any() else np.nan, spy_on[t + 1], len(idx), pick, nmask))
+    df = pd.DataFrame(rows, columns=["date", "picks", "univ", "spy", "n_elig", "pick", "masked"]).set_index("date")
     return df
 
 
 def s1_s2(df):
     book = df["picks"].values - COST
     a1 = alpha(book, df["spy"].values)
-    a1["alpha_bp"] = round(a1["alpha_bp"] - SPY_COST * 1e4 * a1["beta"], 2)   # hedge leg cost at the fitted beta
+    a1["alpha_bp"] = round(a1["alpha_bp"] - SPY_COST * 1e4 * abs(a1["beta"]), 2)   # hedge leg cost at the fitted beta
     a1["t"] = round(a1["alpha_bp"] / a1["se_bp"], 2)
     a2 = alpha(df["picks"].values - df["univ"].values, df["spy"].values)
     return a1, a2
@@ -227,10 +264,15 @@ def s1_s2(df):
 def check():
     import lh_core as C
     import lh_strat as S
+    status = json.load(open(os.path.join(WORK, "status.json")))
+    errs = sorted(s for s, v in status.items() if str(v).startswith("error"))
+    if errs or set(panel_syms()) - set(status):
+        raise SystemExit(f"check refused: {len(errs)} symbols in error, {len(set(panel_syms()) - set(status))} never fetched; rerun fetch")
     A = build()
     X = derive(A)
     dates = pd.DatetimeIndex(A["dates"])
-    res = {"symbols_with_yahoo_data": len(A["syms"]), "panel_symbols": len(panel_syms()), "drops": X["drops"]}
+    res = {"status_counts": {k: sum(1 for v in status.values() if str(v).startswith(k)) for k in ("ok", "not_found")},
+           "symbols_with_yahoo_data": len(A["syms"]), "panel_symbols": len(panel_syms()), "drops": X["drops"]}
     pre = (dates >= P_FIRST) & (dates <= pd.Timestamp(PRE_END))
     # coverage: nights with >= 30 eligible (no outcomes)
     cnt = []
@@ -265,6 +307,8 @@ def check():
     tdif = float(dif.mean() / (dif.std(ddof=1) / math.sqrt(len(dif))))
     res["data_source_check"] = {"nights": int(len(j)), "common_symbols": len(common), "mean_diff_bp": round(float(dif.mean()), 2),
                                 "t_diff": round(tdif, 2), "corr": round(corr, 3), "pick_overlap_mean": round(float(np.mean(ov)), 3),
+                                "univ_mean_diff_bp": round(float(((j["univ_y"] - j["univ_p"]).values * 1e4).mean()), 2),
+                                "univ_corr": round(float(np.corrcoef(j["univ_y"].fillna(0), j["univ_p"].fillna(0))[0, 1]), 3),
                                 "pass": bool(abs(dif.mean()) <= 1 and abs(tdif) < 2 and corr >= 0.9)}
     # survivorship calibration on the Alpaca panel, 2018-2026: full vs survivors (bars in the panel's last month)
     surv = np.isfinite(Pn["c"][-21:]).any(0)
@@ -276,10 +320,14 @@ def check():
     sv = book_series(pd_, Pn["rc"], Pn["adv20"], pmf, Pn["cf"], Pn["ON"], pspy, lo, hi, keep=surv)
     f1, f2 = s1_s2(full.dropna(subset=["picks"]))
     s1, s2 = s1_s2(sv.dropna(subset=["picks"]))
-    res["survivorship_calibration_2018_2026"] = {"full": {"S1": f1, "S2": f2}, "survivors_only": {"S1": s1, "S2": s2},
-                                                 "gap_S1_bp": round(s1["alpha_bp"] - f1["alpha_bp"], 2),
-                                                 "gap_S2_bp": round(s2["alpha_bp"] - f2["alpha_bp"], 2),
-                                                 "survivor_share_of_symbols": round(float(surv.mean()), 3)}
+    ysv = np.array([status.get(s_) == "ok" for s_ in psyms])
+    yv = book_series(pd_, Pn["rc"], Pn["adv20"], pmf, Pn["cf"], Pn["ON"], pspy, lo, hi, keep=ysv)
+    y1, y2 = s1_s2(yv.dropna(subset=["picks"]))
+    res["survivorship_calibration_2018_2026"] = {
+        "full": {"S1": f1, "S2": f2}, "survivors_only": {"S1": s1, "S2": s2}, "yahoo_served_only": {"S1": y1, "S2": y2},
+        "gap_S1_bp": round(s1["alpha_bp"] - f1["alpha_bp"], 2), "gap_S2_bp": round(s2["alpha_bp"] - f2["alpha_bp"], 2),
+        "gap_yahoo_S1_bp": round(y1["alpha_bp"] - f1["alpha_bp"], 2), "gap_yahoo_S2_bp": round(y2["alpha_bp"] - f2["alpha_bp"], 2),
+        "survivor_share_of_symbols": round(float(surv.mean()), 3), "yahoo_share_of_symbols": round(float(ysv.mean()), 3)}
     json.dump(res, open(os.path.join(WORK, "check.json"), "w"), indent=1, default=str)
     P_(json.dumps(res, indent=1, default=str))
 
@@ -290,9 +338,11 @@ def score():
     A = build()
     X = derive(A)
     dates = A["dates"]
-    df = book_series(dates, A["rc"], X["adv"], X["m"], X["cf"], X["ON"], X["spy_on"], P_FIRST, pd.Timestamp(PRE_END))
+    df = book_series(dates, A["rc"], X["adv"], X["m"], X["cf"], X["ON"], X["spy_on"], P_FIRST, pd.Timestamp(PRE_END),
+                     badyr=X["badyr"])
     res = {"prereg": "docs/studies/overnight_pre2016_prereg.json (fa3bf43)", "check": ck,
-           "nights": int(len(df)), "nights_skipped_lt30": int(df["picks"].isna().sum())}
+           "nights": int(len(df)), "nights_skipped_lt30": int(df["picks"].isna().sum()),
+           "pick_slots_masked_by_bad_name_year": int(df["masked"].sum())}
     if ck["coverage"]["share_ge_30"] < 0.60:
         res["verdict"] = "NO VERDICT: coverage < 60% of nights with >= 30 eligible names"
     d = df.dropna(subset=["picks", "univ", "spy"])
@@ -301,6 +351,7 @@ def score():
     res["tables"] = T
     pw = {s: {"mde_bp": T["all"][s]["mde_bp"], "powered": T["all"][s]["mde_bp"] <= 5.0} for s in ("S1", "S2")}
     res["power"] = pw
+    P_("POWER (read first): " + json.dumps(pw))
     surv = ck["survivorship_calibration_2018_2026"]
 
     def decided(s, gap):
@@ -308,7 +359,8 @@ def score():
         voided = abs(gap) >= 0.5 * abs(a["alpha_bp"]) if a["alpha_bp"] else True
         return {"powered": pw[s]["powered"], "t>=2": a["t"] >= 2.0, "positive": a["alpha_bp"] > 0,
                 "P1>0": T["P1"][s]["alpha_bp"] > 0, "P2>0": T["P2"][s]["alpha_bp"] > 0, "survivorship_ok": not voided}
-    crit = {"EDGE_REPLICATES (S2)": decided("S2", surv["gap_S2_bp"]), "ALPHA (S1)": decided("S1", surv["gap_S1_bp"])}
+    worst = lambda k: max(abs(surv[f"gap_{k}_bp"]), abs(surv[f"gap_yahoo_{k}_bp"]))
+    crit = {"EDGE_REPLICATES (S2)": decided("S2", worst("S2")), "ALPHA (S1)": decided("S1", worst("S1"))}
     res["criteria"] = crit
     if "verdict" not in res:
         if not ck["data_source_check"]["pass"]:

@@ -9,10 +9,10 @@
   "no_changes": "no parameter of the book is changed, tuned or chosen on this data"
  },
  "data": {
-  "source": "Yahoo daily bars via yfinance, auto_adjust=False, actions=True, repair=False (frozen), 1998-06-01..2016-01-06 (warm-up for the 252-day momentum and ADV; the last night's open is covered), for every symbol in the 2016-2026 panel (lh_cache panel syms) plus SPY. Every fetch failure is logged; HTTP 429/timeouts are retried; the count of symbols with no data is reported.",
+  "source": "Yahoo daily bars via yfinance, auto_adjust=False, actions=True, repair=False (frozen), 1998-06-01..today (warm-up for the 252-day momentum and ADV; to today because Yahoo split-adjusts for every split to date, so the full split history is needed for the raw-price rule), for every symbol in the 2016-2026 panel (lh_cache panel syms) plus SPY. Every fetch failure is logged; HTTP 429/timeouts are retried; the count of symbols with no data is reported. Each symbol gets a status (ok / not_found / error); symbols empty in the batch download are retried singly; check refuses to run while any symbol is in error.",
   "prices": "Yahoo Open/High/Low/Close are split-adjusted, not dividend-adjusted. Raw price for the $5 rule = Yahoo Close x the product of all split ratios AFTER that date (point-in-time). Dollar volume = Yahoo Close x Yahoo Volume (split-invariant). cf (the momentum ranking series) = forward-filled Yahoo Adj Close, to match the Alpaca panel (adjustment=all).",
   "overnight_return": "ON = (Open(t+1) + Dividend(t+1)) / Close(t) - 1, where Dividend is Yahoo's split-adjusted cash dividend with ex-date t+1 (0 otherwise); the same for SPY. This matches the panel's dividend-inclusive returns.",
-  "bad_data_rules": "Applied to picks, universe AND SPY. A name-night is dropped (counted) if Open(t+1) or Close(t) is missing or <= 0, Open(t+1)==High==Low==Close with zero volume, |ON| > 50%, or t+1 is within +/-1 trading day of a split ex-date (Yahoo split-date errors give -50%/-33%). A whole name-YEAR is dropped from picks and universe if more than 25% of its nights have ON exactly 0 (Yahoo filled the open with the prior close; KO 2000 63%). Reported: the ON==0 share by year, separately for picks and universe, and drops by rule.",
+  "bad_data_rules": "Applied to picks, universe AND SPY. A name-night is dropped (counted) if Open(t+1) or Close(t) is missing or <= 0, Open(t+1)==High==Low==Close with zero volume, |ON| > 50%, or t+1 is within +/-1 trading day of a split ex-date (Yahoo split-date errors give -50%/-33%). A whole name-YEAR is dropped from picks and universe if more than 25% of its nights have ON exactly 0 (Yahoo filled the open with the prior close; KO 2000 63%). Reported: the ON==0 share by year, separately for picks and universe, and drops by rule. The name-year rule masks ON only; it is NOT an eligibility or selection input (pick slots are unchanged, so a masked pick leaves fewer than 20 names that night); masked pick slots are reported.",
   "survivorship": "the symbol list is names that existed in 2016-2026, so pre-2016 delistings are MISSING. This biases toward survivors. The universe-relative statistic (S2) is the main defence: picks and universe are both survivors.",
   "abort": "if fewer than 60% of nights 2000-2015 have >= 30 eligible names, report coverage only and draw no verdict"
  },
@@ -36,12 +36,12 @@
  "caveats": [
   "survivorship (pre-2016 delistings missing)",
   "Yahoo open prices before ~2005 can be unreliable",
-  "no dividends",
   "$50M ADV is nominal, so fewer names qualify in early years",
   "auction costs in 2000-2015 were higher than 4 bp; the hedged money result is therefore an upper bound",
   "S1 at 4 bp understates early-era costs (20 bp shown for 2000-2002 as information)"
  ],
  "amended": "2026-10-04, before any pre-2016 data or script, per the skeptic's FIX FIRST (3 blockers, 5 fix-first, minors), all applied",
- "survivorship_calibration": "On data already in hand (Alpaca panel, which includes inactive names from 2018): compute S1 and S2 for 2018-2026 twice, (a) full panel, (b) only names that still have bars in the panel's last month (survivors). Report the gap (b - a) for each. If |gap(S2)| >= half of the 2000-2015 S2 point estimate, S2 is NO VERDICT (survivorship could explain it); same for S1.",
- "process": "the script is committed and reviewed by the skeptic BEFORE the pre-2016 fetch"
+ "survivorship_calibration": "On data already in hand (Alpaca panel, which includes inactive names from 2018): compute S1 and S2 for 2018-2026 twice, (a) full panel, (b) only names that still have bars in the panel's last month (survivors). Report the gap (b - a) for each. If |gap(S2)| >= half of the 2000-2015 S2 point estimate, S2 is NO VERDICT (survivorship could explain it); same for S1. A second calibration uses survivors = symbols Yahoo still serves (the actual pre-2016 selection); the verdict is voided if EITHER gap fails the half-of-estimate rule.",
+ "process": "the script is committed and reviewed by the skeptic BEFORE the pre-2016 fetch",
+ "amended_2": "2026-10-04, before any pre-2016 fetch, after the skeptic's script review (225e0d4): per-symbol fetch status, second survivorship calibration, fetch to today, name-year rule clarified"
 }
