@@ -1,3 +1,9 @@
+> **Depth data (2026-10-04):** Databento XNAS.ITCH mbp-10 for 7,353 random entries in the top-40 gappers,
+> 6/1-8/28, is on the mini in `data/databento/xnas_itch_mbp10_2026-06_08/` (git-ignored, $6.27 of the free credit).
+> The stage-2 depth gate test came out UNDERPOWERED/no verdict, with negative point estimates in both halves
+> ([`docs/studies/DEPTH_BOOK_RESULT_2026-10-04.md`](docs/studies/DEPTH_BOOK_RESULT_2026-10-04.md)). Loading and rerunning:
+> [`docs/studies/DEPTH_BOOK_DATA.md`](docs/studies/DEPTH_BOOK_DATA.md).
+>
 > **START HERE (2026-09-27): name-finding is the prime directive.** Profit comes
 > from serving the best possible names to the book, early and at the right
 > time. Entries and exits stay as they are; all effort goes into name finding

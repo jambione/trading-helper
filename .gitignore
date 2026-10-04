@@ -183,3 +183,6 @@ config/live_armed.json
 
 # overnight live arm switch (operational flag, never committed)
 config/overnight_live.armed
+
+# Databento raw market data (licensed, never commit; see docs/studies/DEPTH_BOOK_DATA.md)
+data/databento/
