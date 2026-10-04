@@ -1,37 +1,42 @@
 {
- "study": "Stage 2 of the paid-data decision: does Nasdaq order-book depth (information the desk has never seen) predict short-term direction in the desk's names well enough to beat the spread?",
+ "study": "Stage 2 of the paid-data decision: does Nasdaq order-book depth (information the desk has never seen) predict short-term direction in desk-like names well enough to beat the spread?",
  "registered_at": "2026-10-04, before any depth data was bought or fetched",
  "registered_before_results": true,
+ "amended": "2026-10-04, before any data, after the result-skeptic pre-registration review (FIX FIRST): the original desk-fill sample (~36 gated signals in the test half) could not detect +5 bp, so a pass was impossible and a fail meaningless. Redesigned: large systematic random-entry sample is primary; desk fills secondary with no pass bar; H1 alone decides; signal time is never a fill; book read by ts_recv; 35 s window; within-name-day OBI; explicit feature rules.",
  "data": {
-  "source": "Databento XNAS.ITCH (Nasdaq TotalView-ITCH), schema mbp-10 (top-10 price levels, aggregated size); historical, pay-as-you-go against the $125 new-account credit",
-  "budget_guard": "before any download, price every request with Databento's metadata.get_cost; abort if the total exceeds $100. Nothing is downloaded outside the windows below.",
-  "key": "the user's Databento API key in config/secrets.json.databento on the mini (gitignored); never printed or logged",
-  "signals": "desk day-trade entries with entry_price >= $10 from ai_reports/outcomes.jsonl (hold_days 0, deduplicated), 2026-09-16 through the last session before the run, restricted to Nasdaq-listed symbols (Alpaca asset exchange == NASDAQ); signal time = entry_test.t_decide when present, else entry_time",
-  "random": "2 random entry minutes per desk signal, same name and day, 09:45-15:30 (seed 17)",
-  "windows": "mbp-10 from signal - 120 s to signal + 300 s for each signal",
-  "tape": "outcomes priced from the SIP tape as in the 10/3 studies (exec_report.nbbo_at; tools/tape_check.regular_prints), never from paper fills"
+  "source": "Databento XNAS.ITCH (Nasdaq TotalView-ITCH), schema mbp-10; Nasdaq's book for every NMS name traded there (all listings), historical, pay-as-you-go against the $125 new-account credit",
+  "budget_guard": "price the full request list with Databento metadata.get_cost before any download; abort if > $100. If the full sample does not fit, shrink sessions (never per-day sampling) and report the power the shrunk sample has before running",
+  "key": "the user's Databento API key in a new file config/secrets.json.databento on the mini (gitignored by secrets.json.*); never printed or logged",
+  "universe": "per session, the 40 largest gappers (open >= $10, prior-day dollar volume >= $20M, gap >= +2%) from the all-symbol daily panel, the same rule as the SIP breakout study",
+  "sessions": "the 60 sessions 2026-06-01..2026-08-28 (before the desk's recorded fills; no overlap with any study that chose a parameter here)",
+  "primary_sample": "2 random entry minutes per name per session in 09:45-15:30 (seed 17) -> ~4,800 entries, ~2,400 per half",
+  "secondary_sample": "desk entries >= $10 since 2026-09-16 (hold_days < 1, deduplicated), signal time = the first buy submit in ai_reports/fills/DAY.jsonl (never the fill); no pass bar, information only",
+  "windows": "mbp-10 from signal - 35 s to signal (nothing after the signal is used)",
+  "tape": "outcomes from the SIP tape: buy at the SIP ask at signal + 0.5 s (latency), sell at the SIP bid at signal + 0.5 s + H (exec_report.nbbo_at); never paper fills"
  },
  "features_at_signal": {
-  "OBI5": "(sum of bid sizes at the top 5 Nasdaq levels - sum of ask sizes) / (their total), from the last mbp-10 update at or before the signal",
-  "OBI1": "the same at level 1 only",
-  "ASK_THIN30": "ask depth over the top 5 levels at the signal / its mean over the 30 s before, minus 1 (negative = asks draining)",
-  "note": "features use only book updates at or before the signal (no look-ahead); Nasdaq's book only, not consolidated"
+  "book_time": "the last mbp-10 record with ts_recv <= signal (never ts_event); a 1 s guard (ts_recv <= signal - 1 s) is run as a sensitivity check because the mini's clock offset is unmeasured",
+  "OBI5": "(sum of bid sizes at the top 5 levels - sum of ask sizes) / their total",
+  "OBI5_dm": "OBI5 minus the mean OBI5 of that name's entries that session (so the gate cannot become a name/depth filter); PRIMARY form",
+  "OBI1": "the same at level 1 only (information)",
+  "ASK_THIN30": "ask depth over the top 5 levels at the signal / its TIME-WEIGHTED mean over the 30 s before, minus 1 (information)",
+  "drops": "drop and count an entry when: fewer than 5 levels on either side, a crossed or locked book, no book update in the 30 s before the signal, or a halt inside the window"
  },
  "outcome": {
-  "market_net": "buy at the SIP ask at the signal, sell at the SIP bid after H, H in {60 s, 300 s, the desk trade's own hold}; bp",
-  "primary_horizon": "the desk trade's own hold (what the desk would actually earn)"
+  "primary_horizon": "H = 120 s (the desk's median hold is ~100 s)",
+  "information": "H = 60 s and 300 s"
  },
- "split": "by date: first half / second half of the sample days",
- "procedure": "cut-offs are fixed on the FIRST half only (OBI5 top tercile; ASK_THIN30 bottom tercile) and applied unchanged to the second half",
+ "split": "by date: sessions 1-30 / 31-60",
+ "procedure": "the OBI5_dm top-tercile cut-off is fixed on the FIRST half and applied unchanged to the second half",
  "hypotheses": {
-  "H1_PRIMARY": "OBI5 gate: desk signals in the first-half-fixed top OBI5 tercile have higher market_net (primary horizon) than the rest",
-  "H2": "ASK_THIN30 gate: desk signals in the bottom tercile (asks draining) have higher market_net than the rest",
-  "H3_info": "the same on random entries (does depth pick direction without the desk's selection?); OBI1; 60 s and 300 s horizons"
+  "H1_PRIMARY": "random entries in the top OBI5_dm tercile earn more over H = 120 s than the rest",
+  "H2_info": "ASK_THIN30 bottom tercile (asks draining): information only; if it alone looks strong it is 'unconfirmed, needs a new held-out period'",
+  "H3_info": "OBI1; 60/300 s; the desk-fill secondary sample; strata by listing exchange (Nasdaq-listed vs other) and by name"
  },
- "statistic": "mean bp per signal, t clustered by day; gated-minus-rest difference and gated level",
- "pass": "H1 (or H2, reported separately, no pooling): in the SECOND half, gated desk signals beat the rest by >= +5 bp with day-clustered t >= 2, the gated signals' own market_net is > 0, and n >= 60 gated signals; the first half is only for fixing cut-offs. With two primary-ish gates, each must pass on its own (no best-of).",
- "if_pass": "result-skeptic review of the positive, then a firm quote for LIVE Nasdaq depth (exchange fees differ from historical), then a paper A/B with live depth — no live money on this result alone",
- "if_fail": "order-book depth is not worth buying for the desk's horizon; the paid-data question is closed",
+ "statistic": "mean bp per entry, t clustered by day",
+ "pass": "H1 alone decides. In the SECOND half: (a) gated minus rest >= +5 bp with day-clustered t >= 2; (b) the gated entries' own net > 0 after the spread they paid; (c) gated n >= 600; (d) the 1 s-guard sensitivity keeps (a) at t >= 1.5. Power check before reading the result: with the first-half per-entry sd, (c) must make +5 bp detectable at t = 2; if not, the run is declared underpowered and no verdict is drawn.",
+ "if_pass": "result-skeptic review of the positive, then a firm quote for LIVE Nasdaq depth (exchange fees differ from historical), then a paper A/B with live depth; no live money on this result alone",
+ "if_fail": "Nasdaq depth is not worth buying as an entry gate at the desk's ~2-minute horizon (only if the power check is met); other horizons are not covered",
  "prior": "low (~10-20%): book imbalance is known to predict seconds-scale mid moves usually smaller than the spread; the desk acts on 0.25-2 s ticks via IEX quotes and REST orders",
- "caveats": ["Nasdaq-only book (not consolidated depth)", "the sample covers only recent sessions (since 9/16), so the second half is small", "Nasdaq-listed subset of the desk's names"]
+ "caveats": ["Nasdaq-only book, not consolidated depth (a live gate would buy the same feed)", "2026-06..08 regime only", "random entries stand in for the desk's entries, which test as noise-equivalent to random minutes"]
 }
