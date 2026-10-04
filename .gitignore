@@ -186,3 +186,6 @@ config/overnight_live.armed
 
 # Databento raw market data (licensed, never commit; see docs/studies/DEPTH_BOOK_DATA.md)
 data/databento/
+
+# Yahoo pre-2016 bars (overnight_pre2016.py; third-party data, never commit)
+data/yahoo_pre2016/
