@@ -1,0 +1,35 @@
+{
+ "study": "Does the live overnight book (top-20 12-1 momentum, close -> next open) hold up on 2000-2015 data, which no study has used, and is any of it more than market beta?",
+ "registered_at": "2026-10-04, before any pre-2016 stock data is fetched for this study",
+ "registered_before_results": true,
+ "why": "Skeptic review 2026-10-02 (SKEPTIC_REVIEW_2026-10-02.md section 1): the overnight edge is UNPROVEN; the settling test is a pre-2016 rerun. On 2016-2026 the book is mostly beta (IS beta 1.34; hedged +0.8 bp IS / +5.4 bp OOS, t 0.3 / 1.4, overnight_hedge_intraday.py). Every 2016-2026 period has now been looked at, so new evidence must come from new years.",
+ "frozen_book": {
+  "rule": "exactly the live/backtest rule in tools/studies/overnight_hedge_intraday.py: on each session t, eligible = raw close >= $5 AND ADV20 (20-day mean of close x volume, min 15 days) >= $50M AND finite 12-1 momentum; pick the 20 highest m = cf[t-21]/cf[t-252] - 1; equal weight; hold close(t) -> open(t+1); skip nights with fewer than 30 eligible names (counted)",
+  "cost": "4 bp per night round trip (same as the 2016-2026 study); the SPY hedge leg costs 2.26 bp x h",
+  "no_changes": "no parameter of the book is changed, tuned or chosen on this data"
+ },
+ "data": {
+  "source": "Yahoo daily bars via yfinance (free), auto_adjust=False, actions=True, 1999-01-01..2015-12-31 (1999 is warm-up for the 252-day momentum and ADV), for every symbol in the 2016-2026 panel (lh_cache panel syms) plus SPY",
+  "prices": "Yahoo Open/High/Low/Close are split-adjusted, not dividend-adjusted. Raw price for the $5 rule = Yahoo Close x the product of all split ratios AFTER that date (undoes the backward split adjustment, so the filter is point-in-time). Dollar volume = Yahoo Close x Yahoo Volume (split-invariant). cf = forward-filled Yahoo Close (as the panel's cf).",
+  "overnight_return": "ON = Open(t+1) / Close(t) - 1 on split-adjusted prices. Dividends are not added back (ex-dates lower the open by the dividend; affects the book and the universe alike; stated as a caveat).",
+  "bad_data_rules": "a name-night is dropped (counted) if Open(t+1) or Close(t) is missing, <= 0, or Open(t+1) == High == Low == Close of t+1 with zero volume (stale/filled bar), or |ON| > 50% (Yahoo split/opening errors); the same rule applies to the universe average",
+  "survivorship": "the symbol list is names that existed in 2016-2026, so pre-2016 delistings are MISSING. This biases toward survivors. The universe-relative statistic (S2) is the main defence: picks and universe are both survivors.",
+  "abort": "if fewer than 60% of nights 2000-2015 have >= 30 eligible names, report coverage only and draw no verdict"
+ },
+ "period": "2000-01-03..2015-12-31 (book nights), split by date into P1 2000-2007 and P2 2008-2015",
+ "statistics": {
+  "S1_hedged": "book net of 4 bp minus h x SPY overnight minus 2.26 bp x h, with h = 1.34 FIXED (the 2017-2021 estimate; NOT re-estimated on this data). Mean bp/night, t with Newey-West (5 lags)",
+  "S2_relative": "picks overnight mean minus the equal-weighted overnight mean of ALL eligible names the same night (gross, no cost: it is the momentum ranking's information, survivorship-neutral to first order). Mean bp/night, Newey-West t (5 lags)",
+  "also_reported": "unhedged net mean/t; realised beta to SPY overnight in P1, P2 and all; S1 at h = realised all-period beta (information); count of eligible names per night (median, min); nights skipped; drops by rule; worst night, CVaR 1%, max drawdown; per-year S1 and S2; a 2016-2021 rerun of S1/S2 on Yahoo data vs the Alpaca panel for the same years as a data-source check"
+ },
+ "power": "before reading means: report SE(S1) and SE(S2) over 2000-2015; minimum detectable effect = 2.84 x SE. If 2.84 x SE(S1) > 8 bp, S1 is reported as UNDERPOWERED (no verdict on alpha); same for S2.",
+ "pass": {
+  "EDGE_REPLICATES": "S2 > 0 with Newey-West t >= 2.0 over 2000-2015 AND S2 > 0 in both P1 and P2",
+  "ALPHA": "S1 > 0 with Newey-West t >= 2.0 over 2000-2015 AND S1 > 0 in both P1 and P2",
+  "reading": "EDGE_REPLICATES + ALPHA = the overnight edge is more than beta: grounds (with real auction fills) to discuss a larger live account. EDGE_REPLICATES only = the ranking has information but the money is mostly beta: keep $100, consider the hedge. Neither = the overnight book is a leveraged index bet; say so plainly."
+ },
+ "data_source_check": "the 2016-2021 Yahoo rerun must give S1 and S2 within 3 bp/night of the Alpaca-panel numbers; if not, report the gap and treat 2000-2015 as unreliable (no verdict)",
+ "no_retuning": "nothing is changed after data is seen; any later variant is a new pre-registration",
+ "prior": "moderate for S2: Lou, Polk and Skouras (2019) find momentum profits accrue overnight in 1993-2013 US stocks; weak for S1 given the 2016-2026 hedged result",
+ "caveats": ["survivorship (pre-2016 delistings missing)", "Yahoo open prices before ~2005 can be unreliable", "no dividends", "$50M ADV is nominal, so fewer names qualify in early years", "auction costs in 2000-2015 were higher than 4 bp; the hedged money result is therefore an upper bound"]
+}
