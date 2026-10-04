@@ -33,7 +33,18 @@ SIP bid at +0.5 s + 120 s (`exec_report.nbbo_at`). Spend: $6.27 quoted, from the
   (H1 +1.7 bp, H2 -0.2 bp). Median quoted SIP spread at entry 15.2 bp; that spread is the whole loss.
 - Clock-hour gated-minus-rest: 09:xx is the only hour positive in both halves (H1 +24.4 t 1.64; H2 +10.0 t 0.90);
   not significant, a stratum picked after looking, so **unconfirmed, needs a new held-out period**.
-- 60 s and 300 s horizons: lookups were still filling in when this was written; rerun `score` to fill them.
+- 60 s and 300 s horizons (filled in by a re-score 2026-10-04 14:40 ET, 0 lookup failures; the 120 s numbers are unchanged),
+  gated minus rest:
+
+  | hold | net H1 | net H2 | gross mid-to-mid H1 | gross mid-to-mid H2 |
+  |---|---|---|---|---|
+  | 60 s | -2.18 (t -1.07) | -0.04 (t -0.04) | +0.91 (t 0.47) | **+3.22 (t 3.45)** |
+  | 300 s | -0.85 (t -0.20) | -1.77 (t -0.77) | +2.16 (t 0.52) | +1.32 (t 0.60) |
+
+  Every horizon loses about the spread net (all-entry net -25..-27 bp). The one significant cell, H2 60 s
+  gross +3.2 bp, is the textbook short-horizon imbalance effect: the mid leans about a fifth of the spread toward
+  the heavy side, then fades by 300 s. It does not replicate in H1 (+0.9), and it is about 1/5 of the 15 bp
+  spread it would have to beat. It is information only and does not change the decision.
 
 ## Plain words
 
