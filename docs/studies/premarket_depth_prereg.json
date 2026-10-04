@@ -1,0 +1,39 @@
+{
+ "study": "Premarket (07:00-09:25 ET) momentum names: does a simple pre-declared entry signal beat random premarket minutes by more than the measured round-trip spread, priced on Nasdaq (XNAS.ITCH) quotes?",
+ "registered_at": "2026-10-04, before any premarket data (Alpaca or Databento) was fetched for this study",
+ "registered_before_results": true,
+ "approved_by": "Jonathan (operator), free-credit Databento test; $0 out of pocket",
+ "budget": {
+  "cap_usd": 10,
+  "rule": "every Databento request is priced with metadata.get_cost first, logged, and refused if the cumulative quoted total would pass $10. Before any download, the whole request list is quoted; the design is fixed by the FIRST rung of this ladder whose total quote is <= $10: (1) mbp-10; (2) mbp-1 (OBI5 information is then dropped); (3) mbp-1 restricted to name-days whose qualify price is $2-10; (4) as (3), dropping whole sessions from the START of the range until it fits. The chosen rung and its exact quote are reported before the fetch. Status (halt) schema for the same names is always included."
+ },
+ "sessions": "all sessions 2026-06-01..2026-08-28 (63, the same as stage 2), split by date: first half = sessions 1-31, second half = sessions 32-63",
+ "universe": {
+  "base": "symbols in the all-symbol daily panel (ai_reports/allsym/daily_2025-09-01_2026-10-02.pkl) with prior close $1.50-25",
+  "scan": "Alpaca SIP 30-minute bars 04:00-09:30 ET (free historical): candidate if premarket high >= 1.10 x prior close and premarket volume >= 20,000",
+  "minute_bars": "Alpaca SIP 1-minute bars 04:00-09:30 ET for every candidate",
+  "qualify": "point-in-time: the first 1-minute bar starting in 07:00..09:24 ET whose close is in $2-20, close >= 1.10 x prior close, cumulative volume since 04:00 >= 50,000, and cumulative volume since 04:00 >= 10% of the name's prior-20-session mean daily volume (relative volume; daily panel). Float is NOT used (no free point-in-time float). A name-day enters the universe only if it qualifies.",
+  "no_lookahead": "nothing at or after the decision time is used for selection; the 09:30 open is never used"
+ },
+ "entries": {
+  "decision_time": "the close of a 1-minute bar (bar start + 60 s); fills priced 0.5 s after the decision",
+  "SIGNAL_primary": "premarket-high break: the first 1-minute bar starting at or after the qualify bar (and by 09:24) whose close is above the highest high of all earlier bars since 04:00 that day; one per name-day",
+  "CONTROL": "3 random decision minutes per name-day, drawn uniformly without replacement from bar starts qualify..09:24 (all of them if fewer than 3), seed 23",
+  "information_only": "OBI5 = (top-5 bid size - top-5 ask size)/total at the decision (if rung 1); control entries in the top tercile of OBI5 demeaned within name-day (cut-off fixed on the first half) vs the rest"
+ },
+ "pricing": {
+  "source": "Databento XNAS.ITCH book from the same download (Nasdaq book only; premarket SIP is thin). Book at time t = last record with ts_recv <= t.",
+  "window": "one continuous window per name-day: [qualify bar start - 10 min, 09:41:00 ET]",
+  "gross": "XNAS mid at exit / XNAS mid at entry - 1 (bp), before costs",
+  "net": "XNAS bid at exit / XNAS ask at entry - 1 (bp): buy at the ask, sell at the bid. Alpaca commission 0; SEC/TAF (< 0.3 bp) ignored and stated.",
+  "round_trip_cost": "per entry, gross - net (the measured half-spread in + half-spread out); RT(half) = mean over SIGNAL entries in that half",
+  "drops": "drop an entry (counted) if the book at entry or exit is missing (no record since window start), one-sided, crossed or locked, or a halt/pause (XNAS status) overlaps entry..exit"
+ },
+ "holds": {"primary": "5 min", "information": ["2 min", "15 min", "to 09:35:00 ET"]},
+ "statistic": "pooled SIGNAL + CONTROL entries in a half; OLS of gross on a SIGNAL dummy; diff = SIGNAL minus CONTROL mean gross; t from day-clustered (CR1) SE",
+ "pass": "POWER CHECK FIRST on the first half: 2.84 x SE(diff) <= RT(first half) and SIGNAL n >= 100 in each half; otherwise UNDERPOWERED, no verdict. PASS iff in BOTH halves, at the primary 5 min hold: diff > RT(half) AND day-clustered t(diff) >= 2. Otherwise FAIL.",
+ "always_reported": "per half and per hold: n, mean, median, day-clustered t, hit rate for SIGNAL and CONTROL, gross and net; the plain random-entry (CONTROL) net after the spread; median XNAS spread at entry; drop counts; universe size; exact quote and logged spend",
+ "no_retuning": "nothing is tuned on the second half; no thresholds are changed after data is seen",
+ "prior": "low: the 2026-09-27 premarket five-pillars study found net about minus the SIP spread for every cell",
+ "caveats": ["Nasdaq book only, not consolidated", "June-August 2026 regime", "no float filter", "XNAS premarket spreads may be wider than the NBBO"]
+}
