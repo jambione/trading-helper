@@ -8,11 +8,12 @@
   "budget_guard": "price the full request list with Databento metadata.get_cost before any download; abort if > $100. If the full sample does not fit, shrink sessions (never per-day sampling) and report the power the shrunk sample has before running",
   "key": "the user's Databento API key in a new file config/secrets.json.databento on the mini (gitignored by secrets.json.*); never printed or logged",
   "universe": "per session, the 40 largest gappers (open >= $10, prior-day dollar volume >= $20M, gap >= +2%) from the all-symbol daily panel, the same rule as the SIP breakout study",
-  "sessions": "the 60 sessions 2026-06-01..2026-08-28 (before the desk's recorded fills; no overlap with any study that chose a parameter here)",
-  "primary_sample": "2 random entry minutes per name per session in 09:45-15:30 (seed 17) -> ~4,800 entries, ~2,400 per half",
+  "sessions": "all sessions 2026-06-01..2026-08-28 (63 in the minute-bar cache), split by date into halves at the middle session; the SIP breakout study used this universe over 5/1-9/11 but tuned nothing used here",
+  "primary_sample": "3 random entry minutes per name per session in 09:45-15:30 (seed 17), ~7,500 entries; if get_cost for 3/name-day exceeds the $100 cap, fall back to 2/name-day, then shrink sessions",
   "secondary_sample": "desk entries >= $10 since 2026-09-16 (hold_days < 1, deduplicated), signal time = the first buy submit in ai_reports/fills/DAY.jsonl (never the fill); no pass bar, information only",
   "windows": "mbp-10 from signal - 35 s to signal (nothing after the signal is used)",
-  "tape": "outcomes from the SIP tape: buy at the SIP ask at signal + 0.5 s (latency), sell at the SIP bid at signal + 0.5 s + H (exec_report.nbbo_at); never paper fills"
+  "tape": "outcomes from the SIP tape: buy at the SIP ask at signal + 0.5 s (latency), sell at the SIP bid at signal + 0.5 s + H (exec_report.nbbo_at); never paper fills",
+  "quote_failures": "SIP quote lookups are cached; failed lookups are counted; abort (no verdict) if more than 2% of entries lose a quote (Alpaca 429s have silently dropped names in study tools before)"
  },
  "features_at_signal": {
   "book_time": "the last mbp-10 record with ts_recv <= signal (never ts_event); a 1 s guard (ts_recv <= signal - 1 s) is run as a sensitivity check because the mini's clock offset is unmeasured",
@@ -24,19 +25,25 @@
  },
  "outcome": {
   "primary_horizon": "H = 120 s (the desk's median hold is ~100 s)",
-  "information": "H = 60 s and 300 s"
+  "information": "H = 60 s and 300 s",
+  "outliers": "raw means decide the verdict; a 3-sd winsorized result is reported as information only"
  },
  "split": "by date: sessions 1-30 / 31-60",
  "procedure": "the OBI5_dm top-tercile cut-off is fixed on the FIRST half and applied unchanged to the second half",
  "hypotheses": {
   "H1_PRIMARY": "random entries in the top OBI5_dm tercile earn more over H = 120 s than the rest",
   "H2_info": "ASK_THIN30 bottom tercile (asks draining): information only; if it alone looks strong it is 'unconfirmed, needs a new held-out period'",
-  "H3_info": "OBI1; 60/300 s; the desk-fill secondary sample; strata by listing exchange (Nasdaq-listed vs other) and by name"
+  "H3_info": "OBI1; 60/300 s; the desk-fill secondary sample; strata by listing exchange (Nasdaq-listed vs other) and by name; gated-minus-rest stratified by clock hour (OBI5_dm is demeaned within name-day, not within hour)"
  },
  "statistic": "mean bp per entry, t clustered by day",
- "pass": "H1 alone decides. In the SECOND half: (a) gated minus rest >= +5 bp with day-clustered t >= 2; (b) the gated entries' own net > 0 after the spread they paid; (c) gated n >= 600; (d) the 1 s-guard sensitivity keeps (a) at t >= 1.5. Power check before reading the result: with the first-half per-entry sd, (c) must make +5 bp detectable at t = 2; if not, the run is declared underpowered and no verdict is drawn.",
+ "pass": "H1 alone decides. POWER CHECK FIRST, on the first half after drops: 2.84 x the day-clustered SE of gated-minus-rest (the cut-off applied to the first half) must be <= 5 bp (80% power for +5 bp at t = 2); if not, the run is underpowered and no verdict is drawn. Then in the SECOND half: (a) gated minus rest >= +5 bp with day-clustered t >= 2 (raw means); (b) the gated entries' own net > 0 after the spread they paid; (c) gated n >= 600 survivors (so >= 1,800 surviving entries in the half); (d) the 1 s-guard sensitivity keeps (a) at t >= 1.5.",
  "if_pass": "result-skeptic review of the positive, then a firm quote for LIVE Nasdaq depth (exchange fees differ from historical), then a paper A/B with live depth; no live money on this result alone",
  "if_fail": "Nasdaq depth is not worth buying as an entry gate at the desk's ~2-minute horizon (only if the power check is met); other horizons are not covered",
  "prior": "low (~10-20%): book imbalance is known to predict seconds-scale mid moves usually smaller than the spread; the desk acts on 0.25-2 s ticks via IEX quotes and REST orders",
- "caveats": ["Nasdaq-only book, not consolidated depth (a live gate would buy the same feed)", "2026-06..08 regime only", "random entries stand in for the desk's entries, which test as noise-equivalent to random minutes"]
+ "caveats": [
+  "Nasdaq-only book, not consolidated depth (a live gate would buy the same feed)",
+  "2026-06..08 regime only",
+  "random entries stand in for the desk's entries, which test as noise-equivalent to random minutes"
+ ],
+ "amended_2": "2026-10-04, before any data, after the skeptic's re-review (FIX FIRST, minor): 3 entries per name-day (power), power check on the day-clustered SE, raw means decide, exact session range, quote-failure abort, clock-hour strata."
 }
