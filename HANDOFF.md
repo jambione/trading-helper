@@ -1,3 +1,9 @@
+> **S/R queue #2 size-by-room FAIL** (prereg `363728b`): lift −12.0 / −1.7 bp vs RT ~12 bp; [`docs/studies/SR_SIZE_BY_ROOM_2026-10-05.md`](docs/studies/SR_SIZE_BY_ROOM_2026-10-05.md). **#2b breakout confirmation FAIL** (prereg `6b0047e`): confirmed−poke lift −19.4 / −16.6 bp vs RT 20; [`docs/studies/SR_BREAKOUT_CONFIRM_2026-10-05.md`](docs/studies/SR_BREAKOUT_CONFIRM_2026-10-05.md). **#3** observe-only held-out score still queued after ~10 IEX sessions — do not invent ([`docs/studies/SR_TEST_QUEUE_2026-10-05.md`](docs/studies/SR_TEST_QUEUE_2026-10-05.md)).
+>
+> **S/R queue #1 exit-only at resistance (2026-10-05): FAIL.** Prereg `4aea5ed97ad2357f386f1bd00cbb2975843e787b`. Half A lift −17.1 bp vs RT 20 bp (net −21.3); half B lift −9.2 bp vs RT 20 bp (net −19.9). Resistance TP loses to the no-S/R time-stop control on both chronological halves. [`docs/studies/SR_EXIT_RESIST_2026-10-05.md`](docs/studies/SR_EXIT_RESIST_2026-10-05.md). Queue #2 size-by-room and #3 observe-only held-out score remain queued ([`docs/studies/SR_TEST_QUEUE_2026-10-05.md`](docs/studies/SR_TEST_QUEUE_2026-10-05.md)); do not invent #3.
+>
+> **−60 %R × S/R-gap open-arm (2026-10-05): FAIL.** Prereg `47d31caf0274e11affb80d55e5056f0ba8b18e2b`. Half A lift −3.2 bp vs RT 20 bp (net −26.7); half B lift +1.9 bp vs RT 20 bp (net −13.8). Does not beat same-hour like-for-like −60 %R control by more than the measured round-trip spread on either chronological half. See [`docs/studies/SR_GAP_WR60_ARM_2026-10-05.md`](docs/studies/SR_GAP_WR60_ARM_2026-10-05.md).
+>
 > **Night batch 2026-10-05 (order blocks):** #1 order-block skip rule **FAIL** (half A −17.9 bp t −3.58, half B +0.1 bp
 > t +0.01); #2 support→resistance range trade **FAIL** (net −8.4 / −20.8 bp; vs like-for-like control −4.2 / −5.2 bp);
 > #3 held-out day 1: flagged −7.4 bp (n 29) vs not −0.4 bp (n 24); #4 overbought exit −7.8 vs live −7.6 bp/trade.

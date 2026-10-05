@@ -1,0 +1,31 @@
+{
+ "study": "−60 %R open-arm gate in the gap between support and resistance: arm when fast %R ≤ −60 near a known support order block with pre-declared room to the nearest resistance.",
+ "registered_at": "2026-10-05 evening ET, before any −60 %R × S/R outcome was computed on the sample",
+ "registered_before_results": true,
+ "origin": "Operator (Jonathan) approved a NEW pre-registered test 2026-10-05: use the gap between support and resistance and a −60 %R open-arm gate that fires closer to support, with a lot of room until resistance. Sibling studies order_block_gate and sr_range_trade both FAIL; this is a different arm (≤ −60, not the live square at −20) gated by S/R location.",
+ "script": "tools/studies/sr_gap_wr60_arm.py (exact rules in its docstring); blocks from tools/order_blocks.py (point-in-time, charted last 3 per side, swing 10, wicks, 1-min bars)",
+ "sample": "admitted name-days of the 2026-10-02 indicator-levels study ($10+; control rows of ai_reports/indicator_levels/rows.json) with its 1-min premarket+RTH SIP bars (ext.pkl), same sessions as docs/studies/sr_range_trade_prereg.json and order_block_gate_prereg.json. These days were mined for other level features and for the two sibling order-block studies; never for a −60 %R × support-gap arm.",
+ "halves": "chronological: first half of sample days vs second half (not alternate days)",
+ "signal": "decision at a 1-min close 09:40-15:30 ET (one per name per 15 min): fast Williams %R (21, EMA 7, as the desk / sr_range_trade) ≤ −60; price NEAR a charted support block S known at that close (unbroken bullish OB or bearish breaker): inside [S.btm, S.top] OR within 0.30% above S.top; not inside a charted resistance block (else dropped); room to nearest charted resistance above (unbroken bearish OB or bullish breaker) = R.btm/price − 1 ≥ 0.40% (primary). No resistance above -> no trade.",
+ "near_support_distance": "inside the support zone, or within 0.30% above its top (mirrors the 0.30% band of order_block_gate; locked before any run)",
+ "trade": "buy at the next bar's open; hold 15 min (15:55 cap); outcome = close of that bar / entry − 1. Cost 0.20% round trip ($10+ tier, same as the sibling studies). Gross = before cost; net = after cost.",
+ "control": "per signal, one random minute (seed 31) in the same name-day AND same ET clock hour that ALSO has fast %R ≤ −60 (fallback: same hour only, counted). Same 15-min hold. Isolates the S/R-gap LOCATION from the −60 %R timing and time of day.",
+ "measured_round_trip_spread": "mean(gross − net) of signal entries in the half under the locked 0.20% cost model (= 20 bp). Pass uses that measured rate; do not invent a different spread.",
+ "pass": "in BOTH chronological halves: (signal mean gross − control mean gross) > measured round-trip spread of that half's signal entries, AND ≥ 50 signal trades per half. Also report net after costs (informative; not the pass bar). Fewer than 50 signals in a half -> UNDERPOWERED, no verdict. Any PASS = PENDING SKEPTIC REVIEW (not a live gate; needs held-out IEX confirmation).",
+ "information_only": [
+  "room ≥ 0.60% (primary is 0.40%; 'a lot of room' variant)",
+  "near-support band 0.10% and inside-only (no above-top band)",
+  "day-clustered t on (signal − control) gross and on net",
+  "gross, net, win rate, median room, median distance-to-support",
+  "drop counts by rule incl. control fallbacks"
+ ],
+ "prior": "low. Sibling order_block_gate FAIL (half A only); sr_range_trade FAIL (does not beat like-for-like control). 10/02 near-support cells were least-bad but still negative. The live desk arms on the square (≥ −20), not ≤ −60; −60 is a new arm threshold.",
+ "caveats": [
+  "flat 0.20% cost, not per-name spreads; measured RT spread under this model is 20 bp",
+  "15-min fixed hold, not the desk's trail",
+  "SIP bars; live desk uses IEX — any pass needs ≥ 10-session IEX confirmation before a config change",
+  "same 20 sessions already mined for levels and two order-block studies",
+  "fast %R here counts rows and returns −50 on a flat range; the desk's _minute_grid_pr fills missing minutes",
+  "port of order_blocks.py checked on four charts only"
+ ]
+}

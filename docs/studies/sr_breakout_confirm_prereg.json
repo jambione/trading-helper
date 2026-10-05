@@ -1,0 +1,30 @@
+{
+ "study": "Breakout confirmation (not the first poke): after a charted resistance order block breaks upward, require a confirming close above the broken top plus a higher low (primary) before entering; compare to entering on the first poke.",
+ "registered_at": "2026-10-05 evening ET, before any breakout-confirmation outcome was computed on the sample",
+ "registered_before_results": true,
+ "origin": "Operator (Jonathan) via steering after S/R queue #2: Breakout confirmation (not the first poke) — require a close above resistance plus a higher low (or volume) before treating it as a run. Queued as #2b after size-by-room.",
+ "queue": "docs/studies/SR_TEST_QUEUE_2026-10-05.md item #2b",
+ "script": "tools/studies/sr_breakout_confirm.py; blocks from tools/order_blocks.py (point-in-time, charted last 3 per side, swing 10, wicks, 1-min)",
+ "sample": "admitted name-days of the 2026-10-02 indicator-levels study ($10+; control rows of ai_reports/indicator_levels/rows.json) with ext.pkl 1-min SIP bars (premarket+RTH). Same sessions as the sibling order-block studies. Break events on RTH 09:40-15:00 ET.",
+ "halves": "chronological: first half of sample days vs second half",
+ "break_event": "a charted bearish order block (among the last 3 per side known at that bar) becomes a breaker on bar i: max(open, close) > zone top (as tools/order_blocks.py). Decision known at the close of bar i. Only the first break of each block (origin_ts, top, btm) per name-day counts.",
+ "control_first_poke": "buy at the open of bar i+1 (first poke after the break is known). Hold 15 min (15:55 cap). Gross = exit_close/entry − 1; net = gross − 0.20%.",
+ "signal_confirmed": "after the break bar i, wait for the first later bar j (j > i, within 15 minutes, before 15:00) with close[j] > broken top AND low[j] > low[i] (higher low). Buy at the open of bar j+1. Same 15-min hold and cost. If no confirmation within 15 minutes, the event has no signal trade (dropped from the paired primary; counted).",
+ "pairing": "primary uses break events that produce BOTH a poke entry and a confirmation entry (confirmation arrived in time). Lift = confirmed gross − poke gross on the same event.",
+ "pass": "in BOTH chronological halves: mean(confirmed gross − poke gross) > measured RT spread of confirmed entries in that half (mean(gross−net) = 20 bp under the 0.20% model), AND >= 50 paired events per half. Also report net after costs for both legs. Fewer than 50 -> UNDERPOWERED. Any PASS = PENDING SKEPTIC REVIEW.",
+ "information_only": [
+  "volume confirmation instead of higher low: close > top AND volume > 20-bar mean volume",
+  "higher-low OR volume (either)",
+  "unpaired: all poke trades vs all confirmed trades (different n)",
+  "events that never confirm (poke-only outcomes)",
+  "day-clustered t on paired lift"
+ ],
+ "prior": "low-moderate. order_block_gate BREAKOUT / breakout-distance cells were information-only and not a registered pass. First-poke breakouts were among the worse cells on 10/02 level breaks.",
+ "caveats": [
+  "flat 0.20% cost; measured RT = 20 bp under this model",
+  "15-min hold, not the desk's trail",
+  "SIP bars; live desk uses IEX",
+  "same mined sessions as sibling studies",
+  "confirmation delay means confirmed entries occur later — the test asks whether waiting helps, not whether breakouts beat random minutes"
+ ]
+}
