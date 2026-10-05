@@ -17724,10 +17724,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 pass
 
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
-        # Order blocks at the decision price. Logged always (when on); with
-        # ai_watch_ob_resist_skip on, a resistance reading refuses the arm.
-        _ob_arm = _ob_observe_stamp(rec, sym, ask_f, cfg, t0)
-        if ok_arm and _ob_resist_refusal(_ob_arm, cfg):
+        # Order blocks (log; ai_watch_ob_resist_skip refuses on resistance).
+        if _ob_resist_refusal(_ob_observe_stamp(rec, sym, ask_f, cfg, t0), cfg) and ok_arm:
             ok_arm, why = False, "ob_resist"
         # The counterfactual record. arm_ok False with in_zone True is the row
         # that pays for this whole mechanism: price was in the zone and the
@@ -17744,11 +17742,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                        "below_zone", "reward_risk", "no_structure",
                        "late_hold_closed", "late_hold_not_late_admit",
                        "ob_resist"):
-                if why == "ob_resist":
-                    _skip(why, ob_room_pct=_ob_arm.get("ob_room_pct"),
-                          ob_bars=_ob_arm.get("ob_bars"))
-                else:
-                    _skip(why)
+                _skip(why)
             else:
                 set_block_reason(rec, why or "blocked", now=t0)
                 touched[sym] = rec
