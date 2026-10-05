@@ -1,0 +1,33 @@
+{
+ "study": "Arm EARLIER on support instead of squares: on seated desk names, arm on the first touch/reclaim of a known point-in-time support order block with room to resistance >= 0.40%, no square/exhaustion print required; compare with the desk's square-arm entries on the same name-days.",
+ "registered_at": "2026-10-05 ~19:10 ET, before any support-arm outcome was computed",
+ "registered_before_results": true,
+ "origin": "Operator (Jonathan) approved 2026-10-05: arm earlier using support instead of squares. Siblings the same day (order_block_gate, sr_range_trade, sr_gap_wr60_arm, sr_exit_resist, sr_size_by_room, sr_breakout_confirm) all FAIL.",
+ "queue": "docs/studies/SR_TEST_QUEUE_2026-10-05.md item #4",
+ "script": "tools/studies/sr_support_arm.py; blocks from tools/order_blocks.py (point-in-time, charted last 3 per side, swing 10, wicks, 1-min)",
+ "sample": "seated desk names = name-days with at least one E square arm in ai_reports/indicator_levels/rows.json ($10+, 554 name-days, 16 days 2026-09-11..10-02), 1-min premarket+RTH SIP bars from ext.pkl (day + prior day). 2026-10-05 is NOT in the cached bars and is EXCLUDED (no new data fetch). Same sessions as the order-block studies.",
+ "halves": "chronological over the 16 sample days: A = first 8 days (09-11..09-22), B = last 8 days (09-23..10-02)",
+ "support_arm": "at a 1-min close i, decision window 09:40-15:30 ET: a charted support block S known at that close (unbroken bullish OB or bearish breaker, known_ts <= close) with low[i] <= S.top AND close[i] >= S.btm (touched or reclaimed the zone and closed at or above its bottom). Only the FIRST such bar per block per name-day counts (later touches of the same block are ignored). Not inside a charted resistance block at close[i]. Room = nearest charted resistance bottom above close[i] / close[i] - 1 >= 0.40% (primary); no resistance above -> no arm. One support arm per name per 15 min. NO square / exhaustion print required. %R NOT required in the primary.",
+ "square_arm": "the desk's square arms on the same name-days = E rows (signal_timing.events_for with live config, one per name per 15 min, 09:40-15:30), decision time t.",
+ "outcome": "both arms identical: buy at the open of the bar after the decision close; gross = close of the bar 15 min after entry (15:55 cap) / entry - 1; net = gross - 0.20% ($10+ tier). Recomputed for both arms from the same bars by the same function.",
+ "primary_statistic": "on matched name-days (both >= 1 support arm and >= 1 square arm): mean support gross - mean square gross (arm level), t from a day-clustered (CR1) regression of gross on a support dummy.",
+ "measured_round_trip_spread": "mean(gross - net) of support entries in the half under the locked 0.20% model (= 20 bp).",
+ "pass": "in BOTH chronological halves: (support gross - square gross) > measured RT spread of that half, with >= 50 support arms per half. Report net after costs, n per half, t. Fewer than 50 -> UNDERPOWERED. Any PASS = PENDING SKEPTIC REVIEW (not a live arm; SIP != IEX; needs held-out IEX confirmation; config untouched incl. ai_watch_ob_resist_skip).",
+ "minutes_earlier": "on matched name-days: (first square decision time - first support decision time) in minutes; report median, mean and share where support fires first. Also, for each square arm, minutes since the latest earlier support arm on the same name-day (if any).",
+ "information_only": [
+  "same-hour like-for-like control: per support arm one random minute (seed 37) in the same name-day and ET hour (any minute), same outcome; lift vs support",
+  "room >= 0.25% and >= 0.60%",
+  "with %R required: fast %R (21, EMA 7) <= -50 at the arm bar",
+  "unmatched: all support arms vs all square arms",
+  "drop counts"
+ ],
+ "prior": "low. 10/02 near-support cells least-bad but negative; sr_range_trade and sr_gap_wr60_arm FAIL; squares match random minutes in prior studies, so 'earlier' only helps if support touches carry location value the squares lack.",
+ "caveats": [
+  "flat 0.20% cost, not per-name spreads",
+  "15-min fixed hold, not the desk's trail",
+  "SIP bars; live desk uses IEX",
+  "same mined sessions as six prior order-block studies",
+  "fast %R counts rows (desk _minute_grid_pr differs)",
+  "10/05 excluded (not cached)"
+ ]
+}
