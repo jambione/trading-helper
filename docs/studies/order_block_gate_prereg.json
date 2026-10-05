@@ -12,6 +12,7 @@
   "E and F on 5-minute bars (resampled from the same 1-minute)",
   "E and F on 10-minute bars, and 'a charted zone on ANY of 1/5/10m' (added 2026-10-05 before any run, operator question; information only, any promising one needs its own pre-registration on new days)",
   "operator hypotheses 10/5 (information only, added before any run): BREAKOUT = a charted bearish OB broken upward (became a breaker) within the last 15 min with price above its top, vs other arms (day FE); ROOM = % from price up to the bottom of the nearest charted resistance block above, terciles cut on half A plus 'none above'. Prior: the 10/02 study found resistance breaks were the WORST cell on four other indicators and more room to PDH/PMH/HOD/whole-dollar did not help.",
+  "operator 10/5, before any run: BREAKOUT DISTANCE = % of price above the top of the most recently broken charted bearish OB (break within 15 min), in fixed bands poke 0-0.10%, clean 0.10-0.30%, running 0.30-0.60%, extended >0.60%; each band vs non-breakout arms with day FE. Information only.",
   "'inside only' (no 0.3% band)",
   "all blocks in memory instead of the charted 3 per side",
   "F (fills): net15 and realized round trip, flagged vs rest; F uses the last bar closed before the FILL, which can be up to one bar after the arm decided (at most one bar of look-ahead; information only)",

@@ -87,7 +87,10 @@ def flags_for(rows, bar_sec, queries):
         above = [b.btm for b in ch if ((b.kind == "bear" and not b.breaker) or (b.kind == "bull" and b.breaker))
                  and b.btm > px]
         room = (min(above) / px - 1) * 100 if above else None
-        out.append((bool(w), bool(ins), bool(OB.overhead_resistance(allb, px, WITHIN)), brk, room))
+        rec = [b for b in ch if b.kind == "bear" and b.breaker and b.break_ts is not None and tq - 900 <= b.break_ts <= tq
+               and px > b.top]
+        brk_d = (px / max(rec, key=lambda b: b.break_ts).top - 1) * 100 if rec else None   # % above the broken zone's top
+        out.append((bool(w), bool(ins), bool(OB.overhead_resistance(allb, px, WITHIN)), brk, room, brk_d))
     return out
 
 
@@ -210,6 +213,23 @@ def main():
             bb, se = fe_diff(y, g, [r["day"] for r in xs])
             lines.append(f"- half {h}: breakouts {sum(g)}/{len(g)} net15 {statistics.fmean([v for v, x in zip(y, g) if x]):+.1f} vs rest "
                          f"{statistics.fmean([v for v, x in zip(y, g) if not x]):+.1f} | DAY-FE diff {bb:+.1f} bp, t {bb / se:+.2f}")
+        lines.append("")
+        lines.append(f"## {pop} 1m BREAKOUT DISTANCE above the broken zone's top (bands fixed before the run), vs non-breakout arms")
+        bands = (("poke 0-0.10%", 0.0, 0.10), ("clean 0.10-0.30%", 0.10, 0.30), ("running 0.30-0.60%", 0.30, 0.60),
+                 ("extended >0.60%", 0.60, 1e9))
+        for lab, lo, hi in bands:
+            parts = []
+            for h in ("A", "B", "all"):
+                xs = [r for r in rows if r["pop"] == pop and r.get("ob_1m") is not None and (h == "all" or half[r["day"]] == h)
+                      and (r["ob_1m"][5] is None or lo <= r["ob_1m"][5] < hi)]
+                g = [0 if r["ob_1m"][5] is None else 1 for r in xs]
+                if sum(g) < 5:
+                    parts.append(f"{h}: n {sum(g)} (too few)")
+                    continue
+                y = [r["net15"] * 1e4 for r in xs]
+                bb, se = fe_diff(y, g, [r["day"] for r in xs])
+                parts.append(f"{h}: n {sum(g)} mean {statistics.fmean([v for v, x in zip(y, g) if x]):+.1f}, FE diff {bb:+.1f} (t {bb / se:+.2f})")
+            lines.append(f"- {lab}: " + " | ".join(parts))
         lines.append("")
         lines.append(f"## {pop} 1m ROOM to the nearest charted resistance above (terciles cut on half A; 'none above' separate)")
         ra = sorted(r["ob_1m"][4] for r in rows if r["pop"] == pop and r.get("ob_1m") and r["ob_1m"][4] is not None and half[r["day"]] == "A")
