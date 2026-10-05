@@ -14020,6 +14020,62 @@ def _extract_lows_from_bars(bars: Any, lookback: int) -> list[float]:
     return []
 
 
+def _ob_resist_skip_on(cfg: dict | None) -> bool:
+    """ai_watch_ob_resist_skip: the HARD order-block skip (default OFF)."""
+    try:
+        return bool((cfg or {}).get("ai_watch_ob_resist_skip", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ob_observe_on(cfg: dict | None) -> bool:
+    """ai_watch_ob_observe (default OFF), or the skip, which needs the same
+    reading. Never raises."""
+    try:
+        import ob_observe
+        return ob_observe.enabled(cfg) or _ob_resist_skip_on(cfg)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ob_resist_refusal(ob_fields: dict | None, cfg: dict | None) -> bool:
+    """True only when the skip knob is on AND there is a reading AND it says
+    resistance. Fails open: no bars / no reading / any error = no refusal."""
+    try:
+        return bool(_ob_resist_skip_on(cfg) and isinstance(ob_fields, dict)
+                    and ob_fields.get("ob_resist_0.3") is True)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ob_observe_stamp(rec: dict, sym: str, price: Any, cfg: dict | None,
+                      now: float) -> dict:
+    """OBSERVE ONLY. Stamp ob_resist_0.3 / ob_room_pct (+ ob_bars,
+    ob_prior_day) onto the record's indicator dict and return them.
+
+    Called AFTER the arm decision it describes, and nothing in the arm or
+    place path reads these keys: it can never refuse, delay or resize an
+    entry. Returns {} (and writes nothing) when the knob is off, when there
+    are no bars, or on any error.
+    """
+    if not _ob_observe_on(cfg):
+        return {}
+    try:
+        import ob_observe
+        f = ob_observe.fields(sym, price, now)
+        if not f or not isinstance(rec, dict):
+            return {}
+        # Only ever ADD keys to an indicator dict the poll already built.
+        # Never create one: "has an indicator map" is itself read by gates,
+        # and an observer must not be the thing that changes it.
+        ind = rec.get("indicator")
+        if isinstance(ind, dict) and ind:
+            ind.update(f)
+        return f
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:
     """Throttled bar lows for double-bottom detection. Empty on failure."""
     sym = str(symbol or "").upper().strip()
@@ -14069,6 +14125,14 @@ def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:
                 "api_key": api_key, "secret_key": secret,
             })
             df = aa.fetch_bars(client, sym, bar_cfg)
+            # Observe-only order blocks reuse THIS frame (no new request).
+            if (_ob_observe_on(full)
+                    and str(bar_cfg.get("bar_timeframe") or "") == "1Min"):
+                try:
+                    import ob_observe
+                    ob_observe.absorb_df(sym, df)
+                except Exception:  # noqa: BLE001
+                    pass
             lows = _extract_lows_from_bars(df, lookback)
             ohlc = _extract_ohlc_from_bars(df, lookback)
             if ohlc:
@@ -15275,7 +15339,17 @@ def _shadow_row(
         "macd_src": (sig.get("macd_src") or None) if sig else None,
         "macd_age_sec": _f_or_none(sig.get("macd_age_sec")) if sig else None,
         "entry_hour_et": _et_hour_decimal(now),
+        # Observe-only order blocks (ai_watch_ob_observe). Absent when off.
+        **_ob_row_fields(sig),
     }
+
+
+def _ob_row_fields(sig: Any) -> dict:
+    try:
+        import ob_observe
+        return ob_observe.copy_fields(sig, {})
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def _arm_day_change(record: dict) -> float | None:
@@ -16787,6 +16861,7 @@ def _record_arm_pass(touched: dict, t0: float) -> None:
                 continue
             ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
             rows.append({
+                **_ob_row_fields(ind),
                 "s": sym,
                 "st": rec.get("status"),
                 "b": rec.get("block_code"),
@@ -17127,6 +17202,14 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 "macd_age_sec": sig.get("bars_age_sec"),
                 "ts": t0,
             }
+            # Observe-only order blocks (ai_watch_ob_observe, default off).
+            # Fourth lesson of this whitelist: this dict REPLACES the map, so
+            # the OB fields are copied in here or nothing downstream reads
+            # them. Writes no keys when the knob is off. Log, never gate.
+            _ob_observe_stamp(
+                rec, sym,
+                _f_or_none(rec.get("last_ask")) or _f_or_none(rec.get("last_trade")),
+                cfg, t0)
         elif "indicator" in rec:
             # Engine dropped it — do not keep asserting a stale reading.
             rec.pop("indicator", None)
@@ -17641,6 +17724,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 pass
 
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
+        # Order blocks (log; ai_watch_ob_resist_skip refuses on resistance).
+        if _ob_resist_refusal(_ob_observe_stamp(rec, sym, ask_f, cfg, t0), cfg) and ok_arm:
+            ok_arm, why = False, "ob_resist"
         # The counterfactual record. arm_ok False with in_zone True is the row
         # that pays for this whole mechanism: price was in the zone and the
         # desk declined, and nothing else on disk says what that cost.
@@ -17654,7 +17740,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if not ok_arm:
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
-                       "late_hold_closed", "late_hold_not_late_admit"):
+                       "late_hold_closed", "late_hold_not_late_admit",
+                       "ob_resist"):
                 _skip(why)
             else:
                 set_block_reason(rec, why or "blocked", now=t0)
@@ -17915,6 +18002,21 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             else None
         )
         place_decision["sticky_used"] = False
+        # Order blocks at the entry price (no keys when off). With only
+        # ai_watch_ob_observe on, nothing reads them: the order, its size and
+        # its timing are unchanged. ai_watch_ob_resist_skip refuses here too.
+        _ob_fields = _ob_observe_stamp(rec, sym, ask_f, cfg, t0)
+        if _ob_resist_refusal(_ob_fields, cfg):
+            # HARD SKIP at the final price (ai_watch_ob_resist_skip).
+            _arm_streak(rec, False, seq=poll_seq)
+            for _k in ("confirm_ask", "confirm_ask_ts", "confirm_px_src"):
+                rec.pop(_k, None)
+            _skip("ob_resist", detail="final_price",
+                  ob_room_pct=_ob_fields.get("ob_room_pct"),
+                  ob_bars=_ob_fields.get("ob_bars"))
+            continue
+        for _obk, _obv in _ob_fields.items():
+            place_decision[_obk] = _obv
         # This desk runs the exhaustion gate; ai_suggest's does not. Name the
         # path on the row so the two never average together again.
         place_decision["entry_path"] = (
@@ -17932,6 +18034,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             if isinstance(place_decision["features"], dict):
                 place_decision["features"]["arm_why"] = _arm_why
                 place_decision["features"]["sticky_used"] = False
+                for _obk, _obv in _ob_fields.items():
+                    place_decision["features"][_obk] = _obv
         rec["status"] = "armed"
         set_block_reason(rec, "placing", now=t0)
         try:

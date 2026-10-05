@@ -2557,6 +2557,10 @@ def place_scaled_entry(
             None if use_market_entry
             else (placed_entry_limit if not broker_stop else entry_limit)
         ),
+        # Observe-only order blocks (ai_watch_ob_observe); absent when off.
+        **{k: decision.get(k) for k in (
+            "ob_resist_0.3", "ob_room_pct", "ob_bars", "ob_prior_day")
+           if isinstance(decision, dict) and k in decision},
     )
     try:
         import ai_duel as duel

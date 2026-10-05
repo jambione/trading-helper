@@ -1,3 +1,51 @@
+> **Order blocks: merged to `master-mac` 2026-10-05 (branches `ob-observe` + `ob-resist-skip`).**
+> **OPERATOR OVERRIDE 2026-10-05: Jonathan chose a HARD SKIP for 10/06, after being told the tradeoffs.**
+> The pre-registered skip test FAILED on 10/05: half A −17.9 bp t −3.58, half B +0.1 bp t +0.01. Held-out day 1:
+> flagged −7.4 bp n 29 vs not flagged −0.4 bp n 24. So this skip is a judgement call, not a validated rule.
+>
+> **Two knobs. Both are OFF in code, and `config/bot_config.json` is unchanged until Jonathan flips one:**
+> - `ai_watch_ob_resist_skip` is the **HARD SKIP**. It refuses an arm when price is inside, or within 0.3% under, a
+>   charted resistance order block known at that moment (an unbroken bearish OB or a bullish breaker; LuxAlgo port,
+>   swing 10, wicks, last 3 per side, 1-minute bars). It checks twice: at the arm decision, and again at the final
+>   price right before the order. A refused name shows block `ob_resist`, and each refusal logs a `watch_skip` event
+>   with `reason: "ob_resist"` in `ai_reports/events.jsonl`. It **fails open**: no bars, no reading or any error means
+>   no refusal. It never resizes or delays an order it lets through.
+> - `ai_watch_ob_observe` **only logs**. The skip turns on the same logging by itself.
+>
+> **What gets logged, when either knob is on:**
+> - Fields: `ob_resist_0.3`, `ob_room_pct` (% up to the nearest charted resistance; 0 = inside; missing = none above),
+>   `ob_bars` and `ob_prior_day` (how much 1-minute history the reading had).
+> - Where: the shadow rows (`ai_reports/shadow.jsonl`), the per-poll arm rows
+>   (`ai_reports/sessions/<day>/decisions.jsonl.gz`), the `entry_ok` events and the position/outcome feature vector.
+> - Bars: the desk's existing 1-minute IEX structure fetch, so no new data requests. They are merged per symbol (prior
+>   day + today, 04:00-16:00 ET) and the blocks are cached per symbol per minute.
+> - A name seated only minutes ago has few bars (`ob_bars` small) until the next structure fetch, about every 120 s.
+>   Until then the skip has less history to see blocks in.
+> - Code: `ob_observe.py`, `ai_entry_watch.py` (`_ob_resist_refusal`). Tests: `tests/test_ob_observe.py`.
+>
+> **Restart steps for Jonathan. Do them after the close, in the mini's own Terminal, never over ssh:**
+> 1. `cd ~/repo/trading-helper && git pull --ff-only && git log --oneline -1`
+>    The mini was already pulled tonight; this confirms the tree is at the order-block merge or later.
+> 2. Turn the HARD SKIP on for tomorrow:
+>    `.venv/bin/python -c "import json;p='config/bot_config.json';d=json.load(open(p));d['ai_watch_ob_resist_skip']=True;open(p,'w').write(json.dumps(d,indent=2))"`
+>    Then `git diff config/bot_config.json` should show exactly one added line: `"ai_watch_ob_resist_skip": true`.
+>    If you want logging only, without the skip, use `'ai_watch_ob_observe'` in that command instead.
+> 3. Restart the desk: `launchctl kickstart -k gui/$(id -u)/com.jambi.trading-desk`
+> 4. Confirm it came up:
+>    - `tail -n 80 logs/ai_trader.log` shows `desk_io recording` and `agy_auth=ok`.
+>    - `.venv/bin/python -c "import config;c=config.load_config();print(c.get('ai_watch_ob_resist_skip'), c.get('ai_watch_ob_observe'))"`
+>      prints `True False`.
+> 5. Tomorrow, once names are seated (09:35 ET or later):
+>    - `tail -n 5000 ai_reports/shadow.jsonl | grep -c '"ob_resist_0.3"'` should be above 0. The file is about 1 GB,
+>      so tail it rather than grep the whole thing.
+>    - `grep '"ob_resist"' ai_reports/events.jsonl | tail -n 5` shows the refusals.
+>    - After a fill, `grep '"entry_ok"' ai_reports/events.jsonl | tail -n 3` shows `ob_resist_0.3`, which is false on
+>      anything the skip let through.
+> 6. **To turn the skip OFF:** run the step-2 command with `False` in place of `True`, or delete the line from
+>    `config/bot_config.json`. The desk re-reads the config every loop, so this takes effect within one poll (about
+>    20 s) with no restart. A kickstart from the mini Terminal is also fine. The full rollback is
+>    `git checkout -- config/bot_config.json`, which also drops any other uncommitted config edits.
+>
 > **S/R queue #2 size-by-room FAIL** (prereg `363728b`): lift −12.0 / −1.7 bp vs RT ~12 bp; [`docs/studies/SR_SIZE_BY_ROOM_2026-10-05.md`](docs/studies/SR_SIZE_BY_ROOM_2026-10-05.md). **#2b breakout confirmation FAIL** (prereg `6b0047e`): confirmed−poke lift −19.4 / −16.6 bp vs RT 20; [`docs/studies/SR_BREAKOUT_CONFIRM_2026-10-05.md`](docs/studies/SR_BREAKOUT_CONFIRM_2026-10-05.md). **#3** observe-only held-out score still queued after ~10 IEX sessions — do not invent ([`docs/studies/SR_TEST_QUEUE_2026-10-05.md`](docs/studies/SR_TEST_QUEUE_2026-10-05.md)).
 >
 > **S/R queue #1 exit-only at resistance (2026-10-05): FAIL.** Prereg `4aea5ed97ad2357f386f1bd00cbb2975843e787b`. Half A lift −17.1 bp vs RT 20 bp (net −21.3); half B lift −9.2 bp vs RT 20 bp (net −19.9). Resistance TP loses to the no-S/R time-stop control on both chronological halves. [`docs/studies/SR_EXIT_RESIST_2026-10-05.md`](docs/studies/SR_EXIT_RESIST_2026-10-05.md). Queue #2 size-by-room and #3 observe-only held-out score remain queued ([`docs/studies/SR_TEST_QUEUE_2026-10-05.md`](docs/studies/SR_TEST_QUEUE_2026-10-05.md)); do not invent #3.
@@ -7,7 +55,7 @@
 > **Night batch 2026-10-05 (order blocks):** #1 order-block skip rule **FAIL** (half A −17.9 bp t −3.58, half B +0.1 bp
 > t +0.01); #2 support→resistance range trade **FAIL** (net −8.4 / −20.8 bp; vs like-for-like control −4.2 / −5.2 bp);
 > #3 held-out day 1: flagged −7.4 bp (n 29) vs not −0.4 bp (n 24); #4 overbought exit −7.8 vs live −7.6 bp/trade.
-> See [`docs/studies/ORDER_BLOCKS_2026-10-05.md`](docs/studies/ORDER_BLOCKS_2026-10-05.md). Observe-only wiring not started.
+> See [`docs/studies/ORDER_BLOCKS_2026-10-05.md`](docs/studies/ORDER_BLOCKS_2026-10-05.md). Order-block wiring: merged, with an operator-chosen HARD SKIP knob (top of this file).
 >
 > **2026-10-05 → Grok for the night:** read [`docs/HANDOFF_2026-10-05_GROK.md`](docs/HANDOFF_2026-10-05_GROK.md) first. One script runs tonight's
 > four studies on the mini after 16:05 ET (`scripts/night_2026-10-05.sh`). No config changes (freeze to ~10/15).
