@@ -76,9 +76,18 @@ def flags_for(rows, bar_sec, queries):
             out.append(None)
             continue
         allb = [b for b in states[j][1] if b.known_ts <= tq]
-        w = OB.overhead_resistance(OB.charted(allb), px, WITHIN)
+        ch = OB.charted(allb)
+        w = OB.overhead_resistance(ch, px, WITHIN)
         ins = [b for b in w if b.btm <= px <= b.top]
-        out.append((bool(w), bool(ins), bool(OB.overhead_resistance(allb, px, WITHIN))))
+        # information (operator 10/5): breakout = a charted bearish OB broken upward (became a breaker) in the last
+        # 15 min with price still above its top; room = % from price up to the bottom of the nearest charted
+        # resistance block above price (bearish OB or bullish breaker); None when there is none above
+        brk = any(b.kind == "bear" and b.breaker and b.break_ts is not None and tq - 900 <= b.break_ts <= tq
+                  and px > b.top for b in ch)
+        above = [b.btm for b in ch if ((b.kind == "bear" and not b.breaker) or (b.kind == "bull" and b.breaker))
+                 and b.btm > px]
+        room = (min(above) / px - 1) * 100 if above else None
+        out.append((bool(w), bool(ins), bool(OB.overhead_resistance(allb, px, WITHIN)), brk, room))
     return out
 
 
@@ -188,6 +197,34 @@ def main():
                     res[h] = (b, b / se, nf)
                 verdict[cell] = res
                 lines.append("")
+    # information: breakout and room-to-resistance (1m, charted blocks), day fixed effects
+    for pop in ("E", "F"):
+        lines.append(f"## {pop} 1m BREAKOUT (charted bearish OB broken upward in the last 15 min, price above it) vs rest")
+        for h in ("A", "B", "all"):
+            xs = [r for r in rows if r["pop"] == pop and r.get("ob_1m") is not None and (h == "all" or half[r["day"]] == h)]
+            g = [1 if r["ob_1m"][3] else 0 for r in xs]
+            if sum(g) < 5 or sum(g) == len(g):
+                lines.append(f"- half {h}: breakouts {sum(g)} of {len(g)} (too few)")
+                continue
+            y = [r["net15"] * 1e4 for r in xs]
+            bb, se = fe_diff(y, g, [r["day"] for r in xs])
+            lines.append(f"- half {h}: breakouts {sum(g)}/{len(g)} net15 {statistics.fmean([v for v, x in zip(y, g) if x]):+.1f} vs rest "
+                         f"{statistics.fmean([v for v, x in zip(y, g) if not x]):+.1f} | DAY-FE diff {bb:+.1f} bp, t {bb / se:+.2f}")
+        lines.append("")
+        lines.append(f"## {pop} 1m ROOM to the nearest charted resistance above (terciles cut on half A; 'none above' separate)")
+        ra = sorted(r["ob_1m"][4] for r in rows if r["pop"] == pop and r.get("ob_1m") and r["ob_1m"][4] is not None and half[r["day"]] == "A")
+        if len(ra) >= 30:
+            c1, c2 = ra[len(ra) // 3], ra[2 * len(ra) // 3]
+            for h in ("A", "B"):
+                xs = [r for r in rows if r["pop"] == pop and r.get("ob_1m") is not None and half[r["day"]] == h]
+                cells = {"low": [], "mid": [], "high": [], "none above": []}
+                for r in xs:
+                    rm = r["ob_1m"][4]
+                    k = "none above" if rm is None else "low" if rm < c1 else "mid" if rm < c2 else "high"
+                    cells[k].append(r["net15"] * 1e4)
+                lines.append(f"- half {h} (cuts {c1:.2f}% / {c2:.2f}%): " + " | ".join(
+                    f"{k} n {len(v)} mean {statistics.fmean(v):+.1f}" for k, v in cells.items() if v))
+        lines.append("")
     p = verdict["E 1m within 0.3%"]
     if any(p[h] is None or p[h][2] < 50 for h in ("A", "B")):
         v = "UNDERPOWERED (fewer than 50 flagged arms in a half): no verdict"
