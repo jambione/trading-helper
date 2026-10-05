@@ -141,18 +141,21 @@ def main():
             miss["no_bars"] += len(rs_)
             continue
         q = [(r["t"], r.get("px")) for r in rs_]
-        for tf, bars_, sec in (("1m", one, 60), ("5m", resample(one, 300), 300)):
+        for tf, bars_, sec in (("1m", one, 60), ("5m", resample(one, 300), 300), ("10m", resample(one, 600), 600)):
             for r, f in zip(rs_, flags_for(bars_, sec, q)):
                 r[f"ob_{tf}"] = f
                 if f is None:
                     miss[f"no_flag_{tf}_{r['pop']}"] += 1
+        for r in rs_:                     # information: a charted zone on ANY of 1/5/10m
+            fs = [r.get(f"ob_{t}") for t in ("1m", "5m", "10m")]
+            r["ob_any"] = None if any(f is None for f in fs) else tuple(any(f[k] for f in fs) for k in range(3))
     json.dump(rows, open(os.path.join(OUT, "rows.json"), "w"))
     lines = [f"# Order-block gate (prereg docs/studies/order_block_gate_prereg.json)", "",
              f"days {days[0]}..{days[-1]} ({len(days)}), halves alternate days; rows E {sum(r['pop'] == 'E' for r in rows)}, "
              f"F {sum(r['pop'] == 'F' for r in rows)}; missing bars {dict(miss)}", ""]
     verdict = {}
     for pop in ("E", "F"):
-        for tf in ("1m", "5m"):
+        for tf in ("1m", "5m", "10m", "any"):
             for k, lab in ((0, f"within {WITHIN}%"), (1, "inside only"), (2, f"ALL blocks within {WITHIN}%")):
                 cell = f"{pop} {tf} {lab}"
                 lines.append(f"## {cell}")

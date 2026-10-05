@@ -10,6 +10,7 @@
  "pass": "diff <= -5 bp AND t <= -2 AND >= 50 RESIST arms, in BOTH halves -> PASS, which earns a held-out confirmation on >= 10 new sessions (10/5 onward) before any config change; it is not a gate yet. Fewer than 50 RESIST arms in a half -> UNDERPOWERED, no verdict. Otherwise FAIL, which means 'no large effect': with net15 SD 123-153 bp and ~50 flagged arms the SE is ~22 bp, so t <= -2 needs about -45 bp; a small effect cannot be ruled out.",
  "information_only": [
   "E and F on 5-minute bars (resampled from the same 1-minute)",
+  "E and F on 10-minute bars, and 'a charted zone on ANY of 1/5/10m' (added 2026-10-05 before any run, operator question; information only, any promising one needs its own pre-registration on new days)",
   "'inside only' (no 0.3% band)",
   "all blocks in memory instead of the charted 3 per side",
   "F (fills): net15 and realized round trip, flagged vs rest; F uses the last bar closed before the FILL, which can be up to one bar after the arm decided (at most one bar of look-ahead; information only)",
