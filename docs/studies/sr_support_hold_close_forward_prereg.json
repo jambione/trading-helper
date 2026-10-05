@@ -1,0 +1,33 @@
+{
+ "study": "FORWARD (held-out) test: support-touch arm + hold to 15:55, scored offline on fresh live-desk sessions (10/06 onward) from the desk's own recordings. Observe-only: nothing in the desk changes.",
+ "registered_at": "2026-10-05 ~19:30 ET, before any session on or after 2026-10-06 existed",
+ "registered_before_results": true,
+ "motivation_not_evidence": "In-sample 9/11-10/02 (docs/studies/SR_SUPPORT_ARM_2026-10-05.md, preregs 3255be0 + afc50c0) the support-touch arm held to 15:55 beat a same-hour random minute by +29.4 / +20.7 bp gross (t 3.69 / 3.25) in the two chronological halves. That cell was INFORMATION ONLY in a study whose registered primaries FAILED; it was chosen after seeing many exit families on mined SIP data. It motivated this test and is NOT evidence for it.",
+ "operator": "Jonathan approved 2026-10-05. Observe-only / offline scoring: no bot_config change, no restart, no trading endpoints, no Databento.",
+ "script": "tools/studies/sr_support_hold_close_score.py (reads only ai_reports/sessions/<day>/ recordings)",
+ "held_out_sessions": "every desk session from 2026-10-06 onward with a usable recording (decisions.jsonl.gz and prints.jsonl.gz present and readable). 2026-10-05 and earlier are EXCLUDED from scoring (10/05 is used only as a parse dry-run and as prior-day block history for 10/06). A session whose recording is missing or unreadable is skipped and does not count.",
+ "universe": "names seated in the desk book that session = symbols appearing in the desk's arm-poll rows (decisions.jsonl.gz, ev 'arm'); the book is filled from the desk's five-pillar sources. A name is eligible from its first arm-row appearance that session.",
+ "bars": "1-minute OHLC built from the desk's recorded price prints (prints.jsonl.gz: every published price update the desk used: alpaca IEX stream, finnhub, desk), bucketed by trade_ts (fallback ts); minutes with no prints are filled from recorded IEX 1-minute bars (wire.jsonl.gz, GET /v2/stocks/bars, feed=iex, 1Min) when present; prior-day history comes from the previous recorded session the same way. A name-day needs >= 200 RTH minutes with bars, else excluded (counted).",
+ "blocks": "tools/order_blocks.py, point-in-time (known_ts <= decision close), charted last 3 per side, swing 10, wicks, on those 1-minute bars (prior session + today, all recorded hours)",
+ "support_arm": "at a 1-min close i, 09:40-15:30 ET, name already seated: a charted support block S (unbroken bullish OB or bearish breaker) with low[i] <= S.top AND close[i] >= S.btm; first such bar per block per name-day (tracked from 09:40); not inside a charted resistance block; room = nearest charted resistance bottom above close[i] / close[i] - 1 >= 0.40% (none above -> no arm); one arm per name per 15 min; NO square, exhaustion or %R condition.",
+ "entry": "open of the next 1-minute bar after the decision close (bars as above)",
+ "exit_primary": "close of the bar starting 15:54 ET (the 15:55 close)",
+ "exits_information_only": [
+  "stop: exit when a bar's low <= S.btm x (1 - 0.001), filled at min(stop, bar open); else 15:55",
+  "resistance touch: exit when a bar's high >= bottom of the nearest charted resistance above entry known at the decision, filled at max(target, bar open); none/never -> 15:55"
+ ],
+ "control_primary": "per support arm, one random minute (seed 43) in the same name-day and ET clock hour, within 09:40-15:30 and after the name was seated, entered at the next bar open and held to 15:55",
+ "control_information": "the desk's own arms that session (arm rows with st 'submitted'; consecutive rows of one symbol within 60 s are one arm), entered at the next bar open after the row and held to 15:55",
+ "cost": "per entry, the quoted spread (ask - bid) / mid of the latest recorded IEX quote for the symbol (wire: quotes/latest, snapshots latestQuote, or quotes history) with quote time in [entry - 120 s, entry], usable if 0 < spread <= 3%. Measured round trip for a half = median usable spread of the support entries in that half. Charged cost = max(measured round trip, 20 bp). The desk's recorded SIP spread input (inputs.jsonl.gz, kind sip_spread) is reported as information.",
+ "halves": "chronological over the scored held-out sessions: A = first floor(n/2) sessions, B = the rest",
+ "min_sample_and_stopping": "score ONCE, at the first close when there are >= 10 held-out sessions AND >= 100 support arms in each half (halves as defined over those sessions). Before that, only COUNTS (sessions, arms) may be checked, never outcomes. If the arm minimum is not met by 20 sessions (about 2026-11-02), score once at 20 sessions; fewer than 100 support arms in a half then = UNDERPOWERED, no verdict. Earliest possible scoring: after the 2026-10-19 close (10 sessions: 10/06-10/09, 10/12-10/16, 10/19).",
+ "pass": "in BOTH chronological halves: mean(support gross - paired same-hour random control gross) at the 15:55 exit > that half's charged cost (max(measured round trip, 20 bp)), with the sample minimum met. Report n per half, gross, net (gross - charged cost), lift and day-clustered t for support, control and desk arms. Any PASS = PENDING SKEPTIC REVIEW; a pass is not a live arm and would need its own approval and a config decision after the freeze.",
+ "no_retuning": "the 0.40% room floor, 09:40-15:30 window, first-touch rule, 15-min refractory, 15:55 exit, seed 43, cost rule and stopping rule are fixed here. Any change is a new pre-registration.",
+ "caveats": [
+  "prints mix the alpaca IEX stream with finnhub trades: these are the prices the desk saw, not pure IEX bars",
+  "IEX top-of-book quotes can be wider than NBBO; the 20 bp floor keeps the bar from getting easier",
+  "hold-to-close returns depend heavily on the market's daily drift; the paired same-hour control is meant to absorb that",
+  "ai_watch_ob_resist_skip=true is live from 10/06; it changes the desk's own arms (information control), not the support arm",
+  "~10-20 sessions = 5-10 day clusters per half; t is weak at that size"
+ ]
+}
