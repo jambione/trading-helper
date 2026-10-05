@@ -1282,6 +1282,11 @@ DEFAULT_CONFIG = {
     "ai_movers_sip_delay_min":          15.0,   # SIP served >= this many minutes late (free plan)
     "ai_watch_rvol_pace_observe":      False,
     "ai_watch_rvol_pace_observe_min":  1.64,
+    # Order blocks at the arm decision (ob_observe.py): LOG ONLY, never gates.
+    # Stamps ob_resist_0.3 / ob_room_pct on shadow, arm-pass and entry rows.
+    # Default OFF. Operator-approved observe-only 2026-10-05; a skip gate is a
+    # separate decision (pre-registered test + held-out sessions + review).
+    "ai_watch_ob_observe":             False,
     "ai_watch_min_rvol_pace":          0.0,
     # Book server: ranked Movers+Trending+Research queue.
     # off | shadow (log would-have-done) | live (replaces soft-seed intake).
@@ -1742,6 +1747,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_max_sip_spread_pct",
     "ai_watch_gap_down_block_pct",
     "ai_watch_rvol_pace_observe",
+    "ai_watch_ob_observe",
     "ai_watch_admit_arm_gates",
     "ai_movers_sip_delay_min",
     "ai_watch_rvol_pace_observe_min",
@@ -2211,6 +2217,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_max_sip_spread_pct",
     "ai_watch_gap_down_block_pct",
     "ai_watch_rvol_pace_observe",
+    "ai_watch_ob_observe",
     "ai_watch_admit_arm_gates",
     "ai_movers_sip_delay_min",
     "ai_watch_rvol_pace_observe_min",
