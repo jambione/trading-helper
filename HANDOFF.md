@@ -1,3 +1,34 @@
+> **Order blocks, observe-only: merged to `master-mac` 2026-10-05 (branch `ob-observe`). It logs and NEVER gates.**
+> The new knob `ai_watch_ob_observe` is **OFF by default**. The default lives in `config.py`; `config/bot_config.json` was
+> NOT changed. When the knob is on, each arm decision gets two fields:
+> - `ob_resist_0.3`: price is inside, or within 0.3% under, a charted resistance order block that was already known.
+> - `ob_room_pct`: % up to the nearest charted resistance block. 0 = inside one; missing = none above.
+> Two more fields record how much 1-minute history the blocks had: `ob_bars` and `ob_prior_day`.
+> The fields go on the shadow rows (`ai_reports/shadow.jsonl`), the per-poll arm rows
+> (`ai_reports/sessions/<day>/decisions.jsonl.gz`), the `entry_ok` events (`ai_reports/events.jsonl`) and the
+> position/outcome feature vector. The bars come from the desk's existing 1-minute IEX structure fetch (no new data
+> requests), merged per symbol: prior day + today, 04:00-16:00 ET, cached per symbol per minute. Code is in `ob_observe.py`;
+> tests are in `tests/test_ob_observe.py`. Nothing in the arm or order path reads these fields.
+>
+> **Restart steps for Jonathan. Do them after the close, in the mini's own Terminal, never over ssh:**
+> 1. `cd ~/repo/trading-helper && git pull --ff-only && git log --oneline -1`
+>    The mini was already pulled tonight; this just confirms the tree is at the `ob-observe` merge or later.
+> 2. Do this only if you want the logging ON. It is off by default, and nothing changes if you skip this step:
+>    `.venv/bin/python -c "import json;p='config/bot_config.json';d=json.load(open(p));d['ai_watch_ob_observe']=True;open(p,'w').write(json.dumps(d,indent=2))"`
+>    Then `git diff config/bot_config.json` should show exactly one added line: `"ai_watch_ob_observe": true`.
+> 3. Restart the desk: `launchctl kickstart -k gui/$(id -u)/com.jambi.trading-desk`
+> 4. Confirm it came up:
+>    - `tail -n 80 logs/ai_trader.log` shows `desk_io recording` and `agy_auth=ok`.
+>    - `.venv/bin/python -c "import config;print(config.load_config().get('ai_watch_ob_observe'))"` prints `True`,
+>      or `False` if you skipped step 2.
+> 5. Next session, once names are seated (about 09:35 ET or later):
+>    - `tail -n 5000 ai_reports/shadow.jsonl | grep -c '"ob_resist_0.3"'` should be above 0. The file is about 1 GB, so
+>      tail it rather than grep the whole thing.
+>    - After a fill, `grep '"entry_ok"' ai_reports/events.jsonl | tail -n 3` shows `ob_resist_0.3` and `ob_bars`.
+>    - A name seated only minutes ago has few bars (`ob_bars` small, `ob_prior_day` false) until the next structure
+>      fetch, about every 120 s.
+> 6. To turn it off: set `"ai_watch_ob_observe": false` (or remove the line), then kickstart again the same way.
+>
 > **S/R queue #2 size-by-room FAIL** (prereg `363728b`): lift −12.0 / −1.7 bp vs RT ~12 bp; [`docs/studies/SR_SIZE_BY_ROOM_2026-10-05.md`](docs/studies/SR_SIZE_BY_ROOM_2026-10-05.md). **#2b breakout confirmation FAIL** (prereg `6b0047e`): confirmed−poke lift −19.4 / −16.6 bp vs RT 20; [`docs/studies/SR_BREAKOUT_CONFIRM_2026-10-05.md`](docs/studies/SR_BREAKOUT_CONFIRM_2026-10-05.md). **#3** observe-only held-out score still queued after ~10 IEX sessions — do not invent ([`docs/studies/SR_TEST_QUEUE_2026-10-05.md`](docs/studies/SR_TEST_QUEUE_2026-10-05.md)).
 >
 > **S/R queue #1 exit-only at resistance (2026-10-05): FAIL.** Prereg `4aea5ed97ad2357f386f1bd00cbb2975843e787b`. Half A lift −17.1 bp vs RT 20 bp (net −21.3); half B lift −9.2 bp vs RT 20 bp (net −19.9). Resistance TP loses to the no-S/R time-stop control on both chronological halves. [`docs/studies/SR_EXIT_RESIST_2026-10-05.md`](docs/studies/SR_EXIT_RESIST_2026-10-05.md). Queue #2 size-by-room and #3 observe-only held-out score remain queued ([`docs/studies/SR_TEST_QUEUE_2026-10-05.md`](docs/studies/SR_TEST_QUEUE_2026-10-05.md)); do not invent #3.
@@ -7,7 +38,7 @@
 > **Night batch 2026-10-05 (order blocks):** #1 order-block skip rule **FAIL** (half A −17.9 bp t −3.58, half B +0.1 bp
 > t +0.01); #2 support→resistance range trade **FAIL** (net −8.4 / −20.8 bp; vs like-for-like control −4.2 / −5.2 bp);
 > #3 held-out day 1: flagged −7.4 bp (n 29) vs not −0.4 bp (n 24); #4 overbought exit −7.8 vs live −7.6 bp/trade.
-> See [`docs/studies/ORDER_BLOCKS_2026-10-05.md`](docs/studies/ORDER_BLOCKS_2026-10-05.md). Observe-only wiring not started.
+> See [`docs/studies/ORDER_BLOCKS_2026-10-05.md`](docs/studies/ORDER_BLOCKS_2026-10-05.md). Observe-only wiring: built and merged (top of this file).
 >
 > **2026-10-05 → Grok for the night:** read [`docs/HANDOFF_2026-10-05_GROK.md`](docs/HANDOFF_2026-10-05_GROK.md) first. One script runs tonight's
 > four studies on the mini after 16:05 ET (`scripts/night_2026-10-05.sh`). No config changes (freeze to ~10/15).
