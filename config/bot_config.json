@@ -485,5 +485,6 @@
   "ai_exit_test_arms": "market,mid",
   "ai_entry_test_cross_sec": 10.0,
   "ai_watch_spread_wide_evict_sec": 120.0,
-  "ai_watch_uptrend_grace_sec": 60.0
+  "ai_watch_uptrend_grace_sec": 60.0,
+  "ai_watch_ob_resist_skip": true
 }
