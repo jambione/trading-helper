@@ -1,0 +1,32 @@
+{
+ "study": "Size by room to resistance: keep the desk's square opens as-is; cut size when room to the nearest charted resistance is under a pre-declared floor (0.40%), full size when wider; compare the sized book to equal full-size on the same opens.",
+ "registered_at": "2026-10-05 evening ET, before any size-by-room outcome was computed on the sample",
+ "registered_before_results": true,
+ "origin": "Operator (Jonathan) S/R queue 2026-10-05 item #2 (after #1 exit-at-resistance FAIL at 9348287): same opens; cut size when room to resistance < ~0.40%, full size when wider.",
+ "queue": "docs/studies/SR_TEST_QUEUE_2026-10-05.md (#2 now; #2b breakout confirmation next after this write-up; #3 observe-only held-out after ~10 IEX sessions — do not invent)",
+ "script": "tools/studies/sr_size_by_room.py; blocks from tools/order_blocks.py (point-in-time, charted last 3 per side, swing 10, wicks, 1-min)",
+ "sample": "E = square arms of the 2026-10-02 indicator-levels study ($10+, 09:40-15:30): ai_reports/indicator_levels/rows.json + ext.pkl. Same SIP sessions as order_block_gate / sr_exit_resist. Outcome per arm = gross15 (15-min close/entry − 1) and net15 = gross15 − 0.20% (the locked $10+ cost). Opens kept as-is.",
+ "halves": "chronological: first half of sample days vs second half",
+ "room": "at the decision close, % from price up to the bottom of the nearest charted resistance above (unbroken bearish OB or bullish breaker), known point-in-time among charted last 3 per side. No resistance above => room = 0 (treated as under the floor).",
+ "floor": "0.40% (primary). Information: 0.60%.",
+ "sizing_primary": "weight w = 0.5 when room < 0.40%, else w = 1.0 (half-size vs full). Contribution of an arm = w * return.",
+ "sizing_info": "w = 0 when room < floor else 1.0 (skip vs full); floor 0.60% with half-size",
+ "control": "equal full size: w = 1.0 on every same open (contribution = return). Same arms, same outcomes; only the weight differs.",
+ "book_metric": "mean contribution in bp of full-size notional: signal = mean(w * gross_bp), control = mean(gross_bp). Lift = signal − control. Net lift uses net_bp the same way. Measured RT spread for the pass bar = mean(w_signal) * 20 bp (the flat 0.20% cost scaled by the sized book's mean weight — measured from the charged cost model, not invented).",
+ "pass": "in BOTH chronological halves: (mean(w*gross) − mean(gross)) > measured RT of that half (mean(w)*20 bp), AND >= 50 arms per half. Also report net after costs (mean(w*net) and equal-size mean(net)). Fewer than 50 -> UNDERPOWERED. Any PASS = PENDING SKEPTIC REVIEW (not a live size change; SIP ≠ IEX).",
+ "information_only": [
+  "skip vs full (w in {0,1}) at floor 0.40%",
+  "half-size at floor 0.60%",
+  "day-clustered t on lift",
+  "share of arms under the floor, mean room, mean w",
+  "F fills under the same sizing (information)"
+ ],
+ "prior": "low. order_block_gate ROOM terciles were information-only and not decisive; sr_exit_resist FAIL; cutting size on tight room helps only if tight-room arms are worse than wide-room arms.",
+ "caveats": [
+  "flat 0.20% cost scaled by w; not per-name spreads",
+  "15-min fixed hold, not the desk's trail",
+  "SIP bars; live desk uses IEX",
+  "same ~20 sessions already mined for levels and prior order-block studies",
+  "half-size is a research weight, not a live position-sizing implementation"
+ ]
+}
