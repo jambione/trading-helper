@@ -50,8 +50,10 @@ Mon 9/21  Paper Phase 1              Historical SIP square replay
           occupancy                  (2–3 weeks admits, $0)
 Tue+      Paper edge / morning flood Decide: SIP yes / no / later
 Ops       keys, flatten, $ kill
-~9/28     Stage 0 shadow ($0)        (optional) Finnhub print-path
-~10/13    Stage 1 live $250          If SIP=yes → funding gate
+~10/26    Stage 0 shadow ($0)        (optional) Finnhub print-path
+          (was ~9/28; re-dated 10/05)
+~11/09+   Stage 1 live $250          If SIP=yes → funding gate
+          (was ~10/13; only if Stage 0 passes + paper edge gate green)
           max_pos=1, fractionals
           bank toward $99
 When banked ≥$99 past kill           Subscribe Algo Trader Plus
@@ -80,12 +82,14 @@ When banked ≥$99 past kill           Subscribe Algo Trader Plus
 - [ ] **OOS Gate 1** (~Wed **2026-09-23+**, ≥5 sessions): re-run with plateau candidates ~2.5–3e6; only then may decision be GO/NO-GO/LATER
 - [ ] **Subscribe only after** OOS GO **and** funding gate — never from 2-day in-sample
 - [ ] Point live feed to SIP after subscribe; then Phase B paper scoreboard
-### Gate 2 — Live plumbing (earliest ~Sep 28)
+### Gate 2 — Live plumbing (earliest ~Oct 26; was ~Sep 28, re-dated 2026-10-05)
+*Reason:* config freeze to ~10/15 (cost A/B arms); key rotation, flatten close-half drill and post-freeze config decisions (week of 10/19) come first. Blockers: [`GO_LIVE_TODO.md`](GO_LIVE_TODO.md#re-dated-2026-10-05-slipped-what-still-blocks-each-stage).
 - [ ] Cash account: read `multiplier`; convert to **margin** if `1` (T+1 fights this desk)
 - [ ] Rotate keys · flatten drill · reconcile cron · dollar kill written
 - [ ] **Stage 0** (~2 weeks): live keys, desk still paper, assert works, **zero** live orders
 
-### Gate 3 — First live dollars (earliest ~Oct 13)
+### Gate 3 — First live dollars (earliest Nov 9, conditional; was ~Oct 13, re-dated 2026-10-05)
+*Reason:* needs Stage 0 passed (ends ~11/06) **and** the paper edge gate green (last recorded 2/10 live-positive, pass=False), so this date floats until that passes.
 - [ ] **Stage 1:** `ai_max_positions=1`, fractionals on, measure slippage
 - [ ] Abort rules: ledger mismatch, unmanaged open
 - [ ] Bank P&L toward SIP only inside Stage rules — no size-up to “make rent”
