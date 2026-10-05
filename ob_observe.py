@@ -3,9 +3,10 @@
 Operator-approved 2026-10-05 (docs/HANDOFF_2026-10-05_GROK.md, "APPROVED ...
 OBSERVE-ONLY"). The night-batch skip rule FAILED its pre-registered test
 (docs/studies/ORDER_BLOCKS_2026-10-05.md), so this exists only to build the
-held-out record on the desk's own IEX feed. Turning it into a skip gate is a
-separate decision (pre-registered test + ~10 held-out sessions + skeptic
-review), not a knob flip here.
+held-out record on the desk's own IEX feed. This module itself never gates.
+OPERATOR OVERRIDE 2026-10-05: the operator chose a hard skip anyway, after the
+tradeoffs; it lives in ai_entry_watch (_ob_resist_refusal), behind its own
+knob ai_watch_ob_resist_skip (code default off, fails open on no reading).
 
 What it computes, per arm decision, from ``tools/order_blocks.py``
 (LuxAlgo Order Blocks & Breaker Blocks, swing 10, wicks, 1-minute bars):

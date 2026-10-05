@@ -174,10 +174,17 @@ def test_flag_never_changes_should_arm_buy(ob, ask, pctr):
         assert on == off
 
 
-def _seed_resistance_at(sym, price):
+def _seed_resistance_at(sym, price, inside=True):
     """Seed `sym` with the recorded series rescaled so `price` sits INSIDE the
-    newest charted resistance block (worst case for a would-be gate)."""
+    newest charted resistance block (inside=False: a moment with NO resistance
+    reading at the equivalent price)."""
     fx = _fixture()
+    if not inside:
+        q = next(q for q in fx["queries"] if not q["resist"])
+        bars = [tuple(b) for b in fx["bars"] if b[0] + 60 <= q["t"]]
+        k = price / q["px"]
+        ob_observe.absorb_rows(sym, [(t, o * k, h * k, lo * k, c * k) for t, o, h, lo, c in bars])
+        return
     q = next(q for q in fx["queries"] if q["inside"])
     bars = [tuple(b) for b in fx["bars"] if b[0] + 60 <= q["t"]]
     ob_observe.absorb_rows("TMP", bars)
@@ -271,3 +278,45 @@ def test_shadow_and_arm_pass_rows_carry_fields_only_when_present():
     row2 = ew._shadow_row(rec2, price=10.0, price_src="quote", arm_ok=True,
                           arm_why="x", now=1e12)
     assert not (OB_KEYS & set(row2))
+
+
+# ── the HARD skip (operator override 2026-10-05): ai_watch_ob_resist_skip ────
+
+def test_skip_knob_defaults_off():
+    import config
+    assert config.DEFAULT_CONFIG["ai_watch_ob_resist_skip"] is False
+    assert ew._ob_resist_skip_on({}) is False
+    assert ew._ob_resist_refusal({"ob_resist_0.3": True}, {}) is False
+    assert ew._ob_resist_refusal({"ob_resist_0.3": True}, {"ai_watch_ob_resist_skip": True}) is True
+    assert ew._ob_resist_refusal({"ob_resist_0.3": False}, {"ai_watch_ob_resist_skip": True}) is False
+    assert ew._ob_resist_refusal({}, {"ai_watch_ob_resist_skip": True}) is False      # fail open
+    assert ew._ob_resist_refusal(None, {"ai_watch_ob_resist_skip": True}) is False
+
+
+@pytest.mark.parametrize("sig", [None, _SIG])
+def test_skip_refuses_inside_resistance(tmp_path, monkeypatch, sig):
+    _seed_resistance_at("SMCI", 28.0)
+    off, _ = _run_poll(tmp_path, monkeypatch, {}, sig)
+    on, st = _run_poll(tmp_path, monkeypatch, {"ai_watch_ob_resist_skip": True}, sig)
+    assert [p[0] for p in off] == ["SMCI"]
+    assert on == []
+    assert st["SMCI"]["status"] == "watching"
+    assert st["SMCI"].get("block_code") == "ob_resist"
+
+
+@pytest.mark.parametrize("sig", [None, _SIG])
+def test_skip_does_not_touch_names_without_resistance(tmp_path, monkeypatch, sig):
+    _seed_resistance_at("SMCI", 28.0, inside=False)
+    off, _ = _run_poll(tmp_path, monkeypatch, {}, sig)
+    on, _ = _run_poll(tmp_path, monkeypatch, {"ai_watch_ob_resist_skip": True}, sig)
+    assert [p[0] for p in off] == [p[0] for p in on] == ["SMCI"]
+    (_, d_off, eq_off, kw_off), (_, d_on, eq_on, kw_on) = off[0], on[0]
+    assert eq_on == eq_off and kw_on == kw_off and _strip(d_on) == _strip(d_off)
+    assert d_on["ob_resist_0.3"] is False
+
+
+def test_skip_fails_open_without_bars(tmp_path, monkeypatch):
+    off, _ = _run_poll(tmp_path, monkeypatch, {}, None)
+    on, _ = _run_poll(tmp_path, monkeypatch, {"ai_watch_ob_resist_skip": True}, None)
+    assert [p[0] for p in off] == [p[0] for p in on] == ["SMCI"]
+    assert _strip(on[0][1]) == _strip(off[0][1]) and on[0][3] == off[0][3]

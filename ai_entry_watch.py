@@ -14020,11 +14020,30 @@ def _extract_lows_from_bars(bars: Any, lookback: int) -> list[float]:
     return []
 
 
+def _ob_resist_skip_on(cfg: dict | None) -> bool:
+    """ai_watch_ob_resist_skip: the HARD order-block skip (default OFF)."""
+    try:
+        return bool((cfg or {}).get("ai_watch_ob_resist_skip", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _ob_observe_on(cfg: dict | None) -> bool:
-    """ai_watch_ob_observe (default OFF). Never raises."""
+    """ai_watch_ob_observe (default OFF), or the skip, which needs the same
+    reading. Never raises."""
     try:
         import ob_observe
-        return ob_observe.enabled(cfg)
+        return ob_observe.enabled(cfg) or _ob_resist_skip_on(cfg)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ob_resist_refusal(ob_fields: dict | None, cfg: dict | None) -> bool:
+    """True only when the skip knob is on AND there is a reading AND it says
+    resistance. Fails open: no bars / no reading / any error = no refusal."""
+    try:
+        return bool(_ob_resist_skip_on(cfg) and isinstance(ob_fields, dict)
+                    and ob_fields.get("ob_resist_0.3") is True)
     except Exception:  # noqa: BLE001
         return False
 
@@ -17705,9 +17724,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 pass
 
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
-        # Observe-only order blocks at the decision price. Runs after the
-        # decision and its result is never read by it (log, never gate).
-        _ob_observe_stamp(rec, sym, ask_f, cfg, t0)
+        # Order blocks at the decision price. Logged always (when on); with
+        # ai_watch_ob_resist_skip on, a resistance reading refuses the arm.
+        _ob_arm = _ob_observe_stamp(rec, sym, ask_f, cfg, t0)
+        if ok_arm and _ob_resist_refusal(_ob_arm, cfg):
+            ok_arm, why = False, "ob_resist"
         # The counterfactual record. arm_ok False with in_zone True is the row
         # that pays for this whole mechanism: price was in the zone and the
         # desk declined, and nothing else on disk says what that cost.
@@ -17721,8 +17742,13 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if not ok_arm:
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
-                       "late_hold_closed", "late_hold_not_late_admit"):
-                _skip(why)
+                       "late_hold_closed", "late_hold_not_late_admit",
+                       "ob_resist"):
+                if why == "ob_resist":
+                    _skip(why, ob_room_pct=_ob_arm.get("ob_room_pct"),
+                          ob_bars=_ob_arm.get("ob_bars"))
+                else:
+                    _skip(why)
             else:
                 set_block_reason(rec, why or "blocked", now=t0)
                 touched[sym] = rec
@@ -17982,10 +18008,19 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             else None
         )
         place_decision["sticky_used"] = False
-        # Observe-only order blocks at the entry price (no keys when off).
-        # Stamped after every gate has already said yes; nothing below reads
-        # them, so the order, its size and its timing are unchanged.
+        # Order blocks at the entry price (no keys when off). With only
+        # ai_watch_ob_observe on, nothing reads them: the order, its size and
+        # its timing are unchanged. ai_watch_ob_resist_skip refuses here too.
         _ob_fields = _ob_observe_stamp(rec, sym, ask_f, cfg, t0)
+        if _ob_resist_refusal(_ob_fields, cfg):
+            # HARD SKIP at the final price (ai_watch_ob_resist_skip).
+            _arm_streak(rec, False, seq=poll_seq)
+            for _k in ("confirm_ask", "confirm_ask_ts", "confirm_px_src"):
+                rec.pop(_k, None)
+            _skip("ob_resist", detail="final_price",
+                  ob_room_pct=_ob_fields.get("ob_room_pct"),
+                  ob_bars=_ob_fields.get("ob_bars"))
+            continue
         for _obk, _obv in _ob_fields.items():
             place_decision[_obk] = _obv
         # This desk runs the exhaustion gate; ai_suggest's does not. Name the
