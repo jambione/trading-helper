@@ -4,12 +4,25 @@
  "registered_before_results": true,
  "origin": "Operator, RXO 2026-10-05: 'this would be the optimal capture' (lift-off from the blue support block at ~28.31 to the orange resistance at ~28.44, while the desk bought the square at 28.46). Chosen from one chart in hindsight; the test counts every lift-off, including those that fail.",
  "script": "tools/studies/sr_range_trade.py (exact rules in its docstring); blocks from tools/order_blocks.py (point-in-time, charted 3 per side, swing 10, wicks, 1-min bars)",
- "sample": "admitted name-days of the 2026-10-02 indicator-levels study ($10+, 16 days 9/11-10/02; control rows of ai_reports/indicator_levels/rows.json) with its 1-min premarket+RTH SIP bars (ext.pkl). Halves = alternate days (as on 10/02). These days were mined on 10/02 for other level features; never for this trade.",
- "signal": "decision at a 1-min close 09:40-15:00 ET: close[i-1] <= S.top < close[i] for a charted support block S (unbroken bullish OB or bearish breaker), one signal per block; nearest charted resistance above (unbroken bearish OB or bullish breaker) at >= 0.40% room; fast %R (21, EMA 7) below -20 and rising",
- "trade": "buy at the next bar's open; target = resistance bottom, filled when a later bar's high is strictly above it; stop = a 1-min close below S.btm; time stop 30 min (15:55 cap); stop wins a same-bar tie; cost 0.20% round trip",
- "control": "per signal, one random minute in the same name-day (seed 29) with the SAME % target and % stop distances and the same time stop, so the test isolates the order-block LOCATION from the bracket shape",
- "pass": "in BOTH halves: >= 50 trades, mean net > 0 with day-clustered t >= 2, AND signal minus control >= +5 bp with t >= 2. Fewer than 50 trades in a half -> UNDERPOWERED. A pass earns a >= 10-session held-out confirmation; it is not a strategy yet.",
- "information_only": ["gross, win rate, median room", "drop counts by rule"],
+ "sample": "admitted name-days of the 2026-10-02 indicator-levels study ($10+, 16 days 9/11-10/02 (9/11 has 1 name-day); 619 name-days, about 7-8 day-clusters per half; control rows of ai_reports/indicator_levels/rows.json) with its 1-min premarket+RTH SIP bars (ext.pkl). Halves = alternate days (as on 10/02). These days were mined on 10/02 for other level features; never for this trade.",
+ "signal": "decision at a 1-min close 09:40-15:00 ET: the FIRST close up out of a charted support block S (close[i-1] <= S.top < close[i]; the block is used whether or not this cross qualifies); not inside a charted resistance block (else dropped); nearest charted resistance above at >= 0.40% room; fast %R (21, EMA 7) below -20 and rising",
+ "trade": "buy at the next bar's open; target = resistance bottom, filled when a later bar's high is strictly above it; stop = a 1-min close below S.btm, sold at the NEXT bar's open; time stop 30 min (15:55 cap); stop wins a same-bar tie; cost 0.20% round trip",
+ "control": "per signal, one random minute (seed 29) in the same name-day AND same ET clock hour that is also an up close with fast %R below -20 and rising (fallback: same hour only, counted), with the SAME % target and % stop distances and the same time stop, so the test isolates the order-block LOCATION from the bracket shape, the up-close/%R condition and time of day",
+ "pass": "in BOTH halves: >= 50 trades, mean net > 0 with day-clustered t >= 2, AND signal minus control >= +5 bp with t >= 2. Fewer than 50 trades in a half -> UNDERPOWERED. A pass earns a >= 10-session held-out confirmation; it is not a strategy yet. With ~7-8 day clusters per half, t >= 2 is about p 0.09 per half; the held-out confirmation is binding.",
+ "information_only": [
+  "room >= 0.25% and >= 0.60% (the 0.40% primary sits just under the RXO example's ~0.46%)",
+  "no-%R variant",
+  "gross, win rate, median room",
+  "drop counts by rule incl. control fallbacks"
+ ],
  "prior": "low-moderate: 10/02 'near support' was the least-bad level cell but negative with fixed 15-min exits; the old -50 mid-rise %R arm matched random minutes; no study has used a resistance-block target.",
- "caveats": ["one 15:55-capped 30-min time stop; the desk's trail is not modelled", "limit fills at the target assumed when the high trades through (no queue model)", "flat 0.20% cost, not per-name spreads", "port checked on four charts only"]
+ "caveats": [
+  "one 15:55-capped 30-min time stop; the desk's trail is not modelled",
+  "limit fills at the target assumed when the high trades through (no queue model)",
+  "flat 0.20% cost, not per-name spreads",
+  "port checked on four charts only",
+  "SIP result; does not transfer to the live IEX feed: the >= 10-session confirmation is run on IEX 1-minute bars with blocks built from IEX",
+  "fast %R here counts rows and returns -50 on a flat range; the desk's _minute_grid_pr fills missing minutes and is NaN until 21 bars; small after 09:40 on SIP"
+ ],
+ "amended": "2026-10-05, before any run, per the skeptic's FIX FIRST: same-hour like-for-like control, inside-resistance drop, first-cross-only, next-open stop exit, feed and %R caveats, room/no-%R info cells"
 }
