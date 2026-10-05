@@ -71,6 +71,26 @@ Done when `/tmp/rp_lob/done` exists. Outputs are in `/tmp/rp_lob/`.
     block is unconfirmed; re-grade after about 10 sessions.
   - **Stage-2 depth (Databento):** UNDERPOWERED, negative. Premarket depth: closed by the operator, no result.
 
+## Optional, ONLY with the operator's explicit go-ahead: wire the order blocks into the desk as OBSERVE-ONLY
+Purpose: build the held-out record on the desk's own **IEX** feed automatically. **No trading behaviour changes.**
+- On a **branch** (not master-mac), compute `tools/order_blocks.py` blocks at each arm decision from the desk's
+  own 1-minute bars (prior day + today, premarket + RTH), using only blocks known at that moment and the charted
+  last 3 per side.
+- **Log, never gate.** Add `ob_resist_0.3` (inside or within 0.3% under a resistance block) and `ob_room_pct` to the
+  arm/entry event rows. A new knob `ai_watch_ob_observe` defaults to off.
+  - It must never refuse, delay or resize an entry.
+  - Follow the "indicator whitelist replaces the map" rule: a new field must be copied into the poll's indicator
+    dict, or nothing reads it.
+- **Cost:** computing blocks over about 800 bars per arm is cheap, but cache per symbol per minute. No new data
+  requests: reuse the bars the desk already has.
+- **Tests:** a unit test that the flag never changes the arm decision, and one that matches the port on a recorded
+  bar series.
+- **Deploy:** only if the operator says so. The operator restarts the desk from the mini's Terminal, never over ssh,
+  and after the close. Remember that the test suite rewrites `config/bot_config.json`: restore it with
+  `git checkout -- config/bot_config.json` after running tests.
+- Turning it into a real **skip gate** is a separate decision after about 10/15. It needs a passing pre-registered
+  test, about 10 held-out sessions on IEX, and a skeptic review.
+
 ## Daily routine (each close, until Claude is back)
 1. `.venv/bin/python tools/studies/ob_fills_daily.py <day>`: the held-out order-block record.
 2. `.venv/bin/python tools/entry_arm_score.py` and `tools/exit_arm_score.py`: the cost A/B arms (grade about
