@@ -1,0 +1,30 @@
+{
+ "study": "Addendum to sr_support_arm_prereg.json (3255be0): run the support-touch arm, the square arm and the same-hour random-minute control WITHOUT the desk's hold-window limits (no 0.06R trail, no time decay, no overbought/triangle exits), under pre-declared exit families. Earlier S/R ideas (gap arm, range trade S->R) rerun with exits (a) and (b) as information.",
+ "registered_at": "2026-10-05 ~19:12 ET, after 3255be0 and before ANY outcome of either prereg was computed",
+ "registered_before_results": true,
+ "origin": "Operator (Jonathan) add-on 2026-10-05: also run the ideas without the desk's hold-window limits.",
+ "parent_prereg": "docs/studies/sr_support_arm_prereg.json (3255be0): sample, halves, support-arm and square-arm definitions, cost and pass bar unchanged; its 15-min primary stays a registered primary.",
+ "script": "tools/studies/sr_support_arm.py (one script for both preregs)",
+ "exit_families": {
+  "a": "hold to the 15:55 ET close (close of the bar starting 15:54)",
+  "b": "PRIMARY. target T = bottom of the nearest charted resistance block (unbroken bearish OB or bullish breaker) strictly above the entry price, among blocks known at the arm's decision close (point-in-time, last 3 per side). Exit when a bar's high >= T, filled at max(T, that bar's open). No resistance above -> hold to 15:55. Else 15:55 close.",
+  "c": "stop + target: stop = (support block bottom) x (1 - 0.001); for the support arm the touched block S, for square/control arms the nearest charted support block below the entry (highest top among support blocks with bottom < entry), none -> no stop. Stop fires when a bar's low <= stop, filled at min(stop, that bar's open); stop is checked before the target in the same bar. Target as in (b). Else 15:55.",
+  "d": "fixed holds of 60, 120 and 240 min after entry (close of the first bar starting >= H after the entry bar's open), 15:55 cap"
+ },
+ "entry": "unchanged: the open of the bar after the decision close, for every arm and control",
+ "arms": "support-touch arm (primary room >= 0.40%, no %R), square arm (E rows), and per support arm one same-hour random minute (seed 37, any minute in the same name-day and ET hour) as in the parent; per square arm one same-hour random minute (seed 41) as information",
+ "primary_exit": "(b) only. Others are information (limits multiple testing).",
+ "pass": "exit (b): in BOTH chronological halves (A 09-11..09-22, B 09-23..10-02): support mean gross - square mean gross on matched name-days > measured round-trip spread (mean gross - net of support entries = 20 bp under the 0.20% model), with >= 50 support arms per half. Report net, n per half, day-clustered t. Same-hour random control reported alongside. Any PASS = PENDING SKEPTIC REVIEW. The parent's 15-min primary is reported separately with its own verdict.",
+ "report": "per half and per exit family: n, gross bp, net bp, vs square, vs same-hour random control, day-clustered t",
+ "earlier_ideas_information_only": {
+  "gap_arm": "sr_gap_wr60_arm_prereg.json primary signal (fast %R <= -60, inside or <= 0.30% above a charted support block, not inside resistance, room >= 0.40%, 09:40-15:30, 1 per name per 15 min) and its like-for-like control (same hour, %R <= -60, seed 31), on its own sample (admitted C name-days, 20 days 09-04..10-02), exits (a) and (b); chronological halves 10/10",
+  "range_trade": "sr_range_trade_prereg.json primary signal (first close up out of a charted support block, not inside resistance, room >= 0.40%, fast %R < -20 and rising, 09:40-15:00) and its like-for-like control (same hour up close with %R < -20 rising, seed 29), on its own sample, exits (a) and (b) (no support stop); chronological halves 10/10 (the original used alternate days; chronological here for consistency with the current bar)",
+  "status": "information only; no verdict"
+ },
+ "caveats": [
+  "long holds on 1-min SIP bars; flat 0.20% cost regardless of hold length",
+  "limit fill at T assumed when the high touches it (no queue model); stop fills at the stop or a worse open",
+  "targets/stops fixed at the decision; blocks formed after entry are ignored",
+  "SIP != IEX; same mined sessions; multiple exit families (only (b) decides)"
+ ]
+}
