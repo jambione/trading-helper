@@ -1,3 +1,5 @@
+> **−60 %R × S/R-gap open-arm (2026-10-05): FAIL.** Prereg `47d31caf0274e11affb80d55e5056f0ba8b18e2b`. Half A lift −3.2 bp vs RT 20 bp (net −26.7); half B lift +1.9 bp vs RT 20 bp (net −13.8). Does not beat same-hour like-for-like −60 %R control by more than the measured round-trip spread on either chronological half. See [`docs/studies/SR_GAP_WR60_ARM_2026-10-05.md`](docs/studies/SR_GAP_WR60_ARM_2026-10-05.md).
+>
 > **Night batch 2026-10-05 (order blocks):** #1 order-block skip rule **FAIL** (half A −17.9 bp t −3.58, half B +0.1 bp
 > t +0.01); #2 support→resistance range trade **FAIL** (net −8.4 / −20.8 bp; vs like-for-like control −4.2 / −5.2 bp);
 > #3 held-out day 1: flagged −7.4 bp (n 29) vs not −0.4 bp (n 24); #4 overbought exit −7.8 vs live −7.6 bp/trade.
