@@ -9,7 +9,7 @@ wiring is WIP on another branch.
 | **1** | **DONE — FAIL** ([write-up](SR_EXIT_RESIST_2026-10-05.md); prereg `4aea5ed`) | **Exit-only at resistance** | Resistance TP lost to no-S/R time-stop on both halves. |
 | **2** | **DONE — FAIL** ([write-up](SR_SIZE_BY_ROOM_2026-10-05.md); prereg `363728b`) | **Size by room** — half-size when room &lt; 0.40%, full when wider | Sized−equal lift −12.0 / −1.7 bp vs RT ~12 bp. |
 | **2b** | **DONE — FAIL** ([write-up](SR_BREAKOUT_CONFIRM_2026-10-05.md); prereg `6b0047e`) | **Breakout confirmation (not the first poke)** | Confirmed−poke lift −19.4 / −16.6 bp vs RT 20 bp; waiting underperforms the poke. |
-| **4** | **NOW** | **Arm earlier on support instead of squares** — first touch/reclaim of a charted support block, room ≥ 0.40%, no square/%R required, vs desk square arms on the same name-days | Prereg [`sr_support_arm_prereg.json`](sr_support_arm_prereg.json). Also reports minutes earlier than the square. |
+| **4** | **DONE — FAIL** ([write-up](SR_SUPPORT_ARM_2026-10-05.md); preregs `3255be0` + addendum `afc50c0`) | **Arm earlier on support instead of squares** (+ exit families without desk hold limits) | 15-min: −10.2 / +5.0 bp; exit (b): −22.5 / +23.2 bp vs RT 20. Support fires a median 32 min before the square. Info-only: hold-to-close/long holds beat squares in both halves — candidate for a NEW held-out IEX prereg, not a result. |
 | **3** | **AFTER ~10 IEX sessions** (queued; **do not invent a score yet**) | Score observe-only held-out log (`ob_resist_0.3` / `ob_room_pct`) | No fabricated held-out numbers. |
 
 ## Hard rules (every item)

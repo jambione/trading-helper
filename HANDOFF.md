@@ -1,3 +1,5 @@
+> **S/R queue #4 support-touch arm (2026-10-05): FAIL** (preregs `3255be0` + `afc50c0`). 15-min support − square −10.2 / +5.0 bp; exit (b) resistance touch −22.5 / +23.2 bp vs RT 20 (both chronological halves). Support arm fires a median 32 min before the square. Info only: hold-to-15:55 and 60–240 min holds put support > square by > 20 bp in both halves (weak t, up-drift, squares worse than random) — needs its own held-out IEX prereg. [`docs/studies/SR_SUPPORT_ARM_2026-10-05.md`](docs/studies/SR_SUPPORT_ARM_2026-10-05.md)
+>
 > **Order blocks: merged to `master-mac` 2026-10-05 (branches `ob-observe` + `ob-resist-skip`).**
 > **OPERATOR OVERRIDE 2026-10-05: Jonathan chose a HARD SKIP for 10/06, after being told the tradeoffs.**
 > The pre-registered skip test FAILED on 10/05: half A −17.9 bp t −3.58, half B +0.1 bp t +0.01. Held-out day 1:
