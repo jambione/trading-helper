@@ -1,5 +1,6 @@
 > **2026-10-05 → Grok for the night:** read [`docs/HANDOFF_2026-10-05_GROK.md`](docs/HANDOFF_2026-10-05_GROK.md) first. One script runs tonight's
 > four studies on the mini after 16:05 ET (`scripts/night_2026-10-05.sh`). No config changes (freeze to ~10/15).
+> Operator APPROVED observe-only order-block logging (log, never gate); see that doc. The operator does the restart.
 >
 > **Premarket depth test (2026-10-04): CLOSED by the operator, no result; do not score the partial sample.** Databento returned 402 account_insufficient_funds
 > mid-fetch (106/797 name-days in). Check the Billing page before resuming

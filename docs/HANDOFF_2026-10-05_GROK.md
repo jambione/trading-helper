@@ -71,7 +71,10 @@ Done when `/tmp/rp_lob/done` exists. Outputs are in `/tmp/rp_lob/`.
     block is unconfirmed; re-grade after about 10 sessions.
   - **Stage-2 depth (Databento):** UNDERPOWERED, negative. Premarket depth: closed by the operator, no result.
 
-## Optional, ONLY with the operator's explicit go-ahead: wire the order blocks into the desk as OBSERVE-ONLY
+## APPROVED by the operator (2026-10-05): wire the order blocks into the desk as OBSERVE-ONLY
+> **Operator go-ahead given 2026-10-05:** build it, test it, and merge it to `master-mac` once the tests pass.
+> **The restart stays with the operator,** from the mini's Terminal after a close, never over ssh. Write the exact
+> restart steps in `HANDOFF.md` for them. Do tonight's night batch FIRST; this comes after it.
 Purpose: build the held-out record on the desk's own **IEX** feed automatically. **No trading behaviour changes.**
 - On a **branch** (not master-mac), compute `tools/order_blocks.py` blocks at each arm decision from the desk's
   own 1-minute bars (prior day + today, premarket + RTH), using only blocks known at that moment and the charted
