@@ -4,12 +4,26 @@
  "registered_before_results": true,
  "origin": "Operator, 10/5: ETHA and EWZ losses 'did not move out of the resistance' (LuxAlgo Order Blocks & Breaker Blocks). Port check the same day: EWZ 10:11 entry was inside a bearish OB (43.39-43.95) known since 08:09 (would flag); ETHA's zone (20.49-20.59) became known at 10:35, after the 10:13 entry (would NOT flag). TradingView draws boxes back to the origin candle, which looks like look-ahead on a chart.",
  "indicator": "tools/order_blocks.py, a point-in-time port of 'Order Blocks & Breaker Blocks [LuxAlgo]' with default inputs (swing lookback 10, wicks). A block is usable only from the close of the bar that confirmed it. Port checked to the cent against the operator's ETHA 5m and EWZ 1m charts on 10/5.",
- "sample": "the 2026-10-02 indicator-levels sample, unchanged (ai_reports/indicator_levels/rows.json, ext.pkl): E = 1,807 square arms at $10+, 09:40-15:30, 9/04-10/02, one per name per 15 min; F = 348 desk fills at $10+ since 9/23. Outcome net15 = 15 min after entry minus 0.20% round trip, as registered then. These days have been used for other level features, never for order blocks.",
- "feature": "RESIST = the price at the decision is inside, or within 0.3% below, a resistance block known before the decision: an unbroken bearish OB, or a bullish breaker (a broken bullish OB). Blocks are computed on the prior day + today, extended hours, from 1-minute SIP bars.",
- "primary": "E arms, 1-minute bars, within 0.3%: net15 of RESIST arms minus net15 of the other arms, OLS on a RESIST dummy, day-clustered t, separately in halves A and B (alternate trading days, as on 10/02).",
- "pass": "diff <= -5 bp AND t <= -2 AND >= 50 RESIST arms, in BOTH halves. A pass earns a held-out confirmation on >= 10 new sessions (10/5 onward) before any config change; it is not a gate yet.",
- "information_only": ["E and F on 5-minute bars (resampled from the same 1-minute)", "'inside only' (no 0.3% band)", "F (fills): net15 and realized round trip, flagged vs rest", "share of arms flagged (the opens a skip rule would cost)"],
+ "sample": "the 2026-10-02 indicator-levels sample, unchanged (ai_reports/indicator_levels/rows.json, ext.pkl): E = 1,809 square arms at $10+, 09:40-15:30, on 16 days 9/11-10/02 (9/11 has 5 arms), one per name per 15 min; F = 348 desk fills at $10+ on 8 days since 9/23. Outcome net15 = 15 min after entry minus 0.20% round trip, as registered then. Halves are alternate days: about 8 day-clusters per half for E (t <= -2 is about p 0.085 on 7 df) and 4 for F. These days were mined on 10/02 with about 7 S/R indicators (never order blocks); 'just under PDH' overlaps.",
+ "feature": "RESIST = the price at the decision is inside, or within 0.3% below, a resistance block known before the decision, among the blocks LuxAlgo charts (the last 3 bullish and last 3 bearish blocks, breakers included, newest first): an unbroken bearish OB, or a bullish breaker. Blocks come from premarket + RTH 1-minute SIP bars (04:00-16:00) of the prior day and today. 'All blocks in memory' is information only.",
+ "primary": "E arms, 1-minute bars, charted blocks, within 0.3%: net15 regressed on a RESIST dummy with DAY FIXED EFFECTS (y and RESIST demeaned within day), day-clustered (CR1) t, separately in halves A and B. The raw (no-FE) diff is reported as information.",
+ "pass": "diff <= -5 bp AND t <= -2 AND >= 50 RESIST arms, in BOTH halves -> PASS, which earns a held-out confirmation on >= 10 new sessions (10/5 onward) before any config change; it is not a gate yet. Fewer than 50 RESIST arms in a half -> UNDERPOWERED, no verdict. Otherwise FAIL, which means 'no large effect': with net15 SD 123-153 bp and ~50 flagged arms the SE is ~22 bp, so t <= -2 needs about -45 bp; a small effect cannot be ruled out.",
+ "information_only": [
+  "E and F on 5-minute bars (resampled from the same 1-minute)",
+  "'inside only' (no 0.3% band)",
+  "all blocks in memory instead of the charted 3 per side",
+  "F (fills): net15 and realized round trip, flagged vs rest; F uses the last bar closed before the FILL, which can be up to one bar after the arm decided (at most one bar of look-ahead; information only)",
+  "medians and a winsorized (+/-300 bp) day-FE diff",
+  "share of arms flagged (the opens a skip rule would cost)",
+  "rows with no usable bar before the decision (counted)"
+ ],
  "no_retuning": "the 0.3% band, swing length 10, the timeframe and the resistance definition are fixed here; any change is a new pre-registration",
  "prior": "low-moderate. 10/02: no S/R level separated arms reliably; the only same-sign fill cell was 'just under the prior-day high' (n 22/15). Order blocks are new.",
- "caveats": ["port is from the published logic as remembered; checked on two charts only", "same 20 sessions as 10/02's levels study", "net15 is a fixed 15-minute hold, not the desk's trail exit", "config changed across these sessions"]
+ "caveats": [
+  "port is from the published logic as remembered; checked on two charts only",
+  "same 20 sessions as 10/02's levels study",
+  "net15 is a fixed 15-minute hold, not the desk's trail exit",
+  "config changed across these sessions"
+ ],
+ "amended": "2026-10-05, before any run, per the skeptic's FIX FIRST: charted 3-per-side blocks primary, day fixed effects, sample counts corrected (16 days, 1,809 arms), UNDERPOWERED/FAIL wording, premarket+RTH, F look-ahead noted"
 }

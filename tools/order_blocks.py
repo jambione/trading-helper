@@ -80,9 +80,6 @@ def order_blocks(bars, length: int = 10, bar_sec: float = 300.0, use_body: bool 
         # breaker / removal
         keep = []
         for b in blocks:
-            if b.known_ts > known:
-                keep.append(b)
-                continue
             if b.kind == "bull":
                 if not b.breaker:
                     if min(op[n], cl[n]) < b.btm:
@@ -98,6 +95,16 @@ def order_blocks(bars, length: int = 10, bar_sec: float = 300.0, use_body: bool 
             keep.append(b)
         blocks = keep
         yield n, [Block(**vars(b)) for b in blocks]
+
+
+def charted(blocks, show: int = 3):
+    """LuxAlgo draws only the last `show` bullish and last `show` bearish blocks (breakers included), newest first."""
+    out, n = [], {"bull": 0, "bear": 0}
+    for b in blocks:                      # blocks are kept newest first
+        if n[b.kind] < show:
+            out.append(b)
+            n[b.kind] += 1
+    return out
 
 
 def overhead_resistance(blocks, price: float, within_pct: float = 0.3):
