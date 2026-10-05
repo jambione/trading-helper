@@ -1,0 +1,32 @@
+{
+ "study": "Exit-only at resistance: keep the desk's square opens as-is; take profit at the bottom of the nearest known charted resistance order block; compare to a no-S/R time-stop exit on the same opens.",
+ "registered_at": "2026-10-05 evening ET, before any exit-at-resistance outcome was computed on the sample",
+ "registered_before_results": true,
+ "origin": "Operator (Jonathan) approved S/R test queue 2026-10-05, item #1 (highest): Exit-only at resistance (keep opens as-is; trail/take profit at bottom of next resistance block; optional stop under support). Sibling entry/gate studies the same day all FAIL; this isolates the EXIT.",
+ "queue": "docs/studies/SR_TEST_QUEUE_2026-10-05.md (#2 size-by-room next; #3 observe-only held-out score after ~10 IEX sessions — do not invent yet)",
+ "script": "tools/studies/sr_exit_resist.py (exact rules in its docstring); blocks from tools/order_blocks.py (point-in-time, charted last 3 per side, swing 10, wicks, 1-min bars)",
+ "sample": "E = square arms of the 2026-10-02 indicator-levels study ($10+, 09:40-15:30, same sessions as order_block_gate / sr_range_trade / sr_gap_wr60_arm): ai_reports/indicator_levels/rows.json + ext.pkl (1-min premarket+RTH SIP). Opens kept as-is: every E arm with a usable bar series and a charted resistance bottom strictly above the entry price. These days were mined for entries/levels; never for this resistance-exit rule.",
+ "halves": "chronological: first half of sample days vs second half (not alternate days)",
+ "entry": "keep opens as-is: E square arm at decision close t; buy at the next bar's open (same as the levels study)",
+ "signal_exit": "target = bottom of the nearest charted resistance block above entry (unbroken bearish OB or bullish breaker), known at the entry bar's open from blocks with known_ts <= entry time; filled when a later bar's HIGH is strictly above the target (fill at target). Time stop: close of the bar at 30 min after entry or 15:55 ET, whichever first. PRIMARY has no support stop (exit-only at resistance).",
+ "control_exit": "no-S/R exit on the SAME opens and the SAME time stop (exit at the close of the bar at min(30 min, 15:55)); no resistance target, no support stop. Isolates the resistance take-profit from hold length.",
+ "optional_stop_info": "information only: same as signal but also stop on a 1-min CLOSE below the bottom of the nearest charted support below entry (unbroken bullish OB or bearish breaker), sold at the NEXT bar's open; stop wins a same-bar tie with the target",
+ "cost": "0.20% round trip ($10+ tier, same as sibling studies). Measured RT spread = mean(gross − net) of signal entries in the half (= 20 bp under this model).",
+ "pass": "in BOTH chronological halves: (signal mean gross − control mean gross) > measured round-trip spread of that half's signal entries, AND >= 50 paired trades per half. Also report net after costs (informative; not the pass bar). Fewer than 50 in a half -> UNDERPOWERED. Any PASS = PENDING SKEPTIC REVIEW (not a live exit change; SIP result does not transfer to IEX without held-out confirmation).",
+ "information_only": [
+  "with support stop (optional stop under support)",
+  "F = desk fills ($10+, since 9/23) under the same exit rules (features from last bar closed before fill)",
+  "day-clustered t on (signal − control) gross and on net",
+  "gross, net, win rate, median room at entry, share hitting target vs time stop",
+  "arms with no resistance above (drop counts)"
+ ],
+ "prior": "low. sr_range_trade FAIL (resistance target on support lift-offs did not beat like-for-like). order_block_gate FAIL. Live trail is not modelled here; the control is the no-S/R time stop, not a full ratchet replay.",
+ "caveats": [
+  "flat 0.20% cost, not per-name spreads; measured RT under this model is 20 bp",
+  "30-min time stop, not the desk's live ratchet trail — 'current/live exit' is represented by the no-S/R time-stop control, not a full trail replay",
+  "limit fill at the resistance bottom assumed when the high trades through (no queue model)",
+  "SIP bars; live desk uses IEX — any pass needs IEX confirmation before a config change",
+  "same ~20 sessions already mined for levels and three order-block studies",
+  "resistance target fixed at entry (not updated if a new block appears mid-trade)"
+ ]
+}
