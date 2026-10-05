@@ -1,0 +1,15 @@
+# Support -> resistance range trade (prereg docs/studies/sr_range_trade_prereg.json)
+
+name-days 619; trades 485; controls 483; drops {'room_below_min': 428, 'inside_resistance': 354, 'no_resistance_above': 801, 'wr_not_rising_below_-20': 374, 'control_fallback_same_hour_only': 2, 'control_none': 2}
+
+- half A: trades 224 on 7 days | net -8.4 bp (day-clustered t -0.90), gross +11.6, win 45%, median room 1.01% | minus same-bracket random control -4.2 bp (t -0.30, n 223)
+- half B: trades 261 on 8 days | net -20.8 bp (day-clustered t -3.73), gross -0.8, win 38%, median room 1.13% | minus same-bracket random control -5.2 bp (t -0.56, n 260)
+- half all: trades 485 on 15 days | net -15.1 bp (day-clustered t -2.88), gross +4.9, win 41%, median room 1.08% | minus same-bracket random control -4.7 bp (t -0.60, n 483)
+- INFO room>=0.25% with %R half A: trades 263 | net -9.7 bp (t -1.18) | minus control +6.4 (t +0.66)
+- INFO room>=0.25% with %R half B: trades 306 | net -20.8 bp (t -4.72) | minus control -5.5 (t -0.65)
+- INFO room>=0.6% with %R half A: trades 181 | net -8.8 bp (t -0.80) | minus control +9.1 (t +0.55)
+- INFO room>=0.6% with %R half B: trades 215 | net -19.4 bp (t -2.61) | minus control +13.1 (t +0.72)
+- INFO room>=0.4% NO %R half A: trades 398 | net -3.9 bp (t -0.56) | minus control +12.6 (t +1.70)
+- INFO room>=0.4% NO %R half B: trades 461 | net -18.5 bp (t -4.43) | minus control -0.3 (t -0.04)
+
+**PRIMARY: FAIL** (bar, both halves: net > 0 with t >= 2, AND beats the same-bracket random control by >= 5 bp with t >= 2, n >= 50)

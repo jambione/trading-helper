@@ -1,3 +1,8 @@
+> **Night batch 2026-10-05 (order blocks):** #1 order-block skip rule **FAIL** (half A −17.9 bp t −3.58, half B +0.1 bp
+> t +0.01); #2 support→resistance range trade **FAIL** (net −8.4 / −20.8 bp; vs like-for-like control −4.2 / −5.2 bp);
+> #3 held-out day 1: flagged −7.4 bp (n 29) vs not −0.4 bp (n 24); #4 overbought exit −7.8 vs live −7.6 bp/trade.
+> See [`docs/studies/ORDER_BLOCKS_2026-10-05.md`](docs/studies/ORDER_BLOCKS_2026-10-05.md). Observe-only wiring not started.
+>
 > **2026-10-05 → Grok for the night:** read [`docs/HANDOFF_2026-10-05_GROK.md`](docs/HANDOFF_2026-10-05_GROK.md) first. One script runs tonight's
 > four studies on the mini after 16:05 ET (`scripts/night_2026-10-05.sh`). No config changes (freeze to ~10/15).
 > Operator APPROVED observe-only order-block logging (log, never gate); see that doc. The operator does the restart.

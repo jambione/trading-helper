@@ -1,0 +1,156 @@
+# Order-block gate (prereg docs/studies/order_block_gate_prereg.json)
+
+days 2026-09-04..2026-10-02 (20), halves alternate days; rows E 1809, F 348; missing bars {}
+
+## E 1m within 0.3%
+- half A: flagged 322/827 (39%) days 8 | net15 -19.1 vs rest -2.2 (medians -22.5 / -16.5) | DAY-FE diff -17.9 bp, t -3.58 | raw diff -16.9 (t -3.57) | winsorized ±300 FE diff -17.3
+- half B: flagged 298/982 (30%) days 8 | net15 -13.9 vs rest -11.2 (medians -20.1 / -19.4) | DAY-FE diff +0.1 bp, t +0.01 | raw diff -2.7 (t -0.29) | winsorized ±300 FE diff -3.5
+- half all: flagged 620/1809 (34%) days 16 | net15 -16.6 vs rest -7.4 (medians -21.1 / -17.8) | DAY-FE diff -8.7 bp, t -1.58 | raw diff -9.2 (t -1.71) | winsorized ±300 FE diff -10.2
+
+## E 1m inside only
+- half A: flagged 210/827 (25%) days 8 | net15 -21.1 vs rest -4.6 (medians -24.4 / -16.9) | DAY-FE diff -16.5 bp, t -3.24 | raw diff -16.5 (t -3.25) | winsorized ±300 FE diff -15.0
+- half B: flagged 201/982 (20%) days 8 | net15 -20.2 vs rest -10.0 (medians -24.8 / -18.1) | DAY-FE diff -6.2 bp, t -0.40 | raw diff -10.2 (t -0.67) | winsorized ±300 FE diff -11.8
+- half all: flagged 411/1809 (23%) days 16 | net15 -20.6 vs rest -7.6 (medians -24.7 / -17.6) | DAY-FE diff -11.3 bp, t -1.41 | raw diff -13.0 (t -1.71) | winsorized ±300 FE diff -13.4
+
+## E 1m ALL blocks within 0.3%
+- half A: flagged 362/827 (44%) days 8 | net15 -18.5 vs rest -1.3 (medians -20.0 / -17.6) | DAY-FE diff -18.0 bp, t -2.41 | raw diff -17.2 (t -2.36) | winsorized ±300 FE diff -17.8
+- half B: flagged 337/982 (34%) days 8 | net15 -12.8 vs rest -11.7 (medians -20.0 / -19.3) | DAY-FE diff +1.0 bp, t +0.13 | raw diff -1.1 (t -0.13) | winsorized ±300 FE diff -1.9
+- half all: flagged 699/1809 (39%) days 16 | net15 -15.7 vs rest -7.3 (medians -20.0 / -18.1) | DAY-FE diff -8.1 bp, t -1.38 | raw diff -8.4 (t -1.42) | winsorized ±300 FE diff -9.5
+
+## E 5m within 0.3%
+- half A: flagged 192/827 (23%) days 8 | net15 -13.4 vs rest -7.4 (medians -20.0 / -18.3) | DAY-FE diff -6.9 bp, t -0.93 | raw diff -6.0 (t -0.85) | winsorized ±300 FE diff -8.6
+- half B: flagged 171/982 (17%) days 8 | net15 -11.8 vs rest -12.1 (medians -17.5 / -20.0) | DAY-FE diff +1.6 bp, t +0.19 | raw diff +0.4 (t +0.04) | winsorized ±300 FE diff +3.3
+- half all: flagged 363/1809 (20%) days 16 | net15 -12.6 vs rest -10.0 (medians -19.2 / -20.0) | DAY-FE diff -2.8 bp, t -0.51 | raw diff -2.6 (t -0.48) | winsorized ±300 FE diff -2.8
+
+## E 5m inside only
+- half A: flagged 138/827 (17%) days 8 | net15 -16.9 vs rest -7.2 (medians -19.6 / -18.4) | DAY-FE diff -12.2 bp, t -1.42 | raw diff -9.7 (t -1.17) | winsorized ±300 FE diff -13.8
+- half B: flagged 126/982 (13%) days 8 | net15 -11.4 vs rest -12.1 (medians -19.7 / -20.0) | DAY-FE diff +1.0 bp, t +0.13 | raw diff +0.8 (t +0.11) | winsorized ±300 FE diff +2.5
+- half all: flagged 264/1809 (15%) days 16 | net15 -14.3 vs rest -9.9 (medians -19.7 / -19.8) | DAY-FE diff -5.7 bp, t -0.99 | raw diff -4.3 (t -0.79) | winsorized ±300 FE diff -5.8
+
+## E 5m ALL blocks within 0.3%
+- half A: flagged 197/827 (24%) days 8 | net15 -13.6 vs rest -7.3 (medians -20.0 / -18.4) | DAY-FE diff -6.7 bp, t -0.94 | raw diff -6.2 (t -0.87) | winsorized ±300 FE diff -8.8
+- half B: flagged 172/982 (18%) days 8 | net15 -10.4 vs rest -12.4 (medians -17.3 / -20.0) | DAY-FE diff +3.4 bp, t +0.39 | raw diff +2.0 (t +0.24) | winsorized ±300 FE diff +5.0
+- half all: flagged 369/1809 (20%) days 16 | net15 -12.1 vs rest -10.2 (medians -19.2 / -20.0) | DAY-FE diff -1.9 bp, t -0.34 | raw diff -1.9 (t -0.35) | winsorized ±300 FE diff -2.1
+
+## E 10m within 0.3%
+- half A: flagged 147/827 (18%) days 8 | net15 -8.1 vs rest -9.0 (medians -21.7 / -18.3) | DAY-FE diff -1.2 bp, t -0.13 | raw diff +0.9 (t +0.10) | winsorized ±300 FE diff -2.5
+- half B: flagged 102/982 (10%) days 8 | net15 -6.2 vs rest -12.7 (medians -20.6 / -20.0) | DAY-FE diff +9.7 bp, t +0.84 | raw diff +6.5 (t +0.55) | winsorized ±300 FE diff +9.5
+- half all: flagged 249/1809 (14%) days 16 | net15 -7.3 vs rest -11.1 (medians -21.1 / -19.3) | DAY-FE diff +3.5 bp, t +0.50 | raw diff +3.8 (t +0.51) | winsorized ±300 FE diff +2.7
+
+## E 10m inside only
+- half A: flagged 117/827 (14%) days 8 | net15 -7.5 vs rest -9.0 (medians -20.0 / -18.7) | DAY-FE diff -0.6 bp, t -0.06 | raw diff +1.5 (t +0.15) | winsorized ±300 FE diff -2.1
+- half B: flagged 79/982 (8%) days 8 | net15 -3.4 vs rest -12.8 (medians -20.0 / -20.0) | DAY-FE diff +11.7 bp, t +0.91 | raw diff +9.4 (t +0.70) | winsorized ±300 FE diff +11.4
+- half all: flagged 196/1809 (11%) days 16 | net15 -5.9 vs rest -11.1 (medians -20.0 / -19.6) | DAY-FE diff +4.6 bp, t +0.57 | raw diff +5.3 (t +0.64) | winsorized ±300 FE diff +3.6
+
+## E 10m ALL blocks within 0.3%
+- half A: flagged 147/827 (18%) days 8 | net15 -8.1 vs rest -9.0 (medians -21.7 / -18.3) | DAY-FE diff -1.2 bp, t -0.13 | raw diff +0.9 (t +0.10) | winsorized ±300 FE diff -2.5
+- half B: flagged 102/982 (10%) days 8 | net15 -6.2 vs rest -12.7 (medians -20.6 / -20.0) | DAY-FE diff +9.7 bp, t +0.84 | raw diff +6.5 (t +0.55) | winsorized ±300 FE diff +9.5
+- half all: flagged 249/1809 (14%) days 16 | net15 -7.3 vs rest -11.1 (medians -21.1 / -19.3) | DAY-FE diff +3.5 bp, t +0.50 | raw diff +3.8 (t +0.51) | winsorized ±300 FE diff +2.7
+
+## E any within 0.3%
+- half A: flagged 411/827 (50%) days 8 | net15 -15.1 vs rest -2.6 (medians -20.0 / -16.8) | DAY-FE diff -14.1 bp, t -2.42 | raw diff -12.6 (t -2.54) | winsorized ±300 FE diff -14.2
+- half B: flagged 382/982 (39%) days 8 | net15 -13.4 vs rest -11.2 (medians -20.0 / -19.7) | DAY-FE diff -0.5 bp, t -0.07 | raw diff -2.2 (t -0.29) | winsorized ±300 FE diff -2.2
+- half all: flagged 793/1809 (44%) days 16 | net15 -14.3 vs rest -7.7 (medians -20.0 / -17.9) | DAY-FE diff -6.9 bp, t -1.45 | raw diff -6.7 (t -1.41) | winsorized ±300 FE diff -7.9
+
+## E any inside only
+- half A: flagged 321/827 (39%) days 8 | net15 -13.6 vs rest -5.8 (medians -21.7 / -16.9) | DAY-FE diff -8.6 bp, t -1.72 | raw diff -7.9 (t -1.65) | winsorized ±300 FE diff -9.2
+- half B: flagged 303/982 (31%) days 8 | net15 -14.3 vs rest -11.0 (medians -22.6 / -18.1) | DAY-FE diff -0.9 bp, t -0.11 | raw diff -3.3 (t -0.35) | winsorized ±300 FE diff -4.3
+- half all: flagged 624/1809 (34%) days 16 | net15 -14.0 vs rest -8.8 (medians -21.9 / -17.5) | DAY-FE diff -4.7 bp, t -0.95 | raw diff -5.2 (t -1.03) | winsorized ±300 FE diff -6.7
+
+## E any ALL blocks within 0.3%
+- half A: flagged 429/827 (52%) days 8 | net15 -15.0 vs rest -2.1 (medians -20.0 / -17.5) | DAY-FE diff -14.4 bp, t -2.23 | raw diff -12.9 (t -2.24) | winsorized ±300 FE diff -14.7
+- half B: flagged 402/982 (41%) days 8 | net15 -13.6 vs rest -11.0 (medians -20.1 / -18.3) | DAY-FE diff -0.9 bp, t -0.14 | raw diff -2.6 (t -0.36) | winsorized ±300 FE diff -2.6
+- half all: flagged 831/1809 (46%) days 16 | net15 -14.3 vs rest -7.4 (medians -20.0 / -18.0) | DAY-FE diff -7.2 bp, t -1.51 | raw diff -6.9 (t -1.45) | winsorized ±300 FE diff -8.3
+
+## F 1m within 0.3%
+- half A: flagged 55/175 (31%) days 4 | net15 -53.1 vs rest -49.9 (medians -31.7 / -37.6) | DAY-FE diff +5.8 bp, t +0.42 | raw diff -3.2 (t -0.19) | winsorized ±300 FE diff +19.1 | realized flagged -21.3 vs rest -12.7
+- half B: flagged 68/173 (39%) days 4 | net15 -31.7 vs rest -25.4 (medians -35.6 / -23.1) | DAY-FE diff -9.4 bp, t -0.53 | raw diff -6.3 (t -0.40) | winsorized ±300 FE diff -9.4 | realized flagged -13.6 vs rest -11.6
+- half all: flagged 123/348 (35%) days 8 | net15 -41.3 vs rest -38.5 (medians -34.1 / -30.8) | DAY-FE diff -2.2 bp, t -0.20 | raw diff -2.8 (t -0.28) | winsorized ±300 FE diff +4.1 | realized flagged -17.1 vs rest -12.2
+
+## F 1m inside only
+- half A: flagged 22/175 (13%) days 4 | net15 -90.1 vs rest -45.3 (medians -18.0 / -37.7) | DAY-FE diff -33.6 bp, t -0.77 | raw diff -44.9 (t -0.90) | winsorized ±300 FE diff +6.9 | realized flagged -24.7 vs rest -14.1
+- half B: flagged 27/173 (16%) days 4 | net15 -50.1 vs rest -23.8 (medians -63.2 / -21.5) | DAY-FE diff -29.8 bp, t -1.52 | raw diff -26.3 (t -1.61) | winsorized ±300 FE diff -29.8 | realized flagged -23.0 vs rest -10.4
+- half all: flagged 49/348 (14%) days 8 | net15 -68.1 vs rest -34.8 (medians -38.3 / -30.8) | DAY-FE diff -31.5 bp, t -1.50 | raw diff -33.3 (t -1.45) | winsorized ±300 FE diff -13.0 | realized flagged -23.8 vs rest -12.3
+
+## F 1m ALL blocks within 0.3%
+- half A: flagged 57/175 (33%) days 4 | net15 -57.7 vs rest -47.6 (medians -34.7 / -36.8) | DAY-FE diff +1.4 bp, t +0.08 | raw diff -10.1 (t -0.46) | winsorized ±300 FE diff +12.9 | realized flagged -21.1 vs rest -12.7
+- half B: flagged 72/173 (42%) days 4 | net15 -30.1 vs rest -26.3 (medians -35.6 / -23.1) | DAY-FE diff -7.7 bp, t -0.53 | raw diff -3.8 (t -0.29) | winsorized ±300 FE diff -7.7 | realized flagged -13.2 vs rest -11.7
+- half all: flagged 129/348 (37%) days 8 | net15 -42.3 vs rest -37.8 (medians -34.7 / -30.5) | DAY-FE diff -3.4 bp, t -0.33 | raw diff -4.5 (t -0.41) | winsorized ±300 FE diff +2.0 | realized flagged -16.7 vs rest -12.3
+
+## F 5m within 0.3%
+- half A: flagged 33/175 (19%) days 4 | net15 -103.8 vs rest -38.6 (medians -45.3 / -30.8) | DAY-FE diff -60.2 bp, t -1.49 | raw diff -65.1 (t -1.42) | winsorized ±300 FE diff -41.8 | realized flagged -24.6 vs rest -13.3
+- half B: flagged 30/173 (17%) days 4 | net15 -12.5 vs rest -31.1 (medians -19.2 / -29.6) | DAY-FE diff +14.1 bp, t +2.51 | raw diff +18.6 (t +4.58) | winsorized ±300 FE diff +14.1 | realized flagged -8.3 vs rest -13.2
+- half all: flagged 63/348 (18%) days 8 | net15 -60.3 vs rest -34.9 (medians -37.0 / -30.5) | DAY-FE diff -24.8 bp, t -0.92 | raw diff -25.4 (t -0.83) | winsorized ±300 FE diff -15.2 | realized flagged -16.8 vs rest -13.3
+
+## F 5m inside only
+- half A: flagged 29/175 (17%) days 4 | net15 -117.2 vs rest -37.8 (medians -49.5 / -30.6) | DAY-FE diff -71.7 bp, t -1.77 | raw diff -79.5 (t -1.70) | winsorized ±300 FE diff -51.5 | realized flagged -28.7 vs rest -12.8
+- half B: flagged 16/173 (9%) days 4 | net15 -23.0 vs rest -28.4 (medians -49.2 / -23.9) | DAY-FE diff +0.9 bp, t +0.15 | raw diff +5.4 (t +1.00) | winsorized ±300 FE diff +0.9 | realized flagged -18.1 vs rest -11.8
+- half all: flagged 45/348 (13%) days 8 | net15 -83.7 vs rest -32.9 (medians -49.5 / -28.8) | DAY-FE diff -44.6 bp, t -1.61 | raw diff -50.8 (t -1.50) | winsorized ±300 FE diff -31.9 | realized flagged -24.9 vs rest -12.3
+
+## F 5m ALL blocks within 0.3%
+- half A: flagged 33/175 (19%) days 4 | net15 -103.8 vs rest -38.6 (medians -45.3 / -30.8) | DAY-FE diff -60.2 bp, t -1.49 | raw diff -65.1 (t -1.42) | winsorized ±300 FE diff -41.8 | realized flagged -24.6 vs rest -13.3
+- half B: flagged 31/173 (18%) days 4 | net15 -5.6 vs rest -32.8 (medians -17.5 / -29.9) | DAY-FE diff +23.2 bp, t +1.90 | raw diff +27.1 (t +2.17) | winsorized ±300 FE diff +23.2 | realized flagged -7.2 vs rest -13.5
+- half all: flagged 64/348 (18%) days 8 | net15 -56.2 vs rest -35.7 (medians -35.9 / -30.6) | DAY-FE diff -19.6 bp, t -0.73 | raw diff -20.5 (t -0.68) | winsorized ±300 FE diff -10.2 | realized flagged -16.2 vs rest -13.4
+
+## F 10m within 0.3%
+- half A: flagged 23/175 (13%) days 4 | net15 -106.3 vs rest -42.5 (medians -37.0 / -34.8) | DAY-FE diff -66.7 bp, t -0.96 | raw diff -63.7 (t -0.94) | winsorized ±300 FE diff -22.1 | realized flagged -21.3 vs rest -14.5
+- half B: flagged 12/173 (7%) days 4 | net15 -25.5 vs rest -28.1 (medians -40.4 / -26.7) | DAY-FE diff -0.5 bp, t -0.02 | raw diff +2.6 (t +0.09) | winsorized ±300 FE diff -0.5 | realized flagged -25.8 vs rest -11.4
+- half all: flagged 35/348 (10%) days 8 | net15 -78.6 vs rest -35.1 (medians -37.0 / -30.5) | DAY-FE diff -44.1 bp, t -1.05 | raw diff -43.5 (t -1.05) | winsorized ±300 FE diff -14.8 | realized flagged -22.8 vs rest -12.9
+
+## F 10m inside only
+- half A: flagged 21/175 (12%) days 4 | net15 -116.6 vs rest -42.0 (medians -38.1 / -33.4) | DAY-FE diff -77.2 bp, t -1.01 | raw diff -74.6 (t -0.99) | winsorized ±300 FE diff -28.6 | realized flagged -26.3 vs rest -13.9
+- half B: flagged 10/173 (6%) days 4 | net15 -41.8 vs rest -27.0 (medians -49.2 / -23.9) | DAY-FE diff -16.9 bp, t -0.38 | raw diff -14.7 (t -0.38) | winsorized ±300 FE diff -16.9 | realized flagged -33.2 vs rest -11.1
+- half all: flagged 31/348 (9%) days 8 | net15 -92.5 vs rest -34.3 (medians -40.8 / -29.6) | DAY-FE diff -57.6 bp, t -1.21 | raw diff -58.2 (t -1.22) | winsorized ±300 FE diff -24.8 | realized flagged -28.5 vs rest -12.5
+
+## F 10m ALL blocks within 0.3%
+- half A: flagged 23/175 (13%) days 4 | net15 -106.3 vs rest -42.5 (medians -37.0 / -34.8) | DAY-FE diff -66.7 bp, t -0.96 | raw diff -63.7 (t -0.94) | winsorized ±300 FE diff -22.1 | realized flagged -21.3 vs rest -14.5
+- half B: flagged 12/173 (7%) days 4 | net15 -25.5 vs rest -28.1 (medians -40.4 / -26.7) | DAY-FE diff -0.5 bp, t -0.02 | raw diff +2.6 (t +0.09) | winsorized ±300 FE diff -0.5 | realized flagged -25.8 vs rest -11.4
+- half all: flagged 35/348 (10%) days 8 | net15 -78.6 vs rest -35.1 (medians -37.0 / -30.5) | DAY-FE diff -44.1 bp, t -1.05 | raw diff -43.5 (t -1.05) | winsorized ±300 FE diff -14.8 | realized flagged -22.8 vs rest -12.9
+
+## F any within 0.3%
+- half A: flagged 73/175 (42%) days 4 | net15 -62.2 vs rest -42.9 (medians -34.7 / -36.8) | DAY-FE diff -10.0 bp, t -0.41 | raw diff -19.3 (t -0.64) | winsorized ±300 FE diff +1.3 | realized flagged -20.5 vs rest -11.8
+- half B: flagged 85/173 (49%) days 4 | net15 -24.6 vs rest -31.1 (medians -33.6 / -27.8) | DAY-FE diff +3.2 bp, t +0.39 | raw diff +6.4 (t +0.87) | winsorized ±300 FE diff +3.2 | realized flagged -12.1 vs rest -12.7
+- half all: flagged 158/348 (45%) days 8 | net15 -42.0 vs rest -37.4 (medians -33.6 / -31.7) | DAY-FE diff -3.3 bp, t -0.27 | raw diff -4.6 (t -0.31) | winsorized ±300 FE diff +2.3 | realized flagged -16.0 vs rest -12.2
+
+## F any inside only
+- half A: flagged 49/175 (28%) days 4 | net15 -85.1 vs rest -37.6 (medians -38.3 / -33.0) | DAY-FE diff -36.8 bp, t -1.10 | raw diff -47.5 (t -1.21) | winsorized ±300 FE diff -18.6 | realized flagged -27.8 vs rest -10.6
+- half B: flagged 41/173 (24%) days 4 | net15 -34.3 vs rest -25.9 (medians -51.6 / -20.5) | DAY-FE diff -9.9 bp, t -0.64 | raw diff -8.4 (t -0.56) | winsorized ±300 FE diff -9.9 | realized flagged -18.3 vs rest -10.5
+- half all: flagged 90/348 (26%) days 8 | net15 -62.0 vs rest -31.6 (medians -42.4 / -28.8) | DAY-FE diff -23.8 bp, t -1.36 | raw diff -30.3 (t -1.33) | winsorized ±300 FE diff -14.4 | realized flagged -23.4 vs rest -10.6
+
+## F any ALL blocks within 0.3%
+- half A: flagged 73/175 (42%) days 4 | net15 -62.2 vs rest -42.9 (medians -34.7 / -36.8) | DAY-FE diff -10.0 bp, t -0.41 | raw diff -19.3 (t -0.64) | winsorized ±300 FE diff +1.3 | realized flagged -20.5 vs rest -11.8
+- half B: flagged 88/173 (51%) days 4 | net15 -25.4 vs rest -30.5 (medians -33.6 / -26.7) | DAY-FE diff +1.5 bp, t +0.17 | raw diff +5.0 (t +0.64) | winsorized ±300 FE diff +1.5 | realized flagged -12.2 vs rest -12.5
+- half all: flagged 161/348 (46%) days 8 | net15 -42.1 vs rest -37.2 (medians -33.6 / -30.8) | DAY-FE diff -4.2 bp, t -0.35 | raw diff -4.9 (t -0.34) | winsorized ±300 FE diff +1.4 | realized flagged -16.0 vs rest -12.1
+
+## E 1m BREAKOUT (charted bearish OB broken upward in the last 15 min, price above it) vs rest
+- half A: breakouts 218/827 net15 -14.0 vs rest -7.0 | DAY-FE diff -7.0 bp, t -1.05
+- half B: breakouts 244/982 net15 -20.1 vs rest -9.4 | DAY-FE diff -8.7 bp, t -0.95
+- half all: breakouts 462/1809 net15 -17.2 vs rest -8.3 | DAY-FE diff -7.9 bp, t -1.41
+
+## E 1m BREAKOUT DISTANCE above the broken zone's top (bands fixed before the run), vs non-breakout arms
+- poke 0-0.10%: A: n 57 mean -23.2, FE diff -16.8 (t -1.29) | B: n 48 mean -5.0, FE diff +11.0 (t +0.79) | all: n 105 mean -14.9, FE diff -4.1 (t -0.41)
+- clean 0.10-0.30%: A: n 68 mean +14.0, FE diff +23.6 (t +1.68) | B: n 76 mean -4.4, FE diff +6.5 (t +0.52) | all: n 144 mean +4.3, FE diff +14.5 (t +1.54)
+- running 0.30-0.60%: A: n 46 mean -50.4, FE diff -44.2 (t -1.40) | B: n 56 mean -10.4, FE diff -2.0 (t -0.22) | all: n 102 mean -28.4, FE diff -21.0 (t -1.33)
+- extended >0.60%: A: n 47 mean -7.7, FE diff -2.8 (t -0.14) | B: n 64 mean -58.6, FE diff -45.2 (t -1.75) | all: n 111 mean -37.1, FE diff -27.3 (t -1.63)
+
+## E 1m ROOM to the nearest charted resistance above (terciles cut on half A; 'none above' separate)
+- half A (cuts 0.24% / 0.75%): low n 120 mean -15.4 | mid n 121 mean -16.3 | high n 121 mean -10.5 | none above n 465 mean -4.7
+- half B (cuts 0.24% / 0.75%): low n 117 mean -5.1 | mid n 93 mean -7.4 | high n 130 mean -22.7 | none above n 642 mean -11.8
+
+## F 1m BREAKOUT (charted bearish OB broken upward in the last 15 min, price above it) vs rest
+- half A: breakouts 17/175 net15 -68.7 vs rest -49.0 | DAY-FE diff -8.7 bp, t -0.90
+- half B: breakouts 35/173 net15 -27.5 vs rest -28.0 | DAY-FE diff +1.1 bp, t +0.08
+- half all: breakouts 52/348 net15 -41.0 vs rest -39.2 | DAY-FE diff -2.4 bp, t -0.25
+
+## F 1m BREAKOUT DISTANCE above the broken zone's top (bands fixed before the run), vs non-breakout arms
+- poke 0-0.10%: A: n 5 mean -20.6, FE diff +17.0 (t +0.86) | B: n 4 (too few) | all: n 9 mean -28.9, FE diff +5.4 (t +0.56)
+- clean 0.10-0.30%: A: n 5 mean -11.4, FE diff +37.1 (t +5.38) | B: n 17 mean -28.7, FE diff -2.6 (t -0.26) | all: n 22 mean -24.7, FE diff +6.9 (t +0.77)
+- running 0.30-0.60%: A: n 1 (too few) | B: n 10 mean +4.2, FE diff +31.8 (t +0.71) | all: n 11 mean +1.2, FE diff +29.4 (t +0.79)
+- extended >0.60%: A: n 6 mean -163.2, FE diff -76.4 (t -1.63) | B: n 4 (too few) | all: n 10 mean -133.9, FE diff -69.2 (t -2.65)
+
+## F 1m ROOM to the nearest charted resistance above (terciles cut on half A; 'none above' separate)
+- half A (cuts 0.33% / 1.06%): low n 34 mean -28.7 | mid n 35 mean -59.8 | high n 35 mean -61.8 | none above n 71 mean -51.9
+- half B (cuts 0.33% / 1.06%): low n 47 mean -26.3 | mid n 42 mean -29.9 | high n 16 mean -7.1 | none above n 68 mean -32.7
+
+**PRIMARY (E, 1m, charted blocks, within 0.3%, day fixed effects): FAIL (= no large effect; a small one cannot be ruled out)** (bar: diff <= -5 bp, t <= -2, flagged n >= 50, both halves)
+Fills, same sign both halves: no (information)

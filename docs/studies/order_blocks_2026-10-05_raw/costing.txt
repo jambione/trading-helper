@@ -1,0 +1,5 @@
+REPLAY COSTING 2026-09-29..2026-10-05 (5 days): bp per trade, full SIP spread charged once
+
+  variant  trades  /day   gross  spread     net  t(days)  net $/day @1k
+  base        369    74    +0.3     7.9    -7.6    -4.36         -56.35
+  lob         385    77    +0.0     7.8    -7.8    -4.67         -59.71
