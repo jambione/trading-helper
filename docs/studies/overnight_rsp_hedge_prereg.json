@@ -11,16 +11,32 @@
  },
  "comparison_baseline": "the same book hedged with SPY at its own trailing 252-night beta, 2.26 bp per unit",
  "data": {
-  "period_A": "2004-05-03 .. 2015-12-30 (RSP listed 2003-04-30; one year of beta warm-up): the book from the 2000-2015 Yahoo pipeline (tools/studies/overnight_pre2016.py, its registered masks and dividend-inclusive ON); RSP and SPY from Yahoo daily (auto_adjust=False, actions=True, ON = (Open(t+1) + Div(t+1)) / Close(t) - 1)",
-  "period_B": "2017-01-13 .. 2026-09-24: the book from the Alpaca panel (as overnight_hedge_intraday.py); RSP from Alpaca SIP daily bars with adjustment=all; SPY as in the panel",
-  "data_source_check": "RSP overnight returns from Yahoo vs Alpaca on 2017-2021: correlation >= 0.99 and |mean nightly difference| <= 0.5 bp, else period A is reported without a verdict",
-  "bad_data": "a night is dropped (counted) if RSP's open or prior close is missing or |RSP ON| > 15%"
+  "period_A": "2004-05-03 .. 2015-12-30 (first night with >= 200 prior book nights) (RSP listed 2003-04-30; one year of beta warm-up): the book from the 2000-2015 Yahoo pipeline (tools/studies/overnight_pre2016.py, its registered masks and dividend-inclusive ON); RSP and SPY from Yahoo daily (auto_adjust=False, actions=True, ON = (Open(t+1) + Div(t+1)) / Close(t) - 1)",
+  "period_B": "from the first night with >= 200 prior book nights (~2017-10; the panel starts 2016-01-04 and book nights at ~2017-01-13) .. 2026-09-24, about 2,240 nights; the book from the Alpaca panel (as overnight_hedge_intraday.py); RSP from Alpaca SIP daily bars with adjustment=all; SPY as in the panel",
+  "data_source_check": "RSP AND SPY overnight returns, Yahoo vs Alpaca, 2017-2021: correlation >= 0.99 and |mean nightly difference| <= 0.5 bp each; if either fails, period A gets no verdict and the overall verdict is UNPROVEN",
+  "bad_data": "a night is dropped (counted) if RSP's open or prior close is missing or |RSP ON| > 15%; the share of RSP nights with ON exactly 0 is reported by year and any year above 25% is dropped from both hedges; one common night set is used for the RSP and SPY hedges"
  },
- "statistic": "RSP-hedged net per night = book net - h x RSP_ON - 3 bp x |h|; mean bp/night, SE = max(plain, Newey-West 5, Newey-West 9)",
- "power": "MDE = 2.84 x SE per period; if MDE > 5 bp in a period, that period is UNDERPOWERED",
- "pass": "RSP-hedged net > 0 with t >= 2 in BOTH periods, AND RSP-hedged minus SPY-hedged (paired by night) > 0 in both periods, AND RSP-hedged net still > 0 at 6 bp hedge cost in both periods. Otherwise FAIL. A pass (after skeptic review) is input to the gate-O1 discussion about the live overnight account; it does not change the live book by itself.",
- "information_only": ["unhedged net", "fixed h = 1.0 RSP hedge", "realised beta of the RSP-hedged book to SPY", "worst night, CVaR 1%, max drawdown, Sharpe for unhedged / SPY-hedged / RSP-hedged", "per-year means", "hedge ratio h over time"],
- "no_retuning": "instrument, beta window, costs, periods and the pass bar are fixed here; IWM or other instruments would be a new pre-registration",
- "prior": "moderate: the ranking edge vs the equal-weight universe is strong in both 2000-15 and 2016-26; whether RSP tracks that universe closely enough (S&P 500 equal weight vs a broader liquid set with ADV >= $50M) is the open question",
- "caveats": ["period B's book has been studied many times (only the RSP hedge is new); period A is the cleaner test", "shorting RSP at the auctions is assumed available at the stated cost; live borrow is not modelled", "RSP has its own rebalancing and fees, included in its returns"]
+ "statistic": "RSP-hedged net per night = book net - h x RSP_ON - 3 bp x |h|; mean bp/night, SE = max(plain, Newey-West 5, Newey-West 9). Paired RSP-minus-SPY hedged difference is reported with its t (information; tracking decides, not the paired mean, which is a cap- vs equal-weight bet)",
+ "power": "period A: MDE = 2.84 x SE <= 5 bp required; period B: reported only (underpowered by construction)",
+ "pass": "Period A decides: RSP-hedged net > 0 with t >= 2, still > 0 at 6 bp hedge cost, AND tracking is better than the SPY hedge (lower SD of the hedged series AND higher R^2 of the book on RSP than on SPY, on the common night set). Period B must have RSP-hedged net > 0 (B is underpowered by construction: SE ~2.4-2.5 bp, MDE ~7 bp); if B is <= 0 the verdict is UNPROVEN. SURVIVORSHIP RULE for period A: report the decomposition RSP-hedged = S2 + (universe alpha vs RSP) - 4 bp - 3 bp x h; if A passes only because universe alpha vs RSP > 0 (i.e. S2 - 4 - 3h <= 0), the verdict is UNPROVEN. Power for A: MDE = 2.84 x SE must be <= 5 bp, else UNPROVEN. A FAIL closes the hedge-instrument question (no IWM/MDY/other follow-ups). A pass is input to gate O1 only.",
+ "information_only": [
+  "unhedged net",
+  "fixed h = 1.0 RSP hedge",
+  "realised beta of the RSP-hedged book to SPY",
+  "worst night, CVaR 1%, max drawdown, Sharpe for unhedged / SPY-hedged / RSP-hedged",
+  "per-year means",
+  "hedge ratio h over time",
+  "realised beta of the RSP-hedged book to RSP by year, the path of h, and the fixed-h gap",
+  "10 bp hedge cost (2004-08 RSP was thin)",
+  "RSP ON == 0 share by year"
+ ],
+ "no_retuning": "instrument, beta window, costs, periods and the pass bar are fixed here; a FAIL closes the hedge-instrument question",
+ "prior": "LOW: expected RSP-hedged ~ 8.6 (S2) - 4 - ~3.6 (3 bp x h) ~ +1 bp plus universe alpha vs RSP; the SPY trailing hedge gave +0.76 (2000-15) and +1.71 (t 0.6, 2018-26)",
+ "caveats": [
+  "shorting RSP at the auctions is assumed available at the stated cost; live borrow is not modelled",
+  "RSP has its own rebalancing and fees, included in its returns",
+  "survivorship: period A's universe is names that existed in 2016-2026; RSP includes delisted names, so the hedge passes the bias through (handled by the decomposition rule)",
+  "LIVE FEASIBILITY: Alpaca blocks shorting below $2,000 equity and has no fractional shorts; RSP ~ $185/share. NOT actionable for the $100 live account; only relevant at several thousand dollars. Borrow and opg/cls short orders on RSP to be verified read-only before any use."
+ ],
+ "amended": "2026-10-06, before any data, per the skeptic's FIX FIRST: period A decides, B > 0 required; survivorship decomposition rule; tracking criterion replaces the coin-flip paired mean; common night set; RSP stale-open rule; prior LOW; FAIL closes the instrument question; live feasibility caveat"
 }
