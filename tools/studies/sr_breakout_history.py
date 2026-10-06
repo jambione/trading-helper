@@ -3,15 +3,19 @@
 Pre-registration: docs/studies/sr_breakout_history_prereg.json (committed before this runs).
 
 Universe: per session, the 40 largest opening gappers with open >= $10, prior-day dollar volume >= $20M, gap >= +2%
-(sip_breakout_study.universe, the same daily panel). Bars: SIP 1-minute, split-adjusted, prior trading day + the day,
-04:00-16:00 ET (fetched here, cached in ai_reports/sr_breakout_hist/).
+(sip_breakout_study.universe on the split-adjusted daily panel) AND a RAW (unadjusted) 09:30 open >= $10 from the
+minute bars (a later reverse split can make a $3 stock look like $30 on adjusted data). Bars: SIP 1-minute, RAW,
+prior trading day + the day, 04:00-16:00 ET (cached in ai_reports/sr_breakout_hist/); the prior-day bars are dropped
+when the day's first bar / prior last close is outside [0.5, 2.0] (a split inside the window).
 Blocks: tools/order_blocks.py (swing 10, wicks), point-in-time, charted last 3 per side.
 EVENTS (desk-like square moments): a 1-min close 09:40-15:00 ET with fast %R (21, EMA 7) >= -20 AND slow %R
   (112, EMA 3) >= -20; at most one per name per clock 15-min block (the first).
 FEATURE: brk = % the close sits above the top of the most recently broken charted bearish OB (it became a breaker
   within the last 15 min and the close is still above its top); None = no breakout.
   bands: none | poke [0, 0.10) | clean [0.10, 0.30) | chase [0.30, inf)
-OUTCOME net15: buy at the next bar's open, sell at the close 15 min later (15:55 cap), minus 0.20%.
+OUTCOME net15: buy at the next bar's open, sell at the close of the last bar starting at or before entry + 15 min
+  (so ~16 min open-to-close), minus 0.20%. Events whose exit bar is > 3 min off target are dropped and counted per band.
+CONTROL (information): per event, one random minute (seed 31) of the same name-day in the same clock hour, same outcome.
 Run on the mini after the close: .venv/bin/python tools/studies/sr_breakout_history.py
 """
 from __future__ import annotations
@@ -23,6 +27,7 @@ import os
 import pickle
 import statistics
 import sys
+import random
 import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -73,7 +78,7 @@ def fetch(day, prev, syms, cl):
         try:
             r = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=syms, timeframe=TimeFrame(1, TimeFrameUnit.Minute),
                                                    start=d0.astimezone(timezone.utc), end=d1.astimezone(timezone.utc),
-                                                   feed=DataFeed.SIP, adjustment=Adjustment.SPLIT))
+                                                   feed=DataFeed.SIP, adjustment=Adjustment.RAW))
             out = {}
             for s, rows in (r.data or {}).items():
                 keep = []
@@ -102,17 +107,31 @@ def main():
     cal = sorted({r[0] for rows in daily.values() for r in rows})
     cl = B.client()
     ev, fails, nd = [], [], 0
+    rng = random.Random(31)
+    cover, drops = {}, collections.Counter()
     for day in days:
         prev = cal[cal.index(day) - 1]
         mb = fetch(day, prev, uni[day], cl)
         if mb is None:
             fails.append(day)
             continue
+        cover[day] = (len(uni[day]), sum(1 for s_ in uni[day] if mb.get(s_)))
         d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
+        t930 = d.replace(hour=9, minute=30).timestamp()
         t_lo, t_hi, t_end = d.replace(hour=9, minute=40).timestamp(), d.replace(hour=15).timestamp(), d.replace(hour=15, minute=55).timestamp()
         for sym in uni[day]:
             rows = sorted(mb.get(sym) or [])
+            today = [r for r in rows if r[0] >= d.replace(hour=4).timestamp()]
+            prior = [r for r in rows if r[0] < d.replace(hour=4).timestamp()]
+            rth = [r for r in today if r[0] >= t930]
+            if not rth or rth[0][1] < 10:
+                drops["raw_open_below_10_or_no_rth"] += 1
+                continue
+            if prior and today and not (0.5 <= today[0][1] / prior[-1][4] <= 2.0):
+                drops["split_in_window_prior_dropped"] += 1
+                rows = today
             if len(rows) < 150:
+                drops["short_series"] += 1
                 continue
             nd += 1
             h = [r[2] for r in rows]
@@ -133,18 +152,32 @@ def main():
                 rec = [b for b in ch if b.kind == "bear" and b.breaker and b.break_ts is not None
                        and tq - 900 <= b.break_ts <= tq and c[i] > b.top]
                 brk = (c[i] / max(rec, key=lambda b: b.break_ts).top - 1) * 100 if rec else None
-                entry = rows[i + 1][1]
-                tx = min(rows[i + 1][0] + 900, t_end)
-                j = max(k for k in range(i + 1, len(rows)) if rows[k][0] <= tx) if rows[i + 1][0] <= tx else None
-                if j is None or j <= i + 1 or abs(rows[j][0] - tx) > 180:
+
+                def net_from(k0):
+                    entry = rows[k0 + 1][1]
+                    tx = min(rows[k0 + 1][0] + 900, t_end)
+                    js = [k for k in range(k0 + 1, len(rows)) if rows[k][0] <= tx]
+                    j = js[-1] if js else None
+                    if j is None or j <= k0 + 1 or abs(rows[j][0] - tx) > 180:
+                        return None
+                    return (c[j] / entry - 1 - COST) * 1e4
+                n15 = net_from(i)
+                if n15 is None:
+                    drops["exit_tolerance_" + ("none" if brk is None else next(lab for lab, lo, hi in BANDS if lo <= brk < hi))] += 1
                     continue
-                ev.append({"day": day, "sym": sym, "brk": brk, "net15": (c[j] / entry - 1 - COST) * 1e4})
-    json.dump({"events": ev, "fails": fails}, open(os.path.join(OUT, "events.json"), "w"))
+                hr = int((tq - d.timestamp()) // 3600)
+                pool = [k for k in range(len(rows) - 1) if t_lo <= rows[k][0] + 60 <= t_hi
+                        and int((rows[k][0] + 60 - d.timestamp()) // 3600) == hr]
+                ctl = net_from(rng.choice(pool)) if pool else None
+                ev.append({"day": day, "sym": sym, "brk": brk, "net15": n15, "ctl": ctl})
+    json.dump({"events": ev, "fails": fails, "cover": cover, "drops": dict(drops)}, open(os.path.join(OUT, "events.json"), "w"))
     dd = sorted({e["day"] for e in ev})
     half = {x: (1 if k < len(dd) // 2 else 2) for k, x in enumerate(dd)}
     L = ["# Breakout distance on untouched history (prereg docs/studies/sr_breakout_history_prereg.json)", "",
          f"sessions {len(dd)} ({dd[0]}..{dd[-1]}), name-days {nd}, events {len(ev)}, failed days {fails}",
-         f"halves: H1 {dd[0]}..{dd[len(dd) // 2 - 1]}, H2 {dd[len(dd) // 2]}..{dd[-1]}", ""]
+         f"halves: H1 {dd[0]}..{dd[len(dd) // 2 - 1]}, H2 {dd[len(dd) // 2]}..{dd[-1]}",
+         f"drops {dict(drops)}",
+         f"days with < 90% of requested names returned: {[x for x, (a, b) in cover.items() if a and b / a < 0.9]}", ""]
 
     def band(b):
         if b is None:
@@ -169,6 +202,15 @@ def main():
             L.append(f"- {lab} H{h}: n {n1} mean {m1:+.1f} vs none {m0:+.1f} (n {len(g) - n1}) | DAY-FE diff {b:+.1f} bp, t {b / se:+.2f}")
             res[(lab, h)] = (n1, b, b / se)
         L.append("")
+    L.append("INFORMATION: per band and half, mean net15 and mean (event minus same-hour random-minute control)")
+    for lab in ("none", "poke", "clean", "chase"):
+        for h in (1, 2):
+            xs = [e for e in ev if e["band"] == lab and half[e["day"]] == h]
+            cs = [e["net15"] - e["ctl"] for e in xs if e.get("ctl") is not None]
+            if xs:
+                L.append(f"- {lab} H{h}: n {len(xs)} net15 {statistics.fmean(e['net15'] for e in xs):+.1f} | minus control "
+                         f"{statistics.fmean(cs):+.1f} (n {len(cs)})" if cs else f"- {lab} H{h}: n {len(xs)}")
+    L.append("")
 
     def verdict(lab, sign):
         r1, r2, ra = res[(lab, 1)], res[(lab, 2)], res[(lab, "all")]
