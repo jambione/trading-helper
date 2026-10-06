@@ -287,6 +287,31 @@ def m1545(cache, H, sym, day):
     return best
 
 
+def excess_at(c, spy, spy_r, dates, j, t, hold):
+    """Beta-adjusted excess of column j bought at close t, sold at close t+hold (bp), or None.
+    Skeptic F3 (2026-10-06): every close t..t+hold must be finite, else a NaN mid-hold poisoned the daily series
+    (and with it the calendar-time mean) while the endpoint return still looked fine."""
+    T = len(dates)
+    if t + hold >= T or t < 160:
+        return None
+    path = c[t:t + hold + 1, j]
+    if not (np.isfinite(path).all() and path[0] > 0 and np.isfinite(spy[t:t + hold + 1]).all()):
+        return None
+    a, b = path[0], path[-1]
+    sr = c[max(0, t - 252):t, j]
+    rr = sr[1:] / sr[:-1] - 1
+    mr = spy_r[max(0, t - 252) + 1:t]
+    ok = np.isfinite(rr) & np.isfinite(mr)
+    if ok.sum() < 150:
+        return None
+    beta = float(np.polyfit(mr[ok], rr[ok], 1)[0])
+    r_s = b / a - 1
+    r_m = spy[t + hold] / spy[t] - 1
+    daily = [(c[t + k, j] / c[t + k - 1, j] - 1) - beta * spy_r[t + k] for k in range(1, hold + 1)]
+    return {"beta": beta, "x": (r_s - beta * r_m) * 1e4, "raw_vs_spy": (r_s - r_m) * 1e4,
+            "daily": [d * 1e4 for d in daily], "dates": [dates[t + k] for k in range(1, hold + 1)]}
+
+
 def phase_minutes_and_score():
     P = panel()
     E = jload(os.path.join(WORK, "events.json"))
@@ -308,24 +333,8 @@ def phase_minutes_and_score():
         return None if (m is None or not np.isfinite(prev) or prev <= 0) else m / prev - 1
 
     def excess(sym, t, hold):
-        j = P["col"][sym]
-        if t + hold >= T or t < 160:
-            return None
-        a, b = c[t, j], c[t + hold, j]
-        if not (np.isfinite(a) and np.isfinite(b) and a > 0):
-            return None
-        sr = c[max(0, t - 252):t, j]
-        rr = sr[1:] / sr[:-1] - 1
-        mr = spy_r[max(0, t - 252) + 1:t]
-        ok = np.isfinite(rr) & np.isfinite(mr)
-        if ok.sum() < 150:
-            return None
-        beta = float(np.polyfit(mr[ok], rr[ok], 1)[0])
-        r_s = b / a - 1
-        r_m = spy[t + hold] / spy[t] - 1
-        daily = [(c[t + k, j] / c[t + k - 1, j] - 1) - beta * spy_r[t + k] for k in range(1, hold + 1)]
-        return {"beta": beta, "x": (r_s - beta * r_m) * 1e4, "raw_vs_spy": (r_s - r_m) * 1e4,
-                "daily": [d * 1e4 for d in daily], "dates": [P["dates"][t + k] for k in range(1, hold + 1)]}
+        return excess_at(c, spy, spy_r, P["dates"], P["col"][sym], t, hold)
+
     rows, cnt = [], collections.Counter()
     for n, e in enumerate(E["events"]):
         rr = r0(e["sym"], e["t0"])

@@ -25,3 +25,21 @@ def test_t_used_nan_fails():
     assert math.isnan(ed.t_used(float("nan"), 3.0))
     assert math.isnan(ed.t_used(3.0, float("nan")))
     assert not (ed.t_used(3.0, float("nan")) >= 2)
+
+
+# ---------------------------------------------------------------- F3 NaN inside the hold
+def _series(n=300, seed=1):
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    spy = 100 * np.cumprod(1 + rng.normal(0, 0.01, n))
+    stk = 50 * np.cumprod(1 + rng.normal(0, 0.015, n))
+    spy_r = np.r_[np.nan, spy[1:] / spy[:-1] - 1]
+    return stk.reshape(-1, 1), spy, spy_r, [f"d{i}" for i in range(n)]
+
+
+def test_excess_needs_every_close_in_the_hold():
+    c, spy, spy_r, dates = _series()
+    ok = ed.excess_at(c, spy, spy_r, dates, 0, 200, 5)
+    assert ok is not None and all(math.isfinite(v) for v in ok["daily"])
+    c[202, 0] = float("nan")                       # endpoints fine, a hole mid-hold
+    assert ed.excess_at(c, spy, spy_r, dates, 0, 200, 5) is None
