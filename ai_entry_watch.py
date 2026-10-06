@@ -14055,7 +14055,22 @@ def _ob_resist_refusal(ob_fields: dict | None, cfg: dict | None) -> bool:
 
 
 _OB_WIRE_KEYS = ("ob_resist", "ob_room_pct", "ob_bars", "ob_sup_btm", "ob_sup_top",
-                 "ob_res_btm", "ob_res_top", "ob_levels_ts")
+                 "ob_res_btm", "ob_res_top", "ob_levels_ts", "ob_nobars", "ob_off")
+
+
+def _ob_no_reading_note(sym: str) -> dict:
+    """Why there is no order-block reading, for the SR cell (display only):
+    ob_off = neither ai_watch_ob_observe nor the skip is on; ob_nobars = on, but
+    the block store holds no 1-minute bars for this name (it is fed only by the
+    structure bar fetch), so neither the panel nor the ob_resist skip has a
+    reading. {} when it cannot tell. Never raises, never fetches."""
+    try:
+        if not _ob_observe_on(_push_cfg()):
+            return {"ob_off": True}
+        import ob_observe
+        return {"ob_nobars": True} if ob_observe.store_size(sym) == 0 else {}
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def _ob_wire_fields(rec: Any, sym: str, price: Any) -> dict:
@@ -14068,7 +14083,7 @@ def _ob_wire_fields(rec: Any, sym: str, price: Any) -> dict:
     try:
         ind = rec.get("indicator") if isinstance(rec, dict) else None
         if not isinstance(ind, dict) or "ob_resist_0.3" not in ind:
-            return {}
+            return _ob_no_reading_note(sym) if isinstance(rec, dict) else {}
         out = {
             "ob_resist": bool(ind.get("ob_resist_0.3")),
             "ob_room_pct": _f_or_none(ind.get("ob_room_pct")),

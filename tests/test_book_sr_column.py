@@ -37,7 +37,7 @@ def test_sr_cell_is_patched_in_place_and_shows_dash_without_a_reading():
     assert "const srEl = el.querySelector('.cell-sr');" in _JS
     i = _JS.index("function _bookSrText(")
     body = _JS[i:_JS.index("\n}", i)]
-    assert "r.ob_resist == null) return '\\u2014'" in body
+    assert "if (!r) return '\\u2014';" in body
     assert "'no R'" in body and "'in R'" in body
     assert "sr--resist" in _JS
 
@@ -60,8 +60,13 @@ def test_wire_fields_copy_the_stamped_reading(monkeypatch):
 
 def test_wire_fields_are_empty_without_a_reading_and_never_raise():
     import ai_entry_watch as ew
-    assert ew._ob_wire_fields({}, "ABC", 10.0) == {}
-    assert ew._ob_wire_fields({"indicator": {"pctr": -20}}, "ABC", 10.0) == {}
+    import ob_observe
+    ob_observe._BARS["ABC"] = {60.0: (60.0, 1, 1, 1, 1)}   # bars present -> no note
+    try:
+        assert ew._ob_wire_fields({}, "ABC", 10.0) in ({}, {"ob_off": True})
+        assert ew._ob_wire_fields({"indicator": {"pctr": -20}}, "ABC", 10.0) in ({}, {"ob_off": True})
+    finally:
+        ob_observe._BARS.pop("ABC", None)
     assert ew._ob_wire_fields(None, "ABC", 10.0) == {}
     assert ew._ob_wire_fields({"indicator": {"ob_resist_0.3": True}}, "ABC", "junk") == {
         "ob_resist": True, "ob_room_pct": None, "ob_bars": None}
@@ -93,3 +98,27 @@ def test_book_table_rows_list_branch_keeps_sr_fields():
     r = [x for x in rows if x["symbol"] == "ABC"]
     if r:  # state={"x": 1} has no usable record, so the list branch may or may not be taken
         assert r[0].get("ob_resist") is True and r[0].get("ob_room_pct") == 0.1
+
+
+def test_no_reading_says_why(monkeypatch):
+    """2026-10-06 09:3x: every SR cell read '—' because the block store had no
+    bars (fed only by the structure fetch, which was not running). The cell now
+    says so instead of a bare dash; still display only, still no fetch."""
+    import ai_entry_watch as ew
+    import ob_observe
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {"ai_watch_ob_resist_skip": True})
+    monkeypatch.setattr(ob_observe, "_BARS", {})
+    assert ew._ob_wire_fields({"indicator": {"pctr": -20}}, "ABC", 10.0) == {"ob_nobars": True}
+    monkeypatch.setattr(ob_observe, "_BARS", {"ABC": {60.0: (60.0, 1, 1, 1, 1)}})
+    assert ew._ob_wire_fields({"indicator": {"pctr": -20}}, "ABC", 10.0) == {}
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {})
+    assert ew._ob_wire_fields({}, "ABC", 10.0) == {"ob_off": True}
+    i = _JS.index("function _bookSrText(")
+    body = _JS[i:_JS.index("\n}", i)]
+    assert "'no bars'" in body and "'off'" in body
+
+
+def test_store_size_never_raises(monkeypatch):
+    import ob_observe
+    monkeypatch.setattr(ob_observe, "_BARS", {"ABC": {1.0: (), 2.0: ()}})
+    assert ob_observe.store_size("abc") == 2 and ob_observe.store_size(None) == 0

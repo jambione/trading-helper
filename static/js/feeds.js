@@ -368,6 +368,8 @@ function _bookRows(book) {
       ob_res_btm: w.ob_res_btm != null ? w.ob_res_btm : null,
       ob_res_top: w.ob_res_top != null ? w.ob_res_top : null,
       ob_levels_ts: w.ob_levels_ts != null ? w.ob_levels_ts : null,
+      ob_nobars: !!w.ob_nobars,
+      ob_off: !!w.ob_off,
     };
   }
   // Live positions always win (P&L / qty).
@@ -1852,7 +1854,8 @@ function _bookRowHtml(r) {
  *  tools/order_blocks.py, 1-min, last 3 per side) — the same ob_room_pct /
  *  ob_resist_0.3 the live ob_resist skip reads. '—' = no reading. */
 function _bookSrText(r) {
-  if (!r || r.ob_resist == null) return '\u2014';
+  if (!r) return '\u2014';
+  if (r.ob_resist == null) return r.ob_nobars ? 'no bars' : (r.ob_off ? 'off' : '\u2014');
   const room = r.ob_room_pct != null && Number.isFinite(Number(r.ob_room_pct))
     ? Number(r.ob_room_pct) : null;
   if (room == null) return 'no R';
@@ -1861,10 +1864,16 @@ function _bookSrText(r) {
 }
 
 function _bookSrClass(r) {
+  if (r && r.ob_resist == null && (r.ob_nobars || r.ob_off)) return ' sr--none';
   return r && r.ob_resist === true ? ' sr--resist' : '';
 }
 
 function _bookSrTitle(r) {
+  if (r && r.ob_resist == null && r.ob_nobars) {
+    return 'No 1-min bars in the order-block store for this name: it is fed only by the desk\u2019s structure bar fetch, '
+      + 'which has not run for it. Neither this column nor the live ob_resist skip has a reading (the skip fails open).';
+  }
+  if (r && r.ob_resist == null && r.ob_off) return 'Order-block reading is off (ai_watch_ob_observe and ai_watch_ob_resist_skip both off)';
   if (!r || r.ob_resist == null) return 'No order-block reading yet for this name';
   const f = v => (v != null && Number.isFinite(Number(v)) ? `$${Number(v).toFixed(2)}` : null);
   const bits = ['Order blocks (point-in-time, 1-min, last 3 per side)'];
