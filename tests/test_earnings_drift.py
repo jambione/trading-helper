@@ -156,3 +156,11 @@ def test_fetch_minutes_batches_by_day_and_never_caches_failures():
 def test_split_guard():
     assert ed.split_suspect(0.51) and ed.split_suspect(-0.75)
     assert not ed.split_suspect(0.5) and not ed.split_suspect(-0.2)
+
+
+# ---------------------------------------------------------------- FIX FIRST 6 per-event seeding
+def test_control_order_is_per_event():
+    a = ed.control_order("AAPL", "2024-05-03", 1300, [1300], 5000)
+    assert a == ed.control_order("AAPL", "2024-05-03", 1300, [1300], 5000)       # independent of call order
+    assert a != ed.control_order("MSFT", "2024-05-03", 1300, [1300], 5000)
+    assert len(a) == 12 and all(abs(t - 1300) > 10 for t in a)

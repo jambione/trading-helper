@@ -422,6 +422,14 @@ def control_candidates(t0, earn_ts, T, near=10, win=60):
     return [t for t in range(t0 - win, t0 + win + 1) if t not in bad and 160 <= t < T - HOLD - 1]
 
 
+def control_order(sym, d0, t0, earn_ts, T, cap=12):
+    """The first `cap` candidates in a per-event seeded order. Skeptic FIX FIRST 6 (2026-10-06): seeded by
+    41|sym|d0, not drawn from one master stream, so an event's control does not depend on which events came before."""
+    cands = control_candidates(t0, earn_ts, T)
+    random.Random(f"41|{sym}|{d0}").shuffle(cands)
+    return cands[:cap]
+
+
 def excess_at(c, spy, spy_r, dates, j, t, hold):
     """Beta-adjusted excess of column j bought at close t, sold at close t+hold (bp), or None.
     Skeptic F3 (2026-10-06): every close t..t+hold must be finite, else a NaN mid-hold poisoned the daily series
@@ -460,7 +468,6 @@ def phase_minutes_and_score():
     ev_by = collections.defaultdict(list)
     for e in E["events"]:
         ev_by[e["sym"]].append(e["t0"])
-    rng_master = random.Random(41)
     earn_t = E.get("earn_t")
     if earn_t is None:
         raise SystemExit("events.json has no earn_t (pre-FIX-FIRST-3 events phase); rerun phase events")
@@ -482,10 +489,7 @@ def phase_minutes_and_score():
     for n, e in enumerate(E["events"]):
         rr = r0(e["sym"], e["t0"])
         if e["surprise"] == "beat" and rr is not None and rr > 0:
-            rng = random.Random(rng_master.random())
-            cands = control_candidates(e["t0"], ev_by[e["sym"]] + earn_t.get(e["sym"], []), T)
-            rng.shuffle(cands)
-            ctl_cands[n] = cands[:12]
+            ctl_cands[n] = control_order(e["sym"], e["d0"], e["t0"], ev_by[e["sym"]] + earn_t.get(e["sym"], []), T)
     fails |= fetch_minutes(cache, H, {(E["events"][n]["sym"], D[t]) for n, ts in ctl_cands.items() for t in ts}, save=save)
     if fails:
         raise SystemExit(f"fetch_fail {len(fails)} symbol-days (not cached; rerun phase score to retry). Refusing to "
