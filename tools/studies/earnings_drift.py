@@ -390,6 +390,14 @@ def nw_mean_se(series, L=5):
     return float(m), float(math.sqrt(max(s, 0) / n))
 
 
+def t_used(t_week, t_cal):
+    """The t the pass rule reads: the signed minimum of the two, NaN if either is NaN (a NaN fails t >= 2).
+    Skeptic F2 (2026-10-06): the old min(|t|) x sign(mean) let t_week=+3, t_cal=-2.5 read as +2.5, a pass."""
+    if not (t_week == t_week and t_cal == t_cal):
+        return float("nan")
+    return min(t_week, t_cal)
+
+
 def cal_series(rows, key_daily, key_dates, cost_bp=0.0):
     by = collections.defaultdict(list)
     for r in rows:
@@ -420,7 +428,7 @@ def score(P, rows, cnt, ecnt):
             t_cal = (pm - cm) / math.sqrt(pse ** 2 + cse ** 2) if pse == pse and cse == cse else float("nan")
             o[f"cost{int(cost)}"] = {"diff_bp": round(m, 2), "se_week": round(se, 2), "t_week": round(t_week, 2),
                                      "cal_daily_diff_bp": round(pm - cm, 3), "t_cal": round(t_cal, 2),
-                                     "t_used": round(min(abs(t_week), abs(t_cal)) * (1 if m > 0 else -1), 2),
+                                     "t_used": round(t_used(t_week, t_cal), 2),
                                      "mde_bp": round(2.84 * se, 2)}
         diff10 = [(r["x5"] - 10) - r["ctl"]["x5"] for r in pr]
         wsum = collections.defaultdict(float)
