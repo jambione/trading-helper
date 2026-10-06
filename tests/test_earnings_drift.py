@@ -258,3 +258,36 @@ def test_report_logs_no_control(tmp_path, monkeypatch):
     monkeypatch.setattr(ed, "WORK", str(tmp_path))
     ed.score(_fake_P(), _fake_rows(), collections.Counter({"no_control": 4}), {})
     assert "no control (12 candidates tried): 4" in (tmp_path / "report.md").read_text()
+
+
+# ---------------------------------------------------------------- efficiency: market-hours guard, resumable units
+def test_market_hours_guard_window():
+    from datetime import datetime
+    at = lambda s: datetime.fromisoformat(s).replace(tzinfo=ed.ET)  # noqa: E731
+    assert ed.in_market_hours(at("2026-10-06T09:00"))           # Tuesday
+    assert ed.in_market_hours(at("2026-10-06T16:29"))
+    assert not ed.in_market_hours(at("2026-10-06T08:59"))
+    assert not ed.in_market_hours(at("2026-10-06T16:30"))
+    assert not ed.in_market_hours(at("2026-10-10T12:00"))       # Saturday
+
+
+def test_news_unit_resumes_from_checkpointed_token(tmp_path, monkeypatch):
+    monkeypatch.setattr(ed, "WORK", str(tmp_path))
+    (tmp_path / "news").mkdir()
+    u = ("AAA", "AAA", "2019-01-01", "2019-02-01")
+    pages = {None: ("p1", "t1"), "t1": ("p2", "t2"), "t2": ("p3", None)}
+    seen, kill = [], {"t2"}
+
+    def fake(url, params, H):
+        tok = params.get("page_token")
+        seen.append(tok)
+        if tok in kill:
+            return None
+        h, nxt = pages[tok]
+        return {"news": [{"headline": h, "created_at": "x", "id": h}], "next_page_token": nxt}
+
+    assert ed.fetch_unit(u, {}, getf=fake, every=1) is None       # dies on page 3
+    kill.clear()
+    seen.clear()
+    rows = ed.fetch_unit(u, {}, getf=fake, every=1)
+    assert seen == ["t2"] and [r["h"] for r in rows] == ["p1", "p2", "p3"]

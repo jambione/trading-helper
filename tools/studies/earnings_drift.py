@@ -192,7 +192,47 @@ def unit_file(u):
     return os.path.join(WORK, "news", "__".join(u) + ".json")
 
 
+def fetch_unit(u, H, getf=None, every=5):
+    """All pages of one news unit, or None on a failed request. The page_token and rows so far are checkpointed to
+    <unit>.json.partial every `every` pages and on failure, so a killed or failed unit resumes where it stopped
+    (skeptic efficiency note, 2026-10-06)."""
+    getf = getf or get
+    owner, tick, a, b = u
+    pp = unit_file(u) + ".partial"
+    st = jload(pp, {}) or {}
+    rows, token, pages = st.get("rows", []), st.get("token"), 0
+    while True:
+        params = {"symbols": tick, "start": a, "end": b, "limit": 50, "sort": "asc", "include_content": "false"}
+        if token:
+            params["page_token"] = token
+        js = getf("https://data.alpaca.markets/v1beta1/news", params, H)
+        if js is None:
+            if rows or token:
+                jsave(pp, {"rows": rows, "token": token})
+            return None
+        for x in js.get("news", []):
+            rows.append({"h": x.get("headline", ""), "c": x.get("created_at"), "id": x.get("id")})
+        token = js.get("next_page_token")
+        if not token:
+            return rows
+        pages += 1
+        if pages % every == 0:
+            jsave(pp, {"rows": rows, "token": token})
+
+
+def in_market_hours(now=None):
+    now = (now or datetime.now(timezone.utc)).astimezone(ET)
+    return now.weekday() < 5 and 9 * 60 <= now.hour * 60 + now.minute < 16 * 60 + 30
+
+
+def market_hours_guard():
+    """The news and minute fetches share the desk's Alpaca budget: refuse 09:00-16:30 ET on weekdays."""
+    if in_market_hours():
+        raise SystemExit("refusing to run 09:00-16:30 ET on a weekday (shares the desk's Alpaca budget); run after hours")
+
+
 def phase_news():
+    market_hours_guard()
     S = jload(os.path.join(WORK, "symbols.json"))
     H = headers()
     D = os.path.join(WORK, "news")
@@ -212,26 +252,15 @@ def phase_news():
         key = "__".join(u)
         if os.path.exists(fp):
             continue
-        rows, token, ok = [], None, True
-        while True:
-            params = {"symbols": tick, "start": a, "end": b, "limit": 50, "sort": "asc", "include_content": "false"}
-            if token:
-                params["page_token"] = token
-            js = get("https://data.alpaca.markets/v1beta1/news", params, H)
-            if js is None:
-                ok = False
-                break
-            for x in js.get("news", []):
-                rows.append({"h": x.get("headline", ""), "c": x.get("created_at"), "id": x.get("id")})
-            token = js.get("next_page_token")
-            if not token:
-                break
-        if not ok:
+        rows = fetch_unit(u, H)
+        if rows is None:
             fails[key] = time.time()
             jsave(os.path.join(WORK, "news_fails.json"), fails)
             continue
         fails.pop(key, None)
         jsave(fp, rows)
+        if os.path.exists(fp + ".partial"):
+            os.remove(fp + ".partial")
         n += 1
         if n % 25 == 0:
             P_(f"  news {n} files; fails {len(fails)}")
@@ -468,6 +497,7 @@ def excess_at(c, spy, spy_r, dates, j, t, hold):
 
 
 def phase_minutes_and_score():
+    market_hours_guard()
     P = panel()
     news_fail_check(jload(os.path.join(WORK, "symbols.json")))
     E = jload(os.path.join(WORK, "events.json"))
