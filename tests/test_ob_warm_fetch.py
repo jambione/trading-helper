@@ -62,6 +62,8 @@ def _clean(monkeypatch):
     ob_observe.reset()
     ew._ob_warm_last.clear()
     ew._ob_warm_pending.clear()
+    ew._ob_warm_deep.clear()
+    ew._ob_warm_deep.clear()
     for k in ew._OB_WARM_STATS:
         ew._OB_WARM_STATS[k] = 0
     monkeypatch.setattr(aa, "recently_rate_limited", lambda *a, **k: False)
@@ -71,6 +73,7 @@ def _clean(monkeypatch):
     ob_observe.reset()
     ew._ob_warm_last.clear()
     ew._ob_warm_pending.clear()
+    ew._ob_warm_deep.clear()
 
 
 def test_enqueue_only_and_one_per_name_per_120s(_clean):
@@ -128,10 +131,24 @@ def test_job_feeds_ob_store_only(monkeypatch):
     assert seen[-1] == ("ABC", "1Min", ew.OB_WARM_REFRESH_LIMIT)
 
 
-def test_first_limit_covers_prior_day_and_today():
-    # 04:00-20:00 ext-hours prior day (960) + 04:00-16:00 today (720)
-    assert ew.OB_WARM_FIRST_LIMIT >= 960 + 720
+def test_first_limit_covers_live_sessions():
+    # worst case: a bar every minute 04:00-20:00 (960) on every kept date
+    assert ob_observe.LIVE_SESSIONS == 3
+    assert ew.OB_WARM_FIRST_LIMIT >= 960 * ob_observe.LIVE_SESSIONS
+    assert ew.OB_WARM_FIRST_LIMIT <= 10000          # one page = one request
     assert ew.OB_WARM_REFRESH_SEC >= 120.0
+
+
+def test_short_history_counts_once_and_does_not_refetch_deep(monkeypatch):
+    seen = []
+    df = _frame(days=((2026, 10, 6),))              # a name with 1 IEX session
+    monkeypatch.setattr(ew, "_ob_warm_data_client", lambda: object())
+    monkeypatch.setattr(aa, "fetch_bars",
+                        lambda c, s, cfg: seen.append(cfg["bar_count"]) or df)
+    ew._ob_warm_job("NEW")
+    ew._ob_warm_job("NEW")
+    assert seen == [ew.OB_WARM_FIRST_LIMIT, ew.OB_WARM_REFRESH_LIMIT]
+    assert ew.ob_warm_stats()["short_window"] == 1
 
 
 @pytest.mark.parametrize("mode", ["raise", "none", "nocreds"])
@@ -222,9 +239,67 @@ def test_counter_log_line(capsys):
     ew._ob_warm_maybe_log(force=True)
     out = capsys.readouterr().out
     assert out.startswith("[ob] warm fetch: requested=0 ok=0 no_data=0 fail=0")
+    assert "short_window=0" in out and "sessions=3" in out
 
 
 def test_ob_stale_on_wire_keys_and_js():
     assert "ob_stale" in ew._OB_WIRE_KEYS
     body = (ROOT / "static/js/feeds.js").read_text(encoding="utf-8")
     assert "ob_stale: !!w.ob_stale" in body and "'stale'" in body
+
+
+# --- 3-session live window (operator override 2026-10-06 10:14 ET) ---------
+
+def _crwv_rows():
+    import gzip
+    import json
+    p = ROOT / "tests/fixtures/crwv_iex_1min_20261006_1003.json.gz"
+    data = json.loads(gzip.open(p, "rt").read())
+    return [(datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp(), o, h, lo, c)
+            for t, o, h, lo, c in data["bars"]]
+
+
+def test_store_keeps_three_newest_dates():
+    ob_observe.absorb_rows("CRWV", _crwv_rows())   # fixture spans 5 dates
+    days = sorted({datetime.fromtimestamp(b[0], ET).date().isoformat()
+                   for b in ob_observe.bars("CRWV")})
+    assert days == ["2026-10-02", "2026-10-05", "2026-10-06"]
+    assert ob_observe.session_count("CRWV") == 3
+
+
+def test_trim_keep_days_parameter():
+    store = {}
+    for d in (1, 2, 5, 6):
+        t = datetime(2026, 10, d, 10, 0, tzinfo=ET).timestamp()
+        store[t] = (t, 1, 1, 1, 1)
+    s2 = dict(store)
+    ob_observe._trim(s2, keep_days=2)
+    assert len(s2) == 2
+    ob_observe._trim(store)
+    assert len(store) == 3
+
+
+def test_crwv_1006_three_sessions_sees_1002_resistance():
+    """Jonathan's 10:04 CRWV entry: with 2 dates the desk had no resistance
+    above (room None); with 3 it charts the 10/02 bear block 91.575-91.750,
+    and the 10:04:14 arm price 91.71 is inside it (skip), 91.91 above it."""
+    rows = _crwv_rows()
+    now = datetime(2026, 10, 6, 10, 4, 14, tzinfo=ET).timestamp()
+    ob_observe.absorb_rows("CRWV", rows)
+    f = ob_observe.fields("CRWV", 91.71, now)
+    assert f["ob_resist_0.3"] is True and f["ob_room_pct"] == 0.0
+    ch, _n, _p = ob_observe._charted_at("CRWV", now)
+    res = [b for b in ch if ob_observe._resistance(b)]
+    assert [(round(b.btm, 3), round(b.top, 3)) for b in res] == [(91.575, 91.75)]
+    assert ob_observe.fields("CRWV", 91.91, now)["ob_resist_0.3"] is False
+    # the old 2-date window: no resistance at all (what the desk saw live)
+    ob_observe.reset()
+    old = ob_observe.LIVE_SESSIONS
+    try:
+        ob_observe.LIVE_SESSIONS = 2
+        ob_observe.absorb_rows("CRWV", rows)
+        g = ob_observe.fields("CRWV", 91.71, now)
+        assert g["ob_resist_0.3"] is False and g["ob_room_pct"] is None
+        assert g["ob_bars"] == 418
+    finally:
+        ob_observe.LIVE_SESSIONS = old

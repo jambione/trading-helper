@@ -49,6 +49,12 @@ SWING = 10
 SHOW = 3
 WITHIN_PCT = 0.3
 CFG_KEY = "ai_watch_ob_observe"
+# How many newest ET trading dates the LIVE store keeps. The study this
+# mirrors (ob_fills_daily) used 2 (prior day + today). OPERATOR OVERRIDE
+# 2026-10-06 10:14 ET (Jonathan): 3 = two prior sessions + today, so a zone
+# like CRWV's 10/02 resistance is seen on 10/06. UNTESTED: no study measured
+# the skip with a 3-session window. Code constant on purpose (not bot_config).
+LIVE_SESSIONS = 3
 
 _LOCK = threading.RLock()
 # symbol -> {bar_ts: (ts, open, high, low, close)}
@@ -80,12 +86,14 @@ def _session_bar(ts: float) -> bool:
     return 4 * 60 <= m < 16 * 60
 
 
-def _trim(store: dict[float, tuple]) -> None:
-    """Keep the two newest ET trading days present (prior day + today)."""
+def _trim(store: dict[float, tuple], keep_days: int | None = None) -> None:
+    """Keep the `keep_days` newest ET trading dates present (default
+    LIVE_SESSIONS: two prior sessions + today)."""
+    n = int(LIVE_SESSIONS if keep_days is None else keep_days)
     days = sorted({_et(t).date() for t in store})
-    if len(days) <= 2:
+    if len(days) <= n:
         return
-    keep = set(days[-2:])
+    keep = set(days[-n:])
     for t in [t for t in store if _et(t).date() not in keep]:
         del store[t]
 
@@ -157,6 +165,16 @@ def absorb_age(symbol: str) -> float | None:
         return None if t is None else max(0.0, time.time() - t)
     except Exception:  # noqa: BLE001
         return None
+
+
+def session_count(symbol: str) -> int:
+    """Distinct ET dates in the store for `symbol` (0 = none). Never raises."""
+    try:
+        with _LOCK:
+            ts = list((_BARS.get(str(symbol or "").upper().strip()) or {}).keys())
+        return len({_et(t).date() for t in ts})
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 def has_prior_day(symbol: str) -> bool:

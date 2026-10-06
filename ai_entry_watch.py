@@ -14147,7 +14147,11 @@ def _ob_observe_stamp(rec: dict, sym: str, price: Any, cfg: dict | None,
 # process-wide pacing + retry/backoff). Failure = no bars = no reading = the
 # skip allows the trade.
 OB_WARM_REFRESH_SEC = 120.0     # at most 1 request per name per 2 minutes
-OB_WARM_FIRST_LIMIT = 2000      # newest 1-min bars (ext hours): prior day + today
+# First fetch: newest 1-min bars (ext hours) covering ob_observe.LIVE_SESSIONS
+# (2 prior sessions + today). Measured 10/06: 2000 bars reached back ~7 IEX
+# sessions on all 17 names (max 392 bars/day); 3000 covers even the worst case
+# of a bar every minute 04:00-20:00 on 3 dates (2880). Still ONE request.
+OB_WARM_FIRST_LIMIT = 3000
 OB_WARM_REFRESH_LIMIT = 30      # later refreshes: the last 30 minutes
 OB_WARM_HTTP_TIMEOUT_SEC = 10.0  # per HTTP call; the SDK sets none by default
 OB_WARM_STALE_SEC = 600.0       # store not refreshed this long = no reading
@@ -14157,11 +14161,13 @@ OB_WARM_LOG_SEC = 300.0
 _ob_warm_lock = threading.Lock()
 _ob_warm_last: dict[str, float] = {}      # sym -> wall time of last enqueue
 _ob_warm_pending: set[str] = set()
+_ob_warm_deep: set[str] = set()           # syms whose deep first fetch landed
 _ob_warm_exec = None
 _ob_warm_client = None
 _ob_warm_log_ts = 0.0
 _OB_WARM_STATS = {"requested": 0, "ok": 0, "no_data": 0, "fail": 0,
-                  "skipped_429": 0, "skipped_busy": 0, "bars": 0}
+                  "skipped_429": 0, "skipped_busy": 0, "bars": 0,
+                  "short_window": 0}
 
 
 def ob_warm_stats() -> dict:
@@ -14259,7 +14265,9 @@ def _ob_warm_job(sym: str) -> int:
     n = 0
     try:
         import ob_observe
-        first = ob_observe.store_size(sym) == 0 or not ob_observe.has_prior_day(sym)
+        # Deep fetch until one has landed for this name (a name with fewer
+        # IEX sessions than LIVE_SESSIONS must not re-pull 3000 bars forever).
+        first = sym not in _ob_warm_deep or ob_observe.store_size(sym) == 0
         limit = OB_WARM_FIRST_LIMIT if first else OB_WARM_REFRESH_LIMIT
         client = _ob_warm_data_client()
         if client is None:
@@ -14273,9 +14281,15 @@ def _ob_warm_job(sym: str) -> int:
         n = 0 if df is None else int(len(df))
         if n:
             ob_observe.absorb_df(sym, df)
+        short = bool(n and first and
+                     ob_observe.session_count(sym) < ob_observe.LIVE_SESSIONS)
         with _ob_warm_lock:
             _OB_WARM_STATS["ok" if n else "no_data"] += 1
             _OB_WARM_STATS["bars"] += n
+            if n and first:
+                _ob_warm_deep.add(sym)
+            if short:
+                _OB_WARM_STATS["short_window"] += 1
     except Exception:  # noqa: BLE001
         with _ob_warm_lock:
             _OB_WARM_STATS["fail"] += 1
@@ -14303,7 +14317,9 @@ def _ob_warm_maybe_log(force: bool = False) -> None:
         print(f"[ob] warm fetch: requested={st['requested']} ok={st['ok']} "
               f"no_data={st['no_data']} fail={st['fail']} "
               f"skipped_429={st['skipped_429']} skipped_busy={st['skipped_busy']} "
-              f"bars={st['bars']} names={names} with_bars={with_bars}", flush=True)
+              f"bars={st['bars']} short_window={st['short_window']} "
+              f"sessions={ob_observe.LIVE_SESSIONS} "
+              f"names={names} with_bars={with_bars}", flush=True)
     except Exception:  # noqa: BLE001
         pass
 
