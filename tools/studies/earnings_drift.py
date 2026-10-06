@@ -6,7 +6,8 @@ Phases (on the mini, AFTER HOURS ONLY: the news fetch shares the desk's Alpaca b
   news      Benzinga headlines per (owner, ticker, start, end) segment of the same-CUSIP rename chain, paged,
             cached, resumable                                                              -> WORK/news/O__T__A__B.json
   events    parse EPS headlines into events (rules below)                                  -> WORK/events.json
-  minutes   SIP 1-min 15:45 closes for D0s and control candidates (cached)                 -> WORK/m1545.json
+  minutes   SIP 1-min 15:45 closes for D0s and control candidates, one request per day per
+            100 symbols, cached per sym|day; refuses to score while any fetch failed     -> WORK/m1545.json
   score     controls, returns, statistics, verdict                                        -> WORK/result.json, report.md
 
 Rules (from the pre-registration):
@@ -353,25 +354,58 @@ def phase_events():
     P_(f"events {len(ev)}; {dict(cnt)}")
 
 
-def m1545(cache, H, sym, day):
-    k = f"{sym}|{day}"
-    if k in cache:
-        return cache[k]
-    d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
-    js = get("https://data.alpaca.markets/v2/stocks/bars",
-             {"symbols": sym, "timeframe": "1Min", "start": d.replace(hour=15, minute=35).astimezone(timezone.utc).isoformat(),
-              "end": d.replace(hour=15, minute=45).astimezone(timezone.utc).isoformat(), "feed": "sip", "adjustment": "raw",
-              "limit": 100}, H)
-    if js is None:
-        return None                                   # not cached: retried on the next run
-    bars = (js.get("bars") or {}).get(sym) or []
+def pick_1545(bars):
+    """Close of the bar starting 15:44 ET, else of the last bar starting 15:35-15:44; None if there is none."""
     best = None
-    for b in bars:
+    for b in sorted(bars, key=lambda x: x["t"]):
         tl = datetime.fromisoformat(b["t"].replace("Z", "+00:00")).astimezone(ET)
-        if tl.hour * 60 + tl.minute <= 15 * 60 + 44:
+        if 15 * 60 + 35 <= tl.hour * 60 + tl.minute <= 15 * 60 + 44:
             best = float(b["c"])
-    cache[k] = best
     return best
+
+
+def fetch_minutes(cache, H, keys, getf=None, save=None):
+    """Fill cache['SYM|day'] for (sym, day) keys: ONE /v2/stocks/bars request per day per 100 symbols (skeptic
+    efficiency note, 2026-10-06; was one request per symbol-day). A cached None means 'no bars'. A failed request is
+    NOT cached and its keys are returned as fetch failures, so a rerun retries them (skeptic FIX FIRST 4)."""
+    getf = getf or get
+    need = collections.defaultdict(set)
+    for sym, day in keys:
+        if f"{sym}|{day}" not in cache:
+            need[day].add(sym)
+    fails = set()
+    for n, day in enumerate(sorted(need)):
+        d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
+        syms = sorted(need[day])
+        for i in range(0, len(syms), 100):
+            ch, bars, token, ok = syms[i:i + 100], collections.defaultdict(list), None, True
+            while True:
+                params = {"symbols": ",".join(ch), "timeframe": "1Min",
+                          "start": d.replace(hour=15, minute=35).astimezone(timezone.utc).isoformat(),
+                          "end": d.replace(hour=15, minute=45).astimezone(timezone.utc).isoformat(),
+                          "feed": "sip", "adjustment": "raw", "limit": 10000}
+                if token:
+                    params["page_token"] = token
+                js = getf("https://data.alpaca.markets/v2/stocks/bars", params, H)
+                if js is None:
+                    ok = False
+                    break
+                for s_, bl in (js.get("bars") or {}).items():
+                    bars[s_] += bl or []
+                token = js.get("next_page_token")
+                if not token:
+                    break
+            if not ok:
+                fails |= {f"{s_}|{day}" for s_ in ch}
+                continue
+            for s_ in ch:
+                cache[f"{s_}|{day}"] = pick_1545(bars.get(s_, []))
+        if save and n % 50 == 49:
+            save()
+            P_(f"  minutes: {n + 1}/{len(need)} days; fetch_fail keys {len(fails)}")
+    if save:
+        save()
+    return fails
 
 
 def control_candidates(t0, earn_ts, T, near=10, win=60):
@@ -427,18 +461,35 @@ def phase_minutes_and_score():
 
     def r0(sym, t):
         j = P["col"][sym]
-        m = m1545(cache, H, sym, P["dates"][t])
+        m = cache.get(f"{sym}|{P['dates'][t]}")
         prev = rc[t - 1, j]
         return None if (m is None or not np.isfinite(prev) or prev <= 0) else m / prev - 1
 
     def excess(sym, t, hold):
         return excess_at(c, spy, spy_r, P["dates"], P["col"][sym], t, hold)
 
-    rows, cnt = [], collections.Counter()
+    save = lambda: jsave(cp, cache)  # noqa: E731
+    D = P["dates"]
+    fails = fetch_minutes(cache, H, {(e["sym"], D[e["t0"]]) for e in E["events"]}, save=save)
+    # control candidates: the first 12 of each PRIMARY's seeded order, fetched up front so the minutes batch by day
+    ctl_cands = {}
+    for n, e in enumerate(E["events"]):
+        rr = r0(e["sym"], e["t0"])
+        if e["surprise"] == "beat" and rr is not None and rr > 0:
+            rng = random.Random(rng_master.random())
+            cands = control_candidates(e["t0"], ev_by[e["sym"]] + earn_t.get(e["sym"], []), T)
+            rng.shuffle(cands)
+            ctl_cands[n] = cands[:12]
+    fails |= fetch_minutes(cache, H, {(E["events"][n]["sym"], D[t]) for n, ts in ctl_cands.items() for t in ts}, save=save)
+    if fails:
+        raise SystemExit(f"fetch_fail {len(fails)} symbol-days (not cached; rerun phase score to retry). Refusing to "
+                         f"score with missing minutes: e.g. {sorted(fails)[:10]}")
+
+    rows, cnt = [], collections.Counter({"fetch_fail": 0})
     for n, e in enumerate(E["events"]):
         rr = r0(e["sym"], e["t0"])
         if rr is None:
-            cnt["no_r0"] += 1
+            cnt["no_r0"] += 1                             # no bars 15:35-15:44 or no prior close (fetched fine)
             continue
         x5 = excess(e["sym"], e["t0"], HOLD)
         if x5 is None:
@@ -450,11 +501,8 @@ def phase_minutes_and_score():
             row[hk] = None if xx is None else xx["x"]
         row["primary"] = (e["surprise"] == "beat" and rr > 0)
         if row["primary"]:
-            rng = random.Random(rng_master.random())
-            cands = control_candidates(e["t0"], ev_by[e["sym"]] + earn_t.get(e["sym"], []), T)
-            rng.shuffle(cands)
             ctl = None
-            for t in cands[:12]:
+            for t in ctl_cands[n]:
                 cr = r0(e["sym"], t)
                 if cr is not None and cr > 0:
                     cx = excess(e["sym"], t, HOLD)
@@ -465,10 +513,6 @@ def phase_minutes_and_score():
                 cnt["no_control"] += 1
             row["ctl"] = ctl
         rows.append(row)
-        if n % 200 == 0:
-            jsave(cp, cache)
-            P_(f"  scored {n}/{len(E['events'])}")
-    jsave(cp, cache)
     score(P, rows, cnt, E.get("counts", {}))
 
 

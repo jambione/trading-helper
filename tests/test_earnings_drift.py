@@ -121,3 +121,32 @@ def test_news_fail_check_aborts_over_two_percent():
     three = two | {ed.unit_file(("S2", "S2", ed.NEWS_START, ed.NEWS_END))}
     with pytest.raises(SystemExit):
         ed.news_fail_check(S, exists=lambda f: f not in three)
+
+
+# ---------------------------------------------------------------- FIX FIRST 4 + efficiency: minute batches
+def test_pick_1545_prefers_1544_else_last_in_window():
+    bar = lambda hm, c: {"t": f"2025-06-02T{hm}:00Z", "c": c}  # noqa: E731  (UTC; 19:44Z = 15:44 ET)
+    assert ed.pick_1545([bar("19:35", 1.0), bar("19:44", 2.0), bar("19:45", 3.0)]) == 2.0
+    assert ed.pick_1545([bar("19:40", 1.5), bar("19:36", 1.0), bar("19:45", 3.0)]) == 1.5
+    assert ed.pick_1545([bar("19:34", 1.0), bar("19:45", 3.0)]) is None
+
+
+def test_fetch_minutes_batches_by_day_and_never_caches_failures():
+    calls = []
+
+    def fake(url, params, H):
+        calls.append(params)
+        if params["start"].startswith("2025-06-03"):
+            return None                                       # this day's request fails after retries
+        return {"bars": {"AAA": [{"t": "2025-06-02T19:44:00Z", "c": 10.0}]}, "next_page_token": None}
+
+    cache = {}
+    keys = {("AAA", "2025-06-02"), ("BBB", "2025-06-02"), ("AAA", "2025-06-03")}
+    fails = ed.fetch_minutes(cache, {}, keys, getf=fake)
+    assert len(calls) == 2 and calls[0]["symbols"] == "AAA,BBB" and calls[0]["limit"] == 10000
+    assert calls[0]["feed"] == "sip" and calls[0]["adjustment"] == "raw"
+    assert cache == {"AAA|2025-06-02": 10.0, "BBB|2025-06-02": None}   # BBB: fetched, no bars -> cached None
+    assert fails == {"AAA|2025-06-03"} and "AAA|2025-06-03" not in cache
+    calls.clear()
+    ed.fetch_minutes(cache, {}, keys, getf=fake)                        # rerun retries only the failure
+    assert len(calls) == 1 and calls[0]["symbols"] == "AAA"
