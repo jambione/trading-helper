@@ -72,3 +72,17 @@ def test_unit_files_are_per_segment():
     S = {"symbols": ["FISV"], "name_changes": FISV_NC}
     files = {os.path.basename(ed.unit_file(u)) for u in ed.news_units(S)}
     assert len(files) == 3 and f"FISV__FI__2023-06-07__2025-11-11.json" in files
+
+
+# ---------------------------------------------------------------- FIX FIRST 1 burst rule
+def test_burst_rule():
+    B = lambda *xs: [(i, h, w) for i, (h, w) in enumerate(xs)]  # noqa: E731
+    assert ed.burst_word(B(("X Q1 EPS", "unclassified"))) == "unclassified"
+    assert ed.burst_word(B(("X Q1 EPS Beats", "beat"), ("X Q1 EPS vs", "unclassified"))) == "beat"
+    assert ed.burst_word(B(("X Q1 GAAP EPS Misses", "miss"), ("X Q1 Adj. EPS Beats", "beat"))) == "beat"
+    assert ed.burst_word(B(("X Q1 GAAP EPS Misses", "miss"), ("X Q1 EPS Beats", "beat"))) == "unclassified"
+    # an unclassified Adj. headline does not decide (nor block) the conflict
+    assert ed.burst_word(B(("X Q1 Adj. EPS vs", "unclassified"), ("X Q1 EPS Misses", "miss"),
+                           ("X Q1 Adj. EPS Beats", "beat"))) == "beat"
+    assert ed.burst_word(B(("X Q1 Adj. EPS vs", "unclassified"), ("X Q1 EPS Misses", "miss"),
+                           ("X Q1 EPS Beats", "beat"))) == "unclassified"

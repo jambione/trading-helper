@@ -248,6 +248,18 @@ def surprise(h):
     return "beat" if w == "beats" else "miss" if w == "misses" else "inline"
 
 
+def burst_word(burst):
+    """Surprise of a 5-minute burst of (time, headline, word). Skeptic FIX FIRST 1 (2026-10-06): an unclassified
+    sibling (e.g. a revenue-only headline) is not a conflict; only different real words go to the Adj. rule."""
+    words = {c[2] for c in burst if c[2] != "unclassified"}
+    if not words:
+        return "unclassified"
+    if len(words) == 1:
+        return next(iter(words))
+    adj = {c[2] for c in burst if "adj." in c[1].lower() and c[2] != "unclassified"}
+    return next(iter(adj)) if len(adj) == 1 else "unclassified"
+
+
 def phase_events():
     P = panel()
     S = jload(os.path.join(WORK, "symbols.json"))
@@ -281,11 +293,8 @@ def phase_events():
                 i += 1
                 continue
             burst = [c for c in cand[i:] if (c[0] - t0).total_seconds() <= 300]
-            words = {c[2] for c in burst}
-            sp = sp0
-            if len(words) > 1:
-                adj = [c for c in burst if "adj." in c[1].lower()]
-                sp = adj[0][2] if adj and len({c[2] for c in adj}) == 1 else "unclassified"
+            sp = burst_word(burst)
+            if len({c[2] for c in burst if c[2] != "unclassified"}) > 1:
                 cnt["burst_conflict"] += 1
             last = t0
             i += len(burst)
