@@ -150,3 +150,9 @@ def test_fetch_minutes_batches_by_day_and_never_caches_failures():
     calls.clear()
     ed.fetch_minutes(cache, {}, keys, getf=fake)                        # rerun retries only the failure
     assert len(calls) == 1 and calls[0]["symbols"] == "AAA"
+
+
+# ---------------------------------------------------------------- FIX FIRST 5 split guard
+def test_split_guard():
+    assert ed.split_suspect(0.51) and ed.split_suspect(-0.75)
+    assert not ed.split_suspect(0.5) and not ed.split_suspect(-0.2)

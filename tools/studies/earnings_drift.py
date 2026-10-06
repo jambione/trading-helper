@@ -408,6 +408,12 @@ def fetch_minutes(cache, H, keys, getf=None, save=None):
     return fails
 
 
+def split_suspect(r0):
+    """Skeptic FIX FIRST 5 (2026-10-06): the panel's rc is raw only per month, so a split month mixes a raw minute
+    price with an adjusted prior close; |R0| > 50% is dropped and counted rather than trusted."""
+    return abs(r0) > 0.5
+
+
 def control_candidates(t0, earn_ts, T, near=10, win=60):
     """Sessions within +/-win of t0, at least near+1 sessions from every earnings headline of the name."""
     bad = set()
@@ -491,6 +497,9 @@ def phase_minutes_and_score():
         if rr is None:
             cnt["no_r0"] += 1                             # no bars 15:35-15:44 or no prior close (fetched fine)
             continue
+        if split_suspect(rr):
+            cnt["split_guard"] += 1
+            continue
         x5 = excess(e["sym"], e["t0"], HOLD)
         if x5 is None:
             cnt["no_return"] += 1
@@ -504,6 +513,9 @@ def phase_minutes_and_score():
             ctl = None
             for t in ctl_cands[n]:
                 cr = r0(e["sym"], t)
+                if cr is not None and split_suspect(cr):
+                    cnt["ctl_split_guard"] += 1
+                    continue
                 if cr is not None and cr > 0:
                     cx = excess(e["sym"], t, HOLD)
                     if cx is not None:
