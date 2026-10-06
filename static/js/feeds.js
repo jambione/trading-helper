@@ -358,6 +358,16 @@ function _bookRows(book) {
       // Day move — wire first; Momentum overlay below may refresh it.
       pct_change: w.pct_change != null ? w.pct_change : null,
       admit_pct_change: w.admit_pct_change != null ? w.admit_pct_change : null,
+      // Order blocks (display only, SR column): the desk's own ob_observe
+      // reading. Fifth field to travel this whitelist chain.
+      ob_resist: w.ob_resist != null ? !!w.ob_resist : null,
+      ob_room_pct: w.ob_room_pct != null ? w.ob_room_pct : null,
+      ob_bars: w.ob_bars != null ? w.ob_bars : null,
+      ob_sup_btm: w.ob_sup_btm != null ? w.ob_sup_btm : null,
+      ob_sup_top: w.ob_sup_top != null ? w.ob_sup_top : null,
+      ob_res_btm: w.ob_res_btm != null ? w.ob_res_btm : null,
+      ob_res_top: w.ob_res_top != null ? w.ob_res_top : null,
+      ob_levels_ts: w.ob_levels_ts != null ? w.ob_levels_ts : null,
     };
   }
   // Live positions always win (P&L / qty).
@@ -539,6 +549,8 @@ function _bookSortVal(r, col) {
       const p = num(r.pctr);
       return p == null ? null : Math.max(0, Math.min(100, 100 + p));
     }
+    case 'sr':
+      return r.ob_resist == null ? null : num(r.ob_room_pct);
     case 'macd':
       return num(r.macd_gap) ?? num(r.macd_hist);
     case 'pl':
@@ -1772,6 +1784,12 @@ function _updateBookRow(el, r) {
     const exhTip = _fmtExhTitle(r);
     if (exhTip) exhEl.title = exhTip;
   }
+  const srEl = el.querySelector('.cell-sr');
+  if (srEl) {
+    _setText(srEl, _bookSrText(r));
+    srEl.className = `cell-sr${_bookSrClass(r)}`;
+    srEl.title = _bookSrTitle(r);
+  }
   _setText(el.querySelector('.cell-qty'), qty);
   const plEl = el.querySelector('.cell-pl');
   if (plEl) {
@@ -1816,16 +1834,51 @@ function _bookRowHtml(r) {
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}${r.bro_call
       ? `<span class="bro-badge" title="Trader Bro called this one out">BRO</span>`
-      : ''}<button type="button" class="book-call-btn" title="Log that I would buy ${_esc(sym)} now (log only, never trades)">Buy?</button></div>`
+      : ''}</div>`
     + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-chg${chgMod ? ` ${chgMod}` : ''}">${_esc(chgTxt || '\u2014')}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
     + `<div class="cell-exh${_bookExhClass(r)}${crit.exh === true ? ' crit--pass' : ''}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
+    + `<div class="cell-sr${_bookSrClass(r)}" title="${_esc(_bookSrTitle(r))}">${_esc(_bookSrText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
+}
+
+/** SR column (display only): room up to the nearest charted resistance order
+ *  block, from the desk's own point-in-time reading (ob_observe /
+ *  tools/order_blocks.py, 1-min, last 3 per side) — the same ob_room_pct /
+ *  ob_resist_0.3 the live ob_resist skip reads. '—' = no reading. */
+function _bookSrText(r) {
+  if (!r || r.ob_resist == null) return '\u2014';
+  const room = r.ob_room_pct != null && Number.isFinite(Number(r.ob_room_pct))
+    ? Number(r.ob_room_pct) : null;
+  if (room == null) return 'no R';
+  if (room <= 0) return 'in R';
+  return `R +${room < 1 ? room.toFixed(2) : room.toFixed(1)}%`;
+}
+
+function _bookSrClass(r) {
+  return r && r.ob_resist === true ? ' sr--resist' : '';
+}
+
+function _bookSrTitle(r) {
+  if (!r || r.ob_resist == null) return 'No order-block reading yet for this name';
+  const f = v => (v != null && Number.isFinite(Number(v)) ? `$${Number(v).toFixed(2)}` : null);
+  const bits = ['Order blocks (point-in-time, 1-min, last 3 per side)'];
+  const rb = f(r.ob_res_btm), rt = f(r.ob_res_top);
+  const sb = f(r.ob_sup_btm), st = f(r.ob_sup_top);
+  bits.push(rb ? `resistance ${rb}\u2013${rt}` : 'resistance: none charted above');
+  bits.push(sb ? `support ${sb}\u2013${st}` : 'support: none charted below');
+  if (r.ob_resist === true) bits.push('IN THE 0.3% RESIST ZONE (inside or within 0.3% under): the live ob_resist skip refuses arms here');
+  if (r.ob_bars != null) bits.push(`${Math.round(Number(r.ob_bars))} bars`);
+  if (r.ob_levels_ts != null && Number.isFinite(Number(r.ob_levels_ts))) {
+    const d = new Date(Number(r.ob_levels_ts) * 1000);
+    bits.push(`levels as of ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' })} ET`);
+  }
+  return bits.join(' \u00b7 ');
 }
 
 const _rstopHigh = Object.create(null);

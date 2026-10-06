@@ -35,6 +35,7 @@ COLUMNS = [
     ("entry", "cell-entry"),
     ("stop", "cell-trail"),
     ("exh", "cell-exh"),
+    ("sr", "cell-sr"),
     ("pl", "cell-pl"),
 ]
 
