@@ -1,0 +1,18 @@
+{
+ "study": "Does loosening the trail's decay leash / give let the desk's own entries run for more net profit? Replay of the live code, costed with real SIP spreads.",
+ "registered_at": "2026-10-06 17:40 ET, before any replay of these variants",
+ "registered_before_results": true,
+ "origin": "Operator 10/6: opens with real potential were 'stalled by the ratchet stop chase'. Quick look at 80 round trips 10/5-10/6: realized -5.1 bp (median hold 2.9 min); price 15 min after exit +7.9 bp; hold-to-15:50 +30.2 bp. But 9/23-29 said the opposite (hold 30 min -43 bp; every looser trail worse). Two up days, repeated names.",
+ "sessions": ["2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06"],
+ "tool": "tools/replay_session.py --day D [--set ...] --out /tmp/rp_run/D-VARIANT.json; costed with tools/studies/replay_costing.py (full SIP spread once per round trip)",
+ "variants": {
+  "base": "live config as recorded for each day",
+  "decay_off": "ai_local_trail_time_decay_enabled=false (no 8-second leash step-ups)",
+  "decay_slow": "ai_local_trail_decay_idle_sec=30 (leash steps only after 30 s without a new high)",
+  "give_wide": "ai_local_trail_give_r=0.25 and ai_local_trail_peak_give_pct=0.7 (twice the room behind the peak)"
+ },
+ "statistic": "net bp per trade per variant, and the per-day difference (variant minus base, net bp per trade), mean over the 6 days with a t across days",
+ "pass": "a variant EARNS A LIVE A/B (after the cost-arm config freeze ends ~10/15) only if: variant minus base >= +3 bp per trade, t across days >= 2, and it is negative on at most 1 of the 6 days. Otherwise no change. Check n > 0 trades per day per variant first (replays have been vacuous before).",
+ "no_retuning": "variants and bar fixed here; any other setting is a new pre-registration",
+ "caveats": ["6 sessions; two of them strong up days", "replay fills at the recorded price; spread charged by costing", "decay/give interact with the arm-site re-entry cooldown, which the replay runs as live"]
+}
