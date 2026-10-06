@@ -1,0 +1,35 @@
+{
+  "study": "Daily support/resistance location inside the overnight 12-1 book. Among the same night's top-20 liquid 12-1 winners, do names sitting closer to the prior 20-day low (support) earn a better close-to-next-open return than names sitting closer to the prior 20-day high (resistance)?",
+  "registered_at": "2026-10-06, before any location-split overnight outcome was computed. The panel file is the 2016..2026-09 cache already used by the overnight studies; this prereg does not authorize a new fetch.",
+  "status": "PARKED 2026-10-06 before any run. Operator corrected to day trades: SR gap is the runway for an open, with %R direction. Do not score this file.",
+  "registered_before_results": true,
+  "origin": "Operator (Jonathan) 2026-10-06: confident support/resistance can move the desk toward profit, and asked for an outside-the-box test. Every prior S/R test timed a 1-minute scalp entry or a 1-minute exit (queue items 1, 2, 2b, 4, the order-block skip, the range trade, the -60 %R gap arm) and failed. The hold-to-15:55 cell is already queue item 5, accruing, and is not re-opened here. This test uses daily high/low, once per night, on the only book that has cleared costs.",
+  "queue": "docs/studies/SR_TEST_QUEUE_2026-10-05.md item #6",
+  "script": "tools/studies/sr_daily_overnight.py",
+  "panel": "/Users/jambimac/lh_cache/panel.npz on the mini (arrays dates, syms, o, h, l, c, v, rc, spy_o, spy_c). Loaded directly. Does not call lh_core.load (that path expects /tmp/lh and fits a quote model this study does not use).",
+  "universe_and_rank": "Identical to the overnight base with the intraday -1% filter OFF (that filter was switched off live on 2026-10-03, and it uses the full-day close). At the close of day t: raw close rc[t] >= $5, ADV20[t] >= $50M, finite 12-1 momentum cf[t-21]/cf[t-252]-1, finite close. At least 30 eligible names or the night is dropped. Top 20 by 12-1. cf is the close forward-filled, matching overnight_variants.py. ADV20 is the 20-day mean of close*volume through day t (min_periods 15), the same look-ahead the base panel uses; it is shared by both sides of the split.",
+  "sr_definition": "Prior 20 sessions ONLY, indices t-20..t-1. prior_high = max high, prior_low = min low, both requiring 20 finite bars (today's high and low are excluded, so the closing auction cannot rewrite the level). Location = (close[t] - prior_low) / (prior_high - prior_low). Undefined when the prior range is not strictly positive. A location above 1 means the close is through the prior high; below 0 means through the prior low. Both are allowed.",
+  "decision": "Close of day t. One decision per name per night. No intraday minute.",
+  "outcome": "ON[t+1] = open[t+1] / close[t] - 1. Same close-to-next-open the overnight book already trades. Names with a non-finite open the next day are dropped from that night's averages.",
+  "primary": "On nights where at least 16 of the top 20 have a finite location and a finite ON[t+1], and each side of the split has at least 5 names: split at that night's median location. Low side = location <= median (closer to the prior 20-day low, ties go low). High side = location > median (closer to the prior 20-day high). diff = equal-weight mean ON of the low side minus equal-weight mean ON of the high side. One number per night.",
+  "cost": "Both sides would pay the same auction round trip (4 bp, 2 bp a side) if held. The cost cancels in the difference, so diff is already a net swap: sell a high-location name, hold a low-location name, same night. The pass bar still requires the gap to exceed 4 bp, one full round trip, so a smaller gap cannot ship.",
+  "halves": "IS = decision dates <= 2021-12-31. OOS = decision dates >= 2022-01-01. Same cut as overnight_variants. Both must pass. The panel ends in 2026-09; no October 2026 session is in it.",
+  "pass": "BOTH halves: mean(diff) > +4 bp AND night-level t >= 2.0 AND n nights >= 200. Otherwise FAIL. If either half has n < 200, UNDERPOWERED (do not widen the rule to manufacture n). Any PASS = PENDING SKEPTIC REVIEW. Not a live arm, not a bot_config change.",
+  "ship_gate_even_if_primary_passes": "Info regression, locked now: diff = a + b * SPY_overnight, SPY_overnight = spy_open[t+1]/spy_close[t] - 1, OLS over the nights in that half. If either half has intercept t < 2, the primary is beta rather than a support/resistance gap and does not ship. This gate cannot create a pass on its own.",
+  "information_only_cannot_flip_the_verdict": [
+    "60-day prior window instead of 20, same median split",
+    "book construction: equal-weight the low-location half versus the full top 20, paired by night",
+    "absolute: names with close >= prior 20-day high versus the rest of the top 20, nights with >= 3 names on each side",
+    "mean raw price and mean 12-1 of each side, so a price or momentum mix-up is visible"
+  ],
+  "promotion_ban": "An information cell on this same panel cannot be promoted to a pass. A different window, threshold, or book rule needs its own prereg and a sample that starts after that prereg.",
+  "also_report": "n nights, mean names per side, mean location per side, mean ON of each side in bp, gross diff bp, t, per half.",
+  "prior": "Low as a scalp timer: 1-minute support/resistance failed the queue. Unstudied as a once-a-night filter on the 12-1 overnight book. 12-1 winners often live near highs, so the high side may be 'still extended' and the low side 'pulled back'; that is the claim being tested, not a bug.",
+  "caveats": [
+    "SIP daily bars in a survivorship-prone panel, the same panel as the overnight studies, not the live IEX tape",
+    "ADV20 includes day t, shared with the base study",
+    "forward-filled closes in the 12-1 rank, shared with the base study",
+    "flat 4 bp auction cost assumed to cancel; a name that cannot be auctioned is not modeled",
+    "one pre-registered split; the info cells are not a search"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "study": "COUNTERFACTUAL only. On the desk's rising-%R square opens, exit at halfway to the nearest charted resistance or at 15:55, whichever comes first. Does a wide gap (about the 1.6-1.8% on the 10/06 ASTS and RKLB charts) beat a same-hour random minute under that same exit, and does it beat the modest-gap squares?",
+  "registered_at": "2026-10-06, before this counterfactual was computed.",
+  "registered_before_results": true,
+  "cannot_ship": "This sample is the indicator-levels tape (2026-09-04..10-02) already mined by the S/R queue, including the full-gap exit which FAILED. These numbers are a what-if. They are not a pass, not a forward test, and not a bot_config change. A result that looks good still needs its own prereg on sessions after this file.",
+  "script": "tools/studies/sr_half_gap_counterfactual.py",
+  "sample": "E rows in ai_reports/indicator_levels/rows.json. Those are the live square events (rising exhaustion / %R) on admitted names, $10+, 2026-09-04..10-02. Bars: ai_reports/indicator_levels/ext.pkl. No new fetch. 10/05 and 10/06 are not in the cache.",
+  "levels": "tools/order_blocks.py, point-in-time, charted last 3 per side, known at the decision close. Same entry as sr_exit_resist: buy the next bar's open. Resistance = lowest charted resistance bottom strictly above that entry.",
+  "room": "(resistance bottom / entry - 1). WIDE >= 1.00%. MODEST >= 0.30% and < 1.00%. Under 0.30% is the wall and is excluded (that is the skip, not this test). No resistance above = drop.",
+  "exit": "Half target = entry + 0.5 * (resistance bottom - entry). Fill at the half target when a later bar's high trades through it (high > target), else the 15:55 close. No 30-minute cap. No trail. No support stop.",
+  "reports": {
+    "1_wide_vs_random": "WIDE squares minus one same-name, same-ET-hour random minute (seed 51, up to 30 redraws) that itself has room >= 0.30%, under the same half-gap exit measured from that minute's own resistance. This is the primary what-if.",
+    "2_wide_vs_modest": "WIDE squares minus MODEST squares, both half-gap-or-15:55. Unpaired means, day-clustered t on each side's gross, and the difference of means.",
+    "3_modest_vs_random": "Same as report 1 for MODEST squares. Shows whether the exit, rather than the wide gap, is doing the work."
+  },
+  "information_only": "On WIDE only: full-gap-or-15:55 minus half-gap-or-15:55. The full gap already failed as a 30-minute exit on all squares. This cell cannot flip anything.",
+  "cost": "0.20% round trip, flat, matching the other S/R studies. Report gross and net.",
+  "halves": "Chronological over the days listed in rows.json, split in half the same way as sr_exit_resist.py.",
+  "pass": "There is no pass bar. Print the numbers. The banner is COUNTERFACTUAL, not PASS or FAIL."
+}
