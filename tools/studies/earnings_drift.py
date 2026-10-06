@@ -529,7 +529,7 @@ def phase_minutes_and_score():
                 cnt["no_control"] += 1
             row["ctl"] = ctl
         rows.append(row)
-    score(P, rows, cnt, E.get("counts", {}))
+    score(P, rows, cnt, E.get("counts", {}), E["events"])
 
 
 def week_t(vals, weeks):
@@ -579,7 +579,31 @@ def cal_series(rows, key_daily, key_dates, cost_bp=0.0):
     return [statistics.fmean(by[d]) for d in sorted(by)]
 
 
-def score(P, rows, cnt, ecnt):
+def coverage(P, events):
+    """Skeptic FIX FIRST 7 (2026-10-06): missing reports must be visible. Per year: matched quarters (events of any
+    surprise) / (4 x eligible symbol-years), a symbol-year being the share of that year's sessions (in the period) on
+    which the name was eligible; and the number of symbols eligible on >= half of a year's sessions with < 2 events."""
+    D = P["dates"]
+    lo, hi = P["ix"][D_LO], P["ix"][D_HI]
+    rc, adv = P["rc"][lo - 1:hi], P["adv_prev"][lo:hi + 1]
+    with np.errstate(invalid="ignore"):
+        ok = np.isfinite(rc) & (rc >= MIN_PX) & np.isfinite(adv) & (adv >= MIN_ADV)
+    yrs = np.array([d[:4] for d in D[lo:hi + 1]])
+    nev = collections.Counter((e["sym"], e["d0"][:4]) for e in events)
+    out = {}
+    for y in sorted(set(yrs)):
+        frac = ok[yrs == y].mean(0)
+        sy = float(frac.sum())
+        matched = sum(v for (_, yy), v in nev.items() if yy == y)
+        full = [str(P["syms"][j]) for j in np.where(frac >= 0.5)[0]]
+        out[y] = {"matched": matched, "symbol_years": round(sy, 1),
+                  "coverage": round(matched / (4 * sy), 3) if sy else None,
+                  "eligible_half_year_symbols": len(full),
+                  "symbols_lt2_events": sum(1 for x in full if nev[(x, y)] < 2)}
+    return out
+
+
+def score(P, rows, cnt, ecnt, events=None):
     status = {str(s): str(st) for s, st in zip(P["syms"], P["status"])}
     res = {"prereg": "docs/studies/earnings_drift_prereg.json (7ed491c, 218199a)", "event_counts": ecnt, "score_counts": dict(cnt)}
     halves = {"H1": lambda d: d <= H1_END, "H2": lambda d: d > H1_END}
@@ -619,6 +643,8 @@ def score(P, rows, cnt, ecnt):
     pw = all(power[h]["mde_bp"] <= 30 for h in power)                  # NaN MDE -> False -> UNDERPOWERED
     res = {"prereg": res["prereg"], "power": {**power, "power_ok": pw}, **{k: v for k, v in res.items() if k != "prereg"}}
     res["primary"] = out
+    if events is not None:
+        res["coverage"] = coverage(P, events)
     crit = {}
     for h in ("H1", "H2"):
         o = out[h]

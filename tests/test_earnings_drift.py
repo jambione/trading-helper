@@ -199,7 +199,6 @@ def _fake_P():
 def test_report_writes_power_before_any_mean(tmp_path, monkeypatch):
     import collections
     monkeypatch.setattr(ed, "WORK", str(tmp_path))
-    monkeypatch.setattr(ed, "coverage", lambda P, ev: {}, raising=False)
     ed.score(_fake_P(), _fake_rows(), collections.Counter({"no_control": 4}), {})
     rep = (tmp_path / "report.md").read_text()
     assert rep.index("## Power") < rep.index("diff_bp") and rep.index("## Power") < rep.index("mean_bp_gross")
@@ -207,3 +206,25 @@ def test_report_writes_power_before_any_mean(tmp_path, monkeypatch):
     for h in ("H1", "H2"):
         p = res["power"][h]
         assert p["se_used"] == max(p["se_week"], p["se_cal"]) and p["mde_bp"] == round(2.84 * p["se_used"], 2)
+
+
+# ---------------------------------------------------------------- FIX FIRST 7 coverage per year
+def test_coverage_per_year(monkeypatch):
+    import numpy as np
+    dates = ["2018-12-31"] + [f"2019-{m:02d}-15" for m in range(1, 13)] + [f"2020-{m:02d}-15" for m in range(1, 13)]
+    T = len(dates)
+    rc = np.full((T, 3), 20.0)
+    rc[:, 2] = 5.0                                     # C never eligible (price)
+    adv = np.full((T, 3), 1e8)
+    adv[7:, 1] = 1.0                                   # B eligible Jan-Jun 2019 only (6 of 12 sessions)
+    P = {"dates": dates, "ix": {d: i for i, d in enumerate(dates)}, "rc": rc, "adv_prev": adv,
+         "syms": np.array(["A", "B", "C"])}
+    monkeypatch.setattr(ed, "D_LO", "2019-01-15")
+    monkeypatch.setattr(ed, "D_HI", "2020-12-15")
+    ev = [{"sym": "A", "d0": f"2019-{m:02d}-15"} for m in (2, 5, 8, 11)] + [{"sym": "B", "d0": "2019-04-15"},
+                                                                          {"sym": "A", "d0": "2020-02-15"}]
+    cov = ed.coverage(P, ev)
+    assert cov["2019"]["symbol_years"] == 1.5 and cov["2019"]["matched"] == 5
+    assert cov["2019"]["coverage"] == round(5 / 6, 3)
+    assert cov["2019"]["eligible_half_year_symbols"] == 2 and cov["2019"]["symbols_lt2_events"] == 1   # B
+    assert cov["2020"]["symbols_lt2_events"] == 1 and cov["2020"]["coverage"] == 0.25                   # A, 1 of 4
