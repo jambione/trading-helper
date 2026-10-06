@@ -228,3 +228,16 @@ def test_coverage_per_year(monkeypatch):
     assert cov["2019"]["coverage"] == round(5 / 6, 3)
     assert cov["2019"]["eligible_half_year_symbols"] == 2 and cov["2019"]["symbols_lt2_events"] == 1   # B
     assert cov["2020"]["symbols_lt2_events"] == 1 and cov["2020"]["coverage"] == 0.25                   # A, 1 of 4
+
+
+# ---------------------------------------------------------------- minors: surprise parser
+def test_surprise_cases():
+    assert ed.surprise("Apple Q3 EPS $2.18 Beats $2.10 Estimate, Sales $90B Miss $91B Estimate") == "beat"
+    assert ed.surprise("Acme Q1 Adj. EPS $0.40 Misses $0.45 Estimate, Sales $1B Beat $0.9B Estimate") == "miss"
+    assert ed.surprise("Acme Q2 EPS $0.40 In-Line With $0.40 Estimate") == "inline"
+    assert ed.surprise("Acme Q2 EPS $0.40 Inline With Estimate") == "inline"
+    assert ed.surprise("Acme Q4 EPS $1.05 Beat $1.00 Estimate") == "beat"                 # singular
+    assert ed.surprise("Markel Q3 EPS $1,234.50 Beats $1,100.00 Estimate, Sales $4B") == "beat"   # "$1,234" survives
+    assert ed.surprise("Acme Q3 EPS $1.00 vs $1.00 Estimate, Sales $5B Beat $4.9B Estimate") == "unclassified"
+    assert ed.surprise("Acme Sees Q4 EPS $1.00-$1.10 vs $1.05 Estimate") is None           # guidance excluded
+    assert ed.surprise("Acme Raises FY Guidance; Q3 EPS Beats") is None

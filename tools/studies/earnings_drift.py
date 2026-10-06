@@ -14,8 +14,8 @@ Rules (from the pre-registration):
   universe   panel names with RAW close >= $10 and ADV20 >= $50M, ADV20 = mean(close x volume) over the 20 sessions
              ending D0-1 (shifted), point-in-time; D0 in 2019-01-02..2026-09-18
   headline   not starting CORRECTION/UPDATE; matches \\bQ[1-4]\\b.*\\bEPS\\b and 'Estimate'; no Sees|Guidance|Outlook|
-             Raises|Lowers before 'EPS'; SURPRISE = first Beats|Misses|In-Line|Inline inside the EPS clause ('EPS' up
-             to the first comma), else unclassified; first qualifying headline per symbol per 10 calendar days (by
+             Raises|Lowers before 'EPS'; SURPRISE = first Beats|Beat|Misses|In-Line|Inline inside the EPS clause ('EPS'
+             up to the first ', '), else unclassified; first qualifying headline per symbol per 10 calendar days (by
              created_at); headlines within 5 min with different surprise words: the one with 'Adj.' wins, else
              unclassified
   D0         ET time < 09:30 -> that session (next session if not a session); >= 16:00 -> next session; RTH -> same;
@@ -64,7 +64,7 @@ NEWS_START, NEWS_END = "2018-12-15", "2026-09-20"
 RPM = float(os.environ.get("ALPACA_RPM", "150"))
 RX_HEAD = re.compile(r"\bQ[1-4]\b.*\bEPS\b", re.I)
 RX_EXCL = re.compile(r"\b(Sees|Guidance|Outlook|Raises|Lowers)\b", re.I)
-RX_SURP = re.compile(r"\b(Beats|Misses|In-Line|Inline)\b", re.I)
+RX_SURP = re.compile(r"\b(Beats|Beat|Misses|In-Line|Inline)\b", re.I)
 
 
 def P_(*a):
@@ -254,12 +254,12 @@ def surprise(h):
     m = re.search(r"\bEPS\b", h, re.I)
     if not m or RX_EXCL.search(h[:m.start()]):
         return None
-    clause = h[m.start():].split(",")[0]
+    clause = h[m.start():].split(", ")[0]                 # ", " not ",": "$1,234" stays in the clause (skeptic minor)
     s = RX_SURP.search(clause)
     if not s:
         return "unclassified"
     w = s.group(1).lower()
-    return "beat" if w == "beats" else "miss" if w == "misses" else "inline"
+    return "beat" if w in ("beats", "beat") else "miss" if w == "misses" else "inline"
 
 
 def burst_word(burst):
