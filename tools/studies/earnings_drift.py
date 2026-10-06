@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Post-earnings drift, exactly per docs/studies/earnings_drift_prereg.json (7ed491c / 218199a).
+"""Post-earnings drift, exactly per docs/studies/earnings_drift_prereg.json (7ed491c / 218199a, amended_2).
 
 Phases (on the mini, AFTER HOURS ONLY: the news fetch shares the desk's Alpaca budget):
   symbols   eligible names from the lh_cache panel + all Alpaca name changes (paged)     -> WORK/symbols.json
@@ -24,7 +24,7 @@ Rules (from the pre-registration):
   trade      buy close(D0), sell close(D0+5); excess = r - beta x r_SPY; beta = OLS daily vs SPY over the 252 sessions
              ending D0-1 (min 150); cost 10 bp (30 bp sensitivity) charged to the PRIMARY trade only
   PRIMARY    EPS Beats AND R0 > 0
-  CONTROL    same symbol, a random session (seed 41) within +/-60 sessions of D0, not within 10 sessions of any of that
+  CONTROL    same symbol, a random session (seed 41|sym|D0, <= 12 tried) within +/-60 sessions of D0, not within 10 sessions of any of that
              symbol's events, with its own 15:45 return > 0; same entry/hold/beta; candidates tried in a seeded order
   statistic  diff = PRIMARY net excess (cost c) - CONTROL gross excess (the control is a comparison, not a trade);
              SE (a) clustered by ISO week of D0, (b) calendar-time: daily mean of open PRIMARY daily excess and of open
@@ -647,7 +647,7 @@ def coverage(P, events):
 
 def score(P, rows, cnt, ecnt, events=None):
     status = {str(s): str(st) for s, st in zip(P["syms"], P["status"])}
-    res = {"prereg": "docs/studies/earnings_drift_prereg.json (7ed491c, 218199a)", "event_counts": ecnt, "score_counts": dict(cnt)}
+    res = {"prereg": "docs/studies/earnings_drift_prereg.json (7ed491c, 218199a, amended_2)", "event_counts": ecnt, "score_counts": dict(cnt)}
     halves = {"H1": lambda d: d <= H1_END, "H2": lambda d: d > H1_END}
     out, power = {}, {}
     for hn, f in halves.items():
