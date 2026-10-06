@@ -1,0 +1,29 @@
+{
+ "study": "Post-earnings drift: after a confirmed good-news earnings report (EPS beat AND a positive reaction day), does a liquid stock keep outperforming over the next week, after market exposure and costs?",
+ "registered_at": "2026-10-06 ~19:15 ET, before any earnings event was collected or any outcome computed",
+ "registered_before_results": true,
+ "origin": "Operator 10/6: 'do we know the edge of certain names to be able to hold it across an entire week?' The 9/27 LONGER_HOLDS study meant to test news-flagged PEAD but ran out of time; only a gap+RVOL proxy ran (and failed). This is the real version. Data check done before registering (format only, no outcomes): Finnhub's free earnings calendar has no history; Alpaca/Benzinga news carries structured headlines such as 'Apple Q3 EPS $2.18 Beats $2.1 Estimate' from at least 2019.",
+ "universe": "US common stocks in the lh_cache panel (SIP daily, adjustment=all, 2016-2026, includes names inactive from 2018) with raw close >= $10 and ADV20 >= $50M on the day before the reaction day (point-in-time)",
+ "period": "reaction days 2019-01-02 .. 2026-09-25; split by date into H1 2019-01-02..2022-12-30 and H2 2023-01-03..2026-09-25",
+ "events": {
+  "source": "Alpaca news API (Benzinga), fetched per symbol, cached; every request logged; abort the study if > 2% of symbols fail to fetch after retries",
+  "headline_rule": "the first headline per symbol per 10 calendar days matching r'\\bQ[1-4]\\b.*\\bEPS\\b.*\\b(Beats|Misses|In-Line|Inline)\\b.*\\bEstimate\\b' (case-insensitive); headlines starting 'CORRECTION' or 'UPDATE' are ignored; surprise = the first Beats/Misses/In-Line word AFTER 'EPS' in that headline",
+  "reaction_day": "D0 = the headline's session if it is before 09:30 ET; the next session if it is at or after 16:00 ET; the same session if during RTH",
+  "reaction": "R0 = close(D0) / close(D0 - 1) - 1"
+ },
+ "trade": "buy at the close of D0 (after the reaction is known; an MOC order), sell at the close of D0 + 5 sessions",
+ "returns": {
+  "beta_adjusted_excess": "stock return over the hold minus beta x SPY return over the same hold; beta = OLS of daily stock on daily SPY returns over the 252 sessions ending D0 - 1 (min 150), point-in-time",
+  "cost": "10 bp round trip (MOC in and out at ~2 bp/side plus slippage); 30 bp as a sensitivity"
+ },
+ "groups": {
+  "PRIMARY_GOOD": "EPS Beats AND R0 > 0",
+  "information": ["EPS Misses AND R0 < 0 (the short side; reported, not traded)", "all Beats regardless of R0", "R0 > 0 regardless of surprise", "20-session hold for PRIMARY_GOOD", "1-session hold for PRIMARY_GOOD", "excess vs SPY without beta adjustment"]
+ },
+ "statistic": "mean net beta-adjusted 5-session excess per PRIMARY_GOOD event (bp); SE clustered by calendar week of D0 (earnings seasons put many correlated events in the same week)",
+ "power": "before reading means: report SE per half; MDE = 2.84 x SE. If MDE > 30 bp in either half, UNDERPOWERED (no verdict).",
+ "pass": "PRIMARY_GOOD mean net (10 bp cost) >= +20 bp per 5-session trade with week-clustered t >= 2 in BOTH halves, >= 300 events per half, AND still > 0 at 30 bp cost in both halves. Otherwise FAIL. A PASS (after skeptic review) earns a paper/score-only pilot, not live money.",
+ "no_retuning": "the headline rule, the 10-day dedupe, D0 timing, the 5-session hold, the beta window and the groups are fixed here; changes need a new pre-registration",
+ "prior": "modest: PEAD is well documented historically but has weakened in large liquid stocks; the 9/27 gap+RVOL proxy failed; momentum beyond beta failed on 10/2",
+ "caveats": ["Benzinga headline coverage may be incomplete for some names/years (coverage per year is reported)", "estimates are Benzinga's consensus", "survivorship: names delisted before 2018 are missing (the period starts 2019)", "no borrow/short side traded"]
+}
