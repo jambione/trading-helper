@@ -279,7 +279,7 @@ def phase_events():
     S = jload(os.path.join(WORK, "symbols.json"))
     sessions = P["dates"]
     sset = set(sessions)
-    ev, cnt = [], collections.Counter()
+    ev, cnt, earn_t = [], collections.Counter(), {}
     for s in S["symbols"]:
         arts = []
         for u in rename_segments(s, S.get("name_changes") or []):
@@ -287,9 +287,17 @@ def phase_events():
                 arts += jload(unit_file(u), [])
         seen = set()                                      # segment boundaries are whole days: drop repeats by id
         arts = [a for a in arts if a.get("id") is None or not (a["id"] in seen or seen.add(a["id"]))]
-        cand = []
+        cand, heads = [], set()
         for a in arts:
             h = a.get("h") or ""
+            if RX_HEAD.search(h):
+                # Skeptic FIX FIRST 3 (2026-10-06): controls must avoid EVERY earnings headline, not only the events
+                # that survived eligibility, period, Sees/Guidance and the dedupe; else a control can sit on a report
+                tt = datetime.fromisoformat(a["c"].replace("Z", "+00:00")).astimezone(ET)
+                dd = d0_of(tt, sessions, sset)
+                dd = tt.strftime("%Y-%m-%d") if dd == "late_rth" else dd
+                if dd in P["ix"]:
+                    heads.add(P["ix"][dd])
             if h.upper().startswith(("CORRECTION", "UPDATE")) or not RX_HEAD.search(h) or "estimate" not in h.lower():
                 continue
             sp = surprise(h)
@@ -326,7 +334,9 @@ def phase_events():
                 continue
             ev.append({"sym": s, "d0": d, "t0": t, "surprise": sp, "headline": h0, "ts": t0.isoformat()})
             cnt[f"surprise_{sp}"] += 1
-    jsave(os.path.join(WORK, "events.json"), {"events": ev, "counts": dict(cnt)})
+        if heads:
+            earn_t[s] = sorted(heads)
+    jsave(os.path.join(WORK, "events.json"), {"events": ev, "counts": dict(cnt), "earn_t": earn_t})
     P_(f"events {len(ev)}; {dict(cnt)}")
 
 
@@ -349,6 +359,14 @@ def m1545(cache, H, sym, day):
             best = float(b["c"])
     cache[k] = best
     return best
+
+
+def control_candidates(t0, earn_ts, T, near=10, win=60):
+    """Sessions within +/-win of t0, at least near+1 sessions from every earnings headline of the name."""
+    bad = set()
+    for t_e in earn_ts:
+        bad |= set(range(t_e - near, t_e + near + 1))
+    return [t for t in range(t0 - win, t0 + win + 1) if t not in bad and 160 <= t < T - HOLD - 1]
 
 
 def excess_at(c, spy, spy_r, dates, j, t, hold):
@@ -389,6 +407,9 @@ def phase_minutes_and_score():
     for e in E["events"]:
         ev_by[e["sym"]].append(e["t0"])
     rng_master = random.Random(41)
+    earn_t = E.get("earn_t")
+    if earn_t is None:
+        raise SystemExit("events.json has no earn_t (pre-FIX-FIRST-3 events phase); rerun phase events")
 
     def r0(sym, t):
         j = P["col"][sym]
@@ -416,10 +437,7 @@ def phase_minutes_and_score():
         row["primary"] = (e["surprise"] == "beat" and rr > 0)
         if row["primary"]:
             rng = random.Random(rng_master.random())
-            near = set()
-            for t_e in ev_by[e["sym"]]:
-                near |= set(range(t_e - 10, t_e + 11))
-            cands = [t for t in range(e["t0"] - 60, e["t0"] + 61) if t not in near and 160 <= t < T - HOLD - 1]
+            cands = control_candidates(e["t0"], ev_by[e["sym"]] + earn_t.get(e["sym"], []), T)
             rng.shuffle(cands)
             ctl = None
             for t in cands[:12]:

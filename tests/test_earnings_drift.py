@@ -103,3 +103,10 @@ def test_d0_mapping():
     assert ed.d0_of(at("2025-07-25", "16:05"), S, ss) == "2025-07-28"     # Friday evening -> Monday
     assert ed.d0_of(at("2025-07-26", "15:50"), S, ss) == "2025-07-28"     # weekend -> next session, not excluded
     assert ed.d0_of(at("2025-07-28", "16:30"), S, ss) is None             # past the panel
+
+
+# ---------------------------------------------------------------- FIX FIRST 3 control exclusion
+def test_control_candidates_avoid_every_earnings_headline():
+    c = ed.control_candidates(1000, [1000, 1040], 5000)
+    assert all(abs(t - 1000) > 10 and abs(t - 1040) > 10 for t in c)
+    assert 1030 not in c and 1050 not in c and 1010 not in c and 1011 in c and 1029 in c and 1051 in c
