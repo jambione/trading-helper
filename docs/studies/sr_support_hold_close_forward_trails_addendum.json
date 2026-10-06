@@ -1,0 +1,17 @@
+{
+ "addendum_to": "docs/studies/sr_support_hold_close_forward_prereg.json (prereg c1e9c30, queue #5)",
+ "registered_at": "2026-10-06 ~03:57 ET, before the 2026-10-06 open (09:30 ET); no 10/06 session data exists yet",
+ "operator": "Jonathan approved 2026-10-06 ~03:50 ET: add trailing-stop exit variants as INFORMATION-ONLY rows",
+ "why_added": "Added AFTER the in-sample worked example (2026-10-06 ~03:52 ET, 9/11-10/02 SIP): the hold-to-15:55 support-arm average comes entirely from the top 10% of trades (mean without them negative), and Jonathan asked how profit gets secured. That observation motivated these rows; it is not evidence for them.",
+ "status": "INFORMATION ONLY. These rows CANNOT change the verdict. The primary exit (15:55 close), the primary control (same name-day same-hour random minute, seed 43), the information control (desk's own arms), the cost rule (max(measured IEX round trip, 20 bp)), the halves, the minimum sample / stopping rule and the pass bar in c1e9c30 are all UNCHANGED. Trail rows are only printed in the same gated score run (no outcomes before >= 10 held-out sessions and >= 100 support arms per half, or the 20-session hard stop); the dry run stays counts only.",
+ "variants": {
+  "T1_trail1.0": "stop = 1.0% below the running high since entry (initial stop entry x 0.99), else 15:55 close",
+  "T2_trail2.0": "stop = 2.0% below the running high since entry (initial stop entry x 0.98), else 15:55 close",
+  "T3_be1.0_trail1.5": "no stop until the running high >= entry x 1.010; from then stop = max(entry, running high x 0.985); else 15:55 close",
+  "T4_block_then_trail1.5": "initial stop = support-block bottom x (1 - 0.001); once the running high >= entry x 1.010, stop = max(that stop, running high x 0.985); else 15:55 close. Support arm: the touched block S. Square/desk arm and random control: the charted support block below entry known at the decision with the highest top (btm < entry), as in the existing study's default stop; none -> no initial stop, trail part only."
+ },
+ "mechanics": "Entry = open of the bar after the decision (unchanged). For each bar j from the entry bar through the bar starting 15:54: the stop level for bar j uses the running high through bar j-1 (initial running high = entry price), so a bar's own high never moves its own stop. If low[j] <= stop: exit at min(stop, open[j]) (gap-through fills at the open). Then update the running high with high[j]. No stop hit -> 15:55 close. Same rules for the support arm, the desk/square arm and the random control. Forward: the desk's recorded IEX-based 1-min bars (prints + recorded IEX bars), as in c1e9c30.",
+ "reported_per_half_info_only": "n; gross mean bp; support minus random (same variant) mean bp with day-clustered t; net = gross - that half's charged cost; median bp; % winners; give-back vs hold = mean(variant gross - 15:55 gross) per trade; for support, random and desk/square arms",
+ "in_sample_info": "The same 4 variants may be run on the in-sample SIP 9/11-10/02 data (tools/studies/sr_support_arm.py cache and arms, cost 20 bp) and reported clearly labelled IN-SAMPLE, INFO ONLY, already-mined data. Not evidence.",
+ "no_retuning": "The 1.0/2.0/1.5% trail widths, the +1.0% activation and the -0.1% block offset are fixed here; any other variant is a new pre-registration."
+}
