@@ -1,0 +1,17 @@
+{
+ "study": "FORWARD test on new sessions of three S/R leads from the 10/5 order-block study, using the desk's own fills and exits",
+ "registered_at": "2026-10-06 ~17:50 ET, before any session after 10/06 is scored",
+ "registered_before_results": true,
+ "origin": "Operator 10/6: 'make better use of S/R'. In-sample leads (order_block_gate.py, 9/11-10/02, information cells, not significant): (H1) arms inside/within 0.3% under a known resistance block: -17.9 bp half A (t -3.6), +0.1 half B; (H2) running/extended breakouts >0.30% above a just-broken bearish OB: -21 / -27 bp vs non-breakout arms (t -1.3 / -1.6); (H3) clean breaks 0.10-0.30%: +14.5 bp (t +1.5).",
+ "data": "every paper desk BUY fill, scored daily by tools/studies/ob_fills_daily.py on SIP 1-minute bars (prior day + day, premarket+RTH; blocks known before the fill; charted last 3 per side): resist_0.3, brk_dist_pct, realized round trip (FIFO, the desk's own exits). The live IEX fields logged by ob_observe (ob_resist_0.3, ob_brk_dist_pct) are a confirmation check, not the primary.",
+ "sessions": "2026-10-05 and every session from 2026-10-07 on; 2026-10-06 is EXCLUDED for H1 (the hard skip blocked flagged arms that day) but included for H2/H3. Scored when >= 10 eligible sessions exist (earliest ~10/19).",
+ "statistic": "realized bp per fill; group minus the reference group, OLS with day fixed effects, day-clustered t",
+ "hypotheses": {
+  "H1": "resist_0.3 = True minus False: predicted NEGATIVE",
+  "H2": "brk_dist_pct >= 0.30 minus fills with no breakout (brk_dist_pct None): predicted NEGATIVE",
+  "H3": "0.10 <= brk_dist_pct < 0.30 minus fills with no breakout: predicted POSITIVE"
+ },
+ "pass": "each hypothesis separately: difference in the predicted direction of at least 5 bp, day-clustered t >= 2.4 (Bonferroni for 3), >= 30 fills in the tested group, and the same sign in the first and second half of the eligible sessions. Fewer than 30 fills in the group -> UNDERPOWERED (keep collecting). A pass earns a pre-registered live A/B (skip for H1/H2, priority/size for H3) after the cost-arm freeze, with skeptic review first; it is not a config change by itself.",
+ "no_retuning": "bands, 15-min break window, 0.3% band and the charted-3 rule are fixed here",
+ "caveats": ["realized returns depend on the trail settings in force; a trail change mid-test is recorded and the test is split at it", "SIP blocks vs the live IEX feed", "the same names repeat within a day (day FE + clustering)"]
+}

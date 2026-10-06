@@ -62,7 +62,7 @@ def main():
     out = []
     for f in sorted(fills, key=lambda x: x["t"]):
         rows = minute_bars(cl, f["sym"], day)
-        flag = room = None
+        flag = room = brk = None
         if rows:
             last = None
             for i, blocks in OB.order_blocks(rows, bar_sec=60):
@@ -78,9 +78,13 @@ def main():
                 inside = [b for b in ch if ((b.kind == "bear" and not b.breaker) or (b.kind == "bull" and b.breaker))
                           and b.btm <= f["fill"] <= b.top]
                 room = 0.0 if inside else ((min(above) / f["fill"] - 1) * 100 if above else None)
+                rec = [b for b in ch if b.kind == "bear" and b.breaker and b.break_ts is not None
+                       and f["t"] - 900 <= b.break_ts <= f["t"] and f["fill"] > b.top]
+                brk = (f["fill"] / max(rec, key=lambda b: b.break_ts).top - 1) * 100 if rec else None
         out.append({"day": day, "sym": f["sym"], "t": f["t"], "fill": f["fill"], "qty": f["qty"],
                     "realized_bp": None if f["realized"] is None else round(f["realized"] * 1e4, 1),
-                    "resist_0.3": flag, "room_pct": None if room is None else round(room, 3)})
+                    "resist_0.3": flag, "room_pct": None if room is None else round(room, 3),
+                    "brk_dist_pct": None if brk is None else round(brk, 3)})
     old = [json.loads(x) for x in open(OUT)] if os.path.exists(OUT) else []
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w") as fh:
@@ -89,12 +93,19 @@ def main():
     print(f"{day}: {len(out)} buy fills")
     for r in out:
         print(f"  {datetime.fromtimestamp(r['t'], ET):%H:%M:%S} {r['sym']:<6} {r['fill']:>9.2f}  resist_0.3={r['resist_0.3']}"
-              f"  room={r['room_pct']}  realized={r['realized_bp']} bp")
+              f"  room={r['room_pct']}  brk={r.get('brk_dist_pct')}  realized={r['realized_bp']} bp")
     for lab, g in (("flagged", True), ("not flagged", False)):
         xs = [r["realized_bp"] for r in out if r["resist_0.3"] is g and r["realized_bp"] is not None]
         if xs:
             print(f"  {lab}: n {len(xs)} mean {statistics.fmean(xs):+.1f} bp")
     allr = [json.loads(x) for x in open(OUT)]
+    bands = (("no breakout", None, None), ("poke 0-0.10%", 0.0, 0.10), ("clean 0.10-0.30%", 0.10, 0.30),
+             ("running/extended >0.30%", 0.30, 1e9))
+    for lab, lo, hi in bands:
+        xs = [r["realized_bp"] for r in allr if r["realized_bp"] is not None and "brk_dist_pct" in r and
+              ((lo is None and r["brk_dist_pct"] is None) or (lo is not None and r["brk_dist_pct"] is not None and lo <= r["brk_dist_pct"] < hi))]
+        if xs:
+            print(f"  HELD-OUT breakout band {lab}: n {len(xs)} mean {statistics.fmean(xs):+.1f} bp")
     for lab, g in (("flagged", True), ("not flagged", False)):
         xs = [r["realized_bp"] for r in allr if r["resist_0.3"] is g and r["realized_bp"] is not None]
         if xs:

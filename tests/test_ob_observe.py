@@ -320,3 +320,14 @@ def test_skip_fails_open_without_bars(tmp_path, monkeypatch):
     on, _ = _run_poll(tmp_path, monkeypatch, {"ai_watch_ob_resist_skip": True}, None)
     assert [p[0] for p in off] == [p[0] for p in on] == ["SMCI"]
     assert _strip(on[0][1]) == _strip(off[0][1]) and on[0][3] == off[0][3]
+
+
+def test_breakout_dist_recent_bear_breaker_only():
+    from tools.order_blocks import Block
+    now = 10_000.0
+    recent = Block("bear", top=100.0, btm=99.0, origin_ts=0.0, known_ts=1.0, breaker=True, break_ts=now - 300)
+    old = Block("bear", top=99.5, btm=99.0, origin_ts=0.0, known_ts=1.0, breaker=True, break_ts=now - 2000)
+    live = Block("bear", top=101.0, btm=100.5, origin_ts=0.0, known_ts=1.0)
+    assert ob_observe.breakout_dist([recent, old, live], 100.2, now) == pytest.approx(0.2)
+    assert ob_observe.breakout_dist([old, live], 100.2, now) is None          # break older than 15 min
+    assert ob_observe.breakout_dist([recent], 99.9, now) is None               # price back under the top

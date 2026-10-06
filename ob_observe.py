@@ -17,6 +17,10 @@ What it computes, per arm decision, from ``tools/order_blocks.py``
   ob_room_pct    % from price up to the bottom of the nearest charted
                  resistance block above; 0.0 when price is inside one; None
                  when there is none above. Same as tools/studies/ob_fills_daily.py.
+  ob_brk_dist_pct  % the price sits above the top of the most recently broken charted bearish OB (it became a
+                 breaker within the last 15 min and price is still above its top); None when there is no such
+                 break. Same definition as the 10/5 study's BREAKOUT DISTANCE cells (order_block_gate.py).
+                 Forward test: docs/studies/sr_breakout_forward_prereg.json.
   ob_bars        how many 1-minute bars the blocks were computed on.
   ob_prior_day   whether those bars reach back into the prior trading day.
 
@@ -241,6 +245,16 @@ def flags(charted_blocks, price: float) -> tuple[bool, float | None]:
     return resist, room
 
 
+def breakout_dist(charted_blocks, price: float, now: float) -> float | None:
+    """% above the top of the most recently broken charted bearish OB (break within 15 min, price above it)."""
+    px = float(price)
+    rec = [b for b in charted_blocks if b.kind == "bear" and b.breaker and b.break_ts is not None
+           and float(now) - 900.0 <= b.break_ts <= float(now) and px > b.top]
+    if not rec:
+        return None
+    return (px / max(rec, key=lambda b: b.break_ts).top - 1.0) * 100.0
+
+
 def fields(symbol: str, price: Any, now: float) -> dict[str, Any]:
     """The logged fields for one decision, or {} when there is nothing to say
     (no price, no bars, any error). Never raises, never fetches."""
@@ -253,9 +267,11 @@ def fields(symbol: str, price: Any, now: float) -> dict[str, Any]:
         if n <= 0:
             return {}
         resist, room = flags(ch, px)
+        brk = breakout_dist(ch, px, float(now))
         return {
             "ob_resist_0.3": resist,
             "ob_room_pct": None if room is None else round(room, 3),
+            "ob_brk_dist_pct": None if brk is None else round(brk, 3),
             "ob_bars": int(n),
             "ob_prior_day": bool(prior),
         }
@@ -263,7 +279,7 @@ def fields(symbol: str, price: Any, now: float) -> dict[str, Any]:
         return {}
 
 
-FIELD_KEYS = ("ob_resist_0.3", "ob_room_pct", "ob_bars", "ob_prior_day")
+FIELD_KEYS = ("ob_resist_0.3", "ob_room_pct", "ob_brk_dist_pct", "ob_bars", "ob_prior_day")
 
 
 def _support(b) -> bool:
