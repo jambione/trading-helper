@@ -238,6 +238,17 @@ def phase_news():
     P_(f"news done: new files {n}, failed {len(fails)} of {len(todo)} fetch units")
 
 
+def news_fail_check(S, exists=os.path.exists):
+    """Prereg: abort if > 2% of symbols fail the news fetch after retries. A symbol fails if any of its units has no
+    cache file (failed, or never fetched). Skeptic FIX FIRST 4 (2026-10-06): enforced in code before events/score."""
+    bad = sorted({u[0] for u in news_units(S) if not exists(unit_file(u))})
+    frac = len(bad) / max(1, len(S["symbols"]))
+    if frac > 0.02:
+        raise SystemExit(f"news fetch failed for {len(bad)}/{len(S['symbols'])} symbols ({frac:.1%} > 2%): "
+                         f"rerun phase news; e.g. {bad[:10]}")
+    return bad
+
+
 def surprise(h):
     m = re.search(r"\bEPS\b", h, re.I)
     if not m or RX_EXCL.search(h[:m.start()]):
@@ -277,6 +288,7 @@ def d0_of(t0, sessions, sset):
 def phase_events():
     P = panel()
     S = jload(os.path.join(WORK, "symbols.json"))
+    nf = news_fail_check(S)
     sessions = P["dates"]
     sset = set(sessions)
     ev, cnt, earn_t = [], collections.Counter(), {}
@@ -336,6 +348,7 @@ def phase_events():
             cnt[f"surprise_{sp}"] += 1
         if heads:
             earn_t[s] = sorted(heads)
+    cnt["news_fail_symbols"] = len(nf)
     jsave(os.path.join(WORK, "events.json"), {"events": ev, "counts": dict(cnt), "earn_t": earn_t})
     P_(f"events {len(ev)}; {dict(cnt)}")
 
@@ -396,6 +409,7 @@ def excess_at(c, spy, spy_r, dates, j, t, hold):
 
 def phase_minutes_and_score():
     P = panel()
+    news_fail_check(jload(os.path.join(WORK, "symbols.json")))
     E = jload(os.path.join(WORK, "events.json"))
     H = headers()
     cp = os.path.join(WORK, "m1545.json")

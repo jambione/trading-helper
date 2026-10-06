@@ -110,3 +110,14 @@ def test_control_candidates_avoid_every_earnings_headline():
     c = ed.control_candidates(1000, [1000, 1040], 5000)
     assert all(abs(t - 1000) > 10 and abs(t - 1040) > 10 for t in c)
     assert 1030 not in c and 1050 not in c and 1010 not in c and 1011 in c and 1029 in c and 1051 in c
+
+
+# ---------------------------------------------------------------- FIX FIRST 4 news fetch-fail abort
+def test_news_fail_check_aborts_over_two_percent():
+    import pytest
+    S = {"symbols": [f"S{i}" for i in range(100)], "name_changes": []}
+    two = {ed.unit_file(("S0", "S0", ed.NEWS_START, ed.NEWS_END)), ed.unit_file(("S1", "S1", ed.NEWS_START, ed.NEWS_END))}
+    assert ed.news_fail_check(S, exists=lambda f: f not in two) == ["S0", "S1"]
+    three = two | {ed.unit_file(("S2", "S2", ed.NEWS_START, ed.NEWS_END))}
+    with pytest.raises(SystemExit):
+        ed.news_fail_check(S, exists=lambda f: f not in three)
