@@ -2,8 +2,9 @@
 """Post-earnings drift, exactly per docs/studies/earnings_drift_prereg.json (7ed491c / 218199a).
 
 Phases (on the mini, AFTER HOURS ONLY: the news fetch shares the desk's Alpaca budget):
-  symbols   eligible names from the lh_cache panel + prior tickers (Alpaca name changes)  -> WORK/symbols.json
-  news      Benzinga headlines per symbol (+ prior tickers), paged, cached, resumable      -> WORK/news/SYM.json
+  symbols   eligible names from the lh_cache panel + all Alpaca name changes (paged)     -> WORK/symbols.json
+  news      Benzinga headlines per (owner, ticker, start, end) segment of the same-CUSIP rename chain, paged,
+            cached, resumable                                                              -> WORK/news/O__T__A__B.json
   events    parse EPS headlines into events (rules below)                                  -> WORK/events.json
   minutes   SIP 1-min 15:45 closes for D0s and control candidates (cached)                 -> WORK/m1545.json
   score     controls, returns, statistics, verdict                                        -> WORK/result.json, report.md
@@ -135,17 +136,57 @@ def phase_symbols():
     ok[0] = False
     syms = sorted(str(P["syms"][j]) for j in np.where(ok[lo:hi + 1].any(0))[0])
     H = headers()
-    prior = {}
-    for i in range(0, len(syms), 100):
-        js = get("https://data.alpaca.markets/v1/corporate-actions",
-                 {"symbols": ",".join(syms[i:i + 100]), "types": "name_change", "start": "2016-01-01", "end": NEWS_END,
-                  "limit": 1000}, H)
-        for nc in ((js or {}).get("corporate_actions") or {}).get("name_changes", []) or []:
-            if nc.get("new_symbol") in syms:
-                prior.setdefault(nc["new_symbol"], []).append({"old": nc["old_symbol"], "until": nc["process_date"]})
+    # Skeptic F1 (2026-10-06): the query matches old OR new symbols, so FISV also returns FI->XPRO 2021-10-04 (Frank's
+    # International); keep EVERY name change (paged) and let phase_news walk the chain back from the owner. Old
+    # tickers found on the chain are queried in turn so A->B->C chains close.
+    NC, queried, todo_q = {}, set(), list(syms)
+    for _round in range(5):
+        todo_q = sorted(set(todo_q) - queried)
+        if not todo_q:
+            break
+        queried |= set(todo_q)
+        for i in range(0, len(todo_q), 100):
+            token = None
+            while True:
+                params = {"symbols": ",".join(todo_q[i:i + 100]), "types": "name_change", "start": "2016-01-01",
+                          "end": NEWS_END, "limit": 1000}
+                if token:
+                    params["page_token"] = token
+                js = get("https://data.alpaca.markets/v1/corporate-actions", params, H)
+                if js is None:
+                    raise SystemExit("corporate-actions fetch failed after retries; rerun phase symbols")
+                for nc in (js.get("corporate_actions") or {}).get("name_changes", []) or []:
+                    NC[nc.get("id") or f"{nc['old_symbol']}>{nc['new_symbol']}@{nc['process_date']}"] = {
+                        k: nc.get(k) for k in ("old_symbol", "new_symbol", "old_cusip", "new_cusip", "process_date")}
+                token = js.get("next_page_token")
+                if not token:
+                    break
+        todo_q = [x["old_symbol"] for x in NC.values() if x["new_symbol"] in queried]
     os.makedirs(WORK, exist_ok=True)
-    jsave(os.path.join(WORK, "symbols.json"), {"symbols": syms, "prior": prior})
-    P_(f"symbols {len(syms)}; with prior tickers {len(prior)}")
+    jsave(os.path.join(WORK, "symbols.json"), {"symbols": syms, "name_changes": sorted(NC.values(), key=lambda x: x["process_date"])})
+    P_(f"symbols {len(syms)}; name changes {len(NC)}")
+
+
+def rename_segments(owner, NC, start=NEWS_START, end=NEWS_END):
+    """(owner, ticker, start, end) news units: walk back from the owner through same-CUSIP renames only.
+    FISV: FISV [2025-11-11, end), FI [2023-06-07, 2025-11-11), FISV [start, 2023-06-07); FI->XPRO is not on the chain."""
+    out, cur = [], owner
+    while True:
+        L = [x for x in NC if x["new_symbol"] == cur and x["process_date"] < end and x["old_cusip"] == x["new_cusip"]]
+        if not L:
+            out.append((owner, cur, start, end))
+            return out
+        x = max(L, key=lambda y: y["process_date"])
+        out.append((owner, cur, x["process_date"], end))
+        end, cur = x["process_date"], x["old_symbol"]
+
+
+def news_units(S):
+    return [u for s in S["symbols"] for u in rename_segments(s, S.get("name_changes") or []) if u[2] < u[3]]
+
+
+def unit_file(u):
+    return os.path.join(WORK, "news", "__".join(u) + ".json")
 
 
 def phase_news():
@@ -154,19 +195,19 @@ def phase_news():
     D = os.path.join(WORK, "news")
     os.makedirs(D, exist_ok=True)
     fails = jload(os.path.join(WORK, "news_fails.json"), {})
-    todo = []
-    for s in S["symbols"]:
-        renames = sorted(S["prior"].get(s, []), key=lambda x: x["until"])
-        own_from = renames[-1]["until"] if renames else NEWS_START          # the ticker is ours only after the rename
-        todo.append((s, s, own_from, NEWS_END))
-        prev = NEWS_START
-        for r in renames:
-            todo.append((s, r["old"], prev, r["until"]))
-            prev = r["until"]
+    todo = news_units(S)
+    by = collections.defaultdict(list)
+    for u in todo:
+        by[u[0]].append(u)
+    for o, us in sorted(by.items()):
+        if len(us) > 1:                                    # hand check every rename chain
+            P_(f"  chain {o}: " + " <- ".join(f"{u[1]}[{u[2]},{u[3]})" for u in us))
     n = 0
-    for owner, tick, a, b in todo:
-        fp = os.path.join(D, f"{owner}__{tick}.json")
-        if os.path.exists(fp) or a >= b:
+    for u in todo:
+        owner, tick, a, b = u
+        fp = unit_file(u)
+        key = "__".join(u)
+        if os.path.exists(fp):
             continue
         rows, token, ok = [], None, True
         while True:
@@ -183,10 +224,10 @@ def phase_news():
             if not token:
                 break
         if not ok:
-            fails[f"{owner}__{tick}"] = time.time()
+            fails[key] = time.time()
             jsave(os.path.join(WORK, "news_fails.json"), fails)
             continue
-        fails.pop(f"{owner}__{tick}", None)
+        fails.pop(key, None)
         jsave(fp, rows)
         n += 1
         if n % 25 == 0:
@@ -215,9 +256,11 @@ def phase_events():
     ev, cnt = [], collections.Counter()
     for s in S["symbols"]:
         arts = []
-        for fn in os.listdir(os.path.join(WORK, "news")):
-            if fn.startswith(s + "__"):
-                arts += jload(os.path.join(WORK, "news", fn), [])
+        for u in rename_segments(s, S.get("name_changes") or []):
+            if u[2] < u[3]:
+                arts += jload(unit_file(u), [])
+        seen = set()                                      # segment boundaries are whole days: drop repeats by id
+        arts = [a for a in arts if a.get("id") is None or not (a["id"] in seen or seen.add(a["id"]))]
         cand = []
         for a in arts:
             h = a.get("h") or ""
