@@ -173,15 +173,16 @@ def phase_symbols():
 def rename_segments(owner, NC, start=NEWS_START, end=NEWS_END):
     """(owner, ticker, start, end) news units: walk back from the owner through same-CUSIP renames only.
     FISV: FISV [2025-11-11, end), FI [2023-06-07, 2025-11-11), FISV [start, 2023-06-07); FI->XPRO is not on the chain."""
-    out, cur = [], owner
+    out, cur, prev = [], owner, None
     while True:
-        L = [x for x in NC if x["new_symbol"] == cur and x["process_date"] < end and x["old_cusip"] == x["new_cusip"]]
+        L = [x for x in NC if x["new_symbol"] == cur and x["process_date"] < end and x["old_cusip"] == x["new_cusip"]
+             and (prev is None or x["new_cusip"] == prev["old_cusip"])]          # links must connect by CUSIP
         if not L:
             out.append((owner, cur, start, end))
             return out
         x = max(L, key=lambda y: y["process_date"])
         out.append((owner, cur, x["process_date"], end))
-        end, cur = x["process_date"], x["old_symbol"]
+        end, cur, prev = x["process_date"], x["old_symbol"], x
 
 
 def news_units(S):
@@ -207,7 +208,11 @@ def fetch_unit(u, H, getf=None, every=5):
             params["page_token"] = token
         js = getf("https://data.alpaca.markets/v1beta1/news", params, H)
         if js is None:
-            if rows or token:
+            if st.get("token") and pages == 0:
+                # the saved token itself failed: it may be stale, so the next rerun starts the unit over
+                if os.path.exists(pp):
+                    os.remove(pp)
+            elif rows or token:
                 jsave(pp, {"rows": rows, "token": token})
             return None
         for x in js.get("news", []):
@@ -247,6 +252,7 @@ def phase_news():
             P_(f"  chain {o}: " + " <- ".join(f"{u[1]}[{u[2]},{u[3]})" for u in us))
     n = 0
     for u in todo:
+        market_hours_guard()                               # re-checked per unit: an evening run must stop by 09:00
         owner, tick, a, b = u
         fp = unit_file(u)
         key = "__".join(u)
@@ -416,6 +422,8 @@ def fetch_minutes(cache, H, keys, getf=None, save=None):
             need[day].add(sym)
     fails = set()
     for n, day in enumerate(sorted(need)):
+        if getf is get:
+            market_hours_guard()                           # re-checked per day (not in unit tests with a fake getter)
         d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
         syms = sorted(need[day])
         for i in range(0, len(syms), 100):
@@ -669,7 +677,8 @@ def score(P, rows, cnt, ecnt, events=None):
                                      "cal_daily_diff_bp": round(pm - cm, 3), "t_cal": round(t_cal, 2),
                                      "t_used": round(t_used(t_week, t_cal), 2)}
             if cost == 10.0:
-                power[hn] = {"n": len(pr), **power_block(se, math.sqrt(pse ** 2 + cse ** 2))}
+                # calendar SE is per day; scale to the 5-session trade (skeptic Mode 3, 2026-10-06)
+                power[hn] = {"n": len(pr), **power_block(se, HOLD * math.sqrt(pse ** 2 + cse ** 2))}
         diff10 = [(r["x5"] - 10) - r["ctl"]["x5"] for r in pr]
         wsum = collections.defaultdict(float)
         nsum = collections.defaultdict(float)

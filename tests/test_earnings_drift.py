@@ -346,3 +346,15 @@ def test_events_and_score_end_to_end_on_fakes(tmp_path, monkeypatch):
     res = json.load(open(tmp_path / "result.json"))
     assert res["score_counts"]["fetch_fail"] == 0 and "coverage" in res and res["power"]["H1"]["n"] >= 0
     assert list(res)[:2] == ["prereg", "power"]
+
+
+def test_rename_walk_requires_cusip_continuity():
+    NC = [{"old_symbol": "B", "new_symbol": "X", "old_cusip": "222", "new_cusip": "222", "process_date": "2024-01-01"},
+          {"old_symbol": "A", "new_symbol": "B", "old_cusip": "999", "new_cusip": "999", "process_date": "2022-01-01"}]
+    segs = ed.rename_segments("X", NC, start="2019-01-01", end="2026-01-01")
+    assert [s[1] for s in segs] == ["X", "B"]          # stops at B: A->B does not connect by CUSIP
+
+
+def test_power_block_scales_calendar_se_to_the_trade():
+    pb = ed.power_block(21.2, 5 * 5.1)
+    assert pb["se_used"] == 25.5
