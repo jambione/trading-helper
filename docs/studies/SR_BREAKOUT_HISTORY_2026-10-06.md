@@ -1,4 +1,15 @@
-# Breakout distance on 91 untouched sessions: both pre-registered tests FAIL; squares lose to random minutes
+# Breakout distance on 91 untouched sessions: both pre-registered tests FAIL
+
+> **RETRACTED (skeptic, same evening): the "squares lose to random minutes" information section is an ARTIFACT.**
+> - **The control used hindsight.** Control minutes were drawn from the same clock hour as the square, and that
+>   hour is in the sample *because* price rose in it. Controls before the square had that rise in their forward
+>   window: +66.8 / +44.8 bp gross.
+> - **With honest controls, squares are a coin flip.**
+>   - Square minus control windows that start after the square: −3.8 (t −1.4) / +1.5 (t +0.6).
+>   - Square minus every universe minute in the same day and hour: −6.0 (t −2.8) / +0.8 (t +0.6).
+>   - Squares themselves are about 0 bp gross (−1.0 / +3.2) and about −20 bp net. The loss is the cost.
+> - The 10/02 study's "squares −21 / −24 vs random" used the same control, so it is the same artifact.
+> - The pre-registered H2/H3 FAILs (squares vs squares) stand.
 
 Pre-registration: [`sr_breakout_history_prereg.json`](sr_breakout_history_prereg.json) (52eebd3, amended 771b38e before any run).
 Script: `tools/studies/sr_breakout_history.py`. 91 sessions 2026-05-01..09-10, top-40 $10+ gappers (raw open),
