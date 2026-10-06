@@ -1,37 +1,41 @@
 #!/usr/bin/env python3
-"""Post-earnings drift, exactly per docs/studies/earnings_drift_prereg.json (7ed491c / 218199a).
+"""Post-earnings drift, exactly per docs/studies/earnings_drift_prereg.json (7ed491c / 218199a, amended_2).
 
 Phases (on the mini, AFTER HOURS ONLY: the news fetch shares the desk's Alpaca budget):
-  symbols   eligible names from the lh_cache panel + prior tickers (Alpaca name changes)  -> WORK/symbols.json
-  news      Benzinga headlines per symbol (+ prior tickers), paged, cached, resumable      -> WORK/news/SYM.json
+  symbols   eligible names from the lh_cache panel + all Alpaca name changes (paged)     -> WORK/symbols.json
+  news      Benzinga headlines per (owner, ticker, start, end) segment of the same-CUSIP rename chain, paged,
+            cached, resumable                                                              -> WORK/news/O__T__A__B.json
   events    parse EPS headlines into events (rules below)                                  -> WORK/events.json
-  minutes   SIP 1-min 15:45 closes for D0s and control candidates (cached)                 -> WORK/m1545.json
+  minutes   SIP 1-min 15:45 closes for D0s and control candidates, one request per day per
+            100 symbols, cached per sym|day; refuses to score while any fetch failed     -> WORK/m1545.json
   score     controls, returns, statistics, verdict                                        -> WORK/result.json, report.md
 
 Rules (from the pre-registration):
   universe   panel names with RAW close >= $10 and ADV20 >= $50M, ADV20 = mean(close x volume) over the 20 sessions
              ending D0-1 (shifted), point-in-time; D0 in 2019-01-02..2026-09-18
   headline   not starting CORRECTION/UPDATE; matches \\bQ[1-4]\\b.*\\bEPS\\b and 'Estimate'; no Sees|Guidance|Outlook|
-             Raises|Lowers before 'EPS'; SURPRISE = first Beats|Misses|In-Line|Inline inside the EPS clause ('EPS' up
-             to the first comma), else unclassified; first qualifying headline per symbol per 10 calendar days (by
+             Raises|Lowers before 'EPS'; SURPRISE = first Beats|Beat|Misses|In-Line|Inline inside the EPS clause ('EPS'
+             up to the first ', '), else unclassified; first qualifying headline per symbol per 10 calendar days (by
              created_at); headlines within 5 min with different surprise words: the one with 'Adj.' wins, else
              unclassified
-  D0         ET time < 09:30 -> that session (next session if not a session); >= 16:00 -> next session; RTH -> same
+  D0         ET time < 09:30 -> that session (next session if not a session); >= 16:00 -> next session; RTH -> same;
+             15:45-16:00 ET on a session -> excluded and counted (after the R0 bar and the MOC cutoff)
   R0         SIP 1-min close at 15:45 ET on D0 (bar starting 15:44; else the last bar starting 15:35-15:44) / RAW close(D0-1) - 1
   trade      buy close(D0), sell close(D0+5); excess = r - beta x r_SPY; beta = OLS daily vs SPY over the 252 sessions
              ending D0-1 (min 150); cost 10 bp (30 bp sensitivity) charged to the PRIMARY trade only
   PRIMARY    EPS Beats AND R0 > 0
-  CONTROL    same symbol, a random session (seed 41) within +/-60 sessions of D0, not within 10 sessions of any of that
+  CONTROL    same symbol, a random session (seed 41|sym|D0, <= 12 tried) within +/-60 sessions of D0, not within 10 sessions of any of that
              symbol's events, with its own 15:45 return > 0; same entry/hold/beta; candidates tried in a seeded order
   statistic  diff = PRIMARY net excess (cost c) - CONTROL gross excess (the control is a comparison, not a trade);
              SE (a) clustered by ISO week of D0, (b) calendar-time: daily mean of open PRIMARY daily excess and of open
              CONTROL daily excess, Newey-West lag 5, SE of the difference = sqrt(se1^2 + se2^2); the smaller |t| is used
   pass       diff >= +20 bp at 10 bp with t >= 2 in BOTH halves (H1 2019-2022, H2 2023-2026-09-18), >= 300 events per
-             half, diff > 0 at 30 bp, > 0 after dropping the top 3 weeks and the top 5 names; power: MDE = 2.84 x SE
-             (week-clustered) <= 30 bp per half, else UNDERPOWERED
+             half, diff > 0 at 30 bp, > 0 after dropping the top 3 weeks and the top 5 names; power: MDE = 2.84 x the larger
+             of the week-clustered and calendar-time SE <= 30 bp per half, else UNDERPOWERED (reported before means)
 """
 from __future__ import annotations
 
+import bisect
 import collections
 import json
 import math
@@ -60,7 +64,7 @@ NEWS_START, NEWS_END = "2018-12-15", "2026-09-20"
 RPM = float(os.environ.get("ALPACA_RPM", "150"))
 RX_HEAD = re.compile(r"\bQ[1-4]\b.*\bEPS\b", re.I)
 RX_EXCL = re.compile(r"\b(Sees|Guidance|Outlook|Raises|Lowers)\b", re.I)
-RX_SURP = re.compile(r"\b(Beats|Misses|In-Line|Inline)\b", re.I)
+RX_SURP = re.compile(r"\b(Beats|Beat|Misses|In-Line|Inline)\b", re.I)
 
 
 def P_(*a):
@@ -135,59 +139,134 @@ def phase_symbols():
     ok[0] = False
     syms = sorted(str(P["syms"][j]) for j in np.where(ok[lo:hi + 1].any(0))[0])
     H = headers()
-    prior = {}
-    for i in range(0, len(syms), 100):
-        js = get("https://data.alpaca.markets/v1/corporate-actions",
-                 {"symbols": ",".join(syms[i:i + 100]), "types": "name_change", "start": "2016-01-01", "end": NEWS_END,
-                  "limit": 1000}, H)
-        for nc in ((js or {}).get("corporate_actions") or {}).get("name_changes", []) or []:
-            if nc.get("new_symbol") in syms:
-                prior.setdefault(nc["new_symbol"], []).append({"old": nc["old_symbol"], "until": nc["process_date"]})
+    # Skeptic F1 (2026-10-06): the query matches old OR new symbols, so FISV also returns FI->XPRO 2021-10-04 (Frank's
+    # International); keep EVERY name change (paged) and let phase_news walk the chain back from the owner. Old
+    # tickers found on the chain are queried in turn so A->B->C chains close.
+    NC, queried, todo_q = {}, set(), list(syms)
+    for _round in range(5):
+        todo_q = sorted(set(todo_q) - queried)
+        if not todo_q:
+            break
+        queried |= set(todo_q)
+        for i in range(0, len(todo_q), 100):
+            token = None
+            while True:
+                params = {"symbols": ",".join(todo_q[i:i + 100]), "types": "name_change", "start": "2016-01-01",
+                          "end": NEWS_END, "limit": 1000}
+                if token:
+                    params["page_token"] = token
+                js = get("https://data.alpaca.markets/v1/corporate-actions", params, H)
+                if js is None:
+                    raise SystemExit("corporate-actions fetch failed after retries; rerun phase symbols")
+                for nc in (js.get("corporate_actions") or {}).get("name_changes", []) or []:
+                    NC[nc.get("id") or f"{nc['old_symbol']}>{nc['new_symbol']}@{nc['process_date']}"] = {
+                        k: nc.get(k) for k in ("old_symbol", "new_symbol", "old_cusip", "new_cusip", "process_date")}
+                token = js.get("next_page_token")
+                if not token:
+                    break
+        todo_q = [x["old_symbol"] for x in NC.values() if x["new_symbol"] in queried]
     os.makedirs(WORK, exist_ok=True)
-    jsave(os.path.join(WORK, "symbols.json"), {"symbols": syms, "prior": prior})
-    P_(f"symbols {len(syms)}; with prior tickers {len(prior)}")
+    jsave(os.path.join(WORK, "symbols.json"), {"symbols": syms, "name_changes": sorted(NC.values(), key=lambda x: x["process_date"])})
+    P_(f"symbols {len(syms)}; name changes {len(NC)}")
+
+
+def rename_segments(owner, NC, start=NEWS_START, end=NEWS_END):
+    """(owner, ticker, start, end) news units: walk back from the owner through same-CUSIP renames only.
+    FISV: FISV [2025-11-11, end), FI [2023-06-07, 2025-11-11), FISV [start, 2023-06-07); FI->XPRO is not on the chain."""
+    out, cur, prev = [], owner, None
+    while True:
+        L = [x for x in NC if x["new_symbol"] == cur and x["process_date"] < end and x["old_cusip"] == x["new_cusip"]
+             and (prev is None or x["new_cusip"] == prev["old_cusip"])]          # links must connect by CUSIP
+        if not L:
+            out.append((owner, cur, start, end))
+            return out
+        x = max(L, key=lambda y: y["process_date"])
+        out.append((owner, cur, x["process_date"], end))
+        end, cur, prev = x["process_date"], x["old_symbol"], x
+
+
+def news_units(S):
+    return [u for s in S["symbols"] for u in rename_segments(s, S.get("name_changes") or []) if u[2] < u[3]]
+
+
+def unit_file(u):
+    return os.path.join(WORK, "news", "__".join(u) + ".json")
+
+
+def fetch_unit(u, H, getf=None, every=5):
+    """All pages of one news unit, or None on a failed request. The page_token and rows so far are checkpointed to
+    <unit>.json.partial every `every` pages and on failure, so a killed or failed unit resumes where it stopped
+    (skeptic efficiency note, 2026-10-06)."""
+    getf = getf or get
+    owner, tick, a, b = u
+    pp = unit_file(u) + ".partial"
+    st = jload(pp, {}) or {}
+    rows, token, pages = st.get("rows", []), st.get("token"), 0
+    while True:
+        params = {"symbols": tick, "start": a, "end": b, "limit": 50, "sort": "asc", "include_content": "false"}
+        if token:
+            params["page_token"] = token
+        js = getf("https://data.alpaca.markets/v1beta1/news", params, H)
+        if js is None:
+            if st.get("token") and pages == 0:
+                # the saved token itself failed: it may be stale, so the next rerun starts the unit over
+                if os.path.exists(pp):
+                    os.remove(pp)
+            elif rows or token:
+                jsave(pp, {"rows": rows, "token": token})
+            return None
+        for x in js.get("news", []):
+            rows.append({"h": x.get("headline", ""), "c": x.get("created_at"), "id": x.get("id")})
+        token = js.get("next_page_token")
+        if not token:
+            return rows
+        pages += 1
+        if pages % every == 0:
+            jsave(pp, {"rows": rows, "token": token})
+
+
+def in_market_hours(now=None):
+    now = (now or datetime.now(timezone.utc)).astimezone(ET)
+    return now.weekday() < 5 and 9 * 60 <= now.hour * 60 + now.minute < 16 * 60 + 30
+
+
+def market_hours_guard():
+    """The news and minute fetches share the desk's Alpaca budget: refuse 09:00-16:30 ET on weekdays."""
+    if in_market_hours():
+        raise SystemExit("refusing to run 09:00-16:30 ET on a weekday (shares the desk's Alpaca budget); run after hours")
 
 
 def phase_news():
+    market_hours_guard()
     S = jload(os.path.join(WORK, "symbols.json"))
     H = headers()
     D = os.path.join(WORK, "news")
     os.makedirs(D, exist_ok=True)
     fails = jload(os.path.join(WORK, "news_fails.json"), {})
-    todo = []
-    for s in S["symbols"]:
-        renames = sorted(S["prior"].get(s, []), key=lambda x: x["until"])
-        own_from = renames[-1]["until"] if renames else NEWS_START          # the ticker is ours only after the rename
-        todo.append((s, s, own_from, NEWS_END))
-        prev = NEWS_START
-        for r in renames:
-            todo.append((s, r["old"], prev, r["until"]))
-            prev = r["until"]
+    todo = news_units(S)
+    by = collections.defaultdict(list)
+    for u in todo:
+        by[u[0]].append(u)
+    for o, us in sorted(by.items()):
+        if len(us) > 1:                                    # hand check every rename chain
+            P_(f"  chain {o}: " + " <- ".join(f"{u[1]}[{u[2]},{u[3]})" for u in us))
     n = 0
-    for owner, tick, a, b in todo:
-        fp = os.path.join(D, f"{owner}__{tick}.json")
-        if os.path.exists(fp) or a >= b:
+    for u in todo:
+        market_hours_guard()                               # re-checked per unit: an evening run must stop by 09:00
+        owner, tick, a, b = u
+        fp = unit_file(u)
+        key = "__".join(u)
+        if os.path.exists(fp):
             continue
-        rows, token, ok = [], None, True
-        while True:
-            params = {"symbols": tick, "start": a, "end": b, "limit": 50, "sort": "asc", "include_content": "false"}
-            if token:
-                params["page_token"] = token
-            js = get("https://data.alpaca.markets/v1beta1/news", params, H)
-            if js is None:
-                ok = False
-                break
-            for x in js.get("news", []):
-                rows.append({"h": x.get("headline", ""), "c": x.get("created_at"), "id": x.get("id")})
-            token = js.get("next_page_token")
-            if not token:
-                break
-        if not ok:
-            fails[f"{owner}__{tick}"] = time.time()
+        rows = fetch_unit(u, H)
+        if rows is None:
+            fails[key] = time.time()
             jsave(os.path.join(WORK, "news_fails.json"), fails)
             continue
-        fails.pop(f"{owner}__{tick}", None)
+        fails.pop(key, None)
         jsave(fp, rows)
+        if os.path.exists(fp + ".partial"):
+            os.remove(fp + ".partial")
         n += 1
         if n % 25 == 0:
             P_(f"  news {n} files; fails {len(fails)}")
@@ -195,32 +274,89 @@ def phase_news():
     P_(f"news done: new files {n}, failed {len(fails)} of {len(todo)} fetch units")
 
 
+def news_fail_check(S, exists=os.path.exists):
+    """Prereg: abort if > 2% of symbols fail the news fetch after retries. A symbol fails if any of its units has no
+    cache file (failed, or never fetched). Skeptic FIX FIRST 4 (2026-10-06): enforced in code before events/score."""
+    bad = sorted({u[0] for u in news_units(S) if not exists(unit_file(u))})
+    frac = len(bad) / max(1, len(S["symbols"]))
+    if frac > 0.02:
+        raise SystemExit(f"news fetch failed for {len(bad)}/{len(S['symbols'])} symbols ({frac:.1%} > 2%): "
+                         f"rerun phase news; e.g. {bad[:10]}")
+    return bad
+
+
 def surprise(h):
     m = re.search(r"\bEPS\b", h, re.I)
     if not m or RX_EXCL.search(h[:m.start()]):
         return None
-    clause = h[m.start():].split(",")[0]
+    clause = h[m.start():].split(", ")[0]                 # ", " not ",": "$1,234" stays in the clause (skeptic minor)
     s = RX_SURP.search(clause)
     if not s:
         return "unclassified"
     w = s.group(1).lower()
-    return "beat" if w == "beats" else "miss" if w == "misses" else "inline"
+    return "beat" if w in ("beats", "beat") else "miss" if w == "misses" else "inline"
+
+
+def burst_word(burst):
+    """Surprise of a 5-minute burst of (time, headline, word). Skeptic FIX FIRST 1 (2026-10-06): an unclassified
+    sibling (e.g. a revenue-only headline) is not a conflict; only different real words go to the Adj. rule."""
+    words = {c[2] for c in burst if c[2] != "unclassified"}
+    if not words:
+        return "unclassified"
+    if len(words) == 1:
+        return next(iter(words))
+    adj = {c[2] for c in burst if "adj." in c[1].lower() and c[2] != "unclassified"}
+    return next(iter(adj)) if len(adj) == 1 else "unclassified"
+
+
+def d0_of(t0, sessions, sset):
+    """Reaction session for an ET headline time: < 09:30 -> that session, >= 16:00 -> the next, RTH -> the same;
+    non-sessions roll forward. Skeptic FIX FIRST 2 (2026-10-06): 15:45-16:00 on a session returns 'late_rth'
+    (excluded and counted): the 15:45 R0 and the MOC cutoff would come before the news."""
+    d = t0.strftime("%Y-%m-%d")
+    mins = t0.hour * 60 + t0.minute
+    if d in sset and 15 * 60 + 45 <= mins < 16 * 60:
+        return "late_rth"
+    i = bisect.bisect_right(sessions, d) if (mins >= 16 * 60 and d in sset) else bisect.bisect_left(sessions, d)
+    return sessions[i] if i < len(sessions) else None
+
+
+def dump_unclassified(events, path, k=50):
+    """Skeptic minor (2026-10-06): a seeded sample of 50 unclassified headlines to read by hand before scoring."""
+    un = sorted((e for e in events if e["surprise"] == "unclassified"), key=lambda e: (e["sym"], e["ts"]))
+    pick = random.Random(41).sample(un, min(k, len(un)))
+    with open(path, "w") as f:
+        f.write(f"# {len(pick)} of {len(un)} unclassified events (seed 41)\n")
+        for e in pick:
+            f.write(f"{e['sym']}\t{e['ts']}\t{e['headline']}\n")
+    return pick
 
 
 def phase_events():
     P = panel()
     S = jload(os.path.join(WORK, "symbols.json"))
+    nf = news_fail_check(S)
     sessions = P["dates"]
     sset = set(sessions)
-    ev, cnt = [], collections.Counter()
+    ev, cnt, earn_t = [], collections.Counter(), {}
     for s in S["symbols"]:
         arts = []
-        for fn in os.listdir(os.path.join(WORK, "news")):
-            if fn.startswith(s + "__"):
-                arts += jload(os.path.join(WORK, "news", fn), [])
-        cand = []
+        for u in rename_segments(s, S.get("name_changes") or []):
+            if u[2] < u[3]:
+                arts += jload(unit_file(u), [])
+        seen = set()                                      # segment boundaries are whole days: drop repeats by id
+        arts = [a for a in arts if a.get("id") is None or not (a["id"] in seen or seen.add(a["id"]))]
+        cand, heads = [], set()
         for a in arts:
             h = a.get("h") or ""
+            if RX_HEAD.search(h):
+                # Skeptic FIX FIRST 3 (2026-10-06): controls must avoid EVERY earnings headline, not only the events
+                # that survived eligibility, period, Sees/Guidance and the dedupe; else a control can sit on a report
+                tt = datetime.fromisoformat(a["c"].replace("Z", "+00:00")).astimezone(ET)
+                dd = d0_of(tt, sessions, sset)
+                dd = tt.strftime("%Y-%m-%d") if dd == "late_rth" else dd
+                if dd in P["ix"]:
+                    heads.add(P["ix"][dd])
             if h.upper().startswith(("CORRECTION", "UPDATE")) or not RX_HEAD.search(h) or "estimate" not in h.lower():
                 continue
             sp = surprise(h)
@@ -238,20 +374,15 @@ def phase_events():
                 i += 1
                 continue
             burst = [c for c in cand[i:] if (c[0] - t0).total_seconds() <= 300]
-            words = {c[2] for c in burst}
-            sp = sp0
-            if len(words) > 1:
-                adj = [c for c in burst if "adj." in c[1].lower()]
-                sp = adj[0][2] if adj and len({c[2] for c in adj}) == 1 else "unclassified"
+            sp = burst_word(burst)
+            if len({c[2] for c in burst if c[2] != "unclassified"}) > 1:
                 cnt["burst_conflict"] += 1
             last = t0
             i += len(burst)
-            d = t0.strftime("%Y-%m-%d")
-            mins = t0.hour * 60 + t0.minute
-            if mins >= 16 * 60 or d not in sset:
-                d = next((x for x in sessions if x > d), None) if mins >= 16 * 60 else next((x for x in sessions if x >= d), None)
-            elif mins < 9 * 60 + 30:
-                pass
+            d = d0_of(t0, sessions, sset)
+            if d == "late_rth":
+                cnt["excluded_1545_1600"] += 1
+                continue
             if d is None or not (D_LO <= d <= D_HI):
                 cnt["outside_period"] += 1
                 continue
@@ -262,33 +393,121 @@ def phase_events():
                 continue
             ev.append({"sym": s, "d0": d, "t0": t, "surprise": sp, "headline": h0, "ts": t0.isoformat()})
             cnt[f"surprise_{sp}"] += 1
-    jsave(os.path.join(WORK, "events.json"), {"events": ev, "counts": dict(cnt)})
+        if heads:
+            earn_t[s] = sorted(heads)
+    cnt["news_fail_symbols"] = len(nf)
+    jsave(os.path.join(WORK, "events.json"), {"events": ev, "counts": dict(cnt), "earn_t": earn_t})
+    dump_unclassified(ev, os.path.join(WORK, "unclassified_sample.txt"))
     P_(f"events {len(ev)}; {dict(cnt)}")
 
 
-def m1545(cache, H, sym, day):
-    k = f"{sym}|{day}"
-    if k in cache:
-        return cache[k]
-    d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
-    js = get("https://data.alpaca.markets/v2/stocks/bars",
-             {"symbols": sym, "timeframe": "1Min", "start": d.replace(hour=15, minute=35).astimezone(timezone.utc).isoformat(),
-              "end": d.replace(hour=15, minute=45).astimezone(timezone.utc).isoformat(), "feed": "sip", "adjustment": "raw",
-              "limit": 100}, H)
-    if js is None:
-        return None                                   # not cached: retried on the next run
-    bars = (js.get("bars") or {}).get(sym) or []
+def pick_1545(bars):
+    """Close of the bar starting 15:44 ET, else of the last bar starting 15:35-15:44; None if there is none."""
     best = None
-    for b in bars:
+    for b in sorted(bars, key=lambda x: x["t"]):
         tl = datetime.fromisoformat(b["t"].replace("Z", "+00:00")).astimezone(ET)
-        if tl.hour * 60 + tl.minute <= 15 * 60 + 44:
+        if 15 * 60 + 35 <= tl.hour * 60 + tl.minute <= 15 * 60 + 44:
             best = float(b["c"])
-    cache[k] = best
     return best
 
 
+def fetch_minutes(cache, H, keys, getf=None, save=None):
+    """Fill cache['SYM|day'] for (sym, day) keys: ONE /v2/stocks/bars request per day per 100 symbols (skeptic
+    efficiency note, 2026-10-06; was one request per symbol-day). A cached None means 'no bars'. A failed request is
+    NOT cached and its keys are returned as fetch failures, so a rerun retries them (skeptic FIX FIRST 4)."""
+    getf = getf or get
+    need = collections.defaultdict(set)
+    for sym, day in keys:
+        if f"{sym}|{day}" not in cache:
+            need[day].add(sym)
+    fails = set()
+    for n, day in enumerate(sorted(need)):
+        if getf is get:
+            market_hours_guard()                           # re-checked per day (not in unit tests with a fake getter)
+        d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
+        syms = sorted(need[day])
+        for i in range(0, len(syms), 100):
+            ch, bars, token, ok = syms[i:i + 100], collections.defaultdict(list), None, True
+            while True:
+                params = {"symbols": ",".join(ch), "timeframe": "1Min",
+                          "start": d.replace(hour=15, minute=35).astimezone(timezone.utc).isoformat(),
+                          "end": d.replace(hour=15, minute=45).astimezone(timezone.utc).isoformat(),
+                          "feed": "sip", "adjustment": "raw", "limit": 10000}
+                if token:
+                    params["page_token"] = token
+                js = getf("https://data.alpaca.markets/v2/stocks/bars", params, H)
+                if js is None:
+                    ok = False
+                    break
+                for s_, bl in (js.get("bars") or {}).items():
+                    bars[s_] += bl or []
+                token = js.get("next_page_token")
+                if not token:
+                    break
+            if not ok:
+                fails |= {f"{s_}|{day}" for s_ in ch}
+                continue
+            for s_ in ch:
+                cache[f"{s_}|{day}"] = pick_1545(bars.get(s_, []))
+        if save and n % 50 == 49:
+            save()
+            P_(f"  minutes: {n + 1}/{len(need)} days; fetch_fail keys {len(fails)}")
+    if save:
+        save()
+    return fails
+
+
+def split_suspect(r0):
+    """Skeptic FIX FIRST 5 (2026-10-06): the panel's rc is raw only per month, so a split month mixes a raw minute
+    price with an adjusted prior close; |R0| > 50% is dropped and counted rather than trusted."""
+    return abs(r0) > 0.5
+
+
+def control_candidates(t0, earn_ts, T, near=10, win=60):
+    """Sessions within +/-win of t0, at least near+1 sessions from every earnings headline of the name."""
+    bad = set()
+    for t_e in earn_ts:
+        bad |= set(range(t_e - near, t_e + near + 1))
+    return [t for t in range(t0 - win, t0 + win + 1) if t not in bad and 160 <= t < T - HOLD - 1]
+
+
+def control_order(sym, d0, t0, earn_ts, T, cap=12):
+    """The first `cap` candidates in a per-event seeded order. Skeptic FIX FIRST 6 (2026-10-06): seeded by
+    41|sym|d0, not drawn from one master stream, so an event's control does not depend on which events came before."""
+    cands = control_candidates(t0, earn_ts, T)
+    random.Random(f"41|{sym}|{d0}").shuffle(cands)
+    return cands[:cap]
+
+
+def excess_at(c, spy, spy_r, dates, j, t, hold):
+    """Beta-adjusted excess of column j bought at close t, sold at close t+hold (bp), or None.
+    Skeptic F3 (2026-10-06): every close t..t+hold must be finite, else a NaN mid-hold poisoned the daily series
+    (and with it the calendar-time mean) while the endpoint return still looked fine."""
+    T = len(dates)
+    if t + hold >= T or t < 160:
+        return None
+    path = c[t:t + hold + 1, j]
+    if not (np.isfinite(path).all() and path[0] > 0 and np.isfinite(spy[t:t + hold + 1]).all()):
+        return None
+    a, b = path[0], path[-1]
+    sr = c[max(0, t - 252):t, j]
+    rr = sr[1:] / sr[:-1] - 1
+    mr = spy_r[max(0, t - 252) + 1:t]
+    ok = np.isfinite(rr) & np.isfinite(mr)
+    if ok.sum() < 150:
+        return None
+    beta = float(np.polyfit(mr[ok], rr[ok], 1)[0])
+    r_s = b / a - 1
+    r_m = spy[t + hold] / spy[t] - 1
+    daily = [(c[t + k, j] / c[t + k - 1, j] - 1) - beta * spy_r[t + k] for k in range(1, hold + 1)]
+    return {"beta": beta, "x": (r_s - beta * r_m) * 1e4, "raw_vs_spy": (r_s - r_m) * 1e4,
+            "daily": [d * 1e4 for d in daily], "dates": [dates[t + k] for k in range(1, hold + 1)]}
+
+
 def phase_minutes_and_score():
+    market_hours_guard()
     P = panel()
+    news_fail_check(jload(os.path.join(WORK, "symbols.json")))
     E = jload(os.path.join(WORK, "events.json"))
     H = headers()
     cp = os.path.join(WORK, "m1545.json")
@@ -299,38 +518,41 @@ def phase_minutes_and_score():
     ev_by = collections.defaultdict(list)
     for e in E["events"]:
         ev_by[e["sym"]].append(e["t0"])
-    rng_master = random.Random(41)
+    earn_t = E.get("earn_t")
+    if earn_t is None:
+        raise SystemExit("events.json has no earn_t (pre-FIX-FIRST-3 events phase); rerun phase events")
 
     def r0(sym, t):
         j = P["col"][sym]
-        m = m1545(cache, H, sym, P["dates"][t])
+        m = cache.get(f"{sym}|{P['dates'][t]}")
         prev = rc[t - 1, j]
         return None if (m is None or not np.isfinite(prev) or prev <= 0) else m / prev - 1
 
     def excess(sym, t, hold):
-        j = P["col"][sym]
-        if t + hold >= T or t < 160:
-            return None
-        a, b = c[t, j], c[t + hold, j]
-        if not (np.isfinite(a) and np.isfinite(b) and a > 0):
-            return None
-        sr = c[max(0, t - 252):t, j]
-        rr = sr[1:] / sr[:-1] - 1
-        mr = spy_r[max(0, t - 252) + 1:t]
-        ok = np.isfinite(rr) & np.isfinite(mr)
-        if ok.sum() < 150:
-            return None
-        beta = float(np.polyfit(mr[ok], rr[ok], 1)[0])
-        r_s = b / a - 1
-        r_m = spy[t + hold] / spy[t] - 1
-        daily = [(c[t + k, j] / c[t + k - 1, j] - 1) - beta * spy_r[t + k] for k in range(1, hold + 1)]
-        return {"beta": beta, "x": (r_s - beta * r_m) * 1e4, "raw_vs_spy": (r_s - r_m) * 1e4,
-                "daily": [d * 1e4 for d in daily], "dates": [P["dates"][t + k] for k in range(1, hold + 1)]}
-    rows, cnt = [], collections.Counter()
+        return excess_at(c, spy, spy_r, P["dates"], P["col"][sym], t, hold)
+
+    save = lambda: jsave(cp, cache)  # noqa: E731
+    D = P["dates"]
+    fails = fetch_minutes(cache, H, {(e["sym"], D[e["t0"]]) for e in E["events"]}, save=save)
+    # control candidates: the first 12 of each PRIMARY's seeded order, fetched up front so the minutes batch by day
+    ctl_cands = {}
+    for n, e in enumerate(E["events"]):
+        rr = r0(e["sym"], e["t0"])
+        if e["surprise"] == "beat" and rr is not None and rr > 0:
+            ctl_cands[n] = control_order(e["sym"], e["d0"], e["t0"], ev_by[e["sym"]] + earn_t.get(e["sym"], []), T)
+    fails |= fetch_minutes(cache, H, {(E["events"][n]["sym"], D[t]) for n, ts in ctl_cands.items() for t in ts}, save=save)
+    if fails:
+        raise SystemExit(f"fetch_fail {len(fails)} symbol-days (not cached; rerun phase score to retry). Refusing to "
+                         f"score with missing minutes: e.g. {sorted(fails)[:10]}")
+
+    rows, cnt = [], collections.Counter({"fetch_fail": 0})
     for n, e in enumerate(E["events"]):
         rr = r0(e["sym"], e["t0"])
         if rr is None:
-            cnt["no_r0"] += 1
+            cnt["no_r0"] += 1                             # no bars 15:35-15:44 or no prior close (fetched fine)
+            continue
+        if split_suspect(rr):
+            cnt["split_guard"] += 1
             continue
         x5 = excess(e["sym"], e["t0"], HOLD)
         if x5 is None:
@@ -342,15 +564,12 @@ def phase_minutes_and_score():
             row[hk] = None if xx is None else xx["x"]
         row["primary"] = (e["surprise"] == "beat" and rr > 0)
         if row["primary"]:
-            rng = random.Random(rng_master.random())
-            near = set()
-            for t_e in ev_by[e["sym"]]:
-                near |= set(range(t_e - 10, t_e + 11))
-            cands = [t for t in range(e["t0"] - 60, e["t0"] + 61) if t not in near and 160 <= t < T - HOLD - 1]
-            rng.shuffle(cands)
             ctl = None
-            for t in cands[:12]:
+            for t in ctl_cands[n]:
                 cr = r0(e["sym"], t)
+                if cr is not None and split_suspect(cr):
+                    cnt["ctl_split_guard"] += 1
+                    continue
                 if cr is not None and cr > 0:
                     cx = excess(e["sym"], t, HOLD)
                     if cx is not None:
@@ -360,11 +579,7 @@ def phase_minutes_and_score():
                 cnt["no_control"] += 1
             row["ctl"] = ctl
         rows.append(row)
-        if n % 200 == 0:
-            jsave(cp, cache)
-            P_(f"  scored {n}/{len(E['events'])}")
-    jsave(cp, cache)
-    score(P, rows, cnt, E.get("counts", {}))
+    score(P, rows, cnt, E.get("counts", {}), E["events"])
 
 
 def week_t(vals, weeks):
@@ -390,6 +605,21 @@ def nw_mean_se(series, L=5):
     return float(m), float(math.sqrt(max(s, 0) / n))
 
 
+def t_used(t_week, t_cal):
+    """The t the pass rule reads: the signed minimum of the two, NaN if either is NaN (a NaN fails t >= 2).
+    Skeptic F2 (2026-10-06): the old min(|t|) x sign(mean) let t_week=+3, t_cal=-2.5 read as +2.5, a pass."""
+    if not (t_week == t_week and t_cal == t_cal):
+        return float("nan")
+    return min(t_week, t_cal)
+
+
+def power_block(se_week, se_cal):
+    """MDE = 2.84 x SE. Skeptic FIX FIRST 8 (2026-10-06): the SE is the LARGER of the week-clustered and the
+    calendar-time SE (NaN if either is NaN, which reads as underpowered), not the week SE alone."""
+    se = max(se_week, se_cal) if (se_week == se_week and se_cal == se_cal) else float("nan")
+    return {"se_week": round(se_week, 2), "se_cal": round(se_cal, 2), "se_used": round(se, 2), "mde_bp": round(2.84 * se, 2)}
+
+
 def cal_series(rows, key_daily, key_dates, cost_bp=0.0):
     by = collections.defaultdict(list)
     for r in rows:
@@ -399,15 +629,40 @@ def cal_series(rows, key_daily, key_dates, cost_bp=0.0):
     return [statistics.fmean(by[d]) for d in sorted(by)]
 
 
-def score(P, rows, cnt, ecnt):
-    status = {str(s): str(st) for s, st in zip(P["syms"], P["status"])}
-    res = {"prereg": "docs/studies/earnings_drift_prereg.json (7ed491c, 218199a)", "event_counts": ecnt, "score_counts": dict(cnt)}
-    halves = {"H1": lambda d: d <= H1_END, "H2": lambda d: d > H1_END}
+def coverage(P, events):
+    """Skeptic FIX FIRST 7 (2026-10-06): missing reports must be visible. Per year: matched quarters (events of any
+    surprise) / (4 x eligible symbol-years), a symbol-year being the share of that year's sessions (in the period) on
+    which the name was eligible; and the number of symbols eligible on >= half of a year's sessions with < 2 events."""
+    D = P["dates"]
+    lo, hi = P["ix"][D_LO], P["ix"][D_HI]
+    rc, adv = P["rc"][lo - 1:hi], P["adv_prev"][lo:hi + 1]
+    with np.errstate(invalid="ignore"):
+        ok = np.isfinite(rc) & (rc >= MIN_PX) & np.isfinite(adv) & (adv >= MIN_ADV)
+    yrs = np.array([d[:4] for d in D[lo:hi + 1]])
+    nev = collections.Counter((e["sym"], e["d0"][:4]) for e in events)
     out = {}
+    for y in sorted(set(yrs)):
+        frac = ok[yrs == y].mean(0)
+        sy = float(frac.sum())
+        matched = sum(v for (_, yy), v in nev.items() if yy == y)
+        full = [str(P["syms"][j]) for j in np.where(frac >= 0.5)[0]]
+        out[y] = {"matched": matched, "symbol_years": round(sy, 1),
+                  "coverage": round(matched / (4 * sy), 3) if sy else None,
+                  "eligible_half_year_symbols": len(full),
+                  "symbols_lt2_events": sum(1 for x in full if nev[(x, y)] < 2)}
+    return out
+
+
+def score(P, rows, cnt, ecnt, events=None):
+    status = {str(s): str(st) for s, st in zip(P["syms"], P["status"])}
+    res = {"prereg": "docs/studies/earnings_drift_prereg.json (7ed491c, 218199a, amended_2)", "event_counts": ecnt, "score_counts": dict(cnt)}
+    halves = {"H1": lambda d: d <= H1_END, "H2": lambda d: d > H1_END}
+    out, power = {}, {}
     for hn, f in halves.items():
         pr = [r for r in rows if r["primary"] and r.get("ctl") and f(r["d0"])]
         if not pr:
             out[hn] = {"n": 0}
+            power[hn] = {"n": 0, **power_block(float("nan"), float("nan"))}
             continue
         wk = [datetime.strptime(r["d0"], "%Y-%m-%d").strftime("%G-%V") for r in pr]
         o = {"n": len(pr)}
@@ -418,10 +673,12 @@ def score(P, rows, cnt, ecnt):
             cm, cse = nw_mean_se(cal_series([{"daily": r["ctl"]["daily"], "ddates": r["ctl"]["ddates"]} for r in pr], "daily", "ddates"))
             t_week = m / se if se and se == se else float("nan")
             t_cal = (pm - cm) / math.sqrt(pse ** 2 + cse ** 2) if pse == pse and cse == cse else float("nan")
-            o[f"cost{int(cost)}"] = {"diff_bp": round(m, 2), "se_week": round(se, 2), "t_week": round(t_week, 2),
+            o[f"cost{int(cost)}"] = {"diff_bp": round(m, 2), "t_week": round(t_week, 2),
                                      "cal_daily_diff_bp": round(pm - cm, 3), "t_cal": round(t_cal, 2),
-                                     "t_used": round(min(abs(t_week), abs(t_cal)) * (1 if m > 0 else -1), 2),
-                                     "mde_bp": round(2.84 * se, 2)}
+                                     "t_used": round(t_used(t_week, t_cal), 2)}
+            if cost == 10.0:
+                # calendar SE is per day; scale to the 5-session trade (skeptic Mode 3, 2026-10-06)
+                power[hn] = {"n": len(pr), **power_block(se, HOLD * math.sqrt(pse ** 2 + cse ** 2))}
         diff10 = [(r["x5"] - 10) - r["ctl"]["x5"] for r in pr]
         wsum = collections.defaultdict(float)
         nsum = collections.defaultdict(float)
@@ -434,8 +691,11 @@ def score(P, rows, cnt, ecnt):
         o["drop_top5_names_mean"] = round(statistics.fmean([v for v, r in zip(diff10, pr) if r["sym"] not in tn]), 2)
         o["primary_vs_spy_net10_mean"] = round(statistics.fmean([r["x5"] - 10 for r in pr]), 2)
         out[hn] = o
+    pw = all(power[h]["mde_bp"] <= 30 for h in power)                  # NaN MDE -> False -> UNDERPOWERED
+    res = {"prereg": res["prereg"], "power": {**power, "power_ok": pw}, **{k: v for k, v in res.items() if k != "prereg"}}
     res["primary"] = out
-    pw = all(out[h].get("cost10", {}).get("mde_bp", 1e9) <= 30 for h in out)
+    if events is not None:
+        res["coverage"] = coverage(P, events)
     crit = {}
     for h in ("H1", "H2"):
         o = out[h]
@@ -473,9 +733,12 @@ def score(P, rows, cnt, ecnt):
     info["unclassified_per_year"] = dict(sorted(collections.Counter(r["d0"][:4] for r in rows if r["surprise"] == "unclassified").items()))
     res["information"] = info
     jsave(os.path.join(WORK, "result.json"), res)
-    L = ["# Earnings drift (prereg docs/studies/earnings_drift_prereg.json)", "", f"**VERDICT: {res['verdict']}**", "",
-         "```", json.dumps({k: v for k, v in res.items() if k != "information"}, indent=1), "```", "", "## Information", "```",
-         json.dumps(info, indent=1), "```"]
+    L = ["# Earnings drift (prereg docs/studies/earnings_drift_prereg.json)", "",
+         "## Power (SE and MDE per half, written before any mean; MDE = 2.84 x max(SE week, SE calendar))", "```",
+         json.dumps(res["power"], indent=1), "```", "", f"**VERDICT: {res['verdict']}**", "",
+         f"PRIMARY events with no control (12 candidates tried): {res['score_counts'].get('no_control', 0)}", "",
+         "```", json.dumps({k: v for k, v in res.items() if k not in ("information", "power")}, indent=1), "```", "",
+         "## Information", "```", json.dumps(info, indent=1), "```"]
     open(os.path.join(WORK, "report.md"), "w").write("\n".join(L) + "\n")
     P_("\n".join(L))
 
