@@ -1,0 +1,26 @@
+{
+ "study": "Does hedging the live overnight book with an equal-weight index (RSP) instead of SPY keep a significant edge with little market exposure?",
+ "registered_at": "2026-10-06 ~19:30 ET, before any RSP data is fetched or any RSP-hedged return is computed",
+ "registered_before_results": true,
+ "origin": "Operator 10/6 'can we improve the overnight book?'. 2000-2015 (OVERNIGHT_PRE2016_2026-10-04.md): the RANKING edge (picks minus the equal-weighted liquid universe) is +8.6 bp/night, t 9.7, 15/16 years, while alpha vs SPY after costs is unproven. Hypothesis: an equal-weight hedge tracks the book's universe better than SPY and keeps more of the ranking edge.",
+ "frozen_book": "the live rule, unchanged: top-20 12-1 momentum, raw close >= $5, ADV20 >= $50M, close -> next open, equal weight, 4 bp round trip (as in overnight_hedge_intraday.py and overnight_pre2016.py)",
+ "hedge": {
+  "instrument": "RSP (Invesco S&P 500 Equal Weight ETF), short overnight close -> next open with the same auction legs",
+  "ratio_primary": "h = trailing 252-night OLS beta of the book's net overnight return on RSP's overnight return, using nights t-252..t-1 only (point-in-time; min 200 nights)",
+  "cost": "3 bp per unit of hedge per round trip (RSP is less liquid than SPY's 2.26 bp); 6 bp as a sensitivity"
+ },
+ "comparison_baseline": "the same book hedged with SPY at its own trailing 252-night beta, 2.26 bp per unit",
+ "data": {
+  "period_A": "2004-05-03 .. 2015-12-30 (RSP listed 2003-04-30; one year of beta warm-up): the book from the 2000-2015 Yahoo pipeline (tools/studies/overnight_pre2016.py, its registered masks and dividend-inclusive ON); RSP and SPY from Yahoo daily (auto_adjust=False, actions=True, ON = (Open(t+1) + Div(t+1)) / Close(t) - 1)",
+  "period_B": "2017-01-13 .. 2026-09-24: the book from the Alpaca panel (as overnight_hedge_intraday.py); RSP from Alpaca SIP daily bars with adjustment=all; SPY as in the panel",
+  "data_source_check": "RSP overnight returns from Yahoo vs Alpaca on 2017-2021: correlation >= 0.99 and |mean nightly difference| <= 0.5 bp, else period A is reported without a verdict",
+  "bad_data": "a night is dropped (counted) if RSP's open or prior close is missing or |RSP ON| > 15%"
+ },
+ "statistic": "RSP-hedged net per night = book net - h x RSP_ON - 3 bp x |h|; mean bp/night, SE = max(plain, Newey-West 5, Newey-West 9)",
+ "power": "MDE = 2.84 x SE per period; if MDE > 5 bp in a period, that period is UNDERPOWERED",
+ "pass": "RSP-hedged net > 0 with t >= 2 in BOTH periods, AND RSP-hedged minus SPY-hedged (paired by night) > 0 in both periods, AND RSP-hedged net still > 0 at 6 bp hedge cost in both periods. Otherwise FAIL. A pass (after skeptic review) is input to the gate-O1 discussion about the live overnight account; it does not change the live book by itself.",
+ "information_only": ["unhedged net", "fixed h = 1.0 RSP hedge", "realised beta of the RSP-hedged book to SPY", "worst night, CVaR 1%, max drawdown, Sharpe for unhedged / SPY-hedged / RSP-hedged", "per-year means", "hedge ratio h over time"],
+ "no_retuning": "instrument, beta window, costs, periods and the pass bar are fixed here; IWM or other instruments would be a new pre-registration",
+ "prior": "moderate: the ranking edge vs the equal-weight universe is strong in both 2000-15 and 2016-26; whether RSP tracks that universe closely enough (S&P 500 equal weight vs a broader liquid set with ADV >= $50M) is the open question",
+ "caveats": ["period B's book has been studied many times (only the RSP hedge is new); period A is the cleaner test", "shorting RSP at the auctions is assumed available at the stated cost; live borrow is not modelled", "RSP has its own rebalancing and fees, included in its returns"]
+}
