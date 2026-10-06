@@ -2,14 +2,14 @@
  "study": "Post-earnings drift: after a confirmed good-news earnings report (EPS beat AND a positive reaction day), does a liquid stock keep outperforming over the next week, after market exposure and costs?",
  "registered_at": "2026-10-06 ~19:15 ET, before any earnings event was collected or any outcome computed",
  "registered_before_results": true,
- "origin": "Operator 10/6: 'do we know the edge of certain names to be able to hold it across an entire week?' The 9/27 LONGER_HOLDS study meant to test news-flagged PEAD but ran out of time; only a gap+RVOL proxy ran (and failed). This is the real version. Data check done before registering (format only, no outcomes): Finnhub's free earnings calendar has no history; Alpaca/Benzinga news carries structured headlines such as 'Apple Q3 EPS $2.18 Beats $2.1 Estimate' from at least 2019.",
- "universe": "US common stocks in the lh_cache panel (SIP daily, adjustment=all, 2016-2026, includes names inactive from 2018) with raw close >= $10 and ADV20 >= $50M on the day before the reaction day (point-in-time)",
- "period": "reaction days 2019-01-02 .. 2026-09-25; split by date into H1 2019-01-02..2022-12-30 and H2 2023-01-03..2026-09-25",
+ "origin": "Operator 10/6: 'do we know the edge of certain names to be able to hold it across an entire week?' PRIOR RESULT DISCLOSED: the 9/27 LONGER_HOLDS study did run a news-flagged PEAD cell (gap >= 5% with an earnings flag, 5-day hold): net minus SPY -0.40%, t -3.5, out of sample 2022-26, an overlapping subset of H2. This test differs (any EPS beat with a positive reaction, beta-adjusted, same-name control) but the prior is LOW. Data check done before registering (format only, no outcomes): Finnhub's free earnings calendar has no history; Alpaca/Benzinga news carries structured headlines such as 'Apple Q3 EPS $2.18 Beats $2.1 Estimate' from at least 2019.",
+ "universe": "US common stocks in the lh_cache panel (~/lh_cache/panel.npz, read via lh_core with the path fixed or symlinked) with raw close >= $10 and ADV20 >= $50M where ADV20 is shifted by one day (20 sessions ending D0-1), point-in-time",
+ "period": "reaction days 2019-01-02 .. 2026-09-18 (the panel ends 2026-09-25; the last D0 must leave 5 sessions; 2026-08-27 for the 20-session information hold); halves H1 2019-01-02..2022-12-30 and H2 2023-01-03..2026-09-18",
  "events": {
-  "source": "Alpaca news API (Benzinga), fetched per symbol, cached; every request logged; abort the study if > 2% of symbols fail to fetch after retries",
-  "headline_rule": "the first headline per symbol per 10 calendar days matching r'\\bQ[1-4]\\b.*\\bEPS\\b.*\\b(Beats|Misses|In-Line|Inline)\\b.*\\bEstimate\\b' (case-insensitive); headlines starting 'CORRECTION' or 'UPDATE' are ignored; surprise = the first Beats/Misses/In-Line word AFTER 'EPS' in that headline",
-  "reaction_day": "D0 = the headline's session if it is before 09:30 ET; the next session if it is at or after 16:00 ET; the same session if during RTH",
-  "reaction": "R0 = close(D0) / close(D0 - 1) - 1"
+  "source": "Alpaca news API (Benzinga), fetched per symbol, cached; every request logged; abort the study if > 2% of symbols fail to fetch after retries. Articles are sorted by created_at locally (the API orders by update time). Renamed tickers: news is also fetched under prior tickers from Alpaca corporate-action name changes; symbols with < 2 events in an eligible year and all excluded counts are reported. Run after hours only (it shares the desk's API budget; ~30-100k requests).",
+  "headline_rule": "the first headline per symbol per 10 calendar days, by created_at, matching r'\\bQ[1-4]\\b.*\\bEPS\\b' and an Estimate comparison; headlines starting 'CORRECTION' or 'UPDATE' are ignored, and headlines with Sees|Guidance|Outlook|Raises|Lowers before 'EPS' are excluded. SURPRISE = the first of Beats|Misses|In-Line|Inline that lies INSIDE the EPS clause (between 'EPS' and the first comma); if none is inside the EPS clause the event is 'unclassified' (counted, not traded). When several headlines arrive within 5 minutes with different EPS surprise words (e.g. Adj. vs GAAP), the one containing 'Adj.' wins; if none does, the event is unclassified.",
+  "reaction_day": "timestamps converted from UTC to ET. D0 = the headline's session if before 09:30 ET; the next session if at or after 16:00 ET; the same session if during RTH; weekend/holiday headlines map to the next session",
+  "reaction": "R0 = SIP 1-minute bar close at 15:45 ET on D0 / close(D0-1) - 1 (known before the MOC cutoff); the trade fills at close(D0). The auction close itself is NOT used for selection."
  },
  "trade": "buy at the close of D0 (after the reaction is known; an MOC order), sell at the close of D0 + 5 sessions",
  "returns": {
@@ -17,13 +17,31 @@
   "cost": "10 bp round trip (MOC in and out at ~2 bp/side plus slippage); 30 bp as a sensitivity"
  },
  "groups": {
-  "PRIMARY_GOOD": "EPS Beats AND R0 > 0",
-  "information": ["EPS Misses AND R0 < 0 (the short side; reported, not traded)", "all Beats regardless of R0", "R0 > 0 regardless of surprise", "20-session hold for PRIMARY_GOOD", "1-session hold for PRIMARY_GOOD", "excess vs SPY without beta adjustment"]
+  "PRIMARY_GOOD": "EPS Beats AND R0 > 0"
  },
- "statistic": "mean net beta-adjusted 5-session excess per PRIMARY_GOOD event (bp); SE clustered by calendar week of D0 (earnings seasons put many correlated events in the same week)",
- "power": "before reading means: report SE per half; MDE = 2.84 x SE. If MDE > 30 bp in either half, UNDERPOWERED (no verdict).",
- "pass": "PRIMARY_GOOD mean net (10 bp cost) >= +20 bp per 5-session trade with week-clustered t >= 2 in BOTH halves, >= 300 events per half, AND still > 0 at 30 bp cost in both halves. Otherwise FAIL. A PASS (after skeptic review) earns a paper/score-only pilot, not live money.",
+ "statistic": "PRIMARY minus its matched control, net beta-adjusted 5-session excess (bp). SE (a) clustered by calendar week of D0 and (b) a calendar-time portfolio t: the daily mean excess of open PRIMARY-minus-control positions, Newey-West lag 5. Both are reported; the smaller |t| is used.",
+ "power": "before reading means: SE per half; MDE = 2.84 x SE. UNDERPOWERED if MDE > 30 bp in either half. Accepted explicitly: a true +20 bp effect has roughly 50% power at that cutoff.",
+ "pass": "PRIMARY minus control >= +20 bp (10 bp cost) with t >= 2 (the smaller of week-clustered and calendar-time NW) in BOTH halves, >= 300 events per half, still > 0 at 30 bp cost, and still > 0 after dropping the top 3 weeks and after dropping the top 5 names. Otherwise FAIL. A PASS (after skeptic review) earns a score-only pilot, not live money.",
  "no_retuning": "the headline rule, the 10-day dedupe, D0 timing, the 5-session hold, the beta window and the groups are fixed here; changes need a new pre-registration",
  "prior": "modest: PEAD is well documented historically but has weakened in large liquid stocks; the 9/27 gap+RVOL proxy failed; momentum beyond beta failed on 10/2",
- "caveats": ["Benzinga headline coverage may be incomplete for some names/years (coverage per year is reported)", "estimates are Benzinga's consensus", "survivorship: names delisted before 2018 are missing (the period starts 2019)", "no borrow/short side traded"]
+ "caveats": [
+  "SURVIVORSHIP: the panel has inactive names ending 2018-2022 but only ~21 ending 2023-2026 (TWTR, SIVB, WWE, ATVI absent), so H2 is close to survivors-only; the same-name control is the main defence",
+  "Benzinga coverage ~89% of sampled quarters; misses ('May Not Compare', no estimate) are excluded and counted",
+  "estimates are Benzinga's consensus",
+  "long side only"
+ ],
+ "control": "per PRIMARY_GOOD event, one matched control: the same symbol, a random session (seed 41) within +/-60 sessions of D0 that is not within 10 sessions of any of that symbol's earnings events and whose 15:45 return vs the prior close is > 0; same entry (close), same 5-session hold, same point-in-time beta adjustment. This cancels name-level survivor drift.",
+ "information_only": [
+  "EPS Misses AND R0 < 0 (the short side; reported, not traded)",
+  "all Beats regardless of R0",
+  "R0 > 0 regardless of surprise",
+  "20-session hold for PRIMARY_GOOD",
+  "1-session hold for PRIMARY_GOOD",
+  "excess vs SPY without beta adjustment",
+  "PRIMARY vs SPY without the control (the original statistic)",
+  "H1 with and without inactive names (sizes the survivorship bias)",
+  "coverage per year (matched quarters / expected)",
+  "unclassified and excluded counts"
+ ],
+ "amended": "2026-10-06, before any script or data, per the skeptic's FIX FIRST (B1, F1-F10, minors)"
 }
