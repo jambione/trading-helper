@@ -23,7 +23,7 @@
  "power": "before reading means: SE per half; MDE = 2.84 x SE. UNDERPOWERED if MDE > 30 bp in either half. Accepted explicitly: a true +20 bp effect has roughly 50% power at that cutoff.",
  "pass": "PRIMARY minus control >= +20 bp (10 bp cost) with t >= 2 (the smaller of week-clustered and calendar-time NW) in BOTH halves, >= 300 events per half, still > 0 at 30 bp cost, and still > 0 after dropping the top 3 weeks and after dropping the top 5 names. Otherwise FAIL. A PASS (after skeptic review) earns a score-only pilot, not live money.",
  "no_retuning": "the headline rule, the 10-day dedupe, D0 timing, the 5-session hold, the beta window and the groups are fixed here; changes need a new pre-registration",
- "prior": "modest: PEAD is well documented historically but has weakened in large liquid stocks; the 9/27 gap+RVOL proxy failed; momentum beyond beta failed on 10/2",
+ "prior": "LOW: PEAD has weakened in large liquid stocks; the 9/27 news-flagged gap>=5% PEAD cell lost to SPY out of sample (-0.40%, t -3.5); momentum beyond beta failed on 10/2",
  "caveats": [
   "SURVIVORSHIP: the panel has inactive names ending 2018-2022 but only ~21 ending 2023-2026 (TWTR, SIVB, WWE, ATVI absent), so H2 is close to survivors-only; the same-name control is the main defence",
   "Benzinga coverage ~89% of sampled quarters; misses ('May Not Compare', no estimate) are excluded and counted",
