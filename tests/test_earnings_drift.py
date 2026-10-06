@@ -86,3 +86,20 @@ def test_burst_rule():
                            ("X Q1 Adj. EPS Beats", "beat"))) == "beat"
     assert ed.burst_word(B(("X Q1 Adj. EPS vs", "unclassified"), ("X Q1 EPS Misses", "miss"),
                            ("X Q1 EPS Beats", "beat"))) == "unclassified"
+
+
+# ---------------------------------------------------------------- FIX FIRST 2 D0 mapping
+def test_d0_mapping():
+    from datetime import datetime
+    S = ["2025-07-24", "2025-07-25", "2025-07-28"]           # Thu, Fri, Mon
+    ss = set(S)
+    at = lambda d, hm: datetime.fromisoformat(f"{d}T{hm}:00").replace(tzinfo=ed.ET)  # noqa: E731
+    assert ed.d0_of(at("2025-07-24", "07:00"), S, ss) == "2025-07-24"     # pre-market -> same session
+    assert ed.d0_of(at("2025-07-24", "12:00"), S, ss) == "2025-07-24"     # RTH -> same
+    assert ed.d0_of(at("2025-07-24", "15:44"), S, ss) == "2025-07-24"
+    assert ed.d0_of(at("2025-07-24", "15:45"), S, ss) == "late_rth"
+    assert ed.d0_of(at("2025-07-24", "15:50"), S, ss) == "late_rth"       # excluded: after R0 and the MOC cutoff
+    assert ed.d0_of(at("2025-07-24", "16:00"), S, ss) == "2025-07-25"     # after the close -> next
+    assert ed.d0_of(at("2025-07-25", "16:05"), S, ss) == "2025-07-28"     # Friday evening -> Monday
+    assert ed.d0_of(at("2025-07-26", "15:50"), S, ss) == "2025-07-28"     # weekend -> next session, not excluded
+    assert ed.d0_of(at("2025-07-28", "16:30"), S, ss) is None             # past the panel

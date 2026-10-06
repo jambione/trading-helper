@@ -17,7 +17,8 @@ Rules (from the pre-registration):
              to the first comma), else unclassified; first qualifying headline per symbol per 10 calendar days (by
              created_at); headlines within 5 min with different surprise words: the one with 'Adj.' wins, else
              unclassified
-  D0         ET time < 09:30 -> that session (next session if not a session); >= 16:00 -> next session; RTH -> same
+  D0         ET time < 09:30 -> that session (next session if not a session); >= 16:00 -> next session; RTH -> same;
+             15:45-16:00 ET on a session -> excluded and counted (after the R0 bar and the MOC cutoff)
   R0         SIP 1-min close at 15:45 ET on D0 (bar starting 15:44; else the last bar starting 15:35-15:44) / RAW close(D0-1) - 1
   trade      buy close(D0), sell close(D0+5); excess = r - beta x r_SPY; beta = OLS daily vs SPY over the 252 sessions
              ending D0-1 (min 150); cost 10 bp (30 bp sensitivity) charged to the PRIMARY trade only
@@ -33,6 +34,7 @@ Rules (from the pre-registration):
 """
 from __future__ import annotations
 
+import bisect
 import collections
 import json
 import math
@@ -260,6 +262,18 @@ def burst_word(burst):
     return next(iter(adj)) if len(adj) == 1 else "unclassified"
 
 
+def d0_of(t0, sessions, sset):
+    """Reaction session for an ET headline time: < 09:30 -> that session, >= 16:00 -> the next, RTH -> the same;
+    non-sessions roll forward. Skeptic FIX FIRST 2 (2026-10-06): 15:45-16:00 on a session returns 'late_rth'
+    (excluded and counted): the 15:45 R0 and the MOC cutoff would come before the news."""
+    d = t0.strftime("%Y-%m-%d")
+    mins = t0.hour * 60 + t0.minute
+    if d in sset and 15 * 60 + 45 <= mins < 16 * 60:
+        return "late_rth"
+    i = bisect.bisect_right(sessions, d) if (mins >= 16 * 60 and d in sset) else bisect.bisect_left(sessions, d)
+    return sessions[i] if i < len(sessions) else None
+
+
 def phase_events():
     P = panel()
     S = jload(os.path.join(WORK, "symbols.json"))
@@ -298,12 +312,10 @@ def phase_events():
                 cnt["burst_conflict"] += 1
             last = t0
             i += len(burst)
-            d = t0.strftime("%Y-%m-%d")
-            mins = t0.hour * 60 + t0.minute
-            if mins >= 16 * 60 or d not in sset:
-                d = next((x for x in sessions if x > d), None) if mins >= 16 * 60 else next((x for x in sessions if x >= d), None)
-            elif mins < 9 * 60 + 30:
-                pass
+            d = d0_of(t0, sessions, sset)
+            if d == "late_rth":
+                cnt["excluded_1545_1600"] += 1
+                continue
             if d is None or not (D_LO <= d <= D_HI):
                 cnt["outside_period"] += 1
                 continue
