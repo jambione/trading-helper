@@ -14055,20 +14055,25 @@ def _ob_resist_refusal(ob_fields: dict | None, cfg: dict | None) -> bool:
 
 
 _OB_WIRE_KEYS = ("ob_resist", "ob_room_pct", "ob_bars", "ob_sup_btm", "ob_sup_top",
-                 "ob_res_btm", "ob_res_top", "ob_levels_ts", "ob_nobars", "ob_off")
+                 "ob_res_btm", "ob_res_top", "ob_levels_ts", "ob_nobars", "ob_off",
+                 "ob_stale")
 
 
 def _ob_no_reading_note(sym: str) -> dict:
     """Why there is no order-block reading, for the SR cell (display only):
     ob_off = neither ai_watch_ob_observe nor the skip is on; ob_nobars = on, but
-    the block store holds no 1-minute bars for this name (it is fed only by the
-    structure bar fetch), so neither the panel nor the ob_resist skip has a
-    reading. {} when it cannot tell. Never raises, never fetches."""
+    the block store holds no 1-minute bars for this name yet (the background
+    warm fetch fills it), so neither the panel nor the ob_resist skip has a
+    reading; ob_stale = bars exist but no refresh for OB_WARM_STALE_SEC, so the
+    reading is withheld (skip fails open). {} when it cannot tell. Never
+    raises, never fetches."""
     try:
         if not _ob_observe_on(_push_cfg()):
             return {"ob_off": True}
         import ob_observe
-        return {"ob_nobars": True} if ob_observe.store_size(sym) == 0 else {}
+        if ob_observe.store_size(sym) == 0:
+            return {"ob_nobars": True}
+        return {"ob_stale": True} if _ob_reading_stale(sym) else {}
     except Exception:  # noqa: BLE001
         return {}
 
@@ -14115,6 +14120,9 @@ def _ob_observe_stamp(rec: dict, sym: str, price: Any, cfg: dict | None,
         return {}
     try:
         import ob_observe
+        _ob_warm_request(sym)          # enqueue only; never waits on HTTP
+        if _ob_reading_stale(sym):
+            return {}
         f = ob_observe.fields(sym, price, now)
         if not f or not isinstance(rec, dict):
             return {}
@@ -14127,6 +14135,189 @@ def _ob_observe_stamp(rec: dict, sym: str, price: Any, cfg: dict | None,
         return f
     except Exception:  # noqa: BLE001
         return {}
+
+
+# --- Order-block bar warm fetch (approved 2026-10-06 09:43 ET) ---------------
+# The ob store is otherwise fed only by _fetch_symbol_lows, which book names
+# never reach (their %R comes from stream bars), so the ob_resist skip had no
+# reading and failed open on every name. This fetch feeds ob_observe ONLY: it
+# never touches _bar_cache / _ohlc_cache / the stream seed, so %R, zones and
+# every other input to an arm are unchanged. The poll thread only enqueues;
+# one background worker does the HTTP, through alpaca_api.fetch_bars (shared
+# process-wide pacing + retry/backoff). Failure = no bars = no reading = the
+# skip allows the trade.
+OB_WARM_REFRESH_SEC = 120.0     # at most 1 request per name per 2 minutes
+OB_WARM_FIRST_LIMIT = 2000      # newest 1-min bars (ext hours): prior day + today
+OB_WARM_REFRESH_LIMIT = 30      # later refreshes: the last 30 minutes
+OB_WARM_HTTP_TIMEOUT_SEC = 10.0  # per HTTP call; the SDK sets none by default
+OB_WARM_STALE_SEC = 600.0       # store not refreshed this long = no reading
+OB_WARM_MAX_PENDING = 64
+OB_WARM_LOG_SEC = 300.0
+
+_ob_warm_lock = threading.Lock()
+_ob_warm_last: dict[str, float] = {}      # sym -> wall time of last enqueue
+_ob_warm_pending: set[str] = set()
+_ob_warm_exec = None
+_ob_warm_client = None
+_ob_warm_log_ts = 0.0
+_OB_WARM_STATS = {"requested": 0, "ok": 0, "no_data": 0, "fail": 0,
+                  "skipped_429": 0, "skipped_busy": 0, "bars": 0}
+
+
+def ob_warm_stats() -> dict:
+    with _ob_warm_lock:
+        return dict(_OB_WARM_STATS)
+
+
+def _ob_warm_executor():
+    global _ob_warm_exec
+    if _ob_warm_exec is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _ob_warm_exec = ThreadPoolExecutor(max_workers=1,
+                                           thread_name_prefix="ob-warm")
+    return _ob_warm_exec
+
+
+def _ob_warm_request(sym: str, now_wall: float | None = None) -> bool:
+    """Called on the poll thread. Enqueue a background bar fetch for `sym` if
+    none ran in the last OB_WARM_REFRESH_SEC and none is pending. Returns
+    True when a job was enqueued. Never blocks on the network, never raises."""
+    try:
+        sym = str(sym or "").upper().strip()
+        if not sym or os.environ.get("TH_OB_WARM_OFF"):   # tests set this
+            return False
+        now_wall = time.time() if now_wall is None else float(now_wall)
+        with _ob_warm_lock:
+            last = _ob_warm_last.get(sym)
+            if sym in _ob_warm_pending or (
+                    last is not None and now_wall - last < OB_WARM_REFRESH_SEC):
+                return False
+            try:
+                import alpaca_api as aa
+                limited = bool(aa.recently_rate_limited(30.0))
+            except Exception:  # noqa: BLE001
+                limited = False
+            if limited:
+                # Back off with the rest of the desk; try again next window.
+                _ob_warm_last[sym] = now_wall
+                _OB_WARM_STATS["skipped_429"] += 1
+                return False
+            if len(_ob_warm_pending) >= OB_WARM_MAX_PENDING:
+                _OB_WARM_STATS["skipped_busy"] += 1
+                return False
+            _ob_warm_last[sym] = now_wall
+            _ob_warm_pending.add(sym)
+            _OB_WARM_STATS["requested"] += 1
+        try:
+            _ob_warm_executor().submit(_ob_warm_job, sym)
+        except Exception:  # noqa: BLE001
+            with _ob_warm_lock:
+                _ob_warm_pending.discard(sym)
+                _OB_WARM_STATS["fail"] += 1
+            return False
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ob_warm_data_client():
+    """One data client for the worker, with a per-request HTTP timeout so a
+    hung connection cannot wedge it. Never prints credentials."""
+    global _ob_warm_client
+    if _ob_warm_client is not None:
+        return _ob_warm_client
+    from config import load_config
+    full = load_config() or {}
+    api_key = full.get("api_key") or full.get("alpaca_key")
+    secret = full.get("secret_key") or full.get("alpaca_secret")
+    if not api_key or not secret:
+        sec_path = ROOT / "config" / "secrets.json"
+        if sec_path.exists():
+            sec = json.loads(sec_path.read_text(encoding="utf-8"))
+            api_key = api_key or sec.get("api_key") or sec.get("ALPACA_API_KEY")
+            secret = secret or sec.get("secret_key") or sec.get("ALPACA_SECRET_KEY")
+    if not api_key or not secret:
+        return None
+    import alpaca_api as aa
+    client = aa.connect_data_client({"api_key": api_key, "secret_key": secret})
+    sess = getattr(client, "_session", None)
+    if sess is not None and callable(getattr(sess, "request", None)):
+        _orig = sess.request
+
+        def _request_with_timeout(method, url, **kw):
+            kw.setdefault("timeout", OB_WARM_HTTP_TIMEOUT_SEC)
+            return _orig(method, url, **kw)
+
+        sess.request = _request_with_timeout
+    _ob_warm_client = client
+    return client
+
+
+def _ob_warm_job(sym: str) -> int:
+    """Background worker: one IEX 1-min bars request, absorbed into the ob
+    store only. Returns bars received (0 on no data / failure). Never raises."""
+    n = 0
+    try:
+        import ob_observe
+        first = ob_observe.store_size(sym) == 0 or not ob_observe.has_prior_day(sym)
+        limit = OB_WARM_FIRST_LIMIT if first else OB_WARM_REFRESH_LIMIT
+        client = _ob_warm_data_client()
+        if client is None:
+            raise RuntimeError("no data credentials")
+        import alpaca_api as aa
+        from config import load_config
+        bar_cfg = dict(load_config() or {})   # same feed resolution as the desk
+        bar_cfg["bar_timeframe"] = "1Min"
+        bar_cfg["bar_count"] = limit
+        df = aa.fetch_bars(client, sym, bar_cfg)
+        n = 0 if df is None else int(len(df))
+        if n:
+            ob_observe.absorb_df(sym, df)
+        with _ob_warm_lock:
+            _OB_WARM_STATS["ok" if n else "no_data"] += 1
+            _OB_WARM_STATS["bars"] += n
+    except Exception:  # noqa: BLE001
+        with _ob_warm_lock:
+            _OB_WARM_STATS["fail"] += 1
+        n = 0
+    finally:
+        with _ob_warm_lock:
+            _ob_warm_pending.discard(sym)
+        _ob_warm_maybe_log()
+    return n
+
+
+def _ob_warm_maybe_log(force: bool = False) -> None:
+    """Counter line in the trader log at most every OB_WARM_LOG_SEC."""
+    global _ob_warm_log_ts
+    try:
+        now = time.time()
+        with _ob_warm_lock:
+            if not force and now - _ob_warm_log_ts < OB_WARM_LOG_SEC:
+                return
+            _ob_warm_log_ts = now
+            st = dict(_OB_WARM_STATS)
+            names = len(_ob_warm_last)
+        import ob_observe
+        with_bars = sum(1 for k in list(_ob_warm_last) if ob_observe.store_size(k) > 0)
+        print(f"[ob] warm fetch: requested={st['requested']} ok={st['ok']} "
+              f"no_data={st['no_data']} fail={st['fail']} "
+              f"skipped_429={st['skipped_429']} skipped_busy={st['skipped_busy']} "
+              f"bars={st['bars']} names={names} with_bars={with_bars}", flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _ob_reading_stale(sym: str) -> bool:
+    """True when the ob store has bars for `sym` but nothing has refreshed it
+    for OB_WARM_STALE_SEC (fetches failing / rate limited): treat as no
+    reading so the skip fails open. Never raises."""
+    try:
+        import ob_observe
+        age = ob_observe.absorb_age(sym)
+        return age is not None and age > OB_WARM_STALE_SEC
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:

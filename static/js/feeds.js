@@ -370,6 +370,7 @@ function _bookRows(book) {
       ob_levels_ts: w.ob_levels_ts != null ? w.ob_levels_ts : null,
       ob_nobars: !!w.ob_nobars,
       ob_off: !!w.ob_off,
+      ob_stale: !!w.ob_stale,
     };
   }
   // Live positions always win (P&L / qty).
@@ -1855,7 +1856,7 @@ function _bookRowHtml(r) {
  *  ob_resist_0.3 the live ob_resist skip reads. '—' = no reading. */
 function _bookSrText(r) {
   if (!r) return '\u2014';
-  if (r.ob_resist == null) return r.ob_nobars ? 'no bars' : (r.ob_off ? 'off' : '\u2014');
+  if (r.ob_resist == null) return r.ob_nobars ? 'no bars' : (r.ob_stale ? 'stale' : (r.ob_off ? 'off' : '\u2014'));
   const room = r.ob_room_pct != null && Number.isFinite(Number(r.ob_room_pct))
     ? Number(r.ob_room_pct) : null;
   if (room == null) return 'no R';
@@ -1864,14 +1865,17 @@ function _bookSrText(r) {
 }
 
 function _bookSrClass(r) {
-  if (r && r.ob_resist == null && (r.ob_nobars || r.ob_off)) return ' sr--none';
+  if (r && r.ob_resist == null && (r.ob_nobars || r.ob_off || r.ob_stale)) return ' sr--none';
   return r && r.ob_resist === true ? ' sr--resist' : '';
 }
 
 function _bookSrTitle(r) {
   if (r && r.ob_resist == null && r.ob_nobars) {
-    return 'No 1-min bars in the order-block store for this name: it is fed only by the desk\u2019s structure bar fetch, '
-      + 'which has not run for it. Neither this column nor the live ob_resist skip has a reading (the skip fails open).';
+    return 'No 1-min bars in the order-block store for this name yet (the background IEX bar fetch fills it within ~2 min of seating). '
+      + 'Until then neither this column nor the live ob_resist skip has a reading (the skip fails open).';
+  }
+  if (r && r.ob_resist == null && r.ob_stale) {
+    return 'Order-block bars have not refreshed for 10+ min (fetch failing or rate limited): reading withheld, the ob_resist skip fails open.';
   }
   if (r && r.ob_resist == null && r.ob_off) return 'Order-block reading is off (ai_watch_ob_observe and ai_watch_ob_resist_skip both off)';
   if (!r || r.ob_resist == null) return 'No order-block reading yet for this name';

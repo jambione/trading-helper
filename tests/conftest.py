@@ -90,6 +90,15 @@ _SESSION_KNOBS = (
 
 
 @pytest.fixture(autouse=True)
+def _no_ob_warm_fetch(monkeypatch):
+    """The order-block warm fetch (ai_entry_watch._ob_warm_request) would
+    make a real IEX bars request from any test that stamps a reading. Off in
+    every test; test_ob_warm_fetch turns it back on with a fake fetch."""
+    monkeypatch.setenv("TH_OB_WARM_OFF", "1")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _test_book_keeps_scalp_geometry(monkeypatch, request):
     """Live bot_config is desk_product=observe. Tests of the old arm path
     still need that geometry. They pass partial cfg dicts (omitted key =

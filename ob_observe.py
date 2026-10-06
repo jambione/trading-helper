@@ -38,6 +38,7 @@ result, and nothing in the arm/place path reads these fields.
 from __future__ import annotations
 
 import threading
+import time
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -54,6 +55,10 @@ _LOCK = threading.RLock()
 _BARS: dict[str, dict[float, tuple]] = {}
 # symbol -> (cache key, charted blocks, n_bars, prior_day)
 _CACHE: dict[str, tuple] = {}
+# symbol -> wall-clock time (time.time()) of the last absorb that brought in
+# at least one session bar. Lets the caller treat a store that stopped
+# refreshing as "no reading" (fail open) instead of trusting stale blocks.
+_LAST_ABSORB: dict[str, float] = {}
 
 
 def enabled(cfg: dict | None) -> bool:
@@ -93,6 +98,7 @@ def absorb_rows(symbol: str, rows) -> int:
         sym = str(symbol or "").upper().strip()
         if not sym:
             return 0
+        n_ok = 0
         with _LOCK:
             store = _BARS.setdefault(sym, {})
             for r in rows or ():
@@ -105,7 +111,10 @@ def absorb_rows(symbol: str, rows) -> int:
                     continue
                 ts = float(int(ts // BAR_SEC) * BAR_SEC)
                 store[ts] = (ts, o, h, lo, c)
+                n_ok += 1
             _trim(store)
+            if n_ok:
+                _LAST_ABSORB[sym] = time.time()
             return len(store)
     except Exception:  # noqa: BLE001
         return 0
@@ -137,6 +146,29 @@ def store_size(symbol: str) -> int:
             return len(_BARS.get(str(symbol or "").upper().strip()) or {})
     except Exception:  # noqa: BLE001
         return 0
+
+
+def absorb_age(symbol: str) -> float | None:
+    """Seconds (wall clock) since the last absorb that added session bars for
+    `symbol`; None if never. Never raises."""
+    try:
+        with _LOCK:
+            t = _LAST_ABSORB.get(str(symbol or "").upper().strip())
+        return None if t is None else max(0.0, time.time() - t)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def has_prior_day(symbol: str) -> bool:
+    """True when the store holds bars from two ET dates (prior day + today)."""
+    try:
+        with _LOCK:
+            ts = list((_BARS.get(str(symbol or "").upper().strip()) or {}).keys())
+        if not ts:
+            return False
+        return _et(min(ts)).date() != _et(max(ts)).date()
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def bars(symbol: str) -> list[tuple]:
@@ -265,3 +297,4 @@ def reset() -> None:
     with _LOCK:
         _BARS.clear()
         _CACHE.clear()
+        _LAST_ABSORB.clear()
