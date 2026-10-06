@@ -4710,6 +4710,8 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             # this next to Last; without it only Momentum dual-lists colored.
             "pct_change": _wire_pct_change(sym, rec),
             "admit_pct_change": _f_or_none(rec.get("admit_pct_change")),
+            # Display only (book SR column); {} when there is no reading.
+            **_ob_wire_fields(rec, sym, last_ask_f),
         })
     # Ready first, then higher score, then symbol for stable UI.
     rows.sort(key=lambda r: (
@@ -4788,6 +4790,8 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "source": src,
         "score": score_f,
         "rvol": _f_or_none(rec.get("admit_rvol")),
+        # Display only (book SR column); {} when there is no reading.
+        **_ob_wire_fields(rec, sym, last_ask_f),
         "exhaustion": _f_or_none(exhaustion_pct(rec)),
         "exhaustion_state": exhaustion_state(rec, _push_cfg()),
         "exh_seat_class": (
@@ -4974,6 +4978,8 @@ def book_table_rows(
                 "plpc": None,
                 "mkt_val": None,
                 "is_position": False,
+                # Display only (book SR column).
+                **{k: w[k] for k in _OB_WIRE_KEYS if k in w},
             }
 
     for sym_raw, p in pos_map.items():
@@ -14046,6 +14052,38 @@ def _ob_resist_refusal(ob_fields: dict | None, cfg: dict | None) -> bool:
                     and ob_fields.get("ob_resist_0.3") is True)
     except Exception:  # noqa: BLE001
         return False
+
+
+_OB_WIRE_KEYS = ("ob_resist", "ob_room_pct", "ob_bars", "ob_sup_btm", "ob_sup_top",
+                 "ob_res_btm", "ob_res_top", "ob_levels_ts")
+
+
+def _ob_wire_fields(rec: Any, sym: str, price: Any) -> dict:
+    """DISPLAY ONLY: the book's SR column. Copies the order-block reading the
+    poll already stamped on the record's indicator dict (ob_resist_0.3 /
+    ob_room_pct: the same values the ob_resist skip reads) and adds cache-only
+    block levels for the tooltip. Never computes blocks, never fetches, never
+    raises, and nothing in the arm/place path reads these keys. {} = no reading.
+    """
+    try:
+        ind = rec.get("indicator") if isinstance(rec, dict) else None
+        if not isinstance(ind, dict) or "ob_resist_0.3" not in ind:
+            return {}
+        out = {
+            "ob_resist": bool(ind.get("ob_resist_0.3")),
+            "ob_room_pct": _f_or_none(ind.get("ob_room_pct")),
+            "ob_bars": _f_or_none(ind.get("ob_bars")),
+        }
+        px = _f_or_none(price)
+        if px:
+            import ob_observe
+            lv = ob_observe.levels(sym, px)
+            for k in ("ob_sup_btm", "ob_sup_top", "ob_res_btm", "ob_res_top", "ob_levels_ts"):
+                if lv.get(k) is not None:
+                    out[k] = _f_or_none(lv.get(k))
+        return out
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def _ob_observe_stamp(rec: dict, sym: str, price: Any, cfg: dict | None,

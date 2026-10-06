@@ -207,6 +207,39 @@ def fields(symbol: str, price: Any, now: float) -> dict[str, Any]:
 FIELD_KEYS = ("ob_resist_0.3", "ob_room_pct", "ob_bars", "ob_prior_day")
 
 
+def _support(b) -> bool:
+    return (b.kind == "bull" and not b.breaker) or (b.kind == "bear" and b.breaker)
+
+
+def levels(symbol: str, price: Any) -> dict[str, Any]:
+    """DISPLAY ONLY (dashboard book SR tooltip). Nearest charted support at or
+    below `price` and nearest charted resistance at or above it, from the LAST
+    block pass the poll already ran (``_CACHE``). Cache-only: never computes
+    blocks, never fetches, never raises; {} when nothing is cached."""
+    try:
+        sym = str(symbol or "").upper().strip()
+        px = float(price)
+        if not sym or not (px > 0):
+            return {}
+        with _LOCK:
+            hit = _CACHE.get(sym)
+        if not hit:
+            return {}
+        key, ch, _n, _prior = hit
+        out: dict[str, Any] = {"ob_levels_ts": float(key[0]) if key and key[0] else None}
+        sup = [b for b in ch if _support(b) and b.btm <= px]
+        res = [b for b in ch if _resistance(b) and b.top >= px]
+        if sup:
+            s = max(sup, key=lambda b: b.top)
+            out["ob_sup_btm"], out["ob_sup_top"] = float(s.btm), float(s.top)
+        if res:
+            r = min(res, key=lambda b: b.btm)
+            out["ob_res_btm"], out["ob_res_top"] = float(r.btm), float(r.top)
+        return out
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def copy_fields(src: Any, dst: dict) -> dict:
     """Copy whichever OB fields `src` carries onto `dst` (no keys when off)."""
     try:

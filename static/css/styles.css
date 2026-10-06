@@ -2465,7 +2465,8 @@ body.mobile [data-tv-toggle-btn] {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Chg | Entry | Stop | EXH | P&L
+  /* Ticker | State | Last | Chg | Entry | Stop | EXH | SR | P&L
+     SR = room to the nearest charted resistance order block (display only).
      EXH is the square-arm live reading (100 + fast %R). RSI stays retired.
      MACD went earlier (exit engine still uses it off-screen). Hold stays gone:
      the Stop cell shows the min-hold countdown while it runs and the stop
@@ -2480,6 +2481,7 @@ body.mobile [data-tv-toggle-btn] {
     minmax(48px, 0.68fr)
     minmax(56px, 0.8fr)
     minmax(56px, 0.75fr)
+    minmax(52px, 0.7fr)
     minmax(50px, 0.75fr);
   width: 100%;
   box-sizing: border-box;
@@ -2545,6 +2547,7 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .feed-cols--ai-book .cell-entry,
 .panel-ai-watch .feed-cols--ai-book .cell-hold,
 .panel-ai-watch .feed-cols--ai-book .cell-exh,
+.panel-ai-watch .feed-cols--ai-book .cell-sr,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
 
@@ -2827,13 +2830,15 @@ body.mobile .panel-ai-watch .feed-cols--ai-book {
     minmax(0, 0.9fr);
   grid-template-areas:
     "ticker state last chg entry pl"
-    "stop   exh   exh  .   .     .";
+    "stop   exh   exh  sr  .     .";
   row-gap: 5px;
   column-gap: 8px;
   align-items: center;
 }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-exh,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-sr,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-sr { grid-area: sr; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-ticker,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-state,
@@ -2885,13 +2890,15 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
       minmax(0, 0.9fr);
     grid-template-areas:
       "ticker state last chg entry pl"
-      "stop   exh   exh  .   .     .";
+      "stop   exh   exh  sr  .     .";
     row-gap: 5px;
     column-gap: 8px;
     align-items: center;
   }
   .panel-ai-watch .feed-cols--ai-book > .th-exh,
   .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
+  .panel-ai-watch .feed-cols--ai-book > .th-sr,
+  .panel-ai-watch .feed-cols--ai-book > .cell-sr { grid-area: sr; }
   .panel-ai-watch .feed-cols--ai-book > .th-ticker,
   .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
   .panel-ai-watch .feed-cols--ai-book > .th-state,
@@ -4777,6 +4784,9 @@ body.engine-visible .engine-bar                         { display: none !importa
 .cell-exh.exh--os        { color: #22d3ee; font-weight: 700; }      /* ▲ oversold */
 
 
+
+/* Book SR cell: inside / within 0.3% under resistance (the ob_resist skip zone). */
+.panel-ai-watch .feed-cols--ai-book .cell-sr.sr--resist { color: #f87171; font-weight: 600; }
 
 /* Book "Buy?" button: logs the operator's call, never trades. */
 .book-call-btn {
