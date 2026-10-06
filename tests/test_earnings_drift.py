@@ -241,3 +241,20 @@ def test_surprise_cases():
     assert ed.surprise("Acme Q3 EPS $1.00 vs $1.00 Estimate, Sales $5B Beat $4.9B Estimate") == "unclassified"
     assert ed.surprise("Acme Sees Q4 EPS $1.00-$1.10 vs $1.05 Estimate") is None           # guidance excluded
     assert ed.surprise("Acme Raises FY Guidance; Q3 EPS Beats") is None
+
+
+# ---------------------------------------------------------------- minors: unclassified sample, no_control logged
+def test_unclassified_sample_is_seeded(tmp_path):
+    ev = [{"sym": f"S{i}", "ts": f"2020-01-{1 + i % 28:02d}", "headline": f"h{i}", "surprise": "unclassified"}
+          for i in range(80)] + [{"sym": "B", "ts": "x", "headline": "hb", "surprise": "beat"}]
+    a = ed.dump_unclassified(ev, str(tmp_path / "u.txt"))
+    b = ed.dump_unclassified(list(reversed(ev)), str(tmp_path / "u2.txt"))
+    assert len(a) == 50 and a == b and all(e["surprise"] == "unclassified" for e in a)
+    assert (tmp_path / "u.txt").read_text().startswith("# 50 of 80 unclassified")
+
+
+def test_report_logs_no_control(tmp_path, monkeypatch):
+    import collections
+    monkeypatch.setattr(ed, "WORK", str(tmp_path))
+    ed.score(_fake_P(), _fake_rows(), collections.Counter({"no_control": 4}), {})
+    assert "no control (12 candidates tried): 4" in (tmp_path / "report.md").read_text()

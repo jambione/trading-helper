@@ -286,6 +286,17 @@ def d0_of(t0, sessions, sset):
     return sessions[i] if i < len(sessions) else None
 
 
+def dump_unclassified(events, path, k=50):
+    """Skeptic minor (2026-10-06): a seeded sample of 50 unclassified headlines to read by hand before scoring."""
+    un = sorted((e for e in events if e["surprise"] == "unclassified"), key=lambda e: (e["sym"], e["ts"]))
+    pick = random.Random(41).sample(un, min(k, len(un)))
+    with open(path, "w") as f:
+        f.write(f"# {len(pick)} of {len(un)} unclassified events (seed 41)\n")
+        for e in pick:
+            f.write(f"{e['sym']}\t{e['ts']}\t{e['headline']}\n")
+    return pick
+
+
 def phase_events():
     P = panel()
     S = jload(os.path.join(WORK, "symbols.json"))
@@ -351,6 +362,7 @@ def phase_events():
             earn_t[s] = sorted(heads)
     cnt["news_fail_symbols"] = len(nf)
     jsave(os.path.join(WORK, "events.json"), {"events": ev, "counts": dict(cnt), "earn_t": earn_t})
+    dump_unclassified(ev, os.path.join(WORK, "unclassified_sample.txt"))
     P_(f"events {len(ev)}; {dict(cnt)}")
 
 
@@ -685,6 +697,7 @@ def score(P, rows, cnt, ecnt, events=None):
     L = ["# Earnings drift (prereg docs/studies/earnings_drift_prereg.json)", "",
          "## Power (SE and MDE per half, written before any mean; MDE = 2.84 x max(SE week, SE calendar))", "```",
          json.dumps(res["power"], indent=1), "```", "", f"**VERDICT: {res['verdict']}**", "",
+         f"PRIMARY events with no control (12 candidates tried): {res['score_counts'].get('no_control', 0)}", "",
          "```", json.dumps({k: v for k, v in res.items() if k not in ("information", "power")}, indent=1), "```", "",
          "## Information", "```", json.dumps(info, indent=1), "```"]
     open(os.path.join(WORK, "report.md"), "w").write("\n".join(L) + "\n")
