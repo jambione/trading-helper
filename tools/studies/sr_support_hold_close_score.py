@@ -4,6 +4,8 @@
 Pre-registration (locked BEFORE any 10/06+ session existed):
   docs/studies/sr_support_hold_close_forward_prereg.json   (commit c1e9c30)
   docs/studies/SR_SUPPORT_HOLD_CLOSE_FORWARD_PREREG.md
+Addendum (INFO ONLY trailing-stop rows T1-T4, registered before the 10/06 open; cannot change the verdict):
+  docs/studies/sr_support_hold_close_forward_trails_addendum.json (commit 1bd4659)
 
 Reads ONLY the desk's own recordings under ai_reports/sessions/<YYYY-MM-DD>/
 (decisions, prints, wire, inputs .jsonl.gz). No network, no broker, no Databento,
@@ -314,6 +316,46 @@ def random_minute(nd, i, seat_ts, rng):
 
 
 # ----------------------------------------------------------------------------- outcomes (score mode only)
+TRAILS = ("T1", "T2", "T3", "T4")                        # addendum 1bd4659, INFO ONLY
+TRAIL_DESC = {"T1": "trail 1.0%", "T2": "trail 2.0%", "T3": "BE at +1%, then trail 1.5%",
+              "T4": "block low -0.1%, trail 1.5% from +1%"}
+
+
+def default_block_btm(nd, i, entry):
+    sb = [b for b in nd.ch(i) if is_sup(b) and b.btm < entry]
+    return max(sb, key=lambda b: b.top).btm if sb else None
+
+
+def trail_exits(rows, ie, last, block_btm):
+    """Addendum T1-T4. Bar j's stop uses the running high through bar j-1 (start = entry);
+    low <= stop -> exit at min(stop, open); else the close of bar `last` (15:55)."""
+    entry = rows[ie][1]
+    eod = rows[last][4] / entry - 1
+    init = block_btm * (1 - 0.001) if block_btm is not None else None
+    out = {}
+    for v in TRAILS:
+        H, res = entry, None
+        for j in range(ie, last + 1):
+            o, lo = rows[j][1], rows[j][3]
+            armed = H >= entry * 1.01
+            if v == "T1":
+                stop = H * 0.99
+            elif v == "T2":
+                stop = H * 0.98
+            elif v == "T3":
+                stop = max(entry, H * 0.985) if armed else None
+            else:
+                stop = init
+                if armed:
+                    stop = H * 0.985 if init is None else max(init, H * 0.985)
+            if stop is not None and lo <= stop:
+                res = min(stop, o) / entry - 1
+                break
+            H = max(H, rows[j][2])
+        out[v] = eod if res is None else res
+    return out
+
+
 def outcomes(nd, i, stop_btm=None):
     rows, ie = nd.rows, i + 1
     entry = rows[ie][1]
@@ -332,7 +374,9 @@ def outcomes(nd, i, stop_btm=None):
             gt = max(tgt, o) / entry - 1
         if gs is not None and gt is not None:
             break
-    return {"close": eod, "stop": eod if gs is None else gs, "res": eod if gt is None else gt}
+    tb = stop_btm if stop_btm is not None else default_block_btm(nd, i, entry)
+    return {"close": eod, "stop": eod if gs is None else gs, "res": eod if gt is None else gt,
+            **trail_exits(rows, ie, last, tb)}
 
 
 # ----------------------------------------------------------------------------- main
@@ -452,7 +496,8 @@ def main():
         nd = r["nd"]
         r["o"] = outcomes(nd, r["i"], r["S_btm"])
         if r["g"] == "support" and r["ctrl"] is not None:
-            r["c"] = outcomes(nd, r["ctrl"])["close"]
+            co = outcomes(nd, r["ctrl"])
+            r["c"], r["ct"] = co["close"], co
     bp = lambda x: f"{x * 1e4:+7.1f}"                   # noqa: E731
     verdicts = {}
     print("\nRESULTS (bp; t = day-clustered)  PRIMARY = support - paired same-hour random, held to 15:55")
@@ -492,6 +537,21 @@ def main():
         ys = [r["o"]["close"] for r in D]
         if xs and ys:
             print(f"   info: support mean - desk-arm mean {bp(statistics.fmean(xs) - statistics.fmean(ys))}")
+        print(f"   INFO ONLY trailing stops (addendum 1bd4659; cannot change the verdict); give-back = variant - 15:55")
+        for v in TRAILS:
+            parts = []
+            for nm, xs, hold, dd in (("support", [r["o"][v] for r in S], [r["o"]["close"] for r in S], [r["day"] for r in S]),
+                                     ("random", [r["ct"][v] for r in P], [r["c"] for r in P], [r["day"] for r in P]),
+                                     ("desk", [r["o"][v] for r in D], [r["o"]["close"] for r in D], [r["day"] for r in D])):
+                if not xs:
+                    parts.append(f"{nm} n=0")
+                    continue
+                parts.append(f"{nm} n={len(xs)} gross {bp(statistics.fmean(xs))} net {bp(statistics.fmean(xs) - cost)} "
+                             f"med {bp(statistics.median(xs))} win {100 * sum(x > 0 for x in xs) / len(xs):.0f}% "
+                             f"giveback {bp(statistics.fmean(xs) - statistics.fmean(hold))}")
+            lv = [r["o"][v] - r["ct"][v] for r in P]
+            mm, tt = tstat(lv, [r["day"] for r in P]) if lv else (float("nan"), float("nan"))
+            print(f"   {v} {TRAIL_DESC[v]:34s} support-random {bp(mm)} t={tt:5.2f} | " + " | ".join(parts))
         verdicts[h] = "UNDERPOWERED" if under else ("PASS" if ok else "FAIL")
     v = ("UNDERPOWERED (no verdict)" if "UNDERPOWERED" in verdicts.values() else
          "PASS - PENDING SKEPTIC REVIEW" if all(x == "PASS" for x in verdicts.values()) else "FAIL")
