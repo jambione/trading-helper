@@ -1,0 +1,13 @@
+{
+ "study": "Tight-spread shadow name supply: would a list of liquid ($10+, prior-day $vol >= $50M), tight (SIP spread <= 0.03% at the delayed knowable time), moving (>= +1% on the day) names give the desk more and cheaper square opportunities than the names it actually held?",
+ "registered_at": "2026-10-06 ~20:00 ET, before any forward session is scored",
+ "registered_before_results": true,
+ "origin": "Operator 10/6, after the bottleneck review: the 0.05% spread cap thins the book because the desk's sources supply mostly wide gappers; source tight movers directly. Shadow only: the desk never trades from it.",
+ "tool": "tools/studies/tight_shadow.py DAY (rules in its docstring), run after each close; ai_reports/tight_shadow/summary.jsonl",
+ "sessions": "every session from 2026-10-07; scored at >= 10 sessions. 10/06 is a dry run (pipeline check, not counted).",
+ "primary": "per day, mean net15 of SHADOW square events minus mean net15 of DESK-BOOK square events (identical method: same square definition, same 15-min hold, cost = full SIP spread at the decision); mean over days with a t across days",
+ "pass": "difference >= +5 bp with t >= 2 across >= 10 sessions, AND shadow events per day >= desk-book events per day (it must add supply, not just shrink it). A pass earns a pre-registered live test of adding the shadow list as a desk source (after the cost-arm freeze, skeptic review first); not a config change by itself.",
+ "information_only": ["shadow and desk-book gross15, cost and net15 separately", "names per day and overlap with the desk book", "movers per checkpoint", "request retries / failures and coverage (a day under 90% minute coverage is flagged and excluded)"],
+ "prior": "moderate on cost (tight names cost less by construction), low on gross (name filters have lifted the win rate, never the mean; megacaps drift flat)",
+ "caveats": ["fixed 15-min hold, not the desk's trail", "SIP bars and NBBO; the desk sees IEX", "the desk's own gates (rvol, float, uptrend, etc.) are not applied to the shadow list", "square defined on SIP 1-min %R (approximates the desk's minute-grid %R)"]
+}
