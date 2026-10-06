@@ -69,7 +69,7 @@ def test_wire_fields_are_empty_without_a_reading_and_never_raise():
         ob_observe._BARS.pop("ABC", None)
     assert ew._ob_wire_fields(None, "ABC", 10.0) == {}
     assert ew._ob_wire_fields({"indicator": {"ob_resist_0.3": True}}, "ABC", "junk") == {
-        "ob_resist": True, "ob_room_pct": None, "ob_bars": None}
+        "ob_resist": True, "ob_room_pct": None, "ob_brk_dist_pct": None, "ob_bars": None}
 
 
 def test_levels_is_cache_only(monkeypatch):
@@ -122,3 +122,15 @@ def test_store_size_never_raises(monkeypatch):
     import ob_observe
     monkeypatch.setattr(ob_observe, "_BARS", {"ABC": {1.0: (), 2.0: ()}})
     assert ob_observe.store_size("abc") == 2 and ob_observe.store_size(None) == 0
+
+
+def test_breakout_distance_travels_to_the_sr_cell(monkeypatch):
+    import ai_entry_watch as ew
+    import ob_observe
+    monkeypatch.setattr(ob_observe, "levels", lambda sym, px: {})
+    rec = {"indicator": {"ob_resist_0.3": False, "ob_room_pct": 1.0, "ob_brk_dist_pct": 0.2, "ob_bars": 400}}
+    out = ew._ob_wire_fields(rec, "ABC", 10.0)
+    assert out["ob_brk_dist_pct"] == 0.2
+    assert "ob_brk_dist_pct" in ew._OB_WIRE_KEYS
+    assert "ob_brk_dist_pct: w.ob_brk_dist_pct != null" in _JS
+    assert "sr--clean" in _JS and "sr--chase" in _JS

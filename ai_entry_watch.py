@@ -14054,7 +14054,7 @@ def _ob_resist_refusal(ob_fields: dict | None, cfg: dict | None) -> bool:
         return False
 
 
-_OB_WIRE_KEYS = ("ob_resist", "ob_room_pct", "ob_bars", "ob_sup_btm", "ob_sup_top",
+_OB_WIRE_KEYS = ("ob_resist", "ob_room_pct", "ob_brk_dist_pct", "ob_bars", "ob_sup_btm", "ob_sup_top",
                  "ob_res_btm", "ob_res_top", "ob_levels_ts", "ob_nobars", "ob_off",
                  "ob_stale")
 
@@ -14092,6 +14092,7 @@ def _ob_wire_fields(rec: Any, sym: str, price: Any) -> dict:
         out = {
             "ob_resist": bool(ind.get("ob_resist_0.3")),
             "ob_room_pct": _f_or_none(ind.get("ob_room_pct")),
+            "ob_brk_dist_pct": _f_or_none(ind.get("ob_brk_dist_pct")),
             "ob_bars": _f_or_none(ind.get("ob_bars")),
         }
         px = _f_or_none(price)

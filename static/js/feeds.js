@@ -362,6 +362,7 @@ function _bookRows(book) {
       // reading. Fifth field to travel this whitelist chain.
       ob_resist: w.ob_resist != null ? !!w.ob_resist : null,
       ob_room_pct: w.ob_room_pct != null ? w.ob_room_pct : null,
+      ob_brk_dist_pct: w.ob_brk_dist_pct != null ? w.ob_brk_dist_pct : null,
       ob_bars: w.ob_bars != null ? w.ob_bars : null,
       ob_sup_btm: w.ob_sup_btm != null ? w.ob_sup_btm : null,
       ob_sup_top: w.ob_sup_top != null ? w.ob_sup_top : null,
@@ -1857,6 +1858,8 @@ function _bookRowHtml(r) {
 function _bookSrText(r) {
   if (!r) return '\u2014';
   if (r.ob_resist == null) return r.ob_nobars ? 'no bars' : (r.ob_stale ? 'stale' : (r.ob_off ? 'off' : '\u2014'));
+  const brk = _bookSrBrk(r);
+  if (brk != null) return `brk +${brk.toFixed(2)}%`;
   const room = r.ob_room_pct != null && Number.isFinite(Number(r.ob_room_pct))
     ? Number(r.ob_room_pct) : null;
   if (room == null) return 'no R';
@@ -1864,8 +1867,27 @@ function _bookSrText(r) {
   return `R +${room < 1 ? room.toFixed(2) : room.toFixed(1)}%`;
 }
 
+/** % above the top of a sell zone broken in the last 15 min (ob_brk_dist_pct), or null. */
+function _bookSrBrk(r) {
+  if (!r || r.ob_brk_dist_pct == null) return null;
+  const v = Number(r.ob_brk_dist_pct);
+  return Number.isFinite(v) ? v : null;
+}
+
+/** Breakout bands from docs/studies/sr_breakout_forward_prereg.json (UNPROVEN leads, display only):
+ *  clean 0.10-0.30% (green), chase >= 0.30% (red), poke < 0.10% (plain). */
+function _bookSrBrkBand(brk) {
+  if (brk == null) return null;
+  if (brk >= 0.30) return 'chase';
+  if (brk >= 0.10) return 'clean';
+  return 'poke';
+}
+
 function _bookSrClass(r) {
   if (r && r.ob_resist == null && (r.ob_nobars || r.ob_off || r.ob_stale)) return ' sr--none';
+  const band = _bookSrBrkBand(_bookSrBrk(r));
+  if (band === 'clean') return ' sr--clean';
+  if (band === 'chase') return ' sr--chase';
   return r && r.ob_resist === true ? ' sr--resist' : '';
 }
 
@@ -1885,6 +1907,13 @@ function _bookSrTitle(r) {
   const sb = f(r.ob_sup_btm), st = f(r.ob_sup_top);
   bits.push(rb ? `resistance ${rb}\u2013${rt}` : 'resistance: none charted above');
   bits.push(sb ? `support ${sb}\u2013${st}` : 'support: none charted below');
+  const brk = _bookSrBrk(r);
+  if (brk != null) {
+    const band = _bookSrBrkBand(brk);
+    bits.push(`BREAKOUT: ${brk.toFixed(2)}% above a sell zone broken in the last 15 min (${band}`
+      + `${band === 'clean' ? ': 0.10-0.30%, the one band that did better in the 10/5 study' : band === 'chase' ? ': over 0.30%, chasing; the worst bands in the 10/5 study' : ': under 0.10%'})`
+      + ' \u2014 an unproven lead, being tested forward');
+  }
   if (r.ob_resist === true) bits.push('IN THE 0.3% RESIST ZONE (inside or within 0.3% under): the live ob_resist skip refuses arms here');
   if (r.ob_bars != null) bits.push(`${Math.round(Number(r.ob_bars))} bars`);
   if (r.ob_levels_ts != null && Number.isFinite(Number(r.ob_levels_ts))) {

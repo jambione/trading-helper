@@ -4787,6 +4787,8 @@ body.engine-visible .engine-bar                         { display: none !importa
 
 /* Book SR cell: inside / within 0.3% under resistance (the ob_resist skip zone). */
 .panel-ai-watch .feed-cols--ai-book .cell-sr.sr--resist { color: #f87171; font-weight: 600; }
+.panel-ai-watch .feed-cols--ai-book .cell-sr.sr--chase { color: #f87171; font-weight: 600; }
+.panel-ai-watch .feed-cols--ai-book .cell-sr.sr--clean { color: #4ade80; font-weight: 600; }
 .panel-ai-watch .feed-cols--ai-book .cell-sr.sr--none { color: var(--text-dim, #9aa); font-style: italic; }
 
 /* Book "Buy?" button: logs the operator's call, never trades. */
