@@ -164,3 +164,46 @@ def test_control_order_is_per_event():
     assert a == ed.control_order("AAPL", "2024-05-03", 1300, [1300], 5000)       # independent of call order
     assert a != ed.control_order("MSFT", "2024-05-03", 1300, [1300], 5000)
     assert len(a) == 12 and all(abs(t - 1300) > 10 for t in a)
+
+
+# ---------------------------------------------------------------- FIX FIRST 8 power from the larger SE, written first
+def test_power_block_uses_larger_se():
+    assert ed.power_block(5.0, 12.0)["mde_bp"] == round(2.84 * 12.0, 2)
+    assert ed.power_block(12.0, 5.0)["se_used"] == 12.0
+    assert math.isnan(ed.power_block(5.0, float("nan"))["mde_bp"])
+    assert math.isnan(ed.power_block(float("nan"), 5.0)["mde_bp"])     # order must not matter (max(nan, x) does)
+
+
+def _fake_rows(n_per_half=40, seed=3):
+    import random
+    from datetime import date, timedelta
+    rng = random.Random(seed)
+    rows = []
+    for k in range(2 * n_per_half):
+        d = date(2020, 1, 6) + timedelta(days=7 * (k % n_per_half)) if k < n_per_half else \
+            date(2024, 1, 8) + timedelta(days=7 * (k % n_per_half))
+        dd = [(d + timedelta(days=i)).isoformat() for i in range(1, 6)]
+        daily = [rng.gauss(0, 100) for _ in range(5)]
+        cdaily = [rng.gauss(0, 100) for _ in range(5)]
+        rows.append({"sym": f"S{k % 7}", "d0": d.isoformat(), "surprise": "beat", "r0": 0.02, "primary": True,
+                     "x5": sum(daily), "raw5": sum(daily), "x1": daily[0], "x20": None, "daily": daily, "ddates": dd,
+                     "ctl": {"t": 0, "x5": sum(cdaily), "daily": cdaily, "ddates": dd}})
+    return rows
+
+
+def _fake_P():
+    import numpy as np
+    return {"syms": np.array([f"S{i}" for i in range(7)]), "status": np.array(["active"] * 7)}
+
+
+def test_report_writes_power_before_any_mean(tmp_path, monkeypatch):
+    import collections
+    monkeypatch.setattr(ed, "WORK", str(tmp_path))
+    monkeypatch.setattr(ed, "coverage", lambda P, ev: {}, raising=False)
+    ed.score(_fake_P(), _fake_rows(), collections.Counter({"no_control": 4}), {})
+    rep = (tmp_path / "report.md").read_text()
+    assert rep.index("## Power") < rep.index("diff_bp") and rep.index("## Power") < rep.index("mean_bp_gross")
+    res = __import__("json").loads((tmp_path / "result.json").read_text())
+    for h in ("H1", "H2"):
+        p = res["power"][h]
+        assert p["se_used"] == max(p["se_week"], p["se_cal"]) and p["mde_bp"] == round(2.84 * p["se_used"], 2)

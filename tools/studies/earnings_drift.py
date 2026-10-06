@@ -30,8 +30,8 @@ Rules (from the pre-registration):
              SE (a) clustered by ISO week of D0, (b) calendar-time: daily mean of open PRIMARY daily excess and of open
              CONTROL daily excess, Newey-West lag 5, SE of the difference = sqrt(se1^2 + se2^2); the smaller |t| is used
   pass       diff >= +20 bp at 10 bp with t >= 2 in BOTH halves (H1 2019-2022, H2 2023-2026-09-18), >= 300 events per
-             half, diff > 0 at 30 bp, > 0 after dropping the top 3 weeks and the top 5 names; power: MDE = 2.84 x SE
-             (week-clustered) <= 30 bp per half, else UNDERPOWERED
+             half, diff > 0 at 30 bp, > 0 after dropping the top 3 weeks and the top 5 names; power: MDE = 2.84 x the larger
+             of the week-clustered and calendar-time SE <= 30 bp per half, else UNDERPOWERED (reported before means)
 """
 from __future__ import annotations
 
@@ -563,6 +563,13 @@ def t_used(t_week, t_cal):
     return min(t_week, t_cal)
 
 
+def power_block(se_week, se_cal):
+    """MDE = 2.84 x SE. Skeptic FIX FIRST 8 (2026-10-06): the SE is the LARGER of the week-clustered and the
+    calendar-time SE (NaN if either is NaN, which reads as underpowered), not the week SE alone."""
+    se = max(se_week, se_cal) if (se_week == se_week and se_cal == se_cal) else float("nan")
+    return {"se_week": round(se_week, 2), "se_cal": round(se_cal, 2), "se_used": round(se, 2), "mde_bp": round(2.84 * se, 2)}
+
+
 def cal_series(rows, key_daily, key_dates, cost_bp=0.0):
     by = collections.defaultdict(list)
     for r in rows:
@@ -576,11 +583,12 @@ def score(P, rows, cnt, ecnt):
     status = {str(s): str(st) for s, st in zip(P["syms"], P["status"])}
     res = {"prereg": "docs/studies/earnings_drift_prereg.json (7ed491c, 218199a)", "event_counts": ecnt, "score_counts": dict(cnt)}
     halves = {"H1": lambda d: d <= H1_END, "H2": lambda d: d > H1_END}
-    out = {}
+    out, power = {}, {}
     for hn, f in halves.items():
         pr = [r for r in rows if r["primary"] and r.get("ctl") and f(r["d0"])]
         if not pr:
             out[hn] = {"n": 0}
+            power[hn] = {"n": 0, **power_block(float("nan"), float("nan"))}
             continue
         wk = [datetime.strptime(r["d0"], "%Y-%m-%d").strftime("%G-%V") for r in pr]
         o = {"n": len(pr)}
@@ -591,10 +599,11 @@ def score(P, rows, cnt, ecnt):
             cm, cse = nw_mean_se(cal_series([{"daily": r["ctl"]["daily"], "ddates": r["ctl"]["ddates"]} for r in pr], "daily", "ddates"))
             t_week = m / se if se and se == se else float("nan")
             t_cal = (pm - cm) / math.sqrt(pse ** 2 + cse ** 2) if pse == pse and cse == cse else float("nan")
-            o[f"cost{int(cost)}"] = {"diff_bp": round(m, 2), "se_week": round(se, 2), "t_week": round(t_week, 2),
+            o[f"cost{int(cost)}"] = {"diff_bp": round(m, 2), "t_week": round(t_week, 2),
                                      "cal_daily_diff_bp": round(pm - cm, 3), "t_cal": round(t_cal, 2),
-                                     "t_used": round(t_used(t_week, t_cal), 2),
-                                     "mde_bp": round(2.84 * se, 2)}
+                                     "t_used": round(t_used(t_week, t_cal), 2)}
+            if cost == 10.0:
+                power[hn] = {"n": len(pr), **power_block(se, math.sqrt(pse ** 2 + cse ** 2))}
         diff10 = [(r["x5"] - 10) - r["ctl"]["x5"] for r in pr]
         wsum = collections.defaultdict(float)
         nsum = collections.defaultdict(float)
@@ -607,8 +616,9 @@ def score(P, rows, cnt, ecnt):
         o["drop_top5_names_mean"] = round(statistics.fmean([v for v, r in zip(diff10, pr) if r["sym"] not in tn]), 2)
         o["primary_vs_spy_net10_mean"] = round(statistics.fmean([r["x5"] - 10 for r in pr]), 2)
         out[hn] = o
+    pw = all(power[h]["mde_bp"] <= 30 for h in power)                  # NaN MDE -> False -> UNDERPOWERED
+    res = {"prereg": res["prereg"], "power": {**power, "power_ok": pw}, **{k: v for k, v in res.items() if k != "prereg"}}
     res["primary"] = out
-    pw = all(out[h].get("cost10", {}).get("mde_bp", 1e9) <= 30 for h in out)
     crit = {}
     for h in ("H1", "H2"):
         o = out[h]
@@ -646,9 +656,11 @@ def score(P, rows, cnt, ecnt):
     info["unclassified_per_year"] = dict(sorted(collections.Counter(r["d0"][:4] for r in rows if r["surprise"] == "unclassified").items()))
     res["information"] = info
     jsave(os.path.join(WORK, "result.json"), res)
-    L = ["# Earnings drift (prereg docs/studies/earnings_drift_prereg.json)", "", f"**VERDICT: {res['verdict']}**", "",
-         "```", json.dumps({k: v for k, v in res.items() if k != "information"}, indent=1), "```", "", "## Information", "```",
-         json.dumps(info, indent=1), "```"]
+    L = ["# Earnings drift (prereg docs/studies/earnings_drift_prereg.json)", "",
+         "## Power (SE and MDE per half, written before any mean; MDE = 2.84 x max(SE week, SE calendar))", "```",
+         json.dumps(res["power"], indent=1), "```", "", f"**VERDICT: {res['verdict']}**", "",
+         "```", json.dumps({k: v for k, v in res.items() if k not in ("information", "power")}, indent=1), "```", "",
+         "## Information", "```", json.dumps(info, indent=1), "```"]
     open(os.path.join(WORK, "report.md"), "w").write("\n".join(L) + "\n")
     P_("\n".join(L))
 
