@@ -291,3 +291,58 @@ def test_news_unit_resumes_from_checkpointed_token(tmp_path, monkeypatch):
     seen.clear()
     rows = ed.fetch_unit(u, {}, getf=fake, every=1)
     assert seen == ["t2"] and [r["h"] for r in rows] == ["p1", "p2", "p3"]
+
+
+# ---------------------------------------------------------------- end to end on fakes (no network, no panel file)
+def test_events_and_score_end_to_end_on_fakes(tmp_path, monkeypatch):
+    import json
+    import numpy as np
+    import pandas as pd
+    dates = [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2019-01-02", periods=700)]
+    T, rng = len(dates), np.random.default_rng(5)
+    spy = 300 * np.cumprod(1 + rng.normal(0, 0.01, T))
+    c = 50 * np.cumprod(1 + rng.normal(0, 0.015, (T, 2)), axis=0)
+    P = {"dates": dates, "ix": {d: i for i, d in enumerate(dates)}, "col": {"AAA": 0, "BBB": 1},
+         "c": c, "rc": c.copy(), "v": np.full((T, 2), 5e6), "spy_c": spy, "syms": np.array(["AAA", "BBB"]),
+         "status": np.array(["active", "active"])}
+    P["adv_prev"] = np.full((T, 2), 1e9)
+    monkeypatch.setattr(ed, "WORK", str(tmp_path))
+    monkeypatch.setattr(ed, "panel", lambda: P)
+    monkeypatch.setattr(ed, "headers", lambda: {})
+    monkeypatch.setattr(ed, "market_hours_guard", lambda: None)
+    monkeypatch.setattr(ed, "D_LO", dates[200])
+    monkeypatch.setattr(ed, "D_HI", dates[650])
+    (tmp_path / "news").mkdir()
+    S = {"symbols": ["AAA", "BBB"], "name_changes": []}
+    json.dump(S, open(tmp_path / "symbols.json", "w"))
+    for sym in S["symbols"]:
+        arts = []
+        for k, t in enumerate(range(210, 640, 63)):
+            word = "Beats" if k % 2 == 0 else "Misses"
+            arts.append({"h": f"{sym} Q{1 + k % 4} EPS $1.10 {word} $1.00 Estimate", "c": f"{dates[t]}T11:00:00Z", "id": f"{sym}{k}"})
+        arts.append({"h": f"{sym} Q2 EPS $1.10 Beats $1.00 Estimate", "c": f"{dates[620]}T19:50:00Z", "id": f"{sym}late"})
+        u = (sym, sym, ed.NEWS_START, ed.NEWS_END)
+        json.dump(arts, open(ed.unit_file(u), "w"))
+    ed.phase_events()
+    E = json.load(open(tmp_path / "events.json"))
+    assert E["counts"]["excluded_1545_1600"] == 2 and E["earn_t"]["AAA"]
+
+    def fake_get(url, params, H):
+        day = params["start"][:10]
+        t = P["ix"][day]
+        out = {}
+        for sym in params["symbols"].split(","):
+            j = P["col"][sym]
+            out[sym] = [{"t": f"{day}T19:44:00Z", "c": float(c[t - 1, j] * (1.01 if t % 3 else 0.99))}]
+        return {"bars": out, "next_page_token": None}
+
+    import pytest
+    monkeypatch.setattr(ed, "get", lambda url, params, H: None)       # every minute request fails
+    with pytest.raises(SystemExit, match="fetch_fail"):
+        ed.phase_minutes_and_score()
+    assert not (tmp_path / "result.json").exists()
+    monkeypatch.setattr(ed, "get", fake_get)
+    ed.phase_minutes_and_score()
+    res = json.load(open(tmp_path / "result.json"))
+    assert res["score_counts"]["fetch_fail"] == 0 and "coverage" in res and res["power"]["H1"]["n"] >= 0
+    assert list(res)[:2] == ["prereg", "power"]
