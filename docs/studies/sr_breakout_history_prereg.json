@@ -1,0 +1,21 @@
+{
+ "study": "Breakout distance above a just-broken LuxAlgo sell zone at desk-like square moments, on untouched history: do chases (>= 0.30%) do worse, and clean breaks (0.10-0.30%) better, than square moments with no breakout?",
+ "registered_at": "2026-10-06 ~18:30 ET, before any of this period's bars were fetched with lows or any order block was computed on it",
+ "registered_before_results": true,
+ "origin": "Operator 10/6: 'can we test the breakout distance SR flag to prove its usefulness?' Leads from order_block_gate.py (9/11-10/02, information cells): chase -21/-27 bp vs non-breakout arms (t -1.3/-1.6); clean +14.5 (t +1.5). The forward test on desk fills (sr_breakout_forward_prereg.json) stays; this is a faster check on more data.",
+ "period": "sessions 2026-05-01..2026-09-10 (ends before the 9/11-10/02 sample already mined); split by date into first and second half",
+ "universe": "per session the 40 largest opening gappers: open >= $10, prior-day $vol >= $20M, gap >= +2% (sip_breakout_study.universe on ai_reports/allsym/daily_2025-09-01_2026-10-02.pkl)",
+ "bars": "SIP 1-minute, split-adjusted, prior trading day + the day, 04:00-16:00 ET",
+ "events": "1-min close 09:40-15:00 ET with fast %R (21, EMA 7) >= -20 AND slow %R (112, EMA 3) >= -20 (the desk's square, approximated on SIP); first such minute per name per clock 15-min block",
+ "feature": "brk = % the close is above the top of the most recently broken charted bearish OB (break within the last 15 min, close still above its top), blocks point-in-time from tools/order_blocks.py (swing 10, wicks, charted last 3 per side). Bands: none | poke [0,0.10) | clean [0.10,0.30) | chase [0.30, inf).",
+ "outcome": "net15 = next bar open -> close 15 min later (15:55 cap) minus 0.20% (constant across groups)",
+ "statistic": "band vs 'none' events, OLS with day fixed effects, day-clustered t",
+ "pass": {
+  "H2_chase": "chase minus none <= -5 bp with t <= -2 in BOTH halves, AND pooled t <= -2.24 (Bonferroni 2), >= 100 chase events per half",
+  "H3_clean": "clean minus none >= +5 bp with t >= 2 in BOTH halves, AND pooled t >= 2.24, >= 100 clean events per half",
+  "else": "fewer than 100 events in a half -> UNDERPOWERED; otherwise FAIL",
+  "consequence": "a PASS (after skeptic review) makes the flag a candidate live A/B after the cost-arm freeze; poke is information only"
+ },
+ "no_retuning": "bands, 15-min break window, swing 10, charted-3, %R thresholds and the 15-min hold are fixed here",
+ "caveats": ["SIP bars; the desk sees IEX", "square approximated (the desk's minute-grid %R differs slightly)", "fixed 15-min hold, not the desk's trail", "split-adjusted prices (percent results unaffected)"]
+}
