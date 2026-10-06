@@ -130,6 +130,15 @@ def absorb_df(symbol: str, df: Any) -> int:
         return 0
 
 
+def store_size(symbol: str) -> int:
+    """How many 1-minute bars the store holds for `symbol` (0 = none). Never raises."""
+    try:
+        with _LOCK:
+            return len(_BARS.get(str(symbol or "").upper().strip()) or {})
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def bars(symbol: str) -> list[tuple]:
     """Stored bars, oldest first (a copy)."""
     with _LOCK:
