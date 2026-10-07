@@ -1,3 +1,9 @@
+> **2026-10-07 state (Claude near usage limit):** Trader Bro + alerts study is on branch `bro-sr-wr-study`
+> (builder adding 2 info cells + `--source alerts`; preregs `bro_sr_wr_prereg.json` cbd07d1, `alerts_sr_wr_prereg.json` ee616dd).
+> It still needs the skeptic's code sign-off before merge/run, so do NOT run it unreviewed; if Claude is out, it waits a day.
+> Nightly, unaffected: `tools/studies/tight_shadow.py DAY`, `tools/studies/ob_fills_daily.py DAY`, arm scorers (see docs/PLAN_2026-10-06.md).
+> Tight source (branch `tight-source`, switch off) merges 10/15 with the G2 change. Config freeze to 10/15.
+>
 > **PLAN (2026-10-06): [`docs/PLAN_2026-10-06.md`](docs/PLAN_2026-10-06.md)** — dated decision gates G1–G7, G-LIVE and overnight O1, the nightly
 > scorer commands, and the one-change-at-a-time order after the 10/15 freeze. Read this before changing anything.
 >
