@@ -1,0 +1,20 @@
+{
+ "study": "Tight-sized ratchet: on the calm, tight-spread names (source 'tight'), does a ratchet sized in percent of price earn more net per trade than the live R-sized ratchet? Replay of the live code on each session's recorded inputs.",
+ "registered_at": "2026-10-07 ~11:25 ET, before any replay of these variants and before any tight trade was scored",
+ "registered_before_results": true,
+ "origin": "Operator 10/7 on INTC ('ratchet ... going but slowly'): fill 113.94, peak 114.275, closed 114.15 by local_trail after 198 s. The synthetic stop is 5% under the fill (ai_watch_synth_stop_pct 5), so 1R = $5.69 and the trail arms only at 0.06R = +0.30%; tight names often move about that much in total. Prior (exits-cannot-move-the-mean, 42 shapes ~0 gross; let_run_replay 10/7 FAIL): exit shapes move the win rate, not the mean.",
+ "sessions": "every session from 2026-10-07 (10/07 partial: tight on from ~10:57) until T1 is scored (tight_source_live_prereg.json: >= 10 sessions, >= 60 tight trades)",
+ "tool": "scripts/tight_trail_replay.sh DAY (mini, after the close): tools/replay_session.py --day DAY [--set ...] --out /tmp/tt_run/DAY-VARIANT.json, costed with tools/studies/replay_costing.py; a trade is 'tight' if its symbol was seeded as source 'tight' that day (ai_reports/shadow.jsonl rows with source 'tight')",
+ "variants": {
+  "base": "live config as recorded for the day",
+  "arm_pct": "ai_local_trail_arm_pct=0.10 (the trail also arms at +0.10% of price; everything else live)",
+  "stop_1pct": "ai_watch_synth_stop_pct=1.0 (synthetic stop 1% under the fill, so every R-based trail knob shrinks 5x: arm ~+0.06%, give 0.12R ~0.12%)"
+ },
+ "scope": "--set is global in the replay, so movers trades change too; only tight trades are scored. Slot competition between sources is a stated caveat.",
+ "fidelity": "per session, base-replay tight trades vs live tight fills (outcomes.jsonl source 'tight'): report recall; a session with live tight fills and base recall < 0.5 is excluded (counted). Check n > 0 tight trades per variant per day before any mean (replays have been vacuous before).",
+ "statistic": "per variant: net bp per tight trade (replay fill price, full SIP spread once per round trip); per day: variant minus base, mean tight-trade net bp; mean over days with a t across days",
+ "pass": "a variant EARNS A LIVE PAPER A/B for tight names (after T1 is read) only if: variant minus base >= +3 bp per tight trade, t across days >= 2, negative on at most 20% of days, >= 60 base tight trades in total. Otherwise no change. Win rate and hold time are reported but cannot pass a variant.",
+ "no_retuning": "variants, the tight-trade definition and the bar are fixed here; any other setting is a new pre-registration",
+ "interaction": "no live config change for tight exits during T1 (tight_source_live_prereg.json); this study only replays",
+ "caveats": ["replay fills at the recorded price; spread charged by costing", "global --set changes movers trades and therefore slot use", "10/07 is a partial session", "small, calm names: per-trade bp is small and so is the spread"]
+}
