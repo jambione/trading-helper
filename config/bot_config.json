@@ -488,5 +488,8 @@
   "ai_watch_uptrend_grace_sec": 60.0,
   "ai_watch_ob_resist_skip": false,
   "ai_watch_ob_observe": true,
-  "ai_watch_seed_tight": true
+  "ai_watch_seed_tight": true,
+  "ai_tight_max_spread_pct": 0.05,
+  "ai_tight_min_pct_change": 0.5,
+  "ai_tight_max_spread_lookups": 80
 }
