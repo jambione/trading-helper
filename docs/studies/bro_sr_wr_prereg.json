@@ -23,8 +23,8 @@
  },
  "statistic": "mean net15 per call; day-clustered t; halves = alternate sessions (A even, B odd index)",
  "power": "report SE and MDE = 2.84 x SE for the PRIMARY per half before any mean; MDE > 150 bp -> UNDERPOWERED for the historical run; the forward record then decides",
- "pass": "PRIMARY net15 > 0 with day-clustered t >= 2 in BOTH halves, AND PRIMARY minus CONTROL (paired) >= +50 bp with t >= 2 pooled, AND >= 60 PRIMARY entries per half. Otherwise FAIL (or UNDERPOWERED per the power rule). INFO_at_call is information only.",
- "forward": "the same rule is scored on every new session from 2026-10-08 (held-out); scored at >= 20 sessions with the same bar",
+ "pass": "Each group separately (Bonferroni 2: t >= 2.24): PRIMARY net15 > 0 with day-clustered t >= 2.24 in BOTH halves, AND PRIMARY minus CONTROL (paired) >= +50 bp with t >= 2.24 pooled, AND >= 60 PRIMARY entries per half; otherwise FAIL, or UNDERPOWERED per the power rule. A T pass earns a paper A/B of the on-book signal for $10+ Trader Bro names; an S pass earns a paper A/B of a LOWER PRICE FLOOR ($2) for Trader Bro names only, with the spread cap reviewed separately. INFO_at_call is information only.",
+ "forward": "both groups are logged and scored on every new session from 2026-10-08 (held-out); scored when a group reaches >= 60 entries per half (T will take months at ~0.75 tradeable calls/day)",
  "no_retuning": "the 0.3% band, the 3-bar %R slope, the 2 s latency, the 15-min hold and the population are fixed here",
  "prior": "LOW: the call moment lost on 34 sessions; S/R filters (10/02, 10/05, 10/06) and %R triggers never separated entries; but this combination on call-outs is untested",
  "caveats": [
@@ -38,5 +38,10 @@
   "CONTROL_on_book": "per PRIMARY entry, one random 1-min close (seed 53) in the same name-day that is NOT a PASS minute and starts AFTER the PRIMARY trade has exited (entry + 15 min) and by 15:30; same entry/exit/cost rule. Controls are never drawn before or during the signal trade, because those windows contain the rise that produced the signal (the 10/06 hindsight-control artifact). Pairs with no eligible control are dropped and counted.",
   "INFO_at_call": "the call moment itself: entry at R + 2 s, with SR_ok/WR_trending reported as a split (the operator's first phrasing)"
  },
- "amended": "2026-10-07, before any feature was computed: operator follow-up makes the on-book signal the primary and the call moment information; control restricted to minutes after the PRIMARY exit (hindsight guard)"
+ "amended": "2026-10-07, before any feature was computed: operator follow-up makes the on-book signal the primary and the call moment information; control restricted to minutes after the PRIMARY exit (hindsight guard); operator 10/7: primary counts only desk-tradeable calls (T), with $2-10 calls scored separately (S) as the floor-change candidate; under $2 excluded",
+ "groups": {
+  "T_tradeable": "calls whose price at the entry decision is >= $10 AND SIP spread <= 0.05% (the desk's current floor and cap). The desk's real use. Count check at registration: only 31 of 643 first-actionable name-days had a captured price >= $10, so the historical run is expected UNDERPOWERED; forward logging continues.",
+  "S_floor_candidate": "calls priced $2-$10 at the entry decision (any spread), costed at each name's real SIP spread. Decides whether lowering the price floor for Trader Bro names is worth a paper A/B.",
+  "excluded": "calls under $2 (counted, not scored)"
+ }
 }
