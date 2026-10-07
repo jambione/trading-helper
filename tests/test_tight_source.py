@@ -364,3 +364,36 @@ def test_the_knobs_ship_declared_and_off():
         assert k in DEFAULT_CONFIG, k
         assert DEFAULT_CONFIG[k] == v, k
         assert k in SAFE_CONFIG_KEYS, k
+
+
+# ── share-price ceiling (operator 10/7: lift $100 for tight) ────────────────
+
+def test_tight_price_ceiling_is_its_own():
+    cfg = {"ai_max_price": 100.0, "ai_tight_max_price": 400.0}
+    assert ew._max_price_for("movers", cfg, 100.0) == 100.0
+    assert ew._max_price_for("tight", cfg, 100.0) == 400.0
+    assert ew._max_price_for("tight", {"ai_max_price": 100.0}, 100.0) == 100.0, \
+        "0/unset = the shared ceiling"
+    # equity floats it down: a $2.3k account buys about a $453 share per slot
+    capped = ew._max_price_for("tight", dict(cfg, ai_tight_max_price=5000.0),
+                               100.0, eq=2264.73)
+    assert 100.0 < capped < 5000.0
+
+
+def test_tight_seed_admits_over_100(tmp_path, monkeypatch):
+    _write(tmp_path, monkeypatch, [_row("WMT", price=108.4), _row("BIG", price=900.0)])
+    got = _seeded({"ai_max_price": 100.0, "ai_tight_max_price": 400.0})
+    assert [r["symbol"] for r in got] == ["WMT"]
+    assert "WMT" in ew._TIGHT_SYMS
+
+
+def test_door_uses_the_tight_ceiling():
+    cfg = {"ai_watch_admit_arm_gates": True, "ai_max_price": 100.0,
+           "ai_tight_max_price": 400.0, "ai_watch_min_price": 10.0}
+    t = datetime(2026, 10, 7, 11, 0, tzinfo=ET).timestamp()
+    ok = dict(symbol="WMT", source="tight", price=108.0)
+    assert ew.admit_arm_gates(ok, cfg, now=t, spread_fn=lambda s, now: 0.02,
+                              gap_fn=lambda s, now: None) == (True, "")
+    mv = dict(ok, source="movers")
+    assert ew.admit_arm_gates(mv, cfg, now=t, spread_fn=lambda s, now: 0.02,
+                              gap_fn=lambda s, now: None) == (False, "above_max_price")

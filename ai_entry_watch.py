@@ -1858,6 +1858,7 @@ def evaluate_arm_ready(
             cap = float(cfg.get("ai_max_price")) if cfg.get("ai_max_price") is not None else None
         except (TypeError, ValueError):
             cap = None
+    cap = _max_price_for(row.get("source"), cfg, cap)
     if cap is not None and px is not None and float(px) + 1e-12 >= float(cap):
         return False, "above_max_price"
 
@@ -7415,6 +7416,7 @@ def desk_candidate_rows(
     # floor, known-thin rvol, $vol floor), plus the file's own spread claim;
     # passes_inclusion treats "tight" like "movers" (_MOVERS_LIKE_SOURCES) and
     # the SIP spread cap still runs at the door and the arm.
+    tight_now: set[str] = set()
     if cfg.get("ai_watch_seed_tight", False):
         try:
             path = ROOT / "tight_stocks.json"
@@ -7473,7 +7475,8 @@ def desk_candidate_rows(
                             px_src, pct_src = c_px, c_pct
                             src_used = "desk" if cand is live else "trending"
                             break
-                    if not _price_under_cap(px_src, max_price):
+                    if not _price_under_cap(
+                            px_src, _max_price_for("tight", cfg, max_price, eq)):
                         _note_seed_drop("tight", s, "price_cap", price=px_src)
                         continue
                     px_f = _f_or_none(px_src)
@@ -7520,8 +7523,11 @@ def desk_candidate_rows(
                         row["indicator"] = seed_ind
                     rows.append(row)
                     added += 1
+                    tight_now.add(s)
         except Exception:
             pass
+    _TIGHT_SYMS.clear()
+    _TIGHT_SYMS.update(tight_now)
 
     # AI Research boards. No numeric gate here on purpose: a research row is a
     # thesis, and the board has already been through the research pass's own
@@ -8099,6 +8105,32 @@ def _push_cfg() -> dict:
 # Symbols the momentum seed is currently proposing (for the push filter,
 # which sees symbols only). Refreshed by desk_candidate_rows.
 _MOMENTUM_SYMS: set[str] = set()
+# Names the tight seed placed this build (the roster sees symbols, not rows).
+_TIGHT_SYMS: set[str] = set()
+
+
+def _max_price_for(source: Any, cfg: dict, default: Any,
+                   eq: float | None = None) -> Any:
+    """Share-price ceiling for one source.
+
+    ai_max_price ($100) exists because volatile $100+ names (MSTR, COIN,
+    VICR) were bought 2026-09-14..23. Tight names are calm, liquid large caps
+    (operator 10/7: lift it for them), so they get ai_tight_max_price,
+    still floated down by equity where equity is known (one slot buys a
+    whole share). 0 = same ceiling as every other source.
+    """
+    if str(source or "").strip().lower() != "tight":
+        return default
+    cap = _f_or_none(cfg.get("ai_tight_max_price")) or 0.0
+    if cap <= 0:
+        return default
+    if eq is not None and eq > 0:
+        try:
+            from desk_risk import dynamic_max_price
+            return dynamic_max_price(eq, {**cfg, "ai_max_price": cap})
+        except Exception:  # noqa: BLE001
+            pass
+    return cap
 
 
 def _min_price_for(source, cfg: dict | None, default: float = 1.0) -> float:
@@ -8184,7 +8216,8 @@ def _push_band_filter(symbols: list[str]) -> list[str]:
         r = desk_rows.get(s) or tr_by.get(s) or {}
         px = _f_or_none(r.get("price"))
         floor = lo_mom if s in _MOMENTUM_SYMS else lo
-        if px is not None and ((floor > 0 and px + 1e-12 < floor) or (hi > 0 and px >= hi)):
+        hi_s = _max_price_for("tight" if s in _TIGHT_SYMS else "", cfg, hi) or 0.0
+        if px is not None and ((floor > 0 and px + 1e-12 < floor) or (hi_s > 0 and px >= hi_s)):
             continue
         if slot_pri and _slot_unseatable(s, cfg):
             continue
@@ -9651,6 +9684,7 @@ def admit_arm_gates(row: dict, cfg: dict | None, *, now: float | None = None,
     if px is not None:
         lo = _min_price_for(row.get("source"), cfg, default=0.0)
         hi = _f_or_none(cfg.get("ai_max_price")) or 0.0
+        hi = _f_or_none(_max_price_for(row.get("source"), cfg, hi)) or 0.0
         if lo > 0 and px + 1e-12 < lo:
             return False, "below_min_price"
         if hi > 0 and px + 1e-12 >= hi:
@@ -17384,9 +17418,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     except Exception:
         indicators = {}
 
+    eq_cap = None
     try:
         from desk_risk import dynamic_max_price
         eq = float(dashboard_state().get("ai_positions", {}).get("account", {}).get("equity") or 0.0)
+        eq_cap = eq
         max_price_f = dynamic_max_price(eq, cfg)
     except Exception:
         max_price = cfg.get("ai_max_price")
@@ -17877,8 +17913,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 })
             touched[sym] = rec
 
-        if max_price_f is not None and ask_f >= max_price_f:
-            _skip("above_max_price", max_price=max_price_f)
+        rec_max_price_f = _f_or_none(_max_price_for(
+            rec.get("source"), cfg, max_price_f, eq_cap))
+        if rec_max_price_f is not None and ask_f >= rec_max_price_f:
+            _skip("above_max_price", max_price=rec_max_price_f)
             continue
         floor_f = _min_price_for(rec.get("source"), cfg, default=min_price_f or 0.0) \
             if min_price_f is not None else None
@@ -18262,7 +18300,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 account_equity=equity,
                 score=rec.get("score"),
                 min_score=float("-inf"),
-                max_price=max_price_f,
+                max_price=rec_max_price_f,
                 risk_pct=risk_pct,
                 # Percent-of-mid spread deliberately NOT enforced here. Quotes
                 # come from IEX, a few percent of the consolidated tape, so its
