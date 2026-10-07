@@ -3,28 +3,30 @@
  "registered_at": "2026-10-07, before any S/R or %R feature is computed on the call archive",
  "registered_before_results": true,
  "origin": "Operator 10/7: 'once we receive the name, check the SR gap; if it is not in resistance or close to it, check %R for trending'. Prior study BB_LIVE_CALLOUTS_2026-09-27.md (1,730 calls, 34 sessions): buying the next minute after a call lost after costs (actionable -106/-246 bp at 15 min), with huge two-sided moves (median MFE30 +8%, MAE30 -8.5%); the call minute did not beat a random later minute. Operator 10/7 (follow-up): 'always keeping those suggestions ... on the book ready to trade for those signals' -> the PRIMARY is the on-book signal, not the call moment.",
- "data": "ai_reports/bb_live.jsonl on the mini (2,188 rows, 2026-08-10..2026-10-06 at registration) plus any sessions captured before the run; deduped on (ticker, text, second); OCR noise rows whose ticker is not a tradable US common stock are dropped (counted)",
+ "data": "ai_reports/bb_live.jsonl on the mini (2,188 rows, 41 sessions 2026-08-10..10-06 at registration). Cleaning before the actionability test: drop terminal-bleed rows (text containing Starting|tunnel|watchdog|engine|http|https|Cloudflare); merge OCR re-reads of the same ticker within 60 s into the first; validate tickers against Alpaca assets (us_equity, NYSE/NASDAQ/AMEX/ARCA, not OTC/ETF/warrant/unit/right) with >= 1 SIP trade that day. All drops counted.",
  "calls": "PRIMARY population: the first ACTIONABLE call per symbol-day (actionable = ai_entry_watch._bb_call_is_actionable is True). Receive time R = the archive's capture timestamp 'unix' (when the desk could first act), not the spoken minute.",
  "features_at_R": {
-  "SR_ok": "NOT ob_resist_0.3: price at R is not inside, and not within 0.3% under, a charted resistance block (unbroken bearish OB or bullish breaker; tools/order_blocks.py, swing 10, wicks, last 3 per side) KNOWN before R, computed on SIP 1-minute bars (prior day + day, 04:00-16:00) closed before R",
-  "WR_trending": "fast %R (21, EMA 7) of the last 1-min bar closed before R is higher than 3 bars earlier AND slow %R (112, EMA 3) is higher than 3 bars earlier (both rising); same SIP bars",
+  "SR_ok": "NOT ob_resist_0.3 at the close of grid minute t: tools/order_blocks.py with bar_sec=60 on the gridded IEX bars (prior day + day), blocks known by t, charted last 3 per side. Before running: a chart check of the port on 3 names from the archive (screenshot vs port levels), recorded in the result doc.",
+  "WR_trending": "desk minute-grid %R: fast (21, EMA 7) and slow (112, EMA 3) at grid minute t each strictly greater (>) than 3 grid minutes earlier; requires >= 112 gridded minutes of warm-up, else the minute is skipped and counted",
   "PASS": "SR_ok AND WR_trending",
   "note": "for the PRIMARY the same features are evaluated at each 1-min close t after R, not only at R"
  },
  "entry_exit": {
-  "entry": "the first SIP trade at or after R + 2 s (regular-hours or extended), price = that trade; cost = full SIP NBBO spread at R (half in, half out)",
-  "primary_outcome": "net15 = last SIP trade at or before entry time + 15 min / entry - 1 - spread",
+  "entry": "first SIP trade at or after t + 2 s; cost = full SIP NBBO spread at the entry minute (half in, half out) PLUS 1 cent round trip when price < $5; a missing quote at t drops the call (counted), never cost 0",
+  "primary_outcome": "net15 = last SIP trade at or before entry + 15 min / entry - 1 - cost; if halted at entry + 15 min, exit at the first trade after resume (counted)",
   "information": [
    "next-minute-open entry (the 9/27 method)",
    "hold to 15:50",
    "MFE30 / MAE30",
-   "calls before 09:30 vs RTH"
+   "calls before 09:30 vs RTH",
+   "latency +30 s (live IEX bar delivery)",
+   "the 9/27 method used 'at' (spoken minute floored, ~39 s early) and is labelled as such"
   ]
  },
  "statistic": "mean net15 per call; day-clustered t; halves = alternate sessions (A even, B odd index)",
  "power": "report SE and MDE = 2.84 x SE for the PRIMARY per half before any mean; MDE > 150 bp -> UNDERPOWERED for the historical run; the forward record then decides",
- "pass": "Each group separately (Bonferroni 2: t >= 2.24): PRIMARY net15 > 0 with day-clustered t >= 2.24 in BOTH halves, AND PRIMARY minus CONTROL (paired) >= +50 bp with t >= 2.24 pooled, AND >= 60 PRIMARY entries per half; otherwise FAIL, or UNDERPOWERED per the power rule. A T pass earns a paper A/B of the on-book signal for $10+ Trader Bro names; an S pass earns a paper A/B of a LOWER PRICE FLOOR ($2) for Trader Bro names only, with the spread cap reviewed separately. INFO_at_call is information only.",
- "forward": "both groups are logged and scored on every new session from 2026-10-08 (held-out); scored when a group reaches >= 60 entries per half (T will take months at ~0.75 tradeable calls/day)",
+ "pass": "Each group separately (Bonferroni 2; t uses df = sessions per half - 1 and must exceed the 2.24-equivalent): PRIMARY net15 > 0 with day-clustered t >= 2.24 in BOTH halves, AND PRIMARY minus CONTROL_primary >= +50 bp with t >= 2.24 pooled, AND >= 60 PRIMARY entries per half. If either half has t <= -2: FAIL even when underpowered. Otherwise UNDERPOWERED if MDE (for both the PRIMARY mean and the paired contrast) > 150 bp. No information cell can be promoted. A historical PASS ships nothing by itself: a forward PASS is also required.",
+ "forward": "both groups logged on every session from 2026-10-08 (OCR capture uptime recorded per session); a group is scored when it reaches >= 60 entries per half (halves = alternate forward sessions) with the same bar. The historical run is NOT untouched: 34 of its 41 sessions were scored by the 9/27 study.",
  "no_retuning": "the 0.3% band, the 3-bar %R slope, the 2 s latency, the 15-min hold and the population are fixed here",
  "prior": "LOW: the call moment lost on 34 sessions; S/R filters (10/02, 10/05, 10/06) and %R triggers never separated entries; but this combination on call-outs is untested",
  "caveats": [
@@ -34,14 +36,19 @@
   "call text is free-form; 'actionable' removes only clear exits/passes"
  ],
  "design": {
-  "PRIMARY_on_book": "from receive time R until 15:30 ET, at every 1-min close t (09:30-15:30) evaluate SR_ok AND WR_trending using only data closed by t; the FIRST minute PASS holds is the entry decision (one entry per name-day). Entry = the first SIP trade at or after t + 2 s; outcome net15 as below.",
+  "PRIMARY_on_book": "the name is on the book from R until 15:30 ET or until an EXIT/AVOID line for it is received (ai_entry_watch rule: the newest line before t decides; lines after t are not used). At every grid minute close t in 09:30-15:30 after R, the first t where PASS holds and the group's price/spread filter holds is the entry decision (one per name-day). Entry = first SIP trade at or after t + 2 s.",
   "CONTROL_on_book": "per PRIMARY entry, one random 1-min close (seed 53) in the same name-day that is NOT a PASS minute and starts AFTER the PRIMARY trade has exited (entry + 15 min) and by 15:30; same entry/exit/cost rule. Controls are never drawn before or during the signal trade, because those windows contain the rise that produced the signal (the 10/06 hindsight-control artifact). Pairs with no eligible control are dropped and counted.",
-  "INFO_at_call": "the call moment itself: entry at R + 2 s, with SR_ok/WR_trending reported as a split (the operator's first phrasing)"
+  "INFO_at_call": "the call moment itself: entry at R + 2 s, with SR_ok/WR_trending reported as a split (the operator's first phrasing)",
+  "CONTROL_primary": "cross-name, same-minute: a random (seed 53) OTHER called name on the same day that is on the book at the same minute t, is NOT PASS at t, and is in the same group's price/spread filter; same entry/exit/cost rule. Fallback +/-2 minutes; pairs with no control are dropped and counted. No hindsight: the control is chosen from information at t only.",
+  "CONTROL_secondary": "the within-name control after the PRIMARY exit (information only)",
+  "INFO_keep_after_exit_line": "names kept on the book despite a later exit/avoid line (the original phrasing), information only"
  },
- "amended": "2026-10-07, before any feature was computed: operator follow-up makes the on-book signal the primary and the call moment information; control restricted to minutes after the PRIMARY exit (hindsight guard); operator 10/7: primary counts only desk-tradeable calls (T), with $2-10 calls scored separately (S) as the floor-change candidate; under $2 excluded",
+ "amended": "2026-10-07, before any feature was computed: operator follow-up makes the on-book signal the primary and the call moment information; control restricted to minutes after the PRIMARY exit (hindsight guard); operator 10/7: primary counts only desk-tradeable calls (T), with $2-10 calls scored separately (S) as the floor-change candidate; under $2 excluded; 2026-10-07 skeptic FIX FIRST (before any feature): declared T/S universes at the entry minute, IEX signal / SIP fills, cross-name same-minute control, entry-minute spread + 1c under $5, desk minute-grid %R, OB bar_sec=60 with a chart check, exit/avoid lines end the name, data cleaning, halts, FAIL on t <= -2, forward pass required",
  "groups": {
-  "T_tradeable": "calls whose price at the entry decision is >= $10 AND SIP spread <= 0.05% (the desk's current floor and cap). The desk's real use. Count check at registration: only 31 of 643 first-actionable name-days had a captured price >= $10, so the historical run is expected UNDERPOWERED; forward logging continues.",
-  "S_floor_candidate": "calls priced $2-$10 at the entry decision (any spread), costed at each name's real SIP spread. Decides whether lowering the price floor for Trader Bro names is worth a paper A/B.",
-  "excluded": "calls under $2 (counted, not scored)"
- }
+  "T_tradeable": "DESK universe: at the entry minute t, SIP price >= $10 AND SIP spread <= 0.05%. Declared UNDERPOWERED by construction for the historical run (31 of 643 first-actionable name-days priced >= $10 at capture; ~160 sessions needed); decided by the forward record only.",
+  "S_floor_candidate": "MICRO universe: at the entry minute t, SIP price $2-$10 AND SIP spread <= 100 bp (the 9/27 'tradeable' cut). A pass does NOT transfer to the desk as-is; it earns only a paper A/B of a $2 floor for Trader Bro names.",
+  "excluded": "under $2 at t, spread above the group cap, or no quote at t (all counted)",
+  "report_first": "n per group per half, and the distribution of entry minutes, before any mean"
+ },
+ "signal_feed": "PASS (SR_ok and WR_trending) is computed on IEX 1-minute bars (what the live desk sees; Alpaca free historical IEX), gridded to the desk's minute grid (signals._minute_grid_pr: flat fill up to MINUTE_GAP_FILL_MAX). Fills, outcomes and costs use SIP trades and NBBO. The same rule on SIP bars is information only."
 }
