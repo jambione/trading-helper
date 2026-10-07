@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.jambi.nightly-studies — weekday 16:40 run of scripts/nightly.sh (operator 10/7):
+  Bro/alerts forward scoring, tight shadow (G5), order-block held-out fills,
+  tight exit replays + costing, then the end-of-day review
+  (ai_reports/day_review/DAY.md). Read-only studies: no orders.
+  Install (mini Terminal):
+    cp config/com.jambi.nightly-studies.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jambi.nightly-studies.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jambi.nightly-studies</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd /Users/jambimac/repo/trading-helper && scripts/nightly.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/jambimac/repo/trading-helper</string>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>40</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>40</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>40</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>40</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>40</integer></dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/nightly_studies.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/nightly_studies.log</string>
+</dict>
+</plist>
