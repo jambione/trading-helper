@@ -1,15 +1,26 @@
 {
- "study": "FORWARD test: are the desk's fills entered 10:00-10:30 ET worse than its fills at other times, enough to justify skipping that half-hour?",
+ "study": "FORWARD test: would starting the desk at 10:30 instead of 09:45 help? Are fills entered 09:45-10:30 ET worse than fills entered 10:30-15:30?",
  "registered_at": "2026-10-07, before any session from 2026-10-08 is scored",
  "registered_before_results": true,
  "origin": "Operator 10/7 after the loss-by-source review. 10:00-10:30 was the worst half-hour in the 9/23-10/02 cost review (-19.9 bp t -6.2; -52.4 bp t -3.3) and again for movers since 9/29 (-16.3 bp, 28 fills). Chosen after looking, so only new sessions can test it.",
  "data": "ai_reports/outcomes.jsonl on the mini: every closed desk round trip (all sources) with entry_time on sessions 2026-10-08 onward; realized bp = (exit_price / entry_price - 1) x 1e4 (the desk's real fills and exits)",
- "groups": {"SLOT": "entry_time in [10:00:00, 10:30:00) ET", "REST": "entry_time in [09:45, 10:00) or [10:30, 15:30) ET"},
+ "groups": {
+  "EARLY": "entry_time in [09:45:00, 10:30:00) ET (what a 10:30 start removes)",
+  "REST": "entry_time in [10:30, 15:30) ET"
+ },
  "statistic": "OLS of realized bp on a SLOT dummy with day fixed effects; day-clustered (CR1) t",
- "pass": "SLOT minus REST <= -5 bp with t <= -2, with >= 60 SLOT fills over >= 10 sessions, AND the sign holds in both the first and second half of the sessions. Then (skeptic review first) a pre-registered paper A/B of skipping 10:00-10:30. Otherwise no change.",
- "information_only": ["SLOT and REST mean, median, win rate, $ per day", "09:45-10:00 and 10:30-11:00 separately", "by source", "the SLOT's share of all fills and of the day's $ result"],
+ "pass": "EARLY minus REST <= -5 bp with t <= -2, with >= 60 EARLY fills over >= 10 sessions, AND the sign holds in both the first and second half of the sessions. Then (skeptic review first) a pre-registered paper A/B of a 10:30 start. Otherwise no change.",
+ "information_only": [
+  "10:00-10:30 alone vs REST (the original slot)",
+  "09:45-10:00 alone",
+  "EARLY and REST mean, median, win rate, $ per day",
+  "by source",
+  "EARLY's share of fills and of the day's $ result",
+  "prior: the 10/3 cost review found a 10:00 or 10:30 start changed per-trade net only -8.8 -> -8.2 bp"
+ ],
  "note": "a skip only helps if the slot is WORSE THAN OTHER TIMES; while every trade loses on average, removing any trades lowers the daily dollar loss, which is not evidence for this slot",
  "config_changes": "any config change during the test (e.g. the 10/15 cost-arm decision) is recorded; day fixed effects absorb day-level shifts; the test is also reported split at each change",
  "no_retuning": "the window, the REST definition and the bar are fixed here",
- "scorer": "tools/studies/slot_skip_score.py"
+ "scorer": "tools/studies/slot_skip_score.py",
+ "amended": "2026-10-07, before any forward session was scored (operator: 'why not just start at 10:30?'): primary changed from the 10:00-10:30 slot to the whole 09:45-10:30 window (the 10:30-start rule); the slot alone is information"
 }
