@@ -1,0 +1,42 @@
+{
+ "study": "Trader Bro call-outs as BOOK names: once a name is called it stays on the book for the rest of the session, and the trade waits for the operator's signal: not in or just under a known resistance block AND %R trending up. Does that signal beat the spread, and beat a random minute while the name is on the book?",
+ "registered_at": "2026-10-07, before any S/R or %R feature is computed on the call archive",
+ "registered_before_results": true,
+ "origin": "Operator 10/7: 'once we receive the name, check the SR gap; if it is not in resistance or close to it, check %R for trending'. Prior study BB_LIVE_CALLOUTS_2026-09-27.md (1,730 calls, 34 sessions): buying the next minute after a call lost after costs (actionable -106/-246 bp at 15 min), with huge two-sided moves (median MFE30 +8%, MAE30 -8.5%); the call minute did not beat a random later minute. Operator 10/7 (follow-up): 'always keeping those suggestions ... on the book ready to trade for those signals' -> the PRIMARY is the on-book signal, not the call moment.",
+ "data": "ai_reports/bb_live.jsonl on the mini (2,188 rows, 2026-08-10..2026-10-06 at registration) plus any sessions captured before the run; deduped on (ticker, text, second); OCR noise rows whose ticker is not a tradable US common stock are dropped (counted)",
+ "calls": "PRIMARY population: the first ACTIONABLE call per symbol-day (actionable = ai_entry_watch._bb_call_is_actionable is True). Receive time R = the archive's capture timestamp 'unix' (when the desk could first act), not the spoken minute.",
+ "features_at_R": {
+  "SR_ok": "NOT ob_resist_0.3: price at R is not inside, and not within 0.3% under, a charted resistance block (unbroken bearish OB or bullish breaker; tools/order_blocks.py, swing 10, wicks, last 3 per side) KNOWN before R, computed on SIP 1-minute bars (prior day + day, 04:00-16:00) closed before R",
+  "WR_trending": "fast %R (21, EMA 7) of the last 1-min bar closed before R is higher than 3 bars earlier AND slow %R (112, EMA 3) is higher than 3 bars earlier (both rising); same SIP bars",
+  "PASS": "SR_ok AND WR_trending",
+  "note": "for the PRIMARY the same features are evaluated at each 1-min close t after R, not only at R"
+ },
+ "entry_exit": {
+  "entry": "the first SIP trade at or after R + 2 s (regular-hours or extended), price = that trade; cost = full SIP NBBO spread at R (half in, half out)",
+  "primary_outcome": "net15 = last SIP trade at or before entry time + 15 min / entry - 1 - spread",
+  "information": [
+   "next-minute-open entry (the 9/27 method)",
+   "hold to 15:50",
+   "MFE30 / MAE30",
+   "calls before 09:30 vs RTH"
+  ]
+ },
+ "statistic": "mean net15 per call; day-clustered t; halves = alternate sessions (A even, B odd index)",
+ "power": "report SE and MDE = 2.84 x SE for the PRIMARY per half before any mean; MDE > 150 bp -> UNDERPOWERED for the historical run; the forward record then decides",
+ "pass": "PRIMARY net15 > 0 with day-clustered t >= 2 in BOTH halves, AND PRIMARY minus CONTROL (paired) >= +50 bp with t >= 2 pooled, AND >= 60 PRIMARY entries per half. Otherwise FAIL (or UNDERPOWERED per the power rule). INFO_at_call is information only.",
+ "forward": "the same rule is scored on every new session from 2026-10-08 (held-out); scored at >= 20 sessions with the same bar",
+ "no_retuning": "the 0.3% band, the 3-bar %R slope, the 2 s latency, the 15-min hold and the population are fixed here",
+ "prior": "LOW: the call moment lost on 34 sessions; S/R filters (10/02, 10/05, 10/06) and %R triggers never separated entries; but this combination on call-outs is untested",
+ "caveats": [
+  "capture time can lag the spoken call by seconds",
+  "SIP history vs the live IEX feed",
+  "34-40 sessions: only large effects are detectable",
+  "call text is free-form; 'actionable' removes only clear exits/passes"
+ ],
+ "design": {
+  "PRIMARY_on_book": "from receive time R until 15:30 ET, at every 1-min close t (09:30-15:30) evaluate SR_ok AND WR_trending using only data closed by t; the FIRST minute PASS holds is the entry decision (one entry per name-day). Entry = the first SIP trade at or after t + 2 s; outcome net15 as below.",
+  "CONTROL_on_book": "per PRIMARY entry, one random 1-min close (seed 53) in the same name-day between R and 15:30 that is NOT a PASS minute, same entry/exit/cost rule (a minute while the name was on the book, without the signal)",
+  "INFO_at_call": "the call moment itself: entry at R + 2 s, with SR_ok/WR_trending reported as a split (the operator's first phrasing)"
+ },
+ "amended": "2026-10-07, before any feature was computed: operator follow-up makes the on-book signal the primary and the call moment information"
+}
