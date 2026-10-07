@@ -535,6 +535,72 @@ def test_summary_reports_halts_per_group_and_no_trade_flag():
     assert "FLAG: > 10% of S" not in B.render_report(res)
 
 
+# ------------------------------------------------------------------ information_only_added_2026-10-07
+@pytest.mark.parametrize("text,want", [
+    ("ABC test hod", "hod"), ("ABC testing the hod with vol", "hod"), ("ABC near hod", "hod"), ("ABC nhod", "hod"),
+    ("ABC nhod pop micro pr", "hod"),            # first match wins, in order
+    ("ABC nice pop", "pop"), ("ABC popping", "pop"), ("ABC pop on pr", "pop"),
+    ("ABC micro float", "micro"), ("ABC low float runner", "micro"), ("ABC micro following pr", "micro"),
+    ("ABC following pr", "news"), ("ABC news out", "news"), ("ABC PR", "news"),
+    ("ABC break hod", "other"), ("ABC popular", "other"), ("ABC price ok", "other"), ("", "other"), (None, "other"),
+])
+def test_phrase_class(text, want):
+    assert B.phrase_class(text) == want
+
+
+def test_phrase_table_per_class():
+    gr = [{"phrase_class": "hod", "primary": {"net_bp": 10.0}}, {"phrase_class": "hod", "primary": {"net_bp": -30.0}},
+          {"phrase_class": "hod", "primary": {"net_bp": 50.0}}, {"phrase_class": "pop", "primary": None},
+          {"phrase_class": "other", "primary": {"net_bp": -5.0}}]
+    t = B.phrase_table(gr)
+    assert list(t) == ["hod", "pop", "micro", "news", "other"]
+    assert t["hod"]["n"] == 3 and abs(t["hod"]["mean"] - 10.0) < 1e-12 and t["hod"]["median"] == 10.0
+    assert abs(t["hod"]["win_rate"] - 2 / 3) < 1e-12
+    assert t["pop"]["n"] == 0 and t["pop"]["mean"] is None
+    assert t["other"]["win_rate"] == 0.0
+
+
+def _wr_series(wr_at, sr_ok=False, lo=T(9, 31), hi=T(15, 30)):
+    return {t: {"warm": True, "sr_ok": sr_ok, "wr": t in wr_at, "pass": sr_ok and t in wr_at}
+            for t in range(int(lo), int(hi) + 1, 60)}
+
+
+def test_wr_only_primary_ignores_sr_and_control_must_not_be_wr():
+    t = T(11, 0)
+    nd = _book_nd(series=_wr_series({t}))                   # in resistance all day: never PASS, WR at 11:00
+    wr_ctrl = _book_nd(sym="WRX", series=_wr_series({t}))   # WR_trending at t (but not PASS): ineligible here
+    ok = _book_nd(sym="OK", series=_wr_series(set()))
+    trades = {s: [(t + 2, 5.0), (t + 900, 5.1)] for s in ("ABC", "WRX", "OK")}
+    quotes = {s: [(t - 1, 4.99, 5.01)] for s in ("ABC", "WRX", "OK")}
+    mkt = FakeMarket(trades=trades, quotes=quotes)
+    c = collections.Counter()
+    assert B.find_primary(mkt, nd, nd["iex"], c) is None                    # PRIMARY (SR + WR) never fires
+    pw = B.find_primary(mkt, nd, nd["iex"], c, key="wr")
+    assert pw["t"] == t
+    for i in range(10):
+        p = dict(nd, sym=f"ABC{i}")
+        cw = B.control_primary(mkt, p, pw, [p, wr_ctrl, ok], collections.Counter(), key="wr", tag="wronly_ctrl_")
+        assert cw["sym"] == "OK"
+    # under the PASS rule the WR-trending name is an eligible control (it is not PASS at t)
+    assert B.control_eligible(wr_ctrl, t) and not B.control_eligible(wr_ctrl, t, key="wr")
+
+
+def test_summary_carries_wr_only_and_phrase_cells_and_chart_caveat():
+    rows = _summ_rows()
+    rows[0]["phrase_class"] = "hod"
+    rows[0]["info_wr_only"] = {"primary": {"t": T(10, 5), "net_bp": 20.0},
+                               "control_primary": {"net_bp": 5.0}}
+    res = B.summarize(rows, collections.Counter(), {"archive_rows": 3})
+    si = res["groups"]["S"]["info"]
+    assert si["wr_only_primary"]["n"] == 1 and si["wr_only_primary"]["mean"] == 20.0
+    assert si["wr_only_minus_control"]["mean"] == 15.0
+    assert si["primary_by_phrase_class"]["hod"]["n"] == 1
+    assert "wr_only_primary" not in res["groups"]["T"]["info"]
+    md = B.render_report(res)
+    assert md.index("chart_check_2026-10-07") < md.index("## 1. Power")
+    assert "MISMATCH on thin premarket names" in md and "PRIMARY by call phrase class" in md
+
+
 # ------------------------------------------------------------------ end to end on a fake market
 class FakeBarsMarket(FakeMarket):
     def __init__(self, bars, **kw):

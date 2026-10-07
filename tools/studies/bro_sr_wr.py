@@ -84,6 +84,17 @@ UNIT_NAME = re.compile(r"\bUNITS?\b", re.I)
 MLP_UNITS = re.compile(r"COMMON\s+UNITS?|LIMITED\s+PARTNERSHIP|\bL\.?P\.?\b", re.I)
 INDEX_SYMS = {"SPY", "QQQ", "IWM", "DIA", "VOO", "IVV", "VTI", "SPX", "NDX", "VIX", "UVXY", "VXX"}
 
+CHART_CHECK_2026_10_07 = (   # verbatim from the prereg (cbd07d1); report.md header caveat
+    "Operator TradingView screenshots (1-min, extended hours, LuxAlgo Order Blocks defaults) vs the port on SIP "
+    "bars: JAGX 2026-10-06 07:00-07:20 TV shows NO order blocks (the red boxes are %R Trend Exhaustion overbought "
+    "boxes, not OBs) while the port finds 3 (bull OB 5.52-5.75 known 07:15, breaker 6.00-6.64, bull OB 6.13-6.30 "
+    "known 07:19); VEEA 2026-10-05 06:45-07:15 TV none, port 2 small zones (4.54-4.77); XHG 2026-10-06 08:30-09:00 "
+    "TV shows a bullish OB carried from 10/02 (~1.85-2.00) the port cannot build (SIP has 5 one-minute bars on "
+    "10/02, IEX 0). Verdict: MISMATCH on thin premarket names (bar coverage differs by feed); the port matched to "
+    "the cent on liquid names on 10/05 (ETHA, EWZ, IHI, XP). Consequence: for group S the SR_ok half of PASS is "
+    "'SR as the port computes on the desk's feed', not the operator's TradingView zones; this is stated in the "
+    "result doc.")
+
 RESOLUTIONS = {
     "R1_signal_time": "grid minute t = the CLOSE of the 1-min bar starting t-60 (bar start + 60 s); entry after t+2 s",
     "R2_window": "PRIMARY t ranges over grid closes 09:31..15:30 ET (09:31 is the first RTH close) with t >= a0",
@@ -119,6 +130,11 @@ RESOLUTIONS = {
     "R18_sip_trade_day": ">= 1 SIP trade that day = at least one SIP 1-min bar 04:00-close",
     "R19_s_price": "S is $2 <= price < $10 (T takes >= $10)",
     "R20_lat30_cost": "+30 s cell: quote at t+30, entry at t+32",
+    "R22_phrase_regex": "hod = test/tests/testing [the] hod | near [the] hod | nhod (a bare 'hod' or 'break hod' "
+                        "is 'other'); pop = pop/pops/popping/popped; micro = micro* | low float; news = pr | news "
+                        "('following pr' is covered by pr); first match wins in that order",
+    "R23_wr_only": "S only: PASS = WR_trending (warm, strict 3-min slopes); CONTROL_primary candidates must be warm "
+                   "and not WR_trending at the control minute; same fallback, entry, exit, cost",
     "R21_p27": "9/27 method: entry = open of the first SIP 1-min bar after 'at' (the bar containing 'at' is skipped), "
                "exit = close of the 15th bar, cost from the NBBO at the entry bar's start; labelled as using 'at'",
 }
@@ -715,7 +731,7 @@ def window_ok(t):
     return WIN_LO <= et_min(t) <= WIN_HI and (t % 60 == 0)
 
 
-def find_primary(mkt, nd, series, counts, keep_exit=False, tag="", latency=LAT_SEC):
+def find_primary(mkt, nd, series, counts, keep_exit=False, tag="", latency=LAT_SEC, key="pass"):
     """design.PRIMARY_on_book: first grid close t >= a0 in 09:31-15:30, on the book, PASS, group filter held
     (T re-checks the 0.05% cap at entry, skips counted); entry first SIP trade >= t + 2 s."""
     cap = _tcap(nd["group"])
@@ -726,7 +742,7 @@ def find_primary(mkt, nd, series, counts, keep_exit=False, tag="", latency=LAT_S
         if not st["warm"]:
             counts[f"{tag}warmup_skipped_minutes"] += 1
             continue
-        if not st["pass"]:
+        if not st[key]:
             continue
         q = mkt.quote(nd["sym"], t)
         if q is None:
@@ -745,14 +761,14 @@ def find_primary(mkt, nd, series, counts, keep_exit=False, tag="", latency=LAT_S
     return None
 
 
-def control_eligible(c, t, series_key="iex"):
+def control_eligible(c, t, series_key="iex", key="pass"):
     if t < c.get("a0", float("inf")) or not window_ok(t) or not on_book(c, t) or t > c["close"]:
         return False
     st = c[series_key].get(t) if isinstance(c[series_key], dict) else None
-    return bool(st and st["warm"] and not st["pass"])
+    return bool(st and st["warm"] and not st[key])
 
 
-def control_primary(mkt, nd, entry, day_nds, counts, series_key="iex"):
+def control_primary(mkt, nd, entry, day_nds, counts, series_key="iex", key="pass", tag="ctrl_"):
     """design.CONTROL_primary: a random (seed 53) OTHER called name that day, on the book at t, warm and NOT PASS at
     t, in the same group (T re-checks the cap); same entry/exit/cost rule. Fallback +/-1, +/-2 min; drops counted.
     Uses only information at the control minute."""
@@ -765,7 +781,7 @@ def control_primary(mkt, nd, entry, day_nds, counts, series_key="iex"):
     for off in FALLBACK:
         tt = t + 60 * off
         for c in cands:
-            if not control_eligible(c, tt, series_key):
+            if not control_eligible(c, tt, series_key, key):
                 continue
             q = mkt.quote(c["sym"], tt)
             if q is None:
@@ -774,7 +790,7 @@ def control_primary(mkt, nd, entry, day_nds, counts, series_key="iex"):
             if cap is not None and (q[1] - q[0]) / ((q[0] + q[1]) / 2) > cap:
                 counts["ctrl_candidate_T_spread_skip"] += 1
                 continue
-            tr = simulate(mkt, c["sym"], tt + LAT_SEC, q, c["sip"], c["close"], counts, tag=f"{nd['group']}_ctrl_")
+            tr = simulate(mkt, c["sym"], tt + LAT_SEC, q, c["sip"], c["close"], counts, tag=f"{nd['group']}_{tag}")
             if tr is None:
                 continue
             tr.update({"t": tt, "sym": c["sym"], "offset_min": off})
@@ -1107,6 +1123,7 @@ def score_day(mkt, day, nds, counts):
         prim = find_primary(mkt, nd, nd["iex"], counts, tag=f"{nd['group']}_")
         row = {"day": day, "sym": nd["sym"], "group": nd["group"], "R": nd["R"], "a0": nd["a0"],
                "premarket_call": nd["R"] < et_ts(day, 9, 30), "exit_line": nd.get("exit_unix"),
+               "phrase_class": phrase_class(nd.get("text")),
                "assign_px": nd.get("assign_px"), "assign_spread_bp": nd.get("assign_spread_bp"),
                "adv20": nd.get("adv20")}
         if prim:
@@ -1115,6 +1132,14 @@ def score_day(mkt, day, nds, counts):
             c1 = control_primary(mkt, nd, prim, nds, counts)
             row["control_primary"] = c1
             row["control_secondary"] = control_secondary(mkt, nd, prim, counts)
+        if nd["group"] == "S":
+            # information_only_added_2026-10-07 (1): PASS = WR_trending alone; control "not WR_trending at t"
+            pw = find_primary(mkt, nd, nd["iex"], counts, tag="info_wronly_S_", key="wr")
+            row["info_wr_only"] = None
+            if pw:
+                cw = control_primary(mkt, nd, pw, nds, counts, key="wr", tag="wronly_ctrl_")
+                row["info_wr_only"] = {"primary": {k: v for k, v in pw.items() if k != "quote"},
+                                       "control_primary": cw}
         # information: SIP-signal version, keep despite exit line
         ps = find_primary(mkt, nd, nd["sip_series"], counts, tag=f"info_sip_{nd['group']}_")
         row["info_sip_signal"] = {k: v for k, v in ps.items() if k != "quote"} if ps else None
@@ -1186,6 +1211,17 @@ def summarize(rows, counts, meta, mode="historical"):
             else:
                 v = verdict(halves, contrast, declared_underpowered=(g == "T" and mode == "historical"))
         info = info_summary(gr)
+        info["primary_by_phrase_class"] = phrase_table(gr)
+        if g == "S":
+            wp = [{"day": r["day"], "half": r["half"], **r["info_wr_only"]["primary"]}
+                  for r in gr if r.get("info_wr_only")]
+            wpairs = [{"day": r["day"], "diff": r["info_wr_only"]["primary"]["net_bp"]
+                       - r["info_wr_only"]["control_primary"]["net_bp"]}
+                      for r in gr if r.get("info_wr_only") and r["info_wr_only"].get("control_primary")]
+            info["wr_only_primary"] = clustered(wp)
+            info["wr_only_primary_half_A"] = clustered([x for x in wp if x["half"] == "A"])
+            info["wr_only_primary_half_B"] = clustered([x for x in wp if x["half"] == "B"])
+            info["wr_only_minus_control"] = clustered(wpairs, "diff")
         if g == "S":
             sp = [p["spread_bp"] for p in prim]
             info["S_share_entry_spread_within_desk_cap"] = (sum(1 for s in sp if s <= T_MAX_SPR * 1e4) / len(sp)
@@ -1205,6 +1241,33 @@ def summarize(rows, counts, meta, mode="historical"):
                             "pooled_primary": clustered(prim)}
     res["entries"] = rows
     return res
+
+
+PHRASE_CLASSES = (   # information_only_added_2026-10-07 (2): first match wins, in this order
+    ("hod", re.compile(r"\btest(?:s|ing)?\s+(?:the\s+)?hod\b|\bnear\s+(?:the\s+)?hod\b|\bnhod\b", re.I)),
+    ("pop", re.compile(r"\bpop(?:s|ping|ped)?\b", re.I)),
+    ("micro", re.compile(r"\bmicro\w*|\blow\s+float\b", re.I)),
+    ("news", re.compile(r"\bpr\b|\bnews\b", re.I)),
+)
+
+
+def phrase_class(text) -> str:
+    t = str(text or "")
+    for name, rx in PHRASE_CLASSES:
+        if rx.search(t):
+            return name
+    return "other"
+
+
+def phrase_table(gr) -> dict:
+    """PRIMARY n, mean, median, win rate of net15 per phrase class (information only)."""
+    out = {}
+    for name in [c[0] for c in PHRASE_CLASSES] + ["other"]:
+        xs = [r["primary"]["net_bp"] for r in gr if r.get("primary") and r.get("phrase_class") == name]
+        out[name] = {"n": len(xs), "mean": statistics.mean(xs) if xs else None,
+                     "median": statistics.median(xs) if xs else None,
+                     "win_rate": sum(1 for x in xs if x > 0) / len(xs) if xs else None}
+    return out
 
 
 def info_summary(gr):
@@ -1249,6 +1312,7 @@ def render_report(res) -> str:
     L = [f"# Bro S/R + %R call-out study ({res['mode']})", "",
          f"Prereg docs/studies/bro_sr_wr_prereg.json. Archive rows at run time: {res['meta'].get('archive_rows')} "
          f"(sha256 {str(res['meta'].get('archive_sha256'))[:12]}). Script {res['meta'].get('script_rev')}.", "",
+         f"**Chart-check caveat (prereg chart_check_2026-10-07):** {CHART_CHECK_2026_10_07}", "",
          "## 1. Power (written before any mean)", ""]
     for g, G in res["groups"].items():
         p = G["power"]
@@ -1280,6 +1344,13 @@ def render_report(res) -> str:
             L.append(f"- **VERDICT: {G['verdict']['verdict']}** — {'; '.join(G['verdict']['why'])}")
         L.append("- information only (never promoted):")
         for k, v in G["info"].items():
+            if k == "primary_by_phrase_class":
+                L.append("  - PRIMARY by call phrase class (net15 bp):")
+                for cname, cv in v.items():
+                    win = "n/a" if cv["win_rate"] is None else f"{cv['win_rate']:.0%}"
+                    L.append(f"    - {cname}: n {cv['n']}, mean {_f(cv['mean'], 1)}, median {_f(cv['median'], 1)}, "
+                             f"win {win}")
+                continue
             k = {"premarket_call_first_rth_print": "premarket call -> first regular RTH print (quote at entry)",
                  "real_iex_bar_minutes_only": "PRIMARY at real IEX bar minutes only (no flat-filled minutes)"}.get(k, k)
             if isinstance(v, dict):
