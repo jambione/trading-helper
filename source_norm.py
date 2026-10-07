@@ -4,7 +4,7 @@ Single table for proposal_ledger + source_scorecard. Call sites store both
 the raw ``proposer`` and ``proposer_norm`` — tools never guess.
 
 Families:
-  momentum | trending | movers | research:<model> | research | bb_live | unknown
+  momentum | trending | movers | tight | research:<model> | research | bb_live | unknown
 """
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ from typing import Optional
 _MOMENTUM = frozenset({"momentum", "mom", "st", "stocktwits"})
 _TRENDING = frozenset({"trending"})
 _MOVERS = frozenset({"movers"})
+# tight_screener.py: its own family so the A/B can score it apart from movers.
+_TIGHT = frozenset({"tight"})
 
 # Research model families. Bare letters mirror _RESEARCH_SOURCES.
 _RESEARCH_AGY = frozenset({
@@ -27,7 +29,7 @@ _BB_LIVE = frozenset({"bb_live", "bro", "bb"})
 
 # Union of every alias we claim to cover (for tests).
 ALL_KNOWN_ALIASES: frozenset[str] = (
-    _MOMENTUM | _TRENDING | _MOVERS | _RESEARCH_AGY | _RESEARCH_XAI
+    _MOMENTUM | _TRENDING | _MOVERS | _TIGHT | _RESEARCH_AGY | _RESEARCH_XAI
     | _RESEARCH_BARE | _BB_LIVE
 )
 
@@ -43,6 +45,8 @@ def normalize_proposer(raw: Optional[str]) -> str:
         return "trending"
     if s in _MOVERS:
         return "movers"
+    if s in _TIGHT:
+        return "tight"
     if s in _RESEARCH_AGY:
         return "research:agy"
     if s in _RESEARCH_XAI:

@@ -518,6 +518,24 @@ DEFAULT_CONFIG = {
     "ai_watch_movers_enrich":           True,
     # Refuse a movers file older than this rather than seed a stale ranking.
     "ai_movers_max_age_sec":           900.0,
+    # "tight" seed — liquid ($10+, prior-day $vol >= $50M, top 400), tight
+    # (16-min-delayed SIP spread <= ai_tight_max_spread_pct) names up on the
+    # day, published by tight_screener.py to tight_stocks.json. OFF by
+    # default: the switch both launches the producer (./trading) and seeds
+    # the book. Shadow-scored first by tools/studies/tight_shadow.py (G5).
+    # Rows go through the same gates movers rows do (min price, rvol, $vol,
+    # tape age, and the desk's SIP spread cap at the door and the arm).
+    "ai_watch_seed_tight":             False,
+    "ai_watch_seed_tight_n":               8,
+    "ai_tight_scan_sec":               300.0,   # producer scan cadence
+    "ai_tight_min_pct_change":           1.0,   # day change floor (producer + seed)
+    "ai_tight_max_spread_pct":          0.03,   # SIP spread ceiling, % of mid
+    "ai_tight_min_price":               10.0,   # prior close floor (producer) / price floor (seed)
+    "ai_tight_min_dollar_volume":       50e6,   # prior-day SIP $vol floor (universe)
+    "ai_tight_universe_n":               400,   # top-N by prior-day $vol
+    "ai_tight_top":                       15,   # names written per scan
+    "ai_tight_max_spread_lookups":        40,   # SIP quote requests per scan, cap
+    "ai_tight_max_age_sec":            900.0,   # seed refuses an older file
     # Trending shortlist floors (looser than momentum's 50% day-move bar).
     # Seed needs score > min OR day chg ≥ this OR rvol ≥ trending min rvol.
     "ai_watch_trending_min_pct_change": 15.0,
@@ -2055,6 +2073,17 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_movers_min_pct_change",
     "ai_watch_movers_enrich",
     "ai_movers_max_age_sec",
+    "ai_watch_seed_tight",
+    "ai_watch_seed_tight_n",
+    "ai_tight_scan_sec",
+    "ai_tight_min_pct_change",
+    "ai_tight_max_spread_pct",
+    "ai_tight_min_price",
+    "ai_tight_min_dollar_volume",
+    "ai_tight_universe_n",
+    "ai_tight_top",
+    "ai_tight_max_spread_lookups",
+    "ai_tight_max_age_sec",
     "ai_watch_trending_min_pct_change",
     "ai_watch_trending_min_rvol",
     "ai_watch_seed_research",

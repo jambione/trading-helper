@@ -55,6 +55,7 @@ FILES = (
     "signal_state.json",
     "trending_stocks.json",
     "movers_stocks.json",
+    "tight_stocks.json",          # absent unless ai_watch_seed_tight is on
     "ai_reports/entry_watch_state.json",
     "ai_reports/admit_funnel.json",
     "ai_reports/phase_b_book.json",

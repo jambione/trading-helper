@@ -43,6 +43,7 @@ _ROOT = Path(__file__).resolve().parent
 SUPPLY_SOURCES = frozenset({
     "movers", "trending", "research", "agy", "xai", "grok",
     "momentum", "mom", "mom_open", "bb_live", "bro", "stocktwits", "st",
+    "tight",   # tight_screener.py; only present when ai_watch_seed_tight is on
 })
 
 # Settings the live book-server path retires (documented for the night report).
@@ -304,7 +305,8 @@ def runway_score(
     score = 1.5 * _tanh_z(day_chg_pct, 8.0)
     if _mins_open(now) < _MORNING_MINS:
         score += 0.5
-    if src == "movers":
+    # tight rows rank like movers (operator 10/7: "ranked like movers").
+    if src in ("movers", "tight"):
         score += 0.5
     if include_pace:
         score += pace_term(rvol_pace)
@@ -342,9 +344,10 @@ def row_inputs(
     pace, pace_src = _first(row, "rvol_pace_sip"), "pace_sip"
     if pace is None and paces and sym in paces:
         pace, pace_src = _f(paces.get(sym)), "pace_sip"
-    if pace is None and _source(row) == "movers":
+    if pace is None and _source(row) in ("movers", "tight"):
         # movers_screener's rvol: SIP day volume vs the name's own 20-day SIP
         # average, time-adjusted to the delayed bar — the study's statistic.
+        # tight_screener.py computes the identical statistic.
         pace, pace_src = _f(row.get("rvol")), "movers_sip"
     return {
         "chg": _first(row, "day_chg_pct", "pct_change", "pct", "change_pct"),

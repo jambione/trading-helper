@@ -2137,6 +2137,7 @@ function _bookSourceLabel(source) {
   if (s === 'xai' || s === 'grok') return 'X';
   if (s === 'anthropic' || s === 'claude') return 'A';
   if (s === 'research') return 'AI';
+  if (s === 'tight') return 'Tight';
   if (s === 'position') return 'Pos';
   if (!s) return '—';
   return s.slice(0, 4);

@@ -1647,8 +1647,13 @@ _NEVER_ARMABLE_BLOCK_CODES = frozenset({
 })
 
 _ARM_READY_DESK_SOURCES = frozenset({
-    "momentum", "trending", "mom", "st", "stocktwits", "movers",
+    "momentum", "trending", "mom", "st", "stocktwits", "movers", "tight",
 })
+# Seeds judged by the movers admission numbers (ai_watch_movers_min_rvol,
+# _min_price, _min_dollar_volume, _admit_max_tape_age_sec). "tight" rows
+# carry the same SIP daily-bar rvol / dollar volume as movers rows, so they
+# must face the same floors rather than the general ones.
+_MOVERS_LIKE_SOURCES = frozenset({"movers", "tight"})
 
 
 def admit_require_arm_ready(cfg: dict | None, now: float | None = None) -> bool:
@@ -2648,7 +2653,7 @@ def _is_protected_warming_seat(
 _PIN_READY_ACCUM: dict[str, float] = {}
 _PIN_READY_MARK: dict[str, float] = {}
 _PIN_READY_DAY: str = ""
-_PIN_HEAT_SOURCES = frozenset({"momentum", "movers", "trending"})
+_PIN_HEAT_SOURCES = frozenset({"momentum", "movers", "trending", "tight"})
 
 
 def _pin_roll_et_day(now: float) -> None:
@@ -6264,7 +6269,7 @@ _RESEARCH_SOURCES = frozenset({
 # correctly keeps the source tag as "research" — a row labelled research
 # wearing another seed's reason.
 _DESK_SOURCES = frozenset({"momentum", "trending", "mom", "st", "stocktwits",
-                           "movers"})
+                           "movers", "tight"})
 # "Bullish Bob LIVE" call-outs. Its own bucket, not a desk source: _merge_source
 # lets research keep thesis ownership over desk heat, and a bro call should not
 # be able to take a name away from a research thesis either.
@@ -7403,6 +7408,121 @@ def desk_candidate_rows(
         except Exception:
             pass
 
+    # Tight names (tight_screener.py): liquid, tight-spread, up on the day.
+    # OFF by default; the operator flips ai_watch_seed_tight for the A/B once
+    # tools/studies/tight_shadow.py clears its gate. Same shape and the same
+    # gates as the movers seed above (live quote first, price floor, day-change
+    # floor, known-thin rvol, $vol floor), plus the file's own spread claim;
+    # passes_inclusion treats "tight" like "movers" (_MOVERS_LIKE_SOURCES) and
+    # the SIP spread cap still runs at the door and the arm.
+    if cfg.get("ai_watch_seed_tight", False):
+        try:
+            path = ROOT / "tight_stocks.json"
+            raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            tg_rows = raw.get("rows") or []
+            try:
+                max_age = float(cfg.get("ai_tight_max_age_sec", 900.0) or 0.0)
+            except (TypeError, ValueError):
+                max_age = 900.0
+            age = time.time() - float(raw.get("ts") or 0)
+            # Absence over a stale claim, as for movers.
+            if max_age > 0 and raw.get("ts") and age > max_age:
+                tg_rows = []
+            if isinstance(tg_rows, list):
+                n = int(cfg.get("ai_watch_seed_tight_n", 8) or 8)
+                tg_min_pct = _cfg_float(cfg, "ai_tight_min_pct_change", 1.0)
+                tg_min_px = max(
+                    _cfg_float(cfg, "ai_tight_min_price", 10.0),
+                    _cfg_float(cfg, "ai_watch_movers_min_price", 0.0))
+                tg_max_sp = _cfg_float(cfg, "ai_tight_max_spread_pct", 0.03)
+                cap_sp = _spread_gate_max("tight", cfg)
+                if cap_sp > 0:
+                    tg_max_sp = min(tg_max_sp, cap_sp) if tg_max_sp > 0 else cap_sp
+                tg_min_dv = _cfg_float(cfg, "ai_watch_movers_min_dollar_volume", 0.0)
+                tg_desk, tg_tr = _live_quote_map()
+                added = 0
+                for r in tg_rows:
+                    if added >= max(1, n):
+                        break
+                    if not isinstance(r, dict):
+                        continue
+                    s = str(r.get("symbol") or "").upper().strip()
+                    if not s or not s[0].isalpha():
+                        continue
+                    if s in seen:
+                        _note_proposal_overlap(
+                            "tight", s,
+                            extra={"price": r.get("price"),
+                                   "pct": r.get("pct_change"),
+                                   "spread_pct": r.get("spread_pct")})
+                        continue
+                    if is_levered_etp(s):
+                        _note_seed_drop("tight", s, "levered")
+                        continue
+                    live = (tg_desk or {}).get(s) or {}
+                    tr = (tg_tr or {}).get(s) or {}
+                    px_src = r.get("price")
+                    pct_src = r.get("pct_change")
+                    src_used = "file"
+                    for cand in (live, tr):
+                        if not cand:
+                            continue
+                        c_px = cand.get("price")
+                        c_pct = _pct_change_value(cand.get("pct_change"))
+                        if c_px is not None and c_pct is not None:
+                            px_src, pct_src = c_px, c_pct
+                            src_used = "desk" if cand is live else "trending"
+                            break
+                    if not _price_under_cap(px_src, max_price):
+                        _note_seed_drop("tight", s, "price_cap", price=px_src)
+                        continue
+                    px_f = _f_or_none(px_src)
+                    if tg_min_px > 0 and (px_f is None or px_f < tg_min_px):
+                        _note_seed_drop("tight", s, "below_min_price", price=px_src)
+                        continue
+                    pct = _pct_change_value(pct_src)
+                    if pct is None or pct < tg_min_pct:
+                        _note_seed_drop(
+                            "tight", s, "pct_low", pct=pct,
+                            file_pct=_pct_change_value(r.get("pct_change")))
+                        continue
+                    # The source's defining claim. Unknown is not tight.
+                    sp = _f_or_none(r.get("spread_pct"))
+                    if tg_max_sp > 0 and (sp is None or sp > tg_max_sp + 1e-12):
+                        _note_seed_drop("tight", s, "spread_wide", spread_pct=sp)
+                        continue
+                    # rvol: the producer's SIP daily-bar ratio, never enriched
+                    # (same reason as movers: one feed per ratio).
+                    rvol = _f_or_none(r.get("rvol"))
+                    thin_why, seed_ind = seed_rvol_gate(
+                        s, rvol, pct, cfg, source="tight",
+                        row=r, indicators=_seed_inds)
+                    if thin_why == "thin_rvol":
+                        _note_seed_drop("tight", s, "thin_rvol", pct=pct, rvol=rvol)
+                        continue
+                    dvol_f = _f_or_none(r.get("dollar_volume"))
+                    if tg_min_dv > 0 and (dvol_f is None or dvol_f < tg_min_dv):
+                        _note_seed_drop(
+                            "tight", s, "thin_dollar_volume",
+                            dollar_volume=dvol_f, price=px_src)
+                        continue
+                    seen.add(s)
+                    row = dict(r)
+                    row["symbol"] = s
+                    row["source"] = "tight"
+                    row["rvol"] = rvol
+                    row["pct_change"] = pct
+                    row["price"] = px_src
+                    row["quote_src"] = src_used
+                    if dvol_f is not None:
+                        row["dollar_volume"] = dvol_f
+                    if isinstance(seed_ind, dict):
+                        row["indicator"] = seed_ind
+                    rows.append(row)
+                    added += 1
+        except Exception:
+            pass
+
     # AI Research boards. No numeric gate here on purpose: a research row is a
     # thesis, and the board has already been through the research pass's own
     # filters. Price / day-change come from Momentum desk first, then Trending
@@ -7618,7 +7738,8 @@ def desk_candidate_rows(
 # The book rebuilds from the current lists every 2 s, so it forgot them.
 _DAY_ROSTER: dict[str, dict] = {}
 _DAY_ROSTER_KEY = {"day": ""}
-_ROSTER_SOURCES = frozenset({"movers", "trending", "research", "agy", "xai", "grok"})
+_ROSTER_SOURCES = frozenset({"movers", "trending", "research", "agy", "xai", "grok",
+                             "tight"})
 
 
 def _roster_eligible(row: dict) -> bool:
@@ -8854,12 +8975,18 @@ def _data_client():
 
 
 def sip_spread_pct(sym: str, *, now: float | None = None, ttl: float = 180.0,
-                   delay_min: float = 16.0, fetch=None) -> float | None:
+                   delay_min: float = 16.0, fetch=None,
+                   record: bool = True) -> float | None:
     """Median SIP (ask-bid)/mid, %, over the minute ending delay_min ago.
 
     Live SIP is not on this plan; historical SIP is, once 15 minutes old. A
     name's spread 16 minutes back predicts the one we pay: for names at
     <= 0.05% then, 99% were <= 0.10% at entry (2026-09-14..23, 673 entries).
+
+    record=False skips the session-recorder write. tight_screener.py calls
+    this from its own process so the source is screened on the desk's exact
+    spread statistic; those reads are not desk inputs and must not land in
+    the replay's recorded inputs.
     """
     sym = str(sym or "").upper()
     t = float(now if now is not None else time.time())
@@ -8887,7 +9014,8 @@ def sip_spread_pct(sym: str, *, now: float | None = None, ttl: float = 180.0,
     except Exception:
         val = None
     _SIP_SPREAD_CACHE[sym] = (val, t)
-    _record_input("sip_spread", sym, val, t)
+    if record:
+        _record_input("sip_spread", sym, val, t)
     return val
 
 
@@ -9372,7 +9500,7 @@ def _admit_min_rvol(source: str, cfg: dict) -> float:
     """
     src = str(source or "").strip().lower()
     try:
-        if src == "movers":
+        if src in _MOVERS_LIKE_SOURCES:
             return max(0.0, float(
                 cfg.get("ai_watch_movers_min_rvol", 1.0) or 0.0))
         if src == "trending":
@@ -9650,7 +9778,7 @@ def passes_inclusion(
     # Movers get a tighter ceiling so thin +20% names need a live print.
     # Rising-heat quality may use a longer ceiling — the %R lines are live.
     tape_max = (
-        movers_admit_max_tape_age_sec(cfg) if source == "movers"
+        movers_admit_max_tape_age_sec(cfg) if source in _MOVERS_LIKE_SOURCES
         else admit_max_tape_age_sec(cfg)
     )
     if rising_heat_quality(_rec_quality, cfg):
@@ -9684,7 +9812,7 @@ def passes_inclusion(
     except (TypeError, ValueError):
         price_f = None
     min_price = _min_price_for(source, cfg, default=1.0)
-    if source == "movers":
+    if source in _MOVERS_LIKE_SOURCES:
         try:
             mv_min_px = float(cfg.get("ai_watch_movers_min_price", 0.0) or 0.0)
         except (TypeError, ValueError):
@@ -9726,7 +9854,7 @@ def passes_inclusion(
         met.append("mom_open")
 
     min_dv = float(cfg.get("ai_min_dollar_volume", 0.0) or 0.0)
-    if source == "movers":
+    if source in _MOVERS_LIKE_SOURCES:
         try:
             mv_dv = float(
                 cfg.get("ai_watch_movers_min_dollar_volume", 0.0) or 0.0)
@@ -9803,7 +9931,7 @@ def passes_inclusion(
     # Hot day-move (≥ ai_watch_hot_move_rvol_waive_pct) waives the floor so
     # BIAF +52% / LABX +23% are not wiped by SIP rvol 0.8–1.8x while the
     # movers panel is full of real momentum (2026-09-04 midday).
-    if source in ("momentum", "trending", "movers") or mom_soft or is_research:
+    if source in ("momentum", "trending", "movers", "tight") or mom_soft or is_research:
         src_for_rvol = source or ("momentum" if mom_soft else "")
         rvol_f = _f_or_none(row.get("rvol"))
         pct_for_rvol = _pct_change_value(row.get("pct_change"))

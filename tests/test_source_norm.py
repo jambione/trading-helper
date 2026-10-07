@@ -16,7 +16,7 @@ _RESEARCH_SOURCES = frozenset({
     "a", "g", "x", "ax", "gx", "ai",
 })
 _DESK_SOURCES = frozenset({
-    "momentum", "trending", "mom", "st", "stocktwits", "movers",
+    "momentum", "trending", "mom", "st", "stocktwits", "movers", "tight",
 })
 _BB_LIVE_SOURCES = frozenset({"bb_live", "bro", "bb"})
 
