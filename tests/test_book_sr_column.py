@@ -38,7 +38,7 @@ def test_sr_cell_is_patched_in_place_and_shows_dash_without_a_reading():
     i = _JS.index("function _bookSrText(")
     body = _JS[i:_JS.index("\n}", i)]
     assert "if (!r) return '\\u2014';" in body
-    assert "'no R'" in body and "'in R'" in body
+    assert "no R`" in body and "in R`" in body
     assert "sr--resist" in _JS
 
 
@@ -134,3 +134,13 @@ def test_breakout_distance_travels_to_the_sr_cell(monkeypatch):
     assert "ob_brk_dist_pct" in ew._OB_WIRE_KEYS
     assert "ob_brk_dist_pct: w.ob_brk_dist_pct != null" in _JS
     assert "sr--clean" in _JS and "sr--chase" in _JS
+
+
+def test_sr_cell_shows_the_support_side():
+    """Operator 10/7: 'I would like to see more SR data' — the cell carries
+    support distance next to the resistance room (display only)."""
+    i = _JS.index("function _bookSrSupText(")
+    body = _JS[i:_JS.index("\n}", i)]
+    assert "ob_sup_top" in body and "'no S'" in body and "'in S'" in body
+    j = _JS.index("function _bookSrText(")
+    assert "_bookSrSupText(r)" in _JS[j:_JS.index("\n}", j)]

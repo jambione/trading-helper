@@ -1858,13 +1858,30 @@ function _bookRowHtml(r) {
 function _bookSrText(r) {
   if (!r) return '\u2014';
   if (r.ob_resist == null) return r.ob_nobars ? 'no bars' : (r.ob_stale ? 'stale' : (r.ob_off ? 'off' : '\u2014'));
+  const sup = _bookSrSupText(r);
+  const pre = sup ? `${sup} \u00b7 ` : '';
   const brk = _bookSrBrk(r);
-  if (brk != null) return `brk +${brk.toFixed(2)}%`;
+  if (brk != null) return `${pre}brk +${brk.toFixed(2)}%`;
   const room = r.ob_room_pct != null && Number.isFinite(Number(r.ob_room_pct))
     ? Number(r.ob_room_pct) : null;
-  if (room == null) return 'no R';
-  if (room <= 0) return 'in R';
-  return `R +${room < 1 ? room.toFixed(2) : room.toFixed(1)}%`;
+  if (room == null) return `${pre}no R`;
+  if (room <= 0) return `${pre}in R`;
+  return `${pre}R +${room < 1 ? room.toFixed(2) : room.toFixed(1)}%`;
+}
+
+/** Support side of the SR cell (display only): % down to the top of the nearest
+ *  charted support block (ob_sup_top / ob_sup_btm from ob_observe.levels), 'in S'
+ *  inside it, 'no S' when none is charted below, '' when levels are missing. */
+function _bookSrSupText(r) {
+  if (!r || r.ob_levels_ts == null) return '';
+  const px = r.price != null && Number.isFinite(Number(r.price)) ? Number(r.price) : null;
+  const top = r.ob_sup_top != null && Number.isFinite(Number(r.ob_sup_top)) ? Number(r.ob_sup_top) : null;
+  const btm = r.ob_sup_btm != null && Number.isFinite(Number(r.ob_sup_btm)) ? Number(r.ob_sup_btm) : null;
+  if (px == null || !(px > 0)) return '';
+  if (top == null) return 'no S';
+  if (btm != null && px <= top && px >= btm) return 'in S';
+  const d = (px / top - 1) * 100;
+  return `S \u2212${d < 1 ? d.toFixed(2) : d.toFixed(1)}%`;
 }
 
 /** % above the top of a sell zone broken in the last 15 min (ob_brk_dist_pct), or null. */

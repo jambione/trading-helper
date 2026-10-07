@@ -2466,7 +2466,8 @@ body.mobile [data-tv-toggle-btn] {
   align-items: center;
   column-gap: 6px;
   /* Ticker | State | Last | Chg | Entry | Stop | EXH | SR | P&L
-     SR = room to the nearest charted resistance order block (display only).
+     SR = % down to the nearest charted support block and room up to the
+     nearest resistance block, "S -0.25% · R +0.21%" (display only).
      EXH is the square-arm live reading (100 + fast %R). RSI stays retired.
      MACD went earlier (exit engine still uses it off-screen). Hold stays gone:
      the Stop cell shows the min-hold countdown while it runs and the stop
@@ -2481,7 +2482,7 @@ body.mobile [data-tv-toggle-btn] {
     minmax(48px, 0.68fr)
     minmax(56px, 0.8fr)
     minmax(56px, 0.75fr)
-    minmax(52px, 0.7fr)
+    minmax(8.5rem, 1.2fr)
     minmax(50px, 0.75fr);
   width: 100%;
   box-sizing: border-box;
