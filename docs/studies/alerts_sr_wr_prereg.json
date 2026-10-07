@@ -11,8 +11,16 @@
  },
  "rule": "identical to bro_sr_wr_prereg.json at commit cbd07d1: on the book from R to 15:30 (alerts have no exit lines), PRIMARY = first 1-min close in 09:31-15:30 where SR_ok AND WR_trending on gridded IEX bars, groups T ($10+, <= 0.05%) / S ($2-10, <= 100 bp) / MEGA / excluded assigned once at the first RTH minute, cross-name same-minute CONTROL_primary drawn from OTHER ALERTED names, SIP fills (first trade >= t + 2 s), 15-min hold, cost = full SIP spread at entry + 1c under $5, halts, the same chart-check caveat for thin names",
  "pass": "the Bro pass bar per group (Bonferroni 2 within this feed): PRIMARY net15 > 0 with t >= the 2.24-equivalent in BOTH halves, PRIMARY minus CONTROL_primary >= +50 bp with t >= 2.24-equivalent pooled, >= 60 entries per half; FAIL if t <= -2 in either half; UNDERPOWERED if any MDE > 150 bp",
- "periods": {"historical": "sessions 2026-09-25 .. 2026-10-07 (about 9 sessions): INFORMATION ONLY (far too few)", "forward": "every session from 2026-10-08; decides; halves = alternate forward sessions; reviewed at R1 (2026-12-15)"},
- "information_only": ["S group WR_trending only", "by alert class", "alert-moment entry (R + 2 s; premarket -> first RTH print, quote at entry)"],
+ "periods": {
+  "historical": "sessions 2026-09-25 .. 2026-10-07 (about 9 sessions): INFORMATION ONLY (far too few)",
+  "forward": "every session from 2026-10-08; decides; halves = alternate forward sessions; reviewed at R1 (2026-12-15)"
+ },
+ "information_only": [
+  "S group WR_trending only",
+  "by alert class",
+  "alert-moment entry (R + 2 s; premarket -> first RTH print, quote at entry)"
+ ],
  "no_retuning": "everything above is fixed here; the 120 s freshness rule cannot be changed after seeing outcomes",
- "prior": "LOW: spike/burst alerts faded like everything else (9/27); the momentum source carried 59% of lifetime loss (cheap names + gap-through stops)"
+ "prior": "LOW: spike/burst alerts faded like everything else (9/27); the momentum source carried 59% of lifetime loss (cheap names + gap-through stops)",
+ "caveat_freshness": "the 120 s age rule rarely binds: most symbols' first rows carry no age_sec (58/62 on 9/25, 87/93 on 10/6) and count as fresh as first appearances, including cards re-read at the 04:00 reader start-up; stated for the forward record"
 }
