@@ -67,12 +67,30 @@ def test_ocr_merge_within_60s_into_first_and_does_not_chain():
     assert ls[0]["n_rows"] == 2 and ls[0]["text"] == "ABC break hod"
 
 
-def test_ocr_twin_makes_nameday_nonactionable():
+def test_ocr_twin_is_nonactionable_as_of_its_own_time():
+    # a twin before any actionable line is skipped; with no later actionable call the name-day is dropped as a twin
     rows = [row("ABC on watch", T(10, 0)), row("ABC on watch lg tloat", T(10, 0, 20)),
             row("DEF on watch", T(10, 0), sym="DEF")]
     lines, _ = B.clean_rows(rows)
     assert B.book_of(lines[(DAY, "ABC")]) == ("ocr_twin_nonactionable", None)
     assert B.book_of(lines[(DAY, "DEF")])[1]["R"] == T(10, 0)
+    # a twin before the first actionable line: the NEXT actionable call becomes R
+    rows += [row("ABC retest hod", T(10, 30))]
+    lines, _ = B.clean_rows(rows)
+    why, bk = B.book_of(lines[(DAY, "ABC")])
+    assert why is None and bk["R"] == T(10, 30) and bk["twins_before_R"] == 1 and bk["exit_unix"] is None
+
+
+def test_later_twin_is_an_exit_line_and_does_not_remove_the_earlier_call():
+    # skeptic probe: "ABC test hod" 07:00, then "ABC sold" / "ABC solo" ~7 h later
+    rows = [row("ABC test hod", T(7, 0)), row("ABC sold", T(14, 0)), row("ABC solo", T(14, 0, 15))]
+    lines, _ = B.clean_rows(rows)
+    assert lines[(DAY, "ABC")][1]["twin"]
+    why, bk = B.book_of(lines[(DAY, "ABC")])
+    assert why is None and bk["R"] == T(7, 0)
+    assert bk["exit_unix"] == T(14, 0) and bk["exit_is_twin"]
+    assert B.on_book(bk, T(10, 0)) and B.on_book(bk, T(13, 59)) and B.on_book(bk, T(14, 0))
+    assert not B.on_book(bk, T(14, 1))
 
 
 @pytest.mark.parametrize("text", ["ABC Ig float", "ABC |g float", "ABC lg tloat", "ABC will avoi", "ABC not enough vol",
@@ -449,6 +467,72 @@ def test_fetch_failure_is_not_cached_and_is_logged(tmp_path):
     assert "quotes|ABC|1" in m.fails and "ABC|1" not in m._cache("quotes")
     assert m._cached("quotes", "ABC|1", lambda: None) is None          # "no data" is a cached answer
     assert "quotes|ABC|1" not in m.fails
+
+
+# ------------------------------------------------------------------ skeptic 2bfcf31 items 2-4
+class RecordingMarket(FakeMarket):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.quote_calls = []
+
+    def quote(self, sym, t):
+        self.quote_calls.append(t)
+        return super().quote(sym, t)
+
+
+def test_premarket_call_cell_costs_at_first_rth_print():
+    nd = _book_nd(R=T(7, 15))
+    nd["iex"] = _series(set())
+    # no regular premarket print in the fake tape: the first regular print is 09:30:05
+    mkt = RecordingMarket(trades={"ABC": [(T(9, 30, 5), 4.0), (T(9, 45), 4.2)]},
+                          quotes={"ABC": [(T(7, 14), 2.0, 6.0), (T(9, 30, 4), 3.99, 4.01)]})
+    out = B.info_cells(mkt, nd, None, collections.Counter())
+    assert "call_moment" not in out
+    c = out["premarket_call_first_rth_print"]
+    assert c["entry_ts"] == T(9, 30, 5) and abs(c["spread_bp"] - 50.0) < 1e-6   # not the 07:14 quote
+    assert T(7, 15) not in mkt.quote_calls and T(9, 30, 5) in mkt.quote_calls
+
+
+def test_rth_call_cell_unchanged():
+    nd = _book_nd(R=T(10, 15))
+    nd["iex"] = _series(set())
+    mkt = RecordingMarket(trades={"ABC": [(T(10, 15, 3), 4.0), (T(10, 29), 4.2)]},
+                          quotes={"ABC": [(T(10, 15), 3.99, 4.01)]})
+    out = B.info_cells(mkt, nd, None, collections.Counter())
+    assert out["call_moment"]["entry_ts"] == T(10, 15, 3) and "premarket_call_first_rth_print" not in out
+
+
+def test_pass_series_marks_real_bars():
+    closes = [10 + 0.01 * i for i in range(130)]
+    rows = [r for i, r in enumerate(_bars(closes, T(8, 0))) if i % 4 != 2]
+    s = B.pass_series(rows)
+    real = {r[0] + 60 for r in rows}
+    assert all(s[k]["real"] == (k in real) for k in s)
+    assert any(not v["real"] for v in s.values())
+
+
+def _summ_rows():
+    base = {"day": DAY, "half": "A", "R": T(10, 0), "a0": T(10, 1), "premarket_call": False, "info": {}}
+    p = {"t": T(10, 5), "net_bp": 10.0, "spread_bp": 4.0, "halt": True}
+    return [dict(base, sym="A1", group="S", primary=p, control_primary=dict(p, halt=False), control_secondary=None),
+            dict(base, sym="A2", group="S", primary=dict(p, halt=False), control_primary=None,
+                 control_secondary=dict(p)),
+            dict(base, sym="A3", group="T", primary=dict(p), control_primary=None, control_secondary=None)]
+
+
+def test_summary_reports_halts_per_group_and_no_trade_flag():
+    c = collections.Counter({"group_excl_no_trade_at_assignment": 1})
+    res = B.summarize(_summ_rows(), c, {"archive_rows": 3})
+    sp = res["groups"]["S"]["power"]
+    assert sp["halt_exit"]["primary"] == 1 and sp["halt_exit"]["control_secondary"] == 1
+    assert sp["halt_exit"]["control_primary"] == 0 and sp["halt_exit"]["primary_by_half"] == {"A": 1, "B": 0}
+    assert res["groups"]["T"]["power"]["halt_exit"]["primary"] == 1
+    assert sp["excl_no_trade_at_assignment"] == 1 and sp["excl_no_trade_flag"]       # 1 of 2 S name-days > 10%
+    md = B.render_report(res)
+    assert "FLAG: > 10% of S" in md and "halt exits" in md
+    res = B.summarize(_summ_rows(), collections.Counter(), {"archive_rows": 3})
+    assert not res["groups"]["S"]["power"]["excl_no_trade_flag"]
+    assert "FLAG: > 10% of S" not in B.render_report(res)
 
 
 # ------------------------------------------------------------------ end to end on a fake market

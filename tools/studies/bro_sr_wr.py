@@ -97,10 +97,13 @@ RESOLUTIONS = {
     "R6_halt": "halted at X if SIP 1-min bars miss >= 5 consecutive minutes covering X's minute, every one of the "
                "5 minutes before the gap printed, and a bar resumes later that day (halt_reopen_study rule)",
     "R7_regular_prints": "trades are tape_check.BAD_CONDITIONS-filtered regular prints (odd lots excluded); this "
-                         "also drops extended-hours prints (condition T), so a premarket call-moment entry (info "
-                         "cell) fills at the first regular RTH print",
+                         "also drops extended-hours prints (condition T), so a premarket call's call-moment entry is "
+                         "its own cell 'premarket call -> first regular RTH print', costed at the NBBO at that entry "
+                         "trade's time; call_moment_* cells hold RTH calls only",
     "R8_twins": "a merge group (same ticker within 60 s of the group's first row) with both actionable and "
-                "non-actionable rows makes the whole name-day non-actionable",
+                "non-actionable rows is non-actionable AS OF ITS OWN TIME: before the first actionable line it is "
+                "skipped (the next actionable call is R); after it, it is an exit line at its own time; a name-day "
+                "with no actionable line and a twin is counted as ocr_twin_nonactionable (skeptic 2bfcf31 BLOCKER)",
     "R9_adv": "ADV20 = mean SIP daily close x volume over the 20 sessions ending D-1 (>= 5 required, else not mega); "
               "MEGA = would-be T name with ADV20 >= $5B",
     "R10_t_crit": "2.24-equivalent = Student-t quantile at the one-sided p of z=2.24 (0.01255) with df = sessions "
@@ -276,15 +279,18 @@ def asset_reason(sym: str, a: dict | None) -> str | None:
 
 
 def book_of(lines: list[dict]):
-    """(reason, book). Book: R = first actionable line's capture time; exit = first non-actionable line after R."""
-    if any(x["twin"] for x in lines):
-        return "ocr_twin_nonactionable", None
+    """(reason, book), point in time (R8). Book: R = first actionable line's capture time; exit = first
+    non-actionable line after R. An OCR twin group (a non-actionable near-copy within 60 s) is non-actionable as of
+    its own time: before the first actionable line it is skipped like any other non-actionable line; after it, it
+    is an exit line at its own time. It never reaches back to remove an earlier call."""
     first = next((x for x in lines if x["actionable"]), None)
     if first is None:
-        return "no_actionable_call", None
+        return ("ocr_twin_nonactionable" if any(x["twin"] for x in lines) else "no_actionable_call"), None
     ex = next((x for x in lines if x["unix"] > first["unix"] and not x["actionable"]), None)
     return None, {"R": first["unix"], "at": first["at"], "text": first["text"],
-                  "exit_unix": ex["unix"] if ex else None, "exit_text": ex["text"] if ex else None}
+                  "exit_unix": ex["unix"] if ex else None, "exit_text": ex["text"] if ex else None,
+                  "exit_is_twin": bool(ex and ex["twin"]),
+                  "twins_before_R": sum(1 for x in lines if x["twin"] and x["unix"] < first["unix"])}
 
 
 def on_book(nd: dict, t: float, keep_exit: bool = False) -> bool:
@@ -375,7 +381,7 @@ def pass_series(rows, day_close_of=None) -> dict:
     grid = desk_grid(rows)
     fast, slow, sr, _ = features(grid)
     for i, g in enumerate(grid):
-        out[g[0] + 60] = _state(i, fast, slow, sr, g[4])
+        out[g[0] + 60] = dict(_state(i, fast, slow, sr, g[4]), real=bool(g[5]))
     # trailing point-in-time flats inside long gaps (and after the last bar)
     real_idx = [i for i, g in enumerate(grid) if g[5]]
     for n, k in enumerate(real_idx):
@@ -395,7 +401,7 @@ def pass_series(rows, day_close_of=None) -> dict:
         ext = grid[:k + 1] + flats
         f2, s2, sr2, _ = features(ext)
         for j in range(len(flats)):
-            out[flats[j][0] + 60] = _state(k + 1 + j, f2, s2, sr2, c)
+            out[flats[j][0] + 60] = dict(_state(k + 1 + j, f2, s2, sr2, c), real=False)
     return out
 
 
@@ -768,7 +774,7 @@ def control_primary(mkt, nd, entry, day_nds, counts, series_key="iex"):
             if cap is not None and (q[1] - q[0]) / ((q[0] + q[1]) / 2) > cap:
                 counts["ctrl_candidate_T_spread_skip"] += 1
                 continue
-            tr = simulate(mkt, c["sym"], tt + LAT_SEC, q, c["sip"], c["close"], counts, tag="ctrl_")
+            tr = simulate(mkt, c["sym"], tt + LAT_SEC, q, c["sip"], c["close"], counts, tag=f"{nd['group']}_ctrl_")
             if tr is None:
                 continue
             tr.update({"t": tt, "sym": c["sym"], "offset_min": off})
@@ -792,7 +798,7 @@ def control_secondary(mkt, nd, entry, counts):
         q = mkt.quote(nd["sym"], t)
         if q is None or (cap is not None and (q[1] - q[0]) / ((q[0] + q[1]) / 2) > cap):
             continue
-        tr = simulate(mkt, nd["sym"], t + LAT_SEC, q, nd["sip"], nd["close"], counts, tag="ctrl2_")
+        tr = simulate(mkt, nd["sym"], t + LAT_SEC, q, nd["sip"], nd["close"], counts, tag=f"{nd['group']}_ctrl2_")
         if tr:
             tr["t"] = t
             return tr
@@ -805,16 +811,32 @@ def info_cells(mkt, nd, prim, counts):
     out = {}
     sym, day = nd["sym"], nd["day"]
     pm = nd["R"] < et_ts(day, 9, 30)
-    # call moment: entry at R + 2 s, split by SR_ok / WR_trending at the last grid close <= R
-    q = mkt.quote(sym, nd["R"])
-    if q is None:
-        counts["info_call_no_quote"] += 1
+    # call moment: entry at R + 2 s, split by SR_ok / WR_trending at the last grid close <= R.
+    # A premarket call's entry is the first regular RTH print (R7), so it is its own cell, costed at the NBBO at
+    # that entry trade's time, not at R (skeptic 2bfcf31 item 2).
+    st = state_at_or_before(nd["iex"], nd["R"]) or {"warm": False}
+    split = {"premarket_call": pm, "warm": st.get("warm"), "sr_ok": st.get("sr_ok"), "wr": st.get("wr")}
+    if pm:
+        e = mkt.first_trade(sym, nd["R"] + LAT_SEC, nd["close"])
+        q = mkt.quote(sym, e[0]) if e is not None else None
+        if e is None:
+            counts["info_pm_call_drop_no_entry_trade"] += 1
+        elif q is None:
+            counts["info_pm_call_no_quote"] += 1
+        else:
+            tr = simulate(mkt, sym, e[0], q, nd["sip"], nd["close"], counts, tag="info_pm_call_")
+            if tr:
+                tr.update(split)
+                out["premarket_call_first_rth_print"] = tr
     else:
-        tr = simulate(mkt, sym, nd["R"] + LAT_SEC, q, nd["sip"], nd["close"], counts, tag="info_call_")
-        if tr:
-            st = state_at_or_before(nd["iex"], nd["R"]) or {"warm": False}
-            tr.update({"premarket_call": pm, "warm": st.get("warm"), "sr_ok": st.get("sr_ok"), "wr": st.get("wr")})
-            out["call_moment"] = tr
+        q = mkt.quote(sym, nd["R"])
+        if q is None:
+            counts["info_call_no_quote"] += 1
+        else:
+            tr = simulate(mkt, sym, nd["R"] + LAT_SEC, q, nd["sip"], nd["close"], counts, tag="info_call_")
+            if tr:
+                tr.update(split)
+                out["call_moment"] = tr
     # the 9/27 method, labelled as using 'at' (spoken minute)
     if nd.get("at"):
         rows = [r for r in nd["sip"] if et_day(r[0]) == day]
@@ -1101,6 +1123,10 @@ def score_day(mkt, day, nds, counts):
             row["info_keep_after_exit"] = {k: v for k, v in pk.items() if k != "quote"} if pk else None
         else:
             row["info_keep_after_exit"] = row.get("primary")
+        # information (skeptic 2bfcf31 item 4): PRIMARY evaluated only at minutes with a REAL IEX bar
+        real = {t: st for t, st in nd["iex"].items() if st.get("real")}
+        pr = find_primary(mkt, nd, real, counts, tag=f"info_realbar_{nd['group']}_")
+        row["info_real_iex_bar_only"] = {k: v for k, v in pr.items() if k != "quote"} if pr else None
         row["info"] = info_cells(mkt, nd, prim, counts)
         entries.append(row)
     return entries
@@ -1164,6 +1190,17 @@ def summarize(rows, counts, meta, mode="historical"):
             sp = [p["spread_bp"] for p in prim]
             info["S_share_entry_spread_within_desk_cap"] = (sum(1 for s in sp if s <= T_MAX_SPR * 1e4) / len(sp)
                                                             if sp else None)
+        n_noq = counts.get("group_excl_no_trade_at_assignment", 0)
+        halts = {leg: sum(1 for r in gr if (r.get(leg) or {}).get("halt"))
+                 for leg in ("primary", "control_primary", "control_secondary", "info_sip_signal")}
+        halts["primary_by_half"] = {h: sum(1 for p in prim if p["half"] == h and p.get("halt")) for h in ("A", "B")}
+        power["halt_exit"] = halts
+        if g == "S":
+            # excl_no_trade_at_assignment names have no SIP price, so they cannot be grouped; the flag compares them
+            # with the S name-day count (skeptic 2bfcf31 item 3)
+            power["excl_no_trade_at_assignment"] = n_noq
+            power["excl_no_trade_share_of_S"] = n_noq / len(gr) if gr else None
+            power["excl_no_trade_flag"] = bool(n_noq > 0.10 * len(gr))
         res["groups"][g] = {"power": power, "primary": halves, "contrast": contrast, "verdict": v, "info": info,
                             "pooled_primary": clustered(prim)}
     res["entries"] = rows
@@ -1176,6 +1213,10 @@ def info_summary(gr):
     out = {}
     out["control_secondary_within_name"] = cell([dict(r["control_secondary"], day=r["day"]) for r in gr
                                                  if r.get("control_secondary")])
+    out["real_iex_bar_minutes_only"] = cell([dict(r["info_real_iex_bar_only"], day=r["day"]) for r in gr
+                                             if r.get("info_real_iex_bar_only")])
+    out["premarket_call_first_rth_print"] = cell([dict(r["info"]["premarket_call_first_rth_print"], day=r["day"])
+                                                  for r in gr if r["info"].get("premarket_call_first_rth_print")])
     out["sip_signal"] = cell([dict(r["info_sip_signal"], day=r["day"]) for r in gr if r.get("info_sip_signal")])
     out["keep_despite_exit_line"] = cell([dict(r["info_keep_after_exit"], day=r["day"]) for r in gr
                                           if r.get("info_keep_after_exit")])
@@ -1185,11 +1226,10 @@ def info_summary(gr):
     out["p27_method_uses_at"] = cell([dict(r["info"]["p27_uses_at"], day=r["day"]) for r in gr
                                       if r["info"].get("p27_uses_at")])
     cm = [dict(r["info"]["call_moment"], day=r["day"]) for r in gr if r["info"].get("call_moment")]
-    out["call_moment_all"] = cell(cm)
+    out["call_moment_rth_calls"] = cell(cm)
     for lab, f in (("sr_ok", lambda x: x.get("sr_ok") is True), ("not_sr_ok", lambda x: x.get("sr_ok") is False),
                    ("wr_trending", lambda x: x.get("wr") is True), ("not_wr_trending", lambda x: x.get("wr") is False),
-                   ("unwarm", lambda x: not x.get("warm")), ("premarket_call", lambda x: x.get("premarket_call")),
-                   ("rth_call", lambda x: not x.get("premarket_call"))):
+                   ("unwarm", lambda x: not x.get("warm"))):
         out[f"call_moment_{lab}"] = cell([x for x in cm if f(x)])
     prim = [dict(r["primary"], day=r["day"], pm=r["premarket_call"]) for r in gr if r.get("primary")]
     out["primary_premarket_call"] = cell([x for x in prim if x["pm"]])
@@ -1218,6 +1258,13 @@ def render_report(res) -> str:
                  f"B: {_f(p['mde_bp_per_half']['B'], 1)}}}; contrast n {p['contrast_n']} MDE "
                  f"{_f(p['contrast_mde_bp'], 1)} bp")
         L.append(f"  entry minutes: {p['entry_minute_distribution']}")
+        L.append(f"  halt exits (first trade after resume): {p.get('halt_exit')}")
+        if "excl_no_trade_at_assignment" in p:
+            share = p.get("excl_no_trade_share_of_S")
+            L.append(f"  excl_no_trade_at_assignment: {p['excl_no_trade_at_assignment']} "
+                     f"({'n/a' if share is None else f'{share:.0%}'} of S name-days)"
+                     + ("  **FLAG: > 10% of S — the unpriced names may differ from S**"
+                        if p.get("excl_no_trade_flag") else ""))
     L += ["", "## 2. Drops and counts", "", "```"]
     L += [f"{k:<48}{v}" for k, v in sorted(res["counts"].items())]
     L += ["```", "", "## 3. Results (net15 bp after full SIP spread, +1c RT under $5)", ""]
@@ -1233,6 +1280,8 @@ def render_report(res) -> str:
             L.append(f"- **VERDICT: {G['verdict']['verdict']}** — {'; '.join(G['verdict']['why'])}")
         L.append("- information only (never promoted):")
         for k, v in G["info"].items():
+            k = {"premarket_call_first_rth_print": "premarket call -> first regular RTH print (quote at entry)",
+                 "real_iex_bar_minutes_only": "PRIMARY at real IEX bar minutes only (no flat-filled minutes)"}.get(k, k)
             if isinstance(v, dict):
                 L.append(f"  - {k}: n {v['n']}, mean {_f(v['mean'], 1)}, t {_f(v['t'], 2)}")
             else:
