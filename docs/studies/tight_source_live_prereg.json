@@ -1,0 +1,11 @@
+{
+ "study": "Tight-spread name source switched on early on the paper desk (operator 10/7, option 1): do 'tight' trades, with the desk's real entries and trail exits, beat 'movers' trades on the same days, and does the source add opens?",
+ "registered_at": "2026-10-07, before the source trades (switch on from the 10/8 session)",
+ "registered_before_results": true,
+ "origin": "Day book thin all day (0.05% cap refuses ~30-40 of ~40-50 candidates per check; median book 5-9). The G5 shadow test (tight_shadow_prereg.json) continues unchanged; this is the live paper counterpart.",
+ "data": "ai_reports/outcomes.jsonl closed round trips from 2026-10-08, source 'tight' vs 'movers'; realized bp = exit/entry - 1 (the desk's real fills, so spread is included)",
+ "statistic": "OLS of realized bp on a TIGHT dummy (tight vs movers) with day fixed effects, day-clustered t; plus opens per day by source and the book size before/after",
+ "pass": "TIGHT minus MOVERS >= +5 bp with t >= 2 over >= 10 sessions with >= 60 tight trades, sign holding in both halves -> keep it on (skeptic review). TIGHT minus MOVERS <= -5 bp with t <= -2 -> switch it off. Otherwise keep on and keep collecting (it adds opens at no worse cost).",
+ "interaction": "the cost-arm A/B (G2) assigns arms per trade, so the extra names affect both arms equally; G2's verdict on 10/15 is still read as registered",
+ "settings": "as merged: ai_watch_seed_tight_n 8, ai_tight_* defaults (top 15, spread <= 0.03%, up >= 1%, $10+, prior $vol >= $50M); movers floors (rvol 1.0, $vol) and the +0.5 movers ranking bonus apply; not retuned during the test"
+}

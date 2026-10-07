@@ -487,5 +487,6 @@
   "ai_watch_spread_wide_evict_sec": 120.0,
   "ai_watch_uptrend_grace_sec": 60.0,
   "ai_watch_ob_resist_skip": false,
-  "ai_watch_ob_observe": true
+  "ai_watch_ob_observe": true,
+  "ai_watch_seed_tight": true
 }
