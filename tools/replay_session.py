@@ -80,7 +80,8 @@ CACHE_DIR = Path(os.getenv("REPLAY_CACHE_DIR") or Path.home() / "replay_cache")
 ALLOWED_HOSTS = ("data.alpaca.markets",)
 # Files the desk code reads from its own folder; materialized from the recording.
 DISK_FILES = (
-    "trending_stocks.json", "movers_stocks.json", "signal_state.json",
+    "trending_stocks.json", "movers_stocks.json", "tight_stocks.json",
+    "signal_state.json",
     "transcription/wb_watchlist.json", "agy_suggestions.json",
     "claude_suggestions.json", "suggestions.json", "grok_suggestions.json",
     "seed_rank_gx.json", "seed_rank_ax.json",

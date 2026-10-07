@@ -83,6 +83,9 @@ trending_stocks.json
 # 60s on the mini and meaningless anywhere else. It has a `ts` the seed reads
 # to refuse stale data, so a committed copy would be worse than none.
 movers_stocks.json
+# tight_screener.py: same class (producer snapshot + its daily universe cache).
+tight_stocks.json
+tight_universe.json
 
 # Local control script artifacts
 .trading.pids
