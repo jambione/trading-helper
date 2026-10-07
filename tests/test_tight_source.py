@@ -248,6 +248,7 @@ def test_wide_spread_and_cheap_rows_are_refused(tmp_path, monkeypatch):
         _row("OK"),
     ])
     got = _seeded({"ai_watch_movers_min_rvol": 1.0,
+                   "ai_watch_tight_min_rvol": 0.5,
                    "ai_watch_hot_move_rvol_waive_pct": 20.0,
                    "ai_watch_movers_min_dollar_volume": 2e6})
     assert [r["symbol"] for r in got] == ["OK"]
@@ -305,11 +306,34 @@ def test_door_spread_cap_applies_to_tight():
     assert ew._spread_gate_max("tight", cfg) == 0.05, "tight is never spread-exempt"
 
 
-def test_tight_faces_the_movers_admission_floors():
+def test_tight_has_its_own_rvol_floor_default_none():
+    # 10/7: calm large caps run rvol ~0.5 (MO, VZ refused at 1.0); the shadow
+    # test applied no rvol floor, so the live source does not either.
     cfg = {"ai_watch_movers_min_rvol": 1.0, "ai_watch_min_rvol": 2.0,
-           "ai_watch_movers_admit_max_tape_age_sec": 60.0}
-    assert ew._admit_min_rvol("tight", cfg) == ew._admit_min_rvol("movers", cfg) == 1.0
+           "ai_watch_heating_min_rvol": 1.25}
+    assert ew._admit_min_rvol("movers", cfg) == 1.0
+    assert ew._admit_min_rvol("tight", cfg) == 0.0
+    assert ew.rvol_blocks_admit(0.45, 1.0, cfg, source="tight") is None
+    assert ew.rvol_blocks_admit(0.45, 1.0, cfg, source="movers") == "thin_rvol"
+    cfg["ai_watch_tight_min_rvol"] = 0.8
+    assert ew.rvol_blocks_admit(0.45, 1.0, cfg, source="tight") == "thin_rvol"
     assert "tight" in ew._MOVERS_LIKE_SOURCES
+
+
+def test_float_cap_skips_tight_only(monkeypatch):
+    import float_feed
+    monkeypatch.setattr(float_feed, "float_shares", lambda s: 5000.0)
+    cfg = {"ai_watch_max_float_m": 800.0, "ai_watch_require_uptrend": False,
+           "ai_watch_min_price": 1.0, "ai_min_dollar_volume": 0.0,
+           "ai_watch_admit_max_tape_age_sec": 0,
+           "ai_watch_movers_admit_max_tape_age_sec": 0}
+
+    def reason(src):
+        row = {"symbol": "WMT", "source": src, "price": 50.0, "pct_change": 2.0,
+               "rvol": 1.5, "criteria": ["mom_open"], "dollar_volume": 9e8}
+        return ew.passes_inclusion(row, cfg)[2]
+    assert reason("movers") == "float_too_big"
+    assert reason("tight") != "float_too_big"
 
 
 # ── registration ────────────────────────────────────────────────────────────

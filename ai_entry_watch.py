@@ -9500,6 +9500,11 @@ def _admit_min_rvol(source: str, cfg: dict) -> float:
     """
     src = str(source or "").strip().lower()
     try:
+        # Tight names are calm large caps (rvol ~0.5 is normal for them); the
+        # shadow test that justified the source applied no rvol floor.
+        if src == "tight":
+            return max(0.0, float(
+                cfg.get("ai_watch_tight_min_rvol", 0.0) or 0.0))
         if src in _MOVERS_LIKE_SOURCES:
             return max(0.0, float(
                 cfg.get("ai_watch_movers_min_rvol", 1.0) or 0.0))
@@ -9586,6 +9591,8 @@ def rvol_blocks_admit(
     rising + tight + heat band) may use ``ai_watch_heating_min_rvol``.
     """
     min_rvol = _admit_min_rvol(source, cfg)
+    if min_rvol <= 0 and str(source or "").strip().lower() == "tight":
+        return None  # no floor: the heat floor below must not add one back
     if record is not None and rising_heat_quality(record, cfg):
         try:
             heat_floor = float(cfg.get("ai_watch_heating_min_rvol", 1.25) or 0.0)
@@ -9893,7 +9900,9 @@ def passes_inclusion(
         max_float_m = float(cfg.get("ai_watch_max_float_m", 0) or 0)
     except (TypeError, ValueError):
         max_float_m = 0.0
-    if max_float_m > 0:
+    # Tight names are large caps by construction (the shadow test applied no
+    # float cap); the cap would refuse every one of them.
+    if max_float_m > 0 and source != "tight":
         try:
             import float_feed
             fl = float_feed.float_shares(str(row.get("symbol") or ""))
