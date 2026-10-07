@@ -35,8 +35,8 @@
  ],
  "design": {
   "PRIMARY_on_book": "from receive time R until 15:30 ET, at every 1-min close t (09:30-15:30) evaluate SR_ok AND WR_trending using only data closed by t; the FIRST minute PASS holds is the entry decision (one entry per name-day). Entry = the first SIP trade at or after t + 2 s; outcome net15 as below.",
-  "CONTROL_on_book": "per PRIMARY entry, one random 1-min close (seed 53) in the same name-day between R and 15:30 that is NOT a PASS minute, same entry/exit/cost rule (a minute while the name was on the book, without the signal)",
+  "CONTROL_on_book": "per PRIMARY entry, one random 1-min close (seed 53) in the same name-day that is NOT a PASS minute and starts AFTER the PRIMARY trade has exited (entry + 15 min) and by 15:30; same entry/exit/cost rule. Controls are never drawn before or during the signal trade, because those windows contain the rise that produced the signal (the 10/06 hindsight-control artifact). Pairs with no eligible control are dropped and counted.",
   "INFO_at_call": "the call moment itself: entry at R + 2 s, with SR_ok/WR_trending reported as a split (the operator's first phrasing)"
  },
- "amended": "2026-10-07, before any feature was computed: operator follow-up makes the on-book signal the primary and the call moment information"
+ "amended": "2026-10-07, before any feature was computed: operator follow-up makes the on-book signal the primary and the call moment information; control restricted to minutes after the PRIMARY exit (hindsight guard)"
 }
