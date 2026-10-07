@@ -8,7 +8,8 @@
  "variants": {
   "base": "live config as recorded for the day",
   "arm_pct": "ai_local_trail_arm_pct=0.10 (the trail also arms at +0.10% of price; everything else live)",
-  "stop_1pct": "ai_watch_synth_stop_pct=1.0 (synthetic stop 1% under the fill, so every R-based trail knob shrinks 5x: arm ~+0.06%, give 0.12R ~0.12%)"
+  "stop_1pct": "ai_watch_synth_stop_pct=1.0 (synthetic stop 1% under the fill, so every R-based trail knob shrinks 5x: arm ~+0.06%, give 0.12R ~0.12%)",
+  "lob": "ai_exit_left_overbought=true (sell when %R leaves overbought: the 'triangle' exit); everything else live"
  },
  "scope": "--set is global in the replay, so movers trades change too; only tight trades are scored. Slot competition between sources is a stated caveat.",
  "fidelity": "per session, base-replay tight trades vs live tight fills (outcomes.jsonl source 'tight'): report recall; a session with live tight fills and base recall < 0.5 is excluded (counted). Check n > 0 tight trades per variant per day before any mean (replays have been vacuous before).",
@@ -16,5 +17,11 @@
  "pass": "a variant EARNS A LIVE PAPER A/B for tight names (after T1 is read) only if: variant minus base >= +3 bp per tight trade, t across days >= 2, negative on at most 20% of days, >= 60 base tight trades in total. Otherwise no change. Win rate and hold time are reported but cannot pass a variant.",
  "no_retuning": "variants, the tight-trade definition and the bar are fixed here; any other setting is a new pre-registration",
  "interaction": "no live config change for tight exits during T1 (tight_source_live_prereg.json); this study only replays",
- "caveats": ["replay fills at the recorded price; spread charged by costing", "global --set changes movers trades and therefore slot use", "10/07 is a partial session", "small, calm names: per-trade bp is small and so is the spread"]
+ "caveats": [
+  "replay fills at the recorded price; spread charged by costing",
+  "global --set changes movers trades and therefore slot use",
+  "10/07 is a partial session",
+  "small, calm names: per-trade bp is small and so is the spread"
+ ],
+ "amended": "2026-10-07 ~11:50 ET, before any replay was run: operator (PFE bought last_overbought, never green) added variant 'lob'. Prior: 10/5 replay on mostly movers, lob -7.8 vs base -7.6 bp/trade (n ~380, fired 54x); untested on tight names. Same pass bar; 3 variants vs base are scored, so the bar is per variant (no multiplicity relief claimed)."
 }

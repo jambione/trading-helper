@@ -7,4 +7,5 @@ mkdir -p /tmp/tt_run
 .venv/bin/python tools/replay_session.py --day $d --out /tmp/tt_run/$d-base.json > /tmp/tt_run/$d-base.log 2>&1
 .venv/bin/python tools/replay_session.py --day $d --set ai_local_trail_arm_pct=0.10 --out /tmp/tt_run/$d-arm_pct.json > /tmp/tt_run/$d-arm_pct.log 2>&1
 .venv/bin/python tools/replay_session.py --day $d --set ai_watch_synth_stop_pct=1.0 --out /tmp/tt_run/$d-stop_1pct.json > /tmp/tt_run/$d-stop_1pct.log 2>&1
+.venv/bin/python tools/replay_session.py --day $d --set ai_exit_left_overbought=true --out /tmp/tt_run/$d-lob.json > /tmp/tt_run/$d-lob.log 2>&1
 echo DONE $d > /tmp/tt_run/done-$d
