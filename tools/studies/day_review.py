@@ -280,6 +280,10 @@ def main():
             L.append(f"- Replay fidelity: unreadable ({fid})")
     else:
         L.append("- Replay fidelity: not written")
+    ns = _read(os.path.join(REP, "nightly", D, "summary.md"), tail=12)
+    L.append("- **Replay checks (tools/nightly.py):** " + ("" if ns else "not written"))
+    if ns:
+        L += ["```"] + ns + ["```"]
     obl = _read(f"/tmp/nightly/ob_fills-{D}.log", tail=6)
     L.append("- **Order-block held-out record:** " + ("appended (see ai_reports/order_block_gate/)" if obl else "not run"))
     for src in ("bro", "alerts"):

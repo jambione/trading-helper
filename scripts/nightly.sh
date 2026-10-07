@@ -8,6 +8,8 @@ cd ~/repo/trading-helper || exit 1
 d=${1:-$(TZ=America/New_York date +%F)}
 mkdir -p /tmp/nightly
 until [ "$(TZ=America/New_York date +%H%M)" -ge 1635 ] || [ "$d" != "$(TZ=America/New_York date +%F)" ]; do sleep 60; done
+# tools/nightly.py (started at 16:05 by session_snapshot) runs one replay at a time; do not overlap it.
+while pgrep -f "tools/nightly.py" > /dev/null; do sleep 60; done
 if [[ "$d" > "2026-10-07" ]]; then
   .venv/bin/python tools/studies/bro_sr_wr.py forward $d > /tmp/nightly/bro_fwd-$d.log 2>&1
   .venv/bin/python tools/studies/bro_sr_wr.py forward $d --source alerts > /tmp/nightly/alerts_fwd-$d.log 2>&1
