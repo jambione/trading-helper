@@ -1,3 +1,10 @@
+> **10/7 RESTART (after the close, in the mini's own Terminal, never over ssh)** — activates the tight-spread source (paper):
+> 1. `cd ~/repo/trading-helper && git pull --ff-only && git log --oneline -1`   (expect 1c70741 or later)
+> 2. `grep -n "seed_tight\|ob_resist_skip" config/bot_config.json`   (expect `ai_watch_seed_tight: true`, `ai_watch_ob_resist_skip: false`)
+> 3. `launchctl kickstart -k gui/$(id -u)/com.jambi.trading-desk`   (runs ./trading restart, which now also starts tight_screener)
+> 4. `./trading status`   (expect a running "tight" line); log: `logs/tight.log`
+> Tonight at 16:35 the Bro + alerts study runs by itself (scripts/bro_alerts_run.sh) — independent of the restart.
+>
 > **2026-10-07 state (Claude near usage limit):** Trader Bro + alerts study is on branch `bro-sr-wr-study`
 > (builder adding 2 info cells + `--source alerts`; preregs `bro_sr_wr_prereg.json` cbd07d1, `alerts_sr_wr_prereg.json` ee616dd).
 > It still needs the skeptic's code sign-off before merge/run, so do NOT run it unreviewed; if Claude is out, it waits a day.
@@ -42,7 +49,7 @@
 >   Until then the skip has less history to see blocks in.
 > - Code: `ob_observe.py`, `ai_entry_watch.py` (`_ob_resist_refusal`). Tests: `tests/test_ob_observe.py`.
 >
-> **Restart steps for Jonathan. Do them after the close, in the mini's own Terminal, never over ssh:**
+> **(SUPERSEDED 10/7: do NOT turn the hard skip on; use the 10/7 steps at the top.) Old restart steps:**
 > 1. `cd ~/repo/trading-helper && git pull --ff-only && git log --oneline -1`
 >    The mini was already pulled tonight; this confirms the tree is at the order-block merge or later.
 > 2. Turn the HARD SKIP on for tomorrow:
