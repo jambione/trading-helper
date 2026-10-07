@@ -144,3 +144,12 @@ def test_sr_cell_shows_the_support_side():
     assert "ob_sup_top" in body and "'no S'" in body and "'in S'" in body
     j = _JS.index("function _bookSrText(")
     assert "_bookSrSupText(r)" in _JS[j:_JS.index("\n}", j)]
+
+
+def test_overnight_panel_has_no_live_line_or_holdings_list():
+    """Operator 10/7: live overnight stopped; remove the LIVE line and the holdings list."""
+    html = (Path(__file__).resolve().parents[1] / "dashboard.html").read_text()
+    for attr in ("data-ai-overnight-live", "data-ai-overnight-status", "data-ai-overnight-list"):
+        assert attr not in html, attr
+    assert "data-ai-overnight-nights" in html and "data-ai-overnight-acct" in html
+    assert "_paintOvernightLive(root" not in _JS

@@ -1148,42 +1148,6 @@ function _bindBookSlot(sectionEl, haveOvernight) {
   apply(slot.dataset.want);
 }
 
-/** The real-money auction test, one line under the paper account's: balance,
- *  P&L, and how its auction fills compare with the official cross and with
- *  paper's market-order fills of the same names. Hidden until it exists. */
-function _paintOvernightLive(root, live) {
-  const el = root && root.querySelector('[data-ai-overnight-live]');
-  if (!el) return;
-  if (!live || typeof live !== 'object') { el.hidden = true; return; }
-  el.hidden = false;
-  const a = live.account && typeof live.account === 'object' ? live.account : {};
-  const eq = Number(a.equity), prior = Number(a.last_equity), start = Number(a.start_equity);
-  const parts = ['<span class="on-live-tag">LIVE</span>'];
-  if (Number.isFinite(eq)) {
-    parts.push(`$${_esc(eq.toFixed(2))}`);
-    if (Number.isFinite(prior) && prior > 0) {
-      const d = eq - prior;
-      parts.push(`<span class="on-dim">today</span> <span class="${_bpCls(d)}">${_esc(_fmtHistPl(d))}</span>`);
-    }
-    if (Number.isFinite(start) && start > 0) {
-      const d = eq - start;
-      parts.push(`<span class="on-dim">since start</span> <span class="${_bpCls(d)}">${_esc(_fmtHistPl(d))}</span>`);
-    }
-  }
-  const t = live.compare && live.compare.totals ? live.compare.totals : null;
-  if (t && Number(t.orders) > 0) {
-    parts.push(`<span class="on-dim">auction fills</span> ${_esc(String(t.full))}/${_esc(String(t.orders))} full`);
-    if (t.live_mean_bp != null) parts.push(`<span class="on-dim">vs cross</span> ${_esc(_fmtBp(t.live_mean_bp))}`);
-    if (t.paper_mean_bp != null) parts.push(`<span class="on-dim">paper market</span> ${_esc(_fmtBp(t.paper_mean_bp))}`);
-  } else {
-    parts.push('<span class="on-dim">no live nights yet</span>');
-  }
-  if (Number(live.updated) > 0) {
-    parts.push(`<span class="on-dim">as of ${_esc(_fmtEtClock(live.updated, '').replace(/:\d{2}$/, ''))}</span>`);
-  }
-  el.innerHTML = parts.join(' · ');
-}
-
 /** Overnight momentum pilot: tonight's book, fills vs the auction, night scores. */
 function _paintOvernight(sectionEl, book) {
   if (!sectionEl) return;
@@ -1262,7 +1226,6 @@ function _paintOvernight(sectionEl, book) {
     acctEl.innerHTML = parts.join(' · ');
   }
 
-  _paintOvernightLive(root, book && book.overnight_live);
 
   const rows = Array.isArray(snap.rows) ? snap.rows : [];
   const bits = [];
