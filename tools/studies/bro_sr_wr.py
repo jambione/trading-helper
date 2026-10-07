@@ -19,7 +19,14 @@ Phases (on the mini, AFTER HOURS ONLY: every request shares the desk's Alpaca bu
 Every API result is cached under WORK/cache (resumable). Requests are paced at <= 150/min. A failed request is
 never cached and is logged in WORK/fetch_fails.json; score refuses to write a result while any failure remains.
 
-USAGE (mini):  .venv/bin/python tools/studies/bro_sr_wr.py all
+Second input source (docs/studies/alerts_sr_wr_prereg.json, ee616dd): --source alerts reads the desk recorder's
+~/session_snapshots/DAY/recorder_discord.jsonl.gz (paid momentum / spike alerts), takes the first FRESH alert per
+symbol-day (age_sec <= 120, or no age_sec on the symbol's first appearance that day), R = that capture's ts, no exit
+lines (on the book to 15:30), controls from OTHER alerted names. Everything else is the Bro path. Outputs go to
+ai_reports/alerts_sr_wr/. The historical alerts run (2026-09-25..10-07) is INFORMATION ONLY (no verdict line).
+
+USAGE (mini):  .venv/bin/python tools/studies/bro_sr_wr.py all [--source bro|alerts]
+               .venv/bin/python tools/studies/bro_sr_wr.py forward 2026-10-08 [--source alerts]
 """
 from __future__ import annotations
 
@@ -44,6 +51,16 @@ for _p in (os.path.join(REPO, "tools"), REPO):
         sys.path.insert(0, _p)
 
 WORK = os.environ.get("BRO_WORK") or os.path.join(REPO, "ai_reports", "bro_sr_wr")
+ALERTS_WORK = os.environ.get("ALERTS_WORK") or os.path.join(REPO, "ai_reports", "alerts_sr_wr")
+SNAP_DIR = os.environ.get("SNAP_DIR") or os.path.expanduser("~/session_snapshots")
+ALERT_FILE = "recorder_discord.jsonl.gz"
+ALERT_FRESH_SEC = 120                                  # alerts prereg: fresh_rule
+ALERTS_HIST = ("2026-09-25", "2026-10-07")             # alerts prereg: periods.historical (information only)
+PREREG = {"bro": "docs/studies/bro_sr_wr_prereg.json", "alerts": "docs/studies/alerts_sr_wr_prereg.json"}
+
+
+def work_dir(source: str) -> str:
+    return ALERTS_WORK if source == "alerts" else WORK
 ARCHIVE = os.environ.get("BB_LIVE_JSONL") or os.path.join(REPO, "ai_reports", "bb_live.jsonl")
 ET = ZoneInfo("America/New_York")
 DATA = "https://data.alpaca.markets"
@@ -135,6 +152,12 @@ RESOLUTIONS = {
                         "('following pr' is covered by pr); first match wins in that order",
     "R23_wr_only": "S only: PASS = WR_trending (warm, strict 3-min slopes); CONTROL_primary candidates must be warm "
                    "and not WR_trending at the control minute; same fallback, entry, exit, cost",
+    "R24_alert_fresh": "alerts: rows are taken in ts order per ET day; a row is fresh if age_sec <= 120, or if age_sec "
+                       "is missing and the row is the symbol's earliest row that day (any freshness); R = the first "
+                       "fresh row's ts; terminal-bleed regex applied to the line; rows whose ts is not on the file's "
+                       "ET day are dropped and counted",
+    "R25_alert_class": "spike = price (volatility )?spike; new_high = new daily high | new weekly high | nhod; card = "
+                       "[ELITE] | find_it_first (also 'find it first'); else other; first match in that order",
     "R21_p27": "9/27 method: entry = open of the first SIP 1-min bar after 'at' (the bar containing 'at' is skipped), "
                "exit = close of the 15th bar, cost from the NBBO at the entry bar's start; labelled as using 'at'",
 }
@@ -307,6 +330,79 @@ def book_of(lines: list[dict]):
                   "exit_unix": ex["unix"] if ex else None, "exit_text": ex["text"] if ex else None,
                   "exit_is_twin": bool(ex and ex["twin"]),
                   "twins_before_R": sum(1 for x in lines if x["twin"] and x["unix"] < first["unix"])}
+
+
+def nd_book(nd: dict):
+    """(reason, book): an alert name-day carries its book; a Bro name-day derives it from its call lines."""
+    if "book" in nd:
+        return None, nd["book"]
+    return book_of(nd["lines"])
+
+
+def alert_namedays(day: str, rows: list[dict], counts=None):
+    """alerts prereg fresh_rule + population: the first FRESH alert per symbol on this ET day.
+
+    Fresh: age_sec <= ALERT_FRESH_SEC, or age_sec missing on the symbol's FIRST row that day. R = that row's ts.
+    Alerts have no exit lines: the name stays on the book to 15:30."""
+    counts = counts if counts is not None else collections.Counter()
+    counts["alert_rows_total"] += len(rows)
+    good = []
+    for r in rows:
+        try:
+            ts = float(r.get("ts"))
+        except (TypeError, ValueError):
+            counts["alert_drop_bad_row"] += 1
+            continue
+        sym = str(r.get("symbol") or "").upper().strip().lstrip("$")
+        line = str(r.get("line") or "")
+        if not sym:
+            counts["alert_drop_bad_row"] += 1
+            continue
+        if BLEED.search(line):
+            counts["alert_drop_bleed"] += 1
+            continue
+        if et_day(ts) != day:
+            counts["alert_drop_not_file_day"] += 1
+            continue
+        good.append((ts, sym, line, r.get("age_sec")))
+    good.sort(key=lambda x: x[0])
+    seen, chosen = set(), {}
+    for ts, sym, line, age in good:
+        first = sym not in seen
+        seen.add(sym)
+        try:
+            age = float(age) if age is not None else None
+        except (TypeError, ValueError):
+            age = None
+        fresh = (age is not None and age <= ALERT_FRESH_SEC) or (age is None and first)
+        if not fresh:
+            counts["alert_stale_captures"] += 1
+            continue
+        if sym in chosen:
+            counts["alert_later_fresh_captures"] += 1
+            continue
+        chosen[sym] = {"day": day, "sym": sym, "source": "alerts",
+                       "book": {"R": ts, "at": None, "text": line, "exit_unix": None, "exit_text": None,
+                                "exit_is_twin": False, "twins_before_R": 0, "age_sec": age}}
+    counts["alert_namedays_no_fresh_alert"] += len(seen - set(chosen))
+    return [chosen[k] for k in sorted(chosen)], counts
+
+
+def read_alert_day(day: str, snap_dir: str | None = None):
+    """(rows, meta) of one session's recorder file; ([], meta with missing=True) when it does not exist."""
+    import gzip
+    path = os.path.join(snap_dir or SNAP_DIR, day, ALERT_FILE)
+    if not os.path.exists(path):
+        return [], {"path": path, "rows": 0, "missing": True}
+    raw = open(path, "rb").read()
+    rows = []
+    for line in gzip.decompress(raw).decode("utf-8", "replace").splitlines():
+        if line.strip():
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                rows.append({"_bad": True})
+    return rows, {"path": path, "rows": len(rows), "sha256": hashlib.sha256(raw).hexdigest()}
 
 
 def on_book(nd: dict, t: float, keep_exit: bool = False) -> bool:
@@ -1041,6 +1137,54 @@ def phase_clean(mkt, day_filter, out_path):
     return out_path
 
 
+def phase_clean_alerts(mkt, days, out_path, snap_dir=None):
+    """alerts prereg data/population: recorder files -> first fresh alert per symbol-day -> asset validation."""
+    counts = collections.Counter()
+    metas, per_day = {}, {}
+    for d in days:
+        rows, meta = read_alert_day(d, snap_dir)
+        metas[d] = meta
+        if meta.get("missing"):
+            counts["alert_session_file_missing"] += 1
+            continue
+        per_day[d] = rows
+    if not per_day:
+        raise SystemExit(f"no recorder files for {days[0]}..{days[-1]} under {snap_dir or SNAP_DIR}")
+    ds = sorted(per_day)
+    cal = mkt.calendar((datetime.strptime(ds[0], "%Y-%m-%d") - timedelta(days=10)).strftime("%Y-%m-%d"), ds[-1])
+    assets = mkt.assets()
+    nds, sessions = [], []
+    for d in ds:
+        if d not in cal:
+            counts["alert_drop_not_session_day"] += 1
+            continue
+        sessions.append(d)
+        got, _ = alert_namedays(d, per_day[d], counts)
+        for nd in got:
+            why = asset_reason(nd["sym"], assets.get(nd["sym"]))
+            if why:
+                counts[f"drop_nameday_{why}"] += 1
+                continue
+            nds.append(nd)
+    meta = {"archive_rows": sum(m["rows"] for m in metas.values()),
+            "archive_sha256": hashlib.sha256("".join(m.get("sha256", "") for _, m in sorted(metas.items()))
+                                             .encode()).hexdigest(),
+            "files": metas, "source": "alerts"}
+    mkt.flush()
+    jsave(out_path, {"meta": meta, "counts": dict(counts), "sessions": sessions, "namedays": nds, "calendar": cal})
+    P_(f"clean (alerts): {len(nds)} validated name-days on {len(sessions)} sessions; counts {dict(counts)}")
+    return out_path
+
+
+def session_days(lo: str, hi: str) -> list[str]:
+    out, d = [], datetime.strptime(lo, "%Y-%m-%d")
+    while d.strftime("%Y-%m-%d") <= hi:
+        if d.weekday() < 5:
+            out.append(d.strftime("%Y-%m-%d"))
+        d += timedelta(days=1)
+    return out
+
+
 def load_nameday_bars(mkt, nd, cal):
     day = nd["day"]
     prior = prior_session(cal, day)
@@ -1068,7 +1212,7 @@ def phase_bars(mkt, clean):
             try:
                 prior = prior_session(cal, day)
                 mkt.minute_bars(nd["sym"], "sip", et_ts(prior or day, 4), cal[day][1])
-                if book_of(nd["lines"])[1] is not None:
+                if nd_book(nd)[1] is not None:
                     mkt.minute_bars(nd["sym"], "iex", et_ts(prior or day, 4), cal[day][1])
             except FetchFail:
                 pass
@@ -1092,11 +1236,12 @@ def prepare_day(mkt, day, nds_raw, cal, counts):
         if not any(et_day(r[0]) == day for r in sip):
             counts["drop_nameday_no_sip_trade"] += 1
             continue
-        why, book = book_of(raw["lines"])
+        why, book = nd_book(raw)
         if why:
             counts[f"drop_nameday_{why}"] += 1
             continue
         nd = {"day": day, "sym": raw["sym"], "close": min(close, et_ts(day, 16)), **book,
+              "source": raw.get("source", "bro"),
               "adv20": adv.get(raw["sym"]), "sip": sip}
         iex = window_rows(mkt.minute_bars(raw["sym"], "iex", et_ts(prior or day, 4), cal[day][1]), day, prior, cal)
         try:
@@ -1123,7 +1268,7 @@ def score_day(mkt, day, nds, counts):
         prim = find_primary(mkt, nd, nd["iex"], counts, tag=f"{nd['group']}_")
         row = {"day": day, "sym": nd["sym"], "group": nd["group"], "R": nd["R"], "a0": nd["a0"],
                "premarket_call": nd["R"] < et_ts(day, 9, 30), "exit_line": nd.get("exit_unix"),
-               "phrase_class": phrase_class(nd.get("text")),
+               "phrase_class": classify(nd.get("text"), CLASSES[nd.get("source", "bro")]),
                "assign_px": nd.get("assign_px"), "assign_spread_bp": nd.get("assign_spread_bp"),
                "adv20": nd.get("adv20")}
         if prim:
@@ -1183,8 +1328,10 @@ def run_score(mkt, clean, sessions_for_halves):
     return rows, counts
 
 
-def summarize(rows, counts, meta, mode="historical"):
-    res = {"mode": mode, "meta": meta, "resolutions": RESOLUTIONS, "counts": dict(counts), "groups": {}}
+def summarize(rows, counts, meta, mode="historical", source="bro"):
+    """mode: historical | forward | historical_info (alerts history: information only, no verdict)."""
+    res = {"mode": mode, "source": source, "meta": meta, "resolutions": RESOLUTIONS, "counts": dict(counts),
+           "groups": {}}
     for g in ("T", "S", "MEGA"):
         gr = [r for r in rows if r["group"] == g]
         prim = [{"day": r["day"], "half": r["half"], **r["primary"]} for r in gr if r.get("primary")]
@@ -1205,13 +1352,14 @@ def summarize(rows, counts, meta, mode="historical"):
                  "entry_minute_distribution": dict(sorted(entry_minutes.items())),
                  "namedays_in_group": len(gr)}
         v = None
-        if g in ("T", "S"):
+        if g in ("T", "S") and mode != "historical_info":
             if mode == "forward" and any(halves[h]["n"] < MIN_N for h in halves):
                 v = {"verdict": "PENDING", "why": [f"forward n per half {power['n_per_half']} < {MIN_N}"]}
             else:
                 v = verdict(halves, contrast, declared_underpowered=(g == "T" and mode == "historical"))
         info = info_summary(gr)
-        info["primary_by_phrase_class"] = phrase_table(gr)
+        info["primary_by_alert_class" if source == "alerts" else "primary_by_phrase_class"] = \
+            phrase_table(gr, CLASSES[source])
         if g == "S":
             wp = [{"day": r["day"], "half": r["half"], **r["info_wr_only"]["primary"]}
                   for r in gr if r.get("info_wr_only")]
@@ -1251,18 +1399,34 @@ PHRASE_CLASSES = (   # information_only_added_2026-10-07 (2): first match wins, 
 )
 
 
-def phrase_class(text) -> str:
+ALERT_CLASSES = (    # alerts prereg classes_information: first match wins, in this order
+    ("spike", re.compile(r"\bprice\s+(?:volatility\s+)?spike\b", re.I)),
+    ("new_high", re.compile(r"\bnew\s+(?:daily|weekly)\s+high\b|\bnhod\b", re.I)),
+    ("card", re.compile(r"\[\s*elite\s*\]|find[_\s]?it[_\s]?first", re.I)),
+)
+CLASSES = {"bro": PHRASE_CLASSES, "alerts": ALERT_CLASSES}
+
+
+def classify(text, classes) -> str:
     t = str(text or "")
-    for name, rx in PHRASE_CLASSES:
+    for name, rx in classes:
         if rx.search(t):
             return name
     return "other"
 
 
-def phrase_table(gr) -> dict:
-    """PRIMARY n, mean, median, win rate of net15 per phrase class (information only)."""
+def phrase_class(text) -> str:
+    return classify(text, PHRASE_CLASSES)
+
+
+def alert_class(text) -> str:
+    return classify(text, ALERT_CLASSES)
+
+
+def phrase_table(gr, classes=PHRASE_CLASSES) -> dict:
+    """PRIMARY n, mean, median, win rate of net15 per text class (information only)."""
     out = {}
-    for name in [c[0] for c in PHRASE_CLASSES] + ["other"]:
+    for name in [c[0] for c in classes] + ["other"]:
         xs = [r["primary"]["net_bp"] for r in gr if r.get("primary") and r.get("phrase_class") == name]
         out[name] = {"n": len(xs), "mean": statistics.mean(xs) if xs else None,
                      "median": statistics.median(xs) if xs else None,
@@ -1309,9 +1473,15 @@ def _f(x, nd=0):
 
 
 def render_report(res) -> str:
-    L = [f"# Bro S/R + %R call-out study ({res['mode']})", "",
-         f"Prereg docs/studies/bro_sr_wr_prereg.json. Archive rows at run time: {res['meta'].get('archive_rows')} "
-         f"(sha256 {str(res['meta'].get('archive_sha256'))[:12]}). Script {res['meta'].get('script_rev')}.", "",
+    src = res.get("source", "bro")
+    title = "Paid alerts S/R + %R study" if src == "alerts" else "Bro S/R + %R call-out study"
+    L = [f"# {title} ({res['mode']})", "",
+         f"Prereg {PREREG[src]}. Input rows at run time: {res['meta'].get('archive_rows')} "
+         f"(sha256 {str(res['meta'].get('archive_sha256'))[:12]}). Script {res['meta'].get('script_rev')}.", ""]
+    if res["mode"] == "historical_info":
+        L += [f"**INFORMATION ONLY:** historical alerts sessions {ALERTS_HIST[0]}..{ALERTS_HIST[1]} (about 9, far "
+              "too few; prereg periods.historical). No verdict is computed; the forward record decides.", ""]
+    L += [
          f"**Chart-check caveat (prereg chart_check_2026-10-07):** {CHART_CHECK_2026_10_07}", "",
          "## 1. Power (written before any mean)", ""]
     for g, G in res["groups"].items():
@@ -1344,8 +1514,9 @@ def render_report(res) -> str:
             L.append(f"- **VERDICT: {G['verdict']['verdict']}** — {'; '.join(G['verdict']['why'])}")
         L.append("- information only (never promoted):")
         for k, v in G["info"].items():
-            if k == "primary_by_phrase_class":
-                L.append("  - PRIMARY by call phrase class (net15 bp):")
+            if k in ("primary_by_phrase_class", "primary_by_alert_class"):
+                L.append("  - PRIMARY by " + ("alert class" if k == "primary_by_alert_class" else "call phrase class")
+                         + " (net15 bp):")
                 for cname, cv in v.items():
                     win = "n/a" if cv["win_rate"] is None else f"{cv['win_rate']:.0%}"
                     L.append(f"    - {cname}: n {cv['n']}, mean {_f(cv['mean'], 1)}, median {_f(cv['median'], 1)}, "
@@ -1372,12 +1543,16 @@ def script_rev():
         return None
 
 
-def main_historical(phases):
-    mkt = AlpacaMarket()
-    cp = os.path.join(WORK, "clean.json")
+def main_historical(phases, source="bro"):
+    work = work_dir(source)
+    mkt = AlpacaMarket(work=work)
+    cp = os.path.join(work, "clean.json")
     if "clean" in phases:
         market_hours_guard()
-        phase_clean(mkt, lambda d: d <= HIST_HI, cp)
+        if source == "alerts":
+            phase_clean_alerts(mkt, session_days(*ALERTS_HIST), cp)
+        else:
+            phase_clean(mkt, lambda d: d <= HIST_HI, cp)
     clean = jload(cp)
     if clean is None:
         raise SystemExit("run phase clean first")
@@ -1388,40 +1563,49 @@ def main_historical(phases):
         market_hours_guard()
         rows, counts = run_score(mkt, clean, clean["sessions"])
         res = summarize(rows, counts, {**clean["meta"], "script_rev": script_rev(),
-                                       "requests_this_run": mkt.requests})
-        jsave(os.path.join(WORK, "result.json"), res)
+                                       "requests_this_run": mkt.requests},
+                        mode="historical_info" if source == "alerts" else "historical", source=source)
+        jsave(os.path.join(work, "result.json"), res)
         P_(f"result.json written ({len(rows)} name-day rows)")
     if "report" in phases:
-        res = jload(os.path.join(WORK, "result.json"))
+        res = jload(os.path.join(work, "result.json"))
         if res is None:
             raise SystemExit("no result.json")
-        open(os.path.join(WORK, "report.md"), "w").write(render_report(res))
-        P_(f"report.md written to {WORK}")
+        open(os.path.join(work, "report.md"), "w").write(render_report(res))
+        P_(f"report.md written to {work}")
 
 
-def uptime_proxy(day):
-    """forward: OCR capture uptime proxy per session from the archive's own capture stamps."""
-    rows, _ = read_archive()
-    ts = sorted(float(r["unix"]) for r in rows if isinstance(r.get("unix"), (int, float))
-                and et_day(float(r["unix"])) == day)
+def uptime_proxy(day, source="bro"):
+    """forward: capture uptime proxy per session from the input's own capture stamps."""
+    if source == "alerts":
+        rows, _ = read_alert_day(day)
+        ts = sorted(float(r["ts"]) for r in rows if isinstance(r.get("ts"), (int, float)) and et_day(r["ts"]) == day)
+    else:
+        rows, _ = read_archive()
+        ts = sorted(float(r["unix"]) for r in rows if isinstance(r.get("unix"), (int, float))
+                    and et_day(float(r["unix"])) == day)
     rth = [t for t in ts if 9 * 60 + 30 <= et_min(t) < 16 * 60]
     gaps = [(b - a) / 60 for a, b in zip(rth, rth[1:])]
     return {"rows": len(ts), "first": hhmm(ts[0]) if ts else None, "last": hhmm(ts[-1]) if ts else None,
             "rth_rows": len(rth), "max_rth_gap_min": max(gaps) if gaps else None}
 
 
-def main_forward(day):
+def main_forward(day, source="bro"):
     if day < FORWARD_START:
         raise SystemExit(f"forward sessions start {FORWARD_START}")
     market_hours_guard()
-    fw = os.path.join(WORK, "forward")
-    mkt = AlpacaMarket()
+    work = work_dir(source)
+    fw = os.path.join(work, "forward")
+    mkt = AlpacaMarket(work=work)
     cp = os.path.join(fw, f"clean_{day}.json")
-    phase_clean(mkt, lambda d: d == day, cp)
+    if source == "alerts":
+        phase_clean_alerts(mkt, [day], cp)
+    else:
+        phase_clean(mkt, lambda d: d == day, cp)
     clean = jload(cp)
     phase_bars(mkt, clean)
     days_meta = jload(os.path.join(fw, "days.json"), {}) or {}
-    days_meta[day] = {"uptime": uptime_proxy(day), "archive_rows": clean["meta"]["archive_rows"]}
+    days_meta[day] = {"uptime": uptime_proxy(day, source), "archive_rows": clean["meta"]["archive_rows"]}
     sessions = sorted(days_meta)
     rows, counts = run_score(mkt, clean, sessions)
     days_meta[day]["counts"] = dict(counts)
@@ -1438,7 +1622,7 @@ def main_forward(day):
         agg.update(d.get("counts") or {})
     res = summarize(allrows, agg, {"archive_rows": clean["meta"]["archive_rows"],
                                    "archive_sha256": clean["meta"]["archive_sha256"], "script_rev": script_rev(),
-                                   "forward_sessions": sessions}, mode="forward")
+                                   "forward_sessions": sessions}, mode="forward", source=source)
     jsave(os.path.join(fw, "result.json"), res)
     open(os.path.join(fw, "report.md"), "w").write(render_report(res))
     P_(f"forward {day}: {len(rows)} name-day rows; forward sessions {len(sessions)}")
@@ -1488,15 +1672,22 @@ def chart_check(sym, day, at_hhmm, feed="iex", mkt=None):
 
 def main(argv=None):
     a = list(sys.argv[1:] if argv is None else argv)
+    source = "bro"
+    if "--source" in a:
+        i = a.index("--source")
+        if i + 1 >= len(a) or a[i + 1] not in ("bro", "alerts"):
+            raise SystemExit("--source must be bro or alerts")
+        source = a[i + 1]
+        del a[i:i + 2]
     if not a:
         raise SystemExit(__doc__)
     cmd = a[0]
     if cmd in ("clean", "bars", "score", "report"):
-        main_historical({cmd})
+        main_historical({cmd}, source)
     elif cmd == "all":
-        main_historical({"clean", "bars", "score", "report"})
+        main_historical({"clean", "bars", "score", "report"}, source)
     elif cmd == "forward" and len(a) == 2:
-        main_forward(a[1])
+        main_forward(a[1], source)
     elif cmd == "chartcheck" and len(a) in (4, 5):
         market_hours_guard()
         chart_check(a[1], a[2], a[3], a[4] if len(a) == 5 else "iex")

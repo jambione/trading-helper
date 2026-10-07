@@ -651,3 +651,118 @@ def test_pipeline_end_to_end_on_synthetic_day():
     md = B.render_report(res)
     assert md.index("Power") < md.index("Results")
     assert res["groups"]["S"]["info"]["S_share_entry_spread_within_desk_cap"] is not None
+
+
+# ------------------------------------------------------------------ --source alerts (alerts_sr_wr_prereg.json)
+def arow(sym, ts, age, line=None):
+    return {"ts": ts, "et": "", "symbol": sym, "line": line or f"${sym} | Price Spike", "price": 999.0,
+            "age_sec": age, "burst": False}
+
+
+def test_alert_freshness_rule():
+    rows = [arow("AAA", T(9, 0), 300.0),            # stale re-read: not fresh
+            arow("AAA", T(9, 5), 120.0),            # exactly 120 s: fresh -> R
+            arow("BBB", T(9, 1), None),             # no age_sec on the first appearance: fresh
+            arow("CCC", T(9, 2), 500.0),            # stale first appearance...
+            arow("CCC", T(9, 3), None),             # ...a later no-age row is NOT the first appearance: not fresh
+            arow("DDD", T(9, 4), 120.5)]            # just over: not fresh
+    nds, c = B.alert_namedays(DAY, rows)
+    got = {nd["sym"]: nd["book"]["R"] for nd in nds}
+    assert got == {"AAA": T(9, 5), "BBB": T(9, 1)}
+    assert c["alert_stale_captures"] == 4 and c["alert_namedays_no_fresh_alert"] == 2
+
+
+def test_alert_first_fresh_per_symbol_day_and_order():
+    rows = [arow("AAA", T(10, 30), 5.0, "late"), arow("AAA", T(10, 0), 30.0, "early"),
+            arow("AAA", T(9, 50), 900.0, "stale"), arow("ZZZ", T(10, 0), 1.0),
+            arow("$aaa", T(11, 0), 1.0), arow("QQQ", B.et_ts("2026-09-16", 9, 0), 1.0),
+            arow("XXX", T(10, 0), 1.0, "Starting tunnel watchdog")]
+    nds, c = B.alert_namedays(DAY, rows)
+    a = [nd for nd in nds if nd["sym"] == "AAA"]
+    assert len(a) == 1 and a[0]["book"]["R"] == T(10, 0) and a[0]["book"]["text"] == "early"
+    assert c["alert_later_fresh_captures"] == 2 and c["alert_drop_not_file_day"] == 1 and c["alert_drop_bleed"] == 1
+    assert [nd["sym"] for nd in nds] == ["AAA", "ZZZ"]
+    assert all("price" not in nd["book"] for nd in nds)
+
+
+def test_alerts_have_no_exit_lines():
+    rows = [arow("AAA", T(9, 40), 1.0, "$AAA sold avoid not for me"), arow("AAA", T(10, 0), 1.0, "$AAA sold")]
+    nds, _ = B.alert_namedays(DAY, rows)
+    why, bk = B.nd_book(nds[0])
+    assert why is None and bk["R"] == T(9, 40) and bk["exit_unix"] is None
+    assert B.on_book(bk, T(15, 30)) and not B.on_book(bk, T(9, 40))
+
+
+@pytest.mark.parametrize("line,want", [
+    ("$ABC | Price Volatility Spike | +12%", "spike"), ("$ABC Price Spike up", "spike"),
+    ("$ABC New Daily High", "new_high"), ("$ABC New Weekly High", "new_high"), ("$ABC NHOD", "new_high"),
+    ("[ELITE] $ABC | Price $1.9 | Float 1.63M", "card"), ("find_it_first $ABC", "card"),
+    ("[ELITE] $ABC Price Spike", "spike"),        # first match wins, in order
+    ("$ABC halted", "other"), ("", "other")])
+def test_alert_class(line, want):
+    assert B.alert_class(line) == want
+
+
+def test_read_alert_day_gz(tmp_path):
+    import gzip
+    import json as _j
+    d = tmp_path / DAY
+    d.mkdir()
+    with gzip.open(d / "recorder_discord.jsonl.gz", "wt") as f:
+        f.write(_j.dumps(arow("AAA", T(9, 0), 1.0)) + "\n\n" + "{bad\n")
+    rows, meta = B.read_alert_day(DAY, str(tmp_path))
+    assert meta["rows"] == 2 and rows[0]["symbol"] == "AAA" and rows[1] == {"_bad": True}
+    rows, meta = B.read_alert_day("2026-09-17", str(tmp_path))
+    assert rows == [] and meta["missing"]
+
+
+def test_source_flag_parsing(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(B, "main_historical", lambda ph, src="bro": seen.update(ph=ph, src=src))
+    monkeypatch.setattr(B, "main_forward", lambda d, src="bro": seen.update(day=d, src=src))
+    B.main(["all", "--source", "alerts"])
+    assert seen["src"] == "alerts" and seen["ph"] == {"clean", "bars", "score", "report"}
+    B.main(["forward", "2026-10-08", "--source", "alerts"])
+    assert seen["day"] == "2026-10-08" and seen["src"] == "alerts"
+    B.main(["score"])
+    assert seen["src"] == "bro"
+    with pytest.raises(SystemExit):
+        B.main(["all", "--source", "nope"])
+    assert B.work_dir("alerts").endswith(os.path.join("ai_reports", "alerts_sr_wr"))
+
+
+def test_alerts_pipeline_controls_from_alerted_names_only_and_info_only_report():
+    prior = "2026-09-14"
+    cal = {prior: [B.et_ts(prior, 9, 30), B.et_ts(prior, 16)], DAY: [T(9, 30), T(16, 0)]}
+    bars, trades, quotes = {}, {}, {}
+    for k, sym in enumerate(("AAA", "BBB", "CCC", "NOTALERTED")):
+        rows = []
+        for d in (prior, DAY):
+            for m in range(4 * 60, 16 * 60):
+                ts = B.et_ts(d, m // 60, m % 60)
+                c = 5 + 0.3 * math.sin(m / (9.0 + k)) + 0.001 * m
+                rows.append([ts, c, c + 0.01, c - 0.01, c, 1000])
+        bars[(sym, "iex")] = bars[(sym, "sip")] = rows
+        today = [r for r in rows if B.et_day(r[0]) == DAY]
+        trades[sym] = sorted([(r[0] + 2, r[4]) for r in today] + [(r[0] + 59, r[4]) for r in today])
+        quotes[sym] = [(r[0] + 1, r[4] - 0.005, r[4] + 0.005) for r in today]
+    mkt = FakeBarsMarket(bars, trades=trades, quotes=quotes)
+    nds, counts = B.alert_namedays(DAY, [arow("AAA", T(9, 45), 3.0),
+                                         arow("BBB", T(10, 5), None, "$BBB New Daily High"),
+                                         arow("CCC", T(8, 0), 10.0, "[ELITE] $CCC")])
+    clean = {"calendar": cal, "counts": dict(counts), "namedays": nds}
+    rows, c = B.run_score(mkt, clean, [prior, DAY])
+    assert {r["sym"] for r in rows} == {"AAA", "BBB", "CCC"}
+    assert all(r["exit_line"] is None for r in rows)
+    assert {r["phrase_class"] for r in rows} == {"spike", "new_high", "card"}
+    ctrl = [r["control_primary"] for r in rows if r.get("control_primary")]
+    assert ctrl
+    for r in rows:
+        if r.get("control_primary"):
+            assert r["control_primary"]["sym"] in {"AAA", "BBB", "CCC"} - {r["sym"]}
+    res = B.summarize(rows, c, {"archive_rows": 3}, mode="historical_info", source="alerts")
+    assert all(G["verdict"] is None for G in res["groups"].values())
+    assert "primary_by_alert_class" in res["groups"]["S"]["info"]
+    md = B.render_report(res)
+    assert "INFORMATION ONLY" in md and "VERDICT" not in md and "alerts_sr_wr_prereg.json" in md
+    assert "PRIMARY by alert class" in md
