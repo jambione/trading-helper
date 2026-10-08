@@ -2538,6 +2538,8 @@ def place_scaled_entry(
         # Frozen at open so the outcome row can slice hybrid vs continuation
         # without guessing from calendar dates.
         **regime_stamp(),
+        # Range arm (ai_watch_range_arm): levels at the arm; range_r_btm puts the position on the range exit.
+        **{k: decision.get(k) for k in RANGE_POSITION_KEYS if isinstance(decision, dict) and k in decision},
     }
 
     def _put(st: dict[str, Any]) -> None:
@@ -2561,6 +2563,7 @@ def place_scaled_entry(
         **{k: decision.get(k) for k in (
             "ob_resist_0.3", "ob_room_pct", "ob_brk_dist_pct", "ob_bars", "ob_prior_day", "ob_sup_pct")
            if isinstance(decision, dict) and k in decision},
+        **{k: decision.get(k) for k in RANGE_POSITION_KEYS if isinstance(decision, dict) and k in decision},
     )
     try:
         import ai_duel as duel
@@ -3294,6 +3297,94 @@ def exh_falling_flatten_due(
     streak = int(pos.get("exh_fall_streak") or 0) + 1
     pos["exh_fall_streak"] = streak
     return streak >= need
+
+
+# --- Range exit (docs/studies/range_arm_replay_prereg.json; pairs with ai_entry_watch's range rule) ----------
+# RANGE_ARM_RESOLUTIONS (exit side; the entry side is in ai_entry_watch):
+#  X1  Applies only with ai_exit_range on AND a numeric range_r_btm on the position (stamped by a range arm).
+#  X2  STOP is checked before TARGET on the same price (the prereg's exit race: stop wins). STOP is strict
+#      (price < S_btm - $0.01); TARGET is inclusive (price >= R_btm x (1 - 0.02%)).
+#  X3  TIME counts from entry_time (the replay: entry_ts), 30 min inclusive; it needs no price.
+#  X4  "First of target / stop / time / 15:50": for these positions every other strategy exit is off -
+#      the ratchet and decay leash (local_profit_stop / green_catchup), no-progress, dead-trade, the triangle,
+#      the %R dump, and also the T1 scale-out, runner ratchet, sell-signal breakeven, exh-falling and MACD
+#      liquidate. Safety paths (fill-through-stop, stale-data, unprotected, broker hard stop) and the 15:50
+#      flatten are unchanged.
+RANGE_STOP_PAD_PX = 0.01
+# Range-arm keys carried from the decision onto the position row (ai_entry_watch.RANGE_DECISION_KEYS).
+RANGE_POSITION_KEYS = ("range_s_btm", "range_r_btm", "range_sup_pct", "range_room_pct", "range_ob_known_ts",
+                       "range_ob_bar_age_sec", "range_pctr", "range_pctr_prev")
+
+
+def range_exit_applies(pos: dict[str, Any] | None, cfg: dict | None = None) -> bool:
+    """True when ai_exit_range is on and the position carries a range_r_btm (a range-arm entry)."""
+    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
+    if not bool(cfg.get("ai_exit_range", False)) or not isinstance(pos, dict):
+        return False
+    return _num(pos.get("range_r_btm")) is not None
+
+
+def range_exit_due(pos: dict[str, Any] | None, price: Any, cfg: dict | None = None,
+                   now: float | None = None) -> tuple[bool, str]:
+    """(sell, reason) for a range position: range_stop / range_target / range_time, or (False, ''). Pure."""
+    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
+    if not range_exit_applies(pos, cfg):
+        return False, ""
+    now = time.time() if now is None else float(now)
+    px = _num(price)
+    s_btm, r_btm = _num(pos.get("range_s_btm")), _num(pos.get("range_r_btm"))
+    try:
+        pad = float(cfg.get("ai_exit_range_res_pad_pct", 0.02) or 0.0)
+    except (TypeError, ValueError):
+        pad = 0.02
+    try:
+        t_min = float(cfg.get("ai_exit_range_time_min", 30.0) or 0.0)
+    except (TypeError, ValueError):
+        t_min = 30.0
+    if px is not None and px > 0:
+        if s_btm is not None and px < s_btm - RANGE_STOP_PAD_PX - 1e-9:
+            return True, "range_stop"
+        if r_btm is not None and px + 1e-9 >= r_btm * (1.0 - pad / 100.0):
+            return True, "range_target"
+    t0 = _num(pos.get("entry_time"))
+    if t0 is None:
+        t0 = _num(pos.get("entry_ts"))
+    if t_min > 0 and t0 is not None and now - t0 + 1e-9 >= t_min * 60.0:
+        return True, "range_time"
+    return False, ""
+
+
+def _range_exit_tick(ticker: str, pos: dict[str, Any], trigger: float | None, events: list[dict[str, Any]],
+                     exit_why: dict[str, Any], *, raise_only: bool = False) -> tuple[bool, bool]:
+    """apply_local_trail for a range position: sell on range_exit_due, nothing else. (changed, closed)."""
+    import alpaca_trader
+
+    if not pos.get("entry_confirmed"):
+        return False, False
+    if pos.get("closing_reason"):
+        return bool(unstrand_failed_close(ticker, pos)), False
+    if raise_only:
+        return False, False
+    px = trigger if trigger is not None else _num(pos.get("last_seen_price"))
+    sell, why = range_exit_due(pos, px, _cfg_all(), time.time())
+    if not sell:
+        return False, False
+    alpaca_trader.cancel_open_orders(ticker)
+    out = alpaca_trader.close_out(ticker) or {}
+    oid = str(out.get("order_id") or "") if isinstance(out, dict) else ""
+    info = {"last": px, "s_btm": pos.get("range_s_btm"), "r_btm": pos.get("range_r_btm")}
+    if oid:
+        pos["close_order_id"] = oid
+        pos["closing_reason"] = why
+        exit_why[ticker] = why
+        events.append({"ticker": ticker, "event": why, "order_id": oid, **info})
+        log_event(why, symbol=ticker, order_id=oid, **info)
+        return True, True
+    # No order id: do not latch closing_reason (as local_trail), retry next tick.
+    exit_why[ticker] = f"{why}_retry"
+    events.append({"ticker": ticker, "event": f"{why}_sell_failed", **info})
+    log_event(f"{why}_sell_failed", symbol=ticker, **info)
+    return True, False
 
 
 def rsi_dump_due(
@@ -4694,6 +4785,10 @@ def apply_local_trail(
                 ticker, pos, trigger, events, exit_why)
     except Exception:
         pass
+    if range_exit_applies(pos, _cfg_all()):
+        # Range position (ai_exit_range): target / stop / time only; no shelf, ratchet or leash.
+        ch, closed = _range_exit_tick(ticker, pos, trigger, events, exit_why, raise_only=raise_only)
+        return (ch or changed_handoff), closed
 
     now = time.time()
     changed = False
@@ -7125,7 +7220,7 @@ def manage_open_positions(
         for ticker, pos in list(state.items()):
             if pos.get("sell_signal_stop_done") or pos.get("closing_reason"):
                 continue
-            if pos.get("late_hold"):
+            if pos.get("late_hold") or range_exit_applies(pos, _cfg_all()):
                 continue
             try:
                 import desk_h4 as _desk_h4
@@ -7221,6 +7316,10 @@ def manage_open_positions(
         if _ch:
             changed = True
         if _closed:
+            continue
+        if range_exit_applies(pos, _cfg_all()):
+            # Range position: it exits only on target / stop / time (apply_local_trail above) and the
+            # 15:50 flatten; T1, runner ratchet, triangle, %R dump, MACD, no-progress, dead-trade do not act.
             continue
 
         # Dual profit bank: free shares held by the full-size stop, then either

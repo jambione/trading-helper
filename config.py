@@ -592,6 +592,14 @@ DEFAULT_CONFIG = {
     "ai_watch_breakout_arm_hi":         0.30,
     # Entry: buy only on the empty-square (presquare) arm (operator 10/8; REPLAY/TEST until a prereg passes).
     "ai_watch_presquare_only":          False,
+    # Range entry (operator 10/8; docs/studies/range_arm_replay_prereg.json; REPLAY/TEST until it passes): buy
+    # 0-0.30% above a charted support block with >= 0.40% room to resistance and the ENGINE fast %R < -20 and
+    # rising; the square / presquare / last arms do not fire while it is on.
+    "ai_watch_range_arm":               False,
+    "ai_watch_range_sup_band_pct":      0.30,
+    "ai_watch_range_min_room_pct":      0.40,
+    "ai_watch_range_pr_max":            -20.0,
+    "ai_watch_range_engine_max_age_sec": 90.0,
     # Tight source (calm large caps, rvol ~0.5 normal): own floor, 0 = none.
     "ai_watch_tight_min_rvol":          0.0,
     # Day-chg % that waives known-thin RVOL at seed + inclusion. 0 = off.
@@ -870,6 +878,12 @@ DEFAULT_CONFIG = {
     # clock-window recompute, which returns raw unsmoothed range %R when the window holds < 21 bars (10/8 bug).
     # This is what the nightly replay's lob / np_lob variants already score. Off until that replay passes.
     "ai_exit_triangle_engine_only": False,
+    # Range exit (pairs with ai_watch_range_arm; positions carrying range_r_btm only): target at resistance
+    # bottom x (1 - pad%), stop under support bottom - $0.01, time stop; ratchet / leash / no-progress /
+    # dead-trade / triangle / %R dump do not act on them. 15:50 flatten stays.
+    "ai_exit_range": False,
+    "ai_exit_range_res_pad_pct": 0.02,
+    "ai_exit_range_time_min": 30.0,
     # If slow %R cannot refresh and is older than this while fast has left OB
     # (and we already latched dual OB), fire triangle rather than wait on trail.
     "ai_exit_dual_slow_max_age_sec": 45.0,
@@ -1814,6 +1828,14 @@ _EFFECTIVE_KEYS = (
     "ai_exit_left_overbought",
     "ai_exit_left_overbought_confirm_sec",
     "ai_exit_triangle_engine_only",
+    "ai_exit_range",
+    "ai_exit_range_res_pad_pct",
+    "ai_exit_range_time_min",
+    "ai_watch_range_arm",
+    "ai_watch_range_sup_band_pct",
+    "ai_watch_range_min_room_pct",
+    "ai_watch_range_pr_max",
+    "ai_watch_range_engine_max_age_sec",
     "ai_exit_dual_slow_max_age_sec",
     "ai_exit_left_ob_exempt_min_hold",
     "ai_dual_tranche_triangle_exit",
@@ -2122,6 +2144,11 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_breakout_arm_lo",
     "ai_watch_breakout_arm_hi",
     "ai_watch_presquare_only",
+    "ai_watch_range_arm",
+    "ai_watch_range_sup_band_pct",
+    "ai_watch_range_min_room_pct",
+    "ai_watch_range_pr_max",
+    "ai_watch_range_engine_max_age_sec",
     "ai_watch_tight_min_rvol",
     "ai_watch_hot_move_rvol_waive_pct",
     "ai_watch_extreme_move_pct",
@@ -2138,6 +2165,9 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_left_overbought",
     "ai_exit_left_overbought_confirm_sec",
     "ai_exit_triangle_engine_only",
+    "ai_exit_range",
+    "ai_exit_range_res_pad_pct",
+    "ai_exit_range_time_min",
     "ai_exit_dual_slow_max_age_sec",
     "ai_exit_left_ob_exempt_min_hold",
     "ai_dual_tranche_triangle_exit",

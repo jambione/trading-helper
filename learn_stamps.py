@@ -34,6 +34,15 @@ _FINGERPRINT_KEYS = (
     # flatten can fire inside the hold window — two regimes, one ledger.
     "ai_exit_left_ob_exempt_min_hold",
     "ai_exit_triangle_engine_only",
+    # Range entry / exit (range_arm_replay_prereg.json): a different entry rule and exit regime.
+    "ai_watch_range_arm",
+    "ai_watch_range_sup_band_pct",
+    "ai_watch_range_min_room_pct",
+    "ai_watch_range_pr_max",
+    "ai_watch_range_engine_max_age_sec",
+    "ai_exit_range",
+    "ai_exit_range_res_pad_pct",
+    "ai_exit_range_time_min",
     "ai_exit_macd_liquidate",
     "ai_exit_macd_hard_sell_sep",
     "ai_exit_macd_confirm_ticks",

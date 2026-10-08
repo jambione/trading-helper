@@ -14212,7 +14212,7 @@ def _ob_observe_on(cfg: dict | None) -> bool:
         import ob_observe
         return (ob_observe.enabled(cfg) or _ob_resist_skip_on(cfg)
                 or bool((cfg or {}).get("ai_watch_ob_resist_ob_skip", False))
-                or breakout_arm_mode(cfg) != "off")
+                or breakout_arm_mode(cfg) != "off" or range_arm_enabled(cfg))
     except Exception:  # noqa: BLE001
         return False
 
@@ -14593,6 +14593,243 @@ def _ob_reading_stale(sym: str) -> bool:
         return age is not None and age > OB_WARM_STALE_SEC
     except Exception:  # noqa: BLE001
         return False
+
+
+# --- Range entry (docs/studies/range_arm_replay_prereg.json; operator 10/8) ---------------------------------
+# REPLAY/TEST knob ai_watch_range_arm (default off). With it on, the square / presquare / last-mode arms do not
+# fire: range_arm_ok decides, and every other admission and arm gate of should_arm_buy stays in force.
+#
+# RANGE_ARM_RESOLUTIONS (where the prereg / brief is silent; the simplest reading, listed in the hand-back):
+#  R1  Engine read key = (round(now - bars_age_sec), pctr), as docs/design/RUN_MANAGER_2026-10-08.md. "Rising" =
+#      pctr strictly higher than on the most recent read whose key DIFFERS from the current one. Repeated checks
+#      of the same read compare against that same previous read (no new read is required to arm). No previous
+#      read, or a previous key equal to the current one, is not rising.
+#  R2  Reads are noted for every engine row once per poll (before any gate), and again at each check
+#      (idempotent for an unchanged key), so the previous read does not depend on which gates a name reached.
+#  R3  The engine read is fresh when 0 <= bars_age_sec <= ai_watch_range_engine_max_age_sec (90 s); a row with
+#      no bars_age_sec or no pctr is no read. %R < -20 is strict (-20.0 fails).
+#  R4  Support: charted support blocks (ob_observe._support) with btm <= price. Inside one -> distance 0 and
+#      S_btm = the bottom of the containing block with the highest top; else S_btm = the bottom of the block
+#      with the highest top (the block _ob_support_pct measures to). Distance rounded to 3 dp, as
+#      _ob_support_pct; band [0, 0.30] inclusive.
+#  R5  Resistance: ob_observe.flags at the check price; room rounded to 3 dp as ob_room_pct; R_btm = the lowest
+#      resistance bottom strictly above the price; price inside resistance (room 0) fails (b). room >= 0.40.
+#  R6  Order-block staleness: newest CLOSED bar in the ob store (ts + 60 <= floor(now, 60), as _charted_at)
+#      older than 240 s (now - (ts + 60) > 240) -> no reading; so is _ob_reading_stale. Both counted.
+#  R7  The ob/engine checks run before the other gates (should_arm_buy with the exhaustion rules, the
+#      indicator triple and presquare_only off), so every book check is counted in the per-input stats; the
+#      per-input stats count the FIRST check of a poll only (stage "check"), not the refresh / pre-place
+#      rechecks, which must pass too.
+#  R8  An arm is counted at the pre-place recheck (stage "final"); its levels, known_ts and %R are stamped on
+#      the decision and the position (range_* keys).
+#  R9  ai_watch_range_arm also turns on the order-block warm fetch (as the ob knobs do), so live has bars.
+RANGE_OB_MAX_AGE_SEC = 240.0
+RANGE_DECISION_KEYS = ("range_s_btm", "range_r_btm", "range_sup_pct", "range_room_pct", "range_ob_known_ts",
+                       "range_ob_bar_age_sec", "range_pctr", "range_pctr_prev")
+_RANGE_READS: dict[str, tuple] = {}            # sym -> (current key, previous distinct key)
+_RANGE_STATS: dict[str, int] = {}
+_RANGE_LOCK = threading.Lock()
+
+
+def range_arm_enabled(cfg: dict | None) -> bool:
+    try:
+        return bool((cfg or {}).get("ai_watch_range_arm", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _range_cfg_f(cfg: dict | None, key: str, default: float) -> float:
+    try:
+        v = (cfg or {}).get(key, default)
+        return float(default if v is None else v)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def range_engine_key(sig: Any, now: float) -> tuple | None:
+    """(engine newest-bar time to the second, pctr) for an engine row, or None (no read). Pure."""
+    if not isinstance(sig, dict):
+        return None
+    pr, age = _f_or_none(sig.get("pctr")), _f_or_none(sig.get("bars_age_sec"))
+    if pr is None or age is None or math.isnan(pr) or math.isnan(age):
+        return None
+    return (round(float(now) - age), round(pr, 4))
+
+
+def range_note_read(sym: str, key: tuple | None) -> tuple | None:
+    """Record an engine read for `sym`; returns the previous DISTINCT read (R1). Idempotent for one key."""
+    s = str(sym or "").upper().strip()
+    with _RANGE_LOCK:
+        cur, prev = _RANGE_READS.get(s, (None, None))
+        if key is None or key == cur:
+            return prev
+        _RANGE_READS[s] = (key, cur)
+        return cur
+
+
+def range_ob_reading(sym: str, price: Any, now: float) -> dict:
+    """Levels for the range rule from ONE ob_observe._charted_at(sym, now) call at the check price.
+
+    {} on no price / error. Keys: ob_bars, stale_bar, stale_absorb, bar_age_sec, sup_pct, s_btm, room_pct,
+    r_btm, known_ts (max block known_ts). Never fetches, never raises."""
+    try:
+        import ob_observe
+        s, px, t = str(sym or "").upper().strip(), float(price), float(now)
+        if not s or not (px > 0):
+            return {}
+        _ob_warm_request(s)                      # enqueue only (R9); a no-op in the replay
+        ch, n, _prior = ob_observe._charted_at(s, t)
+        minute = float(int(t // 60.0) * 60.0)
+        closed = [b[0] for b in ob_observe.bars(s) if b[0] + 60.0 <= minute]
+        age = (t - (max(closed) + 60.0)) if closed else None
+        out: dict[str, Any] = {
+            "ob_bars": int(n), "bar_age_sec": None if age is None else round(age, 1),
+            "stale_bar": bool(age is None or age > RANGE_OB_MAX_AGE_SEC),
+            "stale_absorb": bool(_ob_reading_stale(s)),
+            "known_ts": max((float(b.known_ts) for b in ch), default=None),
+            "sup_pct": None, "s_btm": None, "room_pct": None, "r_btm": None,
+        }
+        sup = [b for b in ch if ob_observe._support(b) and b.btm <= px]
+        if sup:
+            inside = [b for b in sup if b.top >= px]
+            blk = max(inside or sup, key=lambda b: b.top)
+            out["s_btm"] = float(blk.btm)
+            out["sup_pct"] = 0.0 if inside else round((px / float(blk.top) - 1.0) * 100.0, 3)
+        _resist, room = ob_observe.flags(ch, px)
+        if room is not None:
+            out["room_pct"] = round(float(room), 3)
+            above = [float(b.btm) for b in ch if ob_observe._resistance(b) and b.btm > px]
+            out["r_btm"] = min(above) if (above and room > 0) else None
+        return out
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def range_arm_parts(ob_fields: dict | None, engine_sig: Any, prev_engine_key: tuple | None, cfg: dict | None,
+                    now: float) -> dict:
+    """The three entry tests of the prereg, each with its own reason ('' = pass). Pure."""
+    c = cfg or {}
+    f = ob_fields if isinstance(ob_fields, dict) else {}
+    out = {"ob": "", "a": "", "b": "", "c": ""}
+    if not f or int(f.get("ob_bars") or 0) <= 0:
+        out["ob"] = "range_no_ob"
+    elif f.get("stale_bar") or f.get("stale_absorb"):
+        out["ob"] = "range_ob_stale"
+    band = _range_cfg_f(c, "ai_watch_range_sup_band_pct", 0.30)
+    sup = _f_or_none(f.get("sup_pct"))
+    if sup is None or f.get("s_btm") is None:
+        out["a"] = "range_no_support"
+    elif not (0.0 <= sup <= band + 1e-9):
+        out["a"] = "range_sup_far"
+    room = _f_or_none(f.get("room_pct"))
+    if room is None:
+        out["b"] = "range_no_resistance"
+    elif room <= 0.0 or f.get("r_btm") is None:
+        out["b"] = "range_in_resistance"
+    elif room + 1e-9 < _range_cfg_f(c, "ai_watch_range_min_room_pct", 0.40):
+        out["b"] = "range_room"
+    key = range_engine_key(engine_sig, now)
+    age = _f_or_none(engine_sig.get("bars_age_sec")) if isinstance(engine_sig, dict) else None
+    if key is None:
+        out["c"] = "range_no_engine"
+    elif not (0.0 <= float(age) <= _range_cfg_f(c, "ai_watch_range_engine_max_age_sec", 90.0)):
+        out["c"] = "range_engine_stale"
+    elif not (key[1] < _range_cfg_f(c, "ai_watch_range_pr_max", -20.0)):
+        out["c"] = "range_pr_high"
+    elif prev_engine_key is None:
+        out["c"] = "range_pr_no_prev"
+    elif tuple(prev_engine_key) == key:
+        out["c"] = "range_pr_same_read"
+    elif not (key[1] > float(prev_engine_key[1])):
+        out["c"] = "range_pr_not_rising"
+    return out
+
+
+def range_arm_ok(ob_fields: dict | None, engine_sig: Any, prev_engine_key: tuple | None, cfg: dict | None,
+                 now: float) -> tuple[bool, str]:
+    """The prereg entry rule: (a) 0-0.30% above / inside charted support, (b) >= 0.40% room to charted
+    resistance, (c) ENGINE fast %R < -20 and higher than on the previous distinct read, read age <= 90 s; a
+    stale or missing order-block reading is no arm. Pure: `ob_fields` from range_ob_reading, `engine_sig` the
+    engine row (signal_proximity), `prev_engine_key` the previous distinct read (range_note_read)."""
+    p = range_arm_parts(ob_fields, engine_sig, prev_engine_key, cfg, now)
+    for k in ("ob", "a", "b", "c"):
+        if p[k]:
+            return False, p[k]
+    return True, "range_arm"
+
+
+def _range_stat(**inc: int) -> None:
+    with _RANGE_LOCK:
+        for k, v in inc.items():
+            _RANGE_STATS[k] = _RANGE_STATS.get(k, 0) + int(v)
+
+
+def range_arm_stats() -> dict:
+    """Per-input counts for the prereg's per-session check (the replay writes them per variant)."""
+    with _RANGE_LOCK:
+        return dict(_RANGE_STATS)
+
+
+def range_arm_reset() -> None:
+    with _RANGE_LOCK:
+        _RANGE_READS.clear()
+        _RANGE_STATS.clear()
+
+
+def _range_count_check(f: dict, parts: dict) -> None:
+    has = bool(f) and int(f.get("ob_bars") or 0) > 0
+    fails = {k for k in ("a", "b", "c") if parts[k]}
+    _range_stat(
+        checks=1,
+        ob_reading=int(has and not parts["ob"]),
+        ob_sup_side=int(has and not parts["ob"] and f.get("s_btm") is not None),
+        ob_res_side=int(has and not parts["ob"] and f.get("room_pct") is not None),
+        ob_stale_bar=int(has and bool(f.get("stale_bar"))),
+        ob_stale_absorb=int(has and bool(f.get("stale_absorb"))),
+        ob_none=int(not has),
+        engine_fresh=int(parts["c"] not in ("range_no_engine", "range_engine_stale")),
+        fail_a_only=int(not parts["ob"] and fails == {"a"}),
+        fail_b_only=int(not parts["ob"] and fails == {"b"}),
+        fail_c_only=int(not parts["ob"] and fails == {"c"}),
+        pass_abc=int(not parts["ob"] and not fails),
+    )
+
+
+def range_arm_decide(rec: dict, sym: str, ask: Any, bid: Any, cfg: dict, now: float, sig: Any,
+                     *, stage: str = "check") -> tuple[bool, str]:
+    """The arm decision at a poll_once book check when ai_watch_range_arm is on (should_arm_buy when off).
+
+    range_arm_ok first, then every other gate (should_arm_buy with the %R arms switched off). On a pass the
+    levels are stamped on rec['range_arm'] for the decision and the position."""
+    s = str(sym or "").upper().strip()
+    f = range_ob_reading(s, ask, now)
+    key = range_engine_key(sig, now)
+    prev = range_note_read(s, key)
+    parts = range_arm_parts(f, sig, prev, cfg, now)
+    if stage == "check":
+        _range_count_check(f, parts)
+    ok, why = range_arm_ok(f, sig, prev, cfg, now)
+    if not ok:
+        if isinstance(rec, dict):
+            rec.pop("range_arm", None)
+        return False, why
+    gate_cfg = {**cfg, "ai_watch_exhaustion_rules": False, "ai_watch_arm_require_indicators": False,
+                "ai_watch_presquare_only": False}
+    ok2, why2 = should_arm_buy(rec, ask=ask, bid=bid, cfg=gate_cfg, now=now)
+    if not ok2 or not isinstance(rec, dict):
+        if isinstance(rec, dict):
+            rec.pop("range_arm", None)
+        return False, why2
+    minute = float(int(float(now) // 60.0) * 60.0)
+    kt = f.get("known_ts")
+    rec["range_arm"] = {
+        "range_s_btm": f.get("s_btm"), "range_r_btm": f.get("r_btm"), "range_sup_pct": f.get("sup_pct"),
+        "range_room_pct": f.get("room_pct"), "range_ob_known_ts": kt, "range_ob_bar_age_sec": f.get("bar_age_sec"),
+        "range_pctr": key[1] if key else None, "range_pctr_prev": float(prev[1]) if prev else None,
+    }
+    if stage == "final":
+        _range_stat(arms=1, known_ts_after_minute=int(kt is not None and kt > minute))
+    return True, "range_arm"
 
 
 def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:
@@ -17512,6 +17749,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         indicators = _engine_indicator_map()
     except Exception:
         indicators = {}
+    if range_arm_enabled(cfg):
+        # Range rule (R2): note every engine read once per poll, before any gate.
+        for _rs, _rsig in indicators.items():
+            range_note_read(_rs, range_engine_key(_rsig, t0))
 
     eq_cap = None
     try:
@@ -18254,7 +18495,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             except Exception:  # noqa: BLE001
                 pass
 
-        ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
+        if range_arm_enabled(cfg):
+            ok_arm, why = range_arm_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="check")
+        else:
+            ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         # Order blocks (log; ai_watch_ob_resist_skip refuses on resistance).
         _ob_arm = _ob_observe_stamp(rec, sym, ask_f, cfg, t0)
         ok_arm, why = apply_breakout_arm(rec, ask_f, bid_f, cfg, t0, _ob_arm, ok_arm, why)
@@ -18296,7 +18540,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if _sr:
             _skip(_sr, detail=px_src or "not_stream")
             continue
-        ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
+        if range_arm_enabled(cfg):
+            ok_arm, why = range_arm_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="refresh")
+        else:
+            ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         if not ok_arm:
             _log_arm_recheck(
                 cp, sym, stage="refresh", ok=False, why=why,
@@ -18481,7 +18728,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
         if bid2_f is None:
             bid2_f = bid_f
-        ok_arm2, why2 = should_arm_buy(rec, ask=ask_f, bid=bid2_f, cfg=cfg, now=t0)
+        if range_arm_enabled(cfg):
+            ok_arm2, why2 = range_arm_decide(rec, sym, ask_f, bid2_f, cfg, t0, indicators.get(sym), stage="final")
+        else:
+            ok_arm2, why2 = should_arm_buy(rec, ask=ask_f, bid=bid2_f, cfg=cfg, now=t0)
         if not ok_arm2:
             _arm_streak(rec, False, seq=poll_seq)
             for _k in ("confirm_ask", "confirm_ask_ts", "confirm_px_src"):
@@ -18551,6 +18801,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
         for _obk, _obv in _ob_fields.items():
             place_decision[_obk] = _obv
+        if why2 == "range_arm" and isinstance(rec.get("range_arm"), dict):
+            # Range rule: the levels of the pre-place check go on the decision and the position.
+            place_decision.update(rec["range_arm"])
         # This desk runs the exhaustion gate; ai_suggest's does not. Name the
         # path on the row so the two never average together again.
         place_decision["entry_path"] = (

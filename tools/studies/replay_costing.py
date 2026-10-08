@@ -29,9 +29,33 @@ import exec_report as er  # noqa: E402
 CACHE = os.path.join(ROOT, "ai_reports", "replay_costing_cache.json")
 
 
+def load_cache() -> dict:
+    return json.load(open(CACHE)) if os.path.exists(CACHE) else {}
+
+
+def save_cache(cache: dict) -> None:
+    json.dump(cache, open(CACHE, "w"))
+
+
+def entry_spread_bp(cache: dict, symbol: str, entry_ts: float, client_box: dict | None = None) -> float | None:
+    """Full SIP quoted spread (bp of mid) at the entry, from the cache or exec_report.nbbo_at; None = no NBBO.
+    Fetches (and caches) on a miss; client_box holds the data client across calls."""
+    key = f"{symbol}|{float(entry_ts):.0f}"
+    if key not in cache:
+        box = client_box if client_box is not None else {}
+        box["cl"] = box.get("cl") or bars.client()
+        q = er.nbbo_at(box["cl"], symbol, datetime.fromtimestamp(float(entry_ts), timezone.utc))
+        cache[key] = list(q) if q else None
+        time.sleep(0.3)   # the live engine shares these data keys
+    q = cache[key]
+    if not q or q[1] <= q[0] or q[0] <= 0:
+        return None
+    return (q[1] - q[0]) / ((q[0] + q[1]) / 2) * 1e4
+
+
 def main():
-    cache = json.load(open(CACHE)) if os.path.exists(CACHE) else {}
-    cl = None
+    cache = load_cache()
+    box: dict = {}
     by_var = defaultdict(list)
     for path in sys.argv[1:]:
         name = os.path.basename(path)[:-5]
@@ -40,19 +64,12 @@ def main():
         for t in d.get("closed") or []:
             if t.get("ret") is None or not t.get("entry_px"):
                 continue
-            key = f"{t['symbol']}|{float(t['entry_ts']):.0f}"
-            if key not in cache:
-                cl = cl or bars.client()
-                q = er.nbbo_at(cl, t["symbol"], datetime.fromtimestamp(float(t["entry_ts"]), timezone.utc))
-                cache[key] = list(q) if q else None
-                time.sleep(0.3)   # the live engine shares these data keys
-            q = cache[key]
-            if not q or q[1] <= q[0] or q[0] <= 0:
+            spr = entry_spread_bp(cache, t["symbol"], t["entry_ts"], box)
+            if spr is None:
                 continue
-            spr = (q[1] - q[0]) / ((q[0] + q[1]) / 2) * 1e4
             by_var[var].append({"day": day, "gross": t["ret"] * 1e4, "spr": spr,
                                 "net": t["ret"] * 1e4 - spr, "px": float(t["entry_px"])})
-        json.dump(cache, open(CACHE, "w"))
+        save_cache(cache)
     days = sorted({r["day"] for v in by_var.values() for r in v})
     print(f"REPLAY COSTING {days[0]}..{days[-1]} ({len(days)} days): bp per trade, full SIP spread charged once\n")
     print(f"  {'variant':<8}{'trades':>7}{'/day':>6}{'gross':>8}{'spread':>8}{'net':>8}{'t(days)':>9}{'net $/day @1k':>15}")

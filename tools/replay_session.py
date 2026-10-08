@@ -326,6 +326,8 @@ def export_and_reexec(args) -> int:
     reports.mkdir()
     env = dict(os.environ, REPLAY_EXPORTED="1", REPLAY_SHA=sha, REPLAY_REPO=str(HERE),
                AI_REPORT_DIR=str(reports), REPLAY_WORK=str(work))
+    # Same session twice -> the same trades (range_arm prereg determinism check): fixed str-hash order.
+    env.setdefault("PYTHONHASHSEED", "0")
     py = str(HERE / ".venv" / "bin" / "python")
     if not Path(py).exists():
         py = sys.executable
@@ -764,10 +766,13 @@ class FakeBroker:
                 pos = open_position(cp, cfg or {}, px, now, stop)
                 if pos is not None and isinstance(decision, dict):
                     pos["features"] = dict(decision.get("features") or {})
+                    # Range arm (range_arm_replay_prereg.json): levels at the arm put it on the range exit.
+                    pos.update(range_fields(decision))
             except AttributeError:
                 pos = None  # commit predates the local trail: fixed hold
             self.open[sym]["pos"] = pos
             self.open[sym]["lob"] = {"symbol": sym, "indicator": {}}
+        self.open[sym].update(range_fields(decision))
         self.entries[sym] = self.entries.get(sym, 0) + 1
         return {"ok": True, "stop_price": self.open[sym]["stop"],
                 "target_1": decision.get("target_1") if isinstance(decision, dict) else None}
@@ -805,6 +810,18 @@ class FakeBroker:
         """One tick of the desk's exits, as tools/sim_fill_replay.walk_ticks runs them."""
         import ai_positions as cp
         p = pos["pos"]
+        if hasattr(cp, "range_exit_applies") and cp.range_exit_applies(p, cfg):
+            # Range position: the desk's own range_exit_due (target / stop / time) and the 15:50 flatten only;
+            # no ratchet, decay leash, no-progress, dead-trade, triangle, %R dump or T1 scale.
+            entry = float(p["entry"])
+            p["last_seen_price"] = px
+            p["peak_price"] = max(float(p.get("peak_price") or entry), px)
+            sell, why = cp.range_exit_due(p, px, cfg, now)
+            if sell:
+                return why
+            if et_min(now) >= EOD_MIN:
+                return "eod_flatten"
+            return None
         sp = next((r.get("signal_proximity") for r in dash.get("tickers") or []
                    if r.get("ticker") == pos["symbol"]), None)
         if ew is not None and isinstance(sp, dict):
@@ -852,6 +869,59 @@ class FakeBroker:
         if et_min(now) >= EOD_MIN:
             return "eod_flatten"
         return None
+
+
+RANGE_KEYS = ("range_s_btm", "range_r_btm", "range_sup_pct", "range_room_pct", "range_ob_known_ts",
+              "range_ob_bar_age_sec", "range_pctr", "range_pctr_prev")
+
+
+def range_fields(decision) -> dict:
+    """The range-arm levels a decision carries (none for any other arm)."""
+    if not isinstance(decision, dict):
+        return {}
+    return {k: decision[k] for k in RANGE_KEYS if k in decision}
+
+
+def range_on(cfg: dict) -> bool:
+    return bool((cfg or {}).get("ai_watch_range_arm") or (cfg or {}).get("ai_exit_range"))
+
+
+class ObStoreFeeder:
+    """Fills ob_observe's order-block store SYNCHRONOUSLY from the day's IEX bar cache (day_bars "iex").
+
+    range_arm_replay_prereg.json: no background warm thread (TH_OB_WARM_OFF), completed minutes only. Same
+    cadence and depth as live's warm worker (ai_entry_watch OB_WARM_*): a name's first feed is every completed
+    bar in the cache (ob_observe keeps its 3 newest sessions), then the last 30 minutes at most every 120 s of
+    replay time. Deterministic: names in sorted order, the replay clock only."""
+
+    def __init__(self, bars: dict, refresh_sec: float = 120.0, refresh_bars: int = 30):
+        self.bars, self.refresh_sec, self.refresh_bars = bars, float(refresh_sec), int(refresh_bars)
+        self.last: dict[str, float] = {}
+        self.feeds = 0
+        self.no_bars: set[str] = set()
+
+    def feed(self, syms, now: float) -> int:
+        import ob_observe
+        cut = float(now) - float(now) % 60.0
+        n = 0
+        for s in sorted({str(x or "").upper().strip() for x in syms or ()} - {""}):
+            last = self.last.get(s)
+            if last is not None and now - last < self.refresh_sec:
+                continue
+            self.last[s] = now
+            rows = [tuple(r[:5]) for r in (self.bars.get(s) or {}).get("iex", []) if r[0] + 60 <= cut]
+            if last is not None:
+                rows = rows[-self.refresh_bars:]
+            if not rows:
+                self.no_bars.add(s)
+                continue
+            ob_observe.absorb_rows(s, rows)
+            self.feeds += 1
+            n += 1
+        return n
+
+    def stats(self) -> dict:
+        return {"names": len(self.last), "feeds": self.feeds, "names_without_bars": len(self.no_bars)}
 
 
 def recording_symbols(path: Path) -> set[str]:
@@ -1164,6 +1234,14 @@ def run_inside(args) -> int:
     import ai_positions as cp
     import ai_trading as gt
     from config import load_config
+    try:
+        import ob_observe  # noqa: F401  (imported before the clock patch so its absorb clock is the replay's)
+    except ImportError:
+        pass
+    if range_on(load_config()):
+        # range_arm_replay_prereg.json: the ob store is filled synchronously (ObStoreFeeder), never by the
+        # desk's background warm thread.
+        os.environ["TH_OB_WARM_OFF"] = "1"
 
     patched: set = set()
     patch_clocks(clock, root, patched)
@@ -1333,12 +1411,17 @@ def run_inside(args) -> int:
     last_poll = -1e18
     t = t_start
     wall0 = _real_time.time()
+    ob_feed = ObStoreFeeder(bars)
+    args.poll_sec = poll_sec
+    args.range_blind = range_on(cfg)
     while t <= t_end:
         clock.t = t
         rec.advance(t)
         materialize()
         dash["state"] = build_dashboard_state(rec, t, synth)
         live = load_config()
+        if range_on(live):
+            ob_feed.feed(set(ew.load_watch()) | set(broker.open), t)
         for sym in broker.exits_due(t, dash["state"], cfg=live, ew=ew):
             with ew._WATCH_LOCK:
                 w = ew.load_watch()
@@ -1424,6 +1507,9 @@ def run_inside(args) -> int:
     spread_cache.save()
     print(f"[replay] recorded inputs used {recorded.hits}, fetched/derived {recorded.misses}; "
           f"synthetic names served {len(synth.used)}")
+    if args.range_blind:
+        args.range_inputs = dict(getattr(ew, "range_arm_stats", dict)(), ob_feed=ob_feed.stats())
+        print(f"[replay] range_arm per-input counts: {args.range_inputs}")
     report(args, slots, broker, blocked, wall0)
     if args.fidelity:
         fidelity(args, snap_dir, slots, broker, t_start, t_end)
@@ -1516,7 +1602,10 @@ def report(args, slots, broker, blocked, wall0) -> None:
     print(f"\nopens {sum(broker.entries.values())} ({sum(broker.entries.values()) / n_slots:.2f}/10m)  "
           f"avg open {avg(all_open):.2f}  >=1 {sum(1 for x in all_open if x >= 1) / max(1, len(all_open)):.0%}  "
           f">=2 {sum(1 for x in all_open if x >= 2) / max(1, len(all_open)):.0%}  "
-          f"closed {n}  gross/trade {1e4 * avg(rets):+.1f} bp  mean hold {avg(holds):.1f}m")
+          f"closed {n}  gross/trade "
+          + ("withheld (range_arm: development runs are blind to P&L)" if getattr(args, "range_blind", False)
+             else f"{1e4 * avg(rets):+.1f} bp")
+          + f"  mean hold {avg(holds):.1f}m")
     print(f"exits {dict(why)}  opens on synthetic data {syn}")
     live_stale = getattr(broker, "live_stale", None)
     if live_stale is not None:
@@ -1530,7 +1619,9 @@ def report(args, slots, broker, blocked, wall0) -> None:
            "closed": broker.closed, "open_at_end": list(broker.open.values()),
            "slots": {str(k): {kk: (avg(v) if isinstance(v, list) else v)
                               for kk, v in s.items()} for k, s in slots.items()},
-           "blocked": blocked}
+           "blocked": blocked, "poll_sec": getattr(args, "poll_sec", None)}
+    if getattr(args, "range_inputs", None) is not None:
+        out["range_arm_inputs"] = args.range_inputs
     path = Path(args.out) if args.out else Path(os.environ.get("REPLAY_WORK", ".")) / "result.json"
     path.write_text(json.dumps(out, indent=1, default=str))
     print(f"result: {path}")
