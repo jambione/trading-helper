@@ -1,0 +1,33 @@
+{
+ "study": "Run manager: does a two-phase exit (phase 1 unchanged; once a trade is up >= 0.15%, a higher-low safety net plus explicit sell signals - triangle, %R dump, into resistance, structure break, 50% give-back - instead of the R-trail and decay leash) earn more per trade than the live exit, by letting profit runs continue?",
+ "registered_at": "2026-10-08 ~11:15 ET, before the exit exists in code and before any replay of it",
+ "registered_before_results": true,
+ "origin": "Operator 10/8: the ratchet 'prevents the current price from going further'; 'look holistically at the position to see if selling is the right move, not just the stop price'. Design: docs/design/RUN_MANAGER_2026-10-08.md (the rules, knobs and data sources there are part of this registration).",
+ "prior": "LOW to MODERATE. Against: exits-cannot-move-the-mean (42 trail/stop shapes ~0 gross); let_run_replay 10/7 FAILED (unconditional loosening: decay_off -8.7, decay_slow -8.2 vs base -7.6 bp, movers era); fills drift -9/-28/-43 bp at 5/15/30 min on average. For: this is CONDITIONAL holding (only after +0.15%, with explicit reversal signals and selling into resistance), never tested; tight names (cost ~1-3 bp) let a small capture gain show; 10/8 winners kept only ~46% of their peak (median best +17 bp, kept +7.9 bp).",
+ "variant": "run_manager: ai_exit_run_manager=true with the design's defaults (arm 0.15%, 3-bar higher low, resistance pad 0.02%, give-back 0.50, signal max age 90 s), on top of the recorded live config's phase-1 exits (np180 on, triangle off)",
+ "reference": "np180: the live exit from 2026-10-08 10:30 (np180 on, triangle off), replayed on the same day with the same code",
+ "sessions": "every session from the first night the variant runs with all three inputs present (engine %R, 1-min bars, resistance levels; checked per session and recorded) - expected from 2026-10-12. Sessions before that are not scored.",
+ "tool": "scripts/tight_trail_replay.sh (variant 'run_manager'), costed with tools/studies/replay_costing.py (full SIP spread once per round trip); the day review reports phase-2 entries, sell reasons, capture ratio (exit gain / best gain after entry, phase-2 trades) and give-back per trade.",
+ "statistic": "per group (TIGHT, MOVERS) and pooled: net bp per trade of run_manager minus np180, per day; mean over days with a t across days (df = days - 1); the same days for both",
+ "power_and_bar": {
+  "pass": "per group: run_manager minus np180 >= +3 bp per trade, t >= 2 across days, negative on <= 20% of days, >= 60 np180 trades in the group over >= 10 sessions, AND run_manager's phase-2 trades show a higher capture ratio than np180's trades that reached +0.15% (the mechanism, not just the mean)",
+  "fail": "run_manager minus np180 <= -3 bp with t <= -2 (either group), OR the pass bar unmet after 15 sessions",
+  "otherwise": "UNDERPOWERED: keep collecting, up to 15 sessions; then FAIL closes it",
+  "vacuity": "a session where run_manager enters phase 2 on 0 trades, or where S1 (triangle) and S3 (resistance) both fire 0 times while np180 had >= 5 trades reaching +0.15%, is flagged; if more than 30% of sessions are flagged the variant is VACUOUS (a build problem) and is not read"
+ },
+ "information_only": [
+  "sell reason distribution (S1 triangle, S2 dump, S3 resistance, S4 structure, S5 give-back, S6 clock) and the net bp of each",
+  "price 15 min after each phase-2 sell (did the run continue?)",
+  "phase-1 trades (should be identical to np180: any difference is a build error and is reported)",
+  "capture ratio and give-back distributions, tight vs movers",
+  "run_manager vs 'off' (the pre-10/8 exit) and vs np_lob_slow30 / np_lob_step02"
+ ],
+ "no_retuning": "the design's thresholds are fixed here; after a read, any change is a new pre-registration. The live triangle fix (engine-line exit) is a separate change and does not alter this variant (which already reads the engine line).",
+ "live": "a PASS earns a live paper switch-on (ai_exit_run_manager=true) after skeptic review of the positive result; a FAIL closes the run-manager question for the current entry design.",
+ "caveats": [
+  "replay fidelity on 10/7 was ~27% recall of live buys: the comparison is variant vs reference inside the replay, not live P&L",
+  "the higher-low stop uses IEX 1-minute bars (the live feed); on thin names bars are gap-filled like the engine's grid",
+  "order-block levels are the port's, which differ from TradingView on thin premarket names (10/7 chart check)",
+  "phase 2 is reached by a minority of trades (10/8: about a third reached +0.15%); the effect on the per-trade mean is bounded by that share"
+ ]
+}
