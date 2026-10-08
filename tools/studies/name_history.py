@@ -115,7 +115,7 @@ RESOLUTIONS = {
                     "printed in the power block before any mean, with n events and distinct names per group per "
                     "half after every drop (count.json carries them after the outcome-blind beta drops)",
     "R22_rn_projection": "round_numbers projected SE per half = SE_ctrl x sqrt(n_ctrl) x sqrt(1/n_ABOVE + "
-                         "1/n_BELOW), SE_ctrl = two-way SE of the control arm's mean hedged net30 in that half; "
+                         "1/n_BELOW) (ABOVE / BELOW events with a beta only), SE_ctrl = two-way SE of the control arm's mean hedged net30 in that half; "
                          "t_crit at min(sessions, names) - 1 of that half's ABOVE U BELOW events; the frozen "
                          "projection decides 'powered' for round_numbers",
     "R23_rn_control": "'ABOVE beats its control' = mean(ABOVE event - its control, hedged net30) > 0 with two-way "
@@ -949,7 +949,8 @@ def rn_projection(rows):
         ctrl = [{"day": r["day"], "sym": r["sym"], "y": r["ctrl"]["hedged30"]} for r in rows
                 if r["half"] == h and nh_arm(r) and r.get("ctrl")]
         cm = tmean(ctrl, "y")
-        g = [r for r in RN_rows(rows) if r["half"] == h]
+        # a row without beta cannot enter the hedged primary, so it is not in n_ABOVE / n_BELOW (review round 1)
+        g = [r for r in RN_rows(rows) if r["half"] == h and r.get("beta") is not None]
         nA, nB = sum(1 for r in g if IS_ABOVE(r)), sum(1 for r in g if not IS_ABOVE(r))
         df = min(len({r["day"] for r in g}), len({r["sym"] for r in g})) - 1 if g else None
         se = (cm["se"] * math.sqrt(cm["n"]) * math.sqrt(1.0 / nA + 1.0 / nB)) if (cm["se"] and nA and nB) else None

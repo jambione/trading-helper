@@ -203,6 +203,7 @@ def test_rn_projection_reads_control_arm_only():
     for r in rows:
         r["tercile"] = "TOP"
         r["rn"] = "ABOVE" if r["g"] else "BELOW"
+        r["beta"] = 1.0                                  # real rows always carry beta (a control needs one)
         r["ctrl"] = {"hedged30": rng.gauss(0, 10)}
         r["hedged30"] = None                             # no event outcome exists
     p = NH.rn_projection(rows)
@@ -346,3 +347,22 @@ def test_power_block_reports_n_and_names_per_group_per_half(synth):
         assert all({"n", "names"} <= set(x) for x in g.values()) and kept
     md = NH.render_report(out)
     assert md.index("better names") < md.index("## Verdicts")
+
+
+def test_rn_projection_excludes_rows_without_beta():
+    """review A note: a row with no beta cannot enter the hedged primary, so it is not in n_ABOVE / n_BELOW."""
+    rows = _rows()
+    rng = random.Random(8)
+    for r in rows:
+        r["tercile"] = "TOP"
+        r["rn"] = "ABOVE" if r["g"] else "BELOW"
+        r["beta"] = 1.0
+        r["ctrl"] = {"hedged30": rng.gauss(0, 10)}
+    base = NH.rn_projection(rows)
+    for r in rows:
+        if r["rn"] == "ABOVE" and r["sym"] == "N0":
+            r["beta"] = None
+    p = NH.rn_projection(rows)
+    for h in "AB":
+        gone = sum(1 for r in rows if r["half"] == h and r["beta"] is None)
+        assert gone and p[h]["n_above"] == base[h]["n_above"] - gone and p[h]["n_below"] == base[h]["n_below"]
