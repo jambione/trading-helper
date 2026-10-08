@@ -363,6 +363,12 @@ def load_universe(cfg: dict, day: str, *, fetch_names=None, fetch_prev=None,
         return mem_rows
     _UNIVERSE_TRY[key] = time.time()
     names = (fetch_names or _fetch_asset_names)()
+    if fetch_names is None and names:
+        try:                                   # issuer names for ticker_filters.is_levered_etp (PTIR 10/8)
+            import ticker_filters
+            ticker_filters.save_asset_names(names)
+        except Exception:  # noqa: BLE001
+            pass
     syms = common_symbols(names)
     if not syms:
         return mem_rows

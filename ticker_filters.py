@@ -6,6 +6,8 @@ module's env bootstrap.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 
 def is_common(sym: str) -> bool:
     """True for ordinary common stock.
@@ -40,6 +42,7 @@ _LEVERED_DENY = frozenset({
     "UCO", "SCO", "TMF", "TMV", "UDOW", "SDOW", "URTY", "SRTY",
     "SH", "PSQ", "DOG", "UVXY", "UVIX", "SVIX", "SVXY", "VXX", "VIXY",
     "BITX", "BITI", "ETHU", "AMDL", "AAPU", "METU", "GGLL", "AMZU", "MSFU",
+    "PTIR", "PLTU", "PLTD",           # PLTR 2x / inverse (PTIR traded 7x on the desk 2026-10-08)
 })
 
 # Issuer-name tokens that mean "this is a leveraged / inverse product".
@@ -52,6 +55,34 @@ _LEVERED_NAME_MARKERS = (
     "DAILY TARGET 2X", "DAILY TARGET 3X",
     "-1X", " -1X",
 )
+
+
+# Issuer names from Alpaca's asset list, saved daily by tight_screener (one request a day). Lets the
+# name markers work on paths that only carry a ticker (movers, most-actives): PTIR, "GraniteShares 2x
+# Long PLTR Daily ETF", passed the ticker-only check on 2026-10-08. Missing/old file = ticker check only.
+ASSET_NAMES_FILE = Path(__file__).resolve().parent / "asset_names.json"
+_NAMES: dict = {"mtime": None, "names": {}}
+
+
+def save_asset_names(names: dict) -> None:
+    import json
+    import time
+    tmp = ASSET_NAMES_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"ts": time.time(), "names": names}), encoding="utf-8")
+    tmp.replace(ASSET_NAMES_FILE)
+
+
+def cached_asset_name(sym: str) -> str:
+    """Issuer name from asset_names.json ('' when unknown). Reloads on change; never raises."""
+    import json
+    try:
+        mt = ASSET_NAMES_FILE.stat().st_mtime
+        if _NAMES["mtime"] != mt:
+            _NAMES["names"] = json.loads(ASSET_NAMES_FILE.read_text(encoding="utf-8")).get("names") or {}
+            _NAMES["mtime"] = mt
+        return str(_NAMES["names"].get(sym) or "")
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def is_levered_etp(sym: str, name: str = "") -> bool:
@@ -72,7 +103,7 @@ def is_levered_etp(sym: str, name: str = "") -> bool:
          stock must stay.
     """
     s = str(sym or "").upper().strip()
-    n = str(name or "").upper()
+    n = str(name or cached_asset_name(s) or "").upper()
     if n and any(tag in n for tag in _LEVERED_NAME_MARKERS):
         return True
     if "2X" in s or "3X" in s:
