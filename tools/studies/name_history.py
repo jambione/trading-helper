@@ -127,7 +127,8 @@ RESOLUTIONS = {
                      "differ by > 2 pp; for round_numbers it sets that verdict FAILED-DATA",
     "R25_levels": "LEVELS (raw): prior 5 sessions' RTH highs/lows from raw 1-min bars, prior raw daily close, "
                   "today's premarket (04:00-09:30) high, 20-session RTH high; round numbers $1 under $50 else $5; "
-                  "nearest level strictly above the close; confluence = levels in (close, close x 1.002]",
+                  "nearest level strictly above the close; confluence = DISTINCT levels (deduped to the cent) in "
+                  "(close, close x 1.002]",
     "R26_atr_sma": "ATR14 = simple mean true range of the prior 14 adjusted daily bars, scaled to raw by the D-1 "
                    "factor; SMA50 of the prior 50 adjusted daily closes vs the D-1 adjusted close",
     "R27_liquidity": "prior-day high = D-1 RTH high (raw 1-min); next older swing high = the most recent RAW 60-min "

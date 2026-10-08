@@ -234,3 +234,10 @@ def test_atr_sma_vol():
     assert BS.atr14(d) == 2.0
     assert BS.sma(list(range(50))) == 24.5
     assert BS.realized_vol([10.0] * 21) == 0.0
+
+
+def test_level_info_confluence_dedupes_equal_levels():
+    """review A note: the 20-session high equal to one of the prior 5 highs (or a level ON a round number) is one
+    level, not two - levels are deduped to the cent before counting."""
+    li = BS.level_info(49.95, [49.99, 49.99, 49.9900001, 50.0, 40.0])
+    assert li["confluence"] == 2      # 49.99 once and the $50 round number once (50.0 is the same level)

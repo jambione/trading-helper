@@ -398,7 +398,9 @@ def level_info(close: float, levels: list, conf_band: float = 0.002) -> dict:
     nxt_round = grid_above(close, 1.0 if close < 50 else 5.0)
     above = [x for x in levels if x > close] + [nxt_round]
     near = min(above) if above else None
-    conf = sum(1 for x in levels if close < x <= close * (1 + conf_band)) + len(rnd)
+    # one price is one level: the 20-session high usually equals one of the prior 5 highs, and a level can sit on
+    # a round number - dedupe to the cent before counting (review round 1 note, 2026-10-08)
+    conf = len({round(x * 100) for x in [x for x in levels if close < x <= close * (1 + conf_band)] + rnd})
     return {"dist": (near / close - 1.0) if near else None, "confluence": conf}
 
 
