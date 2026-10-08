@@ -25,6 +25,7 @@ R np_lob_step02 $NP_ON $LOB_ON $STEP02     # triangle (engine %R) + smaller leas
 R dump30 $NP_ON $LOB_OFF --set ai_exit_rsi_dump_enabled=true --set ai_exit_rsi_dump_points=30 --set ai_exit_rsi_dump_sec=60 --set ai_exit_rsi_dump_confirm_ticks=2
 R brk_replace --set ai_watch_breakout_arm=replace   # entry: clean breakout INSTEAD of the square
 R brk_either  --set ai_watch_breakout_arm=either    # entry: square OR clean breakout
+R start0945 $NP_ON $LOB_OFF --set ai_entry_earliest_time=09:45   # the open, kept in the replay after the live 10:30 start
 R presq_only --set ai_watch_presquare_only=true    # entry: about-to-square arm only (no buying already-overbought)
 R ob_broad --set ai_watch_ob_resist_skip=true    # entry rule: no arm in or within 0.3% under resistance
 R ob_narrow --set ai_watch_ob_resist_ob_skip=true --set ai_watch_ob_resist_ob_room_pct=0.10   # entry rule, on top of the live config
