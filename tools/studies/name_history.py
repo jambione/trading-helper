@@ -112,7 +112,8 @@ RESOLUTIONS = {
     "R19_better_group": "the better group is the hypothesised one (H1 TOP, H2 HTF_UP true, round numbers ABOVE)",
     "R20_halves": "halves = alternate test sessions in calendar order (index 0, 2, ... = A; 1, 3, ... = B)",
     "R21_power_nh": "name_history MDE per half = (t_crit(half df) + 0.84) x the half's two-way FE SE; computed and "
-                    "printed in the power block before any mean",
+                    "printed in the power block before any mean, with n events and distinct names per group per "
+                    "half after every drop (count.json carries them after the outcome-blind beta drops)",
     "R22_rn_projection": "round_numbers projected SE per half = SE_ctrl x sqrt(n_ctrl) x sqrt(1/n_ABOVE + "
                          "1/n_BELOW), SE_ctrl = two-way SE of the control arm's mean hedged net30 in that half; "
                          "t_crit at min(sessions, names) - 1 of that half's ABOVE U BELOW events; the frozen "
@@ -888,6 +889,7 @@ def nh_hypothesis(rows, sel, better, z=Z_NH):
     g = sel(rows)
     kept = [r for r in g if not r.get("drop")]
     v = group_verdict(kept, "hedged30", better, z)
+    v["groups_by_half"] = count_table(kept, list, better)     # power rule: n and names per group per half (FF3)
     v["raw_net30"] = group_verdict(kept, "net30", better, z)["pooled"]
     v["drop_rates"] = drop_rates(g, better)
     v["control"] = positive([r for r in kept if better(r)])
@@ -918,6 +920,7 @@ def rn_hypothesis(rows, projection):
     v = group_verdict(kept, "hedged30", IS_ABOVE, Z_RN, fes=("day", "hour", "band"), covs=("log_brk",),
                       powered=powered)
     v["projection"] = projection
+    v["groups_by_half"] = count_table(kept, list, IS_ABOVE)
     v["drop_rates"] = drop_rates(g, IS_ABOVE)
     v["control"] = positive([r for r in kept if IS_ABOVE(r)])
     if v["verdict"] == "PASS":
@@ -1170,6 +1173,11 @@ def run(mode, work=WORK, mkt=None):
         res = {"frozen_sha256": sha, "counts": dict(counts), "n_events": len(rows),
                "H1": count_table(rows, H1_rows, IS_TOP), "H2": count_table(rows, H2_rows, IS_HTF),
                "RN": count_table(rows, RN_rows, IS_ABOVE), "rn_projection": rn_projection(rows)}
+        # the power rule's n / names per group per half after the drops known outcome-blind (beta_pairs); quote
+        # drops are only known at score, whose power block repeats the table after every drop (review round 1 FF3)
+        wb = [r for r in rows if r["beta"] is not None]
+        res["after_beta_drop"] = {"H1": count_table(wb, H1_rows, IS_TOP), "H2": count_table(wb, H2_rows, IS_HTF),
+                                  "RN": count_table(wb, RN_rows, IS_ABOVE)}
         BRO.jsave(os.path.join(work, "count.json"), res)
         P_(json.dumps(res, indent=1, default=str))
         return res
@@ -1197,7 +1205,9 @@ def summarize(rows, mirror, counts, projection, sha):
         "failed_data": bool(H1.get("failed_data") or H2.get("failed_data")),
         "verdict_data": {k: v.get("verdict_data") for k, v in (("H1", H1), ("H2", H2), ("RN", RN))},
         "power": {"H1": {h: H1["halves"][h] for h in "AB"}, "H2": {h: H2["halves"][h] for h in "AB"},
-                  "RN_projection": projection},
+                  "RN_projection": projection,
+                  "groups_after_drops": {"H1": H1["groups_by_half"], "H2": H2["groups_by_half"],
+                                         "RN": RN["groups_by_half"]}},
         "H1": H1, "H2": H2, "RN": RN, "info": info_cells(rows, mirror), "rn_info": rn_info(rows),
         "overlap_rn_with_H1H2": {"ABOVE_in_H1_TOP": sum(1 for r in rows if IS_ABOVE(r) and IS_TOP(r)),
                                  "ABOVE_in_HTF": sum(1 for r in rows if IS_ABOVE(r) and IS_HTF(r))},
@@ -1223,6 +1233,13 @@ def render_report(res) -> str:
         x = res["power"]["RN_projection"][h]
         L.append(f"| RN (projected) | {h} | {x['n_above']}+{x['n_below']} | | | {_f(x['projected_se'])} | "
                  f"{_f(x['projected_mde'])} |")
+    L += ["", "n events and distinct names per group per half, after drops (power rule):", "",
+          "| hyp | half | better n | better names | other n | other names |", "|---|---|---|---|---|---|"]
+    for hyp in ("H1", "H2", "RN"):
+        g = res["power"]["groups_after_drops"][hyp]
+        for h in "AB":
+            L.append(f"| {hyp} | {h} | {g[h + '_better']['n']} | {g[h + '_better']['names']} | "
+                     f"{g[h + '_other']['n']} | {g[h + '_other']['names']} |")
     L += ["", "## Verdicts", ""]
     for hyp in ("H1", "H2", "RN"):
         v = res[hyp]

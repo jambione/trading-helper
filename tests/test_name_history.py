@@ -330,3 +330,19 @@ def test_htf_missing_reasons_are_counted():
     assert c["htf_missing_ema_warmup_lt141_bars"] == 1
     assert NH.htf_feature(raw1, DAY, cl, 1.0, prior, t, c) in (True, False)    # 20 x 7 + 1 = 141 bars
     assert sum(c.values()) == 2
+
+
+def test_power_block_reports_n_and_names_per_group_per_half(synth):
+    """FF3: count and score carry n events AND distinct names per group per half (after drops); report prints them
+    before the verdicts."""
+    mkt, work = synth
+    res = NH.run("count", work=str(work), mkt=mkt)
+    for hyp in ("H1", "H2", "RN"):
+        assert set(res["after_beta_drop"][hyp]) == {"A_better", "A_other", "B_better", "B_other"}
+    out = NH.run("score", work=str(work), mkt=mkt)
+    for hyp in ("H1", "H2", "RN"):
+        g = out["power"]["groups_after_drops"][hyp]
+        kept = [r for r in out[hyp]["groups_by_half"].values()]
+        assert all({"n", "names"} <= set(x) for x in g.values()) and kept
+    md = NH.render_report(out)
+    assert md.index("better names") < md.index("## Verdicts")
