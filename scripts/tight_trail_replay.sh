@@ -29,4 +29,6 @@ R start0945 $NP_ON $LOB_OFF --set ai_entry_earliest_time=09:45   # the open, kep
 R presq_only --set ai_watch_presquare_only=true    # entry: about-to-square arm only (no buying already-overbought)
 R ob_broad --set ai_watch_ob_resist_skip=true    # entry rule: no arm in or within 0.3% under resistance
 R ob_narrow --set ai_watch_ob_resist_ob_skip=true --set ai_watch_ob_resist_ob_room_pct=0.10   # entry rule, on top of the live config
+R pr_engine --set ai_watch_exhaustion_live=false   # %R fix test: engine minute-grid %R only, no live clock-window overwrite (raw clock_range bug, 10/8)
+R presq_engine --set ai_watch_presquare_only=true --set ai_watch_exhaustion_live=false   # presquare-only on the engine %R line
 echo DONE $d > /tmp/tt_run/done-$d
