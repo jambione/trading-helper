@@ -145,6 +145,9 @@ RESOLUTIONS = {
     "R33_price_band_lt10": "an event whose close is below $10 (the universe is $10+ on D-1 only) gets its own "
                            "price-band FE level 'lt10'",
     "R34_rn_sample": "the round-number primary regression uses ABOVE and BELOW events only (NEUTRAL is information)",
+    "R35_quote_fetch_fail": "a quote fetch failure (offline cache miss or failed request) drops that event "
+                            "(quote_fetch_fail, a quote drop in R24) or its control (counted) and marks the name-day "
+                            "failed; count and score abort when bar-failed + quote-failed name-days > 2% of name-days",
 }
 
 
@@ -643,7 +646,13 @@ def attach_outcomes(data, rows, counts, short=False, events=True, controls=True,
             counts["drop_beta_pairs"] += 1
             continue
         if events:
-            o = outcome(data, r["sym"], r["t"], r["beta"], short)
+            # a quote fetch failure is a counted, per-name-day failure, not the end of a multi-hour run; count/score
+            # refuse above 2% of name-days (check_fail_share) per the data rule (review round 1, 2026-10-08)
+            try:
+                o = outcome(data, r["sym"], r["t"], r["beta"], short)
+            except BRO.FetchFail:
+                o = {"drop": "quote_fetch_fail"}
+                r["fetch_fail"] = True
             if "drop" in o:
                 counts[f"drop_{o['drop']}"] += 1
             r.update(o)
@@ -652,13 +661,28 @@ def attach_outcomes(data, rows, counts, short=False, events=True, controls=True,
                 counts["control_no_legal_minute"] += 1
                 continue
             counts[f"control_hour_{r['ctrl_tag']}"] += 1
-            c = outcome(data, r["sym"], r["ctrl_t"], r["beta"], short)
+            try:
+                c = outcome(data, r["sym"], r["ctrl_t"], r["beta"], short)
+            except BRO.FetchFail:
+                counts["control_fetch_fail"] += 1
+                r["ctrl_drop"] = "fetch_fail"
+                r["fetch_fail"] = True
+                continue
             if "drop" in c:
                 counts["control_stale"] += 1
                 r["ctrl_drop"] = c["drop"]
             else:
                 r["ctrl"] = c
     return rows
+
+
+def check_fail_share(counts, build_fails, *row_lists):
+    """data rule: abort if > 2% of name-days failed (bar fetch failures + name-days with a quote fetch failure)."""
+    bad = len({(r["sym"], r["day"]) for rs in row_lists for r in rs if r.get("fetch_fail")})
+    counts["outcome_fetch_fail_namedays"] = bad
+    nd = counts["namedays"]
+    if nd and (build_fails + bad) / nd > FAIL_SHARE:
+        raise SystemExit(f"ABORT: {build_fails} + {bad} quote / {nd} name-days failed (> 2%): re-run fetch")
 
 
 # ------------------------------------------------------------------ statistics (two-way clustered FE OLS)
@@ -1172,6 +1196,7 @@ def run(mode, work=WORK, mkt=None):
     if mode == "count":
         sha = freeze(rows, work)
         attach_outcomes(data, rows, counts, events=False, ctrl_filter=nh_arm)   # CONTROL arm only (R22)
+        check_fail_share(counts, fails, rows)
         res = {"frozen_sha256": sha, "counts": dict(counts), "n_events": len(rows),
                "H1": count_table(rows, H1_rows, IS_TOP), "H2": count_table(rows, H2_rows, IS_HTF),
                "RN": count_table(rows, RN_rows, IS_ABOVE), "rn_projection": rn_projection(rows)}
@@ -1190,6 +1215,7 @@ def run(mode, work=WORK, mkt=None):
             raise SystemExit("count.json does not match the frozen groups: re-run count")
         attach_outcomes(data, rows, counts)
         attach_outcomes(data, mirror, counts, short=True, controls=False)
+        check_fail_share(counts, fails, rows, mirror)
         res = summarize(rows, mirror, counts, cnt["rn_projection"], sha)
         BRO.jsave(os.path.join(work, "result.json"), res)
         P_(f"result.json written ({len(rows)} events)")

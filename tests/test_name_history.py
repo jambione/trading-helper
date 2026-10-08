@@ -366,3 +366,25 @@ def test_rn_projection_excludes_rows_without_beta():
     for h in "AB":
         gone = sum(1 for r in rows if r["half"] == h and r["beta"] is None)
         assert gone and p[h]["n_above"] == base[h]["n_above"] - gone and p[h]["n_below"] == base[h]["n_below"]
+
+
+def test_quote_fetch_failure_is_counted_not_fatal_and_aborts_over_2pct():
+    """review A note: a quote FetchFail no longer kills attach_outcomes - it is a counted per-name-day fetch
+    failure (a quote drop), and count/score abort when failed name-days exceed 2%."""
+    def q(sym, t):
+        if sym == "BAD":
+            raise NH.BRO.FetchFail("offline (not cached)")
+        return [t, 99.99, 100.01]
+    d = FakeData([DAY], quote_fn=q)
+    rows = [{"sym": s, "day": DAY, "t": T(11, 0), "beta": 1.0, "tercile": "TOP", "ctrl_t": T(13, 0),
+             "ctrl_tag": "same"} for s in ("BAD", "OK1", "OK2")]
+    c = collections.Counter()
+    NH.attach_outcomes(d, rows, c)
+    assert rows[0]["drop"] == "quote_fetch_fail" and rows[0]["fetch_fail"] and rows[0]["ctrl_drop"] == "fetch_fail"
+    assert "net30" in rows[1] and "ctrl" in rows[2]
+    assert c["drop_quote_fetch_fail"] == 1 and c["control_fetch_fail"] == 1
+    c["namedays"] = 100
+    NH.check_fail_share(c, 1, rows)                       # 2 / 100 = 2%: not > 2%
+    assert c["outcome_fetch_fail_namedays"] == 1
+    with pytest.raises(SystemExit):
+        NH.check_fail_share(c, 2, rows)                   # 3 / 100 > 2%
