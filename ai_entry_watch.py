@@ -14210,19 +14210,44 @@ def _ob_observe_on(cfg: dict | None) -> bool:
     reading. Never raises."""
     try:
         import ob_observe
-        return ob_observe.enabled(cfg) or _ob_resist_skip_on(cfg)
+        return (ob_observe.enabled(cfg) or _ob_resist_skip_on(cfg)
+                or bool((cfg or {}).get("ai_watch_ob_resist_ob_skip", False)))
     except Exception:  # noqa: BLE001
         return False
 
 
-def _ob_resist_refusal(ob_fields: dict | None, cfg: dict | None) -> bool:
-    """True only when the skip knob is on AND there is a reading AND it says
-    resistance. Fails open: no bars / no reading / any error = no refusal."""
+def _ob_resist_refusal(ob_fields: dict | None, cfg: dict | None, rec: dict | None = None) -> bool:
+    """True when a skip applies. Fails open: no bars / no reading / any error = no refusal.
+
+    ai_watch_ob_resist_skip: the HARD skip, any arm in or within 0.3% under resistance.
+    ai_watch_ob_resist_ob_skip (operator 10/8, PEP/BSX: bought overbought 0.04%/0.07% under a
+    sell zone): the NARROW skip, only when the name is overbought (fast %R in the OB band) AND
+    resistance is within ai_watch_ob_resist_ob_room_pct (0.10%) above, or price is inside it."""
     try:
-        return bool(_ob_resist_skip_on(cfg) and isinstance(ob_fields, dict)
-                    and ob_fields.get("ob_resist_0.3") is True)
+        if not isinstance(ob_fields, dict):
+            return False
+        if _ob_resist_skip_on(cfg) and ob_fields.get("ob_resist_0.3") is True:
+            return True
+        return _ob_narrow_refusal(ob_fields, cfg, rec)
     except Exception:  # noqa: BLE001
         return False
+
+
+def _ob_narrow_refusal(ob_fields: dict, cfg: dict | None, rec: dict | None) -> bool:
+    c = cfg or {}
+    if not bool(c.get("ai_watch_ob_resist_ob_skip", False)):
+        return False
+    room = _f_or_none(ob_fields.get("ob_room_pct"))
+    if room is None:
+        return False                          # no resistance above: nothing to buy into
+    try:
+        lim = float(c.get("ai_watch_ob_resist_ob_room_pct", 0.10) or 0.0)
+    except (TypeError, ValueError):
+        lim = 0.10
+    if room > lim + 1e-12:
+        return False
+    ind = rec.get("indicator") if isinstance(rec, dict) else None
+    return bool(isinstance(ind, dict) and ind.get("pctr_ob") is True)
 
 
 _OB_WIRE_KEYS = ("ob_resist", "ob_room_pct", "ob_brk_dist_pct", "ob_bars", "ob_sup_btm", "ob_sup_top",
@@ -18161,8 +18186,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         # Order blocks (log; ai_watch_ob_resist_skip refuses on resistance).
-        if _ob_resist_refusal(_ob_observe_stamp(rec, sym, ask_f, cfg, t0), cfg) and ok_arm:
-            ok_arm, why = False, "ob_resist"
+        _ob_arm = _ob_observe_stamp(rec, sym, ask_f, cfg, t0)
+        if _ob_resist_refusal(_ob_arm, cfg, rec) and ok_arm:
+            ok_arm, why = False, ("ob_resist" if (_ob_resist_skip_on(cfg) and isinstance(_ob_arm, dict)
+                                                 and _ob_arm.get("ob_resist_0.3") is True) else "ob_resist_ob")
         # The counterfactual record. arm_ok False with in_zone True is the row
         # that pays for this whole mechanism: price was in the zone and the
         # desk declined, and nothing else on disk says what that cost.
@@ -18177,7 +18204,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
                        "late_hold_closed", "late_hold_not_late_admit",
-                       "ob_resist"):
+                       "ob_resist", "ob_resist_ob"):
                 _skip(why)
             else:
                 set_block_reason(rec, why or "blocked", now=t0)
@@ -18442,8 +18469,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # ai_watch_ob_observe on, nothing reads them: the order, its size and
         # its timing are unchanged. ai_watch_ob_resist_skip refuses here too.
         _ob_fields = _ob_observe_stamp(rec, sym, ask_f, cfg, t0)
-        if _ob_resist_refusal(_ob_fields, cfg):
-            # HARD SKIP at the final price (ai_watch_ob_resist_skip).
+        if _ob_resist_refusal(_ob_fields, cfg, rec):
+            # HARD / NARROW SKIP at the final price (ai_watch_ob_resist_skip / _ob_skip).
             _arm_streak(rec, False, seq=poll_seq)
             for _k in ("confirm_ask", "confirm_ask_ts", "confirm_px_src"):
                 rec.pop(_k, None)

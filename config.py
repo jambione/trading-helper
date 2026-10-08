@@ -582,6 +582,10 @@ DEFAULT_CONFIG = {
     # Movers SIP rvol runs lower than desk IEX; a shared 2.0 floor emptied
     # the movers shortlist on 2026-09-04 (BIAF/LABX wiped at 0.8–1.8x).
     "ai_watch_movers_min_rvol":         1.0,
+    # Narrow order-block skip (operator 10/8): refuse an arm only when overbought AND a sell zone is within
+    # this % above (or price is inside it). Off by default; ai_watch_ob_resist_skip is the broad one.
+    "ai_watch_ob_resist_ob_skip":       False,
+    "ai_watch_ob_resist_ob_room_pct":   0.10,
     # Tight source (calm large caps, rvol ~0.5 normal): own floor, 0 = none.
     "ai_watch_tight_min_rvol":          0.0,
     # Day-chg % that waives known-thin RVOL at seed + inclusion. 0 = off.
@@ -2101,6 +2105,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_open_seed_stream_min_pct",
     "ai_watch_min_rvol",
     "ai_watch_movers_min_rvol",
+    "ai_watch_ob_resist_ob_skip",
+    "ai_watch_ob_resist_ob_room_pct",
     "ai_watch_tight_min_rvol",
     "ai_watch_hot_move_rvol_waive_pct",
     "ai_watch_extreme_move_pct",

@@ -18,4 +18,5 @@ R stop_1pct $NP_OFF $LOB_OFF --set ai_watch_synth_stop_pct=1.0 --set ai_watch_mi
 R lob       $NP_OFF $LOB_ON
 R np180     $NP_ON  $LOB_OFF
 R np_lob    $NP_ON  $LOB_ON
+R ob_narrow --set ai_watch_ob_resist_ob_skip=true --set ai_watch_ob_resist_ob_room_pct=0.10   # entry rule, on top of the live config
 echo DONE $d > /tmp/tt_run/done-$d
