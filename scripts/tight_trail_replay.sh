@@ -18,5 +18,9 @@ R stop_1pct $NP_OFF $LOB_OFF --set ai_watch_synth_stop_pct=1.0 --set ai_watch_mi
 R lob       $NP_OFF $LOB_ON
 R np180     $NP_ON  $LOB_OFF
 R np_lob    $NP_ON  $LOB_ON
+DECAY30=(--set ai_local_trail_decay_idle_sec=30)
+STEP02=(--set ai_local_trail_decay_step_r=0.02)
+R np_lob_slow30 $NP_ON $LOB_ON $DECAY30    # triangle (engine %R) + leash steps after 30 s idle
+R np_lob_step02 $NP_ON $LOB_ON $STEP02     # triangle (engine %R) + smaller leash steps (0.02R)
 R ob_narrow --set ai_watch_ob_resist_ob_skip=true --set ai_watch_ob_resist_ob_room_pct=0.10   # entry rule, on top of the live config
 echo DONE $d > /tmp/tt_run/done-$d
