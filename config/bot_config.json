@@ -35,7 +35,7 @@
   "ai_eod_liquidate_enabled": true,
   "ai_eod_liquidate_time": "15:50",
   "ai_exit_left_ob_exempt_min_hold": true,
-  "ai_exit_left_overbought": true,
+  "ai_exit_left_overbought": false,
   "ai_exit_rsi_dump_enabled": false,
   "ai_exit_macd_confirm_ticks": 3,
   "ai_exit_macd_hard_sell_sep": 0.8,
