@@ -278,3 +278,38 @@ def test_exact_verdict_fails_only_on_a_broken_replay():
     assert rp.exact_verdict({**ok, "errors": {"sync: TypeError": 3}})[0] == "FAIL"
     assert rp.exact_verdict({**ok, "checks": 0})[0] == "FAIL"     # live polled, nothing scored
     assert rp.exact_verdict({"checks": 0, "live_buys": 0})[0] == "SKIP"
+
+
+_T0_DT = __import__("datetime")
+T0 = _T0_DT.datetime(2026, 10, 7, 11, 0, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York")).timestamp()
+
+
+def _live_broker_pos(cfg):
+    b = rp.FakeBroker(hold_sec=420, max_pos=5, equity=1e5, mode="live")
+    b.enter("AAA", 100.0, T0, {"stop_price": 95.0}, cfg=cfg)
+    return b
+
+
+def test_replay_no_progress_exit_mirrors_the_desk():
+    """2026-10-07: the np180 variant replayed identical to base because the
+    replay's exit copy had no no_progress exit."""
+    cfg = {"ai_no_progress_flatten_enabled": True, "ai_no_progress_sec": 180,
+           "ai_no_progress_mfe_r": 0.001, "ai_dead_trade_min": 0.0}
+    b = _live_broker_pos(cfg)
+    pos = b.open["AAA"]
+    assert b._live_exit(pos, 99.9, T0 + 100, {}, cfg, None) is None   # 100 s: too early
+    assert b._live_exit(pos, 99.9, T0 + 181, {}, cfg, None) == "no_progress"
+    cfg_off = dict(cfg, ai_no_progress_flatten_enabled=False)
+    b2 = _live_broker_pos(cfg_off)
+    assert b2._live_exit(b2.open["AAA"], 99.9, T0 + 181, {}, cfg_off, None) is None
+
+
+def test_replay_dead_trade_reads_zero_as_the_default_like_live():
+    """Live ai_positions reads ai_dead_trade_min 0 as the 22-min default (it
+    fired dead_trade at 22 min on 2026-10-07); the replay read 0 as off."""
+    import ai_positions as cp
+    cfg = {"ai_dead_trade_min": 0.0}
+    b = _live_broker_pos(cfg)
+    pos = b.open["AAA"]
+    t = T0 + cp.DEFAULT_DEAD_TRADE_MIN * 60 + 1
+    assert b._live_exit(pos, 99.95, t, {}, cfg, None) == "dead_trade"

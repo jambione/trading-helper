@@ -827,8 +827,19 @@ class FakeBroker:
         want = cp.local_profit_stop(p, cfg)
         if want is not None and want > float(p["local_stop_price"]) + 1e-9:
             p["local_stop_price"] = want
-        dead_min = float(cfg.get("ai_dead_trade_min", 22.0) or 0.0)
-        dead_mfe = float(cfg.get("ai_dead_trade_mfe_r", 0.10) or 0.0)
+        # Same reading as the live desk (ai_positions._cfg_float): 0/absent = the
+        # 22-min / 0.10R defaults, not "off" (live fired dead_trade at 22 min
+        # on 2026-10-07 with ai_dead_trade_min 0; this replay did not).
+        dead_min = float(cfg.get("ai_dead_trade_min", 22.0) or cp.DEFAULT_DEAD_TRADE_MIN)
+        dead_mfe = float(cfg.get("ai_dead_trade_mfe_r", 0.10) or cp.DEFAULT_DEAD_TRADE_MFE_R)
+        # Fast no-progress flatten, as ai_positions.no_progress_due (off unless
+        # ai_no_progress_flatten_enabled; the clock starts at the fill).
+        if bool(cfg.get("ai_no_progress_flatten_enabled", False)) and not p["t1_hit"] \
+                and float(p["local_stop_price"]) <= entry + 1e-9:
+            np_sec = float(cfg.get("ai_no_progress_sec", cp.DEFAULT_NO_PROGRESS_SEC) or 0.0)
+            np_mfe = float(cfg.get("ai_no_progress_mfe_r", cp.DEFAULT_NO_PROGRESS_MFE_R) or 0.0)
+            if np_sec > 0 and now - float(p["entry_ts"]) >= np_sec and float(p["mfe_r"]) + 1e-12 < np_mfe:
+                return "no_progress"
         if (dead_min > 0 and not p["t1_hit"] and float(p["local_stop_price"]) <= entry + 1e-9
                 and (now - float(p["entry_ts"])) / 60 >= dead_min and p["mfe_r"] < dead_mfe):
             return "dead_trade"

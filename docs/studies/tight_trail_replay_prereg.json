@@ -8,7 +8,7 @@
  "variants": {
   "base": "live config as recorded for the day",
   "arm_pct": "ai_local_trail_arm_pct=0.10 (the trail also arms at +0.10% of price; everything else live)",
-  "stop_1pct": "ai_watch_synth_stop_pct=1.0 (synthetic stop 1% under the fill, so every R-based trail knob shrinks 5x: arm ~+0.06%, give 0.12R ~0.12%)",
+  "stop_1pct": "ai_watch_synth_stop_pct=1.0 (synthetic stop 1% under the fill, so every R-based trail knob shrinks 5x: arm ~+0.06%, give 0.12R ~0.12%) AND ai_watch_min_stop_pct=0.5 (amended 10/8: without it the live 1.5% minimum refused every entry as stop_too_tight)",
   "lob": "ai_exit_left_overbought=true (sell when %R leaves overbought: the 'triangle' exit); everything else live",
   "np180": "ai_no_progress_flatten_enabled=true, ai_no_progress_sec=180, ai_no_progress_mfe_r=0.001 (market exit if the trade has not gone green, MFE < 0.001R, within 180 s of the fill confirm); everything else live"
  },
@@ -25,5 +25,6 @@
   "small, calm names: per-trade bp is small and so is the spread"
  ],
  "amended": "2026-10-07 ~11:50 ET, before any replay was run: operator (PFE bought last_overbought, never green) added variant 'lob'. Prior: 10/5 replay on mostly movers, lob -7.8 vs base -7.6 bp/trade (n ~380, fired 54x); untested on tight names. Same pass bar; 3 variants vs base are scored, so the bar is per variant (no multiplicity relief claimed).",
- "amended_2": "2026-10-07 ~17:20 ET, before any replay was run: operator added 'np180' after a loser review (since 10/5, 121 trades: the worst 10% look like the rest at entry but were held a median 593 s vs 130 s, half never green). np180 is scored on tight trades AND, separately, on movers trades (same bar each); the movers cell is its own family and does not share the tight verdict. Prior: 42 exit shapes ~0 gross; ai_no_progress_flatten was turned off 9/18 untested."
+ "amended_2": "2026-10-07 ~17:20 ET, before any replay was run: operator added 'np180' after a loser review (since 10/5, 121 trades: the worst 10% look like the rest at entry but were held a median 593 s vs 130 s, half never green). np180 is scored on tight trades AND, separately, on movers trades (same bar each); the movers cell is its own family and does not share the tight verdict. Prior: 42 exit shapes ~0 gross; ai_no_progress_flatten was turned off 9/18 untested.",
+ "amended_3": "2026-10-08 ~04:15 ET, after the first (10/7) replay and BEFORE any variant was scored or read for a verdict: two variants were vacuous and the replay's exit copy differed from live. (1) stop_1pct placed 0 trades: the live ai_watch_min_stop_pct 1.5 refuses a 1% stop; the variant now also sets ai_watch_min_stop_pct=0.5. (2) np180 never fired: tools/replay_session.py had no no_progress exit; added, mirroring ai_positions.no_progress_due. (3) the replay read ai_dead_trade_min 0 as off while live reads it as the 22-min default (live fired 4 dead_trade exits on 10/7, replay 0); fixed. All five 10/7 replays are re-run on the fixed code; the first run is discarded. Variants, bar and scoring are otherwise unchanged."
 }
