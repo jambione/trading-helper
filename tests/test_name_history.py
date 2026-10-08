@@ -289,3 +289,28 @@ def test_score_refuses_without_frozen_groups(synth):
     mkt, work = synth
     with pytest.raises(SystemExit):
         NH.run("score", work=str(work), mkt=mkt)
+
+
+# ------------------------------------------------------------------ review round 1 (reviewer A)
+def test_drop_rates_count_quote_drops_only():
+    """FF1: a beta_pairs drop is not a quote drop - it must not enter the FAILED-DATA rate."""
+    rows = _rows()
+    for i, r in enumerate(rows):
+        r["htf_up"] = r["g"]
+        if r["g"] and i % 10 == 0:
+            r["drop"] = "beta_pairs"
+    dr = NH.drop_rates(rows, NH.IS_HTF)
+    assert not dr["failed_data"] and dr["better"] == 0.0
+
+
+def test_failed_data_hypothesis_never_reads_pass():
+    """FF1: H1/H2 set verdict_data FAILED-DATA like RN, and the verdict / report do not read PASS."""
+    rows = _rows(diff=20.0, noise=1.0)
+    for i, r in enumerate(rows):
+        r["htf_up"] = r["g"]
+        r["ctrl"] = {"hedged30": r["hedged30"] - 15.0}
+        if r["g"] and i % 10 == 0:
+            r["drop"] = "stale_quote"
+    v = NH.nh_hypothesis(rows, NH.H2_rows, NH.IS_HTF)
+    assert v["verdict_data"] == "FAILED-DATA" and v["verdict"] == "FAILED-DATA"
+    assert v["verdict_if_read"] == "PASS" and "PASS" not in v.get("label", "")

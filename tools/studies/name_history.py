@@ -117,7 +117,9 @@ RESOLUTIONS = {
                          "projection decides 'powered' for round_numbers",
     "R23_rn_control": "'ABOVE beats its control' = mean(ABOVE event - its control, hedged net30) > 0 with two-way "
                       "t >= 1.64 (the POSITIVE rule); else a PASS is labelled RELATIVE ONLY",
-    "R24_drop_rate": "drop rate = events dropped for stale/missing quotes / events in the group; FAILED-DATA when "
+    "R24_drop_rate": "drop rate = events dropped for stale/missing quotes (stale_quote, stale_spy_quote, "
+                     "quote_fetch_fail) / events in the group that reached the quote step (beta_pairs drops are in "
+                     "neither); a FAILED-DATA hypothesis's verdict reads FAILED-DATA, never PASS; FAILED-DATA when "
                      "the two groups of any hypothesis (H1 TOP vs BOTTOM, H2 true vs false, RN ABOVE vs BELOW) "
                      "differ by > 2 pp; for round_numbers it sets that verdict FAILED-DATA",
     "R25_levels": "LEVELS (raw): prior 5 sessions' RTH highs/lows from raw 1-min bars, prior raw daily close, "
@@ -818,11 +820,16 @@ def group_verdict(rows, y, better, z, fes=("day", "hour"), covs=(), under_bp=UND
                                              "other": sum(1 for r in rows if not better(r))}}
 
 
+QUOTE_DROPS = ("stale_quote", "stale_spy_quote", "quote_fetch_fail")
+
+
 def drop_rates(rows, better):
+    """R24: QUOTE drops only. A beta_pairs drop never asks for a quote, so it is neither a drop nor in the base
+    (review round 1 FF1, 2026-10-08: counting it let a beta-coverage gap read as FAILED-DATA)."""
     out = {}
     for lab, f in (("better", better), ("other", lambda r: not better(r))):
-        g = [r for r in rows if f(r)]
-        out[lab] = (sum(1 for r in g if r.get("drop")) / len(g)) if g else None
+        g = [r for r in rows if f(r) and r.get("drop") != "beta_pairs"]
+        out[lab] = (sum(1 for r in g if r.get("drop") in QUOTE_DROPS) / len(g)) if g else None
     a, b = out["better"], out["other"]
     out["failed_data"] = a is not None and b is not None and abs(a - b) > DROP_RATE_PP
     return out
@@ -874,7 +881,18 @@ def nh_hypothesis(rows, sel, better, z=Z_NH):
         v["label"] = "PASS (reruns on >= 60 earlier sessions and on IEX bars required before any forward test)"
     if v["drop_rates"]["failed_data"]:
         v["failed_data"] = True
+        mark_failed_data(v)
     return v
+
+
+def mark_failed_data(v):
+    """R24: a FAILED-DATA hypothesis is not read - the verdict becomes FAILED-DATA (the unread one is kept in
+    verdict_if_read) and no PASS label survives (review round 1 FF1)."""
+    v["verdict_data"] = "FAILED-DATA"
+    v["verdict_if_read"] = v["verdict"]
+    v["verdict"] = "FAILED-DATA"
+    v.pop("label", None)
+    v["why"] = ["groups' quote-drop rates differ by > 2 pp: not read"] + v["why"]
 
 
 def rn_hypothesis(rows, projection):
@@ -890,7 +908,7 @@ def rn_hypothesis(rows, projection):
         v["label"] = ("PASS (name_history earlier-period and IEX reruns required)" if v["control"]["positive"]
                       else "RELATIVE ONLY")
     if v["drop_rates"]["failed_data"]:
-        v["verdict_data"] = "FAILED-DATA"
+        mark_failed_data(v)
     return v
 
 
@@ -1161,6 +1179,7 @@ def summarize(rows, mirror, counts, projection, sha):
         "prereg": PREREG, "script_rev": BRO.script_rev(), "resolutions": RESOLUTIONS, "frozen_sha256": sha,
         "counts": dict(counts), "n_events": len(rows), "sessions": len({r["day"] for r in rows}),
         "failed_data": bool(H1.get("failed_data") or H2.get("failed_data")),
+        "verdict_data": {k: v.get("verdict_data") for k, v in (("H1", H1), ("H2", H2), ("RN", RN))},
         "power": {"H1": {h: H1["halves"][h] for h in "AB"}, "H2": {h: H2["halves"][h] for h in "AB"},
                   "RN_projection": projection},
         "H1": H1, "H2": H2, "RN": RN, "info": info_cells(rows, mirror), "rn_info": rn_info(rows),
