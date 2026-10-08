@@ -16,6 +16,10 @@ if [[ "$d" > "2026-10-07" ]]; then
   .venv/bin/python tools/studies/bro_sr_wr.py forward $d > /tmp/nightly/bro_fwd-$d.log 2>&1
   .venv/bin/python tools/studies/bro_sr_wr.py forward $d --source alerts > /tmp/nightly/alerts_fwd-$d.log 2>&1
 fi
+if [[ "$d" > "2026-10-07" ]]; then
+  .venv/bin/python tools/studies/sr_breakout_book.py score $d > /tmp/nightly/sr_breakout_book-$d.log 2>&1
+  .venv/bin/python tools/studies/sr_breakout_book.py power >> /tmp/nightly/sr_breakout_book-$d.log 2>&1
+fi
 .venv/bin/python tools/studies/tight_shadow.py $d > /tmp/nightly/tight_shadow-$d.log 2>&1
 .venv/bin/python tools/studies/ob_fills_daily.py $d > /tmp/nightly/ob_fills-$d.log 2>&1
 scripts/tight_trail_replay.sh $d > /tmp/nightly/tt_replay-$d.log 2>&1
