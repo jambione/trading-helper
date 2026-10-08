@@ -1,0 +1,19 @@
+{
+ "study": "Round numbers: is a new intraday high that sits just BELOW a whole or half dollar more likely to fail, and one that has just cleared a round number more likely to run (Ross Cameron's 'apex point vs psychological resistance')?",
+ "registered_at": "2026-10-08 ~14:00 ET, before any feature or outcome",
+ "registered_before_results": true,
+ "origin": "Operator 10/8 (Warrior Trading transcript): 'if the apex point is 4.95 that presents a problem because the breakout spot is just below psychological resistance ... we'd rather have the apex point right at it or just above it'. Never tested here.",
+ "prior": "LOW to MODERATE: round-number clustering of orders is documented in the academic literature; whether it moves 30-min outcomes on liquid $10+ names after costs is untested.",
+ "events_and_data": "EXACTLY the events, universe, data, entry, exits, costs, beta hedge, clustering, halves and quote rules of name_history_prereg.json (new session-high events 10:30-15:00 on top-400 $10+ names; hedged net30 primary) - computed by the same tool on the same sessions, so the two studies share one data pull.",
+ "round_levels": "whole dollars and half dollars; for prices >= $100 also every $5 (the $1 / $0.50 grid is too fine to matter there - reported separately)",
+ "groups": {
+  "BELOW": "the nearest round level ABOVE the event close is within 0.15% of the close (the breakout is pressing into a round number)",
+  "ABOVE": "a round level lies between the prior session high-so-far (the level the event broke) and the event close, OR within 0.15% below the close (the breakout has just cleared a round number)",
+  "NEUTRAL": "neither"
+ },
+ "primary": "ABOVE minus BELOW, hedged net30: OLS with session and event-hour fixed effects, two-way clustered (session, name) t; halves = alternate sessions",
+ "pass": "difference >= +5 bp, one-sided two-way t >= the 1.96 equivalent at the smaller cluster df (one hypothesis), same sign in both halves, the ABOVE group's hedged net30 > 0 after costs, robust to dropping the top 5 names and top 3 sessions; FAIL if t <= -2 or if powered (MDE <= 10 bp in both halves) and not passed; else UNDERPOWERED. A PASS needs the name_history earlier-period and IEX reruns (same bars) before a forward test.",
+ "information_only": ["BELOW minus NEUTRAL and ABOVE minus NEUTRAL", "by price band ($10-20, $20-50, $50-100, $100+)", "0.10% and 0.25% bands", "whole dollars only vs half dollars only"],
+ "no_retuning": "levels, the 0.15% band, groups and the bar fixed here",
+ "tool": "tools/studies/name_history.py (round-number cells added before it scores anything; same skeptic code review)"
+}
