@@ -4,7 +4,7 @@ Operator, 10/8: *"The ratchet stop works OK in some situations, but in most it p
 
 Status: **design only.** It is built switched off (`ai_exit_run_manager: false`), replayed nightly as `run_manager`, and switched on live only if its pre-registered test passes (`docs/studies/run_manager_prereg.json`).
 
-Revision 2 applies all 16 findings of the 10/8 skeptic review; the reference [Rn] is to finding n.
+Revision 2 applies all 16 findings of the 10/8 skeptic review ([Rn]); revision 3 the round-2 items ([R3], [R5], [R10], [R11], [N1]-[N3]).
 
 ## Why
 
@@ -17,9 +17,9 @@ This design targets **winners only**. Phase 1 is unchanged; on 10/8, 16 of 32 tr
 | Input | Source | Rule |
 |---|---|---|
 | **Price, peak** | polled `last_seen_price` only [R2] | The +0.15% arm and the S5 peak use polled prices only, never bar highs. |
-| **Completed 1-min bars** | live: the desk's IEX 1-min cache; replay: its IEX bar store | A bar is usable only once `bar_start + 60 s + 30 s <= now` (`ai_exit_rm_bar_lag_sec` 30). The same lag applies live and in the replay, so the replay cannot see a bar sooner than live [R1]. The bar timestamp used is logged on every decision. |
-| **Engine fast %R** | live: `_engine_indicators()` (dashboard `signal_proximity`); replay: the recorded `signal_proximity` | A **read** is a distinct engine update, keyed on the engine row's own update timestamp (the builder confirms the field and records it here before coding). A repeated value with the same timestamp is not a new read [R5]. A row older than 90 s is no signal, so the position holds on that signal. |
-| **Resistance level** | `ob_observe._charted_at(sym, now)`, recomputed at each completed bar for held names (not the cache-only `levels()`) [R3] | Nearest charted resistance block with **bottom strictly above the price** at that moment. A block that contains the price is not a level [R4]. A level older than 120 s is no level, so S3 is inactive. `ob_levels_ts` is logged. |
+| **Completed 1-min bars** | live: the desk's IEX 1-min cache; replay: its IEX bar store | A bar is usable only once `bar_start + 60 s + 30 s <= now` (`ai_exit_rm_bar_lag_sec` 30). The same lag applies live and in the replay, so the replay cannot see a bar sooner than live [R1]. **Real bars only**: no gap-filled bars, because a filled bar's low equals the last close and would tighten the stop artificially [N1]. The bar timestamp used is logged on every decision. |
+| **Engine fast %R** | live: `_engine_indicators()` (dashboard `signal_proximity`); replay: the recorded `signal_proximity` | A **read** is a distinct engine update. Its key is (engine newest-bar time = observation time − the row's `bars_age_sec`, rounded to the second; the `pctr` value). A read is new when either part changes; the same key twice is one read [R5]. The same key is used live and in the replay (the replay ages `bars_age_sec` with its clock, `AGE_KEYS`). A row with `bars_age_sec` > 90 s is no signal, so the position holds on that signal. |
+| **Resistance level** | `ob_observe._charted_at(sym, now)`, recomputed at each usable bar for held names (not the cache-only `levels()`) [R3] | Nearest charted resistance block with **bottom strictly above the price** at that moment. A block that contains the price is not a level [R4]. **Age = now − (start of the newest bar in the order-block store + 60 s)** (equivalently `ob_observe.absorb_age`), so a level built on a store that stopped updating is old even though `_charted_at` keys on the current minute. Above **240 s** (`ai_exit_rm_level_max_age_sec`; the warm worker refreshes each name at most every 120 s) there is no level, so S3 is inactive. The replay copies the warm worker's 120 s refresh cadence. Held names must stay in the warm-fetch set after they leave the book (the build proves this with a test). The level age is logged. |
 
 ## Phases
 
@@ -50,17 +50,17 @@ This design targets **winners only**. Phase 1 is unchanged; on 10/8, 16 of 32 tr
 | # | Signal | Exact rule |
 |---|---|---|
 | S1 | **Triangle** | The engine fast %R was ≥ −20 on a read in phase 2, and is < −20 on **2 consecutive distinct reads**. |
-| S2 | **%R dump** | `ai_positions.rsi_dump_due` on the engine reads, called with a **private cfg** (enabled, 30 points, 60 s, 2 ticks). The global `ai_exit_rsi_dump_enabled` stays **off**, so phase 1 is untouched [R6]. |
+| S2 | **%R dump** | `ai_positions.rsi_dump_due` with a **private cfg** (enabled, 30 points, 60 s, confirm 2), **called only on a new distinct engine read** (never on every 2 s exit tick, because it counts its streak per call), so 'confirm 2' means 2 distinct engine reads [N3]. The global `ai_exit_rsi_dump_enabled` stays **off**, so phase 1 is untouched [R6]. |
 | S3 | **Into resistance** | Price ≥ the current resistance level's bottom × (1 − 0.02%) (`ai_exit_rm_res_pad_pct`). |
 | S4 | **Structure break** | Price ≤ the net stop. |
-| S5 | **Give-back cap**, wide runs only | Active only once the peak is ≥ **+0.40%** (`ai_exit_rm_gb_min_pct`). Sell when price ≤ peak − 50% × (peak − entry), and never at a level below entry + 2 × the entry spread (the 8/21 spread guard) [R10]. Below +0.40% there is no give-back rule, so phase 2 is never tighter than a plain breakeven net. |
+| S5 | **Give-back cap**, wide runs only | **Arms** once the peak is ≥ max(+0.40%, 2 × the entry spread) above the entry, where the entry spread is the recorded SIP NBBO spread at the entry (as in the 8/21 guard, which delays arming until the move clears k spreads) [R10]. Once armed: sell when price ≤ peak − 50% × (peak − entry). Before it arms there is no give-back rule, so phase 2 is never tighter than a plain breakeven net. |
 | S6 | **Clock** | 15:50 flatten (existing). |
 
 Holding is the absence of a sell signal: %R still in the band, higher lows intact, below the next resistance, and (on wide runs) less than half the profit given back.
 
 ## Knobs (all new, default off or neutral)
 
-`ai_exit_run_manager` (false), `ai_exit_rm_arm_pct` 0.15, `ai_exit_rm_bar_lag_sec` 30, `ai_exit_rm_hl_bars` 3, `ai_exit_rm_res_pad_pct` 0.02, `ai_exit_rm_level_max_age_sec` 120, `ai_exit_rm_gb_min_pct` 0.40, `ai_exit_rm_giveback` 0.50, `ai_exit_rm_signal_max_age_sec` 90.
+`ai_exit_run_manager` (false), `ai_exit_rm_signals` (`all` | `s5_only`: S1-S3 off, for the mechanism null) [N2], `ai_exit_rm_arm_pct` 0.15, `ai_exit_rm_bar_lag_sec` 30, `ai_exit_rm_hl_bars` 3, `ai_exit_rm_res_pad_pct` 0.02, `ai_exit_rm_level_max_age_sec` 240, `ai_exit_rm_gb_min_pct` 0.40, `ai_exit_rm_giveback` 0.50, `ai_exit_rm_signal_max_age_sec` 90.
 
 ## What it does not do
 
