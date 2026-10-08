@@ -83,8 +83,9 @@ RESOLUTIONS = {
                      "are those starting at >= t + 60 s and ending <= that fallback bar's end; a stale time-exit "
                      "quote -> the fallback close with the ENTRY spread as the exit cost (counted); no quote AND no "
                      "fallback bar -> no outcome: that arm is dropped (counted <arm>_time_exit_no_price)",
-    "R13_spy": "a stale SPY quote at either hedge instant makes that arm's hedged value missing (counted); the pair "
-               "then leaves the hedged series only",
+    "R13_spy": "a stale SPY quote at either hedge instant makes that arm's hedged value missing (counted "
+               "<arm>_spy_stale; a missing beta is counted apart as <arm>_beta_missing); the pair then leaves the "
+               "hedged series only",
     "R14_control_draw": "control candidates are CLOCK times (15-min closes 10:30, 10:45 ... 14:30; or every 1-min "
                         "close 10:30..14:30 for S4/S6) with |c - t| > 60 min; no bar data is read to choose; "
                         "random.Random(int(sha256('67|SETUP|SYM|DAY').hexdigest()[:16], 16)).choice(sorted)",
@@ -476,12 +477,15 @@ def simulate(data, sym, b1, t, entry, spread, stop, target, beta, counts=None, t
     cost = 0.5 * spread + 0.5 * sx
     out = {"exit": ex["type"], "hold_min": (ex["ts"] - te) / 60.0, "R_mult": (ex["px"] - entry) / R if R else None,
            "net": 1e4 * (ex["px"] / entry - 1.0 - cost), "net_slip": 1e4 * (ex["px_slip"] / entry - 1.0 - cost)}
+    out["hedged"] = out["hedged_slip"] = None
+    if beta is None:
+        counts[f"{tag}beta_missing"] += 1          # apart from spy_stale (review round 1 N4): different causes
+        return out
     s0, s1 = NH.mid_at(data, NH.SPY, te), NH.mid_at(data, NH.SPY, ex["ts"])
-    if s0 and s1 and beta is not None:
+    if s0 and s1:
         spy = 1e4 * beta * (s1[0] / s0[0] - 1.0)
         out["hedged"], out["hedged_slip"] = out["net"] - spy, out["net_slip"] - spy
     else:
-        out["hedged"] = out["hedged_slip"] = None
         counts[f"{tag}spy_stale"] += 1
     return out
 
@@ -872,7 +876,10 @@ def run(mode, extend=False, work=WORK, mkt=None):
         _abort(counts, fails)
         sha = hashlib.sha256(json.dumps(signals, sort_keys=True).encode()).hexdigest()
         if sha != cnt["signals_sha256"]:
-            raise SystemExit("signals differ from the count step: re-run count")
+            # the count step read every entry quote, so a difference here means a name-day failed in score on a
+            # quote only score needs (a cache miss): fetch it, do not re-count (review round 1 N3)
+            raise SystemExit("signals differ from the count step: a quote score needs is missing from the cache - "
+                             "re-run fetch")
         res = summarize(pairs, signals, counts, cnt)
         BRO.jsave(os.path.join(work, "result.json"), res)
         P_(f"result.json written ({len(pairs)} pairs)")

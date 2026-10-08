@@ -508,3 +508,31 @@ def test_powered_is_judged_on_the_raw_series_only():
     assert any(h["mde"] > SP.UNDER_BP for h in v["hedged"]["halves"].values())
     assert v["hedged"]["pooled"]["t"] > SP.FAIL_T and v["raw"]["pooled"]["t"] > SP.FAIL_T   # not the t <= -2 rule
     assert v["powered"] and v["verdict"] == "FAIL"
+
+
+def test_spy_stale_and_beta_missing_are_counted_apart():
+    """N4: a missing beta is not a stale SPY quote."""
+    c = collections.Counter()
+    b1 = flat(100, T(9, 30), T(16, 0))
+    SP.simulate(qd(), "XYZ", b1, T(11, 0), 100.0, 0.001, 99.0, 103.0, None, c, "ev_")
+    assert c["ev_beta_missing"] == 1 and c["ev_spy_stale"] == 0
+    d = FakeData([DAY], quote_fn=lambda s, t: [t - 30, 99.99, 100.01] if s == NH.SPY else [t, 99.99, 100.01])
+    SP.simulate(d, "XYZ", b1, T(11, 0), 100.0, 0.001, 99.0, 103.0, 1.0, c, "ev_")
+    assert c["ev_spy_stale"] == 1 and c["ev_beta_missing"] == 1
+
+
+def test_score_signal_mismatch_says_rerun_fetch(tmp_path, monkeypatch):
+    """N3: score's signals differ from count's when a quote only score needs is missing -> 're-run fetch'."""
+    import json as _json
+    days = weekdays("2026-05-04", 34)
+    mkt = FakeStudyMarket(days, ["AAA", "BBB", "CCC"], seed=5)
+    monkeypatch.setattr(SP, "DATA_LO", days[10])
+    monkeypatch.setattr(SP, "TEST_HI", days[-1])
+    monkeypatch.setattr(NH, "BETA_MIN_PAIRS", 50)
+    monkeypatch.setattr(NH.BRO, "script_rev", lambda: "test")
+    res = SP.run("count", work=str(tmp_path), mkt=mkt)
+    res["signals_sha256"] = "0" * 64
+    res["projection"]["extend_to_2025_11_03"] = False
+    _json.dump(res, open(tmp_path / "count.json", "w"))
+    with pytest.raises(SystemExit, match="re-run fetch"):
+        SP.run("score", work=str(tmp_path), mkt=mkt)
