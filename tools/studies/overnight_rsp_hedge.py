@@ -17,6 +17,7 @@ import math
 import os
 import pickle
 import sys
+import time
 
 import numpy as np
 import pandas as pd
@@ -225,7 +226,11 @@ def _alpaca_rsp():
                "feed": "sip", "adjustment": "all"}
         if tok:
             prm["page_token"] = tok
-        r = requests.get("https://data.alpaca.markets/v2/stocks/bars", params=prm, headers=H, timeout=90)
+        for _ in range(40):                       # the key is shared with the nightly jobs: wait out 429s
+            r = requests.get("https://data.alpaca.markets/v2/stocks/bars", params=prm, headers=H, timeout=90)
+            if r.status_code != 429:
+                break
+            time.sleep(5)
         r.raise_for_status()
         j = r.json()
         rows += (j.get("bars") or {}).get("RSP", [])
