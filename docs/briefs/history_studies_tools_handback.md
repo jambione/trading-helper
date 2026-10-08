@@ -10,7 +10,7 @@ nothing was run against Alpaca. No prereg or live-desk file was changed.
 | `tools/studies/bars_structure.py` | Pure functions: 5/15/60-min RTH aggregation aligned to 09:30 (60-min half bar), `completed()`, strict 2/2 swings with `known_ts`, `swings_at(t)`, 60-min concatenation across sessions, `UP60`, `HTF_UP`, the name_history event and T1 race, T2 pairs, T3, the predicates (rejection, momentum, pin, bullish FVG), LEVELS / S5 levels / round-number grids and groups, ATR14 / SMA50 / 20-day vol |
 | `tools/studies/name_history.py` | `StudyMarket` (subclass of `bro_sr_wr.AlpacaMarket`: daily bars, per-symbol 1-min month files, **`quote_ts` returns the quote timestamp**, offline mode), universe, outcome-blind events and features, same-name control (seed 61, hour fallbacks), two-way clustered FE OLS, H1 / H2 / round-number verdicts, information cells, `fetch` / `count` / `score` / `report` |
 | `tools/studies/structure_pullback.py` | Scanners S2-S7, exits (stop priority, gap fill, slippage cell, +80 min / 15:50 time exit, scan from t+60 s), same-geometry control (sha256 seed 67), paired raw and hedged series, the outcome-blind count step with the extension decision, verdicts, information cells |
-| `tests/test_bars_structure.py`, `tests/test_name_history.py`, `tests/test_structure_pullback.py` (+ `tests/_hist_synth.py`) | 89 tests on synthetic bars, no network |
+| `tests/test_bars_structure.py`, `tests/test_name_history.py`, `tests/test_structure_pullback.py` (+ `tests/_hist_synth.py`) | 102 tests on synthetic bars, no network (89 + 13 in review round 1) |
 
 Both tools share one bar and quote cache (`ai_reports/history_studies/cache`). `count`, `score` and `report` never
 touch the network: a cache miss counts as a fetch failure. `score` refuses to run until `count` has frozen the groups
@@ -59,7 +59,8 @@ should check first:
 
 1. **The S6 cancel can never fire on complete minute data.** A 5-min close below the FVG bottom (< top) means one of
    that bar's 1-min lows was ≤ the top, and that minute is checked before the 5-min bar closes. So the touch always
-   comes first. The cancel only matters when minute bars are missing.
+   comes first. This holds even with missing minutes, because the 5-min bar is built from the same 1-min bars
+   (corrected in review round 1; SP R10).
 2. **The S3 "BREAK = the next completed bar"** can be read as the very next bar, or as the next bar that qualifies. I
    took the very next bar (R5); the other reading lets M from an old consolidation persist.
 3. **The S7 "FIRST 60-min close above H today"** is checked against the H in force at each bar's start. Two
@@ -81,9 +82,50 @@ should check first:
 10. **Reruns.** The out-of-period and IEX reruns a PASS requires are not wired yet. They need a `--period` argument and
     a feed switch (IEX bars, SIP quotes). That is a small follow-up, not needed before the first scoring.
 
+## Review round 1 fixes (2026-10-08)
+
+Two result-skeptic reviews. One commit per finding (or per closely tied pair), each with a test that fails without it.
+
+**name_history (reviewer A)**
+- **FF1 FAILED-DATA.** Drop rates now count quote drops only (`stale_quote`, `stale_spy_quote`, `quote_fetch_fail`).
+  A `beta_pairs` drop is left out of both the count and the base. H1 and H2 now set `verdict_data = "FAILED-DATA"`, as
+  RN already did. A FAILED-DATA verdict reads FAILED-DATA and never PASS: the unread verdict is kept in
+  `verdict_if_read`, and the label is removed.
+- **FF2 HTF_UP missing.** Missing HTF_UP is now counted by reason in count.json: `htf_missing_no_factor_today`,
+  `htf_missing_ema_warmup_lt141_bars`, `htf_missing_lt3_15min_bars`.
+- **FF3 power block.** n events and distinct names are given per group per half after drops. They are in count.json
+  (`after_beta_drop`), result.json (`power.groups_after_drops`) and report.md, before any mean.
+- **Notes.**
+  - Confluence counts distinct levels, deduped to the cent.
+  - The R22 projection leaves beta-less rows out of n_ABOVE and n_BELOW.
+  - A quote fetch failure is now a counted per-name-day failure, not a crash. count and score abort above 2% of
+    name-days (R35).
+  - report.md states that above $3,333 every event is BELOW.
+  - R10 now says that the pooled tercile cut points read later sessions' features, and that a forward test would
+    have to rank across the universe.
+- **N5.** Every PASS carries "ACTION BLOCKED: earlier-period and IEX reruns not wired", in both tools.
+
+**structure_pullback (reviewer B)**
+- **FF1.** A time exit with no quote and no fallback bar now returns no outcome. The arm is dropped
+  (`<arm>_time_exit_no_price`) and counts toward the FAILED-DATA rates (R12, R16).
+- **N1 (operator decision).** "Powered" is judged on the raw half MDEs alone (R17). A setup that is powered on the
+  raw series and does not pass is FAIL, whatever the hedged MDE.
+- **N2.** R14 states that the seed uses the short key, `S2` etc.
+- **N3.** The signal-mismatch refusal now says "re-run fetch".
+- **N4.** `spy_stale` and `beta_missing` are counted separately.
+- **Ambiguity 5.** report.md lists the two uncomputed cells as NOT COMPUTED, with the reason.
+- **Resolutions.**
+  - R10: the S6 cancel never fires; the mid-below-FVG-bottom guard covers a fall through the gap.
+  - R9: the S5 touch-bar cancel is impossible.
+  - R3: the stale check runs before the R-bound check, so a stale quote on a would-be R-skip ends the setup's day.
+
 ## Tests
 
 `pytest -q` over the whole suite: 4232 passed, 6 failed, 7 skipped. The 6 failures (`tests/test_alert_sound.py` ×5 and
 `tests/test_sr_breakout_book.py::test_real_pins_accept_head_and_reject_dirty`) fail the same way on the untouched base
 `master-mac` in this container: alert-sound playback, and a git-HEAD build check. `config/bot_config.json` was
 backed up before the run and is unchanged.
+
+After review round 1 (MacBook, worktree `th-hist`): the three history-study test files give 102 passed. The full
+`pytest -q` gives 4296 passed, 1 xfailed, 0 failed. The suite rewrites `config/bot_config.json`; it was restored with
+`git checkout` afterwards.
