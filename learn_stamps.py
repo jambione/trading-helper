@@ -33,6 +33,7 @@ _FINGERPRINT_KEYS = (
     # Min-hold exemption for leave-OB: True vs False changes whether triangle
     # flatten can fire inside the hold window — two regimes, one ledger.
     "ai_exit_left_ob_exempt_min_hold",
+    "ai_exit_triangle_engine_only",
     "ai_exit_macd_liquidate",
     "ai_exit_macd_hard_sell_sep",
     "ai_exit_macd_confirm_ticks",

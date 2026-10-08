@@ -3490,7 +3490,8 @@ def trail_yields_to_triangle(
     sig = {}
     live_px = _num(pos.get("last_seen_price"))
     ticker = str(pos.get("symbol") or pos.get("ticker") or "").upper().strip()
-    if live_px and ticker:
+    # Engine-only triangle: no live clock-window recompute; read the engine dual persisted on the row.
+    if live_px and ticker and not bool(cfg.get("ai_exit_triangle_engine_only", False)):
         try:
             probe = {"symbol": ticker, "indicator": dict(sig)}
             if ew.apply_live_exhaustion(probe, live_px, cfg, t0):
@@ -7509,7 +7510,9 @@ def manage_open_positions(
             # still inside the square: CLSK 2026-09-22 showed fast −26 on
             # the book and stayed hold.
             live_px = _num(pos.get("last_seen_price"))
-            if live_px:
+            # Engine-only triangle (ai_exit_triangle_engine_only): judge on the engine's smoothed minute-grid
+            # line as the replay does; the live recompute can be raw clock_range %R (10/8).
+            if live_px and not _cfg_flag("ai_exit_triangle_engine_only", False):
                 try:
                     import ai_entry_watch as _ew
                     probe_rec = {"symbol": ticker, "indicator": dict(engine_sig)}

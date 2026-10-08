@@ -866,6 +866,10 @@ DEFAULT_CONFIG = {
     # Dual leave-OB must persist this long before flatten (APLD flicker guard).
     # Cap enforced in code at 15s — must stay ≪ 30s (MARA-class lag).
     "ai_exit_left_overbought_confirm_sec": 1.0,
+    # Triangle reads the ENGINE's smoothed minute-grid %R only (dashboard signal_proximity), never the live
+    # clock-window recompute, which returns raw unsmoothed range %R when the window holds < 21 bars (10/8 bug).
+    # This is what the nightly replay's lob / np_lob variants already score. Off until that replay passes.
+    "ai_exit_triangle_engine_only": False,
     # If slow %R cannot refresh and is older than this while fast has left OB
     # (and we already latched dual OB), fire triangle rather than wait on trail.
     "ai_exit_dual_slow_max_age_sec": 45.0,
@@ -1809,6 +1813,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_arm_sources",
     "ai_exit_left_overbought",
     "ai_exit_left_overbought_confirm_sec",
+    "ai_exit_triangle_engine_only",
     "ai_exit_dual_slow_max_age_sec",
     "ai_exit_left_ob_exempt_min_hold",
     "ai_dual_tranche_triangle_exit",
@@ -2132,6 +2137,7 @@ SAFE_CONFIG_KEYS = [
     "ai_edge_mode",
     "ai_exit_left_overbought",
     "ai_exit_left_overbought_confirm_sec",
+    "ai_exit_triangle_engine_only",
     "ai_exit_dual_slow_max_age_sec",
     "ai_exit_left_ob_exempt_min_hold",
     "ai_dual_tranche_triangle_exit",
