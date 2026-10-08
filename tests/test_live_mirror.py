@@ -44,10 +44,19 @@ def test_arming_needs_the_file_and_no_overnight_test(files):
 
 
 def test_buy_caps():
-    assert lm.buy_allowed(20.0, 0.0, 100.0) == (True, "ok")
-    assert lm.buy_allowed(lm.MAX_ORDER + 1, 0.0, 100.0)[0] is False
-    assert lm.buy_allowed(30.0, 70.0, 100.0)[0] is False    # past settled cash
-    assert lm.buy_allowed(None, 0.0, 100.0)[0] is False
+    ok = dict(cash_now=100.0, equity=100.0, holding=[], open_buys=[])
+    assert lm.buy_allowed(20.0, **ok) == (True, "ok")
+    assert lm.buy_allowed(lm.MAX_ORDER + 1, **ok)[0] is False
+    assert lm.buy_allowed(None, **ok)[0] is False
+    assert lm.buy_allowed(60.0, **dict(ok, cash_now=55.0))[1].startswith("cash")
+    assert lm.buy_allowed(20.0, **dict(ok, holding=["BBB"]))[1].startswith("one_position")
+    assert lm.buy_allowed(20.0, **dict(ok, open_buys=["BBB"]))[1].startswith("one_position")
+    assert lm.buy_allowed(20.0, **dict(ok, equity=89.99))[1].startswith("equity_floor")
+
+
+def test_defaults_fit_the_100_dollar_account():
+    """Operator 10/8: $95 per buy (tight names up to ~$95), stop new buys under $90 equity."""
+    assert lm.MAX_ORDER == 95 and lm.EQUITY_FLOOR == 90
 
 
 def test_copy_request_keeps_type_prices_and_legs():
@@ -82,11 +91,12 @@ class FakePaper:
 
 
 class FakeLive:
-    def __init__(self, cash=100.0):
+    def __init__(self, cash=100.0, equity=100.0):
         self.cash, self.positions, self.open, self.submitted, self.cancelled, self.closed = cash, {}, [], [], [], []
+        self.equity = equity
 
     def get_account(self):
-        return NS(cash=str(self.cash), account_number="LIVE1", status="ACTIVE")
+        return NS(cash=str(self.cash), equity=str(self.equity), account_number="LIVE1", status="ACTIVE")
 
     def get_all_positions(self):
         return [NS(symbol=s, qty=str(q)) for s, q in self.positions.items()]
@@ -98,8 +108,12 @@ class FakeLive:
         self.submitted.append(req)
         o = NS(id=f"L{len(self.submitted)}", client_order_id=req.client_order_id, symbol=req.symbol,
                side=req.side, status="accepted")
-        if lm.order_kind(req) in lm.PROTECTIVE:
-            self.open.append(o)
+        if lm.order_kind(req) in lm.PROTECTIVE or lm.order_kind(req) == "limit":
+            self.open.append(o)                      # working until filled/cancelled
+        elif lm._v(req.side) == "buy":
+            self.positions[req.symbol] = 1           # a market buy fills at once
+        elif lm._v(req.side) == "sell":
+            self.positions.pop(req.symbol, None)
         return o
 
     def cancel_order_by_id(self, oid):
@@ -139,15 +153,58 @@ def test_proxy_mirrors_only_after_a_successful_paper_call(files):
     assert m.id_map == {"p1": "L1"}
 
 
-def test_buy_over_budget_is_skipped_and_logged(files):
+def test_second_name_waits_for_the_first_to_close(files):
+    """One live position at a time; after the exit the next paper open is mirrored (proceeds reuse)."""
     live = FakeLive(cash=30.0)
     m = mirror(files, live)
-    for i in range(2):
-        m.enqueue("submit", MarketOrderRequest(symbol=f"A{i}", qty=5, side=OrderSide.BUY,
-                                               time_in_force=TimeInForce.DAY), NS(id=f"p{i}", client_order_id=None))
+    buy = lambda s, i: m.enqueue("submit", MarketOrderRequest(symbol=s, qty=5, side=OrderSide.BUY,  # noqa: E731
+                                                              time_in_force=TimeInForce.DAY), NS(id=f"p{i}", client_order_id=None))
+    buy("A0", 0)
+    buy("A1", 1)
     drain(m)
-    assert len(live.submitted) == 1
-    assert rows(files)[1]["event"] == "mirror_skip" and "day budget" in rows(files)[1]["reason"]
+    assert [r.symbol for r in live.submitted] == ["A0"]
+    assert rows(files)[1]["event"] == "mirror_skip" and rows(files)[1]["reason"].startswith("one_position")
+    m.enqueue("close", "A0")                         # the desk closes (e.g. no_progress / left_overbought)
+    buy("A2", 2)
+    drain(m)
+    assert live.closed == ["A0"] and [r.symbol for r in live.submitted] == ["A0", "A2"]
+
+
+def test_a_working_limit_buy_blocks_a_second_name(files):
+    live = FakeLive()
+    m = mirror(files, live)
+    m.enqueue("submit", LimitOrderRequest(symbol="AAA", qty=5, side=OrderSide.BUY, time_in_force=TimeInForce.DAY,
+                                          limit_price=20.0), NS(id="p1", client_order_id="e1"))
+    m.enqueue("submit", MarketOrderRequest(symbol="BBB", qty=5, side=OrderSide.BUY, time_in_force=TimeInForce.DAY),
+              NS(id="p2", client_order_id="e2"))
+    drain(m)
+    assert [r.symbol for r in live.submitted] == ["AAA"]
+
+
+def test_desk_market_exit_is_copied(files):
+    """The 10/8 exits (no_progress, left_overbought) flatten with market sells or close_position: both copied."""
+    live = FakeLive()
+    m = mirror(files, live)
+    live.positions["AAA"] = 1
+    m.bought.add("AAA")
+    m.enqueue("submit", MarketOrderRequest(symbol="AAA", qty=12, side=OrderSide.SELL, time_in_force=TimeInForce.DAY),
+              NS(id="p9", client_order_id="x9"))
+    drain(m)
+    assert live.submitted[-1].qty == 1 and "AAA" not in live.positions
+
+
+def test_below_the_equity_floor_buys_stop_but_exits_continue(files):
+    live = FakeLive(equity=89.0)
+    m = mirror(files, live)
+    m.enqueue("submit", MarketOrderRequest(symbol="AAA", qty=5, side=OrderSide.BUY, time_in_force=TimeInForce.DAY),
+              NS(id="p1", client_order_id=None))
+    drain(m)
+    assert live.submitted == [] and rows(files)[0]["reason"].startswith("equity_floor")
+    live.positions["BBB"] = 1
+    m.bought.add("BBB")
+    m.enqueue("close", "BBB")
+    drain(m)
+    assert live.closed == ["BBB"]
 
 
 def test_stop_then_exit_cancels_the_live_stop_first(files):

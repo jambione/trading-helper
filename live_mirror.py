@@ -61,7 +61,9 @@ OUT = ROOT / "ai_reports" / "live_mirror"
 LEDGER = OUT / "ledger.jsonl"
 LOG = OUT / "run.log"
 CID_PREFIX = "mir-"
-MAX_ORDER = float(os.getenv("LIVE_MIRROR_MAX_ORDER", "60"))
+MAX_ORDER = float(os.getenv("LIVE_MIRROR_MAX_ORDER", "95"))
+# Operator 10/8: stop opening live positions (exits still copied) once live equity is below this.
+EQUITY_FLOOR = float(os.getenv("LIVE_MIRROR_EQUITY_FLOOR", "90"))
 MAX_SHARES = 1
 SYNC_EVERY = 15.0
 EOD_FLATTEN = (15, 55)
@@ -135,14 +137,25 @@ def copy_request(req, qty: int, cid: str):
     return req.model_copy(update={"qty": qty, "notional": None, "client_order_id": cid})
 
 
-def buy_allowed(price: float | None, spent: float, start_cash: float) -> tuple[bool, str]:
-    """Caps for one 1-share buy. Pure."""
+def buy_allowed(price: float | None, cash_now: float, equity: float, holding: list[str],
+                open_buys: list[str]) -> tuple[bool, str]:
+    """Caps for one 1-share buy. Pure.
+
+    2026-10-08 (operator, before the first live week): the account is limited margin, not cash
+    (Alpaca has no cash accounts and covers settlement), so sale proceeds buy again at once: the
+    budget is the CURRENT cash, not the start-of-day cash minus the day's buys (which stopped the
+    mirror after 2-3 trades). One live position at a time ($100 holds one), and no new buys below
+    the equity floor."""
     if not price or price <= 0:
         return False, "no_price"
+    if equity < EQUITY_FLOOR:
+        return False, f"equity_floor: ${equity:.2f} < ${EQUITY_FLOOR:g}"
+    if holding or open_buys:
+        return False, f"one_position: holding {sorted(holding)} open buys {sorted(open_buys)}"
     if price > MAX_ORDER:
         return False, f"price ${price:.2f} > cap ${MAX_ORDER:g}"
-    if spent + price > 0.98 * start_cash:
-        return False, f"day budget: spent ${spent:.2f} + ${price:.2f} > settled ${start_cash:.2f}"
+    if price > 0.98 * cash_now:
+        return False, f"cash: ${price:.2f} > 98% of cash ${cash_now:.2f}"
     return True, "ok"
 
 
@@ -263,7 +276,10 @@ class Mirror:
                 "desk_cid": getattr(desk_order, "client_order_id", None)}
         if side == "buy":
             px = getattr(req, "limit_price", None) or self._price(sym)
-            ok, why = buy_allowed(float(px) if px else None, self.spent, self.start_cash)
+            a = tc.get_account()
+            holding = [p.symbol for p in tc.get_all_positions() if abs(float(p.qty)) > 0]
+            open_buys = [o.symbol for o in self._our_open(tc) if _v(o.side) == "buy"]
+            ok, why = buy_allowed(float(px) if px else None, float(a.cash), float(a.equity), holding, open_buys)
             if not ok:
                 append({"event": "mirror_skip", **base, "reason": why, "ref_price": px})
                 return
@@ -492,14 +508,26 @@ def report(day: str | None) -> None:
         print("skipped: " + ", ".join(f"{k} x{v}" for k, v in Counter(r["reason"].split(":")[0] for r in skips).most_common()))
 
 
+def pdt_view(a) -> dict:
+    """The account fields that decide whether same-day round trips are safe. Pure."""
+    g = lambda k: getattr(a, k, None)  # noqa: E731
+    return {k: (str(getattr(g(k), "value", g(k))) if g(k) is not None else None) for k in (
+        "pattern_day_trader", "daytrade_count", "multiplier", "buying_power", "daytrading_buying_power",
+        "regt_buying_power", "non_marginable_buying_power", "equity", "last_equity", "cash", "shorting_enabled",
+        "trading_blocked", "account_blocked", "trade_suspended_by_user", "transfers_blocked", "crypto_status")}
+
+
 def check() -> None:
     ok, why = armed()
-    print(f"mirror: {'ARMED' if ok else 'not armed'} ({why}); caps 1 share, ${MAX_ORDER:g}/buy")
+    print(f"mirror: {'ARMED' if ok else 'not armed'} ({why}); caps 1 share, ${MAX_ORDER:g}/buy, "
+          f"one position at a time, no buys below ${EQUITY_FLOOR:g} equity")
     m = Mirror(None)
     try:
         tc = m.client()
         a = tc.get_account()
         print(f"live account {a.account_number} {a.status}: cash ${float(a.cash):,.2f} equity ${float(a.equity):,.2f}")
+        for k, v in pdt_view(a).items():
+            print(f"  {k:28s} {v}")
         for p in tc.get_all_positions():
             print(f"  holding {p.symbol} {p.qty}")
         print(f"  open mirror orders: {len(m._our_open(tc))}")
