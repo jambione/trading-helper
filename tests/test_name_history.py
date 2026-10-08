@@ -1,6 +1,7 @@
 """Tests for tools/studies/name_history.py (name_history + round_numbers preregs). Synthetic data, no network."""
 from __future__ import annotations
 
+import collections
 import json
 import random
 import subprocess
@@ -314,3 +315,18 @@ def test_failed_data_hypothesis_never_reads_pass():
     v = NH.nh_hypothesis(rows, NH.H2_rows, NH.IS_HTF)
     assert v["verdict_data"] == "FAILED-DATA" and v["verdict"] == "FAILED-DATA"
     assert v["verdict_if_read"] == "PASS" and "PASS" not in v.get("label", "")
+
+
+def test_htf_missing_reasons_are_counted():
+    """FF2: R11's missing HTF_UP is counted by reason (no factor today / < 141 completed 60-min bars)."""
+    from _hist_synth import bars60, flat
+    prior = [bars60(d, [(100.0, 100.1, 99.9, 100.0)] * 7) for d in weekdays("2026-08-17", 20)]
+    raw1 = flat(100.0, T(9, 30), T(16, 0))
+    cl, t = BS.et_ts(DAY, 16), T(11, 0)
+    c = collections.Counter()
+    assert NH.htf_feature(raw1, DAY, cl, None, prior, t, c) is None
+    assert c["htf_missing_no_factor_today"] == 1
+    assert NH.htf_feature(raw1, DAY, cl, 1.0, prior[1:], t, c) is None          # 19 x 7 + 1 = 134 bars
+    assert c["htf_missing_ema_warmup_lt141_bars"] == 1
+    assert NH.htf_feature(raw1, DAY, cl, 1.0, prior, t, c) in (True, False)    # 20 x 7 + 1 = 141 bars
+    assert sum(c.values()) == 2

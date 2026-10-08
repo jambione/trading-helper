@@ -86,7 +86,9 @@ RESOLUTIONS = {
     "R10_terciles": "terciles of TREND_SCORE pooled over all test-session events: rank percentile p of the score "
                     "among all scored events (same rule as R9); BOTTOM p < 1/3, TOP p >= 2/3",
     "R11_HTF_60": "the 60-min EMA series runs over ADJUSTED 60-min bars of the 20 look-back sessions + today; "
-                  "missing (event excluded from H2, counted) when fewer than 140 completed bars precede the last; "
+                  "missing (event excluded from H2, counted in count.json: htf_missing_no_factor_today, "
+                  "htf_missing_ema_warmup_lt141_bars, htf_missing_lt3_15min_bars) when fewer than 140 completed "
+                  "bars precede the last; "
                   "the 15-min comparisons use today's RAW 15-min bars",
     "R12_beta": "beta returns = aligned 30-min bars (09:30-10:00 ... 15:30-16:00), close-to-close within session, "
                 "first bar from its open; pairs need both name and SPY bars in the same bucket",
@@ -476,10 +478,7 @@ def nameday_features(data, summ, sym, day, counts, mirror=False):
     tds = [s["trend"] for _, s in sums if s["trend"] is not None]
     T3 = (sum(tds) / len(tds)) if tds else None
     # HTF_UP (R11)
-    b15 = BS.aggregate(raw1, day, 15, cl)
-    b60_today_adj = BS.aggregate(BS.scale(raw1, f_today), day, 60, cl) if f_today else []
-    series = BS.concat_sessions([s["b60adj"] for _, s in sums] + [b60_today_adj])
-    htf = BS.htf_up(b15, series, t) if f_today else None
+    htf = htf_feature(raw1, day, cl, f_today, [s["b60adj"] for _, s in sums], t, counts)
     # beta
     beta, npairs = beta_of(summ, sym, prior)
     # LEVELS_info (R25)
@@ -520,6 +519,23 @@ def nameday_features(data, summ, sym, day, counts, mirror=False):
         row["rn_half"] = BS.rn_group(ev["close"], ev["h_prev"], RN_BAND, "half")
         row["log_brk"] = math.log(ev["close"] / ev["h_prev"])
     return row
+
+
+def htf_feature(raw1, day, cl, f_today, prior_b60adj, t, counts):
+    """HTF_UP at t (R11), or None with the reason counted (review round 1 FF2, 2026-10-08: R11 promised the
+    missing count, the code dropped events from H2 silently)."""
+    if not f_today:
+        counts["htf_missing_no_factor_today"] += 1
+        return None
+    b15 = BS.aggregate(raw1, day, 15, cl)
+    series = BS.concat_sessions(list(prior_b60adj) + [BS.aggregate(BS.scale(raw1, f_today), day, 60, cl)])
+    if len(BS.completed(series, t)) < BS.EMA_WARM + 1:
+        counts["htf_missing_ema_warmup_lt141_bars"] += 1
+        return None
+    htf = BS.htf_up(b15, series, t)
+    if htf is None:
+        counts["htf_missing_lt3_15min_bars"] += 1
+    return htf
 
 
 def assign_scores(rows):
