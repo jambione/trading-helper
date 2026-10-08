@@ -218,10 +218,27 @@ class Mirror:
         if self.day == today:
             return
         a = tc.get_account()
-        self.day, self.start_cash, self.spent, self.bought = today, float(a.cash), 0.0, set()
-        others = [p.symbol for p in tc.get_all_positions()]
-        log(f"day {today}: settled cash ${self.start_cash:,.2f}"
+        self.day, self.start_cash, self.spent = today, float(a.cash), 0.0
+        held = {p.symbol for p in tc.get_all_positions() if abs(float(p.qty)) > 0}
+        # Restart-safe (skeptic 10/8 #3): a live name the mirror bought today and still holds is ours,
+        # whatever this process remembers, so exits, sync and the 15:55 flatten still cover it.
+        self.bought = held & self._mirror_buys_today(tc, today)
+        others = sorted(held - self.bought)
+        log(f"day {today}: cash ${self.start_cash:,.2f}"
+            + (f"; ours (rebuilt): {sorted(self.bought)}" if self.bought else "")
             + (f"; positions not ours, left alone: {others}" if others else ""))
+
+    def _mirror_buys_today(self, tc, today) -> set[str]:
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+        try:
+            start = datetime(today.year, today.month, today.day, tzinfo=ET)
+            os_ = tc.get_orders(GetOrdersRequest(status=QueryOrderStatus.ALL, after=start, limit=500))
+        except Exception as e:  # noqa: BLE001
+            log(f"rebuild bought: {e!s:.120}")
+            return set()
+        return {o.symbol for o in os_ if str(o.client_order_id or "").startswith(CID_PREFIX)
+                and _v(o.side) == "buy" and float(getattr(o, "filled_qty", 0) or 0) > 0}
 
     def _held(self, tc, sym: str) -> int:
         for p in tc.get_all_positions():
@@ -280,6 +297,8 @@ class Mirror:
             holding = [p.symbol for p in tc.get_all_positions() if abs(float(p.qty)) > 0]
             open_buys = [o.symbol for o in self._our_open(tc) if _v(o.side) == "buy"]
             ok, why = buy_allowed(float(px) if px else None, float(a.cash), float(a.equity), holding, open_buys)
+            if not ok and why.startswith("one_position") and (sym in holding or sym in open_buys):
+                why = "live_leg_filled: " + why     # same name: an earlier leg of this entry is live already
             if not ok:
                 append({"event": "mirror_skip", **base, "reason": why, "ref_price": px})
                 return
@@ -337,11 +356,13 @@ class Mirror:
         self.id_map.clear()
         append({"event": "mirror_cancel_all", "t_desk": t, "cancelled": n})
 
-    def flatten(self, tc, sym: str, why: str, t: float | None = None) -> None:
+    def flatten(self, tc, sym: str, why: str, t: float | None = None, desk_order=None) -> None:
         if self._held(tc, sym) <= 0:
             return
         self._cancel_name(tc, sym)
-        row = {"event": "mirror_exit", "reason": why, "sym": sym, "t_desk": t, "t_live": time.time()}
+        row = {"event": "mirror_exit", "reason": why, "sym": sym, "t_desk": t, "t_live": time.time(),
+               "desk_order_id": str(getattr(desk_order, "id", "") or "") or None,
+               "desk_cid": getattr(desk_order, "client_order_id", None)}
         try:
             o = tc.close_position(sym)
             row.update(live_order_id=str(getattr(o, "id", "")), live_cid=getattr(o, "client_order_id", None))
@@ -349,10 +370,11 @@ class Mirror:
             row["error"] = str(e)[:200]
         append(row)
 
-    def on_close(self, t: float, sym: str) -> None:
+    def on_close(self, t: float, sym: str, desk_order=None) -> None:
         tc = self.client()
+        self._roll_day(tc)
         if sym.upper() in self.bought:
-            self.flatten(tc, sym.upper(), "desk_close_position", t)
+            self.flatten(tc, sym.upper(), "desk_close_position", t, desk_order)
 
     def sync(self) -> None:
         tc = self.client()
@@ -381,7 +403,25 @@ class Mirror:
         elif kind == "close":
             self.on_close(t, *args)
 
+    @staticmethod
+    def exit_side(kind: str, args: tuple) -> bool:
+        """Events that only reduce or protect a live position (allowed while disarmed). Pure."""
+        if kind in ("cancel", "cancel_all", "close"):
+            return True
+        if kind == "submit" and args:
+            return _v(getattr(args[0], "side", None)) == "sell"
+        return False
+
+    def _startup_rebuild(self) -> None:
+        """Once, at desk start: learn what the mirror holds (restart-safe). Swallows its errors."""
+        try:
+            if KEYS_FILE.exists():
+                self._roll_day(self.client())
+        except Exception as e:  # noqa: BLE001
+            log(f"startup rebuild: {e!s:.160}")
+
     def _run(self) -> None:
+        self._startup_rebuild()
         while True:
             try:
                 kind, t, args = self.q.get(timeout=5)
@@ -389,9 +429,11 @@ class Mirror:
                 kind = None
             ok = armed()[0]
             try:
-                if kind and ok:
+                # Disarming stops NEW BUYS only (skeptic 10/8 #2): exits, cancels, sync and the 15:55
+                # flatten keep running for anything the mirror still holds.
+                if kind and (ok or (self.bought and self.exit_side(kind, args))):
                     self.handle(kind, t, args)
-                if ok and time.time() - self.last_sync >= SYNC_EVERY:
+                if (ok or self.bought) and time.time() - self.last_sync >= SYNC_EVERY:
                     self.last_sync = time.time()
                     self.sync()
             except Exception as e:  # noqa: BLE001
@@ -429,7 +471,7 @@ class MirroredClient:
 
     def close_position(self, symbol_or_asset_id, *a, **k):
         r = self._real.close_position(symbol_or_asset_id, *a, **k)
-        self._mirror.enqueue("close", str(symbol_or_asset_id))
+        self._mirror.enqueue("close", str(symbol_or_asset_id), r)
         return r
 
 

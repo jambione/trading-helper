@@ -93,7 +93,7 @@ class FakePaper:
 class FakeLive:
     def __init__(self, cash=100.0, equity=100.0):
         self.cash, self.positions, self.open, self.submitted, self.cancelled, self.closed = cash, {}, [], [], [], []
-        self.equity = equity
+        self.equity, self.history = equity, []
 
     def get_account(self):
         return NS(cash=str(self.cash), equity=str(self.equity), account_number="LIVE1", status="ACTIVE")
@@ -102,6 +102,8 @@ class FakeLive:
         return [NS(symbol=s, qty=str(q)) for s, q in self.positions.items()]
 
     def get_orders(self, req):
+        if lm._v(getattr(req, "status", None)) == "all":
+            return list(self.history)
         return [o for o in self.open if not req.symbols or o.symbol in req.symbols]
 
     def submit_order(self, req):
@@ -112,6 +114,7 @@ class FakeLive:
             self.open.append(o)                      # working until filled/cancelled
         elif lm._v(req.side) == "buy":
             self.positions[req.symbol] = 1           # a market buy fills at once
+            self.history.append(NS(symbol=req.symbol, client_order_id=req.client_order_id, side=req.side, filled_qty="1"))
         elif lm._v(req.side) == "sell":
             self.positions.pop(req.symbol, None)
         return o
@@ -245,3 +248,55 @@ def test_sync_flattens_a_name_the_desk_no_longer_holds(files):
 def test_attach_is_a_no_op_off_paper():
     t = NS(_mode="live", _client=object())
     assert lm.attach(t) is None and not isinstance(t._client, lm.MirroredClient)
+
+
+def test_desk_close_position_exit_is_paired_with_the_paper_close_order(files):
+    """Skeptic 10/8 #1: the desk exits through close_position; the live exit row must carry the paper order id."""
+    live = FakeLive()
+    m = mirror(files, live)
+    proxy = lm.MirroredClient(m.desk, m)
+    m.desk.close_position = lambda sym: NS(id="pclose7", client_order_id="cl7")
+    live.positions["AAA"] = 1
+    m.bought.add("AAA")
+    m.day = lm.datetime.now(lm.ET).date()
+    proxy.close_position("AAA")
+    drain(m)
+    ex = [r for r in rows(files) if r["event"] == "mirror_exit"][0]
+    assert ex["reason"] == "desk_close_position" and ex["desk_order_id"] == "pclose7" and live.closed == ["AAA"]
+
+
+def test_disarmed_mirror_still_exits_what_it_holds(files):
+    """Skeptic 10/8 #2: deleting the arm file stops new buys, never the exits."""
+    live = FakeLive()
+    m = mirror(files, live)
+    (files / "live_mirror.armed").unlink()
+    m.bought.add("AAA")
+    live.positions["AAA"] = 1
+    assert m.exit_side("close", ("AAA",)) and not m.exit_side(
+        "submit", (MarketOrderRequest(symbol="B", qty=1, side=OrderSide.BUY, time_in_force=TimeInForce.DAY),))
+    assert m.exit_side("submit", (MarketOrderRequest(symbol="AAA", qty=1, side=OrderSide.SELL,
+                                                     time_in_force=TimeInForce.DAY),))
+
+
+def test_restart_rebuilds_what_the_mirror_holds(files):
+    """Skeptic 10/8 #3: after a restart the mirror's own live position is still covered by exits and sync."""
+    live = FakeLive()
+    m = mirror(files, live)
+    m.enqueue("submit", MarketOrderRequest(symbol="AAA", qty=5, side=OrderSide.BUY, time_in_force=TimeInForce.DAY),
+              NS(id="p1", client_order_id="e1"))
+    drain(m)
+    live.positions["ZZZ"] = 1                                    # not ours (no mir- buy today)
+    m2 = mirror(files, live)                                     # a fresh process
+    m2._roll_day(live)
+    assert m2.bought == {"AAA"}
+
+
+def test_same_name_second_leg_is_logged_as_live_leg_filled(files):
+    """Skeptic 10/8 #7: the paper market fallback after a live-filled limit leg is not a one_position skip."""
+    live = FakeLive()
+    m = mirror(files, live)
+    for i, req in enumerate((MarketOrderRequest(symbol="AAA", qty=5, side=OrderSide.BUY, time_in_force=TimeInForce.DAY),
+                             MarketOrderRequest(symbol="AAA", qty=5, side=OrderSide.BUY, time_in_force=TimeInForce.DAY))):
+        m.enqueue("submit", req, NS(id=f"p{i}", client_order_id=f"e{i}"))
+    drain(m)
+    assert rows(files)[1]["reason"].startswith("live_leg_filled")

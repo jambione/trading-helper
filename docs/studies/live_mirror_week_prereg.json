@@ -6,34 +6,39 @@
  "what_this_is_not": "Not a test of whether the strategy makes money: at 1 share, live P&L is noise (expected about -$0.50 to -$2 a day at the paper desk's ~-3 bp/trade). Live P&L is reported, never judged.",
  "period": "sessions 2026-10-12 .. 2026-10-16 (5 sessions). The operator may extend by whole weeks; the rules below then apply to the pooled sessions, read once at the end of each week.",
  "setup": {
-  "mirror": "live_mirror.py at commit 505d08e: 1 share per paper order; buys only when live holds nothing and has no working buy (one position at a time); $95 max per buy; buy only if price <= 98% of current cash; no new buys once live equity < $90 (exits continue); exits/cancels/close_position copied; 15-s sync flattens a live name the paper desk no longer holds; 15:55 flatten.",
+  "mirror": "live_mirror.py at the commit that fixes the 10/8 skeptic findings (recorded in 'amended'): 1 share per paper order; buys only when live holds nothing and has no working buy (one position at a time); $95 max per buy; buy only if price <= 98% of current cash; no new buys once live equity < $90 (exits continue); exits/cancels/close_position copied; 15-s sync flattens a live name the paper desk no longer holds; 15:55 flatten. Disarming stops NEW BUYS only: exits, cancels, sync and the 15:55 flatten keep running for what the mirror holds. On start and each new day the mirror rebuilds what it holds from today's filled mir- buys still in the account (restart-safe).",
   "desk": "the paper desk exactly as configured for T1 from 2026-10-08 (tight + movers, 0.05% SIP spread cap, 09:45 start, np180 + left_overbought exits). No desk change is made for this test.",
-  "arming": "config/live_mirror.armed = '2026-10-12' (operator). Disarm = delete the file (exits still complete)."
+  "arming": "config/live_mirror.armed = '2026-10-12' (operator). Disarm = delete the file (exits still complete).",
+  "overnight": "The overnight live book is PAUSED for the test (its arm file is absent since 10/7 and it refuses to buy while live_mirror.armed exists). The account must be flat before 09:45 on 2026-10-12 (operator confirms with `live_mirror.py check`); any non-mirror holding blocks every mirror buy (one_position)."
  },
  "data": {
   "pairs": "ai_reports/live_mirror/ledger.jsonl mirror_submit rows (desk_order_id + live_order_id), joined to the Alpaca order records of BOTH accounts (status, filled_avg_price, filled_qty, filled_at, submitted_at)",
   "reference_quote": "SIP NBBO at the paper order's submitted_at (last valid quote <= 5 s old; Alpaca historical, after the close)",
-  "account": "the live account record (/v2/account) and /v2/account/configurations, logged once after each session: equity, cash, buying power, multiplier, and ANY field whose name contains pattern|daytrad|pdt; plus /v2/account/activities FEE rows",
+  "account": "ai_reports/live_mirror/account_daily.jsonl: one row per session after 16:05 ET: date, equity, cash, buying_power, multiplier, every /v2/account field whose name contains pattern|daytrad|pdt (expected: none), /v2/account/configurations, and the day's FEE activities",
   "skips": "mirror_skip rows (one_position, price cap, cash, equity_floor, no live position) counted by reason"
  },
  "definitions": {
-  "fill_gap_bp": "per order with BOTH fills: side-signed (live_fill / paper_fill - 1) x 1e4, + for a buy filled higher or a sell filled lower on live (live worse)",
-  "slippage_vs_mid_bp": "per filled order, each account separately: side-signed (fill / SIP mid at the paper submit time - 1) x 1e4",
-  "latency_s": "live filled_at minus paper filled_at",
+  "fill_gap_bp": "per paired order with both FULLY filled: side-signed (live_fill / paper_fill - 1) x 1e4 (+ = live worse). Orders filled on one side only, or partially on paper, are counted separately and never enter the mean.",
+  "slippage_vs_mid_bp": "per filled order, each account against its OWN submit time: side-signed (fill / SIP mid at that account's submitted_at - 1) x 1e4, quote <= 1 s old (else that order's component is dropped, counted). The difference live minus paper of these two is the EXECUTION component; the SIP mid move between the two submit times is the PLUMBING/DRIFT component (our mirror's delay).",
+  "latency_s": "split: desk submit -> live submit (our mirror's delay: account/position/order/price calls) and live submit -> live fill (the broker); paper submit -> paper fill reported alongside",
   "fee_bp": "live FEE activities on a sell / that sell's notional x 1e4",
-  "round_trip": "a live buy and the live sell(s) that close it, FIFO; its paper twin is the paper position opened by the same desk order"
+  "round_trip": "a live buy and the live sell(s) that close it, FIFO; its paper twin is the paper position opened by the same desk order",
+  "pairs": "ORDER level: mirror_submit rows (desk_order_id -> live_order_id) for entries and sells, and mirror_exit rows with reason 'desk_close_position' (desk_order_id = the paper close_position order) for exits. sync_exit and eod_flatten rows have no paper twin and are NEVER paired (counted). The desk's 15:50 eod_liquidate is a desk close_position and IS paired. POSITION level (entries): per desk entry decision, the paper position's final blended entry fill vs the live position's entry fill, whichever legs filled (limit leg on one account, market leg on the other is allowed and flagged).",
+  "fee_usd": "live FEE activities in dollars per sell; reported in dollars and bp but labelled NON-TRANSFERABLE (per-order cent rounding at 1 share)",
+  "limit_fill_rate": "paper: FULL fill rate and ANY-fill rate; live: fill rate (1 share, all or nothing). The 1-share live order needs only one share of queue, which FAVOURS live; stated as a bias."
  },
- "primary": "mean fill_gap_bp over all MARKET orders (entries and exits pooled) with both fills; SE clustered by session (CR1); also reported separately for entries and exits. If market orders with both fills < 60, the primary is UNDERPOWERED and the week is extended or the result labelled underpowered.",
+ "primary": "mean EXECUTION component (live slippage vs mid minus paper slippage vs mid, each at its own submit time) over paired MARKET orders (entries + desk_close_position exits) with both fully filled and both quotes valid; SE clustered by session (CR1); t with df = sessions - 1. Raw fill_gap_bp (which includes our mirror's delay) is the secondary and is always shown next to it.",
  "decision_rules": {
-  "TRANSFERS": "primary mean <= +2 bp AND its upper 95% bound (mean + 1.96 x SE) <= +5 bp: paper fills are a fair stand-in; paper verdicts (T1, G2, exits) are read as they are.",
-  "PAPER_OPTIMISTIC": "primary mean >= +5 bp with t >= 2: every paper verdict is re-read with the gap subtracted per fill (x2 per round trip) before ANY live-money decision; the entry/exit order styles (G2) become the first lever; no size-up.",
-  "PAPER_PESSIMISTIC": "primary mean <= -5 bp with t <= -2: reported; no change (live doing better than paper is not a reason to trade more without a second week).",
-  "INCONCLUSIVE": "anything else: report the interval; the operator decides whether to run a second week",
-  "LIMITS": "for limit orders (entry_test arms ask / mid_down / bid / wait), fill rate live vs paper: if the live fill rate is lower by >= 20 percentage points (n >= 20 limit pairs), limit-arm results on paper are flagged as optimistic for G2"
+  "TRANSFERS": "one-sided 95% upper bound of the primary (mean + t_0.95,df x SE) <= +3 bp: paper fills are a fair stand-in; paper verdicts read as they are.",
+  "PAPER_OPTIMISTIC": "one-sided 95% lower bound > 0 bp: live is worse; every paper verdict is re-read with the UPPER bound subtracted per fill (x2 per round trip) before ANY live-money decision; order styles (G2) become the first lever; no size-up.",
+  "PAPER_PESSIMISTIC": "one-sided 95% upper bound < 0 bp: reported; no change without a further week.",
+  "INCONCLUSIVE": "otherwise. Pre-committed: extend one week at a time while INCONCLUSIVE, at most 3 weeks in total (to 2026-10-30); if still inconclusive after 3 weeks, the UPPER bound is used as the haircut on paper results (conservative) and the test closes.",
+  "LIMITS": "limit pairs (n >= 20): if live fill rate is below paper's FULL fill rate by >= 20 percentage points, paper limit-arm results are flagged optimistic for G2 (noting the 1-share bias runs the other way).",
+  "read_schedule": "read once at the end of each week (Friday after the close); never mid-week."
  },
  "safety": {
   "built_in": "no buys below $90 equity; one position; $95 cap; exits always copied; 15:55 flatten",
-  "operator_stops": "disarm the same day if: any account restriction appears (trading_blocked, account_blocked, a pattern/daytrade/pdt field appearing in the record), a live position is left open at 15:56, the same order fails >= 3 times, or live equity falls below $85 (the $90 floor should prevent that)",
+  "operator_stops": "disarm the same day if: any account restriction appears (trading_blocked, account_blocked, or a field containing pattern|daytrad|pdt appears in /v2/account); a live position is open at 15:56 (operator also closes it in the Alpaca app); >= 3 mirror_submit or mirror_exit rows with an 'error' on the same day; or live equity < $85. Disarming stops buys; the mirror still exits.",
   "no_scaling": "the 1-share size and $100 account are fixed for the test; no change of either until the week is read"
  },
  "information_only": [
@@ -44,7 +49,10 @@
   "fee_bp per round trip",
   "skip counts by reason and the share of paper opens mirrored",
   "sync_exit and eod_flatten counts (live exits not driven by a copied desk order)",
-  "daily account record (PDT fields, buying power)"
+  "daily account record (PDT fields, buying power)",
+  "mirrored vs skipped mix by price band and source (selection by the $95 cap and the one-position rule)",
+  "position-level entry pairs whose legs differ (live limit vs paper market and the reverse)",
+  "skip reasons including live_leg_filled (a later leg of an entry the live account already filled)"
  ],
  "tool": "live_mirror.py report (exists) plus a week summary to be written before 2026-10-12 (tools/studies/live_mirror_week.py: reads the ledger and both accounts' orders, the SIP NBBO, the activities FEE rows and the daily account log; read-only), skeptic code review first. A nightly step appends the account record from 2026-10-12.",
  "no_retuning": "the mirror's caps and rules, the desk config, the definitions and the decision rules are fixed here; a mirror code change during the week splits the week at the change",
@@ -52,6 +60,9 @@
   "1-share orders are the smallest possible; fills at real size (100+ shares) could be worse than both accounts show",
   "one position at a time means the live sample is the first paper open after each live exit, not all opens (selection by timing; reported via the skip counts)",
   "the live and paper orders are submitted milliseconds to seconds apart; latency is part of what is measured",
-  "Alpaca routes the live orders; another broker could differ"
- ]
+  "Alpaca routes the live orders; another broker could differ",
+  "our mirror adds a delay before each live order (several broker/data calls); entries follow rises and exits follow drops, so the raw fill gap includes drift: the primary measures each account against its own submit time to separate it"
+ ],
+ "power": "Assumption at registration (not measured): per-order SD of the execution component ~10-20 bp; at that SD the TRANSFERS bound needs roughly 100-300 pairs. Pairs per session are unknown (one position at a time; ~half of entries are limit arms). After week 1 the tool reports the observed SD, pairs per session and the projected weeks needed; the operator's extend/stop choice follows the rule below, not the interim mean.",
+ "amended": "2026-10-08 ~09:20 ET, before any live order: result-skeptic FIX FIRST applied - mirror code: desk close_position exits now carry the paper order id; disarming stops buys only (exits/sync/EOD continue); restart-safe rebuild of held mirror names; live_leg_filled skip reason. Prereg: pairing incl. desk_close_position exits and position-level entries; execution vs plumbing split with 1 s quotes; one-sided bounds with t(df) and a pre-committed 3-week cap; full vs any limit fill rates and the 1-share bias; fees in dollars, non-transferable; overnight paused and account flat before 10/12; operator stop rules and the account log defined."
 }
