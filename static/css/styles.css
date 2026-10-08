@@ -2761,7 +2761,7 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .ai-book-overnight__nights { display: flex; flex-direction: column; gap: 1px; }
 .panel-ai-watch .on-nightrow {
   display: grid;
-  grid-template-columns: 3.4rem 4.8rem 4.6rem 3.6rem minmax(0, 1fr);
+  grid-template-columns: 3.4rem 4.8rem 4.6rem 3.6rem 13rem minmax(0, 1fr);
   gap: 6px;
 }
 .panel-ai-watch .on-nightrow > span:last-child {

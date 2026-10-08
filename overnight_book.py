@@ -1248,6 +1248,28 @@ def reconcile(tc, day: date, leg: str) -> None:
         night_summary(day)
 
 
+# Market benchmarks priced at the SAME official crosses as the book (operator 10/8: "it is not profitable"):
+# SPY = the market, RSP = equal-weight S&P (close to the ranking edge's equal-weight universe). The book's
+# excess over each says whether a night was the ranking or just the market (2026-10-02 skeptic: mostly beta).
+BENCHMARKS = ("SPY", "RSP")
+
+
+def benchmark_bp(close_cx: dict, open_cx: dict) -> dict:
+    """{'spy_bp', 'rsp_bp'}: each benchmark's close-cross -> open-cross return (None if a cross is missing). Pure."""
+    out = {}
+    for s in BENCHMARKS:
+        c, o = close_cx.get(s), open_cx.get(s)
+        out[f"{s.lower()}_bp"] = round((o[0] / c[0] - 1) * 1e4, 1) if (c and o and c[0] > 0) else None
+    return out
+
+
+def night_excess(n: dict) -> dict:
+    """The book night minus each benchmark (None when either side is missing). Pure."""
+    b = night_bp(n)
+    return {f"vs_{k}_bp": (round(b - n[f"{k}_bp"], 1) if (b is not None and n.get(f"{k}_bp") is not None) else None)
+            for k in ("spy", "rsp")}
+
+
 def score_plan(picks: list[str], close_cx: dict, open_cx: dict) -> dict:
     """The night as the backtest measures it: every planned name, official
     closing cross -> next official opening cross, equal DOLLARS each. Pure.
@@ -1360,8 +1382,9 @@ def night_summary(sell_day: date, fetch=None) -> None:
             _write_night(night)
             log(f"night ending {sell_day}: LIVE account bought nothing on {buy_day}; unscored")
             return
-    close_cx, open_cx = fetch(picks, buy_day, "close"), fetch(picks, sell_day, "open")
+    close_cx, open_cx = fetch(picks + list(BENCHMARKS), buy_day, "close"), fetch(picks + list(BENCHMARKS), sell_day, "open")
     night.update(score_plan(picks, close_cx, open_cx))
+    night.update(benchmark_bp(close_cx, open_cx))
     # The book actually held: the picks that passed the intraday filter that
     # night. Paper nights without a filter row (filter off, or before it
     # existed) held all 20, so the book is the plan.
@@ -1589,6 +1612,11 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
                   "all20_mean_bp": (sum(n["mean_bp_plan"] for n in done if n.get("mean_bp_plan") is not None)
                                     / max(1, sum(n.get("mean_bp_plan") is not None for n in done))),
                   "green": sum(night_bp(n) > 0 for n in done)}
+        for k in ("spy", "rsp"):
+            ex = [night_excess(n)[f"vs_{k}_bp"] for n in done]
+            ex = [x for x in ex if x is not None]
+            totals[f"vs_{k}_bp"] = (sum(ex) / len(ex)) if ex else None
+            totals[f"vs_{k}_nights"] = len(ex)
     return {
         "updated": now.timestamp(),
         "account": {"equity": account.get("equity"), "cash": account.get("cash"),
@@ -1600,7 +1628,7 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
         "book_night": night,
         "rows": sorted(rows.values(), key=lambda r: r["sym"]),
         "holding": len(held),
-        "nights": done[-10:][::-1],
+        "nights": [{**n, **night_excess(n)} for n in done[-10:][::-1]],
         "totals": totals,
         "backtest_bp": BACKTEST_BP,
         "order_mode": ORDER_MODE,

@@ -1185,6 +1185,9 @@ function _paintOvernight(sectionEl, book) {
         + `<span class="${_bpCls(t.mean_bp)}">${_esc(_fmtBp(t.mean_bp))}/night</span> · `
         + `<span class="${_bpCls(t.pnl_usd)}">${_esc(_fmtHistPl(t.pnl_usd))}</span> · `
         + `${_esc(String(t.green))}/${_esc(String(t.nights))} green`
+        + (t.vs_spy_bp != null ? ` · <span class="${_bpCls(t.vs_spy_bp)}">vs SPY ${_esc(_fmtBp(t.vs_spy_bp))}</span>` : '')
+        + (t.vs_rsp_bp != null ? ` <span class="${_bpCls(t.vs_rsp_bp)}">vs RSP ${_esc(_fmtBp(t.vs_rsp_bp))}</span>`
+          + ` <span class="on-dim">(${_esc(String(t.vs_rsp_nights))} nights)</span>` : '')
         + (Number.isFinite(bt) ? ` <span class="on-dim">(backtest ${_esc(bt.toFixed(0))} bp)</span>` : '');
     } else {
       score.innerHTML = Number.isFinite(bt)
@@ -1309,6 +1312,10 @@ function _paintOvernight(sectionEl, book) {
         + `<span class="${_bpCls(bp)}">${_esc(_fmtBp(bp))}</span>`
         + `<span class="${_bpCls(pl)}">${_esc(_fmtHistPl(pl))}</span>`
         + `<span class="on-dim">${_esc(count)} names</span>`
+        + `<span class="on-dim" title="The book minus SPY / RSP over the same auction-to-auction night: what the ranking added beyond the market.">`
+        + (x.vs_spy_bp != null ? `SPY ${_esc(_fmtBp(x.spy_bp))} → <span class="${_bpCls(x.vs_spy_bp)}">${_esc(_fmtBp(x.vs_spy_bp))} vs</span>` : '')
+        + (x.vs_rsp_bp != null ? ` · RSP <span class="${_bpCls(x.vs_rsp_bp)}">${_esc(_fmtBp(x.vs_rsp_bp))} vs</span>` : '')
+        + `</span>`
         + `<span class="on-dim">${_esc(paper)}</span>`
         + `</div>`;
     }).join('');
