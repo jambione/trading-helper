@@ -2559,7 +2559,7 @@ def place_scaled_entry(
         ),
         # Observe-only order blocks (ai_watch_ob_observe); absent when off.
         **{k: decision.get(k) for k in (
-            "ob_resist_0.3", "ob_room_pct", "ob_brk_dist_pct", "ob_bars", "ob_prior_day")
+            "ob_resist_0.3", "ob_room_pct", "ob_brk_dist_pct", "ob_bars", "ob_prior_day", "ob_sup_pct")
            if isinstance(decision, dict) and k in decision},
     )
     try:

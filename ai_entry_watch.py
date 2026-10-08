@@ -14343,6 +14343,27 @@ def _ob_wire_fields(rec: Any, sym: str, price: Any) -> dict:
         return {}
 
 
+def _ob_support_pct(sym: str, price: Any, now: float) -> float | None:
+    """LOG ONLY (operator 10/8: make support testable). % the price sits above the TOP of the nearest charted
+    support block at or below it (0.0 when inside one), from the same charted blocks as ob_room_pct
+    (ob_observe._charted_at, cached; ob_observe.py itself is pinned by the OB studies and is not changed).
+    None when no support block is charted below, or on any error. Never fetches, never raises."""
+    try:
+        import ob_observe
+        px = float(price)
+        ch, n, _prior = ob_observe._charted_at(str(sym).upper().strip(), float(now))
+        if n <= 0 or not (px > 0):
+            return None
+        sup = [b for b in ch if ob_observe._support(b) and b.btm <= px]
+        if not sup:
+            return None
+        if any(b.btm <= px <= b.top for b in sup):
+            return 0.0
+        return round((px / max(b.top for b in sup) - 1.0) * 100.0, 3)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _ob_observe_stamp(rec: dict, sym: str, price: Any, cfg: dict | None,
                       now: float) -> dict:
     """OBSERVE ONLY. Stamp ob_resist_0.3 / ob_room_pct (+ ob_bars,
@@ -14363,6 +14384,7 @@ def _ob_observe_stamp(rec: dict, sym: str, price: Any, cfg: dict | None,
         f = ob_observe.fields(sym, price, now)
         if not f or not isinstance(rec, dict):
             return {}
+        f = {**f, "ob_sup_pct": _ob_support_pct(sym, price, now)}
         # Only ever ADD keys to an indicator dict the poll already built.
         # Never create one: "has an indicator map" is itself read by gates,
         # and an observer must not be the thing that changes it.
@@ -15844,7 +15866,10 @@ def _shadow_row(
 def _ob_row_fields(sig: Any) -> dict:
     try:
         import ob_observe
-        return ob_observe.copy_fields(sig, {})
+        out = ob_observe.copy_fields(sig, {})
+        if isinstance(sig, dict) and "ob_sup_pct" in sig:
+            out["ob_sup_pct"] = sig["ob_sup_pct"]
+        return out
     except Exception:  # noqa: BLE001
         return {}
 

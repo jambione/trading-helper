@@ -24,7 +24,7 @@ from tests.test_ai_entry_watch import (  # noqa: E402
 )
 
 FIX = os.path.join(ROOT, "tests", "fixtures", "ob_bars_QQQ_2026-09-22.json")
-OB_KEYS = set(ob_observe.FIELD_KEYS)
+OB_KEYS = set(ob_observe.FIELD_KEYS) | {"ob_sup_pct"}   # log-only support distance (ai_entry_watch._ob_support_pct)
 
 
 @pytest.fixture(autouse=True)
@@ -331,3 +331,16 @@ def test_breakout_dist_recent_bear_breaker_only():
     assert ob_observe.breakout_dist([recent, old, live], 100.2, now) == pytest.approx(0.2)
     assert ob_observe.breakout_dist([old, live], 100.2, now) is None          # break older than 15 min
     assert ob_observe.breakout_dist([recent], 99.9, now) is None               # price back under the top
+
+
+def test_support_pct_reads_the_nearest_support_top(monkeypatch):
+    import ai_entry_watch as ew
+    from types import SimpleNamespace as B
+    blocks = [B(kind="bull", breaker=False, btm=9.0, top=9.5), B(kind="bull", breaker=False, btm=9.6, top=9.8),
+              B(kind="bear", breaker=False, btm=10.5, top=10.8)]
+    monkeypatch.setattr(ob_observe, "_charted_at", lambda sym, now: (blocks, 100, True))
+    assert ew._ob_support_pct("AAA", 10.0, 0.0) == round((10.0 / 9.8 - 1) * 100, 3)   # nearest top below
+    assert ew._ob_support_pct("AAA", 9.7, 0.0) == 0.0                                   # inside a support block
+    assert ew._ob_support_pct("AAA", 8.0, 0.0) is None                                  # none below
+    monkeypatch.setattr(ob_observe, "_charted_at", lambda sym, now: ([], 0, False))
+    assert ew._ob_support_pct("AAA", 10.0, 0.0) is None
