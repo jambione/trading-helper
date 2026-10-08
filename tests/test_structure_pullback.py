@@ -494,3 +494,17 @@ def test_time_exit_without_quote_or_bar_drops_the_pair():
     sigs = [{"setup": "S3", "stale": False} for _ in range(20)]
     pairs = [{"setup": "S3"} for _ in range(19)] + [p]
     assert SP.drop_rates(pairs, sigs)["event"] == 0.05
+
+
+def test_powered_is_judged_on_the_raw_series_only():
+    """N1 (operator): 'powered' = every RAW half MDE <= 15 bp (the count step projects from raw control net). A
+    raw-powered, not-passed setup is FAIL even when the hedged MDE > 15 bp."""
+    ps = _pairs(diff=0.0, noise=3.0, n_days=60, n_names=40)
+    rng = random.Random(5)
+    for p in ps:
+        p["ev"]["hedged"] = p["ev"]["hedged_slip"] = p["ev"]["net"] + rng.gauss(0, 2000)
+    v = SP.setup_verdict(ps, "S2")
+    assert all(h["mde"] <= SP.UNDER_BP for h in v["raw"]["halves"].values())
+    assert any(h["mde"] > SP.UNDER_BP for h in v["hedged"]["halves"].values())
+    assert v["hedged"]["pooled"]["t"] > SP.FAIL_T and v["raw"]["pooled"]["t"] > SP.FAIL_T   # not the t <= -2 rule
+    assert v["powered"] and v["verdict"] == "FAIL"

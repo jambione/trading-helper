@@ -94,7 +94,8 @@ RESOLUTIONS = {
                      "drop rate = (no legal bar + stale + no exit price) / event entries; FAILED-DATA when the pooled rates differ by > 2 pp (per setup also reported)",
     "R17_power": "count step uses the RAW control net; MDE = (t_crit(df, z 2.64) + 0.84) x sqrt(2) x SE_ctrl, "
                  "df = min(sessions, names) - 1 of the control sample; after scoring 'powered' = MDE <= 15 bp in "
-                 "both halves on BOTH series",
+                 "both halves of the RAW series (operator decision 2026-10-08, consistent with the raw count-step "
+                 "projection; the hedged MDE is reported only)",
     "R18_drop_share": "a unit's share = its summed paired difference / n; the 5 names / 3 sessions with the largest "
                       "share are dropped",
     "R19_not_implemented": "information cells NOT computed: 'setup 1 short mirror' (no coded rule for 'momentum "
@@ -725,15 +726,16 @@ def setup_verdict(pairs, setup, z=Z_SP):
         why = [f"raw: {w}" for w in out["raw"]["why"]] + [f"hedged: {w}" for w in out["hedged"]["why"]]
         if not slip_ok:
             why.append("stop-slippage cell < 0")
-        powered = all(h["mde"] is not None and h["mde"] <= UNDER_BP
-                      for s in ("raw", "hedged") for h in out[s]["halves"].values())
+        # operator decision (review round 1 N1, 2026-10-08): 'powered' is judged on the RAW series alone, as the
+        # count step projects from the raw control net; the hedged MDE is reported, not gating
+        powered = all(h["mde"] is not None and h["mde"] <= UNDER_BP for h in out["raw"]["halves"].values())
         out["powered"] = powered
         if ok:
             v = "PASS"
             why = ["historical PASS: reruns on >= 60 earlier sessions AND on IEX bars required"]
         elif powered:
             v = "FAIL"
-            why.append("powered (MDE <= 15 bp in both halves) and not passed")
+            why.append("powered (raw MDE <= 15 bp in both halves) and not passed")
         else:
             v = "UNDERPOWERED"
     out["verdict"], out["why"] = v, why
