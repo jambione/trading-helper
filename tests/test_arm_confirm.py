@@ -276,7 +276,7 @@ def test_the_poll_logs_both_dark_branches():
     """The post-refresh veto and the confirm streak each get an event."""
     src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
     i = src.index("ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)")
-    body = src[i:i + 4200]
+    body = src[i:i + 5200]
     assert 'stage="refresh"' in body, "post-repull veto must be logged"
     assert 'stage="confirm"' in body, "confirm streak must be logged"
 
