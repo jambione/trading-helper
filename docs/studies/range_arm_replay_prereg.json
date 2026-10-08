@@ -1,0 +1,32 @@
+{
+ "study": "Range entry on the desk: buy low in the support->resistance gap with %R trending up (operator's model), exit at resistance - does it make money in the nightly replay on the desk's own names, feed and costs, and beat the live entry?",
+ "registered_at": "2026-10-08 ~18:30 ET, before the variant exists in code and before any replay of it",
+ "registered_before_results": true,
+ "origin": "Operator 10/8 (SPCX charts): 'a gap between support and resistance and trending up with %R' is how the indicators are expected to behave. The live desk arms at/near overbought, which on such charts is just under resistance (10/5-10/8 fills 0-0.1% under resistance: n 20, -10 bp, 20% win).",
+ "prior": "LOW. sr_range_trade (10/5, SIP, flat 0.20% cost, 485 trades) FAILED: net -15 bp, gross +4.9 bp, and -4.7 bp vs a same-bracket random up-minute. Differences here: the desk's live code, IEX bars, real per-name spreads (tight names ~1-3 bp), the engine %R line, the desk's names. A pass must therefore clear a fresh bar on new sessions; the 10/5 data are not reused.",
+ "arms": {
+  "range_arm": "scripts/tight_trail_replay.sh: R range_arm --set ai_watch_range_arm=true --set ai_exit_range=true (entries ONLY from the range rule; square/presquare arms off; exits per 'exit' below)",
+  "reference": "the replay's base run of the same session (the live config of that day, presquare-only from 10/09)"
+ },
+ "entry": "at a book check (all other live admission/arm gates unchanged: sources, price, spread, 10:30 start, levered deny): (a) a charted support block is at or below the price and the price is 0.00-0.30% above that block's top, or inside it (ob_sup_pct in [0, 0.30]); (b) a charted resistance block is above with ob_room_pct >= 0.40 (price not inside resistance); (c) the ENGINE fast %R (dashboard signal_proximity, minute-grid line; never the live clock-window recompute) is < -20 and higher than on the previous DISTINCT engine read; engine read age <= 90 s. Order-block readings older than 240 s (store age) = no reading = no arm. Levels at the arm are recorded on the position: support bottom S_btm, resistance bottom R_btm.",
+ "exit": "first of: TARGET price >= R_btm x (1 - 0.0002) (sell at the triggering poll's price); STOP price < S_btm - $0.01; TIME 30 min after entry; 15:50 flatten. The ratchet, decay leash, no-progress cut, dead-trade, triangle and %R dump are OFF for range_arm positions. Size and the order path unchanged.",
+ "sessions": "the first 12 sessions on which the build passes the per-input check, from 2026-10-09 or the first session after the build ships; ONE read at session 12; nightly numbers are direction only.",
+ "per_input_check": "per session: share of range_arm book checks with an order-block reading (support side and resistance side), share with a fresh engine read, count of range arms. A session is a BUILD FAILURE if order-block readings exist on < 30% of checks or engine reads are fresh on < 50%. More than 3 build failures, or range_arm places trades on fewer than 8 of the 12 counted sessions, -> VACUOUS (not read).",
+ "statistic": "per trade net bp = exit / entry - 1 at the replay's fills (cost = the replay's own fill rule at bid/ask, as every variant); per-day mean; mean over days with t across days (df = days - 1). Fills re-scored at the next poll and at +10 s as robustness (as run_manager).",
+ "pass": "at the single read: range_arm net per trade > 0 with t >= 2 across days under all three fill rules, >= 60 trades, negative on <= 30% of days; AND range_arm net per trade minus the reference's net per trade (per-day means, paired by day) >= +3 bp with t >= 2. A pass earns a skeptic review of the positive, then a live paper switch-on; it is not live money (live mirror rules: docs/studies/live_mirror_week_prereg.json amended_4).",
+ "fail": "range_arm net per trade <= 0 at >= 60 trades, or paired difference <= -3 bp with t <= -2 -> FAIL; otherwise CLOSED UNPROVEN. Either closes the range-entry question for the current level source (LuxAlgo order-block port).",
+ "information_only": [
+  "range_arm exit reason mix (target / stop / time / flatten) and net per reason",
+  "win rate, median room to resistance at entry, median ob_sup_pct at entry",
+  "per-day dollars range_arm vs reference",
+  "range_arm restricted to tight-source names",
+  "trades/day vs the reference (opportunity count)"
+ ],
+ "no_retuning": "the 0.30% support band, 0.40% room, %R < -20 rising, the exits and the 12-session read are fixed; any change is a new pre-registration",
+ "caveats": [
+  "replay recall of live buys was ~27% on 10/7: the comparison is variant vs reference inside the replay",
+  "order-block levels are the LuxAlgo port (TradingView mismatch on thin premarket names, 10/7 chart check)",
+  "the target assumes a fill at the triggering poll's price (no queue model)",
+  "one regime (Oct 2026)"
+ ]
+}
