@@ -313,3 +313,20 @@ def test_replay_dead_trade_reads_zero_as_the_default_like_live():
     pos = b.open["AAA"]
     t = T0 + cp.DEFAULT_DEAD_TRADE_MIN * 60 + 1
     assert b._live_exit(pos, 99.95, t, {}, cfg, None) == "dead_trade"
+
+
+def test_replay_rsi_dump_fires_on_a_30_point_drop_from_the_band():
+    """Operator 10/8 (KR 'red knife'): the replay copies the desk's ai_exit_rsi_dump on the engine %R line."""
+    cfg = {"ai_exit_rsi_dump_enabled": True, "ai_exit_rsi_dump_points": 30.0, "ai_exit_rsi_dump_sec": 60.0,
+           "ai_exit_rsi_dump_confirm_ticks": 2, "rte_threshold": 20, "ai_dead_trade_min": 0.0}
+    b = _live_broker_pos(cfg)
+    pos = b.open["AAA"]
+    dash = lambda pr: {"tickers": [{"ticker": "AAA", "signal_proximity": {"pctr": pr}}]}  # noqa: E731
+    assert b._live_exit(pos, 100.2, T0 + 10, dash(-8.0), cfg, None) is None
+    assert b._live_exit(pos, 100.1, T0 + 30, dash(-40.0), cfg, None) is None        # 1st agreeing read
+    assert b._live_exit(pos, 100.1, T0 + 32, dash(-41.0), cfg, None) == "rsi_dump"   # confirmed
+    off = dict(cfg, ai_exit_rsi_dump_enabled=False)
+    b2 = _live_broker_pos(off)
+    p2 = b2.open["AAA"]
+    for t, pr in ((T0 + 10, -8.0), (T0 + 30, -40.0), (T0 + 32, -41.0)):
+        assert b2._live_exit(p2, 100.1, t, dash(pr), off, None) is None

@@ -813,6 +813,12 @@ class FakeBroker:
             hit, _why = ew.exhaustion_exit_now(lob, cfg, now=now)
             if hit:
                 return "left_overbought"
+        # Upper-band %R dump (ai_exit_rsi_dump_*), the desk's own rule on the engine's recorded %R line
+        # (the chart-matching minute grid), as the triangle above. Off unless enabled.
+        if isinstance(sp, dict) and bool(cfg.get("ai_exit_rsi_dump_enabled", False)):
+            p.setdefault("entry_confirmed", True)
+            if cp.rsi_dump_due(p, sp, cfg, now):
+                return "rsi_dump"
         if px <= float(p["local_stop_price"]) + 1e-9:
             return "local_trail"
         entry, risk = float(p["entry"]), float(p["risk_per_share"])
