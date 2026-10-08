@@ -101,3 +101,13 @@ def test_verdict_branches():
     assert H.verdict(_ev(r2_book_on_rsp=0.4), B, True)[0].startswith("FAIL")
     assert H.verdict(_ev(decomposition_bp={"S2_minus_costs": -0.1}), B, True)[0].startswith("UNPROVEN (period A passes only")
     assert H.verdict(_ev(), _ev(rsp_hedged={"mean_bp": 0.0}), True)[0].startswith("UNPROVEN (period B")
+
+
+def test_calendar_gap_is_bad_not_two_nights():
+    cal = pd.bdate_range("2010-01-04", periods=5)
+    df = pd.DataFrame({"Open": [100, 101, 102, 103, 104], "Close": [100, 101, 102, 103, 104],
+                       "Dividends": [0, 0, 0, 0, 0]}, index=cal).drop(cal[2])     # day 3 missing
+    on, nbad = H.cal_on(df, cal)
+    assert np.isnan(on[cal[2]]) and np.isnan(on[cal[3]])                         # both nights touching the gap
+    assert np.isclose(on[cal[1]], 0.01) and np.isclose(on[cal[4]], 104 / 103 - 1)
+    assert nbad == 2

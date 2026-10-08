@@ -33,6 +33,7 @@ RSP_COST_INFO = 10e-4  # information
 SPY_COST = 2.26e-4     # baseline SPY hedge, per unit
 WIN, MINP = 252, 200   # trailing beta window (nights t-252..t-1) and minimum valid pairs
 A_LO, A_HI = pd.Timestamp("2003-04-30"), pd.Timestamp("2015-12-30")   # buy dates used for period A (warm-up from RSP's listing)
+A_FIRST = pd.Timestamp("2004-05-03")   # the prereg's registered first scored night (one year of beta warm-up)
 B_HI = pd.Timestamp("2026-09-24")
 CHK = (pd.Timestamp("2017-01-01"), pd.Timestamp("2021-12-31"))
 RSP_MAX_ABS_ON = 0.15
@@ -41,8 +42,15 @@ MDE_MAX_BP = 5.0
 
 RESOLUTIONS = {
     "night_label": "a night is labelled by its BUY date t (close t -> open t+1); period ends compare the buy date",
-    "period_A_scored": "buy dates <= 2015-12-30 with a finite trailing beta for BOTH hedges (>= 200 valid pairs in t-252..t-1); "
-                       "beta rows start at RSP's first Yahoo night, so the first scored night falls ~2004-05 as the prereg expects",
+    "period_A_scored": "buy dates 2004-05-03 .. 2015-12-30 (the registered dates) with a finite trailing beta for BOTH hedges "
+                       "(>= 200 valid pairs in t-252..t-1); beta rows start at RSP's listing (2003-04-30), so the min-200 rule "
+                       "alone would start ~2004-02; the registered date wins",
+    "calendar": "RSP (and the fresh Yahoo SPY) are reindexed to the book's own calendar (Yahoo SPY dates for A, panel dates "
+                "for B) BEFORE ON is computed, so a missing prior close is a bad night (counted), never a two-night return",
+    "spy_period_A": "period A's SPY ON is the fresh Yahoo SPY fetch of this tool (the one the source check validates), on the "
+                    "book calendar, dividend-inclusive",
+    "betas_pairs": "h_RSP and h_SPY are each fitted on their own valid pairs (book and that hedge finite); the common set "
+                   "applies to scoring only",
     "period_B_scored": "buy dates <= 2026-09-24, book nights from panel index 260 (as overnight_hedge_intraday.py), scored once both betas exist",
     "beta_window": "the previous 252 rows of the nightly series (dropped nights stay in the row count); pairs counted only where the "
                    "book and the hedge ON are both finite",
@@ -243,15 +251,25 @@ def _raw():
     return pickle.load(open(os.path.join(WORK, "raw.pkl"), "rb"))
 
 
-def yahoo_on(df):
-    """ON indexed by the OPEN date t+1: (Open(t+1) + Div(t+1)) / Close(t) - 1, bad nights NaN."""
-    on, nbad = on_series(df["Open"].values[1:], df["Close"].values[:-1], df["Dividends"].values[1:])
-    return pd.Series(on, index=df.index[1:]), nbad
+def cal_on(df, cal, o="Open", c="Close", div="Dividends"):
+    """ON indexed by the OPEN date t+1 of calendar `cal`: (Open(t+1) + Div(t+1)) / Close(t) - 1. The frame is reindexed
+    to `cal` first, so a day missing from the frame makes both adjacent nights NaN (counted), never a 2-night return."""
+    cal = pd.DatetimeIndex(cal)
+    f = df.reindex(cal)
+    d = f[div].values[1:] if div in f else None
+    on, nbad = on_series(f[o].values[1:], f[c].values[:-1], d)
+    on = pd.Series(on, index=cal[1:])
+    first = df.index.min()
+    nbad_listed = int(on[on.index > first].isna().sum())     # bad nights after the instrument's first row
+    return on, nbad_listed
 
 
-def alpaca_on(df):
-    on, nbad = on_series(df["o"].values[1:], df["c"].values[:-1])
-    return pd.Series(on, index=df.index[1:]), nbad
+def yahoo_on(df, cal):
+    return cal_on(df, cal)
+
+
+def alpaca_on(df, cal):
+    return cal_on(df, cal, "o", "c", None)
 
 
 def _panel():
@@ -269,9 +287,10 @@ def check():
     P = _panel()
     pd_ = pd.DatetimeIndex(P["dates"])
     spy_al = pd.Series(np.r_[np.nan, P["spy_o"][1:] / P["spy_c"][:-1] - 1], index=pd_)
-    ry, nby = yahoo_on(R["yahoo_RSP"])
-    sy, _ = yahoo_on(R["yahoo_SPY"])
-    ra, nba = alpaca_on(R["alpaca_RSP"])
+    ycal = R["yahoo_SPY"].index
+    ry, nby = yahoo_on(R["yahoo_RSP"], ycal)
+    sy, _ = yahoo_on(R["yahoo_SPY"], ycal)
+    ra, nba = alpaca_on(R["alpaca_RSP"], pd_)
     res = {"rsp_bad_nights": {"yahoo": nby, "alpaca": nba}}
     for name, y, a in (("RSP", ry, ra), ("SPY", sy, spy_al)):
         j = pd.concat([y.rename("y"), a.rename("a")], axis=1, join="inner").dropna()
@@ -280,8 +299,9 @@ def check():
         res[f"source_{name}"] = {"nights": int(len(j)), "corr": round(float(j["y"].corr(j["a"])), 4),
                                  "mean_diff_bp": round(float(d.mean()), 3), "pass": bool(j["y"].corr(j["a"]) >= 0.99 and abs(d.mean()) <= 0.5)}
     res["source_check_pass"] = bool(res["source_RSP"]["pass"] and res["source_SPY"]["pass"])
-    res["rsp_on_zero_share_by_year_yahoo"] = zero_years(ry.values, ry.index.year)[0]
-    res["rsp_on_zero_share_by_year_alpaca"] = zero_years(ra.values, ra.index.year)[0]
+    res["rsp_on_zero_share_by_open_date_year_yahoo"] = zero_years(ry.values, ry.index.year)[0]
+    res["rsp_on_zero_share_by_open_date_year_alpaca"] = zero_years(ra.values, ra.index.year)[0]
+    res["note"] = "zero shares here are by the OPEN-date year; score drops years by the BUY-date year (its own table)"
     json.dump(res, open(os.path.join(WORK, "check.json"), "w"), indent=1)
     P_(json.dumps(res, indent=1))
 
@@ -290,15 +310,17 @@ def check():
 def period_a(R):
     sys.path.insert(0, HERE)
     import overnight_pre2016 as Y
+    Y.WORK = os.path.join(REPO, "data/yahoo_pre2016")      # never this tool's WORK
     A = Y.build()
     X = Y.derive(A)
     dates = pd.DatetimeIndex(A["dates"])
     df = Y.book_series(dates, A["rc"], X["adv"], X["m"], X["cf"], X["ON"], X["spy_on"], A_LO, A_HI, badyr=X["badyr"])
     pos = dates.get_indexer(df.index)
     nxt = dates[pos + 1]
-    ry, _ = yahoo_on(R["yahoo_RSP"])
+    ry, _ = yahoo_on(R["yahoo_RSP"], dates)
+    sy, _ = yahoo_on(R["yahoo_SPY"], dates)
     out = pd.DataFrame({"book": df["picks"].values - COST, "picks": df["picks"].values, "univ": df["univ"].values,
-                        "spy": df["spy"].values, "rsp": ry.reindex(nxt).values}, index=df.index)
+                        "spy": sy.reindex(nxt).values, "rsp": ry.reindex(nxt).values}, index=df.index)
     return out
 
 
@@ -310,7 +332,7 @@ def period_b(R, P):
     m = np.full_like(cf, np.nan)
     with np.errstate(all="ignore"):
         m[252:] = cf[252 - 21:T - 21] / cf[:T - 252] - 1
-    ra, _ = alpaca_on(R["alpaca_RSP"])
+    ra, _ = alpaca_on(R["alpaca_RSP"], dates)
     rows = []
     for t in range(260, T - 1):
         if dates[t] > B_HI:
@@ -342,7 +364,9 @@ def score():
     P = _panel()
     fa, za, ba = _prep(period_a(R))
     fb, zb, bb = _prep(period_b(R, P))
-    ca, cb = fa[fa["common"]], fb[fb["common"]]
+    ca, cb = fa[fa["common"] & (fa.index >= A_FIRST)], fb[fb["common"]]
+    if len(ca) < 2000 or len(cb) < 1500:
+        raise SystemExit(f"score refused: common sets too small (A {len(ca)}, expected ~2,900; B {len(cb)}, expected ~2,240)")
     A, B = evaluate(ca), evaluate(cb)
     P_("POWER (read first): period A MDE %.2f bp (<= 5 required), n %d; period B MDE %.2f bp (report only), n %d"
        % (A["rsp_hedged"]["mde_bp"], A["nights"], B["rsp_hedged"]["mde_bp"], B["nights"]))
