@@ -1,0 +1,40 @@
+{
+ "study": "Name history: does a stock's OWN recent history - whether it tends to trend (follow through after new highs) or snap back - and its higher-timeframe trend (15-min structure, 60-min trend) predict whether a new intraday high keeps going? And (information) does a multi-day key level nearby matter?",
+ "registered_at": "2026-10-08 ~13:00 ET, before any feature or outcome is computed",
+ "registered_before_results": true,
+ "origin": "Operator 10/8: 'higher highs and lower lows - have we looked at the history of the name, not just the current market data'; 'should we look at 15m timeframes for our entries and the 1hr timeframe for clear uptrends'; 'do we need a helper to look at the entirety of the day history of the name to find a key level for confluence'. Every entry test so far used today's data; the only multi-day facts used were daily context (gap, 50-day MA, news), which picked NAMES, not minutes.",
+ "prior": "LOW to MODERATE. Against: multi-timeframe EMA alignment on 1/5/10m failed (STRATEGY_EDGE_ROUND2 test 6: no better than random in the same name-hour); stock-level intraday persistence is usually weak; S/R levels (10/2) and breakouts (10/6 history) failed. For: name selection is the only place effects appeared (needle study, daily context); per-name trendiness and 15m/60m structure are untested.",
+ "universe": "point-in-time each session: US common stock (bro_sr_wr asset filters: no ETF/ETP/levered), prior SIP close >= $10, prior-day SIP dollar volume in the top 400 (the tight-source universe rule)",
+ "data": "SIP 1-minute bars (Alpaca historical, adjustment=all), 04:00-16:00 ET, for the sessions 2026-05-26 .. 2026-10-07: the first 20 sessions are look-back only; the following sessions are test sessions (about 70). SIP NBBO quotes at each event and its control for costs. After hours only (09:00-16:30 guard); request counts and failures recorded, abort if > 2% of name-days fail.",
+ "event": "per name per test session, the FIRST 1-minute bar closing between 10:30 and 15:00 ET whose close is a new session high (above every prior 1-min high since 09:30) by >= 0.10%, where the session high so far is >= +0.5% above the prior close (an up day making a higher high: the setup the desk trades). Decision time t = that bar's close; entry at the SIP NBBO mid at t + 5 s; exit at the mid at entry + 30 min (net30) and + 15 min (net15, information); cost = half the full spread at entry + half at exit (quotes <= 5 s old, else dropped and counted).",
+ "features_known_at_t": {
+  "T1_hh_followthrough": "over the prior 20 sessions, for every first-new-high event defined as above (one per session): share where price made another new session high within 30 min BEFORE trading 0.30% below the event close (0..1; sessions with no event are skipped; >= 8 events required, else missing)",
+  "T2_autocorr15": "over the prior 20 sessions, lag-1 correlation of consecutive non-overlapping 15-minute RTH returns (09:30-16:00, within-session pairs only)",
+  "TREND_SCORE": "mean of the cross-sectional percentile ranks of T1 and T2 among that session's events (both required)",
+  "HTF_UP": "at t: the last 3 completed 15-min bars (aligned to 09:30) have strictly higher highs AND higher lows, AND the last completed 60-min bar's close is above the EMA20 of 60-min closes (prior 20 sessions + today, RTH) and that EMA is rising vs 3 bars earlier",
+  "T3_trend_day_share": "information: share of the prior 20 sessions with |close - open| / (high - low) >= 0.6",
+  "LEVELS_info": "information (the 'confluence helper'): multi-day key levels known at t - prior 5 sessions' highs and lows, prior close, today's premarket high, 20-session high, and round numbers ($1 steps under $50, $5 above) - distance from t's close to the nearest level above, and the count of levels within 0.20% above (confluence)"
+ },
+ "hypotheses": {
+  "H1": "events in the TOP tercile of TREND_SCORE minus events in the BOTTOM tercile: net30 difference > 0",
+  "H2": "events with HTF_UP true minus HTF_UP false: net30 difference > 0"
+ },
+ "statistic": "for each hypothesis: difference in mean net30 between the two groups, OLS with session fixed effects, session-clustered t; halves = alternate test sessions (fixed by calendar order)",
+ "power": "report n per group per half and the SE before any mean; UNDERPOWERED if the MDE ((t_crit + 0.84) x SE) exceeds 10 bp",
+ "pass": "per hypothesis (Bonferroni 2: t_crit = the 2.24 equivalent at the session-cluster df): difference >= +5 bp with t >= t_crit pooled, the same sign in both halves, AND the better group's net30 > 0 after costs (it must make money, not just lose less), AND it holds after dropping the top 5 names and the top 3 sessions by contribution. FAIL if the pooled t <= -2. Otherwise UNDERPOWERED. No information cell can be promoted. A PASS earns a forward test on the desk's own tight-name entries (a gate or a book-ranking input, pre-registered then), never a live change by itself.",
+ "information_only": [
+  "net15 for H1 and H2",
+  "T1, T2, T3 each alone (terciles)",
+  "H1 x H2 (both true vs neither)",
+  "LEVELS_info: net30 by nearest-level distance band (< 0.2%, 0.2-0.5%, > 0.5%, none) and by confluence count (0, 1, >= 2)",
+  "short mirror (new session LOW on a down day) for H1",
+  "how stable TREND_SCORE is for a name across the test period (rank correlation of its score month to month)"
+ ],
+ "no_retuning": "the event, the 20-session look-back, the T1/T2 definitions, terciles, the 15m/60m rule, the 30-min hold and the bar are fixed here",
+ "tool": "tools/studies/name_history.py (to be written; skeptic code review before it scores anything)",
+ "caveats": [
+  "SIP history vs the desk's live IEX feed (the event uses consolidated bars; the desk would see IEX)",
+  "the event is a breakout-style new high, not the desk's %R square; a pass speaks to 'higher highs on trending names', and the desk version is a separate forward test",
+  "70 test sessions in one market regime (Sep-Oct 2026 up-trending tape)"
+ ]
+}
