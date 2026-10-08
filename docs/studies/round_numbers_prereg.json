@@ -1,19 +1,27 @@
 {
  "study": "Round numbers: is a new intraday high that sits just BELOW a whole or half dollar more likely to fail, and one that has just cleared a round number more likely to run (Ross Cameron's 'apex point vs psychological resistance')?",
- "registered_at": "2026-10-08 ~14:00 ET, before any feature or outcome",
+ "registered_at": "2026-10-08 12:16 ET (commit 0a50484); amended ~13:50 ET before any script or data",
  "registered_before_results": true,
  "origin": "Operator 10/8 (Warrior Trading transcript): 'if the apex point is 4.95 that presents a problem because the breakout spot is just below psychological resistance ... we'd rather have the apex point right at it or just above it'. Never tested here.",
  "prior": "LOW to MODERATE: round-number clustering of orders is documented in the academic literature; whether it moves 30-min outcomes on liquid $10+ names after costs is untested.",
  "events_and_data": "EXACTLY the events, universe, data, entry, exits, costs, beta hedge, clustering, halves and quote rules of name_history_prereg.json (new session-high events 10:30-15:00 on top-400 $10+ names; hedged net30 primary) - computed by the same tool on the same sessions, so the two studies share one data pull.",
- "round_levels": "whole dollars and half dollars; for prices >= $100 also every $5 (the $1 / $0.50 grid is too fine to matter there - reported separately)",
+ "round_levels": "primary grid by the event close: $0.50 steps under $50; $1 steps $50-100; $5 steps at $100 and above. (Other grids: information only.)",
  "groups": {
-  "BELOW": "the nearest round level ABOVE the event close is within 0.15% of the close (the breakout is pressing into a round number)",
-  "ABOVE": "a round level lies between the prior session high-so-far (the level the event broke) and the event close, OR within 0.15% below the close (the breakout has just cleared a round number)",
-  "NEUTRAL": "neither"
+  "BELOW": "the nearest grid level strictly ABOVE the event close is within 0.15% of the close. BELOW takes precedence over ABOVE.",
+  "ABOVE": "not BELOW, and a grid level L satisfies H_prev < L <= close, where H_prev = the RTH session high through t-1 (the level the event broke); a close exactly on a level is ABOVE",
+  "NEUTRAL": "neither (the three groups are exclusive and exhaustive)"
  },
- "primary": "ABOVE minus BELOW, hedged net30: OLS with session and event-hour fixed effects, two-way clustered (session, name) t; halves = alternate sessions",
- "pass": "difference >= +5 bp, one-sided two-way t >= the 1.96 equivalent at the smaller cluster df (one hypothesis), same sign in both halves, the ABOVE group's hedged net30 > 0 after costs, robust to dropping the top 5 names and top 3 sessions; FAIL if t <= -2 or if powered (MDE <= 10 bp in both halves) and not passed; else UNDERPOWERED. A PASS needs the name_history earlier-period and IEX reruns (same bars) before a forward test.",
- "information_only": ["BELOW minus NEUTRAL and ABOVE minus NEUTRAL", "by price band ($10-20, $20-50, $50-100, $100+)", "0.10% and 0.25% bands", "whole dollars only vs half dollars only"],
+ "primary": "ABOVE minus BELOW, hedged net30: OLS with session, event-hour and PRICE-BAND ($10-20, $20-50, $50-100, $100+) fixed effects and log(close / H_prev) as a covariate, two-way clustered (session, name) t; halves = alternate sessions. Base rates of each group per price band reported.",
+ "pass": "difference >= +5 bp, one-sided two-way t >= the 1.96 equivalent at the smaller cluster df (one hypothesis), same sign in both halves, the ABOVE group's hedged net30 > 0 after costs, ABOVE beats its same-name random-minute control (name_history's control rule; else the PASS is labelled RELATIVE ONLY), robust to dropping the top 5 names and top 3 sessions; FAIL if t <= -2 or if powered (MDE <= 10 bp in both halves) and not passed; else UNDERPOWERED. A PASS needs the name_history earlier-period and IEX reruns (same bars) before a forward test.",
+ "information_only": [
+  "BELOW minus NEUTRAL and ABOVE minus NEUTRAL",
+  "by price band ($10-20, $20-50, $50-100, $100+)",
+  "0.10% and 0.25% bands",
+  "whole dollars only vs half dollars only"
+ ],
  "no_retuning": "levels, the 0.15% band, groups and the bar fixed here",
- "tool": "tools/studies/name_history.py (round-number cells added before it scores anything; same skeptic code review)"
+ "tool": "tools/studies/name_history.py (round-number cells added before it scores anything; same skeptic code review)",
+ "power": "OUTCOME-BLIND COUNT STEP before any outcome: n and distinct names per group per half; MDE = (t_crit + 0.84) x the projected two-way SE (from the same-name control arm of name_history); UNDERPOWERED if MDE > 10 bp in either half; if powered and not passed, FAIL.",
+ "dependence": "the groups are computed and FROZEN in the same run before any name_history outcome is read; the name_history verdict does not gate this verdict; the report notes the overlap with name_history H1/H2 samples",
+ "amended": "2026-10-08 ~13:50 ET, before any script or data: skeptic review - exclusive groups with precedence; price-scaled primary grid; price-band FE and breakout-size covariate; H_prev defined; own outcome-blind count step; frozen groups and no gating; same-name control requirement."
 }
