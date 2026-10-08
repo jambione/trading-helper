@@ -476,3 +476,21 @@ def test_count_simulates_controls_only(tmp_path, monkeypatch):
     if out is None:
         with pytest.raises(SystemExit):
             SP.run("score", work=str(tmp_path), mkt=mkt)
+
+
+# ------------------------------------------------------------------ review round 1 (reviewer B)
+def test_time_exit_without_quote_or_bar_drops_the_pair():
+    """FF1: no time-exit quote AND no fallback bar -> no outcome (not px = entry booked as -cost); the event arm
+    drop enters the FAILED-DATA event drop rate."""
+    c = collections.Counter()
+    t = T(11, 0)
+    d = qd(stale_at=[t + 5 + 4800])
+    assert SP.simulate(d, "XYZ", [], t, 100.0, 0.001, 99.0, 103.0, 1.0, c, "ev_") is None
+    assert c["ev_time_exit_no_price"] == 1
+    ctx = ctx_for([], FLAT60)
+    sig = {"setup": "S3", "t": t, "entry": 100.0, "spread": 0.001, "stop": 99.0, "R": 1.0, "r_pct": 0.01}
+    p = SP.run_pair(d, ctx, sig, 1.0, c, control_arm=False)
+    assert p["ev_drop"] == "no_exit_price" and "ev" not in p
+    sigs = [{"setup": "S3", "stale": False} for _ in range(20)]
+    pairs = [{"setup": "S3"} for _ in range(19)] + [p]
+    assert SP.drop_rates(pairs, sigs)["event"] == 0.05

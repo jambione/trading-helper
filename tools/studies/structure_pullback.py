@@ -81,7 +81,8 @@ RESOLUTIONS = {
     "R12_time_exit": "time-exit instant = min(entry + 80 min, 15:50:00) with entry = t + 5 s; its fallback bar is "
                      "the 1-min bar ending at min(t + 80 min, 15:50) (or the last bar before it); stop/target bars "
                      "are those starting at >= t + 60 s and ending <= that fallback bar's end; a stale time-exit "
-                     "quote -> the fallback close with the ENTRY spread as the exit cost (counted)",
+                     "quote -> the fallback close with the ENTRY spread as the exit cost (counted); no quote AND no "
+                     "fallback bar -> no outcome: that arm is dropped (counted <arm>_time_exit_no_price)",
     "R13_spy": "a stale SPY quote at either hedge instant makes that arm's hedged value missing (counted); the pair "
                "then leaves the hedged series only",
     "R14_control_draw": "control candidates are CLOCK times (15-min closes 10:30, 10:45 ... 14:30; or every 1-min "
@@ -89,8 +90,8 @@ RESOLUTIONS = {
                         "random.Random(int(sha256('67|SETUP|SYM|DAY').hexdigest()[:16], 16)).choice(sorted)",
     "R15_control_geometry": "control stop = entry x (1 - R%/100), target = entry x (1 + 3 R%/100), R% from the "
                             "event's entry mid and stop",
-    "R16_drop_rate": "event drop rate = stale entries / event signals; control drop rate = (no legal bar + stale) / "
-                     "event entries; FAILED-DATA when the pooled rates differ by > 2 pp (per setup also reported)",
+    "R16_drop_rate": "event drop rate = (stale entries + event time exits with no price) / event signals; control "
+                     "drop rate = (no legal bar + stale + no exit price) / event entries; FAILED-DATA when the pooled rates differ by > 2 pp (per setup also reported)",
     "R17_power": "count step uses the RAW control net; MDE = (t_crit(df, z 2.64) + 0.84) x sqrt(2) x SE_ctrl, "
                  "df = min(sessions, names) - 1 of the control sample; after scoring 'powered' = MDE <= 15 bp in "
                  "both halves on BOTH series",
@@ -429,7 +430,8 @@ SCANNERS = {"S2": scan_S2, "S3": scan_S3, "S4": scan_S4, "S5": scan_S5, "S6": sc
 
 # ------------------------------------------------------------------ exits
 def simulate(data, sym, b1, t, entry, spread, stop, target, beta, counts=None, tag=""):
-    """common exit rules. Returns raw/hedged net (bp) for the primary fill and the stop-slippage cell."""
+    """common exit rules. Returns raw/hedged net (bp) for the primary fill and the stop-slippage cell, or None when
+    a time exit has neither a quote nor a fallback bar (no exit price)."""
     counts = counts if counts is not None else collections.Counter()
     day = BS.et_day(t)
     te = t + ENTRY_LAG
@@ -462,7 +464,12 @@ def simulate(data, sym, b1, t, entry, spread, stop, target, beta, counts=None, t
             px, sx = q[0], q[1]
         else:
             fb = [b for b in b1 if b.end <= bar_end]
-            px, sx = (fb[-1].c if fb else entry), spread
+            if not fb:
+                # no quote AND no bar: there is no exit price - booking px = entry would score a made-up -cost
+                # outcome (review round 1 FF1, 2026-10-08); the caller drops the pair
+                counts[f"{tag}time_exit_no_price"] += 1
+                return None
+            px, sx = fb[-1].c, spread
             counts[f"{tag}time_exit_bar_close_fallback"] += 1
         ex = {"type": "time", "px": px, "px_slip": px, "ts": q_time}
     cost = 0.5 * spread + 0.5 * sx
@@ -500,8 +507,12 @@ def run_pair(data, ctx, sig, beta, counts, event_arm=True, control_arm=True):
     p = {"setup": sig["setup"], "sym": ctx.sym, "day": ctx.day, "t": sig["t"], "r_pct": rp,
          "info": {k: v for k, v in sig.items() if k not in ("setup", "t", "entry", "spread", "stop", "R", "r_pct")}}
     if event_arm:
-        p["ev"] = simulate(data, ctx.sym, ctx.b1, sig["t"], sig["entry"], sig["spread"], sig["stop"],
-                           sig["entry"] + TARGET_R * sig["R"], beta, counts, "ev_")
+        ev = simulate(data, ctx.sym, ctx.b1, sig["t"], sig["entry"], sig["spread"], sig["stop"],
+                      sig["entry"] + TARGET_R * sig["R"], beta, counts, "ev_")
+        if ev is None:
+            p["ev_drop"] = "no_exit_price"          # an event-arm drop: enters the FAILED-DATA event rate (R16)
+            return p
+        p["ev"] = ev
         p["ev2R"] = simulate(data, ctx.sym, ctx.b1, sig["t"], sig["entry"], sig["spread"], sig["stop"],
                              sig["entry"] + INFO_R * sig["R"], beta)
         if sig["setup"] == "S7" and sig.get("ind_high", 0) > sig["entry"]:
@@ -523,7 +534,11 @@ def run_pair(data, ctx, sig, beta, counts, event_arm=True, control_arm=True):
         m, s = q[0], q[1]
         st, tg = m * (1 - rp), m * (1 + TARGET_R * rp)
         p["ctrl_t"] = c
-        p["ctrl"] = simulate(data, ctx.sym, ctx.b1, c, m, s, st, tg, beta, counts, "ctrl_")
+        co = simulate(data, ctx.sym, ctx.b1, c, m, s, st, tg, beta, counts, "ctrl_")
+        if co is None:
+            p["ctrl_drop"] = "no_exit_price"
+            return p
+        p["ctrl"] = co
         p["ctrl2R"] = simulate(data, ctx.sym, ctx.b1, c, m, s, st, m * (1 + INFO_R * rp), beta)
         if "ind_pct" in p:
             p["ctrl_ind"] = simulate(data, ctx.sym, ctx.b1, c, m, s, st, m * (1 + p["ind_pct"]), beta)
@@ -728,7 +743,7 @@ def setup_verdict(pairs, setup, z=Z_SP):
 def drop_rates(pairs, signals, setup=None):
     sg = [s for s in signals if setup is None or s["setup"] == setup]
     pp = [p for p in pairs if setup is None or p["setup"] == setup]
-    ev = (sum(1 for s in sg if s["stale"]) / len(sg)) if sg else None
+    ev = ((sum(1 for s in sg if s["stale"]) + sum(1 for p in pp if p.get("ev_drop"))) / len(sg)) if sg else None
     ct = (sum(1 for p in pp if p.get("ctrl_drop")) / len(pp)) if pp else None
     return {"event": ev, "control": ct,
             "failed_data": ev is not None and ct is not None and abs(ev - ct) > NH.DROP_RATE_PP}
