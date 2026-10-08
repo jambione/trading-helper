@@ -1,0 +1,42 @@
+{
+ "study": "Structure pullback: do the price-action setups from the operator's 10/8 video - (S2) buy the pullback to the last higher low in a 1-hour uptrend after rejection wicks and a strong green 15-minute bar, (S3) buy the retest of a broken 15-minute consolidation high that holds with a rejection wick - with a structure stop and a 3R target, beat the SAME stop/target geometry entered at a random time in the same name and session, after costs?",
+ "registered_at": "2026-10-08 ~12:15 ET, before any script, feature or outcome",
+ "registered_before_results": true,
+ "origin": "Operator 10/8 shared Brad Goh, 'Trading SECRETS: Pro Entry & Exit Strategies Explained' (transcript pasted). Rules: trend on 1h (higher highs/higher lows), entries on 15m; never enter while price is pushing; wait for a key level; confirm with momentum fade / rejection wicks / a full-body close; stop beyond structure; target 2-3R. The video shows three hand-picked winners on forex; setup 1 (short at resistance) is out of scope (long-only desk). Contrast with the desk: its %R square buys the push.",
+ "prior": "LOW. Related failures: '1m dip inside a 5m+10m EMA uptrend' (STRATEGY_EDGE_ROUND2 test 6), the pullback zone entry (zone-entry-buys-the-fade), VWAP pullback/reclaim (INDICATOR_LEVELS 10/2), S/R levels (10/2), breakouts (10/6). Never tested here: swing-structure trend, the last-higher-low level, rejection-wick confirmation, break-and-RETEST, structure stops with 3R targets.",
+ "universe": "as name_history_prereg.json: each session D, top 400 by RAW SIP close x volume on D-1 over the bro_sr_wr asset set (US common stock, no ETF/ETP/levered), raw close on D-1 >= $10",
+ "data": "SIP 1-minute bars (Alpaca historical), RAW prices, RTH 09:30-16:00 for structure and exits. 15-minute bars and 60-minute bars are built from 1-minute bars aligned to 09:30 (60-min: 09:30-10:30, ..., 15:30-16:00 half bar); a bar is COMPLETED when its end <= the decision time. Sessions 2026-06-09 .. 2026-10-07 (the first 10 sessions are structure look-back only; ~74 test sessions from 2026-06-23). SIP NBBO quotes at entry and at time exits. After hours only; requests/failures recorded; abort if > 2% of name-days fail; a split inside the look-back drops the name-day.",
+ "definitions": {
+  "swing": "on a bar series, bar i is a swing high if high(i) > high of each of bars i-2, i-1, i+1, i+2 (strict), a swing low if low(i) < each of their lows; it is KNOWN only at the end of bar i+2 (no look-ahead)",
+  "UP60": "at decision time t: among 60-min swing points known by t (look-back: prior 10 sessions + today), the last two swing highs are ascending AND the last two swing lows are ascending",
+  "rejection_bar": "a completed 15-min bar with range > 0, lower wick (min(open, close) - low) >= 50% of the range, and close in the upper half of the range",
+  "momentum_bar": "a completed 15-min bar with close > open, body >= 60% of the range, and close > the previous 15-min bar's high",
+  "costs": "entry at the SIP NBBO mid at t + 5 s, cost half the entry spread; exit cost half the spread at the exit (target and stop exits use the spread at the entry; the 15:50 time exit uses its own quote <= 5 s old); quotes older than 5 s drop the trade (counted)"
+ },
+ "setups": {
+  "S2_continuation_pullback": "UP60 at the touch. Level L = the most recent 60-min swing LOW known at the touch (the last higher low). TOUCH = the first completed 15-min bar (10:00 or later) whose low <= L x 1.001. The touch bar itself never enters. Within the next 8 completed 15-min bars: if any bar closes < L x 0.99 the setup is cancelled; otherwise ENTRY at the close t of the first momentum_bar that comes after >= 2 rejection_bars (the touch bar may count as one), if t is between 10:30 and 14:30 ET. STOP = the lowest low of the bars from the touch to t, minus $0.01.",
+  "S3_break_and_retest": "CONSOLIDATION = 4 consecutive completed 15-min bars whose (max high - min low) <= 1.0% of the last close; M = their max high. BREAK = the next completed 15-min bar closing > M x 1.001 with body >= 50% of its range (a full-body close, not a wick). RETEST = within the next 6 completed 15-min bars, the first bar with low <= M x 1.001, close >= M, that is a rejection_bar. ENTRY at that bar's close t, if t is between 10:30 and 14:30 ET. STOP = the retest bar's low minus $0.01. No trend condition (the video's example followed a decline).",
+  "common": "one trade per name per setup per session (the first). R = entry - stop; skip (counted) if R < 0.15% or > 2.0% of the entry. TARGET = entry + 3R (primary) and + 2R (information). EXIT on 1-min bars after entry: a bar whose low <= stop exits at min(stop, that bar's open) (gap-through); a bar whose high >= target exits at the target; a bar doing both = stop; otherwise the 15:50 mid. Outcome: net bp = exit / entry_mid - 1 minus costs; and R-multiple."
+ },
+ "control": "SAME-NAME, SAME-GEOMETRY: for each event, a random completed 15-min bar close (seed 67) in the same name and session, between 10:30 and 14:30 ET, not within 60 min of the event's entry, with entry at that time's mid + 5 s, the SAME stop distance in % and the SAME 3R target, same exit and cost rules. This separates the setup's timing from the payoff shape of a 3R bracket. No legal bar -> pair dropped (counted).",
+ "statistic": "per setup: event net bp minus control net bp (paired); mean with two-way clustered SE (session, name); halves = alternate test sessions (calendar order). Also reported: event-only net bp, R-multiple, win rate.",
+ "power": "before any mean: pairs and distinct names per setup per half, and the two-way SE; MDE = (t_crit + 0.84) x SE; UNDERPOWERED only if MDE > 15 bp; if MDE <= 15 bp in both halves and the pass is not met, FAIL",
+ "pass": "per setup (Bonferroni 2, one-sided t_crit = the 2.24 equivalent at the smaller cluster df): paired difference >= +5 bp with two-way t >= t_crit, positive in both halves, the event net bp > 0 after costs, and after dropping the 5 names and (separately) the 3 sessions with the largest share of the difference the difference stays >= 0 and the event net stays > 0. FAIL if two-way t <= -2 or as in 'power'. Otherwise UNDERPOWERED. A PASS must be RERUN with the same code on >= 60 earlier sessions (2025-11 onward) AND on IEX bars, each showing a paired difference > 0 with two-way t >= 1.64 and event net > 0, else FAIL; only then a forward paper test on the desk is pre-registered. No information cell can be promoted.",
+ "information_only": [
+  "2R target instead of 3R (both arms)",
+  "beta-hedged net (SPY at the same instants, beta from prior-20-session 30-min returns)",
+  "S2 by touch depth (low within 0.1% of L vs pierced below L, as in the video) and by number of rejection bars (2, 3, >= 4)",
+  "S3 with UP60 true vs false",
+  "event R distribution, hold time, share exited at target / stop / 15:50",
+  "setup 1 short mirror (reversal at resistance after a momentum fade, full-body close below a minor support) - reported, not traded",
+  "the desk's own %R square at the same names and sessions (entry at the square, same 3R bracket) for comparison"
+ ],
+ "no_retuning": "every threshold above (swing 2/2, 0.1% / 1% / 50% / 60% bands, 8 and 6 bar windows, 0.15-2.0% R bounds, 3R, 10:30-14:30) is fixed here",
+ "tool": "tools/studies/structure_pullback.py (to be written; reuses the name_history bar loader; skeptic code review before it scores anything)",
+ "caveats": [
+  "the video's examples are three hand-picked forex winners: no win rate can be inferred from them",
+  "SIP history vs the desk's IEX feed",
+  "rules translate discretionary chart reading; a FAIL tests these rules, not every reading of the video",
+  "~74 test sessions in one regime"
+ ]
+}
