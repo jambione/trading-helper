@@ -31,7 +31,24 @@ reading, write it in a `RANGE_ARM_RESOLUTIONS` comment block next to the code, a
    `R range_arm --set ai_watch_range_arm=true --set ai_exit_range=true`
 6. **Per-input check** (prereg): log per session the shares and counts it lists, into the replay's per-variant output.
 
+## Review round 1 requirements (binding; see the prereg's `amended`)
+
+- Entry levels: ONE `ob_observe._charted_at(sym, now)` call at the check price (not the indicator dict's previous-poll
+  stamp); log `max(block.known_ts)` per arm; staleness = newest closed bar > 240 s older than now, plus
+  `_ob_reading_stale`; log both counts.
+- Replay: fill the ob store synchronously from the replay's `day_bars` IEX cache (completed minutes only), never via the
+  background warm thread. Add a determinism check (same session twice -> identical range_arm trades).
+- Control scorer: `tools/studies/range_arm_control.py`, per the prereg `control` (seed 71 via sha256, same-hour fallback,
+  IEX 1-min closes, stop wins ties, same spread). Costing: reuse `tools/studies/replay_costing.py`, but a trade with no
+  NBBO is charged the arm's day-median spread and counted, never skipped.
+- Fill re-scoring: entries and exits at next poll and +10 s.
+- Development runs print per-input counts only, never range_arm or control P&L.
+
 ## Tests (required, no network)
+
+Also: FakeBroker's live exit skips the ratchet, decay leash, no-progress, dead-trade, triangle and %R dump for range
+positions; the control never reads bars after its own time; the no-NBBO day-median rule.
+
 
 Pure-function tests for every entry and exit rule, including near-misses (0.31% above support, 0.39% room, %R -19,
 %R not rising, same engine key twice, stale engine read, stale order-block reading, inside resistance); the exit race
