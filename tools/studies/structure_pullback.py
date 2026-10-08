@@ -42,7 +42,7 @@ PREREG = "docs/studies/structure_pullback_prereg.json"
 
 DATA_LO, EXT_LO, TEST_HI = "2026-06-09", "2025-11-03", "2026-10-07"
 STRUCT_LOOKBACK, BETA_LOOKBACK = 10, 20      # first 10 SESSIONS look-back; beta over the prior 20 sessions
-SETUPS = ("S2", "S3", "S4", "S5", "S6", "S7")
+SETUPS = ("S2",)                            # amended_7: S2 only; S3-S7 deferred (scanners kept, never run)
 MINUTE_SETUPS = ("S4", "S6")                 # minute-bar controls
 WIN_LO, WIN_HI = 10 * 60 + 30, 14 * 60 + 30  # entries 10:30-14:30
 R_LO, R_HI = 0.0015, 0.02                    # skip if R < 0.15% or > 2.0% of the entry
@@ -51,7 +51,7 @@ MAX_HOLD = 80 * 60
 LAST_EXIT = 15 * 60 + 50
 ENTRY_LAG, QUOTE_MAX_AGE = 5.0, 5.0
 CTRL_SEED, CTRL_GAP = 67, 60 * 60
-Z_SP, UNDER_BP, PASS_BP, FAIL_T = 2.64, 15.0, 5.0, -2.0
+Z_SP, UNDER_BP, PASS_BP, FAIL_T = 1.96, 15.0, 5.0, -2.0   # amended_7: Bonferroni 1
 TICK = 0.01
 
 RESOLUTIONS = {
@@ -100,7 +100,7 @@ RESOLUTIONS = {
                             "event's entry mid and stop",
     "R16_drop_rate": "event drop rate = (stale entries + event time exits with no price) / event signals; control "
                      "drop rate = (no legal bar + stale + no exit price) / event entries; FAILED-DATA when the pooled rates differ by > 2 pp (per setup also reported)",
-    "R17_power": "count step uses the RAW control net; MDE = (t_crit(df, z 2.64) + 0.84) x sqrt(2) x SE_ctrl, "
+    "R17_power": "count step uses the RAW control net; MDE = (t_crit(df, z 1.96 after amended_7) + 0.84) x sqrt(2) x SE_ctrl, "
                  "df = min(sessions, names) - 1 of the control sample; after scoring 'powered' = MDE <= 15 bp in "
                  "both halves of the RAW series (operator decision 2026-10-08, consistent with the raw count-step "
                  "projection; the hedged MDE is reported only)",

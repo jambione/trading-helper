@@ -465,12 +465,12 @@ def test_count_simulates_controls_only(tmp_path, monkeypatch):
         return c
     monkeypatch.setattr(SP, "simulate", rec_sim)
     monkeypatch.setattr(SP, "control_time", rec_ct)
-    # force signals: every name-day gets an S3 signal at 11:00
-    monkeypatch.setitem(SP.SCANNERS, "S3", lambda ctx, c: SP.try_entry(ctx, "S3", T(11, 0, day=ctx.day),
+    # force signals: every name-day gets an S2 signal at 11:00
+    monkeypatch.setitem(SP.SCANNERS, "S2", lambda ctx, c: SP.try_entry(ctx, "S2", T(11, 0, day=ctx.day),
                                                                        ctx.entry(T(11, 0, day=ctx.day))[0] * 0.995,
                                                                        c)[1])
     res = SP.run("count", work=str(tmp_path), mkt=mkt)
-    assert res["projection"]["S3"]["A"]["events"] + res["projection"]["S3"]["B"]["events"] > 0
+    assert res["projection"]["S2"]["A"]["events"] + res["projection"]["S2"]["B"]["events"] > 0
     assert sim_t and set(sim_t) <= set(ctrl_t)                        # no event exit was simulated
     out = SP.run("score", work=str(tmp_path), mkt=mkt) if not res["projection"]["extend_to_2025_11_03"] else None
     if out is None:
