@@ -34,7 +34,10 @@
   "setup 1 short mirror (reversal at resistance after a momentum fade, full-body close below a minor support) - reported, not traded",
   "the desk's own %R square at the same names and sessions (entry at the square, same 3R bracket) for comparison",
   "share of trades ending at the target / stop / time exit, per arm (the 80-min cap departs from the video)",
-  "S7 with the indication-high target instead of 3R; S5 split pin vs double bottom; S4 by pole size"
+  "S7 with the indication-high target instead of 3R; S5 split pin vs double bottom; S4 by pole size",
+  "DAILY BIAS (transcript 5, Doug): events split by the name's prior-day close vs its 50-day SMA (above / below); with-trend vs contrarian",
+  "RANGE BUDGET (transcript 5): events split by the share of the 14-day ATR (daily, prior sessions) already used at t, measured as (price at t - session low) / ATR14: < 50%, 50-100%, > 100%; and whether the 3R target lies beyond the remaining ATR budget",
+  "LIQUIDITY ZONES (transcript 5): distance from t to the prior session's high (range high) and the next older swing high above it; events entered within 0.3% under the prior-day high vs not"
  ],
  "no_retuning": "every threshold above (swing 2/2, 0.1% / 1% / 50% / 60% bands, 8 and 6 bar windows, 0.15-2.0% R bounds, 3R, 10:30-14:30) is fixed here",
  "tool": "tools/studies/structure_pullback.py (to be written; reuses the name_history bar loader; skeptic code review before it scores anything)",
@@ -48,5 +51,6 @@
  "amended": "2026-10-08 ~12:45 ET, before any script or data: skeptic FIX FIRST (16) applied - 80-min max hold for both arms (time-left confound); beta-hedged co-primary; stop-slippage robustness cell required; time-exit fallback and drop-rate FAILED-DATA rule; exact S2 touch (approach from above, UP60 at the touch), S3 window/cancel/retest rules; scan continues after cancels/skips; 60-min swing sequence; exit scan from t+60 s, target on >=; timestamped quote helper; deterministic control seed; session-count start; per-half MDE with an outcome-blind count step and pre-committed extension to 2025-11; no-promotion covers hedged and slippage cells; IEX rerun spec.",
  "amended_2": "2026-10-08 ~13:30 ET, before any script: skeptic round 2 - sha256 control seed; beta look-back from 2026-05-26 (adjusted); stop-slippage fill capped at the bar open; exit-quote rule (end of exit bar, stale -> entry spread, never a drop) incl. SPY instant; S3 restart point; projected-SE formula and step order; entry-hour re-weighted control report.",
  "amended_3": "2026-10-08 ~13:40 ET, before any script: skeptic round-2 leftovers - S2 resume/skip rule, S3 next-consolidation rule, time-exit fallback bar, slippage cell on both series, 80-min caveat and time-exit share.",
- "amended_4": "2026-10-08 ~14:00 ET, before any script or data: operator added setups S4 (Ross Cameron first candle to make a new high), S5 (double bottom / pin bar at a key level), S6 (liquidity sweep, displacement, FVG retrace) and S7 (ICC: indication, correction, continuation) from transcripts 2-4; every setup uses the same universe, data, control, costs, max hold and bar; the multiplicity correction is now Bonferroni 6."
+ "amended_4": "2026-10-08 ~14:00 ET, before any script or data: operator added setups S4 (Ross Cameron first candle to make a new high), S5 (double bottom / pin bar at a key level), S6 (liquidity sweep, displacement, FVG retrace) and S7 (ICC: indication, correction, continuation) from transcripts 2-4; every setup uses the same universe, data, control, costs, max hold and bar; the multiplicity correction is now Bonferroni 6.",
+ "amended_5": "2026-10-08 ~13:40 ET, before any script or data: operator transcript 5 (daily 50-SMA bias, ATR range budget, prior-day high/low liquidity zones) added as INFORMATION cells only; no new hypothesis, multiplicity unchanged."
 }

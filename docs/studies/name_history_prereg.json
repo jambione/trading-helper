@@ -32,7 +32,10 @@
   "H1 x H2 (both vs neither)",
   "LEVELS_info: hedged net30 by nearest-level distance band (< 0.2%, 0.2-0.5%, > 0.5%, none) and confluence count (0, 1, >= 2)",
   "short mirror (new session LOW on a down day) for H1",
-  "TREND_SCORE stability: month-to-month rank correlation per name; T2 sampling-noise estimate (SE ~ 1/sqrt(pairs))"
+  "TREND_SCORE stability: month-to-month rank correlation per name; T2 sampling-noise estimate (SE ~ 1/sqrt(pairs))",
+  "DAILY BIAS (transcript 5, Doug): events split by the name's prior-day close vs its 50-day SMA (above / below); with-trend vs contrarian",
+  "RANGE BUDGET (transcript 5): events split by the share of the 14-day ATR (daily, prior sessions) already used at t, measured as (price at t - session low) / ATR14: < 50%, 50-100%, > 100%; and whether the 3R target lies beyond the remaining ATR budget",
+  "LIQUIDITY ZONES (transcript 5): distance from t to the prior session's high (range high) and the next older swing high above it; events entered within 0.3% under the prior-day high vs not"
  ],
  "no_retuning": "the event, the 20-session look-back, the T1/T2 definitions, terciles, the 15m/60m rule, the 30-min hold and the bar are fixed here",
  "tool": "tools/studies/name_history.py (to be written; skeptic code review before it scores anything)",
@@ -42,5 +45,6 @@
   "~74 test sessions (2026-06-24 .. 2026-10-07) in one market regime (a mostly up-trending tape)"
  ],
  "amended": "2026-10-08 ~12:40 ET, before any script or data: skeptic FIX FIRST (13) applied - raw vs adjusted prices and split drops; exact event threshold; T1 race rules; exact HTF_UP comparisons and bar completion; universe from the bro_sr_wr asset set; T1 eligibility reporting and H2-on-eligible; group drop-rate check; beta-hedged primary with event-hour FE; two-way (session x name) clustering; same-name random-minute control and the NAME SELECTION label; FAIL when powered and not passed; earlier-period and IEX reruns before any forward test; correlation / volatility confound reporting.",
- "amended_2": "2026-10-08 ~13:10 ET, before any script: skeptic round 2 - same-name control feasibility (window, exit by 16:00, hour fallbacks) and its POSITIVE definition; beta/SPY-leg/event-hour definitions; drop-test conditions; pass bars for the out-of-period and IEX reruns; caveat period."
+ "amended_2": "2026-10-08 ~13:10 ET, before any script: skeptic round 2 - same-name control feasibility (window, exit by 16:00, hour fallbacks) and its POSITIVE definition; beta/SPY-leg/event-hour definitions; drop-test conditions; pass bars for the out-of-period and IEX reruns; caveat period.",
+ "amended_3": "2026-10-08 ~13:40 ET, before any script or data: operator transcript 5 (daily 50-SMA bias, ATR range budget, prior-day high/low liquidity zones) added as INFORMATION cells only; no new hypothesis, multiplicity unchanged."
 }
