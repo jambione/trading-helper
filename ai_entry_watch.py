@@ -14211,7 +14211,8 @@ def _ob_observe_on(cfg: dict | None) -> bool:
     try:
         import ob_observe
         return (ob_observe.enabled(cfg) or _ob_resist_skip_on(cfg)
-                or bool((cfg or {}).get("ai_watch_ob_resist_ob_skip", False)))
+                or bool((cfg or {}).get("ai_watch_ob_resist_ob_skip", False))
+                or breakout_arm_mode(cfg) != "off")
     except Exception:  # noqa: BLE001
         return False
 
@@ -14231,6 +14232,45 @@ def _ob_resist_refusal(ob_fields: dict | None, cfg: dict | None, rec: dict | Non
         return _ob_narrow_refusal(ob_fields, cfg, rec)
     except Exception:  # noqa: BLE001
         return False
+
+
+def breakout_arm_mode(cfg: dict | None) -> str:
+    """ai_watch_breakout_arm: 'off' (default) | 'replace' (arm ONLY on a clean breakout, no square) |
+    'either' (square OR breakout). Operator 10/8: 'test opening on breakouts instead of the square'.
+    REPLAY/TEST knob: live stays 'off' until a pre-registered test passes."""
+    m = str((cfg or {}).get("ai_watch_breakout_arm", "off") or "off").strip().lower()
+    return m if m in ("replace", "either") else "off"
+
+
+def apply_breakout_arm(rec: dict, ask: Any, bid: Any, cfg: dict, now: float, ob_fields: dict | None,
+                       ok_arm: bool, why: str) -> tuple[bool, str]:
+    """Breakout entry trigger at the arm site, on the reading stamped at the current price.
+
+    A CLEAN breakout (ai_watch_breakout_arm_lo <= ob_brk_dist_pct < _hi, default 0.10-0.30%: the band
+    of sr_breakout_book_prereg.json) arms through every hard gate of should_arm_buy (stale quote,
+    spread, gap, structure, reward/risk, product, source) with the %R exhaustion rules OFF - the
+    breakout replaces the square, nothing else. In 'replace' mode a square arm without a breakout is
+    refused ('no_breakout'). Never raises; any error leaves the decision unchanged."""
+    mode = breakout_arm_mode(cfg)
+    if mode == "off":
+        return ok_arm, why
+    try:
+        lo = float(cfg.get("ai_watch_breakout_arm_lo", 0.10) or 0.0)
+        hi = float(cfg.get("ai_watch_breakout_arm_hi", 0.30) or 0.0)
+        brk = _f_or_none((ob_fields or {}).get("ob_brk_dist_pct")) if isinstance(ob_fields, dict) else None
+        is_brk = brk is not None and lo <= brk < hi
+        if is_brk:
+            if ok_arm:
+                return True, "breakout_arm"
+            ok2, why2 = should_arm_buy(rec, ask=ask, bid=bid,
+                                       cfg={**cfg, "ai_watch_exhaustion_rules": False,
+                                            "ai_watch_arm_require_indicators": False}, now=now)
+            return (True, "breakout_arm") if ok2 else (False, why2 or why)
+        if mode == "replace" and ok_arm:
+            return False, "no_breakout"
+        return ok_arm, why
+    except Exception:  # noqa: BLE001
+        return ok_arm, why
 
 
 def _ob_narrow_refusal(ob_fields: dict, cfg: dict | None, rec: dict | None) -> bool:
@@ -18187,6 +18227,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         # Order blocks (log; ai_watch_ob_resist_skip refuses on resistance).
         _ob_arm = _ob_observe_stamp(rec, sym, ask_f, cfg, t0)
+        ok_arm, why = apply_breakout_arm(rec, ask_f, bid_f, cfg, t0, _ob_arm, ok_arm, why)
         if _ob_resist_refusal(_ob_arm, cfg, rec) and ok_arm:
             ok_arm, why = False, ("ob_resist" if (_ob_resist_skip_on(cfg) and isinstance(_ob_arm, dict)
                                                  and _ob_arm.get("ob_resist_0.3") is True) else "ob_resist_ob")
@@ -18204,7 +18245,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
                        "late_hold_closed", "late_hold_not_late_admit",
-                       "ob_resist", "ob_resist_ob"):
+                       "ob_resist", "ob_resist_ob", "no_breakout"):
                 _skip(why)
             else:
                 set_block_reason(rec, why or "blocked", now=t0)
