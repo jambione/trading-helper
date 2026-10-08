@@ -1,6 +1,6 @@
 {
  "study": "Round numbers: is a new intraday high that sits just BELOW a whole or half dollar more likely to fail, and one that has just cleared a round number more likely to run (Ross Cameron's 'apex point vs psychological resistance')?",
- "registered_at": "2026-10-08 12:16 ET (commit 0a50484); amended ~13:50 ET before any script or data",
+ "registered_at": "2026-10-08 12:16 ET (commit 0a50484); amended 13:34 ET (commit 0f55822) before any script or data",
  "registered_before_results": true,
  "origin": "Operator 10/8 (Warrior Trading transcript): 'if the apex point is 4.95 that presents a problem because the breakout spot is just below psychological resistance ... we'd rather have the apex point right at it or just above it'. Never tested here.",
  "prior": "LOW to MODERATE: round-number clustering of orders is documented in the academic literature; whether it moves 30-min outcomes on liquid $10+ names after costs is untested.",
@@ -21,7 +21,7 @@
  ],
  "no_retuning": "levels, the 0.15% band, groups and the bar fixed here",
  "tool": "tools/studies/name_history.py (round-number cells added before it scores anything; same skeptic code review)",
- "power": "OUTCOME-BLIND COUNT STEP before any outcome: n and distinct names per group per half; MDE = (t_crit + 0.84) x the projected two-way SE (from the same-name control arm of name_history); UNDERPOWERED if MDE > 10 bp in either half; if powered and not passed, FAIL.",
+ "power": "OUTCOME-BLIND COUNT STEP before any outcome: n and distinct names per group per half; MDE = (t_crit + 0.84) x the projected two-way SE (from the same-name control arm of name_history, scaled to the ABOVE and BELOW group sizes); UNDERPOWERED if MDE > 10 bp in either half; if powered and not passed, FAIL.",
  "dependence": "the groups are computed and FROZEN in the same run before any name_history outcome is read; the name_history verdict does not gate this verdict; the report notes the overlap with name_history H1/H2 samples",
- "amended": "2026-10-08 ~13:50 ET, before any script or data: skeptic review - exclusive groups with precedence; price-scaled primary grid; price-band FE and breakout-size covariate; H_prev defined; own outcome-blind count step; frozen groups and no gating; same-name control requirement."
+ "amended": "2026-10-08 13:34 ET (commit 0f55822), before any script or data: skeptic review - exclusive groups with precedence; price-scaled primary grid; price-band FE and breakout-size covariate; H_prev defined; own outcome-blind count step; frozen groups and no gating; same-name control requirement."
 }
