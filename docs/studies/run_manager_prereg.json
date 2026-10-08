@@ -1,33 +1,35 @@
 {
- "study": "Run manager: does a two-phase exit (phase 1 unchanged; once a trade is up >= 0.15%, a higher-low safety net plus explicit sell signals - triangle, %R dump, into resistance, structure break, 50% give-back - instead of the R-trail and decay leash) earn more per trade than the live exit, by letting profit runs continue?",
- "registered_at": "2026-10-08 ~11:15 ET, before the exit exists in code and before any replay of it",
+ "study": "Run manager: does a two-phase exit (phase 1 unchanged; from +0.15% a higher-low safety net plus explicit sell signals - engine-line triangle, %R dump, into resistance, structure break, and a give-back cap only on wide runs - instead of the R-trail and decay leash) earn more per trade than the live exit, by letting profit runs continue?",
+ "registered_at": "2026-10-08 ~11:15 ET; revision 2 ~11:40 ET after the skeptic review; before the exit exists in code and before any replay of it",
  "registered_before_results": true,
- "origin": "Operator 10/8: the ratchet 'prevents the current price from going further'; 'look holistically at the position to see if selling is the right move, not just the stop price'. Design: docs/design/RUN_MANAGER_2026-10-08.md (the rules, knobs and data sources there are part of this registration).",
- "prior": "LOW to MODERATE. Against: exits-cannot-move-the-mean (42 trail/stop shapes ~0 gross); let_run_replay 10/7 FAILED (unconditional loosening: decay_off -8.7, decay_slow -8.2 vs base -7.6 bp, movers era); fills drift -9/-28/-43 bp at 5/15/30 min on average. For: this is CONDITIONAL holding (only after +0.15%, with explicit reversal signals and selling into resistance), never tested; tight names (cost ~1-3 bp) let a small capture gain show; 10/8 winners kept only ~46% of their peak (median best +17 bp, kept +7.9 bp).",
- "variant": "run_manager: ai_exit_run_manager=true with the design's defaults (arm 0.15%, 3-bar higher low, resistance pad 0.02%, give-back 0.50, signal max age 90 s), on top of the recorded live config's phase-1 exits (np180 on, triangle off)",
- "reference": "np180: the live exit from 2026-10-08 10:30 (np180 on, triangle off), replayed on the same day with the same code",
- "sessions": "every session from the first night the variant runs with all three inputs present (engine %R, 1-min bars, resistance levels; checked per session and recorded) - expected from 2026-10-12. Sessions before that are not scored.",
- "tool": "scripts/tight_trail_replay.sh (variant 'run_manager'), costed with tools/studies/replay_costing.py (full SIP spread once per round trip); the day review reports phase-2 entries, sell reasons, capture ratio (exit gain / best gain after entry, phase-2 trades) and give-back per trade.",
- "statistic": "per group (TIGHT, MOVERS) and pooled: net bp per trade of run_manager minus np180, per day; mean over days with a t across days (df = days - 1); the same days for both",
- "power_and_bar": {
-  "pass": "per group: run_manager minus np180 >= +3 bp per trade, t >= 2 across days, negative on <= 20% of days, >= 60 np180 trades in the group over >= 10 sessions, AND run_manager's phase-2 trades show a higher capture ratio than np180's trades that reached +0.15% (the mechanism, not just the mean)",
-  "fail": "run_manager minus np180 <= -3 bp with t <= -2 (either group), OR the pass bar unmet after 15 sessions",
-  "otherwise": "UNDERPOWERED: keep collecting, up to 15 sessions; then FAIL closes it",
-  "vacuity": "a session where run_manager enters phase 2 on 0 trades, or where S1 (triangle) and S3 (resistance) both fire 0 times while np180 had >= 5 trades reaching +0.15%, is flagged; if more than 30% of sessions are flagged the variant is VACUOUS (a build problem) and is not read"
+ "origin": "Operator 10/8 (see the design). Design and all thresholds: docs/design/RUN_MANAGER_2026-10-08.md revision 2, part of this registration.",
+ "prior": "LOW to MODERATE. Against: exits-cannot-move-the-mean (42 shapes ~0 gross); let_run_replay 10/7 FAILED (unconditional loosening worse); fills drift down on average with hold time. For: conditional holding with explicit reversal and resistance exits is untested; tight names cost ~1-3 bp.",
+ "arms": {
+  "run_manager": "scripts/tight_trail_replay.sh: R run_manager $NP_ON $LOB_OFF --set ai_exit_rsi_dump_enabled=false --set ai_exit_run_manager=true (design defaults)",
+  "np180": "R np180 $NP_ON $LOB_OFF (the live exit from 10/08 10:30), dump off - the reference",
+  "s5_only": "information only: phase 2 with ONLY the S5 give-back rule and the net stop (S1-S3 off) - the mechanism null"
  },
+ "sessions": "the first 12 sessions on which the run_manager build passes the per-input check (below), expected from 2026-10-12. ONE read at session 12; interim nightly numbers are direction only.",
+ "pairing": "trades are matched across run_manager and np180 on (symbol, entry time within 2 s). The PRIMARY is scored on the matched set; unmatched trades (slot/re-entry divergence from longer holds) are reported per arm with their net bp, and per-day dollars per arm are reported next to per-trade bp. Phase-1 trades that differ in a matched pair are reported (expected only where a later entry was displaced).",
+ "statistic": "per group (TIGHT, MOVERS): on matched pairs, run_manager net bp minus np180 net bp; per-day mean of the pair differences; mean over days with t across days (df = days - 1)",
+ "fills": "exits fill at the triggering poll's price (as every variant), AND are re-scored at the next poll's price and at the price 10 s later; the pass must hold under all three fill rules",
+ "pass": "per group, at the single read: matched-pair mean >= +3 bp per trade with t >= 2 across days under all three fill rules, negative on <= 20% of days, >= 60 matched pairs; AND the mechanism check: on matched pairs that reached +0.15% in BOTH arms, the paired realized-gain difference is > 0 with t >= 2 (both arms judged on the same entries; the peak over a fixed window, entry to entry + 30 min, is reported for both). A group that passes earns a live paper switch-on for THAT group only (skeptic review of the positive first). Both groups are read; no pooled pass.",
+ "fail": "at the read: matched-pair mean <= -3 bp with t <= -2 in a group -> FAIL for that group; otherwise not passed -> CLOSED UNPROVEN for that group. Either closes the run-manager question for the current entry design.",
+ "labels": "S5-dominated if S5 + S4 are > 70% of phase-2 exits (then the result is a give-back trail, not the holistic manager, and is reported as such). s5_only is reported next to run_manager; if s5_only passes the same bar, the S1-S3 signals are judged to add nothing.",
+ "per_input_check": "every session, for every name held by run_manager: share of polls with a fresh (<= 90 s) engine read; share of phase-2 polls with >= 3 usable real (not filled) bars; share of phase-2 polls with a resistance level <= 120 s old (also reported at <= 60 s); counts of phase-2 entries and of each sell reason. A session is a BUILD FAILURE (not counted toward the 12) if phase 2 is entered on 0 trades while np180 had >= 5 trades reaching +0.15%, or if fresh engine reads are < 50% of polls, or if S1 and S3 both fire 0 times on >= 5 phase-2 trades. More than 3 build-failure sessions -> the variant is VACUOUS and not read.",
  "information_only": [
-  "sell reason distribution (S1 triangle, S2 dump, S3 resistance, S4 structure, S5 give-back, S6 clock) and the net bp of each",
-  "price 15 min after each phase-2 sell (did the run continue?)",
-  "phase-1 trades (should be identical to np180: any difference is a build error and is reported)",
-  "capture ratio and give-back distributions, tight vs movers",
-  "run_manager vs 'off' (the pre-10/8 exit) and vs np_lob_slow30 / np_lob_step02"
+  "sell reason distribution (S1-S6) and net bp per reason",
+  "price 15 and 30 min after each phase-2 sell",
+  "capture (realized / fixed-window peak) for matched phase-2 trades in both arms",
+  "s5_only, np_lob_slow30, np_lob_step02 and 'off' next to run_manager",
+  "unmatched trades and per-day dollars per arm"
  ],
- "no_retuning": "the design's thresholds are fixed here; after a read, any change is a new pre-registration. The live triangle fix (engine-line exit) is a separate change and does not alter this variant (which already reads the engine line).",
- "live": "a PASS earns a live paper switch-on (ai_exit_run_manager=true) after skeptic review of the positive result; a FAIL closes the run-manager question for the current entry design.",
+ "no_retuning": "the design's thresholds, the arms, the fill rules, the read at 12 sessions and the bars are fixed; any change is a new pre-registration",
  "caveats": [
-  "replay fidelity on 10/7 was ~27% recall of live buys: the comparison is variant vs reference inside the replay, not live P&L",
-  "the higher-low stop uses IEX 1-minute bars (the live feed); on thin names bars are gap-filled like the engine's grid",
-  "order-block levels are the port's, which differ from TradingView on thin premarket names (10/7 chart check)",
-  "phase 2 is reached by a minority of trades (10/8: about a third reached +0.15%); the effect on the per-trade mean is bounded by that share"
- ]
+  "replay recall of live buys was ~27% on 10/7: the comparison is arm vs arm inside the replay",
+  "IEX 1-minute bars are thin on some names; the higher-low uses real bars plus the engine's gap-fill rule",
+  "order-block levels are the port's (TradingView mismatch on thin premarket names, 10/7 chart check)",
+  "only trades that reach +0.15% can differ; the per-trade mean effect is bounded by that share"
+ ],
+ "amended": "2026-10-08 ~11:40 ET, before any code or replay: skeptic FIX FIRST (16 findings) applied - same 30 s bar lag live and replay; peak from polled prices only; resistance via _charted_at each bar, blocks strictly above price, 120 s age; distinct engine reads by engine timestamp; S2 private cfg with the global dump off; net stop never below the inherited stop; phase-1 exits off in phase 2 listed; arms pinned; S5 only from +0.40% with a 2x-spread floor plus the s5_only null and the S5-dominated label; capture ratio dropped from the pass for a matched-pair mechanism test; trades matched on (symbol, entry time); next-poll and +10 s fills; one read at 12 sessions per group; per-input vacuity checks."
 }

@@ -1,68 +1,77 @@
-# Run manager: a two-phase exit (design, 2026-10-08)
+# Run manager: a two-phase exit (design, 2026-10-08, revision 2)
 
 Operator, 10/8: *"The ratchet stop works OK in some situations, but in most it prevents the price from going further … have the ratchet as one of the things that prevent loss and capture profit … when a name is on a profit run, let it continue … look holistically at the position to see if selling is the right move, not just the stop price."*
 
 Status: **design only.** It is built switched off (`ai_exit_run_manager: false`), replayed nightly as `run_manager`, and switched on live only if its pre-registered test passes (`docs/studies/run_manager_prereg.json`).
 
+Revision 2 applies all 16 findings of the 10/8 skeptic review; the reference [Rn] is to finding n.
+
 ## Why
 
-Today's exits are separate rules, each selling on its own trigger: the ratchet (R-based trail), the decay leash (+0.05R every 8 s without a new high), the triangle, dead-trade, and the 3-minute no-green cut. None of them looks at the rest of the position. On a calm $100 name the leash moves the stop about 0.25% of price every 8 s of sideways drift, so a healthy run is sold on its first pause (TJX 10/7: 53 s; the operator's "ratchet chase").
+Today's exits are separate rules, each selling on its own trigger: the ratchet (R-based trail), the decay leash (+0.05R every 8 s without a new high), the triangle, dead-trade, and the 3-minute no-green cut. None looks at the rest of the position. On a calm $100 name the leash moves the stop about 0.25% of price every 8 s of sideways drift, so a run is sold on its first pause.
 
-10/8 to 10:53: 32 trades, −6.9 bp. 16 of 32 never rose more than 5 bp after entry, so most losses are entries. Winners peaked at a median +17 bp and kept +7.9 bp. **This design targets the winners only: phase 1 is unchanged.**
+This design targets **winners only**. Phase 1 is unchanged; on 10/8, 16 of 32 trades never rose more than 5 bp, and those are an entry problem.
+
+## Inputs, and the rule each obeys (identical live and in the replay)
+
+| Input | Source | Rule |
+|---|---|---|
+| **Price, peak** | polled `last_seen_price` only [R2] | The +0.15% arm and the S5 peak use polled prices only, never bar highs. |
+| **Completed 1-min bars** | live: the desk's IEX 1-min cache; replay: its IEX bar store | A bar is usable only once `bar_start + 60 s + 30 s <= now` (`ai_exit_rm_bar_lag_sec` 30). The same lag applies live and in the replay, so the replay cannot see a bar sooner than live [R1]. The bar timestamp used is logged on every decision. |
+| **Engine fast %R** | live: `_engine_indicators()` (dashboard `signal_proximity`); replay: the recorded `signal_proximity` | A **read** is a distinct engine update, keyed on the engine row's own update timestamp (the builder confirms the field and records it here before coding). A repeated value with the same timestamp is not a new read [R5]. A row older than 90 s is no signal, so the position holds on that signal. |
+| **Resistance level** | `ob_observe._charted_at(sym, now)`, recomputed at each completed bar for held names (not the cache-only `levels()`) [R3] | Nearest charted resistance block with **bottom strictly above the price** at that moment. A block that contains the price is not a level [R4]. A level older than 120 s is no level, so S3 is inactive. `ob_levels_ts` is logged. |
 
 ## Phases
 
-### Phase 1: protect (from the fill until the run is confirmed)
+### Phase 1: protect (from the fill until +0.15%)
 
-**Unchanged from live**: initial shelf and ratchet, decay leash, the 3-minute no-green cut (np180), dead-trade, 15:50 flatten. Keeping phase 1 identical means any difference in the test comes from phase 2 alone.
+**Unchanged from live (np180):** initial shelf and R-ratchet, decay leash, the 3-minute no-green cut, dead-trade, 15:50 flatten. The triangle and the global %R dump stay off, as in np180.
 
-**Phase 2 starts** the first time the position's best price reaches **+0.15% above the entry fill** (`ai_exit_rm_arm_pct`). That is about 1.5–3× a tight name's spread, and about half the live ratchet's R-based arm (+0.30% on a 5% stop).
+**Phase 2 starts** the first poll where the polled peak is ≥ **+0.15%** above the entry fill (`ai_exit_rm_arm_pct`).
 
 ### Phase 2: let it run
 
-On entering phase 2, the R-trail and the decay leash **stop moving the stop**. The stop becomes a **safety net**:
+**Exits switched off in phase 2** [R8]:
+- the R-trail (`local_profit_stop`)
+- the decay leash (`green_catchup_raise`)
+- dead_trade
+- `no_progress` (already off by definition once green)
+- the legacy left_overbought exit
 
-- **Net stop** = max(entry + `ai_breakeven_offset_px`, **higher-low stop**). A run that turns red is never held.
-- **Higher-low stop** = the lowest low of the last **3 completed 1-minute bars** (`ai_exit_rm_hl_bars`), minus 1 cent. It is recomputed when each 1-minute bar completes and **only ever raised**.
+**Kept:** the 15:50 flatten, and the T1 scale-out exactly as live (1R target, rarely reached).
 
-**Sell when any of these happens**, checked every poll with the reason logged:
+**Net stop** (written into `local_stop_price`, only ever raised) [R7] = max of:
+- the **inherited `local_stop_price`** at the moment phase 2 starts (it never lowers the phase-1 stop);
+- entry + `ai_breakeven_offset_px`;
+- the **higher-low stop**: the lowest low of the last 3 usable completed 1-min bars (`ai_exit_rm_hl_bars`), minus $0.01, recomputed at each newly usable bar.
+
+**Sell on the first of these** (checked every poll; the reason is logged):
 
 | # | Signal | Exact rule |
 |---|---|---|
-| S1 | **Triangle** | Fast %R from the **engine's minute-grid line** (smoothed %R(21) EMA(7), the chart-matching line) was ≥ −20 while in phase 2 and is now < −20 on 2 consecutive reads. Never uses the live clock-window recompute (the 10/8 raw-fallback bug). |
-| S2 | **%R dump** (red knife) | `ai_positions.rsi_dump_due` on the same engine line: peak in the last 60 s ≥ −20, now ≥ 30 points below, 2 agreeing reads. |
-| S3 | **Into resistance** | Price ≥ the bottom of the nearest charted resistance block above (`ob_observe.levels` → `ob_res_btm`, point-in-time, last 3 per side) minus 0.02% (`ai_exit_rm_res_pad_pct`). The level is read when phase 2 starts and refreshed each completed bar. No level known means S3 is inactive. |
-| S4 | **Structure break** | Price ≤ the net stop (above). |
-| S5 | **Give-back cap** | Price falls by ≥ 50% of the open profit (peak − entry) from the peak (`ai_exit_rm_giveback`), once the peak is ≥ +0.15%. This is the one ratchet-like rule kept, so a reversal that S1, S2 and S4 have not yet confirmed still keeps half the run. |
+| S1 | **Triangle** | The engine fast %R was ≥ −20 on a read in phase 2, and is < −20 on **2 consecutive distinct reads**. |
+| S2 | **%R dump** | `ai_positions.rsi_dump_due` on the engine reads, called with a **private cfg** (enabled, 30 points, 60 s, 2 ticks). The global `ai_exit_rsi_dump_enabled` stays **off**, so phase 1 is untouched [R6]. |
+| S3 | **Into resistance** | Price ≥ the current resistance level's bottom × (1 − 0.02%) (`ai_exit_rm_res_pad_pct`). |
+| S4 | **Structure break** | Price ≤ the net stop. |
+| S5 | **Give-back cap**, wide runs only | Active only once the peak is ≥ **+0.40%** (`ai_exit_rm_gb_min_pct`). Sell when price ≤ peak − 50% × (peak − entry), and never at a level below entry + 2 × the entry spread (the 8/21 spread guard) [R10]. Below +0.40% there is no give-back rule, so phase 2 is never tighter than a plain breakeven net. |
 | S6 | **Clock** | 15:50 flatten (existing). |
 
-Holding is simply the absence of a sell signal: %R still in the band, higher lows intact, below the next resistance, and less than half the profit given back.
-
-## Data each signal needs (live and replay must match)
-
-| Input | Live | Replay |
-|---|---|---|
-| Engine fast %R (S1, S2) | `_engine_indicators()` (dashboard `signal_proximity`), with its timestamp; stale > 90 s = no signal (hold) | recorded `signal_proximity` |
-| Completed 1-min bars (net stop) | the desk's IEX 1-min cache (`symbol_ohlc` and stamps), gap-filled like `signals._minute_grid_pr` | the replay's bar store (IEX), same fill rule |
-| Resistance level (S3) | `ob_observe.levels(sym, price)` | the same, from the replay's order-block store |
-| Price | `last_seen_price` | recorded tape |
-
-The build must prove each input is present in the replay. Counts of phase-2 entries and of each sell reason are reported every night. **A variant that never enters phase 2, or never fires S1 or S3, is vacuous and is labelled so before any read.**
+Holding is the absence of a sell signal: %R still in the band, higher lows intact, below the next resistance, and (on wide runs) less than half the profit given back.
 
 ## Knobs (all new, default off or neutral)
 
-`ai_exit_run_manager` (false), `ai_exit_rm_arm_pct` 0.15, `ai_exit_rm_hl_bars` 3, `ai_exit_rm_res_pad_pct` 0.02, `ai_exit_rm_giveback` 0.50, `ai_exit_rm_signal_max_age_sec` 90.
+`ai_exit_run_manager` (false), `ai_exit_rm_arm_pct` 0.15, `ai_exit_rm_bar_lag_sec` 30, `ai_exit_rm_hl_bars` 3, `ai_exit_rm_res_pad_pct` 0.02, `ai_exit_rm_level_max_age_sec` 120, `ai_exit_rm_gb_min_pct` 0.40, `ai_exit_rm_giveback` 0.50, `ai_exit_rm_signal_max_age_sec` 90.
 
 ## What it does not do
 
 - It does not change entries, phase 1, sizing or the 15:50 clock.
-- It does not use the live %R recompute; the triangle bug fix stays a separate change.
-- It does not trade on any of this live until the prereg passes.
+- It does not use the live clock-window %R recompute.
+- It does not trade live until the prereg passes.
 
 ## Build order
 
-1. Prereg plus skeptic review (this document and `run_manager_prereg.json`).
-2. `ai_positions`: `run_manager_exit(pos, sig, bars, levels, cfg, now)`, a pure function returning (sell?, reason, new_net_stop), with tests for every row of the signal table.
-3. The live exit loop calls it only when the knob is on.
-4. `tools/replay_session.py` `_live_exit` calls the same function on recorded inputs, with a test.
-5. Nightly replay variant `run_manager` against `np180`; review section showing phase-2 counts, sell reasons, capture ratio and give-back.
+1. Prereg plus skeptic review (round 2).
+2. `ai_positions.run_manager_exit(pos, engine_reads, bars, level, cfg, now)`: a pure function returning (sell, reason, net_stop, diagnostics), with a test for every rule above, including the look-ahead guards (bar lag, distinct reads, inside-block level).
+3. The live exit loop calls it only when the knob is on, and logs the inputs it used.
+4. `tools/replay_session.py` calls the same function on recorded inputs, with the same bar lag, and `_charted_at` for held names.
+5. The nightly replay variant `run_manager` (switches pinned: `$NP_ON $LOB_OFF`, dump off) [R9] and the information variant `s5_only` (the plain give-back trail of S5, without S1-S4) as the mechanism null [R10].
