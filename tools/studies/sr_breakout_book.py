@@ -9,6 +9,7 @@ group meets the power bars (or before 2026-12-15), and refuses a second read.
 USAGE (mini, after 16:30 ET):
   .venv/bin/python tools/studies/sr_breakout_book.py score 2026-10-08
   .venv/bin/python tools/studies/sr_breakout_book.py power
+  .venv/bin/python tools/studies/sr_breakout_book.py read-due   (nightly: reads a group on its first ready night)
   .venv/bin/python tools/studies/sr_breakout_book.py read TIGHT|MOVERS
 
 Prereg sections are cited as [P:key]. Resolutions of wording the prereg leaves open are marked R1.. and listed in
@@ -41,6 +42,7 @@ OUTCOMES = os.path.join(REPO, "ai_reports", "outcomes.jsonl")
 SEALED = os.path.join(WORK, "sealed.jsonl")
 COUNTS = os.path.join(WORK, "counts.jsonl")
 READS = os.path.join(WORK, "reads.json")
+READY_FIRST = os.path.join(WORK, "ready_first.json")   # first sealed day each group met the power bars
 
 FIRST_SESSION = "2026-10-08"                         # [P:data.sessions]
 READ_DEADLINE = "2026-12-15"                         # [P:pass] / [P:decision_date]
@@ -86,6 +88,8 @@ RESOLUTIONS = {
     "R10_pins": "a row's git_version (trailing '+' = dirty build -> excluded) must resolve to commits where both pinned files have "
                 "the pinned blobs; other builds counted and excluded.",
     "R11_halves": "NYSE sessions from 2026-10-08 by the Alpaca calendar; index 0 = A, 1 = B, alternating.",
+    "R13_read_cutoff": "the read uses sealed sessions up to the first night `power` found the group ready (frozen in "
+                       "ready_first.json), or up to 2026-12-15; nightly `read-due` performs it so it cannot be timed by hand.",
     "R12_t": "t_crit = bro_sr_wr.t_crit(df) (one-sided p of z = 2.24); MDE = (t_crit + 0.84) x session-clustered SE.",
 }
 
@@ -136,6 +140,11 @@ def has_ob(r):
     return "ob_brk_dist_pct" in r and "ob_bars" in r and (r.get("ob_bars") or 0) >= MIN_OB_BARS
 
 
+def in_window(day, ts):
+    """09:45:00 <= ts <= 15:30:00 ET exactly (not 15:30:59)."""
+    return B.et_ts(day, 9, 45) <= ts <= B.et_ts(day, 15, 30)
+
+
 def is_primary_row(r):
     return r.get("price_src") == "quote" and r.get("arm_why") not in NONPRIMARY_ARM and (r.get("price") or 0) > 0
 
@@ -153,6 +162,8 @@ def pin_blobs():
     if not _PIN_BLOBS:
         for f, c in PINS.items():
             _PIN_BLOBS[f] = _git("rev-parse", f"{c}:{f}")
+            if not _PIN_BLOBS[f]:
+                sys.exit(f"pin {c}:{f} does not resolve in {REPO}: refusing to score (every row would be excluded)")
     return _PIN_BLOBS
 
 
@@ -175,8 +186,9 @@ def build_ok(ver) -> bool:
 _TS_RE = re.compile(r'"ts":\s*([0-9.]+)')
 
 
-def load_day_rows(day, path=SHADOW):
-    """Rows of `day` (ET), ts-sorted, with only the fields this study reads."""
+def load_day_rows(day, path=SHADOW, counts=None):
+    """Rows of `day` (ET), ts-sorted, with only the fields this study reads. Unparseable lines are counted."""
+    counts = counts if counts is not None else collections.Counter()
     t0 = B.et_ts(day, 0, 0)
     t1 = t0 + 86400
     keep = ("ts", "symbol", "source", "price", "price_src", "arm_why", "ob_brk_dist_pct", "ob_resist_0.3",
@@ -186,6 +198,7 @@ def load_day_rows(day, path=SHADOW):
         for line in f:
             m = _TS_RE.search(line[:200])
             if not m:
+                counts["lines_without_ts"] += 1
                 continue
             ts = float(m.group(1))
             if not (t0 <= ts < t1):
@@ -193,6 +206,7 @@ def load_day_rows(day, path=SHADOW):
             try:
                 r = json.loads(line)
             except Exception:  # noqa: BLE001
+                counts["lines_unparseable"] += 1
                 continue
             out.append({k: r[k] for k in keep if k in r})
     out.sort(key=lambda r: (r["ts"], r.get("symbol") or ""))
@@ -306,9 +320,9 @@ def score_day(day, mkt=None, rows=None, outcomes=None):
     """Score one session; returns (sealed_rows, counts). Never prints means."""
     counts = collections.Counter()
     mkt = mkt or Mkt(work=WORK)
-    rows = load_day_rows(day) if rows is None else rows
+    rows = load_day_rows(day, counts=counts) if rows is None else rows
     counts["rows_total"] = len(rows)
-    in_win = [r for r in rows if WIN_START <= B.et_min(r["ts"]) <= WIN_END]
+    in_win = [r for r in rows if in_window(day, r["ts"])]
     counts["rows_window"] = len(in_win)
     counts["rows_with_ob"] = sum(1 for r in in_win if "ob_brk_dist_pct" in r)
     pinned = []
@@ -321,16 +335,19 @@ def score_day(day, mkt=None, rows=None, outcomes=None):
     for r in pinned:
         if r.get("symbol"):
             by_sym[r["symbol"]].append(r)
+        else:
+            counts["rows_without_symbol"] += 1
     news = readings(by_sym, counts)
-    # every CLEAN new reading (any row type), for the Control A exclusion [P:controls]
-    clean_times = {s: [r["ts"] for r, b, _ in lst if b == "CLEAN"] for s, lst in news.items()}
+    # every CLEAN new reading on a primary row (primary, non-first or spread_only), for the Control A
+    # exclusion [P:controls.CONTROL_A_primary]
+    clean_times = {s: [r["ts"] for r, b, _ in lst if b == "CLEAN" and is_primary_row(r)] for s, lst in news.items()}
 
     out = []
     for sym in sorted(news):
         firsts = {}
         for r, b, prev in news[sym]:
             c = r["ts"]
-            if not (WIN_START <= B.et_min(c) <= WIN_END):
+            if not in_window(day, c):
                 continue
             if not is_primary_row(r):
                 counts[f"{b}_nonprimary_row"] += 1
@@ -416,7 +433,7 @@ def _score_event(mkt, day, sym, r, band, by_sym, clean_times, counts, outcomes):
         return row
     row.update(ctrlA=ctrl, ca=cx, diff=ev["net"] - cx["net"], status="pair")
     # Control B (R9, information)
-    later = [x for x in by_sym[sym] if c + LAT_SEC + HOLD_SEC < x["ts"] and B.et_min(x["ts"]) <= WIN_END
+    later = [x for x in by_sym[sym] if c + LAT_SEC + HOLD_SEC < x["ts"] and x["ts"] <= B.et_ts(day, 15, 30)
              and is_primary_row(x) and "ob_brk_dist_pct" in x and x.get("ob_brk_dist_pct") is None]
     if later:
         pick = random.Random(f"{SEED}|{sym}|{c:.3f}|B").choice(later)
@@ -513,7 +530,9 @@ def cmd_score(day):
     unrec = sum(v for k, v in counts.items() if k.endswith("fetch_fail"))
     flag = {"coverage": (counts["rows_with_ob"] / counts["rows_window"]) if counts["rows_window"] else None,
             "unrecovered_fetch_failures": unrec}
-    flag["flagged"] = bool(unrec) or (flag["coverage"] is not None and flag["coverage"] < 0.80)
+    flag["other_build_share"] = (counts["rows_other_build"] / counts["rows_total"]) if counts["rows_total"] else None
+    flag["flagged"] = (bool(unrec) or (flag["coverage"] is not None and flag["coverage"] < 0.80)
+                       or (flag["other_build_share"] or 0) > 0.05)
     jl_rewrite_without_day(SEALED, day)
     jl_append(SEALED, rows)
     jl_rewrite_without_day(COUNTS, day)
@@ -532,7 +551,14 @@ def cmd_power():
     sealed = jl_read(SEALED)
     halves = halves_map()
     pw = power_table(sealed, halves)
+    last_day = max((r["day"] for r in sealed), default=None)
+    first = B.jload(READY_FIRST, {}) or {}
+    for grp, v in pw.items():
+        if v["ready"] and grp not in first and last_day:
+            first[grp] = last_day                     # frozen: the read uses sealed days up to this one
+    B.jsave(READY_FIRST, first)
     print("sr_breakout_book power (counts, sessions, SE, MDE only - no means)")
+    print(f"  first ready day by group (frozen read cutoff): {first or 'none yet'}")
     for grp, v in pw.items():
         print(f"  {grp}: ready for its single read: {v['ready']} (bars: >= {MIN_PAIRS} pairs, >= {MIN_SESSIONS} sessions, "
               f"MDE <= {MDE_BAR[grp]:.0f} bp per half)")
@@ -549,25 +575,43 @@ def cmd_read(grp):
     reads = B.jload(READS, {}) or {}
     if grp in reads:
         sys.exit(f"{grp} was already read on {reads[grp]['at']}: one read per group (prereg)")
-    sealed = jl_read(SEALED)
-    halves = halves_map()
     today = datetime.now(B.ET).strftime("%Y-%m-%d")
-    pw = power_table(sealed, halves)[grp]
-    if not pw["ready"] and today < READ_DEADLINE:
-        sys.exit(f"{grp} does not meet the power bars and it is before {READ_DEADLINE}: no read (run `power`)")
-    res = verdict(grp, sealed, halves, today=today)
-    reads[grp] = {"at": today, "verdict": res["verdict"]}
+    first = (B.jload(READY_FIRST, {}) or {}).get(grp)
+    if first:
+        cutoff = first                                # the first night the group met the power bars
+    elif today >= READ_DEADLINE:
+        cutoff = READ_DEADLINE
+    else:
+        sys.exit(f"{grp} has not met the power bars (run `power`) and it is before {READ_DEADLINE}: no read")
+    sealed = [r for r in jl_read(SEALED) if r.get("day", "") <= cutoff]
+    halves = halves_map()
+    res = verdict(grp, sealed, halves, today=cutoff if first else today)
+    res["cutoff_day"] = cutoff
+    reads[grp] = {"at": today, "cutoff_day": cutoff, "verdict": res["verdict"]}
     B.jsave(READS, reads)
     print(json.dumps(res, indent=1, default=str))
 
 
+def cmd_read_due():
+    """Nightly: read any unread group that is due (first-ready day recorded, or the deadline reached)."""
+    reads = B.jload(READS, {}) or {}
+    first = B.jload(READY_FIRST, {}) or {}
+    today = datetime.now(B.ET).strftime("%Y-%m-%d")
+    for grp in MDE_BAR:
+        if grp not in reads and (grp in first or today >= READ_DEADLINE):
+            print(f"== single read: {grp}")
+            cmd_read(grp)
+
+
 def main(argv):
-    if len(argv) < 2 or argv[1] not in ("score", "power", "read"):
+    if len(argv) < 2 or argv[1] not in ("score", "power", "read", "read-due"):
         sys.exit(__doc__)
     if argv[1] == "score":
         cmd_score(argv[2] if len(argv) > 2 else datetime.now(B.ET).strftime("%Y-%m-%d"))
     elif argv[1] == "power":
         cmd_power()
+    elif argv[1] == "read-due":
+        cmd_read_due()
     else:
         cmd_read(argv[2] if len(argv) > 2 else "")
 

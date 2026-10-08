@@ -249,7 +249,21 @@ def main():
           "_First breakout reading per name per 15 min; gross move 15 min later from the desk's own checks. "
           "No cost and no control: a lead for the breakout prereg, not a result._", ""]
     bo = breakouts(series, brk)
-    if bo:
+    # Blind (sr_breakout_book_prereg.json, skeptic code review 10/8): from 2026-10-08 until BOTH groups have had their
+    # single read, this section prints counts only — the per-band moves are the study's outcome.
+    _reads = {}
+    try:
+        _reads = json.load(open(os.path.join(REP, "sr_breakout_book", "reads.json")))
+    except Exception:  # noqa: BLE001
+        pass
+    if D >= "2026-10-08" and not {"TIGHT", "MOVERS"} <= set(_reads):
+        L.append("_Blinded while the breakout-on-book study runs: counts only._")
+        L.append("")
+        cnt = Counter(r["band"] for r in bo)
+        L += [f"- {b}: {n} readings" for b, n in sorted(cnt.items())] or ["- none"]
+        bo = []
+        L.append("")
+    elif bo:
         L += ["| Band | n | Avg gross 15m bp | Up share |", "|---|---|---|---|"]
         bb = defaultdict(list)
         for r in bo:
@@ -257,11 +271,15 @@ def main():
         for b in sorted(bb):
             v = bb[b]
             L.append(f"| {b} | {len(v)} | {sum(v) / len(v):+.1f} | {100 * sum(x > 0 for x in v) / len(v):.0f}% |")
-    else:
+    elif not (D >= "2026-10-08" and not {"TIGHT", "MOVERS"} <= set(_reads)):
         L.append("_no breakout readings_")
     L.append("")
 
     L += ["## 7. Study outputs", ""]
+    sbl = _read(f"/tmp/nightly/sr_breakout_book-{D}.log", tail=14)
+    L.append("- **Breakout-on-book (blind counts/power):** " + ("" if sbl else "not run"))
+    if sbl:
+        L += ["```"] + sbl + ["```"]
     ts_line = [r for r in _load_jsonl(os.path.join(REP, "tight_shadow", "summary.jsonl")) if r.get("day") == D]
     if ts_line:
         s = ts_line[-1]
