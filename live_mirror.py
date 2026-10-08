@@ -366,6 +366,7 @@ class Mirror:
         try:
             o = tc.close_position(sym)
             row.update(live_order_id=str(getattr(o, "id", "")), live_cid=getattr(o, "client_order_id", None))
+            self.bought.discard(sym)      # ours no longer: a later holding of this name is not the mirror's
         except Exception as e:  # noqa: BLE001
             row["error"] = str(e)[:200]
         append(row)
@@ -377,6 +378,8 @@ class Mirror:
             self.flatten(tc, sym.upper(), "desk_close_position", t, desk_order)
 
     def sync(self) -> None:
+        if OVERNIGHT_ARM_FILE.exists():
+            return            # the overnight book owns the account: never act on it (skeptic 10/8 r2 #12)
         tc = self.client()
         self._roll_day(tc)
         now = datetime.now(ET)
@@ -416,7 +419,20 @@ class Mirror:
         """Once, at desk start: learn what the mirror holds (restart-safe). Swallows its errors."""
         try:
             if KEYS_FILE.exists():
-                self._roll_day(self.client())
+                tc = self.client()
+                # A mir- order still working at start has lost its id_map entry, so the desk's cancel can
+                # never reach it and a later fill would be an orphan (skeptic 10/8 r2 #3): cancel them all.
+                n = 0
+                for o in self._our_open(tc):
+                    try:
+                        tc.cancel_order_by_id(o.id)
+                        n += 1
+                    except Exception as e:  # noqa: BLE001
+                        log(f"startup cancel {o.symbol} {o.id}: {e!s:.120}")
+                if n:
+                    log(f"startup: cancelled {n} working mir- order(s) left by the previous process")
+                    append({"event": "mirror_startup_cancel", "cancelled": n, "t_live": time.time()})
+                self._roll_day(tc)
         except Exception as e:  # noqa: BLE001
             log(f"startup rebuild: {e!s:.160}")
 

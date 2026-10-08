@@ -300,3 +300,31 @@ def test_same_name_second_leg_is_logged_as_live_leg_filled(files):
         m.enqueue("submit", req, NS(id=f"p{i}", client_order_id=f"e{i}"))
     drain(m)
     assert rows(files)[1]["reason"].startswith("live_leg_filled")
+
+
+def test_startup_cancels_orphaned_working_orders(files, monkeypatch):
+    """Skeptic 10/8 r2 #3: a working mir- limit at restart cannot be reached by the desk's cancel."""
+    live = FakeLive()
+    m = mirror(files, live)
+    live.open.append(NS(id="Lold", client_order_id="mir-e9", symbol="AAA", side="buy", status="new"))
+    monkeypatch.setattr(lm, "KEYS_FILE", files / "keys.json")
+    (files / "keys.json").write_text("{}")
+    m._startup_rebuild()
+    assert live.cancelled == ["Lold"] and rows(files)[-1]["event"] == "mirror_startup_cancel"
+
+
+def test_flattened_names_are_forgotten_and_sync_never_touches_an_overnight_account(files):
+    """Skeptic 10/8 r2 #12: after its exit a name is not the mirror's, and no sync while overnight is armed."""
+    live = FakeLive()
+    m = mirror(files, live)
+    m._roll_day(live)
+    live.positions["AAA"] = 1
+    m.bought.add("AAA")
+    m.flatten(live, "AAA", "desk_close_position")
+    assert "AAA" not in m.bought
+    live.positions["AAA"] = 1                      # e.g. the overnight book's own buy of the same name
+    m.bought.add("AAA")                             # even if something re-marked it
+    (files / "overnight_live.armed").write_text("")
+    m.desk.positions = []
+    m.sync()
+    assert live.closed == ["AAA"]                   # only the first, deliberate flatten
