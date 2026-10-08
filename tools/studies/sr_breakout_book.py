@@ -523,6 +523,9 @@ def verdict(grp, sealed, halves, today=None):
 def cmd_score(day):
     if day < FIRST_SESSION:
         sys.exit(f"{day} is before {FIRST_SESSION}: excluded by the prereg")
+    frozen = list((B.jload(READY_FIRST, {}) or {}).values()) + [r.get("cutoff_day") for r in (B.jload(READS, {}) or {}).values()]
+    if any(f and day <= f for f in frozen):
+        sys.exit(f"{day} is on or before a frozen read cutoff ({frozen}): refusing to rescore")
     B.market_hours_guard()
     mkt = Mkt(work=WORK)
     rows, counts = score_day(day, mkt=mkt, outcomes=jl_read(OUTCOMES))
@@ -554,8 +557,9 @@ def cmd_power():
     last_day = max((r["day"] for r in sealed), default=None)
     first = B.jload(READY_FIRST, {}) or {}
     for grp, v in pw.items():
-        if v["ready"] and grp not in first and last_day:
+        if v["ready"] and grp not in first and last_day and last_day <= READ_DEADLINE:
             first[grp] = last_day                     # frozen: the read uses sealed days up to this one
+    # (a group first ready only after the deadline is not frozen: its read is the deadline read, cut at 12/15)
     B.jsave(READY_FIRST, first)
     print("sr_breakout_book power (counts, sessions, SE, MDE only - no means)")
     print(f"  first ready day by group (frozen read cutoff): {first or 'none yet'}")
@@ -587,6 +591,9 @@ def cmd_read(grp):
     halves = halves_map()
     res = verdict(grp, sealed, halves, today=cutoff if first else today)
     res["cutoff_day"] = cutoff
+    if res["verdict"] == "UNDERPOWERED":
+        # never spend the single read on an underpowered result (e.g. a cutoff day rescored after the freeze)
+        sys.exit(f"{grp}: data up to {cutoff} is not powered after all; read NOT recorded: {json.dumps(res['power'], default=str)[:300]}")
     reads[grp] = {"at": today, "cutoff_day": cutoff, "verdict": res["verdict"]}
     B.jsave(READS, reads)
     print(json.dumps(res, indent=1, default=str))

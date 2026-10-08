@@ -349,3 +349,32 @@ def test_day_review_breakout_section_is_blind_from_10_8(tmp_path):
 def test_sessions_before_10_8_are_refused():
     with pytest.raises(SystemExit):
         S.cmd_score("2026-10-07")
+
+
+def test_underpowered_read_is_not_recorded(tmp_path, monkeypatch):
+    """Code review r2 #9: a frozen cutoff whose data is (re)scored underpowered must not spend the single read."""
+    rows, halves = _sealed(4, 3, 10.0)
+    _wire(tmp_path, monkeypatch, rows, halves)
+    json.dump({"TIGHT": "2026-10-11"}, open(S.READY_FIRST, "w"))
+    with pytest.raises(SystemExit):
+        S.cmd_read("TIGHT")
+    assert not (tmp_path / "reads.json").exists()
+
+
+def test_frozen_days_cannot_be_rescored(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, "READY_FIRST", str(tmp_path / "ready.json"))
+    monkeypatch.setattr(S, "READS", str(tmp_path / "reads.json"))
+    json.dump({"TIGHT": "2026-11-20"}, open(S.READY_FIRST, "w"))
+    with pytest.raises(SystemExit, match="frozen"):
+        S.cmd_score("2026-11-19")
+
+
+def test_no_freeze_after_the_deadline(tmp_path, monkeypatch):
+    rows, halves = _sealed(32, 10, 8.0)
+    for r in rows:
+        r["day"] = "2026-12-" + r["day"][-2:]       # all sessions after 12/15 by construction below
+    rows = [dict(r, day="2026-12-%02d" % (16 + i % 10)) for i, r in enumerate(rows)]
+    halves = {d: ("A" if i % 2 == 0 else "B") for i, d in enumerate(sorted({r["day"] for r in rows}))}
+    _wire(tmp_path, monkeypatch, rows, halves)
+    S.cmd_power()
+    assert json.load(open(S.READY_FIRST)) == {}
