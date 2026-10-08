@@ -590,6 +590,8 @@ DEFAULT_CONFIG = {
     "ai_watch_breakout_arm":            "off",
     "ai_watch_breakout_arm_lo":         0.10,
     "ai_watch_breakout_arm_hi":         0.30,
+    # Entry: buy only on the empty-square (presquare) arm (operator 10/8; REPLAY/TEST until a prereg passes).
+    "ai_watch_presquare_only":          False,
     # Tight source (calm large caps, rvol ~0.5 normal): own floor, 0 = none.
     "ai_watch_tight_min_rvol":          0.0,
     # Day-chg % that waives known-thin RVOL at seed + inclusion. 0 = off.
@@ -2114,6 +2116,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_breakout_arm",
     "ai_watch_breakout_arm_lo",
     "ai_watch_breakout_arm_hi",
+    "ai_watch_presquare_only",
     "ai_watch_tight_min_rvol",
     "ai_watch_hot_move_rvol_waive_pct",
     "ai_watch_extreme_move_pct",

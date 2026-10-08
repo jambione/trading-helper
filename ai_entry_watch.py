@@ -16355,6 +16355,11 @@ def should_arm_buy(
     if last_mode:
         # Last is the entry. Structure only supplies stop/target for R.
         if exh_ok:
+            # Operator 10/8 (REPLAY/TEST knob, default off): buy only on the empty-square (about-to-square)
+            # arm, never when the name is already overbought (last_overbought 54% vs last_presquare 38% of
+            # fills never rose > +5 bp, 10/5-10/8).
+            if bool(cfg.get("ai_watch_presquare_only", False)) and exh_why != "presquare":
+                return False, "not_presquare"
             pace_ok, pace_why = _rvol_pace_gate(record, cfg, now)
             if not pace_ok:
                 return False, pace_why
@@ -18245,7 +18250,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
                        "late_hold_closed", "late_hold_not_late_admit",
-                       "ob_resist", "ob_resist_ob", "no_breakout"):
+                       "ob_resist", "ob_resist_ob", "no_breakout", "not_presquare"):
                 _skip(why)
             else:
                 set_block_reason(rec, why or "blocked", now=t0)

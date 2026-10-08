@@ -52,3 +52,12 @@ def test_wired_at_the_arm_site_and_keeps_the_reading_on():
     src = open(ew.__file__).read()
     assert "ok_arm, why = apply_breakout_arm(rec, ask_f, bid_f, cfg, t0, _ob_arm, ok_arm, why)" in src
     assert ew._ob_observe_on({"ai_watch_breakout_arm": "either"})
+
+
+def test_presquare_only_knob_is_wired_and_off_by_default():
+    import config
+    assert config.DEFAULT_CONFIG["ai_watch_presquare_only"] is False
+    src = open(ew.__file__).read()
+    i = src.index('if bool(cfg.get("ai_watch_presquare_only", False)) and exh_why != "presquare":')
+    assert 'return False, "not_presquare"' in src[i:i + 200]
+    assert src.index('return True, f"last_{exh_why}"') > i      # checked before the arm returns
