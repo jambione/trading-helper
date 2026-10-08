@@ -61,7 +61,9 @@ RESOLUTIONS = {
                        "candidate lies outside the window, the candidate resolves without an entry (counted "
                        "<setup>_outside_window) and the scan continues after it",
     "R3_stale_entry": "a stale (> 5 s) or missing entry quote drops the pair (counted) AND uses the setup's one "
-                      "trade that day (scanning on would pick a later signal conditional on quote coverage)",
+                      "trade that day (scanning on would pick a later signal conditional on quote coverage); the "
+                      "stale check runs before the R-bound check, so a stale quote on a signal that would have been "
+                      "an R-skip also ends the setup's day (counted <setup>_stale_entry)",
     "R4_R_bounds": "R = entry mid - stop; R < 0.15% (incl. R <= 0) or > 2.0% of the entry mid is an R-bound skip",
     "R5_S3_break": "BREAK must be the bar immediately after the 4-bar consolidation (rolling: every bar end is a "
                    "consolidation check); body = |close - open|",
@@ -72,9 +74,13 @@ RESOLUTIONS = {
     "R8_S5_level_pick": "levels satisfying BOTH the +/-0.15% band and the approach-from-above rule; the nearest to "
                         "the touch low is used (tie: the lower level); levels known at the touch bar's end",
     "R9_S5_resume": "after a touch resolves (entry skip, cancel, 12-bar expiry, window) the next touch is scanned "
-                    "from the bar after the resolving bar",
+                    "from the bar after the resolving bar. Quirk: the touch bar's own cancel (close < L x 0.9985) is "
+                    "impossible - the touch needs low >= L x 0.9985 and close >= low - so only later bars cancel",
     "R10_S6_resume": "after a sweep candidate resolves, the next sweep is scanned from the first 5-min bar starting "
-                     "at or after the resolving instant (no displacement: the bar after the 6-bar window)",
+                     "at or after the resolving instant (no displacement: the bar after the 6-bar window). The S6 "
+                     "cancel can never fire, even with missing minutes: the 5-min bar is built from the same 1-min "
+                     "bars, so the minute that set its low (<= the FVG top) is always scanned first and touches; the "
+                     "entry-mid-below-FVG-bottom guard (mid < bottom -> skip) covers a fall through the gap",
     "R11_S7_resume": "after an S7 candidate resolves, the next indication must start at or after the resolving "
                      "15-min bar's end; the pre-indication 60-min swing low = the most recent swing low known at "
                      "the indication bar's start (none -> no swing-low cancel)",
@@ -88,7 +94,8 @@ RESOLUTIONS = {
                "hedged series only",
     "R14_control_draw": "control candidates are CLOCK times (15-min closes 10:30, 10:45 ... 14:30; or every 1-min "
                         "close 10:30..14:30 for S4/S6) with |c - t| > 60 min; no bar data is read to choose; "
-                        "random.Random(int(sha256('67|SETUP|SYM|DAY').hexdigest()[:16], 16)).choice(sorted)",
+                        "random.Random(int(sha256('67|SETUP|SYM|DAY').hexdigest()[:16], 16)).choice(sorted), "
+                        "SETUP = the SHORT setup key ('S2' ... 'S7'), not the prereg's long setup name",
     "R15_control_geometry": "control stop = entry x (1 - R%/100), target = entry x (1 + 3 R%/100), R% from the "
                             "event's entry mid and stop",
     "R16_drop_rate": "event drop rate = (stale entries + event time exits with no price) / event signals; control "
@@ -109,6 +116,12 @@ RESOLUTIONS = {
     "R23_beta_missing": "a name-day without >= 100 beta pairs keeps its raw pair; its hedged values are missing "
                         "(counted beta_pairs_drop), so it leaves the hedged series only",
 }
+
+
+NOT_COMPUTED = (
+    ("setup 1 short mirror", "the prereg gives no coded rule for 'momentum fade' or 'minor support'"),
+    ("desk %R square with the same 3R bracket", "the prereg gives no stop for the square's bracket, so there is no R"),
+)
 
 
 def P_(*a):
@@ -736,7 +749,7 @@ def setup_verdict(pairs, setup, z=Z_SP):
         out["powered"] = powered
         if ok:
             v = "PASS"
-            why = ["historical PASS: reruns on >= 60 earlier sessions AND on IEX bars required"]
+            why = ["historical PASS: reruns on >= 60 earlier sessions AND on IEX bars required", NH.ACTION_BLOCKED]
         elif powered:
             v = "FAIL"
             why.append("powered (raw MDE <= 15 bp in both halves) and not passed")
@@ -922,6 +935,8 @@ def render_report(res) -> str:
         L.append(f"- **{s}: {v['verdict']}** - raw diff {_f(v['raw']['pooled']['coef'])} bp (t "
                  f"{_f(v['raw']['pooled']['t'], 2)}), hedged {_f(v['hedged']['pooled']['coef'])} bp (t "
                  f"{_f(v['hedged']['pooled']['t'], 2)}); {'; '.join(v['why'])}")
+    L += ["", "Information cells NOT COMPUTED (need a prereg addendum before they can be coded):", ""]
+    L += [f"- {k}: NOT COMPUTED - {why}" for k, why in NOT_COMPUTED]
     L += ["", "Information cells are in result.json; none can be promoted.", ""]
     return "\n".join(L)
 

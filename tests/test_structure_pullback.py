@@ -536,3 +536,20 @@ def test_score_signal_mismatch_says_rerun_fetch(tmp_path, monkeypatch):
     _json.dump(res, open(tmp_path / "count.json", "w"))
     with pytest.raises(SystemExit, match="re-run fetch"):
         SP.run("score", work=str(tmp_path), mkt=mkt)
+
+
+def test_pass_action_blocked_and_report_lists_uncomputed_cells():
+    """N5: a PASS carries 'ACTION BLOCKED: earlier-period and IEX reruns not wired' in why and report.md;
+    ambiguity 5: report.md lists the two uncomputed information cells as NOT COMPUTED with the reason."""
+    v = SP.setup_verdict(_pairs(diff=20.0), "S2")
+    assert v["verdict"] == "PASS" and NH.ACTION_BLOCKED in v["why"]
+    h = {"events": 1, "names": 1, "projected_mde": 1.0}
+    res = {"prereg": SP.PREREG, "script_rev": "test", "failed_data": False,
+           "count": {"projection": {s: {"A": h, "B": h} for s in SP.SETUPS}},
+           "setups": {s: v for s in SP.SETUPS}}
+    md = SP.render_report(res)
+    assert "ACTION BLOCKED: earlier-period and IEX reruns not wired" in md
+    assert md.count(": NOT COMPUTED - ") == 2 and "short mirror" in md and "%R square" in md
+    r = SP.RESOLUTIONS
+    assert "'S2'" in r["R14_control_draw"] and "never fire" in r["R10_S6_resume"]
+    assert "impossible" in r["R9_S5_resume"] and "before the R-bound" in r["R3_stale_entry"]
