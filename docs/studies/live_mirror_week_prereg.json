@@ -1,0 +1,57 @@
+{
+ "study": "Live mirror week: does a real-money account get the fills the paper desk books? Every paper desk order is copied to the ~$100 live account at 1 share (live_mirror.py); the difference between each paper fill and its live twin is execution alone.",
+ "registered_at": "2026-10-08 ~08:50 ET, before the mirror places any live order (armed from 2026-10-12)",
+ "registered_before_results": true,
+ "origin": "Operator 10/8: 'run a test on our live account for our day trading system, $100 or thereabouts, to see if we can learn something on live'. Paper fills are instant at the displayed quote at any size; live orders are routed and can slip, fill partially or sit. Every desk verdict so far (T1, G2 cost arms, the exit replay, G8) is in paper fills, so the paper-to-live gap decides whether any of them transfers to money.",
+ "what_this_is_not": "Not a test of whether the strategy makes money: at 1 share, live P&L is noise (expected about -$0.50 to -$2 a day at the paper desk's ~-3 bp/trade). Live P&L is reported, never judged.",
+ "period": "sessions 2026-10-12 .. 2026-10-16 (5 sessions). The operator may extend by whole weeks; the rules below then apply to the pooled sessions, read once at the end of each week.",
+ "setup": {
+  "mirror": "live_mirror.py at commit 505d08e: 1 share per paper order; buys only when live holds nothing and has no working buy (one position at a time); $95 max per buy; buy only if price <= 98% of current cash; no new buys once live equity < $90 (exits continue); exits/cancels/close_position copied; 15-s sync flattens a live name the paper desk no longer holds; 15:55 flatten.",
+  "desk": "the paper desk exactly as configured for T1 from 2026-10-08 (tight + movers, 0.05% SIP spread cap, 09:45 start, np180 + left_overbought exits). No desk change is made for this test.",
+  "arming": "config/live_mirror.armed = '2026-10-12' (operator). Disarm = delete the file (exits still complete)."
+ },
+ "data": {
+  "pairs": "ai_reports/live_mirror/ledger.jsonl mirror_submit rows (desk_order_id + live_order_id), joined to the Alpaca order records of BOTH accounts (status, filled_avg_price, filled_qty, filled_at, submitted_at)",
+  "reference_quote": "SIP NBBO at the paper order's submitted_at (last valid quote <= 5 s old; Alpaca historical, after the close)",
+  "account": "the live account record (/v2/account) and /v2/account/configurations, logged once after each session: equity, cash, buying power, multiplier, and ANY field whose name contains pattern|daytrad|pdt; plus /v2/account/activities FEE rows",
+  "skips": "mirror_skip rows (one_position, price cap, cash, equity_floor, no live position) counted by reason"
+ },
+ "definitions": {
+  "fill_gap_bp": "per order with BOTH fills: side-signed (live_fill / paper_fill - 1) x 1e4, + for a buy filled higher or a sell filled lower on live (live worse)",
+  "slippage_vs_mid_bp": "per filled order, each account separately: side-signed (fill / SIP mid at the paper submit time - 1) x 1e4",
+  "latency_s": "live filled_at minus paper filled_at",
+  "fee_bp": "live FEE activities on a sell / that sell's notional x 1e4",
+  "round_trip": "a live buy and the live sell(s) that close it, FIFO; its paper twin is the paper position opened by the same desk order"
+ },
+ "primary": "mean fill_gap_bp over all MARKET orders (entries and exits pooled) with both fills; SE clustered by session (CR1); also reported separately for entries and exits. If market orders with both fills < 60, the primary is UNDERPOWERED and the week is extended or the result labelled underpowered.",
+ "decision_rules": {
+  "TRANSFERS": "primary mean <= +2 bp AND its upper 95% bound (mean + 1.96 x SE) <= +5 bp: paper fills are a fair stand-in; paper verdicts (T1, G2, exits) are read as they are.",
+  "PAPER_OPTIMISTIC": "primary mean >= +5 bp with t >= 2: every paper verdict is re-read with the gap subtracted per fill (x2 per round trip) before ANY live-money decision; the entry/exit order styles (G2) become the first lever; no size-up.",
+  "PAPER_PESSIMISTIC": "primary mean <= -5 bp with t <= -2: reported; no change (live doing better than paper is not a reason to trade more without a second week).",
+  "INCONCLUSIVE": "anything else: report the interval; the operator decides whether to run a second week",
+  "LIMITS": "for limit orders (entry_test arms ask / mid_down / bid / wait), fill rate live vs paper: if the live fill rate is lower by >= 20 percentage points (n >= 20 limit pairs), limit-arm results on paper are flagged as optimistic for G2"
+ },
+ "safety": {
+  "built_in": "no buys below $90 equity; one position; $95 cap; exits always copied; 15:55 flatten",
+  "operator_stops": "disarm the same day if: any account restriction appears (trading_blocked, account_blocked, a pattern/daytrade/pdt field appearing in the record), a live position is left open at 15:56, the same order fails >= 3 times, or live equity falls below $85 (the $90 floor should prevent that)",
+  "no_scaling": "the 1-share size and $100 account are fixed for the test; no change of either until the week is read"
+ },
+ "information_only": [
+  "live round-trip net bp vs the paper twin's round-trip net bp",
+  "fill_gap by time of day (09:45-10:30, 10:30-15:00, 15:00-close), by source (tight / movers), by exit reason (local_trail, no_progress, left_overbought, dead_trade, eod)",
+  "slippage_vs_mid for each account (paper is expected near +half spread for marketable orders)",
+  "latency_s distribution; partial fills; orders that filled on one account only",
+  "fee_bp per round trip",
+  "skip counts by reason and the share of paper opens mirrored",
+  "sync_exit and eod_flatten counts (live exits not driven by a copied desk order)",
+  "daily account record (PDT fields, buying power)"
+ ],
+ "tool": "live_mirror.py report (exists) plus a week summary to be written before 2026-10-12 (tools/studies/live_mirror_week.py: reads the ledger and both accounts' orders, the SIP NBBO, the activities FEE rows and the daily account log; read-only), skeptic code review first. A nightly step appends the account record from 2026-10-12.",
+ "no_retuning": "the mirror's caps and rules, the desk config, the definitions and the decision rules are fixed here; a mirror code change during the week splits the week at the change",
+ "caveats": [
+  "1-share orders are the smallest possible; fills at real size (100+ shares) could be worse than both accounts show",
+  "one position at a time means the live sample is the first paper open after each live exit, not all opens (selection by timing; reported via the skip counts)",
+  "the live and paper orders are submitted milliseconds to seconds apart; latency is part of what is measured",
+  "Alpaca routes the live orders; another broker could differ"
+ ]
+}
