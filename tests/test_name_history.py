@@ -388,3 +388,21 @@ def test_quote_fetch_failure_is_counted_not_fatal_and_aborts_over_2pct():
     assert c["outcome_fetch_fail_namedays"] == 1
     with pytest.raises(SystemExit):
         NH.check_fail_share(c, 2, rows)                   # 3 / 100 > 2%
+
+
+def test_pass_carries_action_blocked_and_report_notes(synth):
+    """review N5 (both tools): a PASS carries 'ACTION BLOCKED: earlier-period and IEX reruns not wired' in its why
+    and in report.md; report.md states the >$3,333 all-BELOW round grid."""
+    rows = _rows(diff=20.0, noise=1.0)
+    for r in rows:
+        r["htf_up"] = r["g"]
+        r["ctrl"] = {"hedged30": r["hedged30"] - 15.0}
+    v = NH.nh_hypothesis(rows, NH.H2_rows, NH.IS_HTF)
+    assert v["verdict"] == "PASS" and NH.ACTION_BLOCKED in v["why"]
+    mkt, work = synth
+    NH.run("count", work=str(work), mkt=mkt)
+    out = NH.run("score", work=str(work), mkt=mkt)
+    out["H2"] = v
+    md = NH.render_report(out)
+    assert "ACTION BLOCKED: earlier-period and IEX reruns not wired" in md and "3,333" in md
+    assert "LATER sessions" in NH.RESOLUTIONS["R10_terciles"]

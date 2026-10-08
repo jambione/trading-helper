@@ -59,6 +59,7 @@ DROP_NAMES, DROP_SESSIONS = 5, 3
 DROP_RATE_PP = 0.02                             # groups' drop rates differ by > 2 pp -> FAILED-DATA
 FAIL_SHARE = 0.02                               # abort if > 2% of name-days fail
 RN_BAND = 0.0015
+ACTION_BLOCKED = "ACTION BLOCKED: earlier-period and IEX reruns not wired"   # every PASS carries it (review N5)
 PRICE_BANDS = ((10, 20, "10-20"), (20, 50, "20-50"), (50, 100, "50-100"), (100, 1e18, "100+"))
 DAILY_BACK = 60                                 # daily bars, 60 sessions before each test session
 SPLIT_TOL = 0.10
@@ -84,7 +85,9 @@ RESOLUTIONS = {
     "R9_trend_score_rank": "percentile rank = (n below + 0.5 x n equal incl. self) / n among that session's events "
                            "with T1 and T2 both defined",
     "R10_terciles": "terciles of TREND_SCORE pooled over all test-session events: rank percentile p of the score "
-                    "among all scored events (same rule as R9); BOTTOM p < 1/3, TOP p >= 2/3",
+                    "among all scored events (same rule as R9); BOTTOM p < 1/3, TOP p >= 2/3. R9/R10 pooled tercile "
+                    "cut points read LATER sessions' feature values (T1/T2 scores, never outcomes); a forward test "
+                    "cannot pool future sessions and would have to rank across the universe at t instead",
     "R11_HTF_60": "the 60-min EMA series runs over ADJUSTED 60-min bars of the 20 look-back sessions + today; "
                   "missing (event excluded from H2, counted in count.json: htf_missing_no_factor_today, "
                   "htf_missing_ema_warmup_lt141_bars, htf_missing_lt3_15min_bars) when fewer than 140 completed "
@@ -922,6 +925,8 @@ def nh_hypothesis(rows, sel, better, z=Z_NH):
         v["label"] = "NAME SELECTION (not an entry signal)"
     elif v["verdict"] == "PASS":
         v["label"] = "PASS (reruns on >= 60 earlier sessions and on IEX bars required before any forward test)"
+    if v["verdict"] == "PASS":
+        v["why"].append(ACTION_BLOCKED)
     if v["drop_rates"]["failed_data"]:
         v["failed_data"] = True
         mark_failed_data(v)
@@ -951,6 +956,7 @@ def rn_hypothesis(rows, projection):
     if v["verdict"] == "PASS":
         v["label"] = ("PASS (name_history earlier-period and IEX reruns required)" if v["control"]["positive"]
                       else "RELATIVE ONLY")
+        v["why"].append(ACTION_BLOCKED)
     if v["drop_rates"]["failed_data"]:
         mark_failed_data(v)
     return v
@@ -1276,7 +1282,9 @@ def render_report(res) -> str:
                  f"t {_f(p['t'], 2)} (crit {_f(p.get('t_crit'), 2)}), halves "
                  f"{_f(v['halves']['A']['coef'])} / {_f(v['halves']['B']['coef'])}, better group "
                  f"{_f(v['better']['coef'])} bp; {'; '.join(v['why'])}")
-    L += ["", "Information cells are in result.json (info, rn_info); none can be promoted.", ""]
+    L += ["", "Round-number grid (prereg design): $5 levels at $50 and above, so above $3,333 the 0.15% band "
+          "(>= $5) always reaches the next level and EVERY event there is BELOW.", "",
+          "Information cells are in result.json (info, rn_info); none can be promoted.", ""]
     return "\n".join(L)
 
 
