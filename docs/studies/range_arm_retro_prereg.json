@@ -1,0 +1,15 @@
+{
+ "study": "Range entry, RETRO check: the range_arm rule (docs/studies/range_arm_replay_prereg.json, as amended, code 27b5081+) replayed once over the recorded sessions before its build, as an independent sample.",
+ "registered_at": "2026-10-09 ~05:30 ET, before any of these sessions is replayed with range_arm",
+ "registered_before_results": true,
+ "origin": "Operator 10/9: what we have learned since the old buy-low design should change its outcome; get the answer sooner than the ~10/26 forward read.",
+ "sessions": "the recorded sessions 2026-09-24, 09-25, 09-28, 09-29, 09-30, 10-01, 10-02, 10-05, 10-06, 10-07 (~/session_snapshots); 2026-10-08 is EXCLUDED (its range_arm P&L was already seen on the development night). Each session is replayed with the current code: base (the reference, the day's own recorded config), range_arm and range_arm_rerun, into /tmp/ra_retro.",
+ "rules": "identical to range_arm_replay_prereg.json: entry, exit, control (tools/studies/range_arm_control.py, seed 71), costing (full SIP spread, no-NBBO = day median), fill re-scoring, per-input build checks (a session failing the build check is excluded and counted).",
+ "pass": "the forward prereg's bar computed by `range_arm_control.py score <days> --dir /tmp/ra_retro --read` on these sessions: net > 0 with t >= 2 under all fill rules, >= 60 trades, negative on <= 30% of days, drop-best-day and drop-top-5-symbols still > 0, minus control >= +3 bp t >= 2, minus reference >= +3 bp t >= 2. ONE read.",
+ "use": "INFORMATION for the operator's decision timing only. It cannot switch anything on by itself: the forward 12-session read stays binding. A retro FAIL with a forward PASS, or the reverse, is reported as a conflict, and the forward result decides.",
+ "caveats": [
+  "older recordings were made under older desk configs and data fixes; the replay's live-buy recall was ~27-62%",
+  "the base reference replays each day with its own recorded config, so it is not today's live setup",
+  "replay runs only outside 09:00-16:30 ET (Alpaca budget); the run pauses through market hours"
+ ]
+}
