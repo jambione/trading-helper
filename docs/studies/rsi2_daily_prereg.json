@@ -1,0 +1,37 @@
+{
+ "study": "Connors RSI-2 on DAILY bars as a day-trading name picker: does a liquid stock that closed above its 200-day average, below its 5-day average, with a 2-day RSI under 10, do better from the next day's open to its close than other liquid stocks above their 200-day average that day, after cost?",
+ "registered_at": "2026-10-09 (evening, after the close), before any script exists and before any outcome on this rule",
+ "registered_before_results": true,
+ "origin": "Indicator Usage Audit (10/9, operator 'queue up the auditor's tests'): candidate 2. The desk computes CM RSI-2 (signals.py compute_cm_rsi_lower) on 1-minute bars, so its SMA(200)/SMA(5) are minutes, not days; Larry Connors designed the rule for daily bars. It has never been tested on daily bars here.",
+ "prior": "LOW. Connors' published edge is a 1-5 day mean-reversion bounce; much of a pullback bounce typically arrives OVERNIGHT (close to open), which a day trader buying at the open does not capture. The published edge is widely reported to have faded since the 2000s. Related results here: yesterday's strongest above-SMA50 names held open->close FAILED over 10 years (-28/-65 bp/day net); gap-down > 1% names fade intraday (z -3.7), and RSI-2 < 10 names often gap down.",
+ "data": "the lh_cache liquid daily panel (~/lh_cache, lh_core.load()), SIP daily bars fetched with adjustment=all (lh_fetch.py): o and c are ADJUSTED open/close, cf = c forward-filled, rc = raw close rebuilt from a month-end factor (can misclassify the $10 floor for days before a split in a split month), adv20; 2016-01-04 to 2026; after the 200-day warm-up the first signal is ~2016-10. The same panel tools/studies/day_hold.py long() uses. No network.",
+ "signal": "at the close of day p = t-1, on ADJUSTED closes (cf): SMA200 = mean of the 200 closes ending p, requiring >= 200 FINITE (not forward-filled) c values in that window; SMA5 = mean of the 5 closes ending p; RSI2 = Wilder RSI with period 2 on cf (alpha 1/2, seeded over the prior history, as signals.py compute_cm_rsi_lower but daily); SIGNAL if cf[p] > SMA200 AND cf[p] < SMA5 AND RSI2[p] < 10.",
+ "universe": "names with raw close rc[p] >= $10 AND adv20[p] >= $20M AND cf[p] > SMA200[p] AND a finite open and close on day t (the CONTROL pool is this universe minus the day's signal names).",
+ "trade": "buy at the open of day t, sell at the close of day t (open->close, ID = c[t]/o[t] - 1; same-day adjusted o and c share one adjustment factor, so the ratio is exact). Cost 10 bp round trip (absolute leg); 20 bp sensitivity.",
+ "statistic": "per day with >= 1 signal name and >= 30 control names: (mean ID of signal names) - (mean ID of control names); mean over days; t = overnight_rsp_hedge.mean_stat (SE = the max of plain, Newey-West 5 and Newey-West 9, because signal baskets persist 2-3 days). Halves: 2016-2020 and 2021-2026 (as day_hold long). Per-day absolute: mean signal ID - 10 bp.",
+ "pass": "in BOTH halves: signal minus control >= +5 bp per day with t >= 2.0 (mean_stat t), AND signal net (after 10 bp) > 0; AND >= 200 signal days per half. If the relative leg passes but the absolute leg fails in a half: RELATIVE-ONLY = FAIL as a picker (it may earn a ranking forward prereg on the desk's own names). A PASS earns a skeptic review and then a forward test on the desk's candidate lists (day-hold style, live data), never a live switch.",
+ "fail": "anything else is FAIL; fewer than 200 signal days in a half = UNDERPOWERED = FAIL.",
+ "information_only": [
+  "every line below per half with the same statistic",
+  "close(p) -> open(t) gap of signal names vs control (where the classic bounce goes); a positive result only earns an OVERNIGHT prereg (31 bp market-order cost, SPY-hedged), never a pass here",
+  "close(p) -> close(t) (the swing version)",
+  "Connors' own exit: hold until a close above SMA5, max 10 days (swing; not day trading)",
+  "RSI2 < 5 instead of < 10",
+  "attribution control (a): pulled-back names with RSI2 in [10, 30) (above SMA200, below SMA5) instead of the universe",
+  "attribution control (b): the universe control matched on the decile of the 2-day return",
+  "beta: the daily difference regressed on SPY open->close (alpha reported), and the per-name volatility gap signal vs control",
+  "robustness: drop the top 3 days and, separately, the top 5 names",
+  "by signal-count tercile per day (selloff days with hundreds of names vs days with a few)",
+  "per-name spread proxy (Abdi-Ranaldo / Corwin-Schultz from the panel) for signal vs control",
+  "signal names per day, and the share that gapped down > 1% at the open of t"
+ ],
+ "no_retuning": "200 / 5 / RSI2 < 10, the $10 / $20M universe, the open->close hold, the halves and the cost are fixed; anything else is information or a new prereg.",
+ "caveats": [
+  "lh_cache is a liquid panel of then-listed names; survivorship as in earlier long-history studies",
+  "fills at the SIP daily-bar open and close (not necessarily the auction prints); the desk's live fills at IEX prices differ",
+  "a daily-bar result transfers to the desk only through a forward test on its own names",
+  "a reused ticker drops the old company's history (lh_fetch.py); inactive names are otherwise included"
+ ],
+ "script": "tools/studies/rsi2_daily.py, written after this file is committed; it may not change anything above",
+ "amended": "2026-10-09 evening, before any script, per the result-skeptic FIX FIRST: data text corrected (SIP adjustment=all; cf = c ffilled; rc month-end factor caveat; first signal ~2016-10), >= 200 finite closes for SMA200, mean_stat t (max of plain/NW5/NW9), information lines per half, close->open only earns an overnight prereg, attribution controls (RSI2 10-30 pullbacks; 2-day-return decile match), beta/vol diagnostic, drop-top robustness, signal-count terciles, spread proxy, ticker-reuse caveat. Round 2 (skeptic OK); caveat wording: SIP daily-bar open/close."
+}
