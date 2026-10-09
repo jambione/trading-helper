@@ -4,6 +4,7 @@ held 10:30 -> 15:54 bar close with only a -3% loss limit and red-knife exits; vs
 
 Commands (on the mini, from the repo root, .venv/bin/python):
   pilot   fetch (outside 09:00-16:30 ET) and score the pilot sessions 2026-09-08 .. 2026-10-08 -> WORK/pilot.json
+  forward the forward run, sessions 2026-10-09 .. today (nightly, after 16:30)  -> WORK/forward.json
   long    the 10-year daily skeleton on the lh_cache panel (no network)          -> WORK/long.json
 Bars: SIP 1-minute RAW via name_history.StudyMarket (shared cache); Alpaca stamps a bar at its START.
 """
@@ -180,31 +181,30 @@ def load_candidates(lo=PILOT_LO, hi=PILOT_HI, counts=None):
     return out
 
 
-def day_minutes(mkt, sym, day, counts):
+def day_minutes(mkt, sym, day, counts, hi=PILOT_HI):
     month = day[:7]
     mf = mkt._minfile(sym)
-    for hi in (PILOT_HI, NH_HI) if month == PILOT_HI[:7] else (NH_HI, PILOT_HI):
-        if month == PILOT_HI[:7] and hi == NH_HI:
-            continue                       # the history cache's October file ends 10-07: never use it for the pilot's last month
-        if f"{month}|{hi}" in mf:
-            rows = mf[f"{month}|{hi}"]
+    keys = [hi] if month == hi[:7] else [NH_HI, PILOT_HI, hi]     # a month file is complete only when keyed past it
+    for k in keys:
+        if f"{month}|{k}" in mf and (month < k[:7] or k == hi):
+            rows = mf[f"{month}|{k}"]
             break
     else:
-        rows = mkt.minute_month(sym, month, PILOT_HI)
+        rows = mkt.minute_month(sym, month, hi)
         counts["minute_month_fetched"] += 1
     return [r for r in rows if BS.et_day(r[0]) == day]
 
 
-def pilot():
+def pilot(lo=PILOT_LO, hi=PILOT_HI, out_name="pilot.json"):
     os.makedirs(WORK, exist_ok=True)
     counts = collections.Counter()
-    cand = load_candidates(counts=counts)
+    cand = load_candidates(lo, hi, counts=counts)
     days = sorted(cand)
     mkt = NH.StudyMarket()
     syms = sorted({s for d in days for s in cand[d]} | {"SPY"})
     draw_lo = "2026-05-01"
-    raw = mkt.daily_bars(syms, draw_lo, PILOT_HI, "raw")
-    adj = mkt.daily_bars(syms, draw_lo, PILOT_HI, "all")
+    raw = mkt.daily_bars(syms, draw_lo, hi, "raw")
+    adj = mkt.daily_bars(syms, draw_lo, hi, "all")
     spy_days = sorted(raw.get("SPY", {}))
     sessions = [d for d in days if d in raw.get("SPY", {})]
     counts["calendar_dropped_days"] = len(days) - len(sessions)
@@ -232,7 +232,7 @@ def pilot():
                 counts["corp_action_D"] += 1
                 continue
             try:
-                bars = day_minutes(mkt, s, d, counts)
+                bars = day_minutes(mkt, s, d, counts, hi)
             except BRO.FetchFail as e:
                 if "429" in str(e):
                     raise SystemExit(f"aborted: 429 on {s} {d}")
@@ -255,7 +255,7 @@ def pilot():
         picks = sorted([p for p in pool if p["q"]], key=rank_key)[:TOP_K]
         k = len(picks)
         elig = [p for p in pool if p["f"]["P"] >= MIN_PX and p["f"]["dv"] >= MIN_DV]
-        spy_b = day_minutes(mkt, "SPY", d, counts)
+        spy_b = day_minutes(mkt, "SPY", d, counts, hi)
         spy = simulate(spy_b, ml=-1, knife=False)
         row = {"day": d, "k": k, "picks": [p["sym"] for p in picks], "n_cand": len(cand[d]), "n_elig": len(elig),
                "spy_bp": None if spy is None else round(spy[0] - 2.0, 2),
@@ -291,7 +291,7 @@ def pilot():
     res = {"prereg": "docs/studies/day_hold_prereg.json (df0ef45)", "resolutions": RESOLUTIONS, "counts": dict(counts),
            "aborted_days": aborted, "days": rows}
     res["summary"] = summarize(rows)
-    json.dump(res, open(os.path.join(WORK, "pilot.json"), "w"), indent=1, default=str)
+    json.dump(res, open(os.path.join(WORK, out_name), "w"), indent=1, default=str)
     P_(json.dumps({k: v for k, v in res.items() if k not in ("days",)}, indent=1, default=str))
 
 
@@ -367,6 +367,14 @@ def long():
     P_(json.dumps(res, indent=1, default=str))
 
 
+def forward():
+    """The pre-registered forward run: every session after the pilot through today (after hours), scored the same way.
+    Read at 40 total sessions (pilot + forward); nightly numbers are direction only."""
+    import datetime as _dt
+    today = _dt.datetime.now(BS.ET).strftime("%Y-%m-%d") if hasattr(BS, "ET") else _dt.date.today().isoformat()
+    pilot("2026-10-09", today, "forward.json")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
-    {"pilot": pilot, "long": long}.get(cmd, lambda: P_(__doc__))()
+    {"pilot": pilot, "long": long, "forward": forward}.get(cmd, lambda: P_(__doc__))()
