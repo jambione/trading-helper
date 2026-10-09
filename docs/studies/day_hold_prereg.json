@@ -1,0 +1,49 @@
+{
+ "study": "Day hold: pick 2-3 names from the morning's own sources (trending, AI, movers) at 10:30, hold to 15:55 with only a red-knife exit and a loss limit (no ratchet). One round trip per name per day. Does it make money and beat random picks from the same lists, SPY, and the day desk?",
+ "registered_at": "2026-10-09 ~04:45 ET, before any day-hold outcome is computed (the minute bars of many candidate names sit in the history-study cache; no hold path or return of any candidate has been looked at)",
+ "registered_before_results": true,
+ "origin": "Operator 10/9: 'not overnight and not day trading ... 2 or 3 stocks that we run with and hold till the end of the day ... only sell on a red knife, end of day, or a loss limit; no ratchet; above 5% think about selling a portion'. Rationale: one round trip removes most of the spread cost that is about half the day desk's loss.",
+ "prior": "LOW to MODERATE. Against: the screened universe fades 30 min to 5 days (the-universe-fades-at-every-horizon); desk fills drift -9/-28/-43 bp at 5/15/30 min; new-high events lose ~-11 bp hedged net30 (name_history 10/9). For: name selection is the only place signal appeared; above-50-day-MA names drifted up; gap-down > 1% fades all day; 'up > 2.35% in the first 76 min' held better (steady-runway check).",
+ "pilot": {
+  "sessions": "every RTH session 2026-09-08 .. 2026-10-08 with admit_range rows (2026-09-07 was Labor Day; excluded), about 22-23; then the same rule runs forward nightly (scored from bars, no orders) with a second read at 40 total sessions",
+  "candidates": "symbols with an ai_reports/admit_range.jsonl row on day D, source in {trending, agy, xai, bb_live, movers, momentum, tight}, row ts between 04:00 and 10:30 ET; common stock only (ticker_filters.is_common; levered/inverse ETPs excluded via is_levered_etp with the cached asset name)",
+  "features_at_1030": "from SIP 1-minute RTH bars 09:30-10:30 of D and SIP daily bars through D-1 (raw prices for price levels, adjusted daily closes for SMA50): P = close of the bar ending 10:30; open O = first RTH bar's open; morning high MH / low ML = max high / min low of bars 09:30-10:30; prior close PC = raw daily close of D-1; SMA50 = mean of the 50 adjusted daily closes ending D-1",
+  "qualify": "P >= $10; D-1 adjusted close > SMA50; gap = O/PC - 1 >= -1%; day change chg = P/PC - 1 in [+2%, +10%]; holding = P >= O AND P >= 0.99 x MH",
+  "rank": "by the number of distinct source FAMILIES that listed the name by 10:30 (trending = {trending}; AI = {agy, xai, bb_live}; movers = {movers, momentum, tight}), descending; ties by 09:30-10:30 dollar volume, descending. Take the top 3 (fewer if fewer qualify; a day with none is a cash day, scored 0).",
+  "entry": "the open of the 10:30-10:31 one-minute bar",
+  "exits": "per name, scanning 1-minute bars from the 10:30-10:31 bar on: LOSS LIMIT stop = entry x 0.97, a bar with low <= stop exits at min(stop, that bar's open); RED KNIFE (a) a 1-minute close below ML, or (b) a 1-minute close <= 0.98 x the highest close of the previous 5 bars -> exit at the next bar's open; TIME the close of the bar ending 15:55. The loss limit is checked before the knife on the same bar. No ratchet, no trail, no target.",
+  "cost": "10 bp round trip per name (one entry and one exit on liquid >= $10 names; the desk's measured cost is ~10 bp per round trip on all names and 2-6 bp on tight names); 20 bp as a sensitivity that must also pass",
+  "portfolio": "equal weight across the day's picks; daily net = mean of the picks' net bp (cash day = 0)"
+ },
+ "controls": {
+  "C1_random_same_lists": "per day, 3 names drawn from that day's candidates with P >= $10 (no other filter), same entry, exits and cost; 200 draws per day with seeds sha256('dayhold|' + day + '|' + k); the day's control = the mean over draws",
+  "C2_spy": "SPY 10:30-10:31 bar open -> 15:55 bar close, 2 bp cost",
+  "desk": "information: the day desk's realised P&L per day from ai_reports/outcomes.jsonl divided by $2,000 paper equity, in bp"
+ },
+ "statistic": "per day: picks net, picks minus C1, picks minus C2; mean over days, t across days (df = days - 1); cash days included at 0 (counted)",
+ "pass": "PILOT (22-23 sessions) earns only the forward run: picks net > 0 AND picks minus C1 >= +20 bp/day with t >= 2 AND picks minus SPY > 0, under both 10 and 20 bp costs, and still > 0 after dropping the best day. FORWARD READ at 40 total sessions: the same bar. A pass at 40 sessions earns a skeptic review of the positive, then a paper switch-on as a separate desk mode; never live money first (live_mirror rules).",
+ "fail": "picks minus C1 <= 0 at either read with MDE (2.84 x SE) <= 40 bp/day, or t <= -2 -> FAIL (closes the day-hold question for this rule). Otherwise UNDERPOWERED (the forward run continues to 40 sessions).",
+ "long_history_secondary": {
+  "question": "does the daily-data proxy of the rule beat the liquid universe open->close over 10 years?",
+  "data": "the lh_cache Alpaca SIP daily panel 2016-2026 (adjusted o/c, raw close rc), the frozen overnight universe: rc(D-1) >= $10, ADV20 >= $50M",
+  "rule": "on day D: D-1 close > SMA50 (D-1), gap = o(D)/c(D-1) - 1 in [-1%, +5%]; rank by ADV20 descending among those with gap >= 0; top 3; hold open -> close; 10 bp cost",
+  "control": "the equal-weight mean open->close of all universe names that day (10 bp cost) and 3 random universe names (200 seeded draws)",
+  "pass": "excess over the universe > 0 with t >= 2 (SE = max(plain, NW5)) in BOTH halves 2016-2020 and 2021-2026",
+  "note": "no source lists, no 10:30 features, no intraday exits exist historically; this tests only the daily skeleton (trend + gap + liquidity, hold the session)"
+ },
+ "information_only": [
+  "partial take: sell half at entry x 1.05 (limit, filled when a bar's high >= it), hold the rest under the same rules",
+  "no-knife variant (loss limit + time only)",
+  "top-2 instead of top-3",
+  "exit reason mix and net per reason",
+  "each qualify filter dropped one at a time (which filter does the work)",
+  "per source family: picks listed by 1, 2, 3 families"
+ ],
+ "no_retuning": "the 10:30 decision time, filters, rank, top 3, -3% loss limit, knife rules, 15:55 exit, costs and the 40-session read are fixed; any change is a new pre-registration",
+ "caveats": [
+  "22-23 pilot sessions in one regime (Sept-Oct 2026); the pilot cannot prove an edge, only stop or continue",
+  "SIP bars; the live desk sees IEX, so a pass needs the forward run on the live feed's prices as well",
+  "admit_range rows are the desk's admissions, a filtered subset of what the sources listed",
+  "fills at bar opens, no queue or slippage model beyond the flat cost"
+ ]
+}
