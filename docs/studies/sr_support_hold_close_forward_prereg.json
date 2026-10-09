@@ -29,5 +29,6 @@
   "hold-to-close returns depend heavily on the market's daily drift; the paired same-hour control is meant to absorb that",
   "ai_watch_ob_resist_skip=true is live from 10/06; it changes the desk's own arms (information control), not the support arm",
   "~10-20 sessions = 5-10 day clusters per half; t is weak at that size"
- ]
+ ],
+ "frozen": "FROZEN 2026-10-09 (operator, day-trading queue triage): no verdict will be read and nothing will be switched on from this test. Reason: low prior, same family as failed tests (chart setups / support levels / exit shapes), and live config churn (~3.5 ships/session vs ~12 fills) keeps every lever underpowered. Priority goes to day_hold (read ~11/4), G2 cost arms (10/15) and the needle C2 / room-HOD out-of-period tests. Unfreezing requires a new decision by the operator. sr_support_hold_close_score.py is not run for a verdict (it was not in the nightly chain)."
 }

@@ -11,5 +11,6 @@
   "older recordings were made under older desk configs and data fixes; the replay's live-buy recall was ~27-62%",
   "the base reference replays each day with its own recorded config, so it is not today's live setup",
   "replay runs only outside 09:00-16:30 ET (Alpaca budget); the run pauses through market hours"
- ]
+ ],
+ "frozen": "FROZEN 2026-10-09 (operator, day-trading queue triage): no verdict will be read and nothing will be switched on from this test. Reason: low prior, same family as failed tests (chart setups / support levels / exit shapes), and live config churn (~3.5 ships/session vs ~12 fills) keeps every lever underpowered. Priority goes to day_hold (read ~11/4), G2 cost arms (10/15) and the needle C2 / room-HOD out-of-period tests. Unfreezing requires a new decision by the operator. The retro read is not run."
 }

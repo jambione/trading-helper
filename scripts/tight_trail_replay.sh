@@ -33,7 +33,7 @@ R pr_engine --set ai_watch_exhaustion_live=false   # %R fix test: engine minute-
 R presq_engine --set ai_watch_presquare_only=true --set ai_watch_exhaustion_live=false   # presquare-only on the engine %R line
 # Range entry (docs/studies/range_arm_replay_prereg.json): range rule in, range exit out. Replayed twice for the
 # prereg's determinism check; range_arm_control.py check writes the per-input counts (never P&L).
-R range_arm --set ai_watch_range_arm=true --set ai_exit_range=true
-R range_arm_rerun --set ai_watch_range_arm=true --set ai_exit_range=true
-.venv/bin/python tools/studies/range_arm_control.py check $d --dir /tmp/tt_run > /tmp/tt_run/$d-range_arm_check.log 2>&1
+# FROZEN 2026-10-09 (range_arm_replay_prereg.json "frozen"): R range_arm --set ai_watch_range_arm=true --set ai_exit_range=true
+# FROZEN 2026-10-09 (range_arm_replay_prereg.json "frozen"): R range_arm_rerun --set ai_watch_range_arm=true --set ai_exit_range=true
+# FROZEN 2026-10-09 (range_arm_replay_prereg.json "frozen"): .venv/bin/python tools/studies/range_arm_control.py check $d --dir /tmp/tt_run > /tmp/tt_run/$d-range_arm_check.log 2>&1
 echo DONE $d > /tmp/tt_run/done-$d
