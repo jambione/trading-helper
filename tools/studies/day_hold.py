@@ -15,6 +15,7 @@ import json
 import math
 import os
 import random
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -42,6 +43,7 @@ RESOLUTIONS = {
     "corp_action": "a corporate action on D = adjusted/raw daily close factor on D differs from D-1 by > 0.01%",
     "control_mean": "C1 = mean over 200 draws of the equal-weight k-name portfolio",
     "t": "plain t across days (mean / (sd / sqrt(n)))",
+    "common_stock": "fund/ETP names excluded with lh_fetch.py's FUNDISH rule on Alpaca asset names (lh_cache dump, then the desk's cached names); unknown names kept and counted",
 }
 
 
@@ -117,8 +119,41 @@ def rank_key(c):
 
 
 # ------------------------------------------------------------------ data
-def load_candidates(lo=PILOT_LO, hi=PILOT_HI):
+# lh_fetch.py's fund-name rule (the overnight universe's common-stock filter), applied to Alpaca asset names
+FUNDISH = re.compile(r"\b(ETF|ETN|FUND|ISHARES|SPDR|PROSHARES|DIREXION|INVESCO|VANGUARD|INDEX|PORTFOLIO|TREASURY|BOND|MUNICIPAL|"
+                     r"LEVERAGED|INVERSE|2X|3X|BULL|BEAR|WARRANTS?|RIGHTS?|UNITS?|PREFERRED|DEPOSITARY SHARES? REPR|NOTES?|DEBENTURES?|"
+                     r"ACQUISITION CORP|ACQUISITION CO|SPAC|CAPITAL TRUST|TRUST UNITS?|ROYALTY TRUST|CLOSED.END|MUTUAL)\b", re.I)
+
+
+def asset_names():
+    """{symbol: name} from the lh_cache asset dump (active + inactive) and the desk's asset-name cache."""
+    names = {}
+    try:
+        raw = json.load(open(os.path.expanduser("~/lh_cache/assets_raw.json")))
+        for st in ("active", "inactive"):
+            for a in raw.get(st, []):
+                names.setdefault(a["symbol"], a.get("name") or "")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from ticker_filters import cached_asset_name
+        names["__cached__"] = cached_asset_name
+    except Exception:  # noqa: BLE001
+        pass
+    return names
+
+
+def is_fund(sym, names):
+    nm = names.get(sym)
+    if not nm and callable(names.get("__cached__")):
+        nm = names["__cached__"](sym)
+    return None if not nm else bool(FUNDISH.search(nm))
+
+
+def load_candidates(lo=PILOT_LO, hi=PILOT_HI, counts=None):
     from ticker_filters import is_common, is_levered_etp
+    counts = counts if counts is not None else collections.Counter()
+    names = asset_names()
     out = collections.defaultdict(dict)
     for line in open(os.path.join(ROOT, "ai_reports", "admit_range.jsonl")):
         try:
@@ -133,6 +168,12 @@ def load_candidates(lo=PILOT_LO, hi=PILOT_HI):
             continue
         if not is_common(s) or is_levered_etp(s):
             continue
+        fund = is_fund(s, names)
+        if fund:
+            counts["fund_or_etp_excluded"] += 1
+            continue
+        if fund is None:
+            counts["asset_name_unknown_kept"] += 1
         c = out[d].setdefault(s, {"sym": s, "fams": set(), "ts": float(ts)})
         c["fams"].add(SOURCES[src])
         c["ts"] = min(c["ts"], float(ts))
@@ -142,7 +183,9 @@ def load_candidates(lo=PILOT_LO, hi=PILOT_HI):
 def day_minutes(mkt, sym, day, counts):
     month = day[:7]
     mf = mkt._minfile(sym)
-    for hi in (NH_HI, PILOT_HI):
+    for hi in (PILOT_HI, NH_HI) if month == PILOT_HI[:7] else (NH_HI, PILOT_HI):
+        if month == PILOT_HI[:7] and hi == NH_HI:
+            continue                       # the history cache's October file ends 10-07: never use it for the pilot's last month
         if f"{month}|{hi}" in mf:
             rows = mf[f"{month}|{hi}"]
             break
@@ -155,7 +198,7 @@ def day_minutes(mkt, sym, day, counts):
 def pilot():
     os.makedirs(WORK, exist_ok=True)
     counts = collections.Counter()
-    cand = load_candidates()
+    cand = load_candidates(counts=counts)
     days = sorted(cand)
     mkt = NH.StudyMarket()
     syms = sorted({s for d in days for s in cand[d]} | {"SPY"})
