@@ -51,3 +51,14 @@ def test_qualifies_filters():
     assert not DH.qualifies({**f, "P": 101.5}, 100, True)                         # chg < 2%
     assert not DH.qualifies({**f, "MH": 105}, 100, True)                          # not holding near high
     assert not DH.qualifies({**f, "dv": 4e6}, 100, True)
+
+
+def test_giveback_and_breakeven_and_resist():
+    up = [(100, 102.5, 99.95, 102.4), (102.4, 102.5, 102.3, 102.4), (102.4, 102.4, 101.0, 101.1)]
+    g, why = DH.simulate(day(up), ml=99.0, giveback=True)
+    assert why == "giveback" and round(g, 1) == round(1e4 * (101.25 / 100 - 1), 1)    # 100 + 0.5 x 2.5
+    be = [(100, 101.6, 99.95, 101.5), (101.5, 101.5, 101.4, 101.45), (101.0, 101.0, 99.5, 99.6)]
+    g, why = DH.simulate(day(be), ml=99.0, breakeven=True)
+    assert why == "breakeven" and round(g, 1) == 0.0
+    g, why = DH.simulate(day([(100, 100.2, 99.95, 100.1), (100.1, 100.9, 100.0, 100.8)]), ml=99.0, resist=100.5)
+    assert why == "resist" and round(g, 1) == 50.0

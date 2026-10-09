@@ -48,5 +48,13 @@
   "admit_range rows are the desk's admissions, a filtered subset of what the sources listed",
   "fills at bar opens, no queue or slippage model beyond the flat cost"
  ],
- "amended": "2026-10-09 ~05:15 ET, before any outcome: skeptic FIX FIRST (8) applied - cash days score 0 for C1 too, invested-days-only must also pass; C1 draws k = picks that day; start-stamped bar labels (P = 10:29 close, entry = 10:30 open, exit = 15:54 close); fetch bars for every candidate, log/abort on gaps and 429s; dedupe + $5M morning dollar volume; 40-session read is PASS or FAIL with forward-only sessions also > 0; SPY comparison information only; long-history selection on D-1 data only, no gap filter, point-in-time universe. Notes: 20 bp is the realistic cost, corporate actions on D excluded, per-week results."
+ "amended": "2026-10-09 ~05:15 ET, before any outcome: skeptic FIX FIRST (8) applied - cash days score 0 for C1 too, invested-days-only must also pass; C1 draws k = picks that day; start-stamped bar labels (P = 10:29 close, entry = 10:30 open, exit = 15:54 close); fetch bars for every candidate, log/abort on gaps and 429s; dedupe + $5M morning dollar volume; 40-session read is PASS or FAIL with forward-only sessions also > 0; SPY comparison information only; long-history selection on D-1 data only, no gap filter, point-in-time universe. Notes: 20 bp is the realistic cost, corporate actions on D excluded, per-week results.",
+ "exit_variants": {
+  "registered": "2026-10-09 ~07:00 ET (operator), AFTER the pilot was seen but BEFORE any forward session is scored; the pilot numbers of these variants are information only and never count toward their read",
+  "resist": "main rule + sell at the nearest charted order-block resistance bottom above the entry, known at entry (ob_observe settings: 1-min bars of the 2 prior sessions + today through 10:29, swing 10, 3 charted per side); fill at max(R, bar open)",
+  "giveback": "main rule + once the peak (highs of completed bars since entry) >= entry x 1.02, sell when a bar's low <= entry + 0.5 x (peak - entry), at min(level, bar open)",
+  "breakeven": "main rule + once a completed bar's high since entry >= entry x 1.015, the stop moves to the entry price",
+  "read": "at the 40-session read, on FORWARD sessions only: a variant replaces the main exit only if (variant - main) per invested day >= +10 bp with t >= 2.4 (Bonferroni 3) AND the variant itself meets the main pass bar; otherwise the main rule stands."
+ },
+ "amended_2": "2026-10-09 ~07:00 ET: operator asked for exits from existing features to reduce loss; three exit variants registered (resist, giveback, breakeven) as information with their own forward-only replacement bar; main rule unchanged."
 }

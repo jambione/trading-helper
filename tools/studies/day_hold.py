@@ -83,8 +83,14 @@ def qualifies(f, pc, above_sma):
             and f["P"] >= f["O"] and f["P"] >= HOLD_PCT * f["MH"] and f["dv"] >= MIN_DV)
 
 
-def simulate(bars, ml, knife=True, partial=False):
-    """Hold from the open of the bar stamped 10:30 (or 10:31..10:34). -> (gross_bp, reason) or None."""
+def simulate(bars, ml, knife=True, partial=False, resist=None, giveback=False, breakeven=False):
+    """Hold from the open of the bar stamped 10:30 (or 10:31..10:34). -> (gross_bp, reason) or None.
+    Exit variants (amended_2, information until the 40-session read), each ON TOP of the main rule:
+      resist     sell at the nearest charted order-block resistance bottom above the entry, known at entry
+                 (a bar with high >= R fills at max(R, that bar's open))
+      giveback   once the peak (highs of COMPLETED bars since entry) is >= entry x 1.02, sell when a bar's low <=
+                 entry + 0.5 x (peak - entry), at min(that level, the bar's open)
+      breakeven  once a completed bar's high since entry is >= entry x 1.015, the stop becomes the entry price"""
     after = [b for b in bars if T_ENTRY <= BS.et_hm(b[0]) <= T_EXIT]
     if not after or BS.et_hm(after[0][0]) > T_ENTRY + 4:
         return None
@@ -99,10 +105,19 @@ def simulate(bars, ml, knife=True, partial=False):
             r = 0.5 * (half_px / entry - 1) + 0.5 * r
         return 1e4 * r, why
 
+    peak = None
     for i, b in enumerate(after):
         st, o, h, l, c = b[0], b[1], b[2], b[3], b[4]
+        if breakeven and peak is not None and peak >= entry * 1.015:
+            stop = max(stop, entry)
         if l <= stop:
-            return ret(min(stop, o), "stop")
+            return ret(min(stop, o), "stop" if stop < entry else "breakeven")
+        if giveback and peak is not None and peak >= entry * 1.02:
+            lvl = entry + 0.5 * (peak - entry)
+            if l <= lvl:
+                return ret(min(lvl, o), "giveback")
+        if resist is not None and h >= resist:
+            return ret(max(resist, o), "resist")
         if partial and not half_done and h >= entry * 1.05:
             half_done, half_px = True, entry * 1.05
         if knife and i + 1 < len(after):
@@ -112,7 +127,24 @@ def simulate(bars, ml, knife=True, partial=False):
             if len(closes) >= 5 and c <= KNIFE_DROP * max(closes[-5:]):
                 return ret(nxt_open, "knife_drop")
         closes.append(c)
+        peak = h if peak is None else max(peak, h)
     return ret(after[-1][4], "time")
+
+
+def resistance_at_entry(bar_rows, entry_ts, entry_px):
+    """Nearest charted resistance bottom above entry_px from bars that closed by entry_ts (ob_observe settings:
+    1-min, swing 10, 3 charted per side, the session window the caller passes). None when there is none."""
+    from tools import order_blocks as OB
+    rows = [tuple(r[:5]) for r in bar_rows if r[0] + 60 <= entry_ts]
+    if len(rows) < 30:
+        return None
+    last = None
+    for _i, blocks in OB.order_blocks(rows, length=10, bar_sec=60.0):
+        last = blocks
+    known = [b for b in (last or []) if b.known_ts <= entry_ts]
+    ch = OB.charted(known, show=3)
+    res = [b.btm for b in ch if ((b.kind == "bear" and not b.breaker) or (b.kind == "bull" and b.breaker)) and b.btm > entry_px]
+    return min(res) if res else None
 
 
 def rank_key(c):
@@ -260,8 +292,20 @@ def pilot(lo=PILOT_LO, hi=PILOT_HI, out_name="pilot.json"):
         row = {"day": d, "k": k, "picks": [p["sym"] for p in picks], "n_cand": len(cand[d]), "n_elig": len(elig),
                "spy_bp": None if spy is None else round(spy[0] - 2.0, 2),
                "desk_bp": round(desk.get(d, 0.0) / 2000 * 1e4, 2)}
-        for variant, kw in (("main", {}), ("noknife", {"knife": False}), ("partial", {"partial": True})):
-            sims = [simulate(p["bars"], p["f"]["ML"], **kw) for p in picks]
+        for p in picks:
+            prev2 = spy_days[max(0, i - 2):i]
+            ext = []
+            for pd_ in prev2:
+                try:
+                    ext += day_minutes(mkt, p["sym"], pd_, counts, hi)
+                except BRO.FetchFail:
+                    counts["resist_prior_bars_missing"] += 1
+            after = [x for x in p["bars"] if T_ENTRY <= BS.et_hm(x[0]) <= T_ENTRY + 4]
+            p["R"] = resistance_at_entry(ext + p["bars"], after[0][0], after[0][1]) if after else None
+            counts["resist_none" if p["R"] is None else "resist_found"] += 1
+        for variant, kw in (("main", {}), ("noknife", {"knife": False}), ("partial", {"partial": True}),
+                            ("resist", {"resist": "R"}), ("giveback", {"giveback": True}), ("breakeven", {"breakeven": True})):
+            sims = [simulate(p["bars"], p["f"]["ML"], **{**kw, **({"resist": p["R"]} if kw.get("resist") else {})}) for p in picks]
             sims = [x for x in sims if x is not None]
             row[f"{variant}_gross"] = None if not picks else (sum(x[0] for x in sims) / len(sims) if sims else None)
             if variant == "main":
@@ -317,6 +361,11 @@ def summarize(rows):
         "desk_bp_per_day": tstat([r["desk_bp"] for r in rows]),
         "noknife_gross_invested": tstat([r["noknife_gross"] for r in rows if r["k"] and r["noknife_gross"] is not None]),
         "partial_gross_invested": tstat([r["partial_gross"] for r in rows if r["k"] and r["partial_gross"] is not None]),
+        **{f"{v}_gross_invested": tstat([r[f"{v}_gross"] for r in rows if r["k"] and r.get(f"{v}_gross") is not None])
+           for v in ("main", "resist", "giveback", "breakeven")},
+        **{f"{v}_minus_main_invested": tstat([r[f"{v}_gross"] - r["main_gross"] for r in rows
+                                              if r["k"] and r.get(f"{v}_gross") is not None and r.get("main_gross") is not None])
+           for v in ("resist", "giveback", "breakeven", "noknife")},
         "cash_days": sum(1 for r in rows if r["k"] == 0), "days": len(rows),
         "exit_reasons": dict(collections.Counter(x for r in rows for x in r.get("reasons", []))),
     }
