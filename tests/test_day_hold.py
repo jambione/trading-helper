@@ -62,3 +62,17 @@ def test_giveback_and_breakeven_and_resist():
     assert why == "breakeven" and round(g, 1) == 0.0
     g, why = DH.simulate(day([(100, 100.2, 99.95, 100.1), (100.1, 100.9, 100.0, 100.8)]), ml=99.0, resist=100.5)
     assert why == "resist" and round(g, 1) == 50.0
+
+
+def test_amended_3_relevance_uses_d1_close_and_dollar_volume():
+    assert DH.relevant_by_d1([0, 0, 0, 10.0, 1_000_000])          # $10 x 1M = $10M
+    assert DH.relevant_by_d1([0, 0, 0, 9.5, 2_000_000])            # >= $9 (P >= $10 reachable)
+    assert not DH.relevant_by_d1([0, 0, 0, 8.99, 5_000_000])
+    assert not DH.relevant_by_d1([0, 0, 0, 50.0, 100_000])        # $5M
+
+
+def test_amended_3_abort_counts_only_relevant_missing():
+    assert not DH.abort_amended_3(90, 2, 40, 2)                    # 5.0% of relevant: kept
+    assert DH.abort_amended_3(90, 2, 40, 3)                        # 7.5%: aborted
+    assert DH.abort_amended_3(90, 14, 40, 0)                       # 15.6% without daily bars: feed problem
+    assert DH.abort_amended_3(90, 0, 40, 1, fetch_fail=2)          # fetch failures always count (feed fault)

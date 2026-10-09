@@ -147,6 +147,22 @@ def resistance_at_entry(bar_rows, entry_ts, entry_px):
     return min(res) if res else None
 
 
+def relevant_by_d1(prev_raw):
+    """amended_3: a candidate is RELEVANT if its D-1 raw close >= $9 and D-1 dollar volume >= $10M (D-1 data only)."""
+    c, v = prev_raw[3], (prev_raw[4] if len(prev_raw) > 4 else 0) or 0
+    return c >= 9.0 and c * v >= 10e6
+
+
+def abort_amended_3(n_cand, no_daily_n, relevant_n, relevant_missing, fetch_fail=0):
+    """amended_3 abort (forward only): > 15% of candidates without D-1 daily bars, or > 5% of RELEVANT candidates
+    missing usable minute bars. Non-relevant missing names are dropped from the pool instead."""
+    if n_cand and no_daily_n / n_cand > 0.15:
+        return True
+    if fetch_fail:
+        return True if not relevant_n else (relevant_missing + fetch_fail) / relevant_n > 0.05
+    return bool(relevant_n) and relevant_missing / relevant_n > 0.05
+
+
 def rank_key(c):
     return (-c["families"], -c["dv"])
 
@@ -227,7 +243,8 @@ def day_minutes(mkt, sym, day, counts, hi=PILOT_HI):
     return [r for r in rows if BS.et_day(r[0]) == day]
 
 
-def pilot(lo=PILOT_LO, hi=PILOT_HI, out_name="pilot.json"):
+def pilot(lo=PILOT_LO, hi=PILOT_HI, out_name="pilot.json", forward_rules=False):
+    """forward_rules: amended_3 abort rule (forward sessions only; the pilot keeps the original rule)."""
     os.makedirs(WORK, exist_ok=True)
     counts = collections.Counter()
     cand = load_candidates(lo, hi, counts=counts)
@@ -253,16 +270,20 @@ def pilot(lo=PILOT_LO, hi=PILOT_HI, out_name="pilot.json"):
         prev = spy_days[i - 1]
         hist = spy_days[max(0, i - 50):i]
         pool, missing = [], 0
+        relevant_n = relevant_missing = no_daily_n = fetch_fail_n = nonrel_missing = 0
         for s, c in cand[d].items():
             r, a = raw.get(s, {}), adj.get(s, {})
             if prev not in r or d not in r or prev not in a or d not in a:
                 counts["no_daily"] += 1
                 missing += 1
+                no_daily_n += 1
                 continue
+            relevant = relevant_by_d1(r[prev])
             f_prev, f_d = a[prev][3] / r[prev][3], a[d][3] / r[d][3]
             if abs(f_d / f_prev - 1) > 1e-4:
                 counts["corp_action_D"] += 1
                 continue
+            relevant_n += relevant
             try:
                 bars = day_minutes(mkt, s, d, counts, hi)
             except BRO.FetchFail as e:
@@ -270,18 +291,31 @@ def pilot(lo=PILOT_LO, hi=PILOT_HI, out_name="pilot.json"):
                     raise SystemExit(f"aborted: 429 on {s} {d}")
                 counts["minute_fetch_fail"] += 1
                 missing += 1
+                fetch_fail_n += 1
                 continue
             f = morning(bars)
             if f is None:
                 counts["no_0930_bar"] += 1
                 missing += 1
+                relevant_missing += relevant
+                nonrel_missing += not relevant
                 continue
             counts["P_fallback"] += int(f["P_fallback"])
             closes = [a[x][3] for x in hist if x in a]
             above = len(closes) == 50 and a[prev][3] > sum(closes) / 50
             pool.append({"sym": s, "families": len(c["fams"]), "dv": f["dv"], "f": f, "bars": bars,
                          "q": qualifies(f, r[prev][3], above)})
-        if cand[d] and missing / len(cand[d]) > 0.05:
+        old_rule_abort = bool(cand[d]) and missing / len(cand[d]) > 0.05
+        miss_info = {"n_cand": len(cand[d]), "missing": missing, "no_daily": no_daily_n, "fetch_fail": fetch_fail_n,
+                     "no_0930_relevant": relevant_missing, "no_0930_nonrelevant": nonrel_missing, "relevant": relevant_n,
+                     "old_rule_abort": old_rule_abort}
+        if forward_rules:
+            if cand[d] and abort_amended_3(len(cand[d]), no_daily_n, relevant_n, relevant_missing, fetch_fail_n):
+                aborted.append({"day": d, "rule": "amended_3", **miss_info})
+                continue
+            counts["dropped_missing_nonrelevant"] += nonrel_missing
+            counts["dropped_no_daily"] += no_daily_n
+        elif cand[d] and missing / len(cand[d]) > 0.05:
             aborted.append((d, missing, len(cand[d])))
             continue
         picks = sorted([p for p in pool if p["q"]], key=rank_key)[:TOP_K]
@@ -292,6 +326,9 @@ def pilot(lo=PILOT_LO, hi=PILOT_HI, out_name="pilot.json"):
         row = {"day": d, "k": k, "picks": [p["sym"] for p in picks], "n_cand": len(cand[d]), "n_elig": len(elig),
                "spy_bp": None if spy is None else round(spy[0] - 2.0, 2),
                "desk_bp": round(desk.get(d, 0.0) / 2000 * 1e4, 2)}
+        if forward_rules:
+            row["missing"] = miss_info
+            row["old_rule_abort"] = old_rule_abort
         for p in picks:
             prev2 = spy_days[max(0, i - 2):i]
             ext = []
@@ -335,6 +372,8 @@ def pilot(lo=PILOT_LO, hi=PILOT_HI, out_name="pilot.json"):
     res = {"prereg": "docs/studies/day_hold_prereg.json (df0ef45)", "resolutions": RESOLUTIONS, "counts": dict(counts),
            "aborted_days": aborted, "days": rows}
     res["summary"] = summarize(rows)
+    if forward_rules:
+        res["summary_old_rule_days"] = summarize([r for r in rows if not r.get("old_rule_abort")])
     json.dump(res, open(os.path.join(WORK, out_name), "w"), indent=1, default=str)
     P_(json.dumps({k: v for k, v in res.items() if k not in ("days",)}, indent=1, default=str))
 
@@ -421,7 +460,7 @@ def forward():
     Read at 40 total sessions (pilot + forward); nightly numbers are direction only."""
     import datetime as _dt
     today = _dt.datetime.now(BS.ET).strftime("%Y-%m-%d") if hasattr(BS, "ET") else _dt.date.today().isoformat()
-    pilot("2026-10-09", today, "forward.json")
+    pilot("2026-10-09", today, "forward.json", forward_rules=True)
 
 
 if __name__ == "__main__":
