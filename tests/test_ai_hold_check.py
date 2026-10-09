@@ -50,3 +50,18 @@ def test_twin_labels_the_worst_n_with_symbol_tiebreak():
     items = [{"sym": "B", "pct": -0.01}, {"sym": "A", "pct": -0.01}, {"sym": "C", "pct": 0.02}]
     hold, ex = A.twin_split(items, 1, "pct")
     assert [x["sym"] for x in ex] == ["A"] and {x["sym"] for x in hold} == {"B", "C"}
+
+
+def test_cites_needs_a_phrase_or_a_distinctive_headline_token():
+    items = [{"headline": "Fermus Wanted $30 Billion Valuation on Just $51 Million in Revenue", "summary": ""}]
+    assert A.cites("EXIT\n3\nFermus valuation concerns weigh on the name", items, "NVDA", "NVIDIA") in ("fermus", "valuation")
+    assert A.cites("HOLD\n3\nno news found", items, "NVDA", "NVIDIA") is None
+    assert A.says_no_news("HOLD\n2\nNo news; price is holding")
+
+
+def test_twin_news_exits_had_news_names_first():
+    items = [{"sym": "A", "news": 0, "pct": -0.05}, {"sym": "B", "news": 1, "pct": 0.02}, {"sym": "C", "news": 0, "pct": 0.01}]
+    for i in items:
+        i["news_key"] = (-i["news"], i["pct"])
+    hold, ex = A.twin_split(items, 1, "news_key")
+    assert [x["sym"] for x in ex] == ["B"]

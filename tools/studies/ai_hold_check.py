@@ -6,7 +6,7 @@ Commands (on the mini, from the repo root, .venv/bin/python; agy needs the GUI/K
 `smoke` must be started by the LaunchAgent or a local Terminal, never over ssh):
   run      one session: wait to ~10:46 ET, qualify on delayed SIP bars 09:30-10:29 (day_hold rules), pick up to 30
            names (qualifiers by rank, then seeded eligible), ask the AI once per name from 11:00 (4 at a time), log raw
-  smoke    pre-start gate: one search-dependent call + 4 concurrent calls; logs search use and latency
+  smoke    pre-start gate (amended_2): news feed returns headlines; a call cites a given headline; an empty block gives "no news"
   status   after hours: counts only (sessions, calls, parse failures, latency drops, HOLD/EXIT split, search use, and
            the scored HOLD/EXIT name-days, which need SIP bars but no outcomes). Never prints returns.
   read     the single pre-registered read; refuses until >= 30 scored sessions and >= 150/150 scored name-days
@@ -57,7 +57,25 @@ Answer in exactly this format:
 Line 1: HOLD or EXIT
 Line 2: confidence 1-5
 Line 3: one sentence giving the reason, citing any news you found (or "no news found")."""
-PROMPT_SHA = hashlib.sha256(PROMPT_V1.encode()).hexdigest()[:16]
+PROMPT_V2 = """You are reviewing one stock position for a day-trading study. Decide only whether to keep holding it until 15:54 ET today or to sell it now.
+Judge ONLY from the data and the news headlines given below. Do not search, and do not rely on anything you remember about this company.
+
+Symbol: {sym} ({name})
+Time now (ET): {now}
+Bought at the 10:30 ET open: ${entry:.2f}
+Current price: ${price:.2f} ({from_entry:+.2f}% from entry)
+Today: open ${open:.2f}, high ${high:.2f}, low ${low:.2f}; prior close ${prev:.2f} ({day_chg:+.2f}% on the day)
+
+News headlines about {sym} since the prior session's close (newest first; empty means none were found):
+{news}
+
+Answer in exactly this format:
+Line 1: HOLD or EXIT
+Line 2: confidence 1-5
+Line 3: one sentence giving the reason, citing the headline you relied on (or "no news" if the list is empty or irrelevant)."""
+PROMPT = PROMPT_V2                       # amended_2 (ai_hold_check_prereg.json): news supplied from the Alpaca news feed
+PROMPT_SHA = hashlib.sha256(PROMPT.encode()).hexdigest()[:16]
+NEWS_MAX, NEWS_SUMMARY_CHARS = 10, 200
 
 
 # ------------------------------------------------------------------ pure pieces (tested)
@@ -208,6 +226,79 @@ def daily(cl, syms, start, end, adj):
     return {s: {BS.et_day(b.timestamp.timestamp()): float(b.close) for b in rows} for s, rows in (r.data or {}).items()}
 
 
+def fetch_news(syms, start, end):
+    """Alpaca news (Benzinga) per symbol, created AND last updated in [start, end]; newest first, at most NEWS_MAX each.
+    -> {sym: [{id, created, updated, source, headline, summary}]}; one batched request per 50 symbols, paged."""
+    import bars as B
+    from alpaca.data.historical.news import NewsClient
+    from alpaca.data.requests import NewsRequest
+    sec = json.load(open(os.path.join(ROOT, "config", "secrets.json")))
+    cl = NewsClient(sec["api_key"], sec["secret_key"])
+    out = {s: [] for s in syms}
+    raw = {s: 0 for s in syms}
+    for i in range(0, len(syms), 50):
+        token = None
+        while True:
+            r = cl.get_news(NewsRequest(symbols=",".join(syms[i:i + 50]), start=start, end=end, limit=50,
+                                        sort="desc", page_token=token))
+            items = r.data["news"] if isinstance(r.data, dict) else r.data
+            for n in items or []:
+                cr, up = n.created_at.timestamp(), (n.updated_at or n.created_at).timestamp()
+                if not (start.timestamp() <= cr <= end.timestamp() and up <= end.timestamp()):
+                    continue
+                for s in n.symbols or []:
+                    if s in raw:
+                        raw[s] += 1
+                    if s in out and len(out[s]) < NEWS_MAX:
+                        out[s].append({"id": n.id, "created": cr, "updated": up, "source": n.source,
+                                       "headline": n.headline, "summary": (n.summary or "")[:NEWS_SUMMARY_CHARS]})
+            token = getattr(r, "next_page_token", None)
+            if not token:
+                break
+        time.sleep(0.5)
+    for s in out:
+        out[s].sort(key=lambda x: -x["created"])
+    return out, raw
+
+
+STOP = set("the a an and or of to in on for with from by at as is are was were be been this that these those its it into over under after "
+           "before about than more most less stock stocks shares share company inc corp news today says said will would could".split())
+
+
+def _norm(t):
+    return re.sub(r"[^a-z0-9 ]", " ", str(t or "").lower()).split()
+
+
+def cites(answer, items, sym="", name=""):
+    """amended_2 (4b): the reason shares >= 5 consecutive words with a given headline/summary, or contains a headline token
+    (>= 4 letters) that is not the symbol, the company name or a stopword. -> matched token/phrase or None."""
+    a = _norm(answer)
+    aset, ajoin = set(a), " " + " ".join(a) + " "
+    skip = set(_norm(sym)) | set(_norm(name)) | STOP
+    for n in items or []:
+        for txt in (n.get("headline"), n.get("summary")):
+            w = _norm(txt)
+            for i in range(len(w) - 4):
+                ph = " " + " ".join(w[i:i + 5]) + " "
+                if ph in ajoin:
+                    return ph.strip()
+        for tok in _norm(n.get("headline")):
+            if len(tok) >= 4 and tok not in skip and tok in aset:
+                return tok
+    return None
+
+
+def says_no_news(answer):
+    return bool(re.search(r"no news", str(answer or ""), re.I))
+
+
+def news_block(items):
+    if not items:
+        return "(none)"
+    return "\n".join(f"- {datetime.fromtimestamp(n['created'], BS.ET):%m-%d %H:%M} ET | {n['source']} | {n['headline']}"
+                     + (f" — {n['summary']}" if n["summary"] else "") for n in items)
+
+
 def call_ai(prompt, timeout=LATENCY_CAP + 60):
     """agy -p from an empty temp workspace, no --dangerously-skip-permissions (same as the desk's research call).
     -> dict(text, num_turns, status, error, start, end)."""
@@ -303,6 +394,17 @@ def run(dry=False):
     log(day, setup)
     wait_until(T_CHECK)
     iex = minute_bars(cl, [p["sym"] for p in checked], d0.replace(hour=9, minute=30), now_et(), "iex")
+    prev_close_dt = (d0 - timedelta(days=1)).replace(hour=16)
+    while prev_close_dt.weekday() >= 5:
+        prev_close_dt -= timedelta(days=1)
+    t_fetch = now_et()
+    try:
+        news, raw_n = fetch_news([p["sym"] for p in checked], prev_close_dt, t_fetch)
+        news_err = None
+    except Exception as e:  # noqa: BLE001
+        news, raw_n, news_err = {}, {}, str(e)[:200]
+    log(day, {"ev": "news_fetch", "fetch_ts": t_fetch.timestamp(), "window_start": prev_close_dt.timestamp(), "raw_counts": raw_n,
+              "error": news_err})
     stop_flag = threading.Event()
 
     def one(p):
@@ -318,13 +420,16 @@ def run(dry=False):
         inputs = {"sym": s, "name": nm or s, "now": now_et().strftime("%H:%M"), "entry": entry, "price": price,
                   "from_entry": (price / entry - 1) * 100, "open": b[0][1], "high": max(x[2] for x in b),
                   "low": min(x[3] for x in b), "prev": p["prev"], "day_chg": (price / p["prev"] - 1) * 100}
-        rec = call_ai(PROMPT_V1.format(**inputs))
+        items = news.get(s, [])
+        rec = call_ai(PROMPT.format(**inputs, news=news_block(items)))
         ans, conf = parse_answer(rec["text"])
         lat = rec["end"] - rec["start"]
         log(day, {"ev": "call", "sym": s, "qualifier": p["q"], "prompt_sha": PROMPT_SHA, "inputs": inputs,
                   "start": rec["start"], "answer_ts": rec["end"], "latency": round(lat, 1), "model": rec["model"],
                   "num_turns": rec["num_turns"], "status": rec["status"], "error": rec["error"], "raw": rec["text"],
-                  "answer": ans, "confidence": conf, "over_cap": lat > LATENCY_CAP})
+                  "answer": ans, "confidence": conf, "over_cap": lat > LATENCY_CAP,
+                  "news": items, "news_error": news_err, "tool_turns": (rec["num_turns"] or 0) > 1,
+                  "cites_news": cites(rec["text"], items, s, nm), "says_no_news": says_no_news(rec["text"])})
         if is_rate_limited(rec):
             stop_flag.set()
             log(day, {"ev": "rate_limit_stop", "sym": s, "ts": time.time()})
@@ -335,19 +440,28 @@ def run(dry=False):
 
 
 def smoke():
+    """amended_2 gate: (a) news for >= half of 5 liquid names over 24 h; (b) a call given headlines cites one; (c) a call given
+    an empty block says no news. (b) and (c) are printed for a hand check and logged."""
     day = now_et().strftime("%Y-%m-%d")
-    q = ("Search the web: what is the most recent news headline about NVIDIA (NVDA) today? Reply with the headline and "
-         "its source, or exactly NO_ACCESS if you cannot search or open web pages.")
-    one = call_ai(q)
+    names = ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA"]
+    end = now_et()
+    news, raw_n = fetch_news(names, end - timedelta(hours=24), end)
+    have = [s for s in names if news[s]]
+    sym = max(names, key=lambda s: len(news[s]))
+    inputs = {"sym": sym, "name": sym, "now": end.strftime("%H:%M"), "entry": 100.0, "price": 101.0, "from_entry": 1.0,
+              "open": 99.5, "high": 101.5, "low": 99.0, "prev": 99.0, "day_chg": 2.02}
+    with_news = call_ai(PROMPT.format(**inputs, news=news_block(news[sym])))
+    no_news = call_ai(PROMPT.format(**{**inputs, "sym": "NVDA", "name": "NVIDIA"}, news=news_block([])))
     batch = []
     with ThreadPoolExecutor(4) as ex:
-        batch = list(ex.map(lambda s: call_ai(f"Answer with one word, HOLD or EXIT, for {s}; no research needed."),
-                            ["AAPL", "MSFT", "AMZN", "GOOGL"]))
-    res = {"ev": "smoke", "ts": time.time(), "search_call": {k: one[k] for k in ("num_turns", "status", "error")},
-           "search_text": (one["text"] or "")[:400], "search_latency": round(one["end"] - one["start"], 1),
-           "searched": bool(one["text"]) and "NO_ACCESS" not in (one["text"] or "") and (one["num_turns"] or 0) > 1,
-           "concurrent_latency": [round(r["end"] - r["start"], 1) for r in batch],
-           "concurrent_ok": [parse_answer(r["text"])[0] for r in batch]}
+        batch = list(ex.map(lambda s: call_ai(PROMPT.format(**{**inputs, "sym": s, "name": s}, news=news_block(news[s]))), names[:4]))
+    res = {"ev": "smoke_v2", "ts": time.time(), "prompt_sha": PROMPT_SHA, "a_names_with_news": have,
+           "a_pass": len(have) >= 3, "b_symbol": sym, "b_headlines": [n["headline"] for n in news[sym]],
+           "b_answer": with_news["text"], "b_match": cites(with_news["text"], news[sym], sym),
+           "c_answer": no_news["text"], "c_pass": says_no_news(no_news["text"]), "raw_counts": raw_n,
+           "parse": [parse_answer(r["text"])[0] for r in [with_news, no_news] + batch],
+           "concurrent_latency": [round(r["end"] - r["start"], 1) for r in batch]}
+    res["gate_pass"] = bool(res["a_pass"] and res["b_match"] and res["c_pass"])
     log(f"smoke_{day}", res)
     print(json.dumps(res, indent=1))
 
@@ -398,7 +512,10 @@ def score_day(day, with_outcomes):
         if r["over_cap"]:
             c["over_latency_cap"] += 1
             continue
-        c["searched" if (r.get("num_turns") or 0) > 1 else "no_search"] += 1
+        c["had_news" if r.get("news") else "no_news"] += 1
+        c["tool_turns"] += bool(r.get("tool_turns"))
+        c["empty_block_cites_news"] += bool(not r.get("news") and not r.get("says_no_news"))
+        c["given_news_cites_none"] += bool(r.get("news") and not r.get("cites_news"))
         b = bars.get(r["sym"], [])
         f = DH.morning(b)
         i0 = first_bar_after(b, r["answer_ts"])
@@ -410,7 +527,7 @@ def score_day(day, with_outcomes):
             c["already_exited"] += 1
             continue
         c["scored_" + r["answer"]] += 1
-        it = {"sym": r["sym"], "ai": r["answer"], "conf": r["confidence"], "q": r["qualifier"],
+        it = {"sym": r["sym"], "ai": r["answer"], "conf": r["confidence"], "q": r["qualifier"], "news": 1 if r.get("news") else 0,
               "pct": b[i0][1] / entry - 1}
         lo, hi = min(x[3] for x in b[:i0]), max(x[2] for x in b[:i0])
         it["rng"] = (b[i0][1] - lo) / (hi - lo) if hi > lo else 0.5
@@ -456,17 +573,21 @@ def read():
         ai = session_diff(hold, ex)
         tp = session_diff(*twin_split(items, len(ex), "pct"))
         tr = session_diff(*twin_split(items, len(ex), "rng"))
+        for i in items:
+            i["news_key"] = (-i["news"], i["pct"])          # had-news first, then worst % from entry
+        tn = session_diff(*twin_split(items, len(ex), "news_key"))
         if ai is not None and tp is not None:
             rows.append({"day": d, "ai": ai, "twin_pct": tp, "twin_range": tr, "d_pct": ai - tp,
-                         "d_rng": None if tr is None else ai - tr})
+                         "d_rng": None if tr is None else ai - tr, "d_news": None if tn is None else ai - tn})
     m, t, n = tstat([r["d_pct"] for r in rows])
     halves = {h: tstat([r["d_pct"] for k, r in enumerate(rows) if k % 2 == (0 if h == "A" else 1)]) for h in ("A", "B")}
     best = max(range(len(rows)), key=lambda k: rows[k]["d_pct"])
     m3, t3, _ = tstat([r["d_pct"] for k, r in enumerate(rows) if k != best])
     mr, _, _ = tstat([r["d_rng"] for r in rows])
-    ok = m >= 25 and t >= 2 and all(halves[h][0] > 0 for h in "AB") and m3 >= 25 and t3 >= 2 and mr > 0
+    mn, _, _ = tstat([r["d_news"] for r in rows])
+    ok = m >= 25 and t >= 2 and all(halves[h][0] > 0 for h in "AB") and m3 >= 25 and t3 >= 2 and mr > 0 and mn > 0
     out = {"sessions": n, "ai_minus_twin_pct": [round(m, 1), round(t, 2)], "halves": {h: [round(v[0], 1), round(v[1], 2)] for h, v in halves.items()},
-           "drop_best_session": [round(m3, 1), round(t3, 2)], "ai_minus_twin_range": round(mr, 1),
+           "drop_best_session": [round(m3, 1), round(t3, 2)], "ai_minus_twin_range": round(mr, 1), "ai_minus_twin_news": round(mn, 1),
            "verdict": "PASS (skeptic review next)" if ok else "FAIL", "counts": dict(tot)}
     json.dump({"summary": out, "sessions": rows}, open(os.path.join(OUT, "read.json"), "w"), indent=1)
     print(json.dumps(out, indent=1))
