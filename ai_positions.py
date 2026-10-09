@@ -3457,6 +3457,36 @@ def rsi_dump_due(
     return streak >= need
 
 
+def supertrend_exit_due(
+    pos: dict[str, Any] | None,
+    ticker: str,
+    now: float | None = None,
+    cfg: dict | None = None,
+) -> tuple[bool, dict]:
+    """Pivot Point SuperTrend exit (tight_trail_replay_prereg.json amended_14; knob ai_exit_supertrend, default off).
+
+    True when the latest COMPLETED 1-minute bar in the ob_observe store (IEX, the same bars the order-block
+    rules read) has SuperTrend trend -1 at the default 2 / 3 / 10. Fewer than 30 completed bars -> False (the
+    other exits stand; counted once per position)."""
+    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
+    if not bool(cfg.get("ai_exit_supertrend", False)):
+        return False, {}
+    if not isinstance(pos, dict) or not pos.get("entry_confirmed") or pos.get("closing_reason"):
+        return False, {}
+    try:
+        import ob_observe
+        import pivot_supertrend as _ps
+        due, info = _ps.exit_due(ob_observe.bars(ticker), float(now if now is not None else time.time()))
+    except Exception as e:  # noqa: BLE001
+        return False, {"error": str(e)[:120]}
+    if due is None:
+        if not pos.get("supertrend_no_bars_logged"):
+            pos["supertrend_no_bars_logged"] = True
+            log_event("supertrend_no_bars", symbol=ticker, bars=info.get("bars"))
+        return False, info
+    return bool(due), info
+
+
 def no_progress_due(
     pos: dict[str, Any] | None,
     now: float | None = None,
@@ -7872,6 +7902,22 @@ def manage_open_positions(
                               pos.get("entry_time") or now)) / 60.0, 1))
                 changed = True
                 continue
+
+        # Pivot Point SuperTrend exit (amended_14, default off): a completed
+        # 1-minute bar closed below the trailing line, trend -1.
+        _st_due, _st_info = supertrend_exit_due(pos, ticker, now)
+        if _st_due:
+            alpaca_trader.cancel_open_orders(ticker)
+            out = alpaca_trader.close_out(ticker) or {}
+            if isinstance(out, dict) and out.get("order_id"):
+                pos["close_order_id"] = str(out["order_id"])
+            pos["closing_reason"] = "supertrend"
+            exit_why[ticker] = "supertrend"
+            events.append({"ticker": ticker, "event": "supertrend", **{k: _st_info.get(k) for k in ("tup", "close", "bars")}})
+            log_event("supertrend", symbol=ticker, tup=_st_info.get("tup"), close=_st_info.get("close"),
+                      bars=_st_info.get("bars"))
+            changed = True
+            continue
 
         # Fast no-progress flatten (seconds after fill confirm). Fires before
         # the minute-scale dead_trade backstop; ignores min_hold past T.

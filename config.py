@@ -1397,6 +1397,9 @@ DEFAULT_CONFIG = {
     # not submit. Does not wait on ai_exit_min_hold_sec past T.
     # Mid-session 2026-09-18: leave off (revolving-door / early scratch risk).
     "ai_no_progress_flatten_enabled":  False,
+    # Pivot Point SuperTrend exit (tight_trail_replay_prereg.json amended_14; REPLAY/TEST only until it passes):
+    # sell a held long when the latest completed 1-minute IEX bar's SuperTrend (2 / 3 / 10) flips to -1.
+    "ai_exit_supertrend":              False,
     "ai_no_progress_sec":              60.0,
     "ai_no_progress_mfe_r":            0.05,
     # Open Plan A long + EXH/pctr falling → market flatten (pack #9).
@@ -2339,6 +2342,7 @@ SAFE_CONFIG_KEYS = [
     "ai_dead_trade_min",
     "ai_dead_trade_mfe_r",
     "ai_no_progress_flatten_enabled",
+    "ai_exit_supertrend",
     "ai_no_progress_sec",
     "ai_no_progress_mfe_r",
     "ai_exh_falling_flatten_enabled",

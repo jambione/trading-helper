@@ -11,7 +11,7 @@ ROOT = os.getcwd()
 sys.path[:0] = [os.path.join(ROOT, "tools", "studies"), os.path.join(ROOT, "tools"), ROOT]
 import replay_costing as RC  # noqa: E402
 
-VARS = ("np_lob", "np_lob_slow30", "np_lob_step02", "base")
+VARS = ("np_lob", "np_lob_slow30", "np_lob_step02", "np_lob_st", "base")
 days = sys.argv[1:]
 tight = defaultdict(set)
 for l in open(os.path.join(ROOT, "ai_reports", "admit_range.jsonl")):
@@ -41,7 +41,7 @@ for v in VARS:
     allx = [x for d in days for x in net[v].get(d, [])]
     if allx:
         print(f"  {v:15s} tight trades {len(allx):4d} net {statistics.fmean(allx):+.1f} bp/trade")
-for v in ("np_lob_slow30", "np_lob_step02"):
+for v in ("np_lob_slow30", "np_lob_step02", "np_lob_st"):
     diffs = [statistics.fmean(net[v][d]) - statistics.fmean(net["np_lob"][d]) for d in days if net[v].get(d) and net["np_lob"].get(d)]
     if not diffs:
         continue

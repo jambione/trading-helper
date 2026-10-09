@@ -43,6 +43,8 @@ _FINGERPRINT_KEYS = (
     "ai_exit_range",
     "ai_exit_range_res_pad_pct",
     "ai_exit_range_time_min",
+    # Pivot Point SuperTrend exit (tight_trail_replay_prereg.json amended_14), default off.
+    "ai_exit_supertrend",
     "ai_exit_macd_liquidate",
     "ai_exit_macd_hard_sell_sep",
     "ai_exit_macd_confirm_ticks",

@@ -22,6 +22,7 @@ DECAY30=(--set ai_local_trail_decay_idle_sec=30)
 STEP02=(--set ai_local_trail_decay_step_r=0.02)
 R np_lob_slow30 $NP_ON $LOB_ON $DECAY30    # triangle (engine %R) + leash steps after 30 s idle
 R np_lob_step02 $NP_ON $LOB_ON $STEP02     # triangle (engine %R) + smaller leash steps (0.02R)
+R np_lob_st     $NP_ON $LOB_ON --set ai_local_trail_time_decay_enabled=false --set ai_exit_supertrend=true   # amended_14: leash off, Pivot SuperTrend 2/3/10 exit
 R dump30 $NP_ON $LOB_OFF --set ai_exit_rsi_dump_enabled=true --set ai_exit_rsi_dump_points=30 --set ai_exit_rsi_dump_sec=60 --set ai_exit_rsi_dump_confirm_ticks=2
 R brk_replace --set ai_watch_breakout_arm=replace   # entry: clean breakout INSTEAD of the square
 R brk_either  --set ai_watch_breakout_arm=either    # entry: square OR clean breakout

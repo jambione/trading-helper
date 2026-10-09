@@ -886,6 +886,12 @@ def range_on(cfg: dict) -> bool:
     return bool((cfg or {}).get("ai_watch_range_arm") or (cfg or {}).get("ai_exit_range"))
 
 
+def ob_feed_on(cfg: dict) -> bool:
+    """The ob bar store is fed synchronously for the range rules and for the SuperTrend exit
+    (tight_trail_replay_prereg.json amended_14), which reads its 1-minute bars."""
+    return range_on(cfg) or bool((cfg or {}).get("ai_exit_supertrend"))
+
+
 class ObStoreFeeder:
     """Fills ob_observe's order-block store SYNCHRONOUSLY from the day's IEX bar cache (day_bars "iex").
 
@@ -1238,7 +1244,7 @@ def run_inside(args) -> int:
         import ob_observe  # noqa: F401  (imported before the clock patch so its absorb clock is the replay's)
     except ImportError:
         pass
-    if range_on(load_config()):
+    if ob_feed_on(load_config()):
         # range_arm_replay_prereg.json: the ob store is filled synchronously (ObStoreFeeder), never by the
         # desk's background warm thread.
         os.environ["TH_OB_WARM_OFF"] = "1"
@@ -1420,7 +1426,7 @@ def run_inside(args) -> int:
         materialize()
         dash["state"] = build_dashboard_state(rec, t, synth)
         live = load_config()
-        if range_on(live):
+        if ob_feed_on(live):
             ob_feed.feed(set(ew.load_watch()) | set(broker.open), t)
         for sym in broker.exits_due(t, dash["state"], cfg=live, ew=ew):
             with ew._WATCH_LOCK:
