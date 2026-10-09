@@ -448,16 +448,17 @@ def smoke():
     news, raw_n = fetch_news(names, end - timedelta(hours=24), end)
     have = [s for s in names if news[s]]
     sym = max(names, key=lambda s: len(news[s]))
-    inputs = {"sym": sym, "name": sym, "now": end.strftime("%H:%M"), "entry": 100.0, "price": 101.0, "from_entry": 1.0,
+    nm_map = {"AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "AMZN": "Amazon", "TSLA": "Tesla"}
+    inputs = {"sym": sym, "name": nm_map[sym], "now": "11:00", "entry": 100.0, "price": 101.0, "from_entry": 1.0,
               "open": 99.5, "high": 101.5, "low": 99.0, "prev": 99.0, "day_chg": 2.02}
-    with_news = call_ai(PROMPT.format(**inputs, news=news_block(news[sym])))
+    with_news = call_ai(PROMPT.format(**inputs, news=news_block(news[sym])))   # time fixed at 11:00 so the hold limit is not the reason
     no_news = call_ai(PROMPT.format(**{**inputs, "sym": "NVDA", "name": "NVIDIA"}, news=news_block([])))
     batch = []
     with ThreadPoolExecutor(4) as ex:
-        batch = list(ex.map(lambda s: call_ai(PROMPT.format(**{**inputs, "sym": s, "name": s}, news=news_block(news[s]))), names[:4]))
+        batch = list(ex.map(lambda s: call_ai(PROMPT.format(**{**inputs, "sym": s, "name": nm_map[s]}, news=news_block(news[s]))), names[:4]))
     res = {"ev": "smoke_v2", "ts": time.time(), "prompt_sha": PROMPT_SHA, "a_names_with_news": have,
            "a_pass": len(have) >= 3, "b_symbol": sym, "b_headlines": [n["headline"] for n in news[sym]],
-           "b_answer": with_news["text"], "b_match": cites(with_news["text"], news[sym], sym),
+           "b_answer": with_news["text"], "b_match": cites(with_news["text"], news[sym], sym, nm_map[sym]),
            "c_answer": no_news["text"], "c_pass": says_no_news(no_news["text"]), "raw_counts": raw_n,
            "parse": [parse_answer(r["text"])[0] for r in [with_news, no_news] + batch],
            "concurrent_latency": [round(r["end"] - r["start"], 1) for r in batch]}
