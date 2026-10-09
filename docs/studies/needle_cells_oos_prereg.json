@@ -1,0 +1,45 @@
+{
+ "study": "Name selection, out of period: do the two needle-study name cells (found 2026-09-26 on 8 recorded days) beat other mover names at the same time of day, after cost, on ~90 earlier sessions they were never fitted to?",
+ "registered_at": "2026-10-09 (Friday, before the script exists and before any outcome on this sample)",
+ "registered_before_results": true,
+ "origin": "Operator 10/9: day trading only; after G2 (order cost, read 10/15) the remaining loss is the gross move, so the next lever is which names. These are the only two name cells that survived a held-out half and were never re-tested (memory needle-study-names-not-timing; tools/studies/needle_study.py).",
+ "prior": "LOW. They were picked from a ~700-cell search on 8 days (9/16-9/25), when the baseline fwd30 was +3.8 bp gross, so a market-drift share is likely. The combined score from the same 8 days FAILED on 60 earlier days (picks -11.2 vs random -10.4 bp). Steady runway (day up >2.35% early) FAILED as money (-2.1 bp gross). New-high entries lose ~-11 bp net30 in every group (name_history, 10/9). Skeptic re-run (10/9) on the needle sample: C1 minus its same day-hour control on the needle's own H2 days is -1.9 bp (by day -16.3, +18.0, -12.4, +3.3): its survival was the 11:00 hour being good, so C1 is demoted to information. C2's H2 rests on 11 name-days; dropping the top 2 (one is FSLY 9/23, +237 bp) takes fwd30 from +27.4 to +9.8 bp.",
+ "cells": {
+  "C2_active_premarket_big_up (PRIMARY, the only verdict cell)": "pm_range in [2.433%, 3.481%) AND day_chg >= 4.718% at the decision close, any sampled minute",
+  "C1_midday_moderate_up (INFORMATION ONLY, demoted before any run)": "day_chg in [1.583%, 4.718%) AND bar start in [10:55, 11:55] ET (needle mins bucket [86, 151) on the 5-min grid, 13 samples)",
+  "C2_day_chg_leg_alone (INFORMATION ONLY)": "day_chg >= 4.718% without the pm_range leg, so the pm_range leg is itself tested by C2 minus this",
+  "definitions": "Edges are the needle study's unrounded H1 quintile edges (day_chg [-1.659, -0.088, 1.583, 4.718], pm_range [1.157, 1.758, 2.433, 3.481], mins [86, 151, 216, 281]) with half-open bins x >= lower edge, x < upper edge, exactly as needle_study.bucket. day_chg = close[i] / prior regular-session close - 1 (prior close from the all-symbol daily panel, a row dated BEFORE the day). pm_range = max(high) / min(low) - 1 over SIP 1-min bars 04:00-09:29 ET of the day; >= 1 premarket bar is enough (as the needle); >= 5 bars is information only. No premarket bars -> no pm_range (counted separately from a failed fetch)."
+ },
+ "sample": {
+  "universe": "the cached SIP-breakout universe (tools/studies/sip_breakout_study.py, ai_reports/allsym/sipbrk_min_*.pkl): each day 2026-05-01..2026-09-11, common stock, open >= $10, prior-day dollar volume >= $20M, gap >= +2%, the 40 largest gaps. Primary restricts to moments with close[i] in [$20, $100] (the needle band).",
+  "why_this_sample": "causal universe (prior-day and opening data only), mover names like the desk's, ~90 sessions none of which were used to find C1/C2. Already used by SR_BREAKOUT_HISTORY (other features), never for day_chg/pm_range cells.",
+  "bars": "RTH bars from the cache (ts, open, high, close, volume; no low). Premarket bars 04:00-09:29 fetched once for the same name-days (SIP, split-adjusted) before scoring; a fetch failure rate > 5% of name-days aborts as FAILED-DATA.",
+  "moments": "bar starts 09:45 to 15:10 ET on the 5-minute grid (as the needle study, m <= 915)",
+  "premarket_fetch": "after the close only, throttled (the live engine shares the Alpaca keys and 429s silently drop names); fetch status logged per batch so 'no premarket bars' is distinguishable from 'fetch failed'; a failed-fetch rate > 5% of name-days aborts as FAILED-DATA. Do not reuse sip_breakout_study.minute_bars as-is (it pickles a partial dict after a failure)."
+ },
+ "trade": "enter at the OPEN of bar i+1; exit at the CLOSE of the last bar starting at or before entry + 30 min (as sip_breakout_study.outcome), 15:55 cap; a moment with no such bar within 45 min is dropped. net30 = gross - cost. Dropped 'no exit bar' moments are reported for cell vs control (halts on gappers drop moments by outcome).",
+ "cost": "primary 10 bp round trip (the needle study's own figure; desk names since the 10/3 cap measure ~3-4 bp, so 10 is conservative for $20-100 movers). Information: 4 bp.",
+ "controls": "per day and ET clock hour: the mean net30 of moments of OTHER name-days that are not in the cell, same universe and price band, same day and hour. Order of averaging: (1) subtract each cell moment's OWN day-hour control mean from that moment; (2) average those differences within the name-day; (3) average name-days within each day. The per-half 'mean net30 > 0' uses the same order on net30 without the control.",
+ "statistic": "day means (days as the unit), t clustered by day. Halves = alternate trading days (A = 1st, 3rd, ...). Per-half means are means of day means.",
+ "pass": "C2 PASSES only if, in BOTH halves: >= 30 name-days and >= 20 days with a cell name-day, mean net30 > 0, AND C2 minus control >= +5 bp; AND pooled C2 minus control has day-clustered t >= 2.0 (one cell, one-sided ~0.025); AND the pooled C2 minus control still clears +5 bp with t >= 2.0 after dropping its top 3 name-days (the 3 with the highest name-day mean of net30 minus control, pooled across both halves). A pass earns a forward test on the desk's own names and IEX feed (to be pre-registered then); it is not a ranking yet.",
+ "fail": "anything else is FAIL. Fewer than 30 name-days or 20 days in a half = UNDERPOWERED, reported as FAIL (no extension of the sample).",
+ "information_only": [
+  "C1 (demoted) and the C2 day_chg leg alone, same statistic",
+  "C2 with >= 5 premarket bars",
+  "beta of C2 name-days to SPY over the same 30-min windows (needle C2 names were crypto/quantum high-beta: IREN, RIOT, BMNR, IONQ)",
+  "4 bp cost",
+  "win rate, gross, n per day, the cells without the $20-100 band ($10+)",
+  "drops: missing prior close, no premarket bars, failed fetch, no exit bar (cell vs control)",
+  "success (+1% before -1%) is NOT computed: the cache has no lows"
+ ],
+ "no_retuning": "edges, window, hold, cost, halves and controls are fixed above; no other cells, holds or bands are scored for a verdict. If C2 fails, the needle line is closed FOR GAPPERS (>= 2%); C1's population differs here (universe median gap 4.9% vs 19% of needle name-days gapping >= 2%), so C1 is not closed by this sample.",
+ "caveats": [
+  "universe is gappers >= 2% only (median gap 4.9%); the needle sample was the desk's nominated + refused names",
+  "SIP bars; the live desk sees IEX",
+  "flat cost, not per-moment spread",
+  "moments overlap within a name (every 5 min, 30-min hold); day clustering handles cross-moment correlation only across days",
+  "2026-05..09 market regime"
+ ],
+ "script": "tools/studies/needle_cells_oos.py (to be written after this file is committed; it may not change anything above)",
+ "amended": "2026-10-09, before the script exists or any run, per the result-skeptic FIX FIRST: exact unrounded half-open edges; C1 window by bar start [10:55, 11:55]; pm_range >= 1 bar primary; C1 demoted to information (fails its own control in-sample); C2 sole verdict cell at t >= 2.0; name-day averaging and name-day/day n bars replace the moment n bar; drop-top-3 robustness condition; SPY beta and day_chg-leg info; exit-bar rule and drop reporting; throttled, status-logged premarket fetch after the close; closure scoped to gappers. Round 2 (skeptic OK): averaging order for name-days spanning hours, top-3 definition, 5-min grid wording."
+}
