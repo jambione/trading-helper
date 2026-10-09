@@ -262,7 +262,8 @@ def fetch_news(syms, start, end):
 
 
 STOP = set("the a an and or of to in on for with from by at as is are was were be been this that these those its it into over under after "
-           "before about than more most less stock stocks shares share company inc corp news today says said will would could".split())
+           "before about than more most less stock stocks shares share company inc corp news today says said will would could "
+           "price prices profit profits entry hold exit session trend headline market markets trading trade higher lower".split())
 
 
 def _norm(t):
