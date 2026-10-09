@@ -1,0 +1,44 @@
+{
+ "study": "AI hold-check (shadow): asked once at ~11:00 ET whether a day-hold-eligible name should be held to 15:54 or exited now, does the AI's EXIT call pick names whose remaining return is worse than the names it says to HOLD, by more than a price-only rule with the same number of exits?",
+ "registered_at": "2026-10-09 (Friday, RTH; before any logger, prompt run or outcome exists)",
+ "registered_before_results": true,
+ "origin": "Operator 10/9: 'can we use AI on our names that we have opened to see if our entries make sense to hold'. Desk trades last 3-10 min, too short for an AI call; the day-hold names are held for hours. The AI can read news and sentiment, which no desk indicator sees.",
+ "prior": "LOW. Every exit rule tested (42 shapes) moved the win rate, never the mean (memory exits-cannot-move-the-mean). Fresh news in the last 60 min made entries worse (daily-context study, 9/23): news gets chased then fades. No AI-judgment test on this desk has passed. The one reason to try: news is genuinely new information to the desk.",
+ "shadow_only": "Nothing the AI says is acted on. The day-hold prereg (docs/studies/day_hold_prereg.json), its picks, exits and 40-session read are unchanged, and no live desk setting changes. The logger must not place, modify or cancel any order.",
+ "population": {
+  "qualify_time": "at ~10:46 ET each session, from DELAYED SIP 1-min bars stamped 09:30-10:29 (complete and free by then), using day_hold.py load_candidates / morning / qualifies / rank_key exactly as the nightly forward run (no IEX qualification).",
+  "checked": "up to 30 names a session: first every name that qualifies under the day-hold rule (by rank_key), then names drawn at random (seed sha256('aihold|' + day)) from the day's ELIGIBLE pool (day-hold candidates with P >= $10 and 09:30-10:29 dollar volume >= $5M, the C1 pool of day_hold_prereg.json) until 30. Pilot counts (14 days): ~2 qualifiers and ~40 eligible a day.",
+  "scored": "a name-day is SCORED when its own SIP bars for the day are complete (day_hold's day-level >5%-missing abort does NOT apply here) and the main day-hold exit rule (loss limit entry x 0.97 from the 10:30 open, red knife, 15:54) has not exited it before the answer bar. These filters apply identically to HOLD and EXIT answers and do not depend on the answer. Others are logged and counted."
+ },
+ "checks": "ONE check per name per session, starting 11:00 ET; calls may run up to 4 at a time; the answer timestamp is logged. Calls whose answer arrives more than 180 s after the call started are counted and NOT scored (latency cap).",
+ "model_and_prompt": {
+  "model": "the AGY slot as configured in bot_config.json on the day (agy CLI, gemini-3.1-pro-high on 10/9), web search allowed; recorded per call. A change of model mid-study is logged; the read reports by model but the verdict pools them.",
+  "prompt": "frozen in tools/studies/ai_hold_check.py as PROMPT_V1 before the first session, sha256 logged with every call. Inputs given: symbol, company name, 10:30 entry price, current price, % from entry, today's high/low/open, prior close, time ET, and the instruction to answer HOLD (keep to 15:54) or EXIT (sell now) with a confidence 1-5 and one sentence citing any news. No P&L history, no other names' outcomes, no desk opinions.",
+  "parse": "normalize: strip markdown (*, _, #, `), whitespace and case; the first token must be HOLD or EXIT; anything else = unparseable (counted, not scored).",
+  "search": "each call logs whether a tool/fetch was used (agy num_turns / tool use). A smoke test before the first session must show at least one call that searched or fetched; if web access cannot be enabled, the study does NOT start (the news premise would be untested) and the operator decides. The smoke test also logs agy latency with 4 calls at once and the share of names the main rule has already exited by ~11:00."
+ },
+ "outcome": "per scored name-day: remaining = (the main day-hold rule's exit price, scanning SIP bars from the first bar that STARTS after the answer timestamp: loss limit, red knife or the 15:54 close, per day_hold.simulate) / (the open of that first post-answer bar) - 1, in bp. Exiting at the answer and holding to the rule's exit are each one sale, so no cost difference is charged.",
+ "statistic": {
+  "ai": "per session: mean remaining of HOLD name-days minus mean remaining of EXIT name-days (a session needs >= 1 of each; sessions without are counted and excluded).",
+  "twin_pct": "price-only twin: in the same session, among the same scored name-days, label EXIT the same number of names as the AI did, chosen as the worst % from the 10:30 entry at the answer bar; the rest HOLD; same statistic. Ties broken by symbol, ascending.",
+  "twin_range": "second twin: the same number chosen by lowest position in the day's range at the answer bar. Ties broken by symbol, ascending.",
+  "primary": "per session: AI statistic minus twin_pct statistic; mean over sessions, t across sessions.",
+  "policy": "INFORMATION ONLY: day-hold top-3 picks under the main rule vs the same picks exited at the AI's EXIT, compared with a random-EXIT control (the same number of exits drawn among the picks, 200 seeded draws).",
+  "by_confidence": "INFORMATION: EXIT confidence 4-5 only."
+ },
+ "read": "ONE read, at the first close with >= 30 scored sessions (a scored session has at least one scored HOLD and one scored EXIT name-day) AND >= 150 scored EXIT and >= 150 scored HOLD name-days (distinct name-days). If not reached by 45 sessions: UNDERPOWERED = FAIL. Before the read only counts (sessions, calls, parse failures, latency drops, EXIT/HOLD split, search use) may be looked at, never outcomes.",
+ "pass": "AI minus twin_pct >= +25 bp per session with t >= 2.0, positive in both halves (alternate sessions), still >= +25 bp with t >= 2.0 after dropping the best session; AND AI minus twin_range > 0. A pass earns a skeptic review, then a pre-registered paper switch-on of AI exits for day-hold names only. Never live money first.",
+ "fail": "anything else is FAIL; the AI hold-check is then closed for day-hold names.",
+ "data_integrity": "failed or unparseable calls are dropped and counted; a session is excluded only for a logger outage covering the 11:00 check or a rate-limit stop before 15 calls (counted); > 25% of sessions excluded aborts as FAILED-DATA. Every call is logged raw (prompt hash, inputs, output, start/answer timestamps, latency, model, tool use) to ai_reports/ai_hold_check/<day>.jsonl before any outcome exists.",
+ "cost_and_load": "subscription slots only (no per-call billing); hard cap 30 calls a session, at most 4 concurrent; the logger stops for the day on the FIRST rate-limit or quota error from agy, and logs the desk's own agy errors per session so any effect on desk research (and so on day_hold's 'agy' source family) is visible; usage recorded under its own phase ('ai_hold_check'); runs at nice 10; one delayed-SIP bars request at 10:46 plus one daily-bars request; started by the LaunchAgent or a local Terminal on the mini, never over ssh (agy's Keychain session is unreadable from ssh); deployed after a close.",
+ "caveats": [
+  "LLM answers are not reproducible; the raw log is the record",
+  "the AI may lean HOLD on up names; HOLD minus EXIT within a session controls the day's market move but not name-level momentum",
+  "30-45 sessions = one season (Oct-Dec 2026)",
+  "the eligible names are not all day-hold picks; the verdict is about the AI's hold judgment on this pool, applied to picks only via the policy line",
+  "web search with agy may need read_url permission; the smoke test gates the start",
+  "UNDERPOWERED is a likely ending: ~20 scored names a session need the AI to say EXIT ~17-25% of the time to reach 150 EXIT name-days in 30-45 sessions; that rate is unknown"
+ ],
+ "script": "tools/studies/ai_hold_check.py (logger + nightly scorer), written after this file is committed; it may not change anything above",
+ "amended": "2026-10-09, before any logger, prompt or outcome, per the result-skeptic FIX FIRST: SIP qualification at 10:46 (IEX cannot meet $5M); outcome from the first bar after the answer + 180 s latency cap; price-only twins (pct-from-entry primary, range second) as the bar; one check per name-day at 11:00; population widened to qualifiers + seeded eligible names up to 30 (pilot: ~2 qualifiers, ~40 eligible a day); per-name bar completeness, not day_hold's day abort; 150/150 distinct name-days; policy line vs random-EXIT control, information only; parse normalization; failed calls dropped, sessions excluded only for outages; search logging + smoke test gate; quota stop, desk agy error logging, own usage phase, LaunchAgent/Terminal only. Round 2 (skeptic OK): scored-session definition, twin tie-break by symbol, smoke test also logs concurrent latency and the share already exited by 11:00, UNDERPOWERED risk stated."
+}
