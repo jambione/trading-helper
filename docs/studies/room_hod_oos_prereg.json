@@ -1,0 +1,48 @@
+{
+ "study": "Name selection, out of period: is a mover that already sits well below its day's high (room below HOD) a better hold than other movers at the same time, after cost, on ~90 sessions it was never fitted to?",
+ "registered_at": "2026-10-09 (Friday, RTH; before the script exists and before any outcome on this sample)",
+ "registered_before_results": true,
+ "origin": "Operator 10/9: day trading only, name selection is the open lever. Room below HOD is the strongest held-out name input we have and the evidence on it is split; never tested out of period (memory name-selection-lifts-win-rate-not-mean).",
+ "prior": "LOW-MODERATE, split. FOR: tools/studies/name_selection_study.py (2026-09-25, 9/1-9/24, -50 %R crosses with the slow line rising, train <= 9/17): room >= 2.74% below HOD (train bottom-tercile cut) net60 +0.26% (t 3.0) vs +0.02% all, held-out half; it was the only name input that lifted the mean in both halves; also a top weight in the 9/26 combined score. AGAINST: needle_study.py (9/26, random 5-min moments, 8 days) found room_hod does not hold across halves; the combined score FAILED on 60 earlier days; the 9/25 test half was ~6 days and a -50-cross population, not all moments. Skeptic 10/9: on this sample ROOM covers 45% of in-band moments (47,715 of 105,917), not a tercile, so the contrast here is 'below the high vs near the high', not 9/25's 'tercile vs all crosses'. The sample is not naive for ROOM's complement: SIP_BREAKOUT_2026-10-03 and SR_BREAKOUT_HISTORY already scored near-high entries on these sessions and both FAILED. Prior lowered to LOW.",
+ "cell": {
+  "ROOM (verdict)": "room_hod >= 2.744% at the decision close, where room_hod = (1 - close[i] / HOD_i) * 100 and HOD_i = max(high) of the day's RTH bars from 09:30 through bar i inclusive (the cache holds RTH bars only)",
+  "edge": "2.744 (the 9/25 study's train cut -2.744073, BOLLINGER_STUDY_2026-09-25.md:206), boundary inclusive; same definition as bollinger_cross_study.py (hod = max(h[:i+1]) from RTH bars). Entry differs from 9/25 on purpose: next bar's open here, the cross bar's close there (more honest).",
+  "prior_close": "ROOM needs no prior close: name-days with a missing prior close are NOT dropped (the sibling tool's build_moments drops them; the ROOM tool must not)."
+ },
+ "sample": {
+  "universe": "same as needle_cells_oos_prereg.json (3168fc7): ai_reports/allsym/sipbrk_min_*.pkl, 2026-05-01..2026-09-11, the 40 largest >= 2% gappers a day, common stock, open >= $10, prior-day dollar volume >= $20M; primary band close[i] in [$20, $100].",
+  "moments": "bar starts 09:45 to 15:10 ET on the 5-minute grid",
+  "independence_note": "the same sessions are scored tonight for the needle C2 cell; ROOM is a different feature with its own bar, and neither result is used to choose the other"
+ },
+ "trade": "enter at the OPEN of bar i+1 (within 5 min); exit at the CLOSE of the last bar starting at or before min(entry + 60 min, 15:55); dropped when the target falls in a gap with no bar within 75 min of entry. net60 = gross - cost. Primary hold 60 min (the 9/25 study's net60). A ROOM 'no exit bar' drop rate more than 2 pp above the control's is flagged on the verdict line (halts on falling names drop moments by outcome).",
+ "cost": "10 bp round trip primary (as the sibling prereg); 4 bp information.",
+ "controls": "per day and ET clock hour: the mean net60 of non-ROOM moments of OTHER name-days, same universe and band. Averaging order: (1) each ROOM moment minus its own day-hour control mean; (2) mean within the name-day; (3) mean of name-days within each day. The per-half 'mean net60 > 0' uses the same order on net60 without the control.",
+ "statistic": "day means (days as the unit), t clustered by day; halves = alternate trading days (A = 1st, 3rd, ...); per-half means are means of day means.",
+ "pass": "ROOM PASSES only if, in BOTH halves: >= 30 name-days and >= 20 days with a ROOM name-day, mean net60 > 0, AND ROOM minus control >= +5 bp; AND pooled ROOM minus control has day-clustered t >= 2.0; AND it still clears +5 bp with t >= 2.0 after dropping its top 3 DAYS (highest day means of net60 minus control) and, separately, after dropping all moments of its top 5 SYMBOLS (highest symbol means of net60 minus control, pooled; removed from the ROOM side only, the control pool unchanged). A pass earns a forward test on the desk's own names and IEX feed at the real per-name spread (pre-registered then); it is not a ranking yet.",
+ "fail": "anything else is FAIL; fewer than 30 name-days or 20 days in a half = UNDERPOWERED = FAIL (no extension). If the relative legs pass but 'mean net60 > 0' fails in a half (the absolute level follows the period's market drift), the verdict is FAIL as a filter, reported as RELATIVE-ONLY; that outcome may earn a forward ranking prereg (ROOM ranked above non-ROOM on the desk's names), never a live filter.",
+ "information_only": [
+  "30-min hold (net30) with the same statistic",
+  "room cuts 1.5% and 4% (sensitivity only)",
+  "4 bp cost; $10+ without the band",
+  "ROOM restricted to day_chg > 0 (green names) — the 9/25 population leaned green",
+  "share of ROOM moments in the first 60 min vs later (room early is often the opening fade)",
+  "drops: no prior close, no exit bar (ROOM vs control)",
+  "within-name estimator: ROOM vs non-ROOM moments of the SAME name-day and hour (removes name fixed effects: volatility, gap fade)",
+  "room scaled by the name's own 5-min volatility (high-vol names sit below their HOD more often)",
+  "SPY beta of ROOM vs control moments over the same 60-min windows",
+  "if ROOM and needle C2 both pass: the overlap of their moments"
+ ],
+ "no_retuning": "cut, hold, window, cost, halves and controls fixed above; nothing else scored for a verdict. If ROOM fails, room below HOD is closed as a name filter for gappers (>= 2%); the -50-cross population of 9/25 is not closed by this sample.",
+ "caveats": [
+  "gappers >= 2% only; the 9/25 population was -50 %R crosses (slow line rising) on the desk's runway cache",
+  "no %R condition: the cache has no lows, and %R triggers have matched random minutes in every test",
+  "HOD from RTH bars only (premarket highs ignored)",
+  "SIP bars; live desk sees IEX; flat cost",
+  "same 92 sessions as the needle C2 test tonight",
+  "ROOM covers 45% of moments here; the complement (near the high) already failed twice on these sessions",
+  "flat 10 bp cancels in the relative leg but is optimistic for the absolute leg: this universe's SIP spreads are ~14-20 bp median at bursts (SIP_BREAKOUT_2026-10-03)"
+ ],
+ "script": "tools/studies/room_hod_oos.py (to be written after this file is committed; it may not change anything above)",
+ "multiple_testing": "two verdict cells (needle C2 and ROOM) run on the same 92 sessions tonight, each at about one-sided 0.025, so the family-wise rate is about 0.05. Information cells cannot rescue a fail in either.",
+ "amended": "2026-10-09, before the script exists or any run, per the result-skeptic FIX FIRST: 45% coverage and prior-sample disclosure, prior lowered; exact cut and definition source; no prior-close drop; drop-rate flag; concentration test = top 3 days and top 5 symbols; RELATIVE-ONLY outcome declared; within-name, vol-scaled, SPY beta and overlap information; family-wise statement. Round 2 (skeptic OK): single cut 2.744; top-5-symbol drop is ROOM side only."
+}
