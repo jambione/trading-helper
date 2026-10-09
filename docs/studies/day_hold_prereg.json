@@ -6,27 +6,27 @@
  "prior": "LOW to MODERATE. Against: the screened universe fades 30 min to 5 days (the-universe-fades-at-every-horizon); desk fills drift -9/-28/-43 bp at 5/15/30 min; new-high events lose ~-11 bp hedged net30 (name_history 10/9). For: name selection is the only place signal appeared; above-50-day-MA names drifted up; gap-down > 1% fades all day; 'up > 2.35% in the first 76 min' held better (steady-runway check).",
  "pilot": {
   "sessions": "every RTH session 2026-09-08 .. 2026-10-08 with admit_range rows (2026-09-07 was Labor Day; excluded), about 22-23; then the same rule runs forward nightly (scored from bars, no orders) with a second read at 40 total sessions",
-  "candidates": "symbols with an ai_reports/admit_range.jsonl row on day D, source in {trending, agy, xai, bb_live, movers, momentum, tight}, row ts between 04:00 and 10:30 ET; common stock only (ticker_filters.is_common; levered/inverse ETPs excluded via is_levered_etp with the cached asset name)",
-  "features_at_1030": "from SIP 1-minute RTH bars 09:30-10:30 of D and SIP daily bars through D-1 (raw prices for price levels, adjusted daily closes for SMA50): P = close of the bar ending 10:30; open O = first RTH bar's open; morning high MH / low ML = max high / min low of bars 09:30-10:30; prior close PC = raw daily close of D-1; SMA50 = mean of the 50 adjusted daily closes ending D-1",
-  "qualify": "P >= $10; D-1 adjusted close > SMA50; gap = O/PC - 1 >= -1%; day change chg = P/PC - 1 in [+2%, +10%]; holding = P >= O AND P >= 0.99 x MH",
+  "candidates": "symbols with an ai_reports/admit_range.jsonl row on day D, source in {trending, agy, xai, bb_live, movers, momentum, tight}, row ts between 04:00 and 10:30 ET; common stock only (ticker_filters.is_common; levered/inverse ETPs excluded via is_levered_etp with the cached asset name); one candidate per symbol per day (earliest ts <= 10:30); names with a split or dividend on D are excluded (counted); SIP 1-minute bars are fetched for EVERY candidate (and for 2026-10-08), never only the top-400 cache; candidates without bars are logged per day; a day with > 5% of candidates missing bars is aborted (counted); a run that hits a 429 aborts",
+  "features_at_1030": "Alpaca stamps a bar at its START. P = close of the bar stamped 10:29; MH / ML / dollar volume use bars stamped 09:30..10:29; O = open of the bar stamped 09:30; PC = raw daily close of D-1; SMA50 = mean of the 50 adjusted daily closes ending D-1",
+  "qualify": "P >= $10; D-1 adjusted close > SMA50; gap = O/PC - 1 >= -1%; day change chg = P/PC - 1 in [+2%, +10%]; holding = P >= O AND P >= 0.99 x MH; 09:30-10:29 dollar volume >= $5M",
   "rank": "by the number of distinct source FAMILIES that listed the name by 10:30 (trending = {trending}; AI = {agy, xai, bb_live}; movers = {movers, momentum, tight}), descending; ties by 09:30-10:30 dollar volume, descending. Take the top 3 (fewer if fewer qualify; a day with none is a cash day, scored 0).",
-  "entry": "the open of the 10:30-10:31 one-minute bar",
-  "exits": "per name, scanning 1-minute bars from the 10:30-10:31 bar on: LOSS LIMIT stop = entry x 0.97, a bar with low <= stop exits at min(stop, that bar's open); RED KNIFE (a) a 1-minute close below ML, or (b) a 1-minute close <= 0.98 x the highest close of the previous 5 bars -> exit at the next bar's open; TIME the close of the bar ending 15:55. The loss limit is checked before the knife on the same bar. No ratchet, no trail, no target.",
+  "entry": "the open of the bar stamped 10:30",
+  "exits": "per name, scanning 1-minute bars from the bar stamped 10:30 on: LOSS LIMIT stop = entry x 0.97, a bar with low <= stop exits at min(stop, that bar's open); RED KNIFE (a) a 1-minute close below ML, or (b) a 1-minute close <= 0.98 x the highest close of the previous 5 bars -> exit at the next bar's open; TIME the close of the bar stamped 15:54. The loss limit is checked before the knife on the same bar. No ratchet, no trail, no target.",
   "cost": "10 bp round trip per name (one entry and one exit on liquid >= $10 names; the desk's measured cost is ~10 bp per round trip on all names and 2-6 bp on tight names); 20 bp as a sensitivity that must also pass",
-  "portfolio": "equal weight across the day's picks; daily net = mean of the picks' net bp (cash day = 0)"
+  "portfolio": "equal weight across the day's picks; daily net = mean of the picks' net bp (cash day = 0); on a cash day C1 is also 0 (difference 0); the invested-days-only mean and t are reported next to the all-days figures and BOTH must pass"
  },
  "controls": {
-  "C1_random_same_lists": "per day, 3 names drawn from that day's candidates with P >= $10 (no other filter), same entry, exits and cost; 200 draws per day with seeds sha256('dayhold|' + day + '|' + k); the day's control = the mean over draws",
-  "C2_spy": "SPY 10:30-10:31 bar open -> 15:55 bar close, 2 bp cost",
+  "C1_random_same_lists": "per day, k names (k = the number the rule picked that day, 1-3) drawn from that day's candidates with P >= $10 and 09:30-10:29 dollar volume >= $5M (no other filter), same entry, exits and cost; 200 draws per day with seeds sha256('dayhold|' + day + '|' + draw); the day's control = the mean over draws. A day with fewer than k such candidates is scored for picks net only and left out of picks minus C1 (counted).",
+  "C2_spy": "INFORMATION ONLY (picks are high-beta, so beating SPY mostly measures up days): SPY bar stamped 10:30 open -> bar stamped 15:54 close, 2 bp cost; results also split by up-SPY and down-SPY days",
   "desk": "information: the day desk's realised P&L per day from ai_reports/outcomes.jsonl divided by $2,000 paper equity, in bp"
  },
  "statistic": "per day: picks net, picks minus C1, picks minus C2; mean over days, t across days (df = days - 1); cash days included at 0 (counted)",
- "pass": "PILOT (22-23 sessions) earns only the forward run: picks net > 0 AND picks minus C1 >= +20 bp/day with t >= 2 AND picks minus SPY > 0, under both 10 and 20 bp costs, and still > 0 after dropping the best day. FORWARD READ at 40 total sessions: the same bar. A pass at 40 sessions earns a skeptic review of the positive, then a paper switch-on as a separate desk mode; never live money first (live_mirror rules).",
- "fail": "picks minus C1 <= 0 at either read with MDE (2.84 x SE) <= 40 bp/day, or t <= -2 -> FAIL (closes the day-hold question for this rule). Otherwise UNDERPOWERED (the forward run continues to 40 sessions).",
+ "pass": "PILOT (22-23 sessions) earns only the forward run: picks net > 0 AND picks minus C1 >= +20 bp/day with t >= 2, on all days AND on invested days only, under both 10 and 20 bp costs, and still > 0 after dropping the best day. FORWARD READ at 40 total sessions: the same bar on all 40, AND picks minus C1 > 0 on the forward-only sessions (those after the pilot). A pass at 40 sessions earns a skeptic review of the positive, then a paper switch-on as a separate desk mode; never live money first.",
+ "fail": "at the 40-session read anything that is not a PASS is a FAIL for this rule (closes the day-hold question for it). At the pilot: picks minus C1 <= 0 with t <= -2 is an early FAIL; otherwise the forward run continues.",
  "long_history_secondary": {
   "question": "does the daily-data proxy of the rule beat the liquid universe open->close over 10 years?",
-  "data": "the lh_cache Alpaca SIP daily panel 2016-2026 (adjusted o/c, raw close rc), the frozen overnight universe: rc(D-1) >= $10, ADV20 >= $50M",
-  "rule": "on day D: D-1 close > SMA50 (D-1), gap = o(D)/c(D-1) - 1 in [-1%, +5%]; rank by ADV20 descending among those with gap >= 0; top 3; hold open -> close; 10 bp cost",
+  "data": "the lh_cache Alpaca SIP daily panel 2016-2026 (adjusted o/c, raw close rc), the frozen overnight universe: rc(D-1) >= $10, ADV20 >= $50M; the panel's assets include inactive (delisted) names (lh_fetch.assets active + inactive), so universe membership is point-in-time",
+  "rule": "selection on D-1 data ONLY: rc(D-1) >= $10, ADV20(D-1) >= $50M, close(D-1) > SMA50(D-1); rank by the D-1 close-to-close return, descending (yesterday's strongest trending names); top 3; enter at o(D), hold to c(D); 10 bp cost. No gap filter (the panel has no minute bars, and filtering on o(D) while entering at o(D) is look-ahead). The share of days whose picks repeat the previous day's is reported.",
   "control": "the equal-weight mean open->close of all universe names that day (10 bp cost) and 3 random universe names (200 seeded draws)",
   "pass": "excess over the universe > 0 with t >= 2 (SE = max(plain, NW5)) in BOTH halves 2016-2020 and 2021-2026",
   "note": "no source lists, no 10:30 features, no intraday exits exist historically; this tests only the daily skeleton (trend + gap + liquidity, hold the session)"
@@ -37,7 +37,9 @@
   "top-2 instead of top-3",
   "exit reason mix and net per reason",
   "each qualify filter dropped one at a time (which filter does the work)",
-  "per source family: picks listed by 1, 2, 3 families"
+  "per source family: picks listed by 1, 2, 3 families",
+  "results per calendar week (the candidate population moved with desk config changes during the pilot)",
+  "up-SPY vs down-SPY days"
  ],
  "no_retuning": "the 10:30 decision time, filters, rank, top 3, -3% loss limit, knife rules, 15:55 exit, costs and the 40-session read are fixed; any change is a new pre-registration",
  "caveats": [
@@ -45,5 +47,6 @@
   "SIP bars; the live desk sees IEX, so a pass needs the forward run on the live feed's prices as well",
   "admit_range rows are the desk's admissions, a filtered subset of what the sources listed",
   "fills at bar opens, no queue or slippage model beyond the flat cost"
- ]
+ ],
+ "amended": "2026-10-09 ~05:15 ET, before any outcome: skeptic FIX FIRST (8) applied - cash days score 0 for C1 too, invested-days-only must also pass; C1 draws k = picks that day; start-stamped bar labels (P = 10:29 close, entry = 10:30 open, exit = 15:54 close); fetch bars for every candidate, log/abort on gaps and 429s; dedupe + $5M morning dollar volume; 40-session read is PASS or FAIL with forward-only sessions also > 0; SPY comparison information only; long-history selection on D-1 data only, no gap filter, point-in-time universe. Notes: 20 bp is the realistic cost, corporate actions on D excluded, per-week results."
 }
