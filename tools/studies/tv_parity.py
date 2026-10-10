@@ -27,7 +27,10 @@ import pandas as pd  # noqa: E402
 import signals as S  # noqa: E402
 
 
-def compute(df, fast, fs, slow, ss):
+def compute(df, fast, fs, slow, ss, src="hl"):
+    """src 'hl' = range from highs/lows (signals.py); 'close' = range from closes only (TradingView Source: Close)."""
+    if src == "close":
+        df = df.assign(high=df["close"], low=df["close"])
     return float(S._minute_grid_pr(df, fast, fs).iloc[-1]), float(S._minute_grid_pr(df, slow, ss).iloc[-1])
 
 
@@ -62,16 +65,17 @@ def main():
         t_bar = pd.Timestamp(datetime.strptime(day, "%Y-%m-%d").replace(hour=hh, minute=mm, tzinfo=ET))
         tv_f, tv_s = float(r["fast"]), float(r["slow"])
         rec = {"sym": sym, "at": f"{day} {r['time_et']}", "tv": (tv_f, tv_s)}
-        for lab, start in (("rth", (9, 30)), ("ext", (4, 0))):
+        for lab, start, src in (("rth", (9, 30), "hl"), ("ext", (4, 0), "hl"), ("rth_close", (9, 30), "close"), ("ext_close", (4, 0), "close")):
             t0 = pd.Timestamp(datetime.strptime(day, "%Y-%m-%d").replace(hour=start[0], minute=start[1], tzinfo=ET))
             cut = df[(df["time"] >= t0) & (df["time"] <= t_bar)].reset_index(drop=True)
-            rec[lab] = compute(cut, a.fast, a.fast_smooth, a.slow, a.slow_smooth) if len(cut) >= 5 else (float("nan"), float("nan"))
+            rec[lab] = compute(cut, a.fast, a.fast_smooth, a.slow, a.slow_smooth, src) if len(cut) >= 5 else (float("nan"), float("nan"))
         out.append(rec)
     print(f"settings: fast %R({a.fast}) EMA {a.fast_smooth}, slow %R({a.slow}) EMA {a.slow_smooth}; {len(out)} readings\n")
-    print(f"  {'symbol':6s} {'bar':16s} {'TV fast':>8s} {'TV slow':>8s} | {'RTH fast':>8s} {'RTH slow':>8s} | {'EXT fast':>8s} {'EXT slow':>8s}")
+    labs = ("rth", "ext", "rth_close", "ext_close")
+    print(f"  {'symbol':6s} {'bar':16s} {'TV fast/slow':>16s} | " + " | ".join(f"{l:>15s}" for l in labs))
     for x in out:
-        print(f"  {x['sym']:6s} {x['at']:16s} {x['tv'][0]:8.2f} {x['tv'][1]:8.2f} | {x['rth'][0]:8.2f} {x['rth'][1]:8.2f} | {x['ext'][0]:8.2f} {x['ext'][1]:8.2f}")
-    for lab in ("rth", "ext"):
+        print(f"  {x['sym']:6s} {x['at']:16s} {x['tv'][0]:7.2f} {x['tv'][1]:7.2f}  | " + " | ".join(f"{x[l][0]:7.2f} {x[l][1]:7.2f}" for l in labs))
+    for lab in labs:
         gf = [abs(x[lab][0] - x["tv"][0]) for x in out if x[lab][0] == x[lab][0]]
         gs = [abs(x[lab][1] - x["tv"][1]) for x in out if x[lab][1] == x[lab][1]]
         if gf:
