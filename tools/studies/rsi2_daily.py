@@ -117,8 +117,8 @@ def connors_swing(P, B):
         if p + 1 >= T:
             continue
         for j in range(p + 1, min(T, p + 11)):
-            if np.isfinite(c[j]) and (c[j] > sma5[j] or j == min(T, p + 11) - 1):
-                ev.append((pd.Timestamp(P["dates"][p]).year, c[j] / c[p] - 1))
+            if np.isfinite(c[j, k]) and (c[j, k] > sma5[j, k] or j == min(T, p + 11) - 1):
+                ev.append((pd.Timestamp(P["dates"][p]).year, c[j, k] / c[p, k] - 1))
                 break
     return ev
 
