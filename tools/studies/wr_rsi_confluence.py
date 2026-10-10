@@ -7,7 +7,8 @@ CLOSED before the entry:
   %R direction    fast %R (21, EMA 7; the TradingView-parity port, extended hours from 04:00), now minus 10 bars earlier:
                   up >= +15, down <= -15, else flat (15 points = the wr_trend15 rise)
 Groups trades by the 3x3 cross and prints gross trade bp, win rate, +15 min move; then BOTH-UP vs the rest by day.
-USAGE (mini, repo root): .venv/bin/python tools/studies/wr_rsi_confluence.py 2026-09-26 2026-10-09
+USAGE (mini, repo root): .venv/bin/python tools/studies/wr_rsi_confluence.py 2026-09-26 2026-10-09 [sip|iex]
+(iex = the live bar feed the gate reads; the +15 min outcome then also uses IEX closes)
 """
 from __future__ import annotations
 
@@ -50,6 +51,7 @@ def directions(bars, t_entry):
 
 def main():
     lo, hi = sys.argv[1], sys.argv[2]
+    feed_name = sys.argv[3] if len(sys.argv) > 3 else "sip"
     pos = {}
     for l in open(os.path.join(ROOT, "ai_reports", "position_shadow.jsonl")):
         r = json.loads(l)
@@ -77,7 +79,7 @@ def main():
         syms = sorted(syms)
         for i in range(0, len(syms), 50):
             r = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=syms[i:i + 50], timeframe=TimeFrame(1, TimeFrameUnit.Minute),
-                                                   start=d0.replace(hour=4), end=d0.replace(hour=16), feed=DataFeed.SIP))
+                                                   start=d0.replace(hour=4), end=d0.replace(hour=16), feed=DataFeed.IEX if feed_name == "iex" else DataFeed.SIP))
             for s, rows in (r.data or {}).items():
                 bars[(d, s)] = [{"t": b.timestamp.timestamp(), "h": float(b.high), "l": float(b.low), "c": float(b.close)} for b in rows]
             time.sleep(0.5)
@@ -90,7 +92,7 @@ def main():
         after = [x for x in b if x["t"] + 60 <= v["t0"] + 900]
         f15 = (after[-1]["c"] / e - 1) * 1e4 if after and after[-1]["t"] > v["t0"] else None
         rows.append({"d": d, **f, "trade": (v["exit"] / e - 1) * 1e4, "f15": f15})
-    print(f"{len(rows)} desk trades {lo}..{hi} with %R and RSI direction from SIP bars (of {len(trades)} closed); gross bp, IN SAMPLE\n")
+    print(f"{len(rows)} desk trades {lo}..{hi} with %R and RSI direction from {feed_name.upper()} bars (of {len(trades)} closed); gross bp, IN SAMPLE\n")
 
     def line(lab, x):
         f = [r["f15"] for r in x if r["f15"] is not None]
