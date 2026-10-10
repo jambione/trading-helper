@@ -16226,6 +16226,72 @@ def arm_source_allows_buy(record: dict | None, cfg: dict | None) -> tuple[bool, 
     return False, "source_blocked"
 
 
+
+# ── %R trend entry filter (docs/studies/wr_trend_entry_prereg.json; REPLAY/TEST knobs, default off) ────────────────
+# History of the arm gate's own fast %R per symbol, recorded once per poll tick (poll_once, just before the arm decision),
+# with its pctr_src. A gap of more than 180 s since the last record means the name was not being polled (dropped from the
+# watch or not yet seated), so the history restarts: no carry across a drop and re-add.
+_WR_HIST: dict[str, list] = {}
+_WR_EPISODE: dict[str, list] = {}        # sym -> [episode index, last presquare-gate time]
+WR_HIST_GAP_SEC = 180.0
+
+
+def wr_trend_record(sym: str, rec: dict, now: float, cfg: dict) -> None:
+    if float(cfg.get("ai_watch_wr_trend_min_rise", 0) or 0) <= 0:
+        return
+    ind = rec.get("indicator") if isinstance(rec, dict) else None
+    v = ind.get("pctr") if isinstance(ind, dict) else None
+    if v is None:
+        return
+    h = _WR_HIST.setdefault(sym, [])
+    if h and now - h[-1][0] > WR_HIST_GAP_SEC:
+        h.clear()
+    h.append((float(now), float(v), str(ind.get("pctr_src") or "")))
+    cut = now - 900.0
+    while h and h[0][0] < cut:
+        h.pop(0)
+
+
+def wr_trend_refusal(sym: str, record: dict, now: float | None, cfg: dict) -> str | None:
+    """None = allowed. Fast %R now minus the value recorded ~600 s earlier (latest record at or before now - 600 s,
+    recorded no more than 90 s before that point, same pctr_src at both ends) must be >= ai_watch_wr_trend_min_rise."""
+    need = float(cfg.get("ai_watch_wr_trend_min_rise", 0) or 0)
+    if need <= 0:
+        return None
+    t = float(now if now is not None else time.time())
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    cur = ind.get("pctr") if isinstance(ind, dict) else None
+    if cur is None:
+        return "wr_no_history"
+    src_now = str(ind.get("pctr_src") or "")
+    target = t - 600.0
+    past = [x for x in _WR_HIST.get(sym, []) if x[0] <= target]
+    if not past or target - past[-1][0] > 90.0:
+        return "wr_no_history"
+    if past[-1][2] != src_now:
+        return "wr_src_mismatch"
+    return None if float(cur) - past[-1][1] >= need else "wr_not_trending"
+
+
+def wr_rand_refusal(sym: str, now: float | None, cfg: dict) -> str | None:
+    """Matched 'trade less' control (wr_rand): refuse whole presquare arm EPISODES at random (sha256(symbol|day|episode)),
+    at share ai_watch_wr_rand_refuse_share. An episode is a run of presquare-gate checks with no gap > 120 s; a refused
+    episode stays refused until it ends."""
+    share = float(cfg.get("ai_watch_wr_rand_refuse_share", 0) or 0)
+    if share <= 0:
+        return None
+    t = float(now if now is not None else time.time())
+    ep = _WR_EPISODE.get(sym) or [0, -1e18]
+    n_ep = ep[0] + 1 if t - ep[1] > 120.0 else ep[0]
+    if not getattr(_MID_RISE_PEEK, "on", False):     # paint (peek) reads only; only the poll advances episodes
+        _WR_EPISODE[sym] = [n_ep, t]
+    import hashlib
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    day = datetime.fromtimestamp(t, ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    u = int(hashlib.sha256(f"{sym}|{day}|{n_ep}".encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
+    return "wr_rand" if u < share else None
+
 def should_arm_buy(
     record: dict,
     *,
@@ -16622,6 +16688,11 @@ def should_arm_buy(
             # fills never rose > +5 bp, 10/5-10/8).
             if bool(cfg.get("ai_watch_presquare_only", False)) and exh_why != "presquare":
                 return False, "not_presquare"
+            if exh_why == "presquare":
+                # wr_trend_entry_prereg.json (both off by default): %R trend filter and its matched random control.
+                _wr_why = wr_trend_refusal(_gate_sym, record, now, cfg) or wr_rand_refusal(_gate_sym, now, cfg)
+                if _wr_why:
+                    return False, _wr_why
             pace_ok, pace_why = _rvol_pace_gate(record, cfg, now)
             if not pace_ok:
                 return False, pace_why
@@ -18495,6 +18566,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             except Exception:  # noqa: BLE001
                 pass
 
+        wr_trend_record(sym, rec, t0, cfg)
         if range_arm_enabled(cfg):
             ok_arm, why = range_arm_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="check")
         else:

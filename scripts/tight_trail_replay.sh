@@ -24,6 +24,12 @@ R np_lob_slow30 $NP_ON $LOB_ON $DECAY30    # triangle (engine %R) + leash steps 
 R np_lob_step02 $NP_ON $LOB_ON $STEP02     # triangle (engine %R) + smaller leash steps (0.02R)
 R np_lob_st     $NP_ON $LOB_ON --set ai_local_trail_time_decay_enabled=false --set ai_exit_supertrend=true   # amended_14: leash off, Pivot SuperTrend 2/3/10 exit
 R np_lob_nodecay $NP_ON $LOB_ON --set ai_local_trail_time_decay_enabled=false   # supertrend_exit_forward_prereg.json attribution: leash off, no SuperTrend
+# %R trend entry filter (docs/studies/wr_trend_entry_prereg.json): wr_trend15 vs base, then the matched trade-less control at the
+# share of base buys wr_trend15 removed (two-pass).
+R wr_trend15 --set ai_watch_wr_trend_min_rise=15
+WR_SHARE=$(.venv/bin/python -c "import json,sys; b=len(json.load(open('/tmp/tt_run/$d-base.json'))['closed']); w=len(json.load(open('/tmp/tt_run/$d-wr_trend15.json'))['closed']); print(max(0.0, round(1 - w / b, 4)) if b else 0.0)" 2>/dev/null || echo 0)
+echo "wr_rand share $WR_SHARE" > /tmp/tt_run/$d-wr_rand_share.txt
+R wr_rand --set ai_watch_wr_rand_refuse_share=$WR_SHARE
 R dump30 $NP_ON $LOB_OFF --set ai_exit_rsi_dump_enabled=true --set ai_exit_rsi_dump_points=30 --set ai_exit_rsi_dump_sec=60 --set ai_exit_rsi_dump_confirm_ticks=2
 R brk_replace --set ai_watch_breakout_arm=replace   # entry: clean breakout INSTEAD of the square
 R brk_either  --set ai_watch_breakout_arm=either    # entry: square OR clean breakout

@@ -45,6 +45,9 @@ _FINGERPRINT_KEYS = (
     "ai_exit_range_time_min",
     # Pivot Point SuperTrend exit (tight_trail_replay_prereg.json amended_14), default off.
     "ai_exit_supertrend",
+    # %R trend entry filter and its random control (wr_trend_entry_prereg.json), default off.
+    "ai_watch_wr_trend_min_rise",
+    "ai_watch_wr_rand_refuse_share",
     "ai_exit_macd_liquidate",
     "ai_exit_macd_hard_sell_sep",
     "ai_exit_macd_confirm_ticks",

@@ -37,6 +37,7 @@ ALLOWED = {
     "_DAY_HIGH_CACHE": "data cache (day high from IEX bars)",
     "_VOL_NOW_CACHE": "data cache (last-5m vs session volume from IEX bars)",
     "_RVOL_OBS_LOGGED": "log de-duplication",
+    "_WR_EPISODE": "wr_rand episode clock (wr_trend_entry_prereg.json, default off); paint is read-only via _MID_RISE_PEEK",
 }
 
 
