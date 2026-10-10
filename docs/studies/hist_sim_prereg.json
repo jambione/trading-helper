@@ -1,0 +1,49 @@
+{
+ "study": "Historical held-out test of the day desk's entry and exit variants: does the live code, run on past sessions it has never seen (synthetic-day replay), make money after cost with (a) the %R + RSI direction entry and/or (b) exits that do not stomp runs (leash off + Pivot SuperTrend)?",
+ "registered_at": "2026-10-10 ~13:30 ET, before the synthetic-day mode or the historical universe exist and before any held-out day is replayed",
+ "registered_before_results": true,
+ "origin": "Operator 10/10: 'time is of the essence' -> test on held-out past sessions instead of waiting 6-9 weeks for fresh ones (docs/studies/HIST_SIM_PLAN_2026-10-10.md). Combination asked for: '%R and RSI direction change with exits not stomping out profit runs'.",
+ "prior": "LOW for profit. Every entry setup has matched random minutes (entry-setups-are-noise-equivalent); exits have never moved the gross mean (exits-cannot-move-the-mean, 42 shapes); the desk nets ~-3 bp/trade at ~3 bp spread. In-sample 10/10 quick look on 416 trades: '%R and RSI both rising' +0.1 bp gross on SIP bars but -2.1 on IEX (the feed live uses), i.e. ~+0.5 bp over %R alone. SuperTrend exit: no evidence yet (replay mirror fixed 72e95a9). Weekend counterfactual batches 1-2 (seen sessions, information only) may be read before this test runs; they cannot change anything below.",
+ "data": {
+  "held_out_window": "every regular trading day 2026-03-02 .. 2026-09-23 (no session recordings exist; this strategy was never run on them). Days the pipeline cannot build (data errors, half days) are listed and excluded before any outcome is computed; the list is frozen in the run log before scoring.",
+  "calibration_days": "2026-09-24 .. 2026-10-09 (recorded, seen): used ONLY for universe recall and synthetic-day fidelity, never scored here.",
+  "universe": "tools/studies/hist_universe.py (workstream U): point-in-time reconstruction of the movers / tight / momentum admissions with RAW-price floors; trending / agy / xai / bb_live are not reconstructable and are absent (stated coverage on the calibration days).",
+  "engine": "tools/replay_session.py --universe (workstream R): live code; engine rows from the replay's SynthEngine on IEX premarket + SIP session 1-minute bars; price path from archived SIP data as documented by WS-R.",
+  "config": "ONE fixed config for every held-out day: the live config/bot_config.json as of the 2026-10-09 close (presquare-only entry, np180 + left-overbought exits on, leash as live), sha-pinned and logged; variants differ only by the --set lines below.",
+  "costing": "tools/studies/replay_costing.py: net = replay ret - full SIP spread at entry; no NBBO -> that day's pooled median across variants (counted)."
+ },
+ "variants": {
+  "base": "fixed config (live entry, live exits)",
+  "wr15": "+ ai_watch_wr_trend_min_rise=15",
+  "wrrsi": "+ ai_watch_wr_trend_min_rise=15 + ai_watch_wr_rsi_min_rise=10",
+  "st": "+ ai_local_trail_time_decay_enabled=false + ai_exit_supertrend=true",
+  "nodecay": "+ ai_local_trail_time_decay_enabled=false",
+  "wrrsi_st": "wrrsi + st (the operator's combination; PRIMARY)",
+  "rand_wrrsi": "+ ai_watch_wr_rand_refuse_share = 1 - (wrrsi trades / base trades) for that day (two-pass), the trade-less control for the entry filter"
+ },
+ "statistic": "per day: net bp per trade and net dollars at $1k per trade (days with no trades = $0). Day-clustered: means over days, t = std_scorer.day_stat (max of plain and Newey-West(5) SE). Paired legs: same-day difference of per-day net bp/trade (and $/day).",
+ "fidelity_gate": "BEFORE any held-out replay: on the 12 calibration days, synthetic-day replay (recorded watchlist) vs the recorded replay, variants base and st: pooled |difference in net bp/trade| <= 3 bp AND >= 50% of recorded-replay trades reproduced within 90 s, for both variants. Fail -> the held-out run is NOT scored under this prereg (a new prereg is needed); the numbers are stated either way.",
+ "pass": {
+  "primary": "wrrsi_st: (1) absolute: mean net bp/trade > 0 with t >= 2.0 AND mean net $/day > 0 with t >= 2.0; (2) vs base: per-day paired difference >= +3 bp/trade with t >= 2.0; (3) both window halves (2026-03-02..06-11 and 06-12..09-23) have absolute net bp/trade > 0; (4) >= 60 scored days and >= 600 wrrsi_st trades.",
+  "secondary": "wr15, wrrsi, st, nodecay each vs base, and wrrsi vs rand_wrrsi: reported with t; any 'better than base' claim needs t >= 2.6 (Bonferroni over 5 legs) and same sign in both halves. Secondaries cannot rescue a failed primary; an absolute-profit claim for any secondary needs a new prereg on fresh sessions.",
+  "on_pass": "skeptic review, then a live PAPER A/B of wrrsi_st vs live (names split by sha256(symbol|day)); the fresh-session tests (wr_trend_entry, supertrend_exit_forward) continue as confirmation.",
+  "fail": "anything else. UNDERPOWERED (< 60 scored days or < 600 trades) = FAIL."
+ },
+ "power": "session sd of per-day net bp/trade on the desk ~15-20 bp; 100 days gives SE ~1.5-2 bp, so a true +3-4 bp per trade is detectable (t ~2); a true effect of +1 bp is not.",
+ "information_only": [
+  "trades/day per variant; exit reasons; hold times",
+  "results by universe source (movers / tight / momentum)",
+  "results by price band (<$10 excluded by config; $10-50; >$50)",
+  "calibration-day results of every variant (seen, not scored)",
+  "the slots/concurrency effect: concurrent positions per variant"
+ ],
+ "no_retuning": "15 %R points, 10 RSI points, 10-minute windows, SuperTrend 2/3/10, the fixed config, the window and the variants are fixed here. Any change after a held-out result is seen is a new prereg on a new window.",
+ "caveats": [
+  "the universe lacks trending / agy / xai / bb_live names (~30-40% of live admissions on calibration days, to be measured); results hold for the reconstructable sources only",
+  "the synthetic engine is not the live engine; fidelity gate above bounds it on calibration days only",
+  "one fixed config on all days is not what live ran on those days (live was different / not running); this tests the CURRENT strategy on past tape",
+  "market regime 2026-03..09 may differ from the coming weeks",
+  "replay fills at the replay price; spread charged at entry only (exit at the bid is inside the replay's price path as documented by WS-R)"
+ ],
+ "scripts": "tools/studies/hist_universe.py, replay_session.py --universe, scripts/hist_sim_batch.sh (to be written), tools/studies/hist_sim_read.py on std_scorer (to be written); written after this file is committed and may not change anything above."
+}
