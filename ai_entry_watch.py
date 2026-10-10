@@ -16273,6 +16273,58 @@ def wr_trend_refusal(sym: str, record: dict, now: float | None, cfg: dict) -> st
     return None if float(cur) - past[-1][1] >= need else "wr_not_trending"
 
 
+def _wilder_rsi(closes: list, n: int = 14) -> list:
+    """Wilder RSI, the arithmetic of tools/studies/rsi_history_fills.py (None until n+1 closes)."""
+    out: list = [None] * len(closes)
+    if len(closes) <= n:
+        return out
+    ag = sum(max(0.0, closes[i] - closes[i - 1]) for i in range(1, n + 1)) / n
+    al = sum(max(0.0, closes[i - 1] - closes[i]) for i in range(1, n + 1)) / n
+    for i in range(n, len(closes)):
+        if i > n:
+            d = closes[i] - closes[i - 1]
+            ag = (ag * (n - 1) + max(0.0, d)) / n
+            al = (al * (n - 1) + max(0.0, -d)) / n
+        out[i] = 100.0 if al == 0 else 100 - 100 / (1 + ag / al)
+    return out
+
+
+def wr_rsi_refusal(sym: str, now: float | None, cfg: dict) -> str | None:
+    """RSI direction gate (operator 10/10 counterfactual; REPLAY/TEST knob ai_watch_wr_rsi_min_rise, default 0 = off).
+    RSI(14) Wilder on today's RTH 1-minute bars in the ob_observe store (IEX, the bars live sees) that CLOSED by now,
+    missing minutes filled flat at the previous close; RSI now minus RSI 10 bars earlier must be >= the knob.
+    Fewer than 45 bars -> wr_rsi_no_bars (same minimum as the quick look)."""
+    need = float(cfg.get("ai_watch_wr_rsi_min_rise", 0) or 0)
+    if need <= 0:
+        return None
+    t = float(now if now is not None else time.time())
+    try:
+        import ob_observe
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+        d_now = datetime.fromtimestamp(t, et)
+        t_open = d_now.replace(hour=9, minute=30, second=0, microsecond=0).timestamp()
+        last_done = float(int(t // 60) * 60 - 60)          # start of the last minute that has closed
+        rows = [b for b in ob_observe.bars(sym) if t_open <= b[0] <= last_done]
+    except Exception:  # noqa: BLE001
+        return "wr_rsi_no_bars"
+    if not rows:
+        return "wr_rsi_no_bars"
+    by_t = {float(b[0]): float(b[4]) for b in rows}
+    closes, c, m = [], None, float(rows[0][0])
+    while m <= last_done:
+        c = by_t.get(m, c)
+        closes.append(c)
+        m += 60.0
+    if len(closes) < 45:
+        return "wr_rsi_no_bars"
+    rsi = _wilder_rsi(closes)
+    if rsi[-1] is None or rsi[-11] is None:
+        return "wr_rsi_no_bars"
+    return None if rsi[-1] - rsi[-11] >= need else "wr_rsi_not_trending"
+
+
 def wr_rand_refusal(sym: str, now: float | None, cfg: dict) -> str | None:
     """Matched 'trade less' control (wr_rand): refuse whole presquare arm EPISODES at random (sha256(symbol|day|episode)),
     at share ai_watch_wr_rand_refuse_share. An episode is a run of presquare-gate checks with no gap > 120 s; a refused
@@ -16690,7 +16742,8 @@ def should_arm_buy(
                 return False, "not_presquare"
             if exh_why == "presquare":
                 # wr_trend_entry_prereg.json (both off by default): %R trend filter and its matched random control.
-                _wr_why = wr_trend_refusal(_gate_sym, record, now, cfg) or wr_rand_refusal(_gate_sym, now, cfg)
+                _wr_why = (wr_trend_refusal(_gate_sym, record, now, cfg) or wr_rsi_refusal(_gate_sym, now, cfg)
+                           or wr_rand_refusal(_gate_sym, now, cfg))
                 if _wr_why:
                     return False, _wr_why
             pace_ok, pace_why = _rvol_pace_gate(record, cfg, now)

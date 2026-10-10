@@ -896,7 +896,8 @@ def range_on(cfg: dict) -> bool:
 def ob_feed_on(cfg: dict) -> bool:
     """The ob bar store is fed synchronously for the range rules and for the SuperTrend exit
     (tight_trail_replay_prereg.json amended_14), which reads its 1-minute bars."""
-    return range_on(cfg) or bool((cfg or {}).get("ai_exit_supertrend"))
+    return (range_on(cfg) or bool((cfg or {}).get("ai_exit_supertrend"))
+            or float((cfg or {}).get("ai_watch_wr_rsi_min_rise", 0) or 0) > 0)
 
 
 class ObStoreFeeder:

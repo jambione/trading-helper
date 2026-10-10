@@ -48,6 +48,7 @@ _FINGERPRINT_KEYS = (
     # %R trend entry filter and its random control (wr_trend_entry_prereg.json), default off.
     "ai_watch_wr_trend_min_rise",
     "ai_watch_wr_rand_refuse_share",
+    "ai_watch_wr_rsi_min_rise",
     "ai_exit_macd_liquidate",
     "ai_exit_macd_hard_sell_sep",
     "ai_exit_macd_confirm_ticks",

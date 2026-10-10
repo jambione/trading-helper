@@ -597,6 +597,7 @@ DEFAULT_CONFIG = {
     "ai_watch_wr_trend_min_rise":       0.0,
     # Its matched 'trade less' control: refuse this share of presquare arm episodes at random (seeded). 0 = off.
     "ai_watch_wr_rand_refuse_share":    0.0,
+    "ai_watch_wr_rsi_min_rise":         0.0,   # RSI(14) 10-bar rise gate on presquare arms (10/10 counterfactual; off)
     # Range entry (operator 10/8; docs/studies/range_arm_replay_prereg.json; REPLAY/TEST until it passes): buy
     # 0-0.30% above a charted support block with >= 0.40% room to resistance and the ENGINE fast %R < -20 and
     # rising; the square / presquare / last arms do not fire while it is on.
@@ -2154,6 +2155,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_presquare_only",
     "ai_watch_wr_trend_min_rise",
     "ai_watch_wr_rand_refuse_share",
+    "ai_watch_wr_rsi_min_rise",
     "ai_watch_range_arm",
     "ai_watch_range_sup_band_pct",
     "ai_watch_range_min_room_pct",
