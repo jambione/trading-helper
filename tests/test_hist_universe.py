@@ -172,6 +172,25 @@ def test_wide_spread_refuses_then_spread_fetch_is_16_min_back():
     assert T is not None and T >= I930 + 16
 
 
+def test_spy_missing_share_is_the_rth_gap():
+    one = {"SPY": [(HU.I_OPEN, 1, 1, 1, 1, 1), (HU.I_OPEN - 1, 1, 1, 1, 1, 1), (HU.N_MIN, 1, 1, 1, 1, 1)]}
+    assert HU.spy_missing_share(one) == round(1.0 - 1.0 / 390.0, 4)
+    assert HU.spy_missing_share({}) == 1.0
+    full = {"SPY": [(m, 1, 1, 1, 1, 1) for m in range(HU.I_OPEN, HU.N_MIN)]}
+    assert HU.spy_missing_share(full) == 0.0
+
+
+def test_file_config_reads_only_the_given_file(tmp_path):
+    import hashlib
+    p = tmp_path / "pinned.json"
+    raw = b'{"ai_max_positions": 3}\n'
+    p.write_bytes(raw)
+    cfg, sha = HU.file_config(p)
+    assert cfg["ai_max_positions"] == 3
+    assert sha == hashlib.sha256(raw).hexdigest()[:16]
+    assert "ai_watch_min_price" in cfg
+
+
 def test_score_day_window_and_traded():
     rec = {(DAY, "A"): {"ts": 1000.0, "source": "movers"}, (DAY, "B"): {"ts": 1000.0, "source": "momentum"},
            (DAY, "C"): {"ts": 1000.0, "source": "trending"}, (DAY, "D"): {"ts": 1000.0, "source": "tight"}}

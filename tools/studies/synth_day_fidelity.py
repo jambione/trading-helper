@@ -11,10 +11,13 @@ print), not the universe error (part B, hist_universe.py).
 SUBCOMMANDS (mini; data reads only, never on a day before 2026-09-24)
   export --out DIR DAY...          universe / config stream / equity per day, from the recordings (read-only)
          [--intervals]             also write DAY-iv.json with candidate spans from sessions/DAY/sources.jsonl.gz
-  run    --out DIR --lane i/n --leg rec|syn [--universe-kind first|iv] DAY...
-                                   the replays, nice'd, one at a time per lane; DIR/{rec,syn}/DAY-VARIANT.json
-  score  --out DIR DAY...          the gate table (trades/day, overlap both ways within 90 s, gross / net bp per
-                                   trade, diffs, paired wrrsi_st-base, per-day sd) -> stdout + DIR/fidelity.json
+  run    --out DIR --lane i/n --leg rec|syn [--universe-kind first|iv|hist] DAY...
+                                   the replays, nice'd, one at a time per lane; DIR/{rec,syn_KIND}/DAY-VARIANT.json
+                                   hist reads ai_reports/hist_universe/calib_DAY.json and skips a null equity
+  score  --out DIR DAY...          part A gate table -> stdout + DIR/fidelity_KIND.json
+  gate   --out DIR [--dest /tmp/hs/FIDELITY.json] DAY...
+                                   part B (syn_hist vs rec) plus DIR/fidelity_first.json. Writes nothing if
+                                   either leg is missing.
 
 Variants (prereg amendment eb0c863): base = the day's config; st = time decay off + SuperTrend exit;
 wrrsi_st = %R trend 15 + RSI rise 10 + st. Net = ret - full SIP spread at entry (replay_costing), no NBBO = that
@@ -165,11 +168,18 @@ def cmd_run(a) -> None:
         if a.sha:
             cmd += ["--sha", a.sha]
         if a.leg == "syn":
+            if a.universe_kind == "hist":
+                uni = ROOT / "ai_reports" / "hist_universe" / f"calib_{d}.json"
+            else:
+                uni = out / f"{d}-{a.universe_kind}.json"
             eq = json.loads((out / f"{d}-equity.json").read_text()).get("equity")
-            cmd += ["--universe", str(out / f"{d}-{a.universe_kind}.json"),
-                    "--config-stream", str(out / f"{d}-config.jsonl"), "--engine-bars", "iex"]
-            if eq:
-                cmd += ["--equity", str(eq)]
+            if not eq:
+                print(f"{d} {v}: equity is null; skipped (would size off the live account file)", flush=True)
+                with open(leg_dir / "status.txt", "a") as f:
+                    f.write(f"{d} {v} rc=skipped null equity\n")
+                continue
+            cmd += ["--universe", str(uni), "--config-stream", str(out / f"{d}-config.jsonl"),
+                    "--engine", "recompute", "--engine-bars", "iex", "--equity", str(eq)]
         cmd += VARIANTS[v]
         t0 = time.time()
         with open(leg_dir / f"{d}-{v}.log", "w") as log:
@@ -345,26 +355,240 @@ def cmd_score(a) -> dict:
     return report
 
 
+# ── part B + the fidelity file the prereg's reader checks ───────────────────────────────────────────────
+
+# NYSE full holidays inside 2026-03-02..09-23. No early close falls in that window
+# (the 2026 early closes are Nov 27 and Dec 24). July 2 is a full day; July 3 is closed.
+HELD_OUT_HOLIDAYS = ("2026-04-03", "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07")
+B_DIFF_BP = 3.0
+B_PAIRED_BP = 1.5
+B_RECALL = 0.70
+Z_80 = 1.959963984540054 + 0.8416212335729143   # two-sided 5%, 80% power
+
+
+def held_out_trading_days(lo: str = "2026-03-02", hi: str = "2026-09-23") -> list[str]:
+    """Weekdays in the held-out window minus the NYSE holidays above. Pure."""
+    from datetime import datetime, timedelta
+    d = datetime.strptime(lo, "%Y-%m-%d")
+    end = datetime.strptime(hi, "%Y-%m-%d")
+    hol = set(HELD_OUT_HOLIDAYS)
+    out = []
+    while d <= end:
+        if d.weekday() < 5 and d.strftime("%Y-%m-%d") not in hol:
+            out.append(d.strftime("%Y-%m-%d"))
+        d += timedelta(days=1)
+    return out
+
+
+def mde_80(sd, n) -> float | None:
+    """Minimum detectable effect at 80% power for a day-level mean, normal approximation. Pure."""
+    if sd is None or n is None or n < 2:
+        return None
+    return Z_80 * float(sd) / math.sqrt(n)
+
+
+def recall_pair(recorded_rows, recon_rows, traded_syms, window_sec: float = 600.0) -> dict:
+    """Movers+tight recall for one day. recorded_rows are first admissions; recon_rows are hist_universe admits.
+
+    A name counts when the reconstructed first_ts is within window_sec of the recorded one.
+    traded_syms are symbols the recorded replay closed. Empty denominators stay None (a vacuous 100% is not a pass).
+    Pure."""
+    rec = {}
+    for r in recorded_rows or []:
+        s = str(r.get("symbol") or "").upper()
+        if not s or r.get("first_ts") is None:
+            continue
+        if s not in rec or float(r["first_ts"]) < float(rec[s]["first_ts"]):
+            rec[s] = r
+    recon = {}
+    for r in recon_rows or []:
+        s = str(r.get("symbol") or "").upper()
+        if not s or r.get("first_ts") is None:
+            continue
+        ts = float(r["first_ts"])
+        if s not in recon or ts < recon[s]:
+            recon[s] = ts
+
+    def hits(names):
+        h = 0
+        for s in names:
+            ts = recon.get(s)
+            if ts is not None and abs(ts - float(rec[s]["first_ts"])) <= window_sec:
+                h += 1
+        return h
+
+    covered = lambda r: str(r.get("source") or "").lower() in ("movers", "tight")  # noqa: E731
+    admit = [s for s, r in rec.items() if covered(r)]
+    traded = [s for s in traded_syms if s in rec and covered(rec[s])]
+    return {"admit_hit": hits(admit), "admit_n": len(admit),
+            "admit_recall": hits(admit) / len(admit) if admit else None,
+            "traded_hit": hits(traded), "traded_n": len(traded),
+            "traded_recall": hits(traded) / len(traded) if traded else None}
+
+
+def part_b_pass(admit_recall, traded_recall, diffs: dict, paired_diff) -> dict:
+    """Fidelity B: recall floors, |net diff| <= 3 bp per variant, paired |diff| <= 1.5 bp. Pure."""
+    d_ok = bool(diffs) and all(v is not None and abs(v) <= B_DIFF_BP for v in diffs.values())
+    out = {"admit_recall_ok": admit_recall is not None and admit_recall >= B_RECALL,
+           "traded_recall_ok": traded_recall is not None and traded_recall >= B_RECALL,
+           "diff_ok": d_ok,
+           "paired_ok": paired_diff is not None and abs(paired_diff) <= B_PAIRED_BP}
+    out["pass"] = all(out.values())
+    return out
+
+
+def fidelity_document(a_pass: bool, b_pass: bool, A: dict, B: dict, power: dict) -> dict:
+    """The file hist_sim_read.py requires before it will score. Pure."""
+    return {"verdict": "PASS" if a_pass and b_pass else "FAIL", "A": A, "B": B, "power": power}
+
+
+def _closed(path: Path) -> list[dict] | None:
+    if not path.exists():
+        return None
+    return json.loads(path.read_text()).get("closed") or []
+
+
+def _recon_rows(path: Path) -> list[dict]:
+    raw = json.loads(path.read_text())
+    if isinstance(raw, dict):
+        return raw.get("admits") or raw.get("rows") or raw.get("universe") or []
+    return raw if isinstance(raw, list) else []
+
+
+def cmd_gate(a) -> dict:
+    """Write DIR/FIDELITY.json from a finished part A score and a part B (hist) leg. Refuses if either is missing."""
+    import replay_costing as RC
+    out = Path(a.out)
+    a_path = out / "fidelity_first.json"
+    if not a_path.exists():
+        raise SystemExit(f"part A score missing: {a_path}")
+    A = json.loads(a_path.read_text())
+    if not A.get("verdict"):
+        raise SystemExit(f"{a_path} has no verdict")
+    rec_dir, syn_dir = out / "rec", out / "syn_hist"
+    missing = []
+    for d in a.days:
+        for v in VARIANTS:
+            for p in (rec_dir / f"{d}-{v}.json", syn_dir / f"{d}-{v}.json"):
+                if not p.exists():
+                    missing.append(str(p))
+        hist = ROOT / "ai_reports" / "hist_universe" / f"calib_{d}.json"
+        if not hist.exists():
+            missing.append(str(hist))
+    if missing:
+        raise SystemExit("part B not ready:\n" + "\n".join(missing[:20]))
+    cache_path = Path(a.cost_cache)
+    if not cache_path.exists():
+        real = ROOT / "ai_reports" / "replay_costing_cache.json"
+        if real.exists():
+            shutil.copy2(real, cache_path)
+    RC.CACHE = str(cache_path)
+    cache, box = RC.load_cache(), {}
+    admit = [json.loads(x) for x in open(ROOT / "ai_reports" / "admit_range.jsonl") if x.strip()]
+    recall = {"admit_hit": 0, "admit_n": 0, "traded_hit": 0, "traded_n": 0}
+    for d in a.days:
+        traded = {str(t["symbol"]).upper() for t in (_closed(rec_dir / f"{d}-base.json") or [])
+                  if t.get("ret") is not None}
+        one = recall_pair(recorded_universe(admit, d), _recon_rows(
+            ROOT / "ai_reports" / "hist_universe" / f"calib_{d}.json"), traded)
+        for k in recall:
+            recall[k] += one[k]
+    diffs, sd_bp, sd_paired, paired_diff = _b_trade_pool(out, a.days, cache, box)
+    RC.save_cache(cache)
+    admit_recall = recall["admit_hit"] / recall["admit_n"] if recall["admit_n"] else None
+    traded_recall = recall["traded_hit"] / recall["traded_n"] if recall["traded_n"] else None
+    b_flag = part_b_pass(admit_recall, traded_recall, diffs, paired_diff)
+    n = len(held_out_trading_days())
+    mde_bp, mde_paired = mde_80(sd_bp, n), mde_80(sd_paired, n)
+    power = {"n_window_days": n, "sd_wrrsi_st_net_bp": sd_bp, "sd_paired_bp": sd_paired,
+             "mde_80_wrrsi_st_net_bp": mde_bp, "mde_80_paired_bp": mde_paired,
+             "source": "part B calibration synthetic (hist_universe watchlist)",
+             "n_note": "window days before exclusions; a later exclusion raises the MDE",
+             "mde_gt_4bp": bool((mde_bp is not None and mde_bp > 4) or (mde_paired is not None and mde_paired > 4))}
+    if power["mde_gt_4bp"]:
+        power["note"] = "a FAIL on the held-out run is uninformative about effects below the MDE"
+    B = {"admit_recall": admit_recall, "traded_recall": traded_recall, "counts": recall,
+         "pooled_diff_bp": diffs, "paired_diff_bp": paired_diff, "verdict": b_flag}
+    doc = fidelity_document(bool(A["verdict"].get("PASS")), bool(b_flag["pass"]), A, B, power)
+    dest = Path(a.dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(doc, indent=1, default=str))
+    print(f"FIDELITY {doc['verdict']}  A {A['verdict'].get('PASS')}  B {b_flag['pass']}  "
+          f"admit {admit_recall} traded {traded_recall}  wrote {dest}")
+    return doc
+
+
+def _b_trade_pool(out: Path, days, cache, box) -> tuple[dict, float | None, float | None, float | None]:
+    """Trade-pooled net diff per variant, plus the per-day sd of synthetic wrrsi_st and of the paired difference.
+
+    A missing NBBO is charged that day's median spread across every variant and both legs, the same
+    substitute part A uses. A variant with no priced trades on either side gets a null diff (not a pass)."""
+    import replay_costing as RC
+    rec_dir, syn_dir = out / "rec", out / "syn_hist"
+    day_nets = {d: {v: {"rec": [], "syn": []} for v in VARIANTS} for d in days}
+    for d in days:
+        pending, spreads = [], []
+        for v in VARIANTS:
+            for leg, p in (("rec", rec_dir / f"{d}-{v}.json"), ("syn", syn_dir / f"{d}-{v}.json")):
+                for t in _closed(p) or []:
+                    if t.get("ret") is None:
+                        continue
+                    spr = RC.entry_spread_bp(cache, t["symbol"], t["entry_ts"], box)
+                    if spr is not None:
+                        spreads.append(spr)
+                    pending.append((v, leg, t["ret"], spr))
+        med = statistics.median(spreads) if spreads else None
+        for v, leg, ret, spr in pending:
+            if spr is None:
+                if med is None:
+                    continue
+                spr = med
+            day_nets[d][v][leg].append(ret * 1e4 - spr)
+    diffs = {}
+    day_syn = {v: {} for v in VARIANTS}
+    for v in VARIANTS:
+        rec_nets, syn_nets = [], []
+        for d in days:
+            rec_nets.extend(day_nets[d][v]["rec"])
+            syn_nets.extend(day_nets[d][v]["syn"])
+            day_syn[v][d] = mean(day_nets[d][v]["syn"])
+        diffs[v] = (mean(syn_nets) - mean(rec_nets)) if rec_nets and syn_nets else None
+    paired_days = []
+    for d in days:
+        a, b = day_syn["wrrsi_st"].get(d), day_syn["base"].get(d)
+        if a is not None and b is not None:
+            paired_days.append(a - b)
+    # diffs are syn - rec, so (syn_w - rec_w) - (syn_b - rec_b) = (syn_w - syn_b) - (rec_w - rec_b)
+    if all(diffs[v] is not None for v in ("base", "wrrsi_st")):
+        paired = diffs["wrrsi_st"] - diffs["base"]
+    else:
+        paired = None
+    return diffs, sd([day_syn["wrrsi_st"].get(d) for d in days]), sd(paired_days), paired
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("export", "run", "score"):
+    for name in ("export", "run", "score", "gate"):
         p = sub.add_parser(name)
         p.add_argument("--out", required=True)
         p.add_argument("days", nargs="+")
         if name == "export":
             p.add_argument("--intervals", action="store_true")
         if name in ("run", "score"):
-            p.add_argument("--universe-kind", default="first", choices=("first", "iv"))
+            p.add_argument("--universe-kind", default="first", choices=("first", "iv", "hist"))
         if name == "run":
             p.add_argument("--lane", default="0/1")
             p.add_argument("--leg", required=True, choices=("rec", "syn"))
             p.add_argument("--sha", default=None)
         if name == "score":
             p.add_argument("--cost-cache", default="/tmp/ws_r_out/costing_cache.json")
+        if name == "gate":
+            p.add_argument("--cost-cache", default="/tmp/ws_r_out/costing_cache.json")
+            p.add_argument("--dest", default="/tmp/hs/FIDELITY.json")
     a = ap.parse_args(argv)
     check_days(a.days)
-    {"export": cmd_export, "run": cmd_run, "score": cmd_score}[a.cmd](a)
+    {"export": cmd_export, "run": cmd_run, "score": cmd_score, "gate": cmd_gate}[a.cmd](a)
 
 
 if __name__ == "__main__":

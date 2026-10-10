@@ -212,3 +212,127 @@ def test_gate_verdict():
     assert not v["base"]["days_within_ok"] and not v["PASS"]
     v = sf.gate_verdict({"base": good}, {"diff": 2.0})
     assert not v["paired"]["pass"] and not v["PASS"]
+
+
+def test_load_universe_reads_admits_and_refuses_an_empty_dict(tmp_path):
+    import pytest
+    p = tmp_path / "h.json"
+    p.write_text(json.dumps({"admits": [
+        {"symbol": "qqq", "first_ts": rp.at(DAY, "10:05"), "source": "tight"},
+    ], "spy_missing_share": 0.0}))
+    u = rp.load_universe(p, DAY)
+    assert [r["symbol"] for r in u] == ["QQQ"] and u[0]["source"] == "tight"
+    empty = tmp_path / "e.json"
+    empty.write_text("{}")
+    with pytest.raises(SystemExit, match="no rows, universe, or admits"):
+        rp.load_universe(empty, DAY)
+    (tmp_path / "b.json").write_text("[]")
+    assert rp.load_universe(tmp_path / "b.json", DAY) == []
+
+
+def test_fake_broker_synthetic_exit_without_a_print_stays_open():
+    prints = {"ABC": ([100.0], [10.0])}
+
+    def fill(sym, t):
+        return rp.TradeTape(prints).next_after(sym, t)
+
+    b = rp.FakeBroker(hold_sec=60, max_pos=5, equity=1e5)
+    b.fill_fn = fill
+    b.enter("ABC", 10.0, 100.0, {})
+    dash = {"tickers": [{"ticker": "ABC", "price": 10.2}]}
+    assert b.exits_due(165.0, dash) == []
+    assert b.closed == [] and "ABC" in b.open and b.exit_no_print == 1
+    assert b.exits_due(170.0, dash) == [] and b.exit_no_print == 1
+    prints["ABC"] = ([100.0, 180.0], [10.0, 10.5])
+    assert b.exits_due(175.0, dash) == ["ABC"]
+    assert (b.closed[0]["exit_px"], b.closed[0]["exit_ts"]) == (10.5, 180.0)
+    assert b.exit_no_print == 1
+
+
+def test_recall_pair_movers_tight_window_and_vacuous_zero():
+    rec = [
+        {"symbol": "A", "first_ts": 2000.0, "source": "movers"},
+        {"symbol": "A", "first_ts": 1000.0, "source": "movers"},
+        {"symbol": "B", "first_ts": 1000.0, "source": "momentum"},
+        {"symbol": "C", "first_ts": 1000.0, "source": "tight"},
+    ]
+    recon = [
+        {"symbol": "A", "first_ts": 1000.0 + 9 * 60, "source": "movers"},
+        {"symbol": "C", "first_ts": 1000.0 + 11 * 60, "source": "tight"},
+        {"symbol": "B", "first_ts": 1000.0, "source": "movers"},
+    ]
+    r = sf.recall_pair(rec, recon, traded_syms=["A", "C", "B"])
+    assert r["admit_n"] == 2 and r["admit_hit"] == 1
+    assert r["traded_n"] == 2 and r["traded_hit"] == 1
+    assert abs(r["admit_recall"] - 0.5) < 1e-9
+    z = sf.recall_pair([], [], [])
+    assert z["admit_n"] == 0 and z["admit_recall"] is None and z["traded_recall"] is None
+
+
+def test_part_b_pass_and_fidelity_document():
+    diffs = {"base": 1.0, "st": -2.9, "wrrsi_st": 0.2}
+    assert sf.part_b_pass(0.70, 0.70, diffs, 1.5)["pass"]
+    assert not sf.part_b_pass(0.69, 0.70, diffs, 1.5)["pass"]
+    assert not sf.part_b_pass(None, 0.80, diffs, 0.0)["pass"]
+    assert not sf.part_b_pass(0.8, 0.8, {"base": 3.1}, 0.0)["pass"]
+    assert not sf.part_b_pass(0.8, 0.8, {}, 0.0)["pass"]
+    assert not sf.part_b_pass(0.8, 0.8, diffs, None)["pass"]
+    assert sf.fidelity_document(True, False, {}, {}, {})["verdict"] == "FAIL"
+    assert sf.fidelity_document(True, True, {"a": 1}, {"b": 1}, {"p": 1})["verdict"] == "PASS"
+
+
+def test_held_out_calendar_and_mde():
+    from datetime import datetime, timedelta
+    hol = {"2026-04-03", "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07"}
+    assert set(sf.HELD_OUT_HOLIDAYS) == hol
+    d = datetime(2026, 3, 2)
+    end = datetime(2026, 9, 23)
+    n = 0
+    while d <= end:
+        if d.weekday() < 5 and d.strftime("%Y-%m-%d") not in hol:
+            n += 1
+        d += timedelta(days=1)
+    assert n == 143
+    days = sf.held_out_trading_days()
+    assert len(days) == 143 and days[0] == "2026-03-02" and days[-1] == "2026-09-23"
+    assert "2026-07-02" in days and "2026-07-03" not in days and "2026-03-07" not in days
+    assert sf.mde_80(None, 143) is None and sf.mde_80(4.0, 1) is None
+    assert abs(sf.mde_80(4.0, 143) - sf.Z_80 * 4.0 / (143 ** 0.5)) < 1e-9
+
+
+def test_b_trade_pool_charges_the_day_median_across_variants(tmp_path, monkeypatch):
+    day = "2026-10-08"
+    for leg in ("rec", "syn_hist"):
+        (tmp_path / leg).mkdir()
+    def write(leg, variant, trades):
+        (tmp_path / leg / f"{day}-{variant}.json").write_text(json.dumps({"closed": trades}))
+    write("rec", "base", [{"symbol": "A", "entry_ts": 1.0, "ret": 0.01}])
+    write("syn_hist", "base", [{"symbol": "A", "entry_ts": 1.0, "ret": 0.01}])
+    write("rec", "st", [{"symbol": "B", "entry_ts": 2.0, "ret": 0.0}])
+    write("syn_hist", "st", [{"symbol": "B", "entry_ts": 2.0, "ret": 0.0}])
+    write("rec", "wrrsi_st", [{"symbol": "C", "entry_ts": 3.0, "ret": 0.002}])
+    write("syn_hist", "wrrsi_st", [{"symbol": "C", "entry_ts": 3.0, "ret": 0.003}])
+    spreads = {("A", 1.0): 10.0, ("B", 2.0): 30.0}
+
+    def fake(_cache, sym, ts, _box):
+        return spreads.get((sym, float(ts)))
+
+    import replay_costing as RC
+    monkeypatch.setattr(RC, "entry_spread_bp", fake)
+    diffs, sd_bp, _sd_paired, paired = sf._b_trade_pool(tmp_path, [day], {}, {})
+    assert diffs["base"] == 0.0 and diffs["st"] == 0.0
+    assert diffs["wrrsi_st"] == 10.0          # (30 - 20) - (20 - 20); C had no NBBO
+    assert paired == 10.0 and sd_bp is None   # one day: no per-day sd
+
+
+def test_gate_writes_nothing_until_both_legs_exist(tmp_path):
+    import pytest
+    dest = tmp_path / "FIDELITY.json"
+    with pytest.raises(SystemExit, match="part A score missing"):
+        sf.main(["gate", "--out", str(tmp_path), "--dest", str(dest), "2026-10-08"])
+    (tmp_path / "fidelity_first.json").write_text(json.dumps({"verdict": {"PASS": True}}))
+    with pytest.raises(SystemExit, match="part B not ready"):
+        sf.main(["gate", "--out", str(tmp_path), "--dest", str(dest), "2026-10-08"])
+    assert not dest.exists()
+    with pytest.raises(SystemExit):
+        sf.main(["run", "--out", str(tmp_path), "--leg", "syn", "--universe-kind", "nope", "2026-10-08"])

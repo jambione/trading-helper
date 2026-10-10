@@ -801,6 +801,7 @@ class FakeBroker:
         # fill_fn(sym, t) -> (price, ts) or None. None (recorded replay): fill at the decision price.
         self.fill_fn = None
         self.exit_no_print = 0
+        self._exit_unfilled: set[str] = set()
 
     def price(self, dash: dict, sym: str):
         for r in dash.get("tickers") or []:
@@ -834,14 +835,22 @@ class FakeBroker:
         return {"ok": True, "stop_price": self.open[sym]["stop"],
                 "target_1": decision.get("target_1") if isinstance(decision, dict) else None}
 
-    def _fill_exit(self, sym: str, now: float, px: float) -> tuple[float, float]:
-        """(fill price, fill time) for an exit decided at *now* on *px*."""
+    def _fill_exit(self, sym: str, now: float, px: float):
+        """(fill price, fill time), or None when a synthetic exit has no later print.
+
+        Recorded replay (fill_fn is None) fills at the decision price. A synthetic exit fills at
+        the first SIP print strictly after the decision (hist_sim_prereg.json). No later print
+        means no fill: the position stays open and the miss is counted once. Never the decision's
+        last price, which is a print already seen."""
         if self.fill_fn is None:
             return px, now
         f = self.fill_fn(sym, now)
         if f is None:
-            self.exit_no_print += 1
-            return px, now
+            if sym not in self._exit_unfilled:
+                self._exit_unfilled.add(sym)
+                self.exit_no_print += 1
+            return None
+        self._exit_unfilled.discard(sym)
         return f
 
     def _close(self, sym: str, now: float, px: float, why: str, r=None) -> None:
@@ -862,7 +871,10 @@ class FakeBroker:
             px = self.price(dash, sym)
             if self.mode == "hold" or not pos.get("pos"):
                 if now - pos["entry_ts"] >= self.hold:
-                    fpx, fts = self._fill_exit(sym, now, px or pos["entry_px"])
+                    filled = self._fill_exit(sym, now, px or pos["entry_px"])
+                    if filled is None:
+                        continue
+                    fpx, fts = filled
                     if self.fill_fn is not None:
                         pos["exit_decision_ts"] = now
                     self._close(sym, fts, fpx, "hold")
@@ -872,7 +884,10 @@ class FakeBroker:
                 continue
             why = self._live_exit(pos, px, now, dash, cfg or {}, ew)
             if why:
-                fpx, fts = self._fill_exit(sym, now, px)
+                filled = self._fill_exit(sym, now, px)
+                if filled is None:
+                    continue
+                fpx, fts = filled
                 if self.fill_fn is not None:
                     pos["exit_decision_ts"] = now
                     pos["exit_decision_px"] = px
@@ -1071,7 +1086,7 @@ def day_bars(day: str, syms: set[str], client) -> dict:
             print(f"[replay] waiting {wait / 60:.0f} min for SIP to serve the close", flush=True)
             _real_time.sleep(wait)
         from datetime import timedelta, timezone
-        from alpaca.data.enums import DataFeed
+        from alpaca.data.enums import Adjustment, DataFeed
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame
         o = datetime.strptime(day, "%Y-%m-%d").replace(hour=9, minute=30, tzinfo=ET)
@@ -1081,17 +1096,17 @@ def day_bars(day: str, syms: set[str], client) -> dict:
                 symbol_or_symbols=batch, timeframe=TimeFrame.Minute,
                 start=o.astimezone(timezone.utc),
                 end=o.replace(hour=16, minute=0).astimezone(timezone.utc),
-                feed=DataFeed.SIP)).data
+                feed=DataFeed.SIP, adjustment=Adjustment.RAW)).data
             d = client.get_stock_bars(StockBarsRequest(
                 symbol_or_symbols=batch, timeframe=TimeFrame.Day,
                 start=(o - timedelta(days=45)).astimezone(timezone.utc),
                 end=(o - timedelta(minutes=1)).astimezone(timezone.utc),
-                feed=DataFeed.SIP)).data
+                feed=DataFeed.SIP, adjustment=Adjustment.RAW)).data
             x = client.get_stock_bars(StockBarsRequest(
                 symbol_or_symbols=batch, timeframe=TimeFrame.Minute,
                 start=(o - timedelta(days=4)).replace(hour=4).astimezone(timezone.utc),
                 end=o.replace(hour=16, minute=0).astimezone(timezone.utc),
-                feed=DataFeed.IEX)).data
+                feed=DataFeed.IEX, adjustment=Adjustment.RAW)).data
             for s in batch:
                 have[s] = {
                     "m": [(b.timestamp.timestamp(), float(b.open), float(b.volume))
@@ -1134,11 +1149,21 @@ NON_LAST_SALE = frozenset("B C G H M N P Q R T U V W Z 4 7 9".split())
 def load_universe(path, day: str | None = None) -> list[dict]:
     """Universe rows, one per symbol (earliest first_ts wins; intervals merged), sorted by first_ts.
 
-    Accepts a list or {"rows": [...]} / {"universe": [...]}. first_ts may be unix seconds or "HH:MM[:SS]" ET
+    Accepts a list or {"rows": [...]} / {"universe": [...]} / {"admits": [...]} (hist_universe).
+    A dict with none of those keys is refused. first_ts may be unix seconds or "HH:MM[:SS]" ET
     (needs *day*). Rows without a symbol or a time are dropped. Pure (file read only)."""
     raw = json.loads(Path(path).read_text())
     if isinstance(raw, dict):
-        raw = raw.get("rows") or raw.get("universe") or []
+        # hist_universe.py writes "admits". A dict with none of these keys is a shape error:
+        # treating it as empty used to replay a vacant book and still print a result.
+        rows = raw.get("rows")
+        if rows is None:
+            rows = raw.get("universe")
+        if rows is None:
+            rows = raw.get("admits")
+        if rows is None:
+            raise SystemExit(f"[synth] {path} has no rows, universe, or admits list")
+        raw = rows
     out: dict[str, dict] = {}
     for r in raw if isinstance(raw, list) else []:
         if not isinstance(r, dict):

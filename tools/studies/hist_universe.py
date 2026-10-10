@@ -28,8 +28,9 @@ WHAT IS RECONSTRUCTED (the live code path, ported, minute resolution)
 
 NOT RECONSTRUCTED (named, never guessed): momentum (Discord "[ELITE]" scanner alerts ->
 dashboard ticker log -> _dashboard_tickers; there is no market-data rule behind it), trending
-(Stocktwits), agy / xai (AI picks), bb_live (Trader Bro callouts), research boards. A recorded
-momentum name still counts as recalled when the movers/tight rules admit it (label differs).
+(Stocktwits), agy / xai (AI picks), bb_live (Trader Bro callouts), research boards. Amendment 3
+of hist_sim_prereg.json: recall floors are movers + tight only. A momentum name the movers/tight
+rules also admit is reported, and it is not in the floor denominator.
 Also not modelled: per-name book state (dead_reentry, stale/no-stream strikes, seat churn), the
 %R heat relief in rvol_blocks_admit (no indicators here), the desk live-quote override of seed
 prices (quote_mode knob, calibrated), morning-flood ordering.
@@ -325,6 +326,12 @@ def door_gates(row: dict, cfg: dict, *, i: int, spread: float | None, gap: float
     if block > 0 and gap is not None and gap < -block:
         return "gapped_down"
     return None
+
+
+def spy_missing_share(sip) -> float:
+    """Share of the 390 RTH minutes with no raw SIP SPY bar. 1.0 when SPY is absent. Pure."""
+    got = {m for m, *_rest in ((sip or {}).get("SPY") or []) if I_OPEN <= m < N_MIN}
+    return round(1.0 - len(got) / float(N_MIN - I_OPEN), 4)
 
 
 def needs_spread(cfg: dict, i: int) -> bool:
@@ -1050,6 +1057,7 @@ def load_day_market(day, *, use_cache=False, cl=None):
     mk._sq = (sq_path, sq_cache, failed_q)
     mk._prev_day = prev_day
     mk._asset_meta = meta
+    mk.spy_missing_share = spy_missing_share(sip)
     return mk
 
 
@@ -1065,6 +1073,17 @@ def live_config():
     from config import load_config
     cfg = load_config() or {}
     raw = open(os.path.join(ROOT, "config", "bot_config.json"), "rb").read()
+    return cfg, hashlib.sha256(raw).hexdigest()[:16]
+
+
+def file_config(path):
+    """DEFAULT_CONFIG plus one config file. Does not read or write the live bot_config.json."""
+    from config import DEFAULT_CONFIG
+    raw = open(path, "rb").read()
+    saved = json.loads(raw)
+    cfg = dict(DEFAULT_CONFIG)
+    if isinstance(saved, dict):
+        cfg.update(saved)
     return cfg, hashlib.sha256(raw).hexdigest()[:16]
 
 
@@ -1116,12 +1135,14 @@ def recorded_config_fn(day):
 
 # ═════════════════════════════ build ═════════════════════════════
 
-def build_day(day, *, cfg_mode="live", knobs=None, use_cache=False, write=True, quiet=False):
+def build_day(day, *, cfg_mode="live", knobs=None, use_cache=False, write=True, quiet=False,
+              config_path=None):
     t0 = time.time()
     mk = load_day_market(day, use_cache=use_cache)
     if cfg_mode == "live":
-        cfg, sha = live_config()
-        cfg_at, cfg_note = (lambda i: cfg), f"config/bot_config.json sha256:{sha} (fixed, built {datetime.now(ET):%Y-%m-%d %H:%M})"
+        cfg, sha = file_config(config_path) if config_path else live_config()
+        src = config_path or "config/bot_config.json"
+        cfg_at, cfg_note = (lambda i: cfg), f"{src} sha256:{sha} (fixed, built {datetime.now(ET):%Y-%m-%d %H:%M})"
         cfg_used = {k: cfg.get(k) for k in CFG_KEYS}
     else:
         cfg_at, cfg_note, snaps = recorded_config_fn(day)
@@ -1136,6 +1157,7 @@ def build_day(day, *, cfg_mode="live", knobs=None, use_cache=False, write=True, 
         "symbol_master": {**mk._asset_meta, "per_day": f"assets with a raw SIP daily bar on {mk._prev_day}"},
         "sources_covered": list(COVERED), "sources_uncovered": list(UNCOVERED),
         "universe_size": n_uni, "failed_fetch_names": n_failed,
+        "spy_missing_share": mk.spy_missing_share,
         "failed_fetch_share": round(n_failed / n_uni, 4) if n_uni else None,
         "failed_names": sorted(mk.failed)[:500],
         "spread_fetch_failures": len(mk._sq[2]), "spread_batches": mk.spread_requests,
@@ -1157,7 +1179,7 @@ def build_day(day, *, cfg_mode="live", knobs=None, use_cache=False, write=True, 
     return out, mk
 
 
-def cmd_build_range(lo, hi, newest_first=True, skip_existing=True):
+def cmd_build_range(lo, hi, newest_first=True, skip_existing=True, config_path=None):
     days = [d for d in trading_days(lo, hi)]
     if newest_first:
         days = days[::-1]
@@ -1167,7 +1189,7 @@ def cmd_build_range(lo, hi, newest_first=True, skip_existing=True):
         if skip_existing and os.path.exists(p):
             continue
         try:
-            out, _ = build_day(d)
+            out, _ = build_day(d, config_path=config_path)
             rec = {k: out[k] for k in ("day", "universe_size", "failed_fetch_names", "failed_fetch_share",
                                         "excluded_gt10pct_failed", "n_admits", "by_source",
                                         "spread_fetch_failures", "secs", "config")}
@@ -1296,7 +1318,10 @@ def cmd_check(span, *, knobs=None, use_cache=True, out_name="check"):
         for s, v in r["per_source"].items():
             per_src[s].update(v)
     rep = {"span": span, "rule_version": RULE_VERSION, "knobs": {**KNOBS_DEFAULT, **(knobs or {})},
-           "window_min": 10, "floors": {"prereg_recall": 70.0, "traded_recall": 70.0},
+           "window_min": 10,
+           "floors": {"movers_tight_recall": 70.0, "traded_movers_tight_recall": 70.0,
+                      "note": "amendment 3: movers+tight only. This check's traded recall is "
+                              "position_shadow; the fidelity gate uses recorded-replay trades."},
            "days": rows, "pooled": pooled, "per_source": {k: dict(v) for k, v in per_src.items()}}
     rep["pooled_pct"] = {
         "prereg_recall": _pct(pooled["prereg_win"], pooled["prereg_n"]),
@@ -1312,8 +1337,10 @@ def cmd_check(span, *, knobs=None, use_cache=True, out_name="check"):
     for r in rows:
         r["pass_prereg"] = (_pct(r["prereg_win"], r["prereg_n"]) or 0) >= 70.0
         r["pass_traded"] = (_pct(r["traded_win"], r["traded_n"]) or 0) >= 70.0 if r["traded_n"] else None
-    rep["pass_pooled"] = {"prereg": (rep["pooled_pct"]["prereg_recall"] or 0) >= 70.0,
-                          "traded": (rep["pooled_pct"]["traded_recall"] or 0) >= 70.0}
+    rep["pass_pooled"] = {
+        "movers_tight": (rep["pooled_pct"]["covered_recall"] or 0) >= 70.0,
+        "traded_movers_tight_position_shadow": (rep["pooled_pct"]["traded_cov_recall"] or 0) >= 70.0,
+    }
     os.makedirs(OUT_DIR, exist_ok=True)
     json.dump(rep, open(os.path.join(OUT_DIR, f"{out_name}.json"), "w"), indent=1)
     print(json.dumps({"pooled_pct": rep["pooled_pct"], "pass_pooled": rep["pass_pooled"],
@@ -1326,9 +1353,10 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("assets")
     p = sub.add_parser("daily"); p.add_argument("lo"); p.add_argument("hi")
-    p = sub.add_parser("build"); p.add_argument("days", nargs="+")
+    p = sub.add_parser("build"); p.add_argument("days", nargs="+"); p.add_argument("--config", default=None)
     p = sub.add_parser("build-range"); p.add_argument("lo"); p.add_argument("hi")
     p.add_argument("--oldest-first", action="store_true"); p.add_argument("--rebuild", action="store_true")
+    p.add_argument("--config", default=None)
     p = sub.add_parser("check"); p.add_argument("span"); p.add_argument("--set", action="append", default=[])
     p.add_argument("--out", default="check"); p.add_argument("--no-cache", action="store_true")
     a = ap.parse_args(argv)
@@ -1340,9 +1368,10 @@ def main(argv=None):
         for d in a.days:
             if CALIB_LO <= d <= CALIB_HI:
                 print(f"{d} is a calibration day: building with the fixed live config anyway", flush=True)
-            build_day(d)
+            build_day(d, config_path=a.config)
     elif a.cmd == "build-range":
-        cmd_build_range(a.lo, a.hi, newest_first=not a.oldest_first, skip_existing=not a.rebuild)
+        cmd_build_range(a.lo, a.hi, newest_first=not a.oldest_first, skip_existing=not a.rebuild,
+                        config_path=a.config)
     elif a.cmd == "check":
         lo, hi = a.span.split("..") if ".." in a.span else (a.span, a.span)
         if lo < CALIB_LO or hi > CALIB_HI:

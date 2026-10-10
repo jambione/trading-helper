@@ -1,4 +1,8 @@
-# Workstream R status (synthetic-day replay), 2026-10-10 — WIP, stopped for usage
+# Workstream R status (synthetic-day replay), 2026-10-10 ~13:55 ET
+
+Working tree (not committed yet) fixes three prereg gaps: `load_universe` reads `admits` and refuses a dict that has none of rows/universe/admits; a synthetic exit with no later SIP print stays open and is counted once; `day_bars` pins `Adjustment.RAW`. `synth_day_fidelity.py gate` writes `/tmp/hs/FIDELITY.json` only when part A and the hist leg both exist. Do not push this onto the mini until `/tmp/cf/status2.txt` exists: `scripts/cf_weekend2.sh` ff-only-pulls the live repo once, and that pull must not pick up `replay_session.py`.
+
+# Earlier note — WIP, stopped for usage
 
 Branch `ws-r-synth-day` (pushed from the MacBook). No held-out day has been run or touched.
 
@@ -12,13 +16,13 @@ Branch `ws-r-synth-day` (pushed from the MacBook). No held-out day has been run 
   - Config: `--config-file F` (default `<repo>/config/bot_config.json`, read-only) or `--config-stream F.jsonl` (`{ts, config}`, used for fidelity). The source and sha256 are logged in the result.
   - Output: same shape as the recorded replay, plus `mode: synthetic_day`, `synthetic{...}` (universe/config sha, equity, trade-fetch stats) and `vacuity{...}`. Vacuity holds arm polls/checks, wr_* refusals, place calls, entry_no_print, exit_no_print, ob feeds, names served/offered, bars missing and trades failed. Recorded runs get `vacuity` too.
   - Guards: a synthetic run before 2026-09-24 is REFUSED unless `--allow-held-out` is passed. `--universe` cannot be combined with `--fidelity/--exact/--live-book/--warm-book`. Path args are made absolute before the re-exec.
-  - Recorded-day behaviour is unchanged. The existing replay tests pass (19); `tests/test_replay_synth_day.py` has 17 passing. The FULL suite has NOT been run yet.
+  - Recorded replay still fills an exit at the decision price (`fill_fn` is None). A synthetic exit with no later print stays open. `tests/test_replay_synth_day.py` covers admits, the empty-dict refusal, the no-print exit, part B, and the 143-day window. Full suite on the MacBook, 2026-10-10: 4458 passed, 1 xfailed. `config/bot_config.json` was restored after the suite.
 - `tools/studies/synth_day_fidelity.py export|run|score`: implements part A per the amended prereg (eb0c863). Variants are base / st / wrrsi_st. Each day runs with its own config stream and its 09:30 dashboard equity. `score` prints trades/day, overlap both ways within 90 s, gross/net bp, per-day and pooled diffs, the paired (wrrsi_st − base) difference, per-day sd and the gate verdict, and writes `OUT/fidelity_<kind>.json` with the vacuity log. Costing uses a private copy of the cache (`/tmp/ws_r_out/costing_cache.json`).
 
 ## Mini state (`ssh mac-mini-away`)
 - Code copy: `/tmp/ws_r`, a clone at 01f6e9c, detached. `.venv`, `ai_reports` and `config/secrets.json` are symlinks to the main repo (read-only use). Cache: `/tmp/ws_r_cache` (copies of the recorded-day bars and sip_spread).
 - Exports are done: `/tmp/ws_r_out/DAY-{first,iv,config.jsonl,equity.json}` for all 12 days.
-  - KNOWN BUG: `2026-09-24-equity.json` is null because that recording has no api/state. Before running syn on 9/24, set it from `ai_positions_state.json` (about 2.2k).
+  - `2026-09-24-equity.json` is null. The snapshot has no `api/state` and no `ai_positions_state.json` at or before 09:30. The recording's first account equity is 2253.32 at 13:07:35 ET; through 16:04 it stays between 2250.56 and 2256.61. Use 2253.32 for the synthetic leg and log that source. Do not read today's live `ai_positions_state.json`.
 - RUNNING (nohup, nice 10, safe to leave): `/tmp/ws_r_out/run_rec.sh` (PID 49926). This is leg (a), the recorded replay at `--sha eb0c863`, base → st → wrrsi_st × 12 days, about 4-9 min each. Status is in `/tmp/ws_r_out/rec/status.txt`, results in `/tmp/ws_r_out/rec/DAY-VAR.json`.
 - RUNNING (nohup): the smoke synthetic 10-08 base (PIDs 50555/50560). It fetched prints for 146 names in 398 s (1268 requests, 3 names failed). Log: `/tmp/ws_r_out/smoke/2026-10-08-base.log`. It has not produced wall time or trade numbers yet. This run used the pre-fix `thin_prints`, which duplicates single-print seconds. That is harmless, but the cache has duplicates; delete `/tmp/ws_r_cache/trades_v1_2026-10-08.pkl` to rebuild it clean.
 
