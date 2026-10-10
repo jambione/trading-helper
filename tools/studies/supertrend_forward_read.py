@@ -9,6 +9,7 @@ USAGE (mini, repo root, after the nightly replay): .venv/bin/python tools/studie
 """
 from __future__ import annotations
 
+import argparse
 import glob
 import json
 import os
@@ -39,12 +40,24 @@ def tight_first_rows(days):
     return first
 
 
+def desk_sessions(start):
+    """Desk sessions = days with a recording, counted against N_MAX whether or not a replay exists."""
+    return sorted(os.path.basename(p) for p in glob.glob(os.path.join(ROOT, "ai_reports", "sessions", "20??-??-??"))
+                  if os.path.basename(p) >= start)
+
+
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--restart-from", default=FROM,
+                    help="CONFIG RULE: the first session after a live change to the np180 / lob / leash / SuperTrend knobs")
+    a = ap.parse_args()
+    start = max(FROM, a.restart_from)
     days = sorted({os.path.basename(p)[:10] for p in glob.glob("/tmp/tt_run/20??-??-??-np_lob.json")
-                   if os.path.basename(p)[:10] >= FROM})
+                   if os.path.basename(p)[:10] >= start})
     first = tight_first_rows(set(days))
     cache, box = RC.load_cache(), {}
-    counts = {"excluded_not_tight_at_entry": 0, "no_nbbo_pooled_median": 0, "vacuous_sessions": []}
+    counts = {"excluded_not_tight_at_entry": {v: 0 for v in VARS}, "no_nbbo_pooled_median": 0, "vacuous_sessions": [],
+              "no_quote_sessions": []}
     trades = {v: [] for v in VARS}
     scored = []
     for d in days:
@@ -54,14 +67,14 @@ def main():
             raw[v] = json.load(open(p)) if os.path.exists(p) else None
         st_closed = (raw["np_lob_st"] or {}).get("closed") or []
         ref_closed = (raw["np_lob"] or {}).get("closed") or []
-        if (raw["np_lob"] is None or raw["np_lob_st"] is None
+        if (raw["np_lob"] is None or raw["np_lob_st"] is None or raw["np_lob_nodecay"] is None
                 or not any(t.get("reason") == "supertrend" for t in st_closed)
                 or [(t["symbol"], t["entry_ts"], t.get("exit_ts")) for t in st_closed]
                 == [(t["symbol"], t["entry_ts"], t.get("exit_ts")) for t in ref_closed]):
             counts["vacuous_sessions"].append(d)
             continue
         scored.append(d)
-        counts.setdefault("sessions", []).append({"day": d, "sha": (raw["np_lob_st"] or {}).get("sha", "")[:8],
+        counts.setdefault("sessions", []).append({"day": d, "sha": ((raw["np_lob_st"] or {}).get("sha") or "")[:8],
                                                   "overrides": (raw["np_lob_st"] or {}).get("overrides")})
         day_rows = {v: [] for v in VARS}
         spreads = []
@@ -71,13 +84,18 @@ def main():
                     continue
                 f = first.get((d, t["symbol"]))
                 if not f or f[1] != "tight" or f[0] > float(t["entry_ts"]):
-                    counts["excluded_not_tight_at_entry"] += 1
+                    counts["excluded_not_tight_at_entry"][v] += 1
                     continue
                 spr = RC.entry_spread_bp(cache, t["symbol"], t["entry_ts"], box)
                 if spr is not None:
                     spreads.append(spr)
                 day_rows[v].append((t, spr))
-        med = statistics.median(spreads) if spreads else 0.0
+        if not spreads:
+            counts["no_quote_sessions"].append(d)
+            scored.remove(d)
+            counts["vacuous_sessions"].append(d)
+            continue
+        med = statistics.median(spreads)
         for v in VARS:
             for t, spr in day_rows[v]:
                 if spr is None:
@@ -91,13 +109,17 @@ def main():
     attrib = S.paired_variants(trades["np_lob_nodecay"], trades["np_lob_st"], scored)
     nodecay = S.paired_variants(trades["np_lob"], trades["np_lob_nodecay"], scored)
     n = len(scored)
-    print(f"SuperTrend exit forward read: scored sessions {n} (read at {N_READ}, max {N_MAX}); vacuous {len(counts['vacuous_sessions'])}; "
-          f"{counts}")
+    n_desk = len(desk_sessions(start))
+    print(f"SuperTrend exit forward read from {start}: scored sessions {n} (read at {N_READ}); desk sessions {n_desk} (max {N_MAX}); "
+          f"vacuous {len(counts['vacuous_sessions'])}; {counts}")
     print(f"  trades: " + ", ".join(f"{v} {len(trades[v])}" for v in VARS) +
           f" | matched st/np_lob {main_leg['matched']} (unmatched st {main_leg['unmatched_var']}, np_lob {main_leg['unmatched_ref']}, "
-          f"ambiguous {main_leg['ambiguous']})")
+          f"ambiguous {main_leg['ambiguous']}; attribution leg matched {attrib['matched']}, ambiguous {attrib['ambiguous']})")
     early = sum(1 for t in trades["np_lob_st"] if t["reason"] == "supertrend" and t["hold"] <= 60)
     print(f"  SuperTrend exits within 60 s of entry: {early}")
+    if n < N_READ and n_desk >= N_MAX:
+        print(f"  VERDICT: UNDERPOWERED = FAIL ({n} scored sessions by {n_desk} desk sessions)")
+        return
     if n < N_READ:
         print(f"  direction only (no verdict before {N_READ} sessions): paired st - np_lob {main_leg['paired']['mean']:+.2f} bp over "
               f"{main_leg['paired']['n']} sessions")

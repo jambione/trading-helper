@@ -836,6 +836,13 @@ class FakeBroker:
             p.setdefault("entry_confirmed", True)
             if cp.rsi_dump_due(p, sp, cfg, now):
                 return "rsi_dump"
+        # Pivot Point SuperTrend exit (ai_exit_supertrend, default off): the desk's own supertrend_exit_due on the
+        # ob_observe bar store the replay feeds. Before 2026-10-10 this mirror lacked it, so np_lob_st never fired.
+        if bool(cfg.get("ai_exit_supertrend", False)):
+            p.setdefault("entry_confirmed", True)
+            due, _info = cp.supertrend_exit_due(p, pos["symbol"], now, cfg)
+            if due:
+                return "supertrend"
         if px <= float(p["local_stop_price"]) + 1e-9:
             return "local_trail"
         entry, risk = float(p["entry"]), float(p["risk_per_share"])
