@@ -1219,7 +1219,8 @@ def thin_prints(prints) -> tuple[list[float], list[float]]:
                 if last is not first:
                     ts_out.append(last[0])
                     px_out.append(last[1])
-            cur, first, last = sec, (t, p), (t, p)
+            first = last = (t, p)
+            cur = sec
         else:
             last = (t, p)
     if first is not None:
