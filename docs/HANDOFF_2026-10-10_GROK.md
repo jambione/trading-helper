@@ -39,6 +39,12 @@ Two workstreams were in progress in parallel Claude sessions. Each pushed a WIP 
 
 **Amendment 3 is pending confirmation.** WS-U found that "momentum" admissions are Discord [ELITE] scanner alerts, not a rule, so they can't be rebuilt. Before any recall number existed, the prereg was amended to make the recall floors in fidelity part B cover movers + tight only. A result-skeptic confirmation of amendment 3 is needed before part B runs. If you can't get one, **ask the operator** before running part B. WS-U status: branch `ws-u-hist-universe` at cba0edd (WIP, 11 tests pass, not yet run end to end). A daily raw-bar cache job is running on the mini (PID 50870, log `/tmp/ws_u/daily.log`).
 
+**WS-R state:** branch `ws-r-synth-day` at 45386b1 (WIP; new tests 17 + existing replay tests 19 pass; full suite NOT run). CLI: `replay_session.py --universe FILE [--config-file F] [--equity X]`. It refuses held-out days without `--allow-held-out`, and only the frozen batch may pass that flag. Fidelity tool: `tools/studies/synth_day_fidelity.py export|run|score`. Running on the mini:
+- the recorded-replay leg, `/tmp/ws_r_out/run_rec.sh` (PID 49926; status in `/tmp/ws_r_out/rec/status.txt`);
+- a synthetic smoke run on 10/08 base (log in `/tmp/ws_r_out/smoke/`).
+
+Known bug: the 9/24 export has a null equity. Next steps are in `docs/studies/WS_R_STATUS.md`: confirm the smoke run has trades > 0 and arm checks > 0, run the synthetic leg, then score.
+
 **Remaining steps, in order. Do not skip the gates.**
 
 1. Finish U and R from their status files. Merge both into `master-mac`, run the full test suite, and push.
