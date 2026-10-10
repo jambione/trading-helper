@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import statistics
 import sys
 
@@ -19,6 +20,20 @@ sys.path[:0] = [os.path.join(ROOT, "tools", "studies"), os.path.join(ROOT, "tool
 import replay_costing as RC  # noqa: E402
 import std_scorer as S  # noqa: E402
 
+_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def hoist_days(argv):
+    """Move YYYY-MM-DD tokens in front of the options.
+
+    ``--vars`` is nargs='+', so it consumes every following non-option. The
+    weekend scripts pass the days after the variant names
+    (``--vars np_lob both_sq DAY ...``). Those days never reach the positional.
+    """
+    days = [t for t in argv if _DAY.match(t)]
+    rest = [t for t in argv if not _DAY.match(t)]
+    return days + rest
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -26,7 +41,7 @@ def main():
     ap.add_argument("--ref", default="base")
     ap.add_argument("--vars", nargs="+", required=True)
     ap.add_argument("days", nargs="+")
-    a = ap.parse_args()
+    a = ap.parse_args(hoist_days(sys.argv[1:]))
     first = {}
     for line in open(os.path.join(ROOT, "ai_reports", "admit_range.jsonl")):
         try:
