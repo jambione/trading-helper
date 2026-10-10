@@ -31,3 +31,28 @@ biased direction anyway, but should be re-scored with equal weight per moment be
 
 Weight each decision equally (or score one decision per name-day chosen by a rule fixed in advance), give the control the same
 weighting, apply price floors to RAW prices, and charge real per-name spreads.
+
+## Addendum 2026-10-10: exposure re-scored
+
+Script `tools/studies/rawfloor_rescore.py`; raw output [RAWFLOOR_RESCORE_2026-10-10_raw.md](RAWFLOOR_RESCORE_2026-10-10_raw.md).
+In the 5/1-9/11 universe, 66 of 3,581 name-days opened below $10 raw (65 reverse splits, plus NOK 9/4 at $9.99).
+
+- **SIP_BREAKOUT_2026-10-03:** 206 signals came from those name-days. Without them, capped net15 is -6.7 (t -1.7) and
+  -5.9 (t -2.2), against -2.8 / -3.2 as published. **Still FAIL.** See that doc's addendum.
+- **SR_BREAKOUT_HISTORY_2026-10-06:** already filtered on the raw open, so 0 scored events are affected. **Unchanged.**
+- **Needle C2 (FAIL, -24.9 bp), re-scored.** Method: every C2 moment weighted equally; control = the same day-hour mean of
+  other name-days' non-cell moments (as pre-registered); t clustered by day; raw $20-100 band; 10 bp cost. The raw
+  band leaves the C2 population unchanged (134 name-days, 4,802 moments, 63 days).
+
+| C2, raw $20-100 | half A | half B | pooled |
+|---|---|---|---|
+| net30 | -11.9 (t -2.1) | -10.3 (t -2.7) | **-11.0 (t -3.4)** |
+| minus control | +0.0 (t +0.0) | +0.1 (t +0.0) | **+0.1 (t +0.0)** |
+
+- Without the top 3 name-days the pooled control difference is -1.1 (t -0.4). The first C2 moment per name-day gives
+  -4.6 (t -0.4). At 4 bp cost, net30 is -5.0.
+- **The verdict stays FAIL,** because it requires net30 > 0 and at least +5 bp over control.
+- **Cite C2 as "no different from other gappers at the same hour (~0 bp), net -11 bp after cost", not as -24.9.** Most
+  of the -24.9 came from the same name-day-first weighting as the ROOM artifact, which worked against C2 here: the same
+  order on the raw band gives -25.1.
+- The needle line stays closed for gappers.

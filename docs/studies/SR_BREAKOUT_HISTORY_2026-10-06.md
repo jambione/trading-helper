@@ -70,3 +70,15 @@ INFORMATION: per band and half, mean net15 and mean (event minus same-hour rando
 **H3 clean (0.10-0.30%) better than no breakout: FAIL**
 (each: in BOTH halves the difference is >= 5 bp in the predicted direction with |t| >= 2, pooled |t| >= 2.24, >= 100 events per half)
 ```
+
+## Addendum 2026-10-10: raw-price floor check (nothing to re-score; verdicts unchanged)
+
+The split-adjusted universe problem ([ROOM_HOD_OOS_2026-10-09.md](ROOM_HOD_OOS_2026-10-09.md)) was already handled
+here. The amended prereg required a RAW 09:30 open >= $10 from raw minute bars, and the script dropped 66 name-days
+(`raw_open_below_10_or_no_rth`). An independent check (`tools/studies/rawfloor_rescore.py`,
+[RAWFLOOR_RESCORE_2026-10-10_raw.md](RAWFLOOR_RESCORE_2026-10-10_raw.md)) found the same 66 below-$10 name-days in the
+5/1-9/11 universe. **0 of the 17,032 scored events (0 of 3,127 scored name-days) came from a name below $10 raw.** All
+outcomes were computed on raw bars. The H2/H3 FAILs and the retraction above stand as written.
+
+Limitation, shared with SIP_BREAKOUT_2026-10-03: the top-40 gap ranking was formed on adjusted prices before the raw
+filter, so the dropped slots were not refilled.
