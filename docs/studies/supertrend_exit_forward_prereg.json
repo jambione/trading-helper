@@ -1,0 +1,35 @@
+{
+ "study": "Pivot Point SuperTrend exit on tight names, FRESH sessions: replacing the time-decay leash with a Pivot Point SuperTrend (2 / 3 / 10) exit, does the desk lose less per tight trade than with the live leash, on sessions never looked at?",
+ "registered_at": "2026-10-10 (Saturday, before any session from 2026-10-12 exists)",
+ "registered_before_results": true,
+ "origin": "Operator 10/10: 'register a fresh-sessions test for SuperTrend exit' after the amended_14 read (tight_trail_replay_prereg.json) formally FAILED at 3 sessions (t requirement unreachable) with the best direction of the three leash variants.",
+ "prior": "LOW-MODERATE. Seen (10/07-10/09, excluded from scoring): np_lob_st tight net -1.9 bp/trade (88 trades) vs np_lob -4.4 (107), +3.8 bp/trade, t +0.86 over 3 sessions, negative on 1 of 3. SuperTrend-type exits were among 42 exit shapes that scored ~0 on all names; the tight-name case is the open question (decay-stepped trail exits on tight names 10/5-10/9: 34% ran >= +30 bp within 30 min vs 25% fell >= 30 bp).",
+ "variants": {
+  "np_lob_st": "np_lob (np180 + lob, live config otherwise) + ai_local_trail_time_decay_enabled=false + ai_exit_supertrend=true (pivot_supertrend.py, default 2 / 3 / 10 on completed 1-min IEX bars from the ob_observe store; amended_14 spec, commit 26c1093)",
+  "np_lob": "reference: the same switches with the live time-decay leash",
+  "np_lob_nodecay": "attribution: np_lob with the leash OFF and NO SuperTrend exit (added to scripts/tight_trail_replay.sh before the first scored session), so a gain can be split between 'leash off' and 'SuperTrend on'"
+ },
+ "sessions": "every desk session from 2026-10-12 on with a usable recording that passes the vacuity check; 10/07-10/09 are seen and excluded. ONE read at the first close with >= 45 scored sessions. Power (stated before any scored session): paired per-session sd 7.75 bp, estimated from only 3 seen sessions (spread only; very uncertain). Skeptic simulation of the full bar (mean >= 3, t >= 2, both halves > 0) at 35 sessions: 73% at +3.8 bp, 49% at +3.0, 0.9% at 0; 45 sessions is a scale-up to ~80% at +3.8 (not simulated). n is fixed now and is not re-picked after scored sessions arrive. Nightly numbers are direction only. If 45 scored sessions are not reached by 60 desk sessions: UNDERPOWERED = FAIL. CONFIG RULE: a change to the np180 / lob / leash / SuperTrend knobs in the live config RESTARTS the count from the next session; sessions before the change are reported as information only.",
+ "statistic": "PRIMARY (exit effect): std_scorer.paired_variants on TIGHT trades: entries both variants share (same symbol, entry within 5 s); per session the mean of (np_lob_st net - np_lob net) over matched entries; sessions weighted equally; t = std_scorer.day_stat (max of plain and Newey-West 5 SE); a session with no matched entries is counted and excluded from this leg only. NO-HARM: per-session difference in total tight net dollars at $1k per trade (all trades, matched or not), a session with no trades = $0, never dropped. Net = replay ret minus the full SIP spread at entry (replay_costing.entry_spread_bp); a trade with no NBBO is charged ONE pooled median spread across both variants for that session (counted). TIGHT = the FIRST admit_range row per name-day has source 'tight' AND its ts <= the trade's entry_ts (trades excluded by this rule are counted).",
+ "pass": "at the single read: paired mean >= +3 bp per tight trade with t >= 2.0, positive in BOTH halves (alternate scored sessions); AND the no-harm dollars mean >= 0; AND np_lob_st minus np_lob_nodecay (same paired statistic) > 0 as a point estimate, so the gain is not only 'leash off'. A pass earns a skeptic review, then a live paper A/B on tight names only; never more.",
+ "fail": "anything else is FAIL; the SuperTrend exit is then closed for tight names. A leash-off-only effect would need its own prereg.",
+ "information_only": [
+  "drop the single best session (paired)",
+  "share of negative sessions",
+  "np_lob_nodecay minus np_lob",
+  "the same comparisons on non-tight trades",
+  "unmatched entries per variant",
+  "exit-reason mix of np_lob_st, median hold, trades per session",
+  "SuperTrend exits within 60 s of entry (trend already -1 at entry: acts like an entry filter)",
+  "supertrend_no_bars counts"
+ ],
+ "no_retuning": "2 / 3 / 10, completed 1-min IEX bars, leash off, the reference and the bar are fixed; any change is a new prereg.",
+ "caveats": [
+  "replay, not live: the ob_observe bar store refreshes about every 120 s, so the exit can lag a flip by ~2 min (amended_14 caveat)",
+  "tight-source membership comes from admit_range.jsonl; if the tight source is switched off, the study pauses",
+  "replay reads finalized post-close IEX bars, so its SuperTrend sees cleaner bars than live; the paper A/B is the gate"
+ ],
+ "script": "scripts/tight_trail_replay.sh (np_lob, np_lob_st, np_lob_nodecay) and tools/studies/supertrend_forward_read.py (std_scorer based), both committed before the 2026-10-12 open",
+ "vacuity": "per session, BOTH variant files exist, np_lob_st has >= 1 supertrend exit (which implies the ob bar store was fed), and np_lob_st's closed list differs from np_lob's; otherwise the session is excluded and counted. Logged per session: the replay's code sha and its overrides (the replay output carries no separate config fingerprint; the day's live config is the recorded one).",
+ "amended": "2026-10-10, before any scored session, per the result-skeptic FIX FIRST: primary = same-entry paired difference (std_scorer), no-harm dollars leg with empty sessions kept, n = 35 from a paired-sd power estimate, drop-best and negative-share demoted to information, nodecay in the bar (point estimate), one config-restart rule, vacuity check + commit/fingerprint per session, tight = first row with ts <= entry, pooled NBBO median, within-60s SuperTrend exits reported. Round 2 (skeptic): n raised to 45 with the simulated 35-session power stated and the sd's uncertainty noted; paired_variants now matches the NEAREST entry within 5 s and the reader reports ambiguous matches."
+}

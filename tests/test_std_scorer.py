@@ -75,3 +75,10 @@ def test_name_day_first_averaging_fakes_an_edge_on_the_same_data():
     m_biased = sum(biased["day_diff"].values()) / len(biased["day_diff"])
     honest = S.cell_vs_control(rows, lambda d: d["cell"])["stat"]["mean"]
     assert m_biased > honest + 5, (m_biased, honest)
+
+
+def test_paired_variants_takes_the_nearest_entry():
+    ref = [{"day": "D1", "symbol": "A", "entry_ts": 100.0, "net_bp": 0.0}, {"day": "D1", "symbol": "A", "entry_ts": 104.0, "net_bp": 10.0}]
+    var = [{"day": "D1", "symbol": "A", "entry_ts": 103.5, "net_bp": 12.0}]
+    r = S.paired_variants(ref, var, ["D1"])
+    assert r["paired_days"]["D1"] == 2.0 and r["ambiguous"] == 1

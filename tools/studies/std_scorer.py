@@ -75,26 +75,24 @@ def paired_variants(ref: list[dict], var: list[dict], all_days: list[str], match
     by = defaultdict(list)
     for t in ref:
         by[(t["day"], t["symbol"])].append(t)
-    used, diffs, unmatched_var = set(), defaultdict(list), 0
+    used, diffs, unmatched_var, ambiguous = set(), defaultdict(list), 0, 0
     for t in var:
-        best = None
-        for j, r in enumerate(by.get((t["day"], t["symbol"]), [])):
-            key = (t["day"], t["symbol"], j)
-            if key in used or abs(r["entry_ts"] - t["entry_ts"]) > match_sec:
-                continue
-            best = (key, r)
-            break
-        if best is None:
+        cands = [(abs(r["entry_ts"] - t["entry_ts"]), j, r) for j, r in enumerate(by.get((t["day"], t["symbol"]), []))
+                 if (t["day"], t["symbol"], j) not in used and abs(r["entry_ts"] - t["entry_ts"]) <= match_sec]
+        if not cands:
             unmatched_var += 1
             continue
-        used.add(best[0])
-        diffs[t["day"]].append(t["net_bp"] - best[1]["net_bp"])
+        cands.sort(key=lambda c: c[0])
+        ambiguous += len(cands) > 1
+        _, j, r = cands[0]                                   # the NEAREST unused reference entry
+        used.add((t["day"], t["symbol"], j))
+        diffs[t["day"]].append(t["net_bp"] - r["net_bp"])
     dollars = {d: (sum(t["net_bp"] for t in var if t["day"] == d) - sum(t["net_bp"] for t in ref if t["day"] == d)) / 1e4 * 1000
                for d in all_days}
     days = {d: sum(v) / len(v) for d, v in diffs.items()}
     return {"paired_days": days, "paired": day_stat([days[d] for d in sorted(days)]),
             "dollars_days": dollars, "dollars": day_stat([dollars[d] for d in all_days]),
-            "matched": sum(len(v) for v in diffs.values()), "unmatched_var": unmatched_var,
+            "matched": sum(len(v) for v in diffs.values()), "unmatched_var": unmatched_var, "ambiguous": ambiguous,
             "unmatched_ref": len(ref) - len(used), "days_without_matches": [d for d in all_days if d not in days]}
 
 
