@@ -87,6 +87,8 @@ DISK_FILES = (
     "seed_rank_gx.json", "seed_rank_ax.json",
 )
 AGE_KEYS = ("price_age_sec", "rt_price_age_sec", "bars_age_sec", "last_ask_age_sec")
+# hist_sim_prereg.json: sessions before this are held out; a synthetic run on one needs --allow-held-out.
+HELD_OUT_BEFORE = "2026-09-24"
 
 
 def parse_args(argv=None):
@@ -133,6 +135,25 @@ def parse_args(argv=None):
                          "tape at that moment (live's stream staleness is not in the recording)")
     ap.add_argument("--trace", action="append", default=[], metavar="SYM",
                     help="print this symbol's arm inputs every poll")
+    # Synthetic day (docs/studies/HIST_SIM_PLAN_2026-10-10.md workstream R, hist_sim_prereg.json).
+    ap.add_argument("--universe", "--synthetic-universe", dest="universe", default=None,
+                    help="SYNTHETIC DAY: run a day with no recording from this universe file "
+                         "([{symbol, first_ts, source, raw_price, pct_change, rvol, ...}]); prices "
+                         "from archived SIP trade prints, engine rows recomputed on IEX bars")
+    ap.add_argument("--config-file", default=None,
+                    help="synthetic day: the fixed config (default: <repo>/config/bot_config.json, "
+                         "read-only); logged with its sha256")
+    ap.add_argument("--config-stream", default=None,
+                    help="synthetic day on a RECORDED day (fidelity): jsonl of {ts, config} to follow, "
+                         "as the recorded replay follows the day's config changes")
+    ap.add_argument("--equity", type=float, default=None,
+                    help="synthetic day: account equity the desk sizes and caps price on")
+    ap.add_argument("--entry-print-window", type=float, default=60.0,
+                    help="synthetic day: an entry fills at the first SIP print strictly after the "
+                         "decision; none within this many seconds -> no fill (counted)")
+    ap.add_argument("--allow-held-out", action="store_true",
+                    help=f"required to run a synthetic day before {HELD_OUT_BEFORE} (the prereg's "
+                         "held-out window; only after the fidelity gate + skeptic)")
     return ap.parse_args(argv)
 
 
@@ -283,7 +304,39 @@ def live_segments(day: str, snap_dir: Path, start: str = "09:30",
     return out
 
 
+def absolutize_argv(argv: list[str], keys=("--universe", "--synthetic-universe", "--config-file",
+                                            "--config-stream", "--out", "--snapshots", "--sessions"),
+                    cwd: Path | None = None) -> list[str]:
+    """Path arguments made absolute: stage 2 runs with cwd = the code export. Pure."""
+    cwd = cwd or Path.cwd()
+    out = list(argv)
+    for i, a in enumerate(out):
+        for k in keys:
+            if a == k and i + 1 < len(out):
+                out[i + 1] = str((cwd / out[i + 1]).resolve()) if not os.path.isabs(out[i + 1]) else out[i + 1]
+            elif a.startswith(k + "="):
+                v = a[len(k) + 1:]
+                out[i] = f"{k}={(cwd / v).resolve() if not os.path.isabs(v) else v}"
+    return out
+
+
+def held_out_refusal(day: str, universe, allow: bool) -> str | None:
+    """Why a synthetic run on *day* is refused (None = allowed). Pure."""
+    if universe and day < HELD_OUT_BEFORE and not allow:
+        return (f"{day} is in the held-out window (before {HELD_OUT_BEFORE}); a synthetic run there needs "
+                "--allow-held-out, only after the hist_sim_prereg fidelity gate and skeptic")
+    return None
+
+
 def export_and_reexec(args) -> int:
+    why = held_out_refusal(args.day, args.universe, args.allow_held_out)
+    if why:
+        print(f"[replay] REFUSED: {why}")
+        return 2
+    if args.universe and (args.fidelity or args.exact or args.live_book or args.warm_book):
+        print("[replay] --universe (synthetic day) cannot take --fidelity/--exact/--live-book/--warm-book")
+        return 2
+    sys.argv = [sys.argv[0]] + absolutize_argv(sys.argv[1:])
     ref = args.sha
     if args.fidelity and ref == "HEAD":
         snap_dir = Path(args.snapshots) if args.snapshots else SNAP_BASE / args.day
@@ -744,6 +797,10 @@ class FakeBroker:
         self.closed: list[dict] = []
         self.last_exit: dict[str, float] = {}
         self.entries: dict[str, int] = {}
+        # Synthetic day: exits fill at the first SIP print after the decision (hist_sim_prereg.json);
+        # fill_fn(sym, t) -> (price, ts) or None. None (recorded replay): fill at the decision price.
+        self.fill_fn = None
+        self.exit_no_print = 0
 
     def price(self, dash: dict, sym: str):
         for r in dash.get("tickers") or []:
@@ -777,6 +834,16 @@ class FakeBroker:
         return {"ok": True, "stop_price": self.open[sym]["stop"],
                 "target_1": decision.get("target_1") if isinstance(decision, dict) else None}
 
+    def _fill_exit(self, sym: str, now: float, px: float) -> tuple[float, float]:
+        """(fill price, fill time) for an exit decided at *now* on *px*."""
+        if self.fill_fn is None:
+            return px, now
+        f = self.fill_fn(sym, now)
+        if f is None:
+            self.exit_no_print += 1
+            return px, now
+        return f
+
     def _close(self, sym: str, now: float, px: float, why: str, r=None) -> None:
         pos = self.open.pop(sym)
         ret = px / pos["entry_px"] - 1
@@ -795,14 +862,21 @@ class FakeBroker:
             px = self.price(dash, sym)
             if self.mode == "hold" or not pos.get("pos"):
                 if now - pos["entry_ts"] >= self.hold:
-                    self._close(sym, now, px or pos["entry_px"], "hold")
+                    fpx, fts = self._fill_exit(sym, now, px or pos["entry_px"])
+                    if self.fill_fn is not None:
+                        pos["exit_decision_ts"] = now
+                    self._close(sym, fts, fpx, "hold")
                     out.append(sym)
                 continue
             if px is None:
                 continue
             why = self._live_exit(pos, px, now, dash, cfg or {}, ew)
             if why:
-                self._close(sym, now, px, why, r=exit_r(pos["pos"], px))
+                fpx, fts = self._fill_exit(sym, now, px)
+                if self.fill_fn is not None:
+                    pos["exit_decision_ts"] = now
+                    pos["exit_decision_px"] = px
+                self._close(sym, fts, fpx, why, r=exit_r(pos["pos"], fpx))
                 out.append(sym)
         return out
 
@@ -1036,6 +1110,444 @@ def day_bars(day: str, syms: set[str], client) -> dict:
     return have
 
 
+# ── synthetic day (no recording): universe + archived SIP prints + IEX engine ─────────────────────────────
+#
+# hist_sim_prereg.json / HIST_SIM_PLAN_2026-10-10.md workstream R. What replaces each recorded stream:
+#   watchlist      the universe file: a name is offered to the desk's own sync (inclusion gate, grace, slots,
+#                  book server) from its first_ts while still_offered() says its panel would still list it
+#   price + clock  the last archived SIP trade print at or before the replay clock, age = clock - print time
+#                  (one event: price and its clock come from the same print)
+#   engine rows    SynthEngine.state on IEX premarket + IEX session 1-minute bars (completed minutes), the
+#                  --engine recompute --engine-bars iex path; the row's rt_price/age is the same SIP print
+#   gate inputs    spread / pace / gap from historical SIP (never the day's recorded inputs)
+#   fills          entry at the first SIP print strictly after the decision (none within
+#                  --entry-print-window -> no fill, counted); exit at the first SIP print after the decision
+# Not modelled: Finnhub stream gaps / drops (the desk's stale-tape refusals come only from SIP print gaps),
+# Momentum-panel flags and dashboard extras, research / Trader Bro boards, the forming-bar %R of the live
+# realtime store (indicators are on completed minutes; the desk folds the live print into %R itself).
+
+# SIP sale conditions that do not set the consolidated last sale (CTA / UTP plans): average price, cash, next
+# day, seller, sold out of sequence, Form T, prior reference, derivatively priced, contingent, bunched sold...
+NON_LAST_SALE = frozenset("B C G H M N P Q R T U V W Z 4 7 9".split())
+
+
+def load_universe(path, day: str | None = None) -> list[dict]:
+    """Universe rows, one per symbol (earliest first_ts wins; intervals merged), sorted by first_ts.
+
+    Accepts a list or {"rows": [...]} / {"universe": [...]}. first_ts may be unix seconds or "HH:MM[:SS]" ET
+    (needs *day*). Rows without a symbol or a time are dropped. Pure (file read only)."""
+    raw = json.loads(Path(path).read_text())
+    if isinstance(raw, dict):
+        raw = raw.get("rows") or raw.get("universe") or []
+    out: dict[str, dict] = {}
+    for r in raw if isinstance(raw, list) else []:
+        if not isinstance(r, dict):
+            continue
+        sym = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
+        ts = r.get("first_ts")
+        if isinstance(ts, str) and ":" in ts and day:
+            hh, mm, *ss = (int(x) for x in ts.split(":"))
+            ts = at(day, f"{hh:02d}:{mm:02d}") + (ss[0] if ss else 0)
+        try:
+            ts = float(ts)
+        except (TypeError, ValueError):
+            continue
+        if not sym:
+            continue
+        row = dict(r, symbol=sym, first_ts=ts, source=str(r.get("source") or "movers").lower())
+        if r.get("intervals") is not None:
+            row["intervals"] = sorted([float(a), float(b)] for a, b in r["intervals"])
+        prev = out.get(sym)
+        if prev is None or ts < prev["first_ts"]:
+            if prev is not None and prev.get("intervals") and row.get("intervals") is not None:
+                row["intervals"] = sorted(prev["intervals"] + row["intervals"])
+            out[sym] = row
+        elif row.get("intervals") and prev.get("intervals") is not None:
+            prev["intervals"] = sorted(prev["intervals"] + row["intervals"])
+    return sorted(out.values(), key=lambda r: (r["first_ts"], r["symbol"]))
+
+
+def still_offered(u: dict, t: float, px, pct, cfg: dict) -> bool:
+    """Would the name's panel still list it at *t*? Pure.
+
+    With "intervals" (a recorded watchlist's candidate spans) that is the answer. Without (the historical
+    universe gives first_ts only), each source's own live seed rule on the CURRENT numbers: movers and tight
+    keep a name while it clears the seed's day-change and price floors (desk_candidate_rows), momentum while
+    it is up more than ai_watch_min_pct_change (_big_mover_from_dashboard); research / trending / bro rows stay
+    offered for the day. An explicit last_ts ends the offer."""
+    if t < float(u["first_ts"]):
+        return False
+    if u.get("last_ts") is not None and t > float(u["last_ts"]):
+        return False
+    if u.get("intervals") is not None:
+        return any(a <= t <= b for a, b in u["intervals"])
+
+    def f(k, d):
+        try:
+            v = cfg.get(k, d)
+            return float(d if v is None else v)
+        except (TypeError, ValueError):
+            return float(d)
+
+    src = str(u.get("source") or "").lower()
+    if px is None or pct is None:
+        return src not in ("movers", "tight", "momentum")
+    if src == "movers":
+        return pct >= f("ai_watch_movers_min_pct_change", 10.0) and px >= f("ai_watch_movers_min_price", 0.0)
+    if src == "tight":
+        return (pct >= f("ai_tight_min_pct_change", 1.0)
+                and px >= max(f("ai_tight_min_price", 10.0), f("ai_watch_movers_min_price", 0.0)))
+    if src == "momentum":
+        return pct > f("ai_watch_min_pct_change", 50.0)
+    return True
+
+
+def thin_prints(prints) -> tuple[list[float], list[float]]:
+    """Keep the first and the last print of every wall-clock second (time order). Pure.
+
+    The first print after a decision and the last print before a 2 s tick are both kept exactly; what is
+    dropped is the inside of a busy second, which neither question reads."""
+    ts_out: list[float] = []
+    px_out: list[float] = []
+    cur, first, last = None, None, None
+    for t, p in prints:
+        sec = int(t)
+        if sec != cur:
+            if first is not None:
+                ts_out.append(first[0])
+                px_out.append(first[1])
+                if last is not first:
+                    ts_out.append(last[0])
+                    px_out.append(last[1])
+            cur, first, last = sec, (t, p), (t, p)
+        else:
+            last = (t, p)
+    if first is not None:
+        ts_out.append(first[0])
+        px_out.append(first[1])
+        if last is not first:
+            ts_out.append(last[0])
+            px_out.append(last[1])
+    return ts_out, px_out
+
+
+class TradeTape:
+    """Archived SIP last-sale prints per symbol: the synthetic day's price path and fill model."""
+
+    def __init__(self, by_sym: dict):
+        self.by = {str(k).upper(): (list(v[0]), list(v[1])) for k, v in (by_sym or {}).items()}
+
+    def last_at(self, sym: str, t: float):
+        """(price, print time) of the last print at or before *t*, or None."""
+        ts, px = self.by.get(str(sym).upper(), ([], []))
+        i = bisect_right(ts, t) - 1
+        return (px[i], ts[i]) if i >= 0 else None
+
+    def next_after(self, sym: str, t: float, within: float | None = None):
+        """(price, print time) of the first print strictly after *t* (and within *within* s), or None."""
+        ts, px = self.by.get(str(sym).upper(), ([], []))
+        i = bisect_right(ts, t)
+        if i >= len(ts) or (within is not None and ts[i] - t > within):
+            return None
+        return px[i], ts[i]
+
+
+def _parse_ts(s: str) -> float:
+    """RFC 3339 with nanoseconds -> unix seconds (float). Pure."""
+    s = s.rstrip("Z")
+    frac = 0.0
+    if "." in s:
+        s, f = s.split(".", 1)
+        frac = float("0." + "".join(ch for ch in f if ch.isdigit()) or "0")
+    from datetime import timezone
+    return datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp() + frac
+
+
+def fetch_sip_trades(sym: str, t0: float, t1: float, get, page_limit: int = 10000) -> list[tuple[float, float]]:
+    """Every SIP last-sale-eligible print in [t0, t1] for *sym*, time ordered. get(url, params) -> dict."""
+    from datetime import timezone
+    iso = lambda x: datetime.fromtimestamp(x, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")  # noqa: E731
+    url = f"https://data.alpaca.markets/v2/stocks/{sym}/trades"
+    out, tok = [], None
+    while True:
+        p = {"start": iso(t0), "end": iso(t1), "limit": page_limit, "feed": "sip"}
+        if tok:
+            p["page_token"] = tok
+        j = get(url, p) or {}
+        for tr in j.get("trades") or []:
+            if NON_LAST_SALE.intersection(tr.get("c") or ()):
+                continue
+            try:
+                out.append((_parse_ts(tr["t"]), float(tr["p"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        tok = j.get("next_page_token")
+        if not tok:
+            break
+    out.sort()
+    return out
+
+
+def day_trades(day: str, need: dict, keys: tuple[str, str], stats: dict | None = None) -> TradeTape:
+    """SIP prints, thinned (thin_prints), for {sym: from_ts} up to 16:00 ET, cached per day in CACHE_DIR."""
+    import pickle
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    import requests
+    stats = stats if stats is not None else {}
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = CACHE_DIR / f"trades_v1_{day}.pkl"
+    have: dict = {}
+    if path.exists():
+        try:
+            have = pickle.loads(path.read_bytes())
+        except Exception:  # noqa: BLE001
+            have = {}
+    t_end = at(day, "16:00")
+    todo = sorted(s for s, t0 in need.items() if s not in have or have[s]["from"] > t0 + 1)
+    hdr = {"APCA-API-KEY-ID": keys[0], "APCA-API-SECRET-KEY": keys[1]}
+    lock = threading.Lock()
+    stats.setdefault("trades_fetched", 0)
+    stats.setdefault("trades_failed", [])
+    stats.setdefault("requests", 0)
+
+    def get(url, params):
+        for attempt in range(8):
+            with lock:
+                stats["requests"] += 1
+            r = requests.get(url, headers=hdr, params=params, timeout=30)
+            if r.status_code == 429 or r.status_code >= 500:
+                _real_time.sleep(min(60.0, 2.0 * 2 ** attempt))
+                continue
+            r.raise_for_status()
+            return r.json()
+        raise RuntimeError(f"{url}: still {r.status_code} after retries")
+
+    def one(sym):
+        t0 = float(need[sym])
+        try:
+            ts, px = thin_prints(fetch_sip_trades(sym, t0, t_end, get))
+        except Exception as e:  # noqa: BLE001
+            with lock:
+                stats["trades_failed"].append(f"{sym}: {str(e)[:80]}")
+            return
+        with lock:
+            have[sym] = {"from": t0, "ts": ts, "px": px}
+            stats["trades_fetched"] += 1
+
+    if todo:
+        wall = _real_time.time()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(one, todo))
+        path.write_bytes(pickle.dumps(have))
+        print(f"[synth] SIP prints for {len(todo)} names in {_real_time.time() - wall:.0f}s "
+              f"({stats['requests']} requests, {len(stats['trades_failed'])} failed)", flush=True)
+    stats["trades_cached"] = len(need) - len(todo)
+    return TradeTape({s: (have[s]["ts"], have[s]["px"]) for s in need if s in have})
+
+
+def prior_close(bars_sym: dict, day: str):
+    prior = [c for d, c, _v in (bars_sym or {}).get("d", []) if d < day]
+    return prior[-1] if prior else None
+
+
+class SynthDay:
+    """Stands in for Recording on a day with no recording (see the block comment above)."""
+
+    EMPTY_FILES = {"trending_stocks.json": {"rows": []}, "movers_stocks.json": {"rows": []},
+                   "tight_stocks.json": {"rows": []}, "signal_state.json": {"tickers": {}}}
+    ROW_KEYS = {"symbol", "ticker", "first_ts", "source", "intervals", "last_ts", "raw_price", "price",
+                "pct_change", "rvol"}
+
+    def __init__(self, day: str, universe: list[dict], tape: TradeTape, bars: dict, synth: "SynthEngine",
+                 configs: list[tuple[float, dict]], equity: float):
+        self.day, self.universe, self.tape, self.bars, self.synth = day, universe, tape, bars, synth
+        self.configs = sorted(configs, key=lambda c: c[0])
+        self.equity = float(equity)
+        self.latest: dict[str, tuple[float, object]] = {}
+        self.changed: set[str] = set()
+        self._cfg_i = -1
+        self.served: set[str] = set()
+        self.offered: set[str] = set()
+        self._t0 = at(day, "09:30")
+        self._memo: dict = {}
+        for name in DISK_FILES:
+            data = dict(self.EMPTY_FILES.get(name, {}))
+            if "rows" in data:
+                data["ts"] = self._t0
+            self.latest[name] = (0.0, data)
+            self.changed.add(name)
+
+    def advance(self, t: float) -> None:
+        i = bisect_right([c[0] for c in self.configs], t) - 1
+        i = max(0, i)
+        if self.configs and i != self._cfg_i:
+            self._cfg_i = i
+            self.latest["config/bot_config.json"] = (self.configs[i][0], self.configs[i][1])
+            self.changed.add("config/bot_config.json")
+
+    def get(self, name: str):
+        hit = self.latest.get(name)
+        return hit if hit else (None, None)
+
+    def quote(self, sym: str, t: float):
+        """(price, age, pct_change) from the last SIP print at or before t; (None, None, None) without one."""
+        lp = self.tape.last_at(sym, t)
+        if lp is None:
+            return None, None, None
+        px, pt = lp
+        pc = self._minute(sym, t)[2]
+        pct = round((px / pc - 1) * 100, 3) if pc else None
+        return px, round(t - pt, 2), pct
+
+    def _minute(self, sym: str, t: float):
+        """(engine state, day volume, prior close) on completed minutes, memoized per (sym, minute)."""
+        key = (sym, int(t // 60))
+        hit = self._memo.get(key)
+        if hit is None:
+            b = self.bars.get(sym) or {}
+            hit = (self.synth.state(sym, t),
+                   sum(v for ts, _o, v in b.get("m", []) if ts + 60 <= t),
+                   prior_close(b, self.day))
+            self._memo[key] = hit
+        return hit
+
+    def _day_vol(self, sym: str, t: float) -> float:
+        return self._minute(sym, t)[1]
+
+    def dashboard(self, t: float) -> dict:
+        """/api/state at t: a ticker row for every universe name past its first_ts that has a print."""
+        rows = []
+        for u in self.universe:
+            if u["first_ts"] > t:
+                break
+            s = u["symbol"]
+            px, age, pct = self.quote(s, t)
+            if px is None:
+                continue
+            st = self._minute(s, t)[0]
+            sp = {"rt_price": px, "rt_price_age_sec": age, "price": px, "synthetic_day": True}
+            if st:
+                self.served.add(s)
+                sp = {**st, **sp, "bars_src": "realtime", "bars_age_sec": age, "pctr_src": "live",
+                      "rt_seeded": True, "bars_fetched": True, "src": "book"}
+            rows.append({"ticker": s, "price": px, "price_age_sec": age,
+                         "prev_close": self._minute(s, t)[2],
+                         "pct_change": pct, "pct_change_basis": "prev_close", "rvol": u.get("rvol"),
+                         "day_vol": self._day_vol(s, t), "mention_window": 0, "mention_burst": False,
+                         "signal_proximity": sp, "synthetic_day": True})
+        return {"tickers": rows, "movers": {}, "trending": {},
+                "ai_positions": {"account": {"equity": self.equity}}}
+
+    def candidates(self, t: float, cfg: dict) -> list[dict]:
+        """desk_candidate_rows at t: the universe names whose panel would still list them."""
+        out = []
+        for u in self.universe:
+            if u["first_ts"] > t:
+                break
+            s = u["symbol"]
+            px, _age, pct = self.quote(s, t)
+            if not still_offered(u, t, px, pct, cfg or {}):
+                continue
+            score = u.get("score", u.get("trending_score", pct if pct is not None else 0.0))
+            row = {k: v for k, v in u.items() if k not in self.ROW_KEYS}
+            row.update({"symbol": s, "source": u["source"], "price": px, "pct_change": pct,
+                        "rvol": u.get("rvol"), "score": score, "trending_score": score,
+                        "reason": f"synthetic {u['source']}"[:40], "agreement": True,
+                        "criteria": list(u.get("criteria") or ["synthetic_universe"]),
+                        "quote_src": "desk"})
+            if px is not None:
+                row["dollar_volume"] = self._day_vol(s, t) * px
+            out.append(row)
+            self.offered.add(s)
+        return out
+
+
+def synth_recording_stub(args, root: Path, info: dict) -> SynthDay:
+    """The SynthDay with universe, config and equity (prints / bars / engine come in finish_synth_day,
+    after the desk modules are importable). Everything it chose is written into *info* for the result."""
+    import hashlib
+    repo = Path(os.getenv("REPLAY_REPO") or root)
+    universe = load_universe(args.universe, args.day)
+    if args.config_stream:
+        configs = config_stream(args.config_stream)
+        src = Path(args.config_stream)
+    else:
+        src = Path(args.config_file) if args.config_file else repo / "config" / "bot_config.json"
+        configs = [(0.0, json.loads(src.read_text()))]
+    if not configs:
+        raise SystemExit(f"[synth] no config in {src}")
+    equity, eq_src = args.equity, "--equity"
+    if equity is None:
+        eq_src = str(repo / "ai_positions_state.json")
+        try:
+            pos = json.loads(Path(eq_src).read_text())
+            equity = float(((pos.get("account") or pos.get("_account") or {}).get("equity")))
+        except (OSError, ValueError, TypeError, AttributeError):
+            equity, eq_src = 100_000.0, "default"
+    info.update({"universe_file": str(args.universe), "universe_size": len(universe),
+                 "universe_sha256": hashlib.sha256(Path(args.universe).read_bytes()).hexdigest()[:16],
+                 "universe_sources": dict(Counter(u["source"] for u in universe)),
+                 "config_source": str(src), "config_sha256": hashlib.sha256(src.read_bytes()).hexdigest()[:16],
+                 "config_versions": len(configs), "equity": equity, "equity_source": eq_src,
+                 "engine": f"recompute/{args.engine_bars}", "entry_print_window_sec": args.entry_print_window,
+                 "price_source": "SIP last-sale prints (thinned to first+last per second)"})
+    print(f"[synth] SYNTHETIC DAY {args.day}: universe {len(universe)} names {info['universe_sources']}; "
+          f"config {src} (sha256 {info['config_sha256']}, {len(configs)} version(s)); equity {equity:.2f} "
+          f"({eq_src}); engine {info['engine']}")
+    return SynthDay(args.day, universe, TradeTape({}), {}, None, configs, equity)
+
+
+def finish_synth_day(rec: SynthDay, args, bars: dict, synth, cfg: dict, info: dict) -> None:
+    """Fetch (or read cached) SIP prints for the universe and attach bars + engine."""
+    open_t = at(args.day, "09:30")
+    need = {u["symbol"]: max(open_t, u["first_ts"]) - 600.0 for u in rec.universe}
+    stats: dict = {}
+    keys = (str(cfg.get("api_key") or ""), str(cfg.get("secret_key") or ""))
+    rec.tape = day_trades(args.day, need, keys, stats)
+    rec.bars, rec.synth = bars, synth
+    info.update({"trades_fetched": stats.get("trades_fetched"), "trades_cached": stats.get("trades_cached"),
+                 "trades_failed": stats.get("trades_failed"), "trade_requests": stats.get("requests")})
+
+
+def config_stream(path) -> list[tuple[float, dict]]:
+    """[(ts, config)] from a jsonl of {ts, config}. Pure (file read only)."""
+    out = []
+    with open(path) as f:
+        for line in f:
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(r.get("config"), dict):
+                out.append((float(r.get("ts") or 0.0), r["config"]))
+    return sorted(out, key=lambda c: c[0])
+
+
+class ArmTally:
+    """Vacuity counters from the desk's own arm-pass telemetry (session_recorder 'decisions' arm rows)."""
+
+    WR = ("wr_not_trending", "wr_no_history", "wr_src_mismatch", "wr_rsi_no_bars", "wr_rsi_not_trending",
+          "wr_rand")
+
+    def __init__(self):
+        self.polls = 0
+        self.checks = 0
+        self.blocks: Counter = Counter()
+
+    def add(self, rows) -> None:
+        self.polls += 1
+        for r in rows or []:
+            self.checks += 1
+            self.blocks[str(r.get("b"))] += 1
+
+    def summary(self) -> dict:
+        return {"arm_polls": self.polls, "arm_checks": self.checks,
+                "wr_refusals": {k: self.blocks.get(k, 0) for k in self.WR},
+                "not_presquare": self.blocks.get("not_presquare", 0),
+                "blocks_top": dict(self.blocks.most_common(25))}
+
+
 class LiveStaleness:
     """Live's own verdict on its tape, from the day's decision ledger.
 
@@ -1204,10 +1716,15 @@ def run_inside(args) -> int:
     sys.path.insert(0, str(root))
     sys.path.insert(0, str(root / "tools"))
     snap_dir = Path(args.snapshots) if args.snapshots else SNAP_BASE / args.day
-    rec = Recording(snap_dir / "state_snapshots.jsonl.gz")
+    synthetic = bool(getattr(args, "universe", None))
     t_start, t_end = at(args.day, args.start), at(args.day, args.end)
     clock = SimClock(t_start)
     blocked = guard_network()
+    synth_info: dict = {}
+    if synthetic:
+        rec = synth_recording_stub(args, root, synth_info)
+    else:
+        rec = Recording(snap_dir / "state_snapshots.jsonl.gz")
 
     # Config in force at the start, plus overrides.
     rec.advance(t_start)
@@ -1262,6 +1779,19 @@ def run_inside(args) -> int:
 
     dash = {"state": {}}
     ew.dashboard_state = lambda *, force=False: dash["state"]
+    tally = ArmTally()
+    try:
+        import session_recorder as _sr
+        _sr_append = _sr._append
+
+        def _sr_capture(stream, obj, **kw):
+            if stream == "decisions" and isinstance(obj, dict) and obj.get("ev") == "arm":
+                tally.add(obj.get("rows"))
+            return _sr_append(stream, obj, **kw)
+
+        _sr._append = _sr_capture
+    except Exception:  # noqa: BLE001
+        pass
     # Pushes are how live asks the dashboard/engine to watch a name; the
     # synthetic engine serves the ones the recording has no data for.
     synth_box: dict = {}
@@ -1290,6 +1820,8 @@ def run_inside(args) -> int:
         equity = float(acct.get("equity") or equity)
     except (TypeError, ValueError):
         pass
+    if synthetic:
+        equity = rec.equity
     cfg = load_config()
     broker = FakeBroker(args.hold_min * 60, int(cfg.get("ai_max_positions", 5) or 5), equity,
                         mode=args.exits)
@@ -1315,11 +1847,26 @@ def run_inside(args) -> int:
         live_stale = None
     broker.live_stale = live_stale
 
+    vac = {"place_calls": 0, "entry_no_print": 0, "entry_fill_delay_sec": []}
+
     def place(sym, decision, equity_arg=None, **kw):
         s = str(sym).upper()
+        vac["place_calls"] += 1
         px = broker.price(dash["state"], s)
         if px is None:
             return {"ok": False, "error": "replay: no recorded price"}
+        if synthetic:
+            # hist_sim_prereg.json: fill at the first SIP print strictly after the decision, never at the
+            # decision's (possibly stale) price; no print within the window -> no fill, counted.
+            nxt = rec.tape.next_after(s, clock.t, within=args.entry_print_window)
+            if nxt is None:
+                vac["entry_no_print"] += 1
+                return {"ok": False, "error": "replay: no SIP print after the decision"}
+            fpx, fts = nxt
+            vac["entry_fill_delay_sec"].append(round(fts - clock.t, 3))
+            res = broker.enter(s, fpx, fts, decision, cfg=load_config(), synthetic=True)
+            broker.open[s].update(decision_ts=clock.t, decision_px=px)
+            return res
         if live_stale is not None and live_stale.stale(s, clock.t):
             live_stale.refused += 1
             # Live never reaches the arm check on stale tape; by the time the
@@ -1344,8 +1891,11 @@ def run_inside(args) -> int:
     # the gap uses the SIP 09:30 open from 09:30 (live reads the IEX first
     # print until 09:46). Spreads are real SIP quotes, cached on disk in the
     # live function's 3-minute buckets so a rerun costs nothing.
-    bars = day_bars(args.day, recording_symbols(snap_dir / "state_snapshots.jsonl.gz"),
-                    ew._data_client())
+    if synthetic:
+        bars = day_bars(args.day, {u["symbol"] for u in rec.universe}, ew._data_client())
+    else:
+        bars = day_bars(args.day, recording_symbols(snap_dir / "state_snapshots.jsonl.gz"),
+                        ew._data_client())
 
     def pace_inputs(sym, t_end, end_et):
         b = bars.get(str(sym).upper()) or {}
@@ -1384,6 +1934,8 @@ def run_inside(args) -> int:
         t: df for t in tickers if (df := fetch_bars(_c, t, bar_cfg)) is not None}
     spread_cache = JsonCache("sip_spread")
     recorded = RecordedInputs(args.day, snap_dir)
+    if synthetic:
+        recorded.by.clear()   # an unrecorded day has no recorded gate inputs: historical SIP only
     _sip, _pace, _gap = ew.sip_spread_pct, ew.rvol_pace_sip, ew.open_gap_pct
 
     def sip_spread(sym, *, now=None, ttl=180.0, **kw):
@@ -1411,9 +1963,16 @@ def run_inside(args) -> int:
                         min(args.synth_cap, push_max) if push_max > 0 else args.synth_cap,
                         enabled=not args.no_synth, recompute=args.engine in ("recompute", "rt"),
                         feed=args.engine_bars if args.engine in ("recompute", "rt") else "sip")
-    if args.engine == "rt":
+    if args.engine == "rt" and not synthetic:
         synth.rt = RtEngine(snap_dir / "recorder_prints.jsonl.gz", bars, synth)
     synth_box["synth"] = synth
+    if synthetic:
+        # Engine pinned: recompute on --engine-bars (iex) bars; no SynthEngine rows of its own (the universe
+        # rows ARE the dashboard). Candidates come from the universe, through the desk's own sync.
+        synth.enabled, synth.recompute, synth.feed = False, True, args.engine_bars
+        finish_synth_day(rec, args, bars, synth, load_config(), synth_info)
+        ew.desk_candidate_rows = lambda cfg=None, now=None: rec.candidates(clock.t, cfg or load_config())
+        broker.fill_fn = lambda s_, t_: rec.tape.next_after(s_, t_)
 
     if args.warm_book:
         _, w = rec.get("ai_reports/entry_watch_state.json")
@@ -1432,7 +1991,7 @@ def run_inside(args) -> int:
         clock.t = t
         rec.advance(t)
         materialize()
-        dash["state"] = build_dashboard_state(rec, t, synth)
+        dash["state"] = rec.dashboard(t) if synthetic else build_dashboard_state(rec, t, synth)
         live = load_config()
         if ob_feed_on(live):
             ob_feed.feed(set(ew.load_watch()) | set(broker.open), t)
@@ -1524,6 +2083,24 @@ def run_inside(args) -> int:
     if args.range_blind:
         args.range_inputs = dict(getattr(ew, "range_arm_stats", dict)(), ob_feed=ob_feed.stats())
         print(f"[replay] range_arm per-input counts: {args.range_inputs}")
+    args.result_extra = {"vacuity": {
+        **tally.summary(), "place_calls": vac["place_calls"],
+        "trades": len(broker.closed) + len(broker.open), "ob_feeds": ob_feed.feeds,
+        "synthetic_names_served": len(synth.used) if not synthetic else len(rec.served)}}
+    if synthetic:
+        d = sorted(vac["entry_fill_delay_sec"])
+        args.result_extra["mode"] = "synthetic_day"
+        args.result_extra["synthetic"] = synth_info
+        args.result_extra["vacuity"].update({
+            "universe_size": len(rec.universe), "names_offered": len(rec.offered),
+            "bars_names": sum(1 for u in rec.universe if (bars.get(u["symbol"]) or {}).get("iex")),
+            "bars_missing": sorted(u["symbol"] for u in rec.universe
+                                   if not (bars.get(u["symbol"]) or {}).get("iex")),
+            "trades_names": len(rec.tape.by), "trades_failed": synth_info.get("trades_failed", []),
+            "entry_no_print": vac["entry_no_print"],
+            "entry_fill_delay_sec_median": d[len(d) // 2] if d else None,
+            "exit_no_print": broker.exit_no_print})
+        print(f"[synth] vacuity {json.dumps(args.result_extra['vacuity'], default=str)[:1500]}")
     report(args, slots, broker, blocked, wall0)
     if args.fidelity:
         fidelity(args, snap_dir, slots, broker, t_start, t_end)
@@ -1636,6 +2213,7 @@ def report(args, slots, broker, blocked, wall0) -> None:
            "blocked": blocked, "poll_sec": getattr(args, "poll_sec", None)}
     if getattr(args, "range_inputs", None) is not None:
         out["range_arm_inputs"] = args.range_inputs
+    out.update(getattr(args, "result_extra", None) or {})
     path = Path(args.out) if args.out else Path(os.environ.get("REPLAY_WORK", ".")) / "result.json"
     path.write_text(json.dumps(out, indent=1, default=str))
     print(f"result: {path}")
