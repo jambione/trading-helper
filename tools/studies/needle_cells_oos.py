@@ -112,7 +112,10 @@ def tstat(xs):
 
 
 def score_cell(moments, cell, cost_bp, days_subset=None, drop_nd=()):
-    """moments: dicts with day, nd (name-day key), hour, net-free gross, and cell flags.
+    """WARNING (2026-10-10, ROOM_HOD_OOS_2026-10-09.md): averaging moments within a name-day first leaks hindsight whenever
+    cell membership changes during the day (the number of cell moments depends on the future path). Do not reuse for such
+    cells; weight each decision equally instead.
+moments: dicts with day, nd (name-day key), hour, net-free gross, and cell flags.
     Returns per-day lists of (net30) and (net30 - control) under the prereg's averaging order, plus name-day means."""
     ctl_sum = defaultdict(lambda: defaultdict(float))   # (day, hour) -> nd -> sum of non-cell net
     ctl_n = defaultdict(lambda: defaultdict(int))
