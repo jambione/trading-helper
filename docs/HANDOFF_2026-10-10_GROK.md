@@ -37,6 +37,8 @@ Two workstreams were in progress in parallel Claude sessions. Each pushed a WIP 
 | U: historical universe | `ws-u-hist-universe` | `docs/studies/WS_U_STATUS.md` | `tools/studies/hist_universe.py`: per-day watchlist + first admission time (movers/tight/momentum), RAW prices, point-in-time symbol master including delisted names; recall check vs `ai_reports/admit_range.jsonl` on 9/24–10/9 |
 | R: synthetic-day replay | `ws-r-synth-day` | `docs/studies/WS_R_STATUS.md` | `replay_session.py --universe FILE` for unrecorded days; engine `--engine recompute --engine-bars iex`; fills at the first SIP print AFTER the decision; per-day vacuity log; `tools/studies/synth_day_fidelity.py` |
 
+**Amendment 3 is pending confirmation.** WS-U found that "momentum" admissions are Discord [ELITE] scanner alerts, not a rule, so they can't be rebuilt. Before any recall number existed, the prereg was amended to make the recall floors in fidelity part B cover movers + tight only. A result-skeptic confirmation of amendment 3 is needed before part B runs. If you can't get one, **ask the operator** before running part B. WS-U status: branch `ws-u-hist-universe` at cba0edd (WIP, 11 tests pass, not yet run end to end). A daily raw-bar cache job is running on the mini (PID 50870, log `/tmp/ws_u/daily.log`).
+
 **Remaining steps, in order. Do not skip the gates.**
 
 1. Finish U and R from their status files. Merge both into `master-mac`, run the full test suite, and push.
