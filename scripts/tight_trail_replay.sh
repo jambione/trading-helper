@@ -30,6 +30,10 @@ R wr_trend15 --set ai_watch_wr_trend_min_rise=15
 WR_SHARE=$(.venv/bin/python -c "import json,sys; b=len(json.load(open('/tmp/tt_run/$d-base.json'))['closed']); w=len(json.load(open('/tmp/tt_run/$d-wr_trend15.json'))['closed']); print(max(0.0, round(1 - w / b, 4)) if b else 0.0)" 2>/dev/null || echo 0)
 echo "wr_rand share $WR_SHARE" > /tmp/tt_run/$d-wr_rand_share.txt
 R wr_rand --set ai_watch_wr_rand_refuse_share=$WR_SHARE
+# Operator 10/10 (information only until a prereg reads them; docs/studies/hist_sim_prereg.json tests them held out):
+# %R + RSI direction entry, and that entry with exits that do not stomp runs (leash off + Pivot SuperTrend).
+R wrrsi    --set ai_watch_wr_trend_min_rise=15 --set ai_watch_wr_rsi_min_rise=10
+R wrrsi_st $NP_ON $LOB_ON --set ai_watch_wr_trend_min_rise=15 --set ai_watch_wr_rsi_min_rise=10 --set ai_local_trail_time_decay_enabled=false --set ai_exit_supertrend=true
 R dump30 $NP_ON $LOB_OFF --set ai_exit_rsi_dump_enabled=true --set ai_exit_rsi_dump_points=30 --set ai_exit_rsi_dump_sec=60 --set ai_exit_rsi_dump_confirm_ticks=2
 R brk_replace --set ai_watch_breakout_arm=replace   # entry: clean breakout INSTEAD of the square
 R brk_either  --set ai_watch_breakout_arm=either    # entry: square OR clean breakout
