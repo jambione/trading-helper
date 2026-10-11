@@ -1738,6 +1738,10 @@ def at(day: str, hhmm: str) -> float:
 
 
 def run_inside(args) -> int:
+    # The background order-block warm fetch is a live network thread. A replay fills
+    # that store synchronously (ObStoreFeeder) when a variant needs bars. Leaving the
+    # thread on burned a calibration day (2026-10-08 base, 78 min of warm fetches).
+    os.environ["TH_OB_WARM_OFF"] = "1"
     root = Path.cwd()
     sys.path.insert(0, str(root))
     sys.path.insert(0, str(root / "tools"))
@@ -1902,9 +1906,12 @@ def run_inside(args) -> int:
             if isinstance(st, dict) and s in st:
                 st[s] = (st[s][0], None)
             return {"ok": False, "error": "replay: live tape was stale"}
-        synthetic = any(r.get("synthetic") for r in dash["state"].get("tickers") or []
-                        if r.get("ticker") == s)
-        return broker.enter(s, px, clock.t, decision, cfg=load_config(), synthetic=synthetic)
+        # Do not assign to `synthetic`. It is the closed-over day flag. An assignment
+        # makes the name local, and `if synthetic:` above raises UnboundLocalError on
+        # every entry (recorded 2026-09-28..10-02 and the 2026-10-08 smoke: 0 trades).
+        on_synth_row = any(r.get("synthetic") for r in dash["state"].get("tickers") or []
+                           if r.get("ticker") == s)
+        return broker.enter(s, px, clock.t, decision, cfg=load_config(), synthetic=on_synth_row)
 
     cp.place_scaled_entry = place
     # The live book loop flattens overnight leftovers at the open and records

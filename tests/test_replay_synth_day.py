@@ -11,6 +11,16 @@ import synth_day_fidelity as sf  # noqa: E402
 DAY = "2026-10-08"
 
 
+def test_place_does_not_shadow_the_synthetic_day_flag():
+    """place() reads the closed-over synthetic-day flag. Assigning to that name makes it
+    local and every entry raises UnboundLocalError (0 trades on 2026-09-28..10-02)."""
+    import inspect
+    src = inspect.getsource(rp.run_inside)
+    body = src[src.index("def place("):src.index("cp.place_scaled_entry = place")]
+    assert "if synthetic:" in body
+    assert "synthetic =" not in body
+
+
 def test_held_out_days_are_refused_without_the_flag():
     assert rp.held_out_refusal("2026-09-23", "u.json", False)
     assert rp.held_out_refusal("2026-03-02", "u.json", False)
