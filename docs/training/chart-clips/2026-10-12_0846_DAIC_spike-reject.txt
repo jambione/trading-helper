@@ -1,0 +1,13 @@
+DAIC, 1-minute, premarket, 2026-10-12 08:46–08:56 ET.
+Panes: %R Trend Exhaustion and CM RSI-2.
+Case: spike reject. A minute before the clip, price was about 3.68 and the %R pair was −18 / −24, tight, with one line already through −20. The spike then failed. Across the recording price fell from 3.53 to 2.98. The pair was still tight and inside the −35 band on the first frame, and already falling. They never both reached −20. The lower line then ran to about −86 while the other stalled near −58, so the gap opened from about 6 to about 29. One line reached the oversold area. The pair did not.
+RSI-2 fell from 72 just before the clip to about 0, then one bounce put it back at 62 while the lower %R line was still near −86.
+Playback is sped up: one frame every 2 seconds, played at 4 fps.
+
+Live reads:
+08:46  price 3.53  %R −22.0 / −27.5  gap 6   RSI 28
+08:48  price 3.43  %R −30.1 / −37.5  gap 7   RSI 15
+08:50  price 3.09  %R −46.9 / −57.3  gap 10  RSI 3
+08:52  price 3.06  %R −53.0 / −73.4  gap 20  RSI 2
+08:54  price 2.98  %R −57.8 / −84.4  gap 27  RSI 0
+08:56  price 3.04  %R −57.6 / −86.2  gap 29  RSI 62
