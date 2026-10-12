@@ -1,0 +1,13 @@
+CLWT, 1-minute, premarket, 2026-10-12 08:32–08:42 ET.
+Panes: %R Trend Exhaustion and CM RSI-2.
+Case: fast line leads. Price ran from 1.99 to 2.36, then eased to 2.25. The fast %R line climbed through −20 (to about −15) while the slow line was still around −44 to −35. The gap stayed about 17–27 points, wider than 15, so the pair never got tight. No approach square and no filled square.
+RSI-2 sat near 90–99 through the push and fell to 34 when price gave back about 11 cents.
+Playback is sped up: one frame every 2 seconds, played at 4 fps.
+
+Live reads (right-axis values):
+08:32  price 1.99  %R −32.8 / −56.3  gap 23  RSI 85
+08:34  price 1.99  %R −36.0 / −56.2  gap 20  RSI 70
+08:36  price 2.10  %R −29.1 / −51.0  gap 22  RSI 91
+08:38  price 2.21  %R −16.9 / −44.1  gap 27  RSI 97
+08:40  price 2.36  %R −15.1 / −35.3  gap 20  RSI 99
+08:42  price 2.25  %R −22.0 / −38.9  gap 17  RSI 34
