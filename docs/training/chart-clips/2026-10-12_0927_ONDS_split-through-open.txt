@@ -1,0 +1,13 @@
+ONDS, 1-minute, 2026-10-12 09:27–09:37 ET. The clip crosses the 09:30 open.
+Panes: %R Trend Exhaustion and CM RSI-2.
+Case: split through the open. Before the open the pair was about 59 points apart, one line near −91 and the other near −32. They moved toward each other. The 09:30 open printed a long red candle, and by 09:37 the pair was tight (gap about 14) around −45 / −59, in the middle of the pane. Tight in the middle is not a zone. Neither line was at −20, and they were never both at −80. The red boxes stayed on the 08:35–08:55 highs.
+RSI-2 ran 56, 76, 47, 69, 87, 32 across those same minutes.
+Playback is sped up: one frame every 2 seconds, played at 4 fps.
+
+Live reads:
+09:27  price 6.99  %R −32.1 / −90.8  gap 59  RSI 56
+09:29  price 7.05  %R −21.9 / −58.0  gap 36  RSI 76
+09:31  price 6.92  %R −45.6 / −67.4  gap 22  RSI 47
+09:33  price 6.94  %R −47.8 / −67.9  gap 20  RSI 69
+09:35  price 6.98  %R −40.0 / −58.1  gap 18  RSI 87
+09:37  price 6.92  %R −45.0 / −59.4  gap 14  RSI 32
