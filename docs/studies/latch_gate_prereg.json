@@ -1,0 +1,41 @@
+{
+  "study": "Operator latch: the %R pair opens or shuts a gate, and CM RSI-2 fires only while that gate is open. Does that round trip clear a 20 bp cost and beat a same-name same-hour random minute, on the admitted $10+ book?",
+  "registered_at": "2026-10-12, before any script run and before any return from this rule was computed",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-12, after five chart clips: %R (long trend) being down is the primary reason not to open. Both lines rising together opens the gate and the gate stays open across RSI swings. RSI under 50 and turning up is the buy. RSI at 70 or higher sells that swing and does not close the gate. An RSI low under a falling pair is not an entry.",
+  "prior": "Not a re-run of the square arm (that lags a same-name same-hour random minute by about 21-27 bp over 15 minutes). Not a re-run of same-bar stage 2 in setup_rules.py, which requires both lines rising AND RSI in 0-50 AND RSI rising on the same bar and has never been scored. The October 10 confluence look crossed RSI(14) direction with the fast %R only, on trades already taken. The five clips from 2026-10-12 are not in this cache.",
+  "as_they_are": {
+    "lookback": "2 bars, the desk's existing trend_lookback. A line is rising when its value is strictly higher than 2 bars earlier, falling when strictly lower. Flat or non-finite is neither.",
+    "shut": "The gate shuts only when BOTH lines are falling. One line turning down does not shut it. That is the 2026-10-12 statement (the pair being down), not the August line that one line turning down ends the move.",
+    "sell": "RSI at or above 70 sells the open swing at the next bar's open. The gate stays open, so a later dip can fire again. A gate that shuts while a trade is open does not flatten it."
+  },
+  "rule": {
+    "series": "signals.compute_percent_r_exhaustion and signals.compute_cm_rsi_lower on SIP 1-minute bars. Fast line %R(21) EMA 7. Slow line %R(112) EMA 3 on the same minute grid (rte_minute_grid, gaps up to 15 minutes filled at the prior close). CM RSI-2, RMA length 2. No level gate: -20 and -35 are not part of this rule.",
+    "warmup": "Bars from 04:00 ET are used only to compute the lines and to update the gate. The gate starts shut at the first bar of the session. No entry before 09:40. No carry of the gate from a prior session.",
+    "gate": "Per name-day. Starts shut. Both lines rising on a completed bar sets the gate open. Both lines falling sets it shut. Any other bar leaves it where it was.",
+    "fire": "On a completed bar, after that bar's gate update: the gate is open, CM RSI-2 is finite and between 0 and 50 inclusive, and CM RSI-2 is rising over 2 bars. The same three were not all true on the previous bar (one fire per dip). One position per name. No fire while a position is open. Signal bar close must be >= $10. Signal bar start must be from 09:40 through 15:30 ET inclusive.",
+    "fill": "The next bar's open. A signal whose next bar starts after 15:50 is not taken.",
+    "exit": "The first later completed bar whose CM RSI-2 is >= 70, filled at the next bar's open, if that next bar starts at or before 15:50. If the position is still open on the 15:50 bar, it sells at that bar's close (session flatten). A 15:50 bar whose RSI is already >= 70 still uses the 15:50 close, not a later open.",
+    "book": "Per name, independent. Slot limits, the spread ceiling, and the live square arm are not applied. This is a timing test, not a book replay."
+  },
+  "data": "ai_reports/indicator_levels/ext.pkl as already built for the indicator-levels study (admitted name-days, SIP 1-minute, extended hours). Null frames are fetch misses and are counted, not filled in. The RTH-only runway_bars_cache.pkl is not a substitute: without the premarket bars the slow line is a different indicator than the chart. If ext.pkl is absent, the script stops and reports nothing.",
+  "feed": "SIP 1-minute. The live desk reads IEX. A number here is about the chart tape. It does not transfer to the live arm.",
+  "cost": "20 bp round trip subtracted from the rule and from the control (the indicator-levels $10+ tier). This cache has no NBBO. The same 20 bp cancels in the lift and remains in the net.",
+  "control": "For each scored trade, one random bar in the same name, same session, and same clock hour as the entry fill. The hold is the same number of rows as the rule trade, and the entry-to-exit timestamps must be exactly that many minutes apart or the trade is dropped as gapped (counted). The control bar is not the rule's entry bar. Seed sha256(symbol|day|entry_minute|latch-v1). No eligible bar: the trade is dropped and counted. The control is not replaced with another hour.",
+  "statistic": "On the trades that have a control: net = exit/entry - 1 - 0.0020. Lift = rule net minus that trade's control net. Each half reports the day-equal mean (mean of the per-day means) and the day-clustered t (that mean divided by its standard error). Days with no scored trade do not enter the mean. The calendar cut does not depend on which days traded.",
+  "split": "Unique session dates present as non-null keys in ext.pkl, sorted. The median date (index (n-1)//2) is the last date of the first half. Later dates are the second half. Printed from the keys before any return is used.",
+  "pass": "BOTH halves must have day-equal lift >= +5 bp, day-clustered t >= 2, day-equal net > 0, at least 100 scored trades, and at least 8 days with a scored trade. Anything else is FAIL, including a half that is short of trades or days (that half is UNDERPOWERED, and UNDERPOWERED is FAIL). One cell. No other cut can pass.",
+  "information_only": [
+    "gross mean, before the 20 bp",
+    "exit reason counts: rsi70 versus session_flatten",
+    "median hold in minutes",
+    "share of fires whose signal bar did not itself have both lines rising (the latch was holding an earlier open)",
+    "share of trades during which the gate shut before the exit",
+    "drop counts: fetch miss, gapped hold, no control bar",
+    "fixed 15-minute markout of the entry fill versus a same-hour random minute, same 20 bp, same day-equal mean. This line cannot pass or fail the study"
+  ],
+  "no_retuning": "Lookback 2, RSI band 0-50, RSI exit 70, both-lines shut, 20 bp, the $10 floor, and the entry window are fixed. Any other value is a new prereg.",
+  "if_pass": "A pass earns a result-skeptic review of the positive. It does not change bot_config, the square arm, or the live book.",
+  "if_fail": "The latch stays a way to read the chart. The live arm stays the square.",
+  "script": "tools/studies/latch_gate_sim.py. It must not be run with --score until this file has a result-skeptic READY. The state machine is covered by tests/test_latch_gate_sim.py, which does not read market data."
+}
