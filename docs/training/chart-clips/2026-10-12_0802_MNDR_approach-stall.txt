@@ -1,0 +1,5 @@
+MNDR, 1-minute, premarket, 2026-10-12 08:02–08:12 ET.
+Panes: %R Trend Exhaustion and CM RSI-2.
+Case: approach stall. The two %R lines stayed tight (about 4–6 points apart). They fell out of the −35 approach band as price dipped to 2.07, climbed back in as price reached 2.34, and stalled around −29 to −32. They never reached −20, so no filled square.
+RSI-2 ran from 22 to 85 and back to 52. At the high it read 85 while the %R pair was still around −30.
+Playback is sped up: one frame every 2 seconds, played at 4 fps.
