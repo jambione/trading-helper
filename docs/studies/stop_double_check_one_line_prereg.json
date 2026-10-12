@@ -1,0 +1,22 @@
+{
+  "study": "On the desk's own round trips, does honoring the ratchet shelf when at least one %R line has bent improve the exit versus selling at the first shelf hit?",
+  "registered_at": "2026-10-12, before the one-line scorer ran",
+  "registered_before_results": true,
+  "origin": "The both-lines gate (stop_double_check_prereg.json) FAILed at -1.11 bp/trade. This sibling asks the weaker gate: sell on a shelf hit when either line is off its 10-minute high. Decline the hit only when neither line is down. Same universe, shelf, cost, and pass bar. The both-lines result is not reopened.",
+  "universe": "Every ai_reports/outcomes.jsonl round trip whose entry is 09:30-15:50 ET, entry_price > 0, plan stop is 0.5% to 20% under the fill, and whose (symbol, ET day) is in ai_reports/runway_bars_cache.pkl. One row per outcome. RTH minute bars only.",
+  "shelf": "Same minute shelf as the both-lines study: ai_positions.initial_local_stop then local_profit_stop once per completed minute, live config (give_r 0.12, peak leash 0.35%, decay idle 8s). This bar's low hits the prior shelf. A gap through fills at the open; otherwise at the shelf. Decay steps once per minute. Both arms share the shelf until the first declined hit.",
+  "arms": {
+    "stop": "Sell at the first shelf hit. Still open at 15:50 ET flattens at that bar's close.",
+    "stop_and_one_line": "Same shelf. A hit sells when either %R line (fast 21/7 or slow 112/3), closed minutes plus the touch price as the live reading, is off its 10-minute high by more than 0.05. A hit sells on no lookback or no live price. A hit is declined only when neither line is down. 15:50 still flattens."
+  },
+  "cost": "Gross bp per trade, (exit/entry - 1) * 1e4. Both arms pay one round trip, so a spread cancels in the difference and is not fetched. The reported edge is the paired difference, not a claim of positive absolute net.",
+  "statistic": "Per scored day (>= 5 trades): mean of (stop_and_one_line bp - stop bp). day_stat from tools/studies/std_scorer.py across those days (Newey-West lag 5).",
+  "pass": "PASS only if the shelf actually binds (the stop arm exits on a shelf hit for at least 30% of trades), the daily paired mean is >= +3 bp/trade, t >= 2, and at least 60% of scored days are positive, with at least 8 scored days. Anything else is FAIL and the live exit does not change. A pass is a replay result, not the G-LIVE bar, and does not by itself switch the desk.",
+  "no_retuning": "Lookback 10, direction eps 0.05, fast 21/7, slow 112/3, and the pass bar are fixed. A $10+ slice may be printed and cannot flip the verdict. Do not compare against the both-lines arm inside the pass test; that arm is already a logged FAIL.",
+  "caveats": [
+    "Minute bars, not the live 2-second chase. The 8-second decay steps once a minute.",
+    "runway_bars_cache.pkl is RTH only, so the slow line is unwarmed early and those hits default to sell yes.",
+    "The cache does not include sessions after it was built. Later days are absent, not zero.",
+    "Touch price is the live %R input, so a wick is judged at the shelf, not at the bar close."
+  ]
+}

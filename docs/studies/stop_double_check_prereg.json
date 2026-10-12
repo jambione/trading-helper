@@ -1,0 +1,22 @@
+{
+  "study": "On the desk's own round trips, does requiring the %R double-check (sell yes) as well as a ratchet-shelf hit improve the exit versus selling at the first shelf hit?",
+  "registered_at": "2026-10-12, before the scorer ran",
+  "registered_before_results": true,
+  "origin": "Operator: keep good names running. Current exit is the stop. Proposed exit sells only when the working ratchet shelf is hit AND tools/sell_double_check.py says sell yes (both %R lines off their 10-minute lookback high, live price included). No lookback or no live price stays sell yes, so a blind shelf still sells. Up, flat, or only one line down does not sell.",
+  "universe": "Every ai_reports/outcomes.jsonl round trip whose entry is 09:30-15:50 ET, entry_price > 0, plan stop is 0.5% to 20% under the fill (the recorded stop_price is that plan stop, median about 5%; it is not the working shelf), and whose (symbol, ET day) is in ai_reports/runway_bars_cache.pkl. One row per outcome. RTH minute bars only.",
+  "shelf": "ai_positions.initial_local_stop then local_profit_stop once per completed minute, live config (give_r 0.12, peak leash 0.35%, decay idle 8s). The shelf is the value from prior minutes. This bar's low hits it. A gap through fills at the open; otherwise at the shelf. Decay steps once per minute, not every 8s. Both arms share this shelf until the first declined hit.",
+  "arms": {
+    "stop": "Sell at the first shelf hit. Still open at 15:50 ET flattens at that bar's close.",
+    "stop_and_check": "Same shelf. A hit sells only when the double-check on closed minutes plus the touch price as the live reading says sell yes. A sell-no hit is declined and the shelf keeps ratcheting. 15:50 still flattens."
+  },
+  "cost": "Gross bp per trade, (exit/entry - 1) * 1e4. Both arms pay one round trip, so a spread cancels in the difference and is not fetched. The reported edge is the paired difference, not a claim of positive absolute net.",
+  "statistic": "Per scored day (>= 5 trades): mean of (stop_and_check bp - stop bp). day_stat from tools/studies/std_scorer.py across those days (Newey-West lag 5).",
+  "pass": "PASS only if the shelf actually binds (the stop arm exits on a shelf hit for at least 30% of trades), the daily paired mean is >= +3 bp/trade, t >= 2, and at least 60% of scored days are positive, with at least 8 scored days. Anything else is FAIL and the live exit does not change. A pass is a replay result, not the G-LIVE bar, and does not by itself switch the desk.",
+  "no_retuning": "Lookback 10, direction eps 0.05, fast 21/7, slow 112/3, and the pass bar are fixed. A $10+ slice may be printed and cannot flip the verdict.",
+  "caveats": [
+    "Minute bars, not the live 2-second chase. The 8-second decay steps once a minute.",
+    "runway_bars_cache.pkl is RTH only, so the slow line is unwarmed early and those hits default to sell yes.",
+    "The cache does not include sessions after it was built. Later days are absent, not zero.",
+    "Touch price is the live %R input, so a wick is judged at the shelf, not at the bar close."
+  ]
+}
