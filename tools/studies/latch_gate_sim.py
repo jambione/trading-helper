@@ -35,6 +35,8 @@ MIN_PRICE = 10.0
 ENTRY_START = 9 * 60 + 40
 ENTRY_END = 15 * 60 + 30
 FLATTEN_MIN = 15 * 60 + 50
+RTH_START = 9 * 60 + 30
+RTH_END = 16 * 60
 MIN_TRADES = 100
 MIN_DAYS = 8
 LIFT_BAR = 0.0005  # +5 bp
@@ -144,8 +146,9 @@ def walk(bars: list[Bar]) -> list[dict]:
         prev_conj = conj
 
     if pos is not None:
-        last = bars[-1]
-        _close(len(bars) - 1, last.close, "session_flatten")
+        # The prereg flatten is the 15:50 bar. Ending earlier is a truncated
+        # tape, not a session flatten, and the scorer does not count it.
+        _close(len(bars) - 1, bars[-1].close, "truncated")
     return out
 
 
@@ -193,26 +196,52 @@ def _rng(sym: str, day: str, entry_minute: int) -> random.Random:
     return random.Random(int.from_bytes(digest[:8], "big"))
 
 
-def _pair(times: list, trade: dict, hour_indexes: dict[int, list[int]]) -> tuple[float, float] | None:
-    """(lift, net) or None when the hold is gapped or the hour has no control."""
-    fill_i, exit_i = trade["fill_i"], trade["exit_i"]
-    hold = exit_i - fill_i
-    if hold <= 0:
-        return None
-    span = times[exit_i] - times[fill_i]
-    if int(round(span)) != hold * 60:
-        return None
-    entry_minute = _minute(times[fill_i])
+def _sec(ts: float) -> int:
+    return int(round(ts))
+
+
+def _by_second(times: list[float]) -> dict[int, int]:
+    return {_sec(ts): i for i, ts in enumerate(times)}
+
+
+def control_indexes(times: list[float], minutes: list[int], fill_i: int, exit_i: int) -> list[int]:
+    """RTH bars in the entry's clock hour that have a print exactly one hold later.
+
+    The hold is the clock delta between the rule's fill and its exit, not the
+    row count. A missing minute inside the rule's hold does not matter. A bar
+    before 09:30 is not eligible, even when it shares the 09:00 hour.
+    """
+    delta = _sec(times[exit_i]) - _sec(times[fill_i])
+    if delta <= 0:
+        return []
+    entry_minute = minutes[fill_i]
+    if not (RTH_START <= entry_minute < RTH_END):
+        return []
     hour = entry_minute // 60
-    eligible = [
-        k for k in hour_indexes.get(hour, [])
-        if k != fill_i and k + hold < len(times)
-        and int(round(times[k + hold] - times[k])) == hold * 60
-    ]
+    have = _by_second(times)
+    out = []
+    for k, minute in enumerate(minutes):
+        if k == fill_i or minute // 60 != hour:
+            continue
+        if not (RTH_START <= minute < RTH_END):
+            continue
+        if have.get(_sec(times[k]) + delta) is None:
+            continue
+        out.append(k)
+    return out
+
+
+def _pair(times: list[float], minutes: list[int], trade: dict) -> tuple[float, float] | None:
+    """(lift, net) or None when that hour has no RTH control. The rule prints stand either way."""
+    fill_i, exit_i = trade["fill_i"], trade["exit_i"]
+    eligible = control_indexes(times, minutes, fill_i, exit_i)
     if not eligible:
         return None
-    k = _rng(trade["sym"], trade["day"], entry_minute).choice(eligible)
-    exit_c = trade["ctrl_open"][k + hold] if trade["reason"] == "rsi70" else trade["ctrl_close"][k + hold]
+    have = _by_second(times)
+    delta = _sec(times[exit_i]) - _sec(times[fill_i])
+    k = _rng(trade["sym"], trade["day"], minutes[fill_i]).choice(eligible)
+    exit_k = have[_sec(times[k]) + delta]
+    exit_c = trade["ctrl_open"][exit_k] if trade["reason"] == "rsi70" else trade["ctrl_close"][exit_k]
     gross_c = exit_c / trade["ctrl_open"][k] - 1.0
     net = trade["gross"] - COST
     net_c = gross_c - COST
@@ -246,9 +275,10 @@ def score(cache: dict) -> dict:
         raise SystemExit("ext.pkl has no frames")
     cut = days[(len(days) - 1) // 2]
     misses = sum(1 for frame in cache.values() if frame is None)
-    drops = {"gapped_or_no_control": 0, "short_frame": 0, "indicator_fail": 0}
+    drops = {"no_control": 0, "short_frame": 0, "indicator_fail": 0, "truncated": 0}
     lifts: dict[str, dict[str, list[float]]] = {"A": {}, "B": {}}
     nets: dict[str, dict[str, list[float]]] = {"A": {}, "B": {}}
+    grosses: dict[str, dict[str, list[float]]] = {"A": {}, "B": {}}
     m15: dict[str, dict[str, list[float]]] = {"A": {}, "B": {}}
     reasons = {"rsi70": 0, "session_flatten": 0}
     latch_only = 0
@@ -269,33 +299,30 @@ def score(cache: dict) -> dict:
             drops["indicator_fail"] += 1
             continue
         times = _times(frame)
-        opens = frame["open"].to_numpy(dtype=float) if "open" in frame.columns else None
-        closes = frame["close"].to_numpy(dtype=float) if "close" in frame.columns else None
-        if opens is None:
-            raw = frame.reset_index()
-            opens = raw["open"].to_numpy(dtype=float)
-            closes = raw["close"].to_numpy(dtype=float)
-        by_hour: dict[int, list[int]] = {}
-        for i, ts in enumerate(times):
-            by_hour.setdefault(_minute(ts) // 60, []).append(i)
+        minutes = _minutes(frame)
+        opens, closes = _opens_closes(frame)
         for tr in walk(built):
             n_trades += 1
             reasons[tr["reason"]] = reasons.get(tr["reason"], 0) + 1
             latch_only += int(tr["latch_only"])
             gate_shut += int(tr["gate_shut_while_in"])
-            holds.append(int(round(times[tr["exit_i"]] - times[tr["fill_i"]])) // 60)
+            if tr["reason"] == "truncated":
+                drops["truncated"] += 1
+                continue
             tr["sym"] = sym
             tr["day"] = day
             tr["ctrl_open"] = opens
             tr["ctrl_close"] = closes
-            paired = _pair(times, tr, by_hour)
+            paired = _pair(times, minutes, tr)
             if paired is None:
-                drops["gapped_or_no_control"] += 1
+                drops["no_control"] += 1
                 continue
             lift, net = paired
+            holds.append((_sec(times[tr["exit_i"]]) - _sec(times[tr["fill_i"]])) // 60)
             lifts[half].setdefault(day, []).append(lift)
             nets[half].setdefault(day, []).append(net)
-            mark = _mark15(times, opens, closes, tr)
+            grosses[half].setdefault(day, []).append(tr["gross"])
+            mark = _mark15(times, minutes, opens, closes, tr)
             if mark is not None:
                 m15[half].setdefault(day, []).append(mark)
 
@@ -303,9 +330,10 @@ def score(cache: dict) -> dict:
     for h in ("A", "B"):
         mu_l, t_l, n, nd = day_equal(lifts[h])
         mu_n, _t_n, _n2, _d2 = day_equal(nets[h])
+        mu_g, _tg, _ng, _dg = day_equal(grosses[h])
         mu_m, t_m, n_m, _dm = day_equal(m15[h])
         halves[h] = {
-            "lift": mu_l, "t": t_l, "net": mu_n, "n": n, "days": nd,
+            "lift": mu_l, "t": t_l, "net": mu_n, "gross": mu_g, "n": n, "days": nd,
             "verdict": half_verdict(mu_l, t_l, mu_n, n, nd),
             "mark15": mu_m, "mark15_t": t_m, "mark15_n": n_m,
         }
@@ -332,28 +360,35 @@ def _times(frame: pd.DataFrame) -> list[float]:
     return out
 
 
-def _mark15(times, opens, closes, tr) -> float | None:
-    """Information only. Entry-open to the close 15 minutes later, minus 20 bp, minus the same on the control."""
+def _opens_closes(frame: pd.DataFrame) -> tuple:
+    if "open" in frame.columns:
+        return frame["open"].to_numpy(dtype=float), frame["close"].to_numpy(dtype=float)
+    raw = frame.reset_index()
+    return raw["open"].to_numpy(dtype=float), raw["close"].to_numpy(dtype=float)
+
+
+def _minutes(frame: pd.DataFrame) -> list[int]:
+    if "time" in frame.columns:
+        col = frame["time"]
+    else:
+        col = frame.reset_index().iloc[:, 0]
+    return [_minute(ts) for ts in col]
+
+
+def _mark15(times, minutes, opens, closes, tr) -> float | None:
+    """Information only. Close of the bar 15 minutes after the entry, minus the same control."""
     fill_i = tr["fill_i"]
-    target = times[fill_i] + 15 * 60
-    exit_i = next((i for i, ts in enumerate(times) if abs(ts - target) < 1), None)
-    if exit_i is None or exit_i <= fill_i:
+    have = _by_second(times)
+    exit_i = have.get(_sec(times[fill_i]) + 15 * 60)
+    if exit_i is None:
         return None
-    hold = exit_i - fill_i
-    if int(round(times[exit_i] - times[fill_i])) != hold * 60:
-        return None
-    entry_minute = _minute(times[fill_i])
-    hour = entry_minute // 60
-    eligible = [
-        k for k in range(len(times))
-        if _minute(times[k]) // 60 == hour and k != fill_i and k + hold < len(times)
-        and int(round(times[k + hold] - times[k])) == hold * 60
-    ]
+    eligible = control_indexes(times, minutes, fill_i, exit_i)
     if not eligible:
         return None
-    k = _rng(tr["sym"], tr["day"], entry_minute).choice(eligible)
+    k = _rng(tr["sym"], tr["day"], minutes[fill_i]).choice(eligible)
+    exit_k = have[_sec(times[k]) + 15 * 60]
     net = closes[exit_i] / opens[fill_i] - 1.0 - COST
-    net_c = closes[k + hold] / opens[k] - 1.0 - COST
+    net_c = closes[exit_k] / opens[k] - 1.0 - COST
     return net - net_c
 
 
@@ -380,7 +415,8 @@ def report(result: dict) -> str:
         s = result["halves"][h]
         lines.append(
             f"half {h}: {s['verdict']}  n={s['n']} days={s['days']}  "
-            f"lift {_fmt(s['lift'])}  t {_fmt(s['t'], bp=False)}  net {_fmt(s['net'])}"
+            f"lift {_fmt(s['lift'])}  t {_fmt(s['t'], bp=False)}  net {_fmt(s['net'])}  "
+            f"gross {_fmt(s['gross'])} (information)"
         )
         lines.append(
             f"  15-min markout (information, not a verdict): "

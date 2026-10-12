@@ -6,7 +6,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools", "studies"))
 
-from latch_gate_sim import FLATTEN_MIN, Bar, half_verdict, walk  # noqa: E402
+from latch_gate_sim import (  # noqa: E402
+    FLATTEN_MIN, Bar, _pair, control_indexes, half_verdict, walk,
+)
 
 
 def _bar(minute, **kw) -> Bar:
@@ -132,6 +134,42 @@ def test_still_open_at_the_flatten_sells_at_that_close():
     assert len(trades) == 1
     assert trades[0]["reason"] == "session_flatten"
     assert trades[0]["exit"] == 12.5
+
+
+def test_a_premarket_bar_is_not_a_control_for_a_regular_hour_fill():
+    # 09:05 has a print five minutes later, and it shares the 09:00 hour with
+    # a 09:45 fill. It is still ineligible. 09:40 is the control that remains.
+    minutes = [9 * 60 + 5, 9 * 60 + 10, 9 * 60 + 40, 9 * 60 + 45, 9 * 60 + 50]
+    times = [0, 5 * 60, 35 * 60, 40 * 60, 45 * 60]
+    assert control_indexes(times, minutes, 3, 4) == [2]
+
+
+def test_a_missing_interior_minute_still_scores():
+    # Fill 10:00, exit 10:10, and 10:01 is absent. The prints exist, and
+    # 10:05 has a bar exactly ten minutes later, so the trade scores.
+    minutes = [10 * 60, 10 * 60 + 2, 10 * 60 + 5, 10 * 60 + 10, 10 * 60 + 15]
+    times = [0, 2 * 60, 5 * 60, 10 * 60, 15 * 60]
+    trade = {
+        "fill_i": 0, "exit_i": 3, "reason": "rsi70", "gross": 0.01,
+        "sym": "AAA", "day": "2026-09-04",
+        "ctrl_open": [10.0, 10.0, 10.0, 11.0, 10.0],
+        "ctrl_close": [10.0, 10.0, 10.0, 11.0, 12.0],
+    }
+    paired = _pair(times, minutes, trade)
+    assert paired is not None
+    lift, net = paired
+    assert abs(net - (0.01 - 0.002)) < 1e-12
+    assert abs(lift - (0.01 - 0.0)) < 1e-12
+
+
+def test_a_tape_that_ends_before_1550_is_truncated():
+    flags = [
+        {"fast_up": True, "slow_up": True, "rsi": 30, "rsi_up": True},
+        {"open": 11, "rsi": 40},
+    ]
+    trades = walk(_session(flags))
+    assert len(trades) == 1
+    assert trades[0]["reason"] == "truncated"
 
 
 def test_verdict_needs_lift_net_and_sample():
