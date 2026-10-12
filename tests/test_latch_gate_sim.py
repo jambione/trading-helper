@@ -6,7 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools", "studies"))
 
-from latch_gate_sim import FLATTEN_MIN, Bar, walk  # noqa: E402
+from latch_gate_sim import FLATTEN_MIN, Bar, half_verdict, walk  # noqa: E402
 
 
 def _bar(minute, **kw) -> Bar:
@@ -132,6 +132,15 @@ def test_still_open_at_the_flatten_sells_at_that_close():
     assert len(trades) == 1
     assert trades[0]["reason"] == "session_flatten"
     assert trades[0]["exit"] == 12.5
+
+
+def test_verdict_needs_lift_net_and_sample():
+    assert half_verdict(0.001, 2.5, 0.0001, 100, 8) == "PASS"
+    assert half_verdict(0.001, 2.5, -0.0001, 100, 8) == "FAIL"
+    assert half_verdict(0.0001, 3.0, 0.001, 100, 8) == "FAIL"
+    assert half_verdict(0.001, 1.9, 0.001, 100, 8) == "FAIL"
+    assert half_verdict(0.001, 2.5, 0.001, 99, 8) == "UNDERPOWERED"
+    assert half_verdict(0.001, 2.5, 0.001, 100, 7) == "UNDERPOWERED"
 
 
 def test_no_second_entry_while_the_first_is_open():

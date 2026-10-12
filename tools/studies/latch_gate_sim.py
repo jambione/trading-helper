@@ -212,7 +212,8 @@ def _pair(times: list, trade: dict, hour_indexes: dict[int, list[int]]) -> tuple
     if not eligible:
         return None
     k = _rng(trade["sym"], trade["day"], entry_minute).choice(eligible)
-    gross_c = trade["ctrl_close"][k + hold] / trade["ctrl_open"][k] - 1.0
+    exit_c = trade["ctrl_open"][k + hold] if trade["reason"] == "rsi70" else trade["ctrl_close"][k + hold]
+    gross_c = exit_c / trade["ctrl_open"][k] - 1.0
     net = trade["gross"] - COST
     net_c = gross_c - COST
     return net - net_c, net
@@ -245,10 +246,10 @@ def score(cache: dict) -> dict:
         raise SystemExit("ext.pkl has no frames")
     cut = days[(len(days) - 1) // 2]
     misses = sum(1 for frame in cache.values() if frame is None)
+    drops = {"gapped_or_no_control": 0, "short_frame": 0, "indicator_fail": 0}
     lifts: dict[str, dict[str, list[float]]] = {"A": {}, "B": {}}
     nets: dict[str, dict[str, list[float]]] = {"A": {}, "B": {}}
     m15: dict[str, dict[str, list[float]]] = {"A": {}, "B": {}}
-    drops = {"gapped_or_no_control": 0}
     reasons = {"rsi70": 0, "session_flatten": 0}
     latch_only = 0
     gate_shut = 0
@@ -256,10 +257,17 @@ def score(cache: dict) -> dict:
     holds: list[int] = []
 
     for (sym, day), frame in cache.items():
-        if frame is None or len(frame) < 120:
+        if frame is None:
+            continue
+        if len(frame) < 120:
+            drops["short_frame"] += 1
             continue
         half = "A" if day <= cut else "B"
-        built = bars_from_frame(frame)
+        try:
+            built = bars_from_frame(frame)
+        except Exception:  # noqa: BLE001 — a bad frame is a counted drop, not a stopped study
+            drops["indicator_fail"] += 1
+            continue
         times = _times(frame)
         opens = frame["open"].to_numpy(dtype=float) if "open" in frame.columns else None
         closes = frame["close"].to_numpy(dtype=float) if "close" in frame.columns else None
@@ -361,7 +369,7 @@ def report(result: dict) -> str:
         f"cut (last date of the first half): {result['cut']}",
         f"fetch misses: {result['fetch_misses']}",
         f"fires: {result['fires']}",
-        f"scored-trade drops (gapped hold or no control): {result['drops']['gapped_or_no_control']}",
+        f"drops: {result['drops']}",
         f"exit reasons: {result['reasons']}",
         f"median hold minutes: {result['median_hold_min']}",
         f"fires with the gate held open from an earlier bar: {result['latch_only']}",
