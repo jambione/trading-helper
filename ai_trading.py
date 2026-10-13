@@ -562,18 +562,34 @@ def _book_limits(equity: float | None = None):
     eq = equity if equity is not None else _live_equity()
     if eq is None:
         return None
+    try:
+        from config import load_config
+        cfg = load_config()
+        max_p = int(cfg.get("ai_max_positions", _max_positions) or _max_positions)
+        max_pct = float(cfg.get("ai_max_position_pct", _max_position_pct) or _max_position_pct)
+        slot_eq = float(cfg.get("ai_position_slot_equity", _slot_equity) or _slot_equity)
+    except Exception:
+        max_p = _max_positions
+        max_pct = _max_position_pct
+        slot_eq = _slot_equity
     return equity_book_limits(
         float(eq),
-        max_positions=_max_positions,
-        max_position_pct=_max_position_pct,
-        slot_equity=_slot_equity,
+        max_positions=max_p,
+        max_position_pct=max_pct,
+        slot_equity=slot_eq,
     )
 
 
 def effective_max_positions(equity: float | None = None) -> int:
     """Slot count from live equity; configured ceiling if equity is unknown."""
     lim = _book_limits(equity)
-    return int(lim.max_positions) if lim is not None else _max_positions
+    if lim is not None:
+        return int(lim.max_positions)
+    try:
+        from config import load_config
+        return int(load_config().get("ai_max_positions", _max_positions) or _max_positions)
+    except Exception:
+        return _max_positions
 
 
 def can_open_new_position(symbol: str) -> bool:
