@@ -1408,6 +1408,11 @@ DEFAULT_CONFIG = {
     "ai_exit_supertrend":              False,
     "ai_no_progress_sec":              60.0,
     "ai_no_progress_mfe_r":            0.05,
+    "ai_double_check_sell_enabled":     False,
+    "ai_double_check_min_sec":          180.0,
+    "ai_double_check_lookback_min":     10,
+    "ai_double_check_under_entry_only": True,
+    "ai_double_check_mode":             "both",
     # Open Plan A long + EXH/pctr falling → market flatten (pack #9).
     # Dedicated flag — does not turn on left_overbought scalp semantics.
     # Confirm ticks: consecutive falling polls before exit (2 = anti-flicker).
@@ -2354,6 +2359,11 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_supertrend",
     "ai_no_progress_sec",
     "ai_no_progress_mfe_r",
+    "ai_double_check_sell_enabled",
+    "ai_double_check_min_sec",
+    "ai_double_check_lookback_min",
+    "ai_double_check_under_entry_only",
+    "ai_double_check_mode",
     "ai_exh_falling_flatten_enabled",
     "ai_exh_falling_flatten_confirm_ticks",
     "ai_exit_rsi_dump_enabled",

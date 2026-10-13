@@ -3485,6 +3485,110 @@ def supertrend_exit_due(
             log_event("supertrend_no_bars", symbol=ticker, bars=info.get("bars"))
         return False, info
     return bool(due), info
+_DOUBLE_CHECK_BARS_CACHE: dict[str, tuple[float, tuple]] = {}
+
+
+def _symbol_bars_for_double_check(ticker: str, t_now: float) -> tuple | None:
+    """Session 1m bars as (stamps, highs, lows, closes) for sell_double_check.
+
+    Cached for up to 30s per symbol. Prefers ob_observe in-memory store if warm.
+    """
+    cached = _DOUBLE_CHECK_BARS_CACHE.get(ticker)
+    if cached is not None and t_now - cached[0] < 30.0:
+        return cached[1]
+
+    # Try in-memory ob_observe bars
+    try:
+        import ob_observe
+        ob_bars = ob_observe.bars(ticker)
+        if ob_bars and len(ob_bars) >= 20:
+            stamps = [float(b[0]) for b in ob_bars]
+            highs = [float(b[2]) for b in ob_bars]
+            lows = [float(b[3]) for b in ob_bars]
+            closes = [float(b[4]) for b in ob_bars]
+            res = (stamps, highs, lows, closes)
+            _DOUBLE_CHECK_BARS_CACHE[ticker] = (t_now, res)
+            return res
+    except Exception:
+        pass
+
+    # Fall back to alpaca data via fetch_session_bars
+    try:
+        from tools import sell_double_check as sdc
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        now_et = datetime.fromtimestamp(t_now, ZoneInfo("America/New_York"))
+        fetched = sdc.fetch_session_bars([ticker], now_et)
+        if fetched and ticker in fetched:
+            res = fetched[ticker]
+            _DOUBLE_CHECK_BARS_CACHE[ticker] = (t_now, res)
+            return res
+    except Exception:
+        pass
+
+    return None
+
+
+def double_check_sell_due(
+    pos: dict[str, Any] | None,
+    ticker: str,
+    now: float | None = None,
+    cfg: dict | None = None,
+) -> tuple[bool, dict]:
+    """Sell double-check exit: at T sec (default 180s = 3m), if under entry price and
+    both %R lines are trending down (or no lookback), cut the stagnant loser early.
+
+    Prevents 7-10 minute slow bleeds during chop while preserving runners.
+    """
+    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
+    if not bool(cfg.get("ai_double_check_sell_enabled", False)):
+        return False, {}
+    if not isinstance(pos, dict) or not pos.get("entry_confirmed") or pos.get("closing_reason"):
+        return False, {}
+    if pos.get("tranche_a_filled"):
+        return False, {}
+
+    _loc = _num(pos.get("local_stop_price"))
+    _ent = _num(pos.get("entry_price"))
+    if _loc is not None and _ent is not None and _loc > _ent + 1e-9:
+        return False, {}  # trail already locked green — not a stagnant open
+
+    try:
+        t_sec = float(cfg.get("ai_double_check_min_sec", 180.0) or 180.0)
+    except (TypeError, ValueError):
+        t_sec = 180.0
+    if t_sec <= 0:
+        return False, {}
+
+    start = _num(pos.get("entry_confirmed_at")) or _num(pos.get("entry_time"))
+    if start is None:
+        return False, {}
+    t_now = float(now if now is not None else time.time())
+    age = t_now - float(start)
+    if age + 1e-9 < t_sec:
+        return False, {}
+
+    last = _num(pos.get("last_seen_price"))
+    if last is None or _ent is None:
+        return False, {}
+
+    if bool(cfg.get("ai_double_check_under_entry_only", True)):
+        if last >= _ent - 1e-9:
+            return False, {}
+
+    try:
+        from tools import sell_double_check as sdc
+        bars = _symbol_bars_for_double_check(ticker, t_now)
+        lookback = int(cfg.get("ai_double_check_lookback_min", sdc.LOOKBACK_MIN) or sdc.LOOKBACK_MIN)
+        mode = str(cfg.get("ai_double_check_mode", "both") or "both")
+        res = sdc.evaluate_symbol(ticker, bars, last, lookback=lookback, now=t_now)
+        if mode == "fast_only":
+            due = res.get("fast_trend") in ("down", "no_lookback")
+        else:
+            due = res.get("sell") == "yes"
+        return bool(due), res
+    except Exception as e:
+        return False, {"error": str(e)[:120]}
 
 
 def no_progress_due(
@@ -7916,6 +8020,37 @@ def manage_open_positions(
             events.append({"ticker": ticker, "event": "supertrend", **{k: _st_info.get(k) for k in ("tup", "close", "bars")}})
             log_event("supertrend", symbol=ticker, tup=_st_info.get("tup"), close=_st_info.get("close"),
                       bars=_st_info.get("bars"))
+            changed = True
+            continue
+
+        # Sell double-check exit: at T sec (default 180s = 3m), if under entry price
+        # and %R lines are trending down (sell == "yes"), cut the stagnant loser early.
+        _dc_due, _dc_info = double_check_sell_due(pos, ticker, now)
+        if _dc_due:
+            mfe = _num(pos.get("mfe_r"))
+            start = _num(pos.get("entry_confirmed_at")) or _num(
+                pos.get("entry_time")) or now
+            age_sec = max(0.0, float(now) - float(start))
+            alpaca_trader.cancel_open_orders(ticker)
+            out = alpaca_trader.close_out(ticker) or {}
+            if isinstance(out, dict) and out.get("order_id"):
+                pos["close_order_id"] = str(out["order_id"])
+            pos["closing_reason"] = "double_check"
+            exit_why[ticker] = "double_check"
+            events.append({
+                "ticker": ticker, "event": "double_check",
+                "age_sec": round(age_sec, 1),
+                "mfe_r": mfe,
+                **{k: _dc_info.get(k) for k in ("fast_trend", "slow_trend", "trend", "reason")},
+            })
+            log_event(
+                "double_check", symbol=ticker,
+                age_sec=round(age_sec, 1), mfe_r=mfe,
+                fast_trend=_dc_info.get("fast_trend"),
+                slow_trend=_dc_info.get("slow_trend"),
+                reason=_dc_info.get("reason"),
+                timeout_sec=_cfg_float("ai_double_check_min_sec", 180.0),
+            )
             changed = True
             continue
 

@@ -57,6 +57,7 @@ _LABELS = {
     "time_stop": "time stop",
     "thesis_break": "thesis break",
     "no_progress": "no progress",
+    "double_check": "double check",
     "exh_falling_flatten": "exhaustion falling",
     "fill_through_stop": "through stop",
     "stop_software_full": "stop",
