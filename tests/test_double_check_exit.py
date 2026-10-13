@@ -1,8 +1,13 @@
 """Unit tests for the 3m %R sell double-check exit gate."""
 from __future__ import annotations
 
+import sys
 import time
+from pathlib import Path
 from unittest.mock import patch, MagicMock
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
 
 import ai_positions
 
