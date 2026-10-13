@@ -158,3 +158,22 @@ def test_lead_report_counts_only_prior_fires():
     assert out["PRE"]["median_lead_min"] == 5      # bar fm-6 closes at fm-5
     assert out["IGN"]["with_prior_fire"] == 0      # 29 min > 15
     assert out["PRE"]["fires"] == 2 and abs(out["PRE"]["hit_rate_10m"] - 0.5) < 1e-12
+
+
+def test_mid_flag_is_the_live_minus_50_cross():
+    fast = [-55.0, -48.0]
+    slow = [-60.0, -59.0]
+    assert E.mid_flag(fast, slow, [50.0, 50.0], 1)
+    assert E.mid_flag(fast, slow, [50.0, 70.0], 1)                # live has no RSI term
+    assert not E.mid_flag(fast, slow, [50.0, 70.0], 1, cap=True)  # MIDCAP info variant
+    assert not E.mid_flag(fast, [-60.0, -60.0], [50.0] * 2, 1)    # slow not rising
+    assert not E.mid_flag([-45.0, -40.0], slow, [50.0] * 2, 1)    # no cross: already above
+    assert not E.mid_flag([-50.0, -50.0], slow, [50.0] * 2, 1)    # -50 is not above -50
+
+
+def test_rsi2_turn_needs_oversold_then_up_with_fast_rising():
+    fast = [-80.0, -79.0]
+    assert E.rsi2_turn_flag(fast, [30.0, 40.0], 1)
+    assert not E.rsi2_turn_flag(fast, [36.0, 40.0], 1)             # was not oversold
+    assert not E.rsi2_turn_flag(fast, [30.0, 29.0], 1)             # did not turn up
+    assert not E.rsi2_turn_flag([-80.0, -80.0], [30.0, 40.0], 1)   # fast flat

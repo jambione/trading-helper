@@ -55,8 +55,17 @@ COST = 0.0010
 LIFT_BAR = 0.0005
 MIN_SIGNALS, MIN_DAYS = 100, 6
 MAX_MISS = 0.05
-RULES = ("PRE", "IGN", "SQ")
-GRADED = ("PRE", "IGN")
+MID_LEVEL, RSI_CAP, RSI_OS = -50.0, 65.0, 35.0
+# Two pre-registered studies share this harness. Each grades its own rules;
+# SQ is information in both.
+STUDIES = {
+    "pre_ign": {"rules": ("PRE", "IGN", "SQ"), "graded": ("PRE", "IGN"),
+                "prereg": "early_entry_honest_prereg.json", "out": "result.md"},
+    "mid_rsi2": {"rules": ("MID", "RSI2T", "MIDCAP", "SQ"), "graded": ("MID", "RSI2T"),
+                 "prereg": "early_entry_mid_rsi2_prereg.json", "out": "result_mid_rsi2.md"},
+}
+RULES = STUDIES["pre_ign"]["rules"]
+GRADED = STUDIES["pre_ign"]["graded"]
 CFG = {
     "cm_rsi_length": 2,
     "rte_fast_length": 21,
@@ -94,6 +103,25 @@ def sq_flag(fast, slow, i: int) -> bool:
     if not (_fin(f) and _fin(s)):
         return False
     return f >= -OB_THR and s >= -OB_THR and abs(f - s) <= TIGHT + 1e-9 and rising(fast, i)
+
+
+def mid_flag(fast, slow, rsi, i: int, cap: bool = False) -> bool:
+    """Live _mid_rise_allows_buy at bar close: fast crosses up through -50 from the
+    previous minute while the slow line rises. Live has no RSI term (the CM RSI-2
+    cap is admission-only, config.py ai_watch_arm_cm_rsi_max); cap=True is the
+    information-only MIDCAP variant."""
+    if i < 1 or not (_fin(fast[i - 1]) and _fin(fast[i])):
+        return False
+    if not (fast[i - 1] <= MID_LEVEL < fast[i] and rising(slow, i)):
+        return False
+    return not cap or (_fin(rsi[i]) and rsi[i] <= RSI_CAP)
+
+
+def rsi2_turn_flag(fast, rsi, i: int) -> bool:
+    """CM RSI-2 was <= 35 on the previous minute and turns up, with fast %R rising."""
+    if i < 1 or not (_fin(rsi[i - 1]) and _fin(rsi[i])):
+        return False
+    return rsi[i - 1] <= RSI_OS and rsi[i] > rsi[i - 1] and rising(fast, i)
 
 
 def ign_flag(minutes, closes, vols, i: int, vol_at: dict | None = None) -> bool:
@@ -355,6 +383,7 @@ def grid_fill(frame):
 def name_day_series(iex_frame) -> dict:
     import signals
     df = signals.compute_percent_r_exhaustion(grid_fill(iex_frame), CFG)
+    df = signals.compute_cm_rsi_lower(df, CFG)
     minutes = [_et_min(t.timestamp()) for t in df["time"]]
     return {
         "minutes": minutes,
@@ -362,6 +391,7 @@ def name_day_series(iex_frame) -> dict:
         "vol": [float(x) for x in df["volume"]],
         "fast": [float(x) for x in df["s_percentR"]],
         "slow": [float(x) for x in df["l_percentR"]],
+        "rsi": [float(x) for x in df["cm_rsi"]],
     }
 
 
@@ -378,6 +408,9 @@ def rule_fires(ser: dict, board: set) -> dict[str, tuple[list[int], int]]:
         "PRE": [pre_flag(f, s, i) for i in range(n)],
         "SQ": [sq_flag(f, s, i) for i in range(n)],
         "IGN": [ign_flag(m, ser["close"], ser["vol"], i, vol_at) for i in range(n)],
+        "MID": [mid_flag(f, s, ser["rsi"], i) for i in range(n)],
+        "MIDCAP": [mid_flag(f, s, ser["rsi"], i, cap=True) for i in range(n)],
+        "RSI2T": [rsi2_turn_flag(f, ser["rsi"], i) for i in range(n)],
     }
     return {r: fires(m, flags[r], board) for r in RULES}
 
@@ -589,7 +622,10 @@ def main() -> None:
     ap.add_argument("--fetch", action="store_true")
     ap.add_argument("--days", nargs="*", help="limit to these days (default: every ledger day)")
     ap.add_argument("--score", action="store_true")
+    ap.add_argument("--study", choices=sorted(STUDIES), default="pre_ign")
     a = ap.parse_args()
+    global RULES, GRADED
+    RULES, GRADED = STUDIES[a.study]["rules"], STUDIES[a.study]["graded"]
     if a.fetch:
         have = set(f[:-4] for f in os.listdir(OUT_DIR) if f.endswith(".pkl")) if os.path.isdir(OUT_DIR) else set()
         have -= {d for d, _why in load_days()[1]}       # refetch days excluded for misses
@@ -618,7 +654,7 @@ def main() -> None:
     md = report(res)
     print(md)
     os.makedirs(OUT_DIR, exist_ok=True)
-    with open(os.path.join(OUT_DIR, "result.md"), "w") as f:
+    with open(os.path.join(OUT_DIR, STUDIES[a.study]["out"]), "w") as f:
         f.write(md + "\n")
 
 
