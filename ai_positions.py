@@ -5002,6 +5002,59 @@ def apply_local_trail(
         pos["local_stop_price"] = float(_jump)
         loc = float(_jump)
         changed = True
+    # Hard profit capture: if current print is up >= ai_profit_capture_pct or ai_profit_capture_px,
+    # sell immediately to lock in gains, superseding ratchet trail stops.
+    _cap_pct = float(_cfg_all().get("ai_profit_capture_pct", 0.0) or 0.0)
+    _cap_px = float(_cfg_all().get("ai_profit_capture_px", 0.0) or 0.0)
+    _entry = _num(pos.get("entry_price"))
+    _profit_hit = False
+    if not raise_only and trigger is not None and _entry is not None and _entry > 0:
+        if _cap_px > 0 and (float(trigger) - _entry) + 1e-9 >= _cap_px:
+            _profit_hit = True
+        elif _cap_pct > 0:
+            _gain_pct = (float(trigger) - _entry) / _entry * 100.0
+            if _gain_pct + 1e-9 >= _cap_pct:
+                _profit_hit = True
+
+    if _profit_hit:
+        last = trigger
+        alpaca_trader.cancel_open_orders(ticker)
+        try:
+            _collar = float(_cfg_all().get("ai_exit_limit_collar_pct", 0.0) or 0.0)
+            _cwait = float(_cfg_all().get("ai_exit_limit_collar_wait_sec", 2.0) or 2.0)
+        except (TypeError, ValueError):
+            _collar, _cwait = 0.0, 2.0
+        if _collar > 0 and trigger:
+            out = alpaca_trader.close_out(
+                ticker, price=float(trigger), collar_pct=_collar,
+                collar_wait_sec=_cwait) or {}
+        else:
+            out = alpaca_trader.close_out(ticker) or {}
+        oid = str(out.get("order_id", "")) if isinstance(out, dict) else ""
+        if oid:
+            pos["close_order_id"] = oid
+        pos["closing_reason"] = "profit_capture"
+        exit_why[ticker] = "profit_capture"
+        events.append({
+            "ticker": ticker,
+            "event": "profit_capture",
+            "last": last,
+            "entry": _entry,
+            "gain": round(last - _entry, 4),
+            "gain_pct": round((last - _entry) / _entry * 100.0, 2),
+            "order_id": oid,
+        })
+        log_event(
+            "profit_capture",
+            symbol=ticker,
+            last=last,
+            entry=_entry,
+            gain=round(last - _entry, 4),
+            gain_pct=round((last - _entry) / _entry * 100.0, 2),
+            order_id=oid,
+        )
+        return True, True
+
     # Hit the *existing* board stop first. Raising on this tick's high
     # and then testing the low would skip a sale through the old shelf.
     # The shelf keeps RAISING while held back — only the sale waits, so a

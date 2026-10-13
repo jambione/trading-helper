@@ -1193,6 +1193,10 @@ DEFAULT_CONFIG = {
     # ...or this much percent of price, whichever comes first. 1R is ~5% of
     # price on these zones, so an R-only floor needs a half-percent move.
     "ai_local_trail_be_at_pct":     0.0,
+    # Hard profit capture threshold: sell immediately when gain reaches this percent
+    # or dollar-per-share gain, superseding ratchet trail stops. 0 = off.
+    "ai_profit_capture_pct":        0.50,
+    "ai_profit_capture_px":         0.0,
     # Breakeven parks this many cents ABOVE the fill, not on it — flat on
     # paper is red after paying the spread twice. 0 = old flat-at-fill.
     "ai_breakeven_offset_px":          0.01,
@@ -2298,6 +2302,8 @@ SAFE_CONFIG_KEYS = [
     "macd_min_gap",
     "ai_watch_macd_max_age_sec",
     "ai_local_trail_be_at_pct",
+    "ai_profit_capture_pct",
+    "ai_profit_capture_px",
     "ai_local_trail_give_max_pct",
     "ai_exit_macd_confirm_ticks",
     "ai_shelf_trace_sec",
