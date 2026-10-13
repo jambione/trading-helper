@@ -1195,7 +1195,7 @@ DEFAULT_CONFIG = {
     "ai_local_trail_be_at_pct":     0.0,
     # Hard profit capture threshold: sell immediately when gain reaches this percent
     # or dollar-per-share gain, superseding ratchet trail stops. 0 = off.
-    "ai_profit_capture_pct":        0.30,
+    "ai_profit_capture_pct":        0.0,
     "ai_profit_capture_px":         0.0,
     # Breakeven parks this many cents ABOVE the fill, not on it — flat on
     # paper is red after paying the spread twice. 0 = old flat-at-fill.
