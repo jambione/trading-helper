@@ -304,6 +304,22 @@ def test_replay_no_progress_exit_mirrors_the_desk():
     assert b2._live_exit(b2.open["AAA"], 99.9, T0 + 181, {}, cfg_off, None) is None
 
 
+def test_replay_profit_capture_mirrors_the_desk():
+    """2026-10-13: the new-exits replay matched cap-off trade for trade because
+    the replay's exit copy had no profit capture (live: ai_positions.apply_local_trail)."""
+    cfg = {"ai_profit_capture_pct": 0.30, "ai_dead_trade_min": 0.0}
+    b = _live_broker_pos(cfg)
+    pos = b.open["AAA"]
+    assert b._live_exit(pos, 100.29, T0 + 10, {}, cfg, None) is None
+    assert b._live_exit(pos, 100.30, T0 + 12, {}, cfg, None) == "profit_capture"
+    off = dict(cfg, ai_profit_capture_pct=0.0)
+    b2 = _live_broker_pos(off)
+    assert b2._live_exit(b2.open["AAA"], 100.30, T0 + 12, {}, off, None) is None
+    px_cfg = {"ai_profit_capture_px": 0.25, "ai_profit_capture_pct": 0.30, "ai_dead_trade_min": 0.0}
+    b3 = _live_broker_pos(px_cfg)
+    assert b3._live_exit(b3.open["AAA"], 100.25, T0 + 12, {}, px_cfg, None) == "profit_capture"
+
+
 def test_replay_dead_trade_reads_zero_as_the_default_like_live():
     """Live ai_positions reads ai_dead_trade_min 0 as the 22-min default (it
     fired dead_trade at 22 min on 2026-10-07); the replay read 0 as off."""

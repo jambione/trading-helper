@@ -932,6 +932,16 @@ class FakeBroker:
             due, _info = cp.supertrend_exit_due(p, pos["symbol"], now, cfg)
             if due:
                 return "supertrend"
+        # Hard profit capture, as ai_positions.apply_local_trail (689dfca): checked on the
+        # print BEFORE the board stop. Before 2026-10-13 this mirror lacked it, so
+        # ai_profit_capture_pct replayed identical to off.
+        _entry = float(p["entry"])
+        cap_px = float(cfg.get("ai_profit_capture_px", 0.0) or 0.0)
+        cap_pct = float(cfg.get("ai_profit_capture_pct", 0.0) or 0.0)
+        if _entry > 0 and ((cap_px > 0 and (px - _entry) + 1e-9 >= cap_px)
+                           or (cap_px <= 0 and cap_pct > 0
+                               and (px - _entry) / _entry * 100.0 + 1e-9 >= cap_pct)):
+            return "profit_capture"
         if px <= float(p["local_stop_price"]) + 1e-9:
             return "local_trail"
         entry, risk = float(p["entry"]), float(p["risk_per_share"])
