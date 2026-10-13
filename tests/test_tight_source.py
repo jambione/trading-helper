@@ -6,12 +6,17 @@ pure functions on fake data) and the desk seed reading tight_stocks.json
 ai_watch_seed_tight, which ships False, so merging it must change nothing.
 """
 import json
+import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
 
 import ai_entry_watch as ew
 import tight_screener as ts

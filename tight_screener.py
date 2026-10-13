@@ -463,7 +463,7 @@ def scan(cfg: dict, *, now: float | None = None, universe: list[dict] | None = N
             return None
     from movers_screener import sip_data_mins_open
     mins_open = sip_data_mins_open(now_et, cfg)
-    min_rvol = _f(cfg, "ai_watch_movers_min_rvol", 1.0)
+    min_rvol = _f(cfg, "ai_watch_tight_min_rvol", _f(cfg, "ai_watch_movers_min_rvol", 1.0))
     rows = [build_row(p, bars_seq=bars.get(p["symbol"]), today=day,
                       mins_open=mins_open, cfg=cfg, min_rvol=min_rvol)
             for p in picks]
