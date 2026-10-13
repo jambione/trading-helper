@@ -21,7 +21,7 @@
   "ai_exh_falling_flatten_enabled": false,
   "ai_no_progress_flatten_enabled": true,
   "ai_no_progress_mfe_r": 0.001,
-  "ai_no_progress_sec": 180.0,
+  "ai_no_progress_sec": 600.0,
   "ai_duel_chance3_time": "14:30",
   "ai_duel_close_before_research_min": 10,
   "ai_duel_enabled": false,
