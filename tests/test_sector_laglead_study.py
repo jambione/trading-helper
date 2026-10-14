@@ -64,10 +64,10 @@ def test_control_minute_needs_laggard_without_sector_move_and_distance():
     spy = {m: (500.0, 500.0) for m in range(590, 700)}
     member = {m: (20.0, 20.0) for m in range(590, 700)}
     sip = {m: (20.0, 20.0) for m in range(590, 720)}
-    k = L.control_minute("AAA", "d", 605, member, flat_etf, spy, sip, [605])
-    assert k is not None and k // 60 == 10 and abs(k - 605) > L.CTRL_EXCL
-    assert k == L.control_minute("AAA", "d", 605, member, flat_etf, spy, sip, [605])      # seeded
-    assert L.control_minute("AAA", "d", 630, member, flat_etf, spy, sip, [630]) is None   # whole hour within 30 min
+    k = L.control_minute("AAA", "d", 630, member, flat_etf, spy, sip, [630])
+    assert k is not None and abs(k - 630) > L.CTRL_EXCL and abs(k - 630) <= 60      # any side, +-60 min
+    assert k == L.control_minute("AAA", "d", 630, member, flat_etf, spy, sip, [630])      # seeded
+    assert L.control_minute("AAA", "d", 630, member, flat_etf, spy, sip, [600, 630, 660]) is None
     hot = _rising_etf(560, 700)
     assert L.control_minute("AAA", "d", 605, member, hot, spy, sip, [605]) is None          # sector moving all hour
 
@@ -83,3 +83,4 @@ def test_adv_and_verdict():
                    ("net_dropetf", -0.0001)):
         assert L.half_verdict(dict(ok, **{k: bad})) == "FAIL", k
     assert L.half_verdict(dict(ok, episodes=19)) == "UNDERPOWERED"
+    assert L.half_verdict(dict(ok, ctrl_cover=0.79)) == "UNDERPOWERED"

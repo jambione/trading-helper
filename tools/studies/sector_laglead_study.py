@@ -68,6 +68,7 @@ HOLD = 10
 COST = 0.0010
 PX_MIN, ADV_MIN, ADV_N = 10.0, 20e6, 20
 MIN_FIRES, MIN_DAYS, MIN_EPISODES = 100, 10, 20
+MIN_CTRL_COVER = 0.80
 MAX_MISS = 0.05
 
 
@@ -135,11 +136,10 @@ def fires(minutes: list[int], etf: dict, spy: dict, members: dict[str, dict],
 
 def control_minute(sym: str, day: str, m: int, member: dict, etf: dict, spy: dict, sip: dict,
                    fire_minutes: list[int], hold: int = HOLD) -> int | None:
-    """Same name, same day, same clock hour: a minute where the name is in the laggard band but its
-    sector is NOT moving, at least 30 min from any of this name's fires, with an exit bar.
-    Returns the SIGNAL minute k (entry k+1)."""
-    hour = m // 60
-    elig = [k for k in range(hour * 60, hour * 60 + 60)
+    """Same name, same day, within 60 min either side of the fire (and inside the window): a minute
+    where the name is in the laggard band but its sector is NOT moving, more than 30 min from any of
+    this name's fires, with an exit bar. Returns the SIGNAL minute k (entry k+1)."""
+    elig = [k for k in range(m - 60, m + 61)
             if WIN_START <= k <= WIN_END and all(abs(k - f) > CTRL_EXCL for f in fire_minutes)
             and is_laggard(member, k) and not sector_moves(etf, spy, k)
             and E.markout(sip, k + 1, hold) is not None]
@@ -158,7 +158,8 @@ def adv_ok(rows: list, day: str) -> bool | None:
 
 def half_verdict(h: dict) -> str:
     """h: net10, t10, net20, lift, lift_t, net_m2, n, days, episodes, net_drop3, net_dropetf."""
-    if h["n"] < MIN_FIRES or h["days"] < MIN_DAYS or h["episodes"] < MIN_EPISODES or h["net10"] is None:
+    if (h["n"] < MIN_FIRES or h["days"] < MIN_DAYS or h["episodes"] < MIN_EPISODES or h["net10"] is None
+            or h.get("ctrl_cover", 1.0) < MIN_CTRL_COVER):
         return "UNDERPOWERED"
     ok = (h["net10"] > 0 and (h["t10"] or 0) >= 2.0 and (h["net20"] or -1) > 0
           and (h["lift"] or -1) > 0 and (h["lift_t"] or 0) >= 2.0
@@ -306,7 +307,9 @@ def ctrl_lift(r) -> float | None:
 def half_stats(part: list[dict]) -> dict:
     n10 = _de(part, lambda r: r["gross"] - COST)
     n20 = _de(part, lambda r: r["gross"] - 2 * COST)
-    lift = _de(part, ctrl_lift)
+    lifts = [ctrl_lift(r) for r in part]
+    cover = (sum(x is not None for x in lifts) / len(lifts)) if lifts else 0.0
+    lift = _de([dict(r, _lift=x) for r, x in zip(part, lifts)], lambda r: r["_lift"])
     m2 = _de(part, lambda r: None if r["gross_m2"] is None else r["gross_m2"] - COST)
     by_day = defaultdict(list)
     for r in part:
@@ -318,6 +321,7 @@ def half_stats(part: list[dict]) -> dict:
     return {"net10": n10[0], "t10": n10[1], "n": n10[2], "days": n10[3], "net20": n20[0],
             "lift": lift[0], "lift_t": lift[1], "net_m2": m2[0], "net_drop3": drop3[0], "net_dropetf": dropetf[0],
             "episodes": len({r["episode"] for r in part}), "big_etf": big[0][0] if big else None,
+            "ctrl_cover": cover,
             "gross": _de(part, lambda r: r["gross"])[0]}
 
 
@@ -325,15 +329,15 @@ def report(rows: list[dict], drops: Counter, info_rows: dict) -> str:
     L = [f"# Sector lead-lag (holdings universe {holdings_digest()})", "",
          f"fires {len(rows)}; drops {dict(drops)}", "",
          "| half | fires | episodes | sessions | gross | net 10 bp | t | net 20 bp | lift vs no-sector-move minute | t "
-         "| net, entry m+2 | net w/o top-3 days | net w/o largest ETF | verdict |",
-         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
+         "| control coverage | net, entry m+2 | net w/o top-3 days | net w/o largest ETF | verdict |",
+         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
     verdicts = []
     for h in "AB":
         st = half_stats([r for r in rows if (r["day"] <= SPLIT_END_A) == (h == "A")])
         v = half_verdict(st)
         verdicts.append(v)
         L.append(f"| {h} | {st['n']} | {st['episodes']} | {st['days']} | {_bp(st['gross'])} | {_bp(st['net10'])} "
-                 f"| {_t(st['t10'])} | {_bp(st['net20'])} | {_bp(st['lift'])} | {_t(st['lift_t'])} | {_bp(st['net_m2'])} "
+                 f"| {_t(st['t10'])} | {_bp(st['net20'])} | {_bp(st['lift'])} | {_t(st['lift_t'])} | {st['ctrl_cover']:.0%} | {_bp(st['net_m2'])} "
                  f"| {_bp(st['net_drop3'])} | {_bp(st['net_dropetf'])} ({st['big_etf']}) | {v} |")
     final = "PASS" if all(v == "PASS" for v in verdicts) else ("FAIL" if "FAIL" in verdicts else "UNDERPOWERED")
     L += ["", f"**Sector lead-lag: {final}**", "", "### Information only", ""]
