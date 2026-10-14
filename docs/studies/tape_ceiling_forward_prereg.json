@@ -1,0 +1,10 @@
+{
+  "study": "Tape-only fix: stop refusing arms on IEX print gaps that are normal for the name. Operator 2026-10-14 ('concerned about not many opens').",
+  "registered_at": "2026-10-14 ~12:15 ET, before the knobs ran on any session.",
+  "evidence": "10/14 09:45-11:47: tape_only = 19% of 3,050 arm refusals; print age behind them p25 33 s, median 45 s, p75 65 s, even on GME (median 54 s) and CTSH (36 s). The fixed ceiling is 15 s (ai_watch_decision_max_age_sec) and the quote fallback needs an IEX quote <= 5 s old (QUOTE_MAX_AGE_SEC).",
+  "knobs": "ai_watch_tape_gap_mult (per-name ceiling = mult x median gap of the name's own prints, >= 5 gaps seen, capped at ai_watch_tape_gap_max_sec), ai_watch_quote_max_age_sec, ai_watch_quote_print_max_age_sec. All default to today's behaviour.",
+  "why_not_replay": "replay_session.py does not see live stale-tape states (replay-session-runs-live-code: precision 0.14 because live refuses on stale tape the replay never sees), so this is a live forward check, not a replay arm.",
+  "live_setting_proposed": "from 2026-10-15: ai_watch_tape_gap_mult 1.5, ai_watch_tape_gap_max_sec 60, ai_watch_quote_max_age_sec 15 (operator's call).",
+  "forward_read": "after 5 sessions: (1) tape_only share of arm refusals vs 10/14's 19%; (2) opens per 10 minutes vs 10/14 after 10:35 (1.4); (3) SAFETY: entries armed on a print older than 15 s - their fill minus the decision price, in bp, vs entries armed on a fresh print. If the stale-armed fills average >= 5 bp worse than fresh-armed (day-clustered t >= 2), or their 10-min markout is worse by >= 10 bp, switch the knobs back off.",
+  "script": "ai_entry_watch.note_print_gap / name_tape_ceiling / cross_checked_quote; tests/test_tape_ceiling_knobs.py"
+}

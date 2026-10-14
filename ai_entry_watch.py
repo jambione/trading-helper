@@ -8597,7 +8597,13 @@ def cross_checked_quote(
         return None
     if tape is None or not tape[0] or tape[0] <= 0 or tape[1] is None:
         return None
-    if float(tape[1]) > QUOTE_PRINT_MAX_AGE_SEC:
+    # Operator 10/14 (tape_only was 19% of arm refusals; median print age 45 s): both ceilings are knobs.
+    # Defaults are the constants, so live behaviour is unchanged until bot_config sets them.
+    q_max = _f_or_none(cfg.get("ai_watch_quote_max_age_sec"))
+    q_max = QUOTE_MAX_AGE_SEC if q_max is None or q_max <= 0 else float(q_max)
+    p_max = _f_or_none(cfg.get("ai_watch_quote_print_max_age_sec"))
+    p_max = QUOTE_PRINT_MAX_AGE_SEC if p_max is None or p_max <= 0 else float(p_max)
+    if float(tape[1]) > p_max:
         return None
     try:
         import ai_trading as gt
@@ -8605,12 +8611,44 @@ def cross_checked_quote(
         q_age = gt.cached_quote_age_sec(symbol, now)
     except Exception:  # noqa: BLE001
         return None
-    if not hit or not hit[0] or q_age is None or q_age > QUOTE_MAX_AGE_SEC:
+    if not hit or not hit[0] or q_age is None or q_age > q_max:
         return None
     ask = float(hit[0])
     if ask <= 0 or abs(ask / float(tape[0]) - 1.0) * 1e4 > QUOTE_PRINT_AGREE_BP:
         return None
     return ask, "quote", float(q_age)
+
+
+# Per-name tape ceiling (operator 10/14; memory iex-trade-gaps-are-not-staleness: a fixed 15 s rule marks liquid
+# names stale 16-63% of the time on IEX-only prints). Gaps between this name's own IEX prints, as the poll sees
+# them; ai_watch_tape_gap_mult > 0 lets the ceiling stretch to mult x the median gap, capped at
+# ai_watch_tape_gap_max_sec. Default 0 = the fixed ceiling, unchanged.
+_PRINT_GAPS: dict[str, list] = {}       # sym -> [last print ts, [gaps...]]
+
+
+def note_print_gap(symbol: str, now: float | None, age: float) -> None:
+    t = float(now if now is not None else time.time())
+    pts = t - float(age)
+    st = _PRINT_GAPS.setdefault(str(symbol).upper(), [None, []])
+    if st[0] is not None and pts > st[0] + 0.5:
+        st[1].append(pts - st[0])
+        del st[1][:-30]
+    if st[0] is None or pts > st[0] + 0.5:
+        st[0] = pts
+
+
+def name_tape_ceiling(symbol: str, cfg: dict | None) -> float:
+    cfg = cfg if isinstance(cfg, dict) else {}
+    mult = _f_or_none(cfg.get("ai_watch_tape_gap_mult")) or 0.0
+    if mult <= 0:
+        return 0.0
+    st = _PRINT_GAPS.get(str(symbol).upper())
+    if not st or len(st[1]) < 5:
+        return 0.0
+    gaps = sorted(st[1])
+    med = gaps[len(gaps) // 2]
+    cap = _f_or_none(cfg.get("ai_watch_tape_gap_max_sec")) or 60.0
+    return min(float(cap), float(mult) * med)
 
 
 def decision_price(
@@ -8633,6 +8671,9 @@ def decision_price(
     tape = live_print(symbol)
     if tape is not None:
         px, age = tape
+        if age is not None:
+            note_print_gap(symbol, now, age)
+            max_age = max(max_age, name_tape_ceiling(symbol, cfg))
         if age is not None and age <= max_age and px > 0:
             return px, "stream", age
     q = cross_checked_quote(symbol, tape, cfg, now)
