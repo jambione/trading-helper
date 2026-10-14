@@ -5,34 +5,37 @@
   "origin": "docs/PLAN_2026-10-14.md stage 1, idea 3 (operator 10/14: 'test it'). A causal discovery rule: it seats a name before its own move, from a move it can see in its sector.",
   "prior": "Weak. tools/studies/sector_study.py (9/14-9/23, book names, 8 days) found sector strength did not predict runway (memory runway-is-findable-profit-is-not-yet); that tested sector strength as a gate on names already seated, not lead-lag across a universe. Intraday sector lead-lag in liquid US names is widely arbitraged.",
   "universe": {
-    "names": "Every symbol on the board (decision_ledger watch/arm rows) on at least 3 of the 26 cached sessions 2026-09-08..2026-10-13 - names the desk's screens recur on, scored on ALL 26 sessions, including days they were not on the board. Requiring 3+ days weakens, but does not remove, selection on a single day's move (caveat).",
-    "sector": "Finnhub /stock/profile2 finnhubIndustry (ai_reports/industry_cache.json, extended for missing names) mapped to one of SMH, XLK, XLC, XLV, XLF, XLE, XLU, XLRE, XLY, XLP, XLI, XLB by tools/studies/sector_study.MAP (first match). Unmapped names are excluded and counted.",
-    "per_day_filters": "Prior session close >= $10 and 20-session mean dollar volume >= $20M (SIP daily bars, split-adjusted; minute prices raw). Unknown = excluded, counted."
+    "names": "HOLDINGS in tools/studies/sector_laglead_study.py: about 15 large holdings per sector ETF (174 names), each name in exactly one sector (semiconductors in SMH, Alphabet/Meta in XLC, Amazon/Tesla in XLY), frozen 2026-10-14 from knowledge dated before the test window. No board membership, so no selection on the scored days' moves (skeptic round 1 #2, #4). The sector of a name is the ETF list it is in; no industry mapping.",
+    "per_day_filters": "20-session mean dollar volume >= $20M (SIP daily, split-invariant) and the day's raw SIP 09:30 open >= $10 (not the split-adjusted prior close, #8). A name with no SIP bars on any of the 26 days is removed from the universe and listed.",
+    "frozen_digest": "holdings_digest() is printed with every result."
   },
   "signal": {
     "feed": "Detected on IEX 1-minute bars (what the live desk can see): the last IEX close at or before a minute, looking back at most 15 minutes. Outcomes on SIP.",
     "sector_move": "At minute m (09:50-15:20 ET): ETF IEX close(m) / close(m-5) - 1 >= +0.25%, AND that minus SPY's same 5-minute return >= +0.10% (a sector move, not the market).",
     "laggard": "A universe member mapped to that ETF whose own IEX close(m) / close(m-5) - 1 <= +0.05% and >= -0.50% (has not moved, and is not falling apart).",
-    "fire": "Each laggard at each qualifying m. 30-minute refractory per symbol (the first fire wins).",
+    "fire": "Each laggard at each qualifying m, 30-minute refractory per symbol. An EPISODE is a run of consecutive qualifying minutes of one ETF; fires within it are not independent.",
     "entry": "SIP open of minute m+1."
   },
   "outcome": "Gross 10-minute markout: SIP close of minute m+10 / SIP open of minute m+1 - 1 (early_entry_honest.markout).",
   "cost": "10 bp round trip for the graded net; the pass also needs net > 0 at 20 bp.",
-  "statistic": "Day-equal mean of per-day mean net, day-clustered t.",
+  "statistic": "Day-equal mean of per-day means, day-clustered t. Control (graded, #1): for each fire, a random minute of the same name, same day and same clock hour where the name is in the laggard band but its sector condition is FALSE, more than 30 minutes from any of that name's fires, held the same way (seeded sha of symbol|day|minute|laglead-v2). Lift = fire gross - control gross.",
   "split": "Half A = 2026-09-08..09-24, half B = 09-25..10-13 (the same calendar split as the early-entry and board-name studies).",
-  "pass": "PASS only if in BOTH halves: day-equal net at 10 bp > 0 with t >= 2.0, day-equal net at 20 bp > 0, >= 100 fires and >= 10 sessions with a fire. Short = UNDERPOWERED (no evidence either way); any FAIL half = FAIL. One graded rule.",
+  "pass": "PASS only if in BOTH halves: net at 10 bp > 0 with t >= 2.0; net at 20 bp > 0; lift vs the no-sector-move control > 0 with t >= 2.0; net at 10 bp > 0 with entry at the SIP open of m+2 (latency, #3); net at 10 bp > 0 after dropping the 3 best days, and after dropping the ETF with the most fires (#5); >= 100 fires, >= 20 distinct ETF episodes and >= 10 sessions. Short of fires, episodes or sessions = UNDERPOWERED; any FAIL half = FAIL. Interpretation fixed now (#10): a PASS whose lift vs the sector ETF's own next 10 minutes is <= 0 is sector momentum, not lead-lag, and the design would trade the ETF, not its members.",
   "information_only": [
-    "lift vs a later same-name minute (entry+1..+60; the null-calibrated control from early_entry_honest)",
-    "lift vs the sector's LEADERS at the same minute (members up >= +0.50% over the same 5 minutes): do laggards beat names that already moved?",
-    "lift vs the sector ETF's own next 10 minutes (did the laggard just carry sector beta?)",
-    "SIP-detected version of the same rule (not computable live)",
-    "30-minute markout; ETF threshold +0.50% instead of +0.25%",
+    "lift vs a later same-name minute (entry+1..+60)",
+    "lift vs a same-sector LEADER (up >= +0.50% over the same 5 minutes) at the same minute",
+    "lift vs the sector ETF's next 10 minutes (see the interpretation under pass)",
+    "30-minute markout",
+    "ETF threshold +0.50% instead of +0.25%",
+    "SIP-detected version (not computable live)",
+    "fires on a fresh IEX bar at the signal minute vs a carried close (#9)",
     "per sector ETF; price >= $30",
-    "drops: unmapped, under $10, ADV unknown/low, missing bars, rate-limited fetches"
+    "drops: removed names, ADV unknown/low, under $10 open, missing bars"
   ],
-  "data_integrity": "Fetches run after 16:15 ET only, throttled, back off on 429, and never cache a day with a failed chunk. Scoring aborts if more than 5% of universe name-days lack bars or ADV.",
+  "data_integrity": "Fetches run after 16:15 ET only (stop launching at 03:30), back off on 429, and never cache a day with a failed chunk. Scoring ABORTS (no verdict) if any of the 26 days lacks bars, any day lacks SPY or any ETF's bars, or more than 5% of universe name-days lack bars or ADV (#7).",
   "no_retuning": "+0.25% / +0.10% / +0.05% / -0.50% thresholds, 5-minute window, 30-minute refractory, 10-minute hold, the universe rule and the cost are fixed.",
   "if_pass": "Provisional: repeat on >= 10 forward sessions, then a result-skeptic review of the positive, then a live seating design (sector ETFs on the real-time stream).",
   "if_fail": "Sector lead-lag is closed as a discovery rule on free data.",
-  "script": "tools/studies/sector_laglead_study.py: --fetch (industries, daily bars, IEX + SIP minute bars; mini, after 16:15), default inventory with no returns, --score after a result-skeptic READY."
+  "script": "tools/studies/sector_laglead_study.py: --fetch (industries, daily bars, IEX + SIP minute bars; mini, after 16:15), default inventory with no returns, --score after a result-skeptic READY.",
+  "amended": "2026-10-14 premarket, before any bar was fetched, after result-skeptic FIX FIRST: frozen ETF-holdings universe replaces board names (no industry mapping, no Finnhub); graded same-name no-sector-move control; m+2 latency bar; episodes >= 20, drop-top-3-days and drop-largest-ETF bars; every information line implemented; aborts on missing SPY/ETF/days; $10 floor on the raw 09:30 open; fresh vs carried line; beta interpretation fixed."
 }
