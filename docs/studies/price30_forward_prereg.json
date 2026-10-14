@@ -1,0 +1,15 @@
+{
+  "study": "Price >= $30 forward watch: on sessions the board-names study never saw, do board names at $30+ (at the seat minute) fade less over the next 10 minutes than the board's cheaper names?",
+  "registered_at": "2026-10-14 ~06:20 ET, before the first forward session (10/14) traded.",
+  "registered_before_results": true,
+  "origin": "BOARD_NAMES_2026-10-14.md: G1 (price >= $30) was the one consistent lead - lift +15.0 / +5.0 bp per 10 min (t 1.57 / 1.70), name-day-equal +33.7 / +19.6 - but FAILED (t < 2, and the gated board itself still faded -3.8 / -2.1). docs/PLAN_2026-10-14.md queue item 6.",
+  "prior": "Positive but weak on 26 seen sessions; cheap names carried most lifetime loss (memory cheap-names-carry-the-loss).",
+  "rule": "Identical to G1 in docs/studies/board_names_prereg.json: SIP close of the name-day's first board minute in 09:50-15:30 >= $30. Outcome, board minutes, day lift (>= 30 board minutes a side), name-day-equal lift (>= 3 name-days a side): unchanged.",
+  "data": "Forward sessions from 2026-10-14 onward, as decision_ledger records them, built with tools/studies/early_entry_honest.py --fetch and tools/studies/board_names_study.py --fetch-daily, after 16:15 ET only.",
+  "read": "Once, when 10 forward sessions with a day lift exist (earliest about 2026-10-27): tools/studies/board_names_study.py --since 2026-10-14 --forward-g1. No peeking: the read command is not run before then.",
+  "pass": "PASS if over the forward sessions: day-equal lift > 0 with day-clustered t >= 2.0, AND name-day-equal lift > 0, AND >= 10 sessions and >= 20 gated name-days. Fewer = UNDERPOWERED (read again at 20 sessions, same bar). The gated board's own mean is printed as information; 'in >= 0' is NOT required here (the board fades; the question is whether $30+ fades less).",
+  "if_pass": "A $30 floor would thin the board, which conflicts with the busy-book goal (memory busy-book-is-the-goal). A pass argues for PRIORITY, not a floor: prefer $30+ names when seats or stream slots are scarce. That would be its own prereg and replay before any config change.",
+  "if_fail": "Price is closed as a board-name lever beyond the shipped $10 floor.",
+  "no_retuning": "$30, the window, the 10-minute hold, the day / name-day minimums and the bar are fixed.",
+  "script": "tools/studies/board_names_study.py (forward_g1, --since, --forward-g1); test in tests/test_board_names_study.py."
+}

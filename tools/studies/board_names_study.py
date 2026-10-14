@@ -402,12 +402,50 @@ def report(datas: list[dict], daily: dict) -> str:
     return "\n".join(L)
 
 
+FWD_MIN_DAYS = 10
+
+
+def forward_g1(nds: list[dict]) -> tuple[str, dict]:
+    """docs/studies/price30_forward_prereg.json: G1 (price >= $30) on forward sessions, one block."""
+    key = lambda n: n["gates"].get("G1_price")  # noqa: E731
+    per_day = defaultdict(list)
+    names = 0
+    for n in nds:
+        g = key(n)
+        if g is None:
+            continue
+        names += bool(g)
+        per_day[n["day"]] += [(bool(g), x) for x in n["fwd"]]
+    lifts, ins = {}, {}
+    for d, rows in per_day.items():
+        mi, li, _ni, _no = day_lift(rows)
+        if li is not None:
+            lifts[d] = [li]
+            ins[d] = [mi]
+    ml, tl, _n, nd = E.day_equal(lifts)
+    mi, ti, _n2, _d2 = E.day_equal(ins)
+    nde, _ndt = name_day_equal(nds, key, "9999-12-31", "A")      # every day counts as one block
+    if nd < FWD_MIN_DAYS or names < MIN_NAMES or ml is None or tl is None:
+        v = "UNDERPOWERED"
+    else:
+        v = "PASS" if (ml > 0 and tl >= 2.0 and nde is not None and nde > 0) else "FAIL"
+    res = {"lift": ml, "t": tl, "in": mi, "in_t": ti, "days": nd, "names": names, "nde": nde, "verdict": v}
+    md = (f"G1 price >= $30, forward: {nd} sessions, {names} gated name-days | lift {_bp(ml)} bp (t {_t(tl)}) | "
+          f"name-day-equal {_bp(nde)} | gated board {_bp(mi)} (t {_t(ti)}) | **{v}**")
+    return md, res
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fetch-daily", action="store_true")
     ap.add_argument("--score", action="store_true")
+    ap.add_argument("--since", default=None, help="score only sessions on or after this day")
+    ap.add_argument("--forward-g1", action="store_true",
+                    help="price30_forward_prereg.json read (with --since 2026-10-14)")
     a = ap.parse_args()
     datas, excluded = E.load_days()
+    if a.since:
+        datas = [d for d in datas if d["day"] >= a.since]
     days = sorted(d["day"] for d in datas)
     if a.fetch_daily:
         do_fetch(datas)
@@ -420,6 +458,12 @@ def main() -> None:
     if os.path.exists(REFUSED):
         rf = pickle.load(open(REFUSED, "rb"))
         print("refused symbols per day:", {d: len(v) for d, v in rf["refused"].items() if v})
+    if a.forward_g1:
+        if not a.since:
+            raise SystemExit("--forward-g1 needs --since (the first forward session)")
+        md, _res = forward_g1(nds)
+        print(md)
+        return
     if not a.score:
         print("(inventory only; --score after the prereg has a result-skeptic READY)")
         return

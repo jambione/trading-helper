@@ -82,3 +82,20 @@ def test_split_scale_converts_the_prior_close_to_raw_minutes():
     assert g["G2_runway"] is True and g["gap_down"] is False            # unscaled: +310% (the bug the scale fixes reads as a huge gain here)
     g = B.gate_values(10.25, 600, 10.0, [("2026-10-01", 40.0, 1.0)])
     assert g["G2_runway"] is False and g["gap_down"] is True            # unscaled forward split: reads -75%
+
+
+def _nd(day, g1, fwd):
+    return {"day": day, "gates": {"G1_price": g1}, "fwd": fwd}
+
+
+def test_forward_g1_needs_ten_sessions_and_both_weightings():
+    nds = []
+    for i in range(10):
+        day = f"2026-10-{15 + i:02d}"
+        for j in range(3):
+            nds.append(_nd(day, True, [0.0010 + 0.0001 * i] * 12))
+            nds.append(_nd(day, False, [-0.0005] * 12))
+    md, res = B.forward_g1(nds)
+    assert res["days"] == 10 and res["verdict"] == "PASS" and res["nde"] > 0
+    md, res = B.forward_g1([n for n in nds if n["day"] < "2026-10-24"])
+    assert res["verdict"] == "UNDERPOWERED"                 # 9 sessions
