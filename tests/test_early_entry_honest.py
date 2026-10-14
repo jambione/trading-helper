@@ -190,3 +190,19 @@ def test_connors_green_needs_uptrend_pullback_and_oversold():
     down = [100.0 - 0.01 * i for i in range(205)]
     assert not E.con_flags(down, [5.0] * 205)[-1]                     # under SMA200: no uptrend
     assert not any(E.con_flags(closes[:150], [5.0] * 150))             # fewer than 200 rows
+
+
+def test_con_live_series_uses_prior_bars_for_warmup():
+    import pandas as pd
+    import early_entry_honest as E
+    t0 = pd.Timestamp("2026-10-14 13:30", tz="UTC")          # 09:30 ET
+    prior = pd.DataFrame({"close": [100.0 + 0.01 * i for i in range(220)]})
+    today = pd.DataFrame({"time": [t0 + pd.Timedelta(minutes=k) for k in range(3)],
+                          "close": [102.30, 102.35, 101.60]})   # up, up, sharp pullback (still over SMA200 ~101.2)
+    m, f = E.con_live_series(prior, today)
+    assert m == [570, 571, 572] and f[2] and not f[0]         # fires at 09:32 thanks to the warm-up
+    assert not any(E.con_live_series(None, today)[1])         # no prior bars: cannot warm up
+    import math
+    closes = [100.0 + 0.01 * i for i in range(205)]
+    closes[100] = float("nan")
+    assert not any(E.con_flags(closes, [5.0] * 205))           # a missing close inside the window

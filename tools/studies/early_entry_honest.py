@@ -134,19 +134,52 @@ def con_flags(closes, rsi) -> list[bool]:
     and RSI-2 < 10, on the same grid-filled IEX series (SMA over the last 200 / 5 rows, this bar included).
     False until 200 rows exist."""
     n = len(closes)
-    pre = [0.0]
+    pre, bad = [0.0], [0]
     for c in closes:
         pre.append(pre[-1] + (c if _fin(c) else 0.0))
+        bad.append(bad[-1] + (0 if _fin(c) else 1))
     out = []
     for i in range(n):
         c, r = closes[i], rsi[i]
-        if i + 1 < CON_SMA_LONG or not (_fin(c) and _fin(r)):
+        if (i + 1 < CON_SMA_LONG or not (_fin(c) and _fin(r))
+                or bad[i + 1] - bad[i + 1 - CON_SMA_LONG] > 0):     # a missing close in the window (skeptic #4)
             out.append(False)
             continue
         sma_l = (pre[i + 1] - pre[i + 1 - CON_SMA_LONG]) / CON_SMA_LONG
         sma_s = (pre[i + 1] - pre[i + 1 - CON_SMA_SHORT]) / CON_SMA_SHORT
         out.append(c > sma_l and c < sma_s and r < CON_RSI)
     return out
+
+
+CON_PRIOR_BARS = 220      # live symbol_ohlc loads the last 220 raw IEX bars (alpaca_api, config ai bars limit)
+
+
+def rsi2_series(closes: list[float]) -> list[float]:
+    """Wilder RSI-2 over the whole series, aligned to closes (index 0 = None), as ai_entry_watch.cm_rsi_series."""
+    out: list = [None]
+    up = down = 0.0
+    for i in range(1, len(closes)):
+        d = closes[i] - closes[i - 1]
+        g, l_ = (d if d > 0 else 0.0), (-d if d < 0 else 0.0)
+        if i == 1:
+            up, down = g, l_
+        else:
+            up, down = 0.5 * g + 0.5 * up, 0.5 * l_ + 0.5 * down
+        out.append(100.0 if down == 0 else 0.0 if up == 0 else 100.0 - 100.0 / (1.0 + up / down))
+    return out
+
+
+def con_live_series(prior_frame, today_frame) -> tuple[list[int], list[bool]]:
+    """The live CON series (skeptic round 1 #1-2): RAW IEX bars, no gap fill, the last CON_PRIOR_BARS bars of
+    earlier sessions prepended for warm-up (as symbol_ohlc), RSI-2 and both averages over the joined series.
+    Returns (today's bar minutes, flags for today's bars)."""
+    pc = [float(x) for x in prior_frame["close"]][-CON_PRIOR_BARS:] if prior_frame is not None else []
+    tc = [float(x) for x in today_frame["close"]]
+    closes = pc + tc
+    rsi = rsi2_series(closes)
+    flags = con_flags(closes, [float("nan") if r is None else r for r in rsi])
+    minutes = [_et_min(t.timestamp()) for t in today_frame["time"]]
+    return minutes, flags[len(pc):]
 
 
 def ign_flag(minutes, closes, vols, i: int, vol_at: dict | None = None) -> bool:
@@ -298,7 +331,8 @@ def ledger_days() -> list[str]:
                   if f.endswith(".jsonl") and len(f) == 16)
 
 
-def _fetch_feed(cl, syms: list[str], day: str, feed: str, errors: list | None = None) -> dict:
+def _fetch_feed(cl, syms: list[str], day: str, feed: str, errors: list | None = None,
+                start=None, end=None) -> dict:
     import pandas as pd
     from alpaca.data.enums import DataFeed
     from alpaca.data.requests import StockBarsRequest
@@ -316,8 +350,8 @@ def _fetch_feed(cl, syms: list[str], day: str, feed: str, errors: list | None = 
             try:
                 df = cl.get_stock_bars(StockBarsRequest(
                     symbol_or_symbols=chunk, timeframe=TimeFrame(1, TimeFrameUnit.Minute),
-                    start=d.replace(hour=4).astimezone(timezone.utc),
-                    end=d.replace(hour=16, minute=5).astimezone(timezone.utc),
+                    start=(start or d.replace(hour=4)).astimezone(timezone.utc),
+                    end=(end or d.replace(hour=16, minute=5)).astimezone(timezone.utc),
                     limit=5_000_000, extended_hours=True,
                     feed=DataFeed.SIP if feed == "sip" else DataFeed.IEX)).df
                 break
@@ -407,12 +441,15 @@ def grid_fill(frame):
     return pd.DataFrame(rows, columns=["time", "open", "high", "low", "close", "volume"])
 
 
-def name_day_series(iex_frame) -> dict:
+def name_day_series(iex_frame, prior_frame=None) -> dict:
     import signals
     df = signals.compute_percent_r_exhaustion(grid_fill(iex_frame), CFG)
     df = signals.compute_cm_rsi_lower(df, CFG)
     minutes = [_et_min(t.timestamp()) for t in df["time"]]
+    con_m, con_f = con_live_series(prior_frame, iex_frame)
     return {
+        "con_minutes": con_m,
+        "con_flags": con_f,
         "minutes": minutes,
         "close": [float(x) for x in df["close"]],
         "vol": [float(x) for x in df["volume"]],
@@ -438,9 +475,11 @@ def rule_fires(ser: dict, board: set) -> dict[str, tuple[list[int], int]]:
         "MID": [mid_flag(f, s, ser["rsi"], i) for i in range(n)],
         "MIDCAP": [mid_flag(f, s, ser["rsi"], i, cap=True) for i in range(n)],
         "RSI2T": [rsi2_turn_flag(f, ser["rsi"], i) for i in range(n)],
-        "CON": con_flags(ser["close"], ser["rsi"]),
     }
-    return {r: fires(m, flags[r], board) for r in RULES}
+    out = {r: fires(m, flags[r], board) for r in RULES if r != "CON"}
+    if "CON" in RULES:
+        out["CON"] = fires(ser["con_minutes"], ser["con_flags"], board)
+    return out
 
 
 def inventory_onsets(data: dict) -> dict:
@@ -499,8 +538,10 @@ def score(datas: list[dict]) -> dict:
             if iex is None or sipf is None or len(iex) < 30:
                 drops["no_bars"] += 1
                 continue
+            if "CON" in RULES and (data.get("iex_prior") or {}).get(sym) is None:
+                drops["CON_no_prior_bars"] += 1
             try:
-                ser = name_day_series(iex)
+                ser = name_day_series(iex, (data.get("iex_prior") or {}).get(sym))
             except Exception:  # noqa: BLE001 — counted, not fatal
                 drops["indicator_fail"] += 1
                 continue
@@ -648,12 +689,37 @@ def report(res: dict) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fetch", action="store_true")
+    ap.add_argument("--fetch-prior", action="store_true",
+                    help="add iex_prior (last 220 IEX bars before each day, 10 calendar days back) to cached days")
     ap.add_argument("--days", nargs="*", help="limit to these days (default: every ledger day)")
     ap.add_argument("--score", action="store_true")
     ap.add_argument("--study", choices=sorted(STUDIES), default="pre_ign")
     a = ap.parse_args()
     global RULES, GRADED
     RULES, GRADED = STUDIES[a.study]["rules"], STUDIES[a.study]["graded"]
+    if a.fetch_prior:
+        import bars
+        from datetime import timedelta
+        cl = bars.client()
+        for fn in sorted(os.listdir(OUT_DIR)):
+            if not fn.endswith(".pkl"):
+                continue
+            pth = os.path.join(OUT_DIR, fn)
+            data = pickle.load(open(pth, "rb"))
+            if data.get("iex_prior") or (a.days and data["day"] not in set(a.days)):
+                continue
+            d0 = datetime.strptime(data["day"], "%Y-%m-%d").replace(tzinfo=ET)
+            errs: list = []
+            got = _fetch_feed(cl, sorted(data["board"]), data["day"], "iex", errs,
+                              start=(d0 - timedelta(days=10)).replace(hour=4), end=d0.replace(hour=4))
+            if errs:
+                print(f"{data['day']}: prior fetch failed {errs}; not cached")
+                continue
+            data["iex_prior"] = {k: v.tail(CON_PRIOR_BARS).reset_index(drop=True) for k, v in got.items()}
+            with open(pth, "wb") as f:
+                pickle.dump(data, f)
+            print(f"{data['day']}: prior bars for {len(got)}/{len(data['board'])} names")
+        return
     if a.fetch:
         have = set(f[:-4] for f in os.listdir(OUT_DIR) if f.endswith(".pkl")) if os.path.isdir(OUT_DIR) else set()
         have -= {d for d, _why in load_days()[1]}       # refetch days excluded for misses
