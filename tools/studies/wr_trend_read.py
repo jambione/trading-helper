@@ -29,9 +29,14 @@ VARS = ("base", "wr_trend15", "wr_rand")
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--restart-from", default=FROM, help="first session of a new live-entry regime (stratification rule)")
+    # docs/studies/wr_trend_sim_prereg.json: the same scoring on held-out synthetic sessions. Defaults keep the forward read.
+    ap.add_argument("--dir", default="/tmp/tt_run", help="replay outputs DAY-VAR.json")
+    ap.add_argument("--held-out", action="store_true", help="score every day in --dir up to --to-day (no 10/12 floor)")
+    ap.add_argument("--to-day", default="9999-12-31")
     a = ap.parse_args()
-    start = max(FROM, a.restart_from)
-    days = sorted({os.path.basename(p)[:10] for p in glob.glob("/tmp/tt_run/20??-??-??-wr_trend15.json") if os.path.basename(p)[:10] >= start})
+    start = "0000-00-00" if a.held_out else max(FROM, a.restart_from)
+    days = sorted({os.path.basename(p)[:10] for p in glob.glob(os.path.join(a.dir, "20??-??-??-wr_trend15.json"))
+                   if start <= os.path.basename(p)[:10] <= a.to_day})
     cache, box = RC.load_cache(), {}
     c = {"vacuous": [], "too_few_wr15": [], "rand_invalid": [], "no_nbbo_pooled": 0}
     rows = []
@@ -39,7 +44,7 @@ def main():
     for d in days:
         raw = {}
         for v in VARS:
-            p = f"/tmp/tt_run/{d}-{v}.json"
+            p = os.path.join(a.dir, f"{d}-{v}.json")
             raw[v] = json.load(open(p)).get("closed") if os.path.exists(p) else None
         if any(raw[v] is None for v in VARS) or [(t["symbol"], t["entry_ts"]) for t in raw["wr_trend15"]] == \
                 [(t["symbol"], t["entry_ts"]) for t in raw["base"]]:
