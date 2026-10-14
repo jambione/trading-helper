@@ -15,7 +15,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=ai_reports/hist_sim
 UNI=ai_reports/hist_universe
-mkdir -p "$OUT/runs"
+mkdir -p "$OUT"   # layout tools/studies/hist_sim_read.py (dfb0646) reads: DIR/DAY-VARIANT.json, DIR/DAY-dayinfo.json, DIR/FIDELITY.json
 FROZEN="$OUT/frozen_config.json"
 MAXP=3
 
@@ -57,18 +57,18 @@ throttle() { while [ "$(pgrep -f 'tools/replay_session.py --day' | wc -l)" -ge $
 
 run() {   # run DAY NAME [--set ...]
   local d=$1 name=$2; shift 2
-  local f="$OUT/runs/${d}-${name}.json"
+  local f="$OUT/${d}-${name}.json"
   [ -f "$f" ] && return 0
   wait_window || { echo "deadline: $d $name not launched" >> "$OUT/failures.txt"; return 0; }
   throttle
   ( .venv/bin/python tools/replay_session.py --day "$d" --universe "$UNI/${d}.json" --config-file "$FROZEN" \
-      --engine recompute --engine-bars iex --allow-held-out --equity "$EQUITY" "$@" --out "$f" > "$OUT/runs/${d}-${name}.log" 2>&1 \
+      --engine recompute --engine-bars iex --allow-held-out --equity "$EQUITY" "$@" --out "$f" > "$OUT/${d}-${name}.log" 2>&1 \
     || echo "FAILED $d $name" >> "$OUT/failures.txt" ) &
   sleep 5
 }
 
 share() {  # share DAY FILTERED: 1 - filtered trades / base trades
-  .venv/bin/python -c "import json,sys; b=len(json.load(open('$OUT/runs/$1-base.json'))['closed']); w=len(json.load(open('$OUT/runs/$1-$2.json'))['closed']); print(max(0.0, round(1-w/b, 4)) if b else 0.0)"
+  .venv/bin/python -c "import json,sys; b=len(json.load(open('$OUT/$1-base.json'))['closed']); w=len(json.load(open('$OUT/$1-$2.json'))['closed']); print(max(0.0, round(1-w/b, 4)) if b else 0.0)"
 }
 
 DAYS=$(.venv/bin/python -c "
@@ -82,6 +82,9 @@ for d in $DAYS; do
 import sys; sys.path.insert(0,'tools/studies'); import hist_universe as HU
 HU.cmd_build_range('$d','$d', config_path='$FROZEN')" >> "$OUT/universe_build.log" 2>&1 || { echo "universe failed $d" >> "$OUT/failures.txt"; continue; }
   fi
+  [ -f "$OUT/${d}-dayinfo.json" ] || .venv/bin/python -c "
+import json; u=json.load(open('$UNI/${d}.json'))
+json.dump({'spy_missing_share': u.get('spy_missing_share'), 'universe': u.get('universe_size'), 'fetch_failed': u.get('failed_fetch_names')}, open('$OUT/${d}-dayinfo.json','w'))"
   run "$d" base
   run "$d" wr15     --set ai_watch_wr_trend_min_rise=15
   run "$d" wrrsi    --set ai_watch_wr_trend_min_rise=15 --set ai_watch_wr_rsi_min_rise=10
@@ -89,9 +92,9 @@ HU.cmd_build_range('$d','$d', config_path='$FROZEN')" >> "$OUT/universe_build.lo
   run "$d" nodecay  --set ai_local_trail_time_decay_enabled=false
   run "$d" wrrsi_st --set ai_watch_wr_trend_min_rise=15 --set ai_watch_wr_rsi_min_rise=10 --set ai_local_trail_time_decay_enabled=false --set ai_exit_supertrend=true
   wait
-  [ -f "$OUT/runs/${d}-base.json" ] || continue
-  [ -f "$OUT/runs/${d}-wrrsi.json" ] && run "$d" rand_wrrsi --set ai_watch_wr_rand_refuse_share="$(share "$d" wrrsi)"
-  [ -f "$OUT/runs/${d}-wr15.json" ]  && run "$d" rand_wr15  --set ai_watch_wr_rand_refuse_share="$(share "$d" wr15)"
+  [ -f "$OUT/${d}-base.json" ] || continue
+  [ -f "$OUT/${d}-wrrsi.json" ] && run "$d" rand_wrrsi --set ai_watch_wr_rand_refuse_share="$(share "$d" wrrsi)"
+  [ -f "$OUT/${d}-wr15.json" ]  && run "$d" rand_wr15  --set ai_watch_wr_rand_refuse_share="$(share "$d" wr15)"
 done
 wait
-echo "batch finished $(date)"
+echo "batch finished $(date); score with: .venv/bin/python tools/studies/hist_sim_read.py --dir $OUT"
