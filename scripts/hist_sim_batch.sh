@@ -2,7 +2,8 @@
 # Held-out synthetic batch for docs/studies/hist_sim_prereg.json (the "scripts/hist_sim_batch.sh (to be
 # written)" it names). Mini only. REFUSES to run until both fidelity gates have passed:
 #   B: ai_reports/hist_universe/check_u2_untouched_file_GRADED.json  pass_pooled all true, void empty
-#   A: ai_reports/hist_sim/FIDELITY_A.json                            {"pass": true, ...}
+#   A: ai_reports/hist_sim/FIDELITY.json  (synth_day_fidelity.py gate --dest ai_reports/hist_sim/FIDELITY.json)
+#      {"verdict": "PASS"} - that document requires both its part A (engine) and part B (end to end)
 # Then, newest held-out day first (2026-09-23 back to 2026-03-02), per day:
 #   1. the point-in-time universe (hist_universe build_day with the FROZEN config)
 #   2. variants base, wr15, wrrsi, st, nodecay, wrrsi_st  (one pass)
@@ -25,14 +26,14 @@ while [ "$(TZ=America/New_York date +%H%M)" -lt 1615 ] && [ "$(TZ=America/New_Yo
 .venv/bin/python - <<'PY'
 import json, os, sys
 b = "ai_reports/hist_universe/check_u2_untouched_file_GRADED.json"
-a = "ai_reports/hist_sim/FIDELITY_A.json"
+a = "ai_reports/hist_sim/FIDELITY.json"
 if not os.path.exists(b):
     sys.exit("gate B result missing - run scripts/hist_universe_u2_check.sh first")
 B = json.load(open(b))
 if B.get("void") or not all(v is True for v in (B.get("pass_pooled") or {}).values()):
     sys.exit(f"gate B not passed: pass_pooled={B.get('pass_pooled')} void={B.get('void')}")
-if not os.path.exists(a) or json.load(open(a)).get("pass") is not True:
-    sys.exit("gate A (engine fidelity) not passed or not run - held-out batch refused")
+if not os.path.exists(a) or json.load(open(a)).get("verdict") != "PASS":
+    sys.exit("synthetic-day fidelity gate not passed or not run - held-out batch refused")
 print("gates A and B passed")
 PY
 
