@@ -1,0 +1,10 @@
+{
+  "study": "Refuse a pre-square within 10 minutes after a full square (ai_watch_presquare_after_square_min = 10). Operator 2026-10-14 (BBWI 10:45: bought %R sliding back out of a square after the left-overbought triangle).",
+  "registered_at": "2026-10-14 ~12:00 ET, before the knob ran on any session.",
+  "evidence_so_far": "In-sample information (9/08-10/13, harness markout, 10 bp RT): PRE fires within 10 min after a harness square -48.2 bp (n 77, win 25%) vs -14.3 bp from below (n 482, win 33%). Not day-clustered, suggested by and measured on the same sessions.",
+  "live": "Operator chose to switch it on from the 10/15 open (after the 10/14 close + LaunchAgent restart, since it is code). Live definition of 'in a square': classify_exh_seat == 'square' (both lines >= -rte_threshold, tight), no rising requirement - broader than the harness's square.",
+  "forward_test": "tools/studies/after_square_forward.py on sessions >= 2026-10-15: refused onsets (arm_why presquare_after_square) vs taken pre-square onsets (arm_ok, last_presquare), each scored as the harness markout (SIP open m+1 to close m+10, 10 bp RT), 15-min refractory per symbol. One read at 10 sessions.",
+  "verdict": "KEEP if taken - refused >= +10 bp per day with day-clustered t >= 2 (>= 40 refused onsets, >= 6 days with both); DROP (switch off) if taken - refused <= 0; otherwise NO EVIDENCE (operator's call); UNDERPOWERED below the minimums.",
+  "caveat": "Refused onsets are logged only while the name stays seated; the counterfactual is a markout, not a replayed trade with the desk's exits.",
+  "script": "ai_entry_watch.after_square_record / after_square_refusal; tests/test_presquare_after_square.py; tools/studies/after_square_forward.py; tests/test_after_square_forward.py"
+}

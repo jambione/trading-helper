@@ -1629,7 +1629,7 @@ class ArmTally:
     """Vacuity counters from the desk's own arm-pass telemetry (session_recorder 'decisions' arm rows)."""
 
     WR = ("wr_not_trending", "wr_no_history", "wr_src_mismatch", "wr_rsi_no_bars", "wr_rsi_not_trending",
-          "wr_rand")
+          "wr_rand", "presquare_after_square")
 
     def __init__(self):
         self.polls = 0

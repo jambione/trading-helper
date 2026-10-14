@@ -16252,6 +16252,40 @@ _WR_EPISODE: dict[str, list] = {}        # sym -> [episode index, last presquare
 WR_HIST_GAP_SEC = 180.0
 
 
+# ── Pre-square after a full square (operator 2026-10-14, BBWI 10:45) ───────────────────────────────────────────────
+# The pre-square band (-35..-20) is crossed both ways: rising into a square (the intended entry) and falling out of one
+# after the left-overbought triangle. In-sample 9/08-10/13 (information): PRE fires within 10 min after a square
+# netted -48 bp (n 77, win 25%) vs -14 bp from below (n 482). ai_watch_presquare_after_square_min > 0 refuses a
+# pre-square when the name was in a full square (both lines >= -rte_threshold, tight) within that many minutes.
+# Recorded once per poll tick; a polling gap > 180 s restarts the memory (no carry across a drop and re-add).
+_LAST_SQUARE: dict[str, list] = {}     # sym -> [last square ts or None, last poll ts]
+
+
+def after_square_record(sym: str, rec: dict, now: float, cfg: dict) -> None:
+    if float(cfg.get("ai_watch_presquare_after_square_min", 0) or 0) <= 0:
+        return
+    st = _LAST_SQUARE.setdefault(sym, [None, None])
+    if st[1] is not None and now - st[1] > WR_HIST_GAP_SEC:
+        st[0] = None
+    st[1] = float(now)
+    try:
+        cls, _gap = classify_exh_seat(rec, cfg)
+    except Exception:  # noqa: BLE001
+        return
+    if cls == "square":
+        st[0] = float(now)
+
+
+def after_square_refusal(sym: str, now: float, cfg: dict) -> str | None:
+    mins = float(cfg.get("ai_watch_presquare_after_square_min", 0) or 0)
+    if mins <= 0:
+        return None
+    st = _LAST_SQUARE.get(sym)
+    if st and st[0] is not None and now - st[0] <= mins * 60.0:
+        return "presquare_after_square"
+    return None
+
+
 def wr_trend_record(sym: str, rec: dict, now: float, cfg: dict) -> None:
     if float(cfg.get("ai_watch_wr_trend_min_rise", 0) or 0) <= 0:
         return
@@ -16758,7 +16792,8 @@ def should_arm_buy(
                 return False, "not_presquare"
             if exh_why == "presquare":
                 # wr_trend_entry_prereg.json (both off by default): %R trend filter and its matched random control.
-                _wr_why = (wr_trend_refusal(_gate_sym, record, now, cfg) or wr_rsi_refusal(_gate_sym, now, cfg)
+                _wr_why = (after_square_refusal(_gate_sym, float(now if now is not None else time.time()), cfg)
+                           or wr_trend_refusal(_gate_sym, record, now, cfg) or wr_rsi_refusal(_gate_sym, now, cfg)
                            or wr_rand_refusal(_gate_sym, now, cfg))
                 if _wr_why:
                     return False, _wr_why
@@ -18636,6 +18671,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 pass
 
         wr_trend_record(sym, rec, t0, cfg)
+        after_square_record(sym, rec, t0, cfg)
         if range_arm_enabled(cfg):
             ok_arm, why = range_arm_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="check")
         else:
