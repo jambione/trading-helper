@@ -21,8 +21,8 @@ N=$(.venv/bin/python -c "import json,sys; d=json.load(open(sys.argv[1])); print(
 if [ "$N" -lt 300 ]; then echo "base config has only $N keys - refusing to run unpinned"; exit 1; fi
 # The replay runs `git archive HEAD`, so check HEAD itself, not the working tree.
 git diff --quiet HEAD -- || { echo "tracked files differ from HEAD - commit first"; exit 1; }
-git show HEAD:tools/replay_session.py | grep -q "def work_counts" || { echo "HEAD replay lacks --set-json/work_counts"; exit 1; }
-git show HEAD:ai_entry_watch.py | grep -q "ai_watch_dead_evict_exh_falling" || { echo "HEAD lacks the keepfall switch"; exit 1; }
+git show HEAD:tools/replay_session.py | grep -c "def work_counts" > /dev/null || { echo "HEAD replay lacks --set-json/work_counts"; exit 1; }
+git show HEAD:ai_entry_watch.py | grep -c "ai_watch_dead_evict_exh_falling" > /dev/null || { echo "HEAD lacks the keepfall switch"; exit 1; }
 echo "sha $SHA cfg $CFG_SHA keys $N out $OUT"
 
 while [ "$(TZ=America/New_York date +%H%M)" -lt 1615 ]; do sleep 120; done
