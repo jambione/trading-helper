@@ -5,26 +5,32 @@
   "origin": "Operator 2026-10-14: 'every name we open has a loss coming, even if it is trending up - can we take advantage of that loss?' October fills (531): 94% went below the fill at some point, 56% by >= 5 bp, 36% by >= 10 bp, 20% by >= 20 bp; of trades that later reached +10 bp, 57% dipped >= 5 bp first.",
   "prior": "Mixed. The dip is near-universal, but limit orders suffer adverse selection: they fill most often on names that keep falling and never on names that run straight up (43% of the +10 bp trades never dipped 5 bp). The three prior dip tests (%R latch + RSI-2, RSI-2 turn, Grok pullback) changed WHETHER to enter; this changes only the PRICE on signals already taken. G2 (reads 10/15) tests the 1-3 bp version (limit at bid / mid).",
   "data": "The cached bars of tools/studies/early_entry_honest.py (ai_reports/early_entry_honest/<day>.pkl): 26 sessions 2026-09-08..10-13, board minutes from decision_ledger, IEX + SIP 1-minute bars (open/high/low/close). Read from cache only; no network.",
-  "signal": "Every PRE fire as in early_entry_honest (live pre-square on IEX 1-minute bars, on-board, 09:50-15:30 window, 15-minute refractory). Signal price P = SIP close of the signal minute m.",
+  "signal": "Every PRE fire as in early_entry_honest (live pre-square on IEX 1-minute bars, on-board, 09:50-15:30 window, 15-minute refractory). Reference price P = the IEX close of the signal minute m (the price that fired the signal; what live sees). A SIP-close reference is information only (free SIP is delayed; at these 566 signals the two differ by >= 5 bp 29% of the time). The order is assumed live a few seconds into m+1, the same optimism as the market arm's m+1 open.",
   "arms": {
     "market": "Buy at the SIP open of minute m+1; exit at the SIP close of the minute 9 minutes later (10-minute hold) - early_entry_honest.markout.",
-    "limit(k, N)": "Buy limit at L = P x (1 - k/10000), live for the N minutes m+1 .. m+N. Filled in the first of those minutes whose SIP LOW is at or below L x (1 - 0.0002) (the price must trade 2 bp THROUGH the limit; touching it is not a fill, a conservative queue assumption). Fill price = min(L, that minute's open) (a gap below the limit fills at the open). Exit at the SIP close of the minute 9 minutes after the fill minute (same 10-minute hold). An exit bar at or after 16:00 drops the trade (counted). Unfilled = no trade."
+    "limit(k, N)": "Buy limit at L = P x (1 - k/10000), live for the N minutes m+1 .. m+N. Filled in the first of those minutes whose SIP LOW is at or below L x (1 - 0.0002) (the price must trade 2 bp THROUGH the limit; touching it is not a fill, a conservative queue assumption). Fill price = min(L, that minute's open) (a gap below the limit fills at the open). Exit at the SIP close of the minute 9 minutes after the fill minute (same 10-minute hold), or the last SIP close before it if that bar is missing (the market arm keeps such signals too). A fill with no exit bar at all is counted. Unfilled = no trade."
   },
   "primary_cell": "k = 10 bp, N = 5 minutes (matches the 36% of fills that dip >= 10 bp).",
   "cost": "10 bp round trip charged to BOTH arms (conservative: a resting limit would not cross the spread on entry). The limit arm at 5 bp is information.",
   "statistic": "Per day: fill_net = mean net over filled limit trades; mkt_net = mean net over ALL signals at market. Lift = fill_net - mkt_net (the filled subset against every signal bought at market: adverse selection is inside fill_net, and the comparison is not flattered by skipping trades, because mkt_net averages every signal). Day-equal mean and day-clustered t.",
   "split": "Half A = 2026-09-08..09-24, half B = 09-25..10-13 (as the other harness studies).",
-  "pass": "The primary cell PASSES only if in BOTH halves: lift >= +5 bp with t >= 2.0, AND fill_net > 0 (filled limit trades make money after 10 bp), AND >= 100 filled trades and >= 10 days with a fill. Short = UNDERPOWERED (no evidence either way); any FAIL half = FAIL. One graded cell.",
+  "pass": "The primary cell PASSES only if in BOTH halves: lift >= +5 bp with t >= 2.0, AND fill_net > 0 WITH day-clustered t >= 2.0, AND >= 60 filled trades and >= 10 days with a fill (60 fixed before any fill rate was seen; half A has 201 signals and may come out UNDERPOWERED, which is no evidence either way). Any FAIL half = FAIL. One graded cell.",
   "information_only": [
     "the grid k in {5, 10, 20} bp x N in {2, 5, 10} min: fill rate, fill_net, lift",
     "adverse selection: the market net of the signals the limit did NOT fill vs those it did",
     "per-signal value with unfilled = 0 vs every signal at market (what the strategy earns per signal, including trades it skips)",
     "the limit arm charged 5 bp instead of 10",
     "fill minute distribution (how fast the dip comes)",
-    "price >= $30; by hour"
+    "price >= $30; by hour",
+    "limit fills exited at the MARKET arm's exit bar (close of m+10): the price gain over the same clock window",
+    "the SIP-close reference version",
+    "a 5 bp trade-through version",
+    "skipped name-days (no or short bars, indicator failure) and excluded days, printed"
   ],
   "no_retuning": "k = 10, N = 5, the 2 bp trade-through, the 10-minute hold, the 10 bp cost and the split are fixed. Another cell is a new prereg on new sessions.",
   "if_pass": "Forward confirmation on >= 10 sessions (the order type exists: a resting limit), then a result-skeptic review of the positive before any live order change.",
   "if_fail": "The limit-below entry is closed at these depths; G2's small offsets stand on their own read.",
-  "script": "tools/studies/limit_below_study.py (default inventory, --score after a result-skeptic READY); tests/test_limit_below_study.py."
+  "script": "tools/studies/limit_below_study.py (default inventory, --score after a result-skeptic READY); tests/test_limit_below_study.py.",
+  "control": "Information, read fixed now: the same limit (k, N, trade-through) placed at the harness's null-calibrated later random minute of the same name and day (early_entry_honest.control_minute, entry+1..+60), with the IEX reference replaced by the SIP close at that minute. If the control's fill_net >= the signal's fill_net, a positive result is a fill-model artifact (bounce off 1-minute SIP lows) and goes to a forward test only, not to live.",
+  "amended": "2026-10-14 before any score, after result-skeptic FIX FIRST: IEX reference price; fill_net needs t >= 2; minimum fills 60 fixed now; control at a random later minute with its reading fixed; same-window exit, SIP-reference and 5 bp trade-through information lines; missing exit bars carry the last close; skipped name-days reported."
 }

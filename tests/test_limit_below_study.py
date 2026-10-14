@@ -46,7 +46,22 @@ def test_limit_trade_gross_and_market_reference():
 
 
 def test_half_verdict():
-    assert L.half_verdict(0.0006, 2.1, 0.0001, 100, 10) == "PASS"
-    assert L.half_verdict(0.0006, 2.1, -0.0001, 100, 10) == "FAIL"     # filled trades still lose
-    assert L.half_verdict(0.0004, 3.0, 0.0001, 100, 10) == "FAIL"
-    assert L.half_verdict(0.0006, 2.1, 0.0001, 99, 10) == "UNDERPOWERED"
+    assert L.half_verdict(0.0006, 2.1, 0.0001, 60, 10, fill_t=2.0) == "PASS"
+    assert L.half_verdict(0.0006, 2.1, 0.0001, 60, 10, fill_t=1.9) == "FAIL"    # filled net needs t >= 2
+    assert L.half_verdict(0.0006, 2.1, -0.0001, 60, 10, fill_t=2.5) == "FAIL"   # filled trades still lose
+    assert L.half_verdict(0.0004, 3.0, 0.0001, 60, 10, fill_t=2.5) == "FAIL"
+    assert L.half_verdict(0.0006, 2.1, 0.0001, 59, 10, fill_t=2.5) == "UNDERPOWERED"
+
+
+def test_limit_uses_the_iex_reference_when_given():
+    bars = _bars([(100, 100, 100, 100.0), (100, 100, 99.79, 99.8)] + [(100, 100, 100, 100.0)] * 15)
+    assert L.limit_fill(bars, 600, 10, 5, ref=99.9) is None            # IEX ref 99.90 -> limit 99.80, needs <= 99.78; low 99.79 is not through
+    assert L.limit_fill(bars, 600, 10, 5) == (601, 99.90)             # SIP ref 100 -> limit 99.90
+
+
+def test_exit_carries_the_last_close_over_a_missing_bar():
+    bars = _bars([(100, 100, 100, 100.0)] * 20)
+    bars[611] = None
+    del bars[611]
+    bars[610] = (100, 100, 100, 100.7)
+    assert L.exit_close(bars, 602) == 100.7
