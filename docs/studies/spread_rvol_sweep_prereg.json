@@ -1,0 +1,13 @@
+{
+  "study": "Spread cap x arm RVOL floor: which setting gives the most opens and the most value? Operator 2026-10-14 after loosening the cap 0.05 -> 0.15% and the arm floor 1.25 -> 0.6 mid-session to get a book.",
+  "registered_at": "2026-10-14 ~11:00 ET, before any replay of these arms.",
+  "method": "tools/replay_session.py (the live code on recorded sessions) on 6 recorded days 2026-10-06..10-13, whole live config of 94f2576 pinned via --set-json, varying only ai_watch_max_sip_spread_pct (with ai_tight_max_spread_pct set equal) and ai_watch_arm_min_rvol. scripts/spread_rvol_sweep.sh: after 16:15 ET and after the evening batch, <= 3 replays, deadline 03:30.",
+  "arms": {"s05r125": "0.05% / 1.25 (10/13 live)", "s15r125": "0.15% / 1.25", "s25r125": "0.25% / 1.25", "s05r06": "0.05% / 0.6", "s15r06": "0.15% / 0.6 (10/14 mid-session live)", "s25r06": "0.25% / 0.6", "s15r095": "0.15% / 0.95"},
+  "rvol_scale": "The replay serves the RVOL the desk recorded live, which was the inflated (clock - 15 min) version on all six days; floors here are on that scale. The option A mapping (percentile-matched, 10/14): recorded 1.25 ~ honest 0.95 at the arm. A pick is translated to the honest scale with that mapping before it goes live.",
+  "costing": "net bp = replay ret - full SIP quoted spread at entry (replay_costing.entry_spread_bp), charged once; no NBBO -> that day's pooled median (counted).",
+  "metrics": "per arm: opens/day, opens per 10 min (09:45-15:50), mean concurrency, net bp/trade (day-clustered t), VALUE = sum of net bp per day (dollars at fixed size), paired per-day value differences vs s05r125 and s15r06.",
+  "pick_rule": "The arm with the highest mean daily VALUE among arms averaging >= 1 open per 10 minutes (the book open standard). Fixed now.",
+  "honesty": "Six days: opens and concurrency are measured well; value differences will mostly have t < 2. A pick with paired t < 2 vs s15r06 is a SUGGESTION. Prior evidence: refused-for-spread squares lost more (spread-gate-avoids-losers, 10/1); refused thin_rvol names traded about flat (cheap-names-carry-the-loss). Replay recall vs live was 0.54-0.62 (replay-session-runs-live-code).",
+  "vacuity": "A day where every arm has zero trades is reported as vacuous and excluded; any missing arm output = the day is incomplete and excluded.",
+  "script": "scripts/spread_rvol_sweep.sh, tools/studies/spread_rvol_score.py, tests/test_spread_rvol_score.py"
+}
