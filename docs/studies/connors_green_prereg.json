@@ -1,0 +1,16 @@
+{
+  "study": "Connors RSI-2 'green' as a 1-minute entry: close above its 200-bar average, below its 5-bar average, RSI-2 under 10 (the green segments of the operator's CM_RSI_2_Strategy_Lower panel; ai_entry_watch.live_cm_rsi 'green'), fired from completed bars on every board name, against a random later minute of the same name.",
+  "registered_at": "2026-10-14 ~14:20 ET, before any return of this rule was computed on market data.",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-14 (chart: green at the low of a pullback, price bounced after). Larry Connors' published rule (daily bars); the desk computes it on 1-minute bars but never graded it as an entry. It is an outside rule, not suggested by these sessions, so the 26 cached sessions grade it.",
+  "prior": "LOW. RSI < 30 / RSI crosses matched random minutes over 60 days and were worse inside the up-day morning (rsi-and-macd-gap-add-nothing); AGY's RSI-2 turn FAILED 10/13; limit-below (10/14) found that dips after a signal keep falling. The green rule differs: it requires an uptrend (SMA200) and a pullback (below SMA5).",
+  "rule": "early_entry_honest.con_flags on the harness series (IEX 1-minute bars from 04:00 ET, minute-gridded as signals._minute_grid_pr, signals.compute_cm_rsi_lower with cm_rsi_length 2): close[i] > mean(close[i-199..i]) and close[i] < mean(close[i-4..i]) and cm_rsi[i] < 10; False until 200 rows exist. Onset (flag true, previous bar false), on the board, 09:50-15:30, 15-minute refractory per name (early_entry_honest.fires).",
+  "fill_markout_control_cost_statistic_split": "Identical to early_entry_mid_rsi2_prereg.json: entry at the SIP open of the next minute, exit at the SIP close 9 minutes after the entry bar (10-minute hold); control = random LATER minute of the same name (entry+1..+60, seed sha256(symbol|day|entry_minute|CON|early-honest-v1)); 10 bp round trip on both; lift = rule net - control net, day-equal mean, day-clustered t; half A ends 2026-09-24.",
+  "calibration": "Null run on the synthetic walk (30 days x 15 names, early_entry_honest_null.py --study connors): CON lift +1.1 / -1.5 bp, |t| <= 0.49, 1115 / 1158 signals. No method bias.",
+  "pass": "Each half PASS = day-equal lift >= +5 bp with day-clustered t >= 2.0, day-equal net > 0, >= 100 scored signals, >= 6 days. CON is PASS only if both halves PASS; FAIL if either FAILs; else UNDERPOWERED (not evidence either way).",
+  "information_only": ["SQ scored the same way", "gross; 5, 15, 30 minute markouts", "cross control (another board name, same minute), close entry, 20 bp cost", "lead before desk fills"],
+  "no_retuning": "200 / 5 / 10, the window, refractory, hold, cost and split are fixed. RSI-2 < 5, other averages or holds are a new prereg.",
+  "if_pass": "Provisional: repeat on >= 10 forward sessions after 2026-10-14 with the same bar, then a result-skeptic review of the positive, before any arm change.",
+  "if_fail": "The 1-minute Connors green is closed as an entry on the free feed.",
+  "script": "tools/studies/early_entry_honest.py --study connors (--score only after a result-skeptic READY); tests/test_early_entry_honest.py::test_connors_green_needs_uptrend_pullback_and_oversold"
+}

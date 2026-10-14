@@ -177,3 +177,16 @@ def test_rsi2_turn_needs_oversold_then_up_with_fast_rising():
     assert not E.rsi2_turn_flag(fast, [36.0, 40.0], 1)             # was not oversold
     assert not E.rsi2_turn_flag(fast, [30.0, 29.0], 1)             # did not turn up
     assert not E.rsi2_turn_flag([-80.0, -80.0], [30.0, 40.0], 1)   # fast flat
+
+
+def test_connors_green_needs_uptrend_pullback_and_oversold():
+    import early_entry_honest as E
+    closes = [100.0 + 0.01 * i for i in range(205)]          # steady uptrend
+    closes[-1] = closes[-2] - 0.05                           # last bar pulls back under SMA5, still over SMA200
+    rsi = [50.0] * 204 + [5.0]
+    f = E.con_flags(closes, rsi)
+    assert f[-1] and not any(f[:-1])
+    assert not E.con_flags(closes, [50.0] * 204 + [12.0])[-1]          # RSI not under 10
+    down = [100.0 - 0.01 * i for i in range(205)]
+    assert not E.con_flags(down, [5.0] * 205)[-1]                     # under SMA200: no uptrend
+    assert not any(E.con_flags(closes[:150], [5.0] * 150))             # fewer than 200 rows

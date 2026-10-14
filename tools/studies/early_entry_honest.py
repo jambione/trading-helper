@@ -63,6 +63,8 @@ STUDIES = {
                 "prereg": "early_entry_honest_prereg.json", "out": "result.md"},
     "mid_rsi2": {"rules": ("MID", "RSI2T", "MIDCAP", "SQ"), "graded": ("MID", "RSI2T"),
                  "prereg": "early_entry_mid_rsi2_prereg.json", "out": "result_mid_rsi2.md"},
+    "connors": {"rules": ("CON", "SQ"), "graded": ("CON",),
+                "prereg": "connors_green_prereg.json", "out": "result_connors.md"},
 }
 RULES = STUDIES["pre_ign"]["rules"]
 GRADED = STUDIES["pre_ign"]["graded"]
@@ -122,6 +124,29 @@ def rsi2_turn_flag(fast, rsi, i: int) -> bool:
     if i < 1 or not (_fin(rsi[i - 1]) and _fin(rsi[i])):
         return False
     return rsi[i - 1] <= RSI_OS and rsi[i] > rsi[i - 1] and rising(fast, i)
+
+
+CON_SMA_LONG, CON_SMA_SHORT, CON_RSI = 200, 5, 10.0
+
+
+def con_flags(closes, rsi) -> list[bool]:
+    """Connors RSI-2 'green' per bar, as ai_entry_watch.live_cm_rsi: close > SMA(200) and close < SMA(5)
+    and RSI-2 < 10, on the same grid-filled IEX series (SMA over the last 200 / 5 rows, this bar included).
+    False until 200 rows exist."""
+    n = len(closes)
+    pre = [0.0]
+    for c in closes:
+        pre.append(pre[-1] + (c if _fin(c) else 0.0))
+    out = []
+    for i in range(n):
+        c, r = closes[i], rsi[i]
+        if i + 1 < CON_SMA_LONG or not (_fin(c) and _fin(r)):
+            out.append(False)
+            continue
+        sma_l = (pre[i + 1] - pre[i + 1 - CON_SMA_LONG]) / CON_SMA_LONG
+        sma_s = (pre[i + 1] - pre[i + 1 - CON_SMA_SHORT]) / CON_SMA_SHORT
+        out.append(c > sma_l and c < sma_s and r < CON_RSI)
+    return out
 
 
 def ign_flag(minutes, closes, vols, i: int, vol_at: dict | None = None) -> bool:
@@ -413,6 +438,7 @@ def rule_fires(ser: dict, board: set) -> dict[str, tuple[list[int], int]]:
         "MID": [mid_flag(f, s, ser["rsi"], i) for i in range(n)],
         "MIDCAP": [mid_flag(f, s, ser["rsi"], i, cap=True) for i in range(n)],
         "RSI2T": [rsi2_turn_flag(f, ser["rsi"], i) for i in range(n)],
+        "CON": con_flags(ser["close"], ser["rsi"]),
     }
     return {r: fires(m, flags[r], board) for r in RULES}
 
