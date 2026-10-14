@@ -400,23 +400,35 @@ def premarket_scan(cfg: dict, api: str, sec: str) -> list[dict]:
 
 
 def sip_data_mins_open(now_et: datetime, cfg: dict | None = None) -> float:
-    """Minutes of the session covered by the SIP daily bar, not by the clock.
+    """Minutes of the session today's SIP DAILY bar covers, for pacing rvol.
 
-    The daily-bar request has no end, so the free plan serves SIP only up to
-    ~15 minutes ago; today's bar volume stops there. Pacing it against the
-    live minutes since 09:30 compared ~6 minutes of volume with 22 minutes of
-    expected volume at 09:52 on 2026-09-24 (rvol/rvol_raw was exactly 6.0 on
-    every scan row), so PFE (+1.7%, spread 0.03%) read 0.69 and was dropped
-    thin_rvol with the whole scan. Floor of 1 minute keeps the curve defined
-    at the open.
+    The free plan serves today's daily bar (close and volume) essentially in
+    real time; only historical minute data waits ~15 minutes. Measured
+    2026-10-14 on 7 recorded sessions 9/25-10/09: live movers rvol equals the
+    real-time cumulative volume paced this way to within 5% for 73-100% of
+    admissions per day (median |error| 0.2-1.3%), and the 16-minute-old
+    volume misses on every day. Pacing real-time volume against
+    clock - 15 minutes (the 2026-09-24 version) inflated rvol about 2x near
+    10:00 and switched the thin-rvol gate off for the first half hour.
+
+    That version rested on "rvol/rvol_raw was exactly 6.0 on every scan row
+    at 09:52" - but a constant ratio across rows is the pacing factor itself
+    (1 / expected share of the day at 22 minutes), the same for every name by
+    construction, not evidence of delayed volume. PFE at 0.69 that morning
+    was trading below its usual pace.
+
+    ai_movers_daily_bar_lag_min (default 1) is the daily bar's lag; it is
+    separate from ai_movers_sip_delay_min, which still times the genuinely
+    delayed minute-quote reads (spread gate, tight scan window). Floor of
+    1 minute keeps the curve defined at the open.
     """
     try:
-        delay = float((cfg or {}).get("ai_movers_sip_delay_min", 15.0) or 0.0)
+        lag = float((cfg or {}).get("ai_movers_daily_bar_lag_min", 1.0))
     except (TypeError, ValueError):
-        delay = 15.0
+        lag = 1.0
     live = (now_et - now_et.replace(
         hour=9, minute=30, second=0, microsecond=0)).total_seconds() / 60.0
-    return max(1.0, live - delay) if live > 0 else live
+    return max(1.0, live - lag) if live > 0 else live
 
 
 def fetch_rows(cfg: dict) -> list[dict] | None:
