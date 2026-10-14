@@ -218,3 +218,14 @@ def test_score_day_excludes_levered_names_from_recorded_and_traded():
     assert full["covered_n"] == 2 and full["traded_n"] == 1
     assert ex["covered_n"] == 1 and ex["covered_win"] == 1 and ex["traded_n"] == 0
     assert ex["excluded_levered"] == ["KORU"]
+
+
+def test_u3_arm_ready_gate_reads_completed_bars():
+    import hist_universe as HU
+    cfg = {"ai_watch_movers_admit_max_tape_age_sec": 60.0, "ai_watch_exhaustion_heat_min_pct": 40.0}
+    pr = {98: (-70.0, -60.0), 99: (-50.0, -55.0)}
+    assert HU.arm_ready_ok(pr, 99, 100, cfg) is None                  # EXH 50, rising, print at T-1
+    assert HU.arm_ready_ok(pr, 97, 100, cfg) == "stale"               # last print 2 minutes before the bar
+    assert HU.arm_ready_ok({98: (-50.0, 0), 99: (-50.0, 0)}, 99, 100, cfg) == "exh_falling"
+    assert HU.arm_ready_ok({98: (-90.0, 0), 99: (-70.0, 0)}, 99, 100, cfg) == "exh_too_low"
+    assert HU.arm_ready_ok({}, 99, 100, cfg) == "exh_rising_required"

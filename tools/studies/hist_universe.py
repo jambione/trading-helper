@@ -77,7 +77,7 @@ for _p in (ROOT, os.path.join(ROOT, "tools")):
         sys.path.insert(0, _p)
 
 ET = ZoneInfo("America/New_York")
-RULE_VERSION = "hist_universe/u2.1"  # 2026-10-14: quote_mode rt, premarket prior gainers, real-time daily bar
+RULE_VERSION = "hist_universe/u3"  # 2026-10-14: book-server seats (no thin_rvol, %R arm-ready gate)  # 2026-10-14: quote_mode rt, premarket prior gainers, real-time daily bar
 OUT_DIR = os.path.join(ROOT, "ai_reports", "hist_universe")
 CACHE_DIR = os.path.join(OUT_DIR, "cache")
 CALIB_LO, CALIB_HI = "2026-09-24", "2026-10-09"
@@ -115,6 +115,12 @@ KNOBS_DEFAULT = {
     "seed_start_min": 0,        # first decision minute index (0 = 04:00)
     "tight_phase": 0,           # tight scans at 09:46 + k*scan_sec + phase minutes
     "spread_ttl_min": 3,        # live sip_spread_pct cache ttl 180 s
+    # u3 (trace 9/24-10/02, 2026-10-14): with ai_book_server_mode 'live' the desk re-ranks movers rows every poll
+    # (book_server.rank_candidates: runway + 2.5 x closeness to the square, top ai_book_server_max_seats) and
+    # seats them WITHOUT the thin_rvol seed gate (66 of 256 traced misses were refused for thin_rvol 0.3-0.9 here
+    # while live admitted them at recorded rvol 0.29-0.93); the seat then passes the arm-ready keep gate in RTH
+    # (young tape, EXH = 100 + fast %R >= heat min and rising). "auto" = on when the day's config runs it live.
+    "book_server": "auto",
 }
 
 # Config knobs that drive the rules (logged with every output).
@@ -397,6 +403,9 @@ class DayMarket:
         self.sip_daily = sip_daily      # {sym: [(date, o, c, v), ...]} prior sessions, oldest first
         self.iex_daily = iex_daily
         self.spread_fn = spread_fn      # (syms, end_ts) -> {sym: median spread % or None}
+        self.ohlc = None                # u3: {sym: [(i, o, h, l, c, v)]} IEX OHLC for the movers pool, or None
+        self.pool_seen: set = set()
+        self._pr: dict = {}
         self.failed = set(failed or ())
         self._spread_cache: dict[str, tuple] = {}
         self.spread_requests = 0
@@ -462,6 +471,11 @@ class DayMarket:
             return None
         return float(cl), float(self.sip_cv[k, j])
 
+    def pr(self, s):
+        if s not in self._pr:
+            self._pr[s] = pr_series((self.ohlc or {}).get(s) or [])
+        return self._pr[s]
+
     def seq(self, s, T):
         prior = [(d, c, v) for (d, o, c, v) in self.prior(s)][-30:]
         today = self.delayed_today(s, T)
@@ -524,6 +538,73 @@ def _ffill(a):
 
 
 # ═════════════════════════════ the day simulation ═════════════════════════════
+
+PR_CFG = {"rte_fast_length": 21, "rte_fast_ewm_span": 7, "rte_slow_native_length": 112, "rte_slow_ewm_span": 3,
+          "rte_minute_grid": True, "rte_slow_timeframe": None}
+PR_EPS = 0.05
+
+
+def pr_series(ohlc: list) -> dict:
+    """{minute index: (fast %R, slow %R)} from IEX 1-minute OHLC [(i, o, h, l, c, v)], minute-gridded as live."""
+    import pandas as pd
+    import signals
+    if not ohlc or len(ohlc) < 5:
+        return {}
+    base = datetime(2000, 1, 3, 4, 0, tzinfo=timezone.utc)
+    rows, prev = [], None
+    for (i, o, h, l_, c, v) in sorted(ohlc):
+        if prev is not None and 1 < i - prev[0] <= 15:
+            for k in range(prev[0] + 1, i):
+                rows.append((k, prev[1], prev[1], prev[1], prev[1], 0.0))
+        rows.append((i, o, h, l_, c, v))
+        prev = (i, c)
+    df = pd.DataFrame([(base + timedelta(minutes=r[0]), *r[1:]) for r in rows],
+                      columns=["time", "open", "high", "low", "close", "volume"])
+    df = signals.compute_percent_r_exhaustion(df, PR_CFG)
+    out = {}
+    for r, f_, s_ in zip(rows, df["s_percentR"], df["l_percentR"]):
+        out[r[0]] = (None if f_ != f_ else float(f_), None if s_ != s_ else float(s_))
+    return out
+
+
+def arm_ready_ok(pr: dict, li: int, T: int, cfg: dict) -> str | None:
+    """The live arm-ready keep gate at decision minute T on completed bar T-1 (None = ready)."""
+    max_age = _f(cfg, "ai_watch_movers_admit_max_tape_age_sec", 60.0)
+    if li < 0 or (T - 1 - li) * 60.0 > max_age:
+        return "stale"
+    cur, prev = pr.get(T - 1), pr.get(T - 2)
+    if not cur or cur[0] is None:
+        return "exh_rising_required"
+    heat_min = _f(cfg, "ai_watch_exhaustion_heat_min_pct", 40.0)
+    if heat_min > 0 and 100.0 + cur[0] + 1e-9 < heat_min:
+        return "exh_too_low"
+    rising = prev is not None and prev[0] is not None and cur[0] > prev[0] + PR_EPS
+    if bool(cfg.get("ai_watch_require_exh_rising", True)) and not rising:
+        return "exh_falling"
+    return None
+
+
+def book_seats(rows: list[dict], mk, T: int, cfg: dict) -> list[dict]:
+    """book_server.rank_candidates over the movers rows at minute T, top ai_book_server_max_seats."""
+    import book_server as bs
+    thr, pre, tight = bs._square_params(cfg)
+    now = et_ts(mk.day, T)
+    ranked = []
+    for r in rows:
+        pr = mk.pr(r["symbol"])
+        cur, prev = pr.get(T - 1), pr.get(T - 2)
+        f_ = cur[0] if cur else None
+        s_ = cur[1] if cur else None
+        rising = None if not (cur and prev and prev[0] is not None and f_ is not None) else f_ > prev[0] + PR_EPS
+        srising = None if not (cur and prev and prev[1] is not None and s_ is not None) else s_ > prev[1] + PR_EPS
+        close = bs.closeness_to_square(f_, s_, thr=thr, pre_thr=pre, tight_max=tight, rising=rising, slow_rising=srising)
+        pri = bs.runway_score(day_chg_pct=r.get("seed_pct", r.get("pct_change")), source="movers",
+                              rvol_pace=r.get("rvol"), now=now) + 2.5 * close
+        ranked.append(((f_ is not None and s_ is not None), f_ is not None, pri, r))
+    ranked.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+    n = max(1, _i(cfg, "ai_book_server_max_seats", 12))
+    return [{**x[3], "source": "movers", "path": "book"} for x in ranked[:n]]
+
 
 def simulate_day(mk: DayMarket, cfg_at, knobs=None, *, end_i: int = N_MIN) -> dict:
     """Run the producers + book seeds + door at every minute; return first admissions.
@@ -627,6 +708,7 @@ def simulate_day(mk: DayMarket, cfg_at, knobs=None, *, end_i: int = N_MIN) -> di
                 if rp is not None and pc:
                     r["seed_price"], r["seed_pct"] = rp, (rp / pc - 1) * 100
         stats["movers_rows"] += len(rows)
+        mk.pool_seen.update(r["symbol"] for r in rows)
 
         # ── book seeds ──
         props = []
@@ -653,6 +735,22 @@ def simulate_day(mk: DayMarket, cfg_at, knobs=None, *, end_i: int = N_MIN) -> di
                         if rp is not None and pc:
                             r["seed_price"], r["seed_pct"] = rp, (rp / pc - 1) * 100
                 props += tight_seed(trs, cfg)
+
+        bs_on = (kn["book_server"] is True) or (kn["book_server"] == "auto" and str(cfg.get("ai_book_server_mode", "")) == "live")
+        if bs_on and mk.ohlc is not None and rows:
+            for r in book_seats(rows, mk, T, cfg):
+                s = r["symbol"]
+                if s in admitted or is_levered(s, mk.names.get(s, "")):
+                    continue
+                if m_et >= 570 and bool(cfg.get("ai_watch_admit_require_arm_ready", True)):
+                    k = mk.idx.get(s)
+                    li = int(mk.iex_li[k, T - 1]) if k is not None else -1
+                    why = arm_ready_ok(mk.pr(s), li, T, cfg)
+                    if why:
+                        refusals["arm_ready_" + why] += 1
+                        continue
+                props.append({**r, "price": r.get("seed_price", r.get("price")),
+                              "pct_change": r.get("seed_pct", r.get("pct_change"))})
 
         # ── the door ──
         fresh, seen = [], set()
@@ -1048,6 +1146,64 @@ def make_spread_fn(cl, cache: dict, failed_q: list):
     return fn
 
 
+def load_pool_ohlc(day, mk, cfg_at, knobs) -> dict:
+    """u3: IEX 1-minute OHLC (high/low needed for %R) for every name that was ever a movers row that day.
+    Pass 1 runs the producers with the book server off to collect the pool; cached in cache/ohlc/DAY.pkl.gz."""
+    p = os.path.join(CACHE_DIR, "ohlc", f"{day}.pkl.gz")
+    have = pickle.load(gzip.open(p, "rb")) if os.path.exists(p) else {}
+    mk.ohlc = None
+    simulate_day(mk, cfg_at, {**(knobs or {}), "book_server": False})
+    need = sorted(mk.pool_seen - set(have))
+    if need:
+        cl = _client()
+        got = fetch_ohlc(cl, need, day)
+        have.update(got)
+        for s_ in need:
+            have.setdefault(s_, [])
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        pickle.dump(have, gzip.open(p, "wb"))
+    mk.pool_seen = set()
+    return have
+
+
+def fetch_ohlc(cl, syms: list[str], day: str) -> dict:
+    """IEX 1-minute bars 04:00-16:00 with high/low, {sym: [(i, o, h, l, c, v)]} (i = minutes since 04:00)."""
+    import pandas as pd
+    from alpaca.data.enums import DataFeed
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    d0 = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
+    out: dict = {}
+    for i in range(0, len(syms), 100):
+        chunk = syms[i:i + 100]
+        for attempt in range(5):
+            try:
+                df = cl.get_stock_bars(StockBarsRequest(
+                    symbol_or_symbols=chunk, timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+                    start=d0.replace(hour=4).astimezone(timezone.utc), end=d0.replace(hour=16).astimezone(timezone.utc),
+                    feed=DataFeed.IEX, limit=5_000_000)).df
+                break
+            except Exception as e:  # noqa: BLE001
+                print(f"  {day} ohlc try {attempt}: {str(e)[:80]}", flush=True)
+                time.sleep(5 * (attempt + 1))
+        else:
+            raise RuntimeError(f"{day}: IEX OHLC fetch failed for {len(chunk)} names")
+        if df is None or df.empty:
+            continue
+        if not isinstance(df.index, pd.MultiIndex):
+            df = pd.concat({chunk[0]: df}, names=["symbol"])
+        for s_ in df.index.get_level_values("symbol").unique():
+            sub = df.xs(s_, level="symbol")
+            rows = []
+            for ts, r in sub.iterrows():
+                t = ts.tz_convert(ET)
+                rows.append((t.hour * 60 + t.minute - DAY0_MIN, float(r["open"]), float(r["high"]),
+                             float(r["low"]), float(r["close"]), float(r["volume"])))
+            out[str(s_).upper()] = rows
+        time.sleep(0.4)
+    return out
+
+
 def load_day_market(day, *, use_cache=False, cl=None):
     """Fetch (or load cached) everything simulate_day needs for one session."""
     import numpy as np  # noqa: F401
@@ -1173,6 +1329,9 @@ def build_day(day, *, cfg_mode="live", knobs=None, use_cache=False, write=True, 
     else:
         cfg_at, cfg_note, snaps = recorded_config_fn(day)
         cfg_used = {k: cfg_at(I_OPEN).get(k) for k in CFG_KEYS}
+    kn_all = {**KNOBS_DEFAULT, **(knobs or {})}
+    if kn_all.get("book_server") in (True, "auto"):
+        mk.ohlc = load_pool_ohlc(day, mk, cfg_at, knobs)
     res = simulate_day(mk, cfg_at, knobs)
     save_spread_cache(mk)
     n_uni = len(mk.syms)
