@@ -38,6 +38,7 @@ FORWARD_START = "2026-10-15"
 READ_AT, EXTEND_TO = 10, 20     # forward sessions: one read at 10; if UNDERPOWERED, one more at 20
 MIN_HELD, MIN_DAYS = 60, 10
 LIFT_BAR = 0.0005
+T_BAR = 2.7     # one of four tests on the same signals (dip_ideas_prereg.json), df ~9
 
 
 # ── pure ─────────────────────────────────────────────────────────────────────
@@ -61,13 +62,13 @@ def entry_trade(bars: dict, entry_min: int, hold: int = HOLD) -> float | None:
 
 def half_verdict(held_net, held_t, lift, lift_t, vs_mkt, n_held, n_days) -> str:
     """A miss on t alone, with every point estimate on the passing side, is UNDERPOWERED, not FAIL
-    (skeptic #2: 10 day clusters need roughly +25-30 bp to reach t 2)."""
+    (skeptic #2: 10 day clusters need roughly +33-40 bp to reach t 2.7)."""
     if n_held < MIN_HELD or n_days < MIN_DAYS or None in (held_net, held_t, lift, lift_t, vs_mkt):
         return "UNDERPOWERED"
     points = held_net > 0 and lift >= LIFT_BAR and vs_mkt >= 0
     if not points:
         return "FAIL"
-    return "PASS" if held_t >= 2.0 and lift_t >= 2.0 else "UNDERPOWERED"
+    return "PASS" if held_t >= T_BAR and lift_t >= T_BAR else "UNDERPOWERED"
 
 
 def read_sessions(fwd: list[str], verdict_at) -> list[str] | None:

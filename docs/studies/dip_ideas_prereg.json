@@ -1,0 +1,49 @@
+{
+  "study": "Ideas for the dip after a signal (operator 2026-10-14): CUT on an early dip, buy the RECLAIM, float ROTATION; HEDGE with SPY as information.",
+  "registered_at": "2026-10-14 ~10:40 ET, before any return of these rules was computed.",
+  "registered_before_results": true,
+  "origin": "Limit-below FAIL 10/14: signals whose price dipped 10 bp in the first 5 minutes lost (-65.6 bp half A) while the rest gained (+57.7). CUT and RECLAIM come from that result on the same 26 sessions, so they are graded FORWARD only. ROTATION (premarket volume above the float = squeeze phase) is a new idea from the operator's 10/14 charts, not from these sessions: graded on a market-wide held-out gapper universe (below): the desk board holds almost no low-float names since the $10 momentum floor (9/29) - inventory before any return: rot >= 1.0 had 32 signals in half A and 1 in half B.",
+  "prior": "CUT: skeptical - 42 stop/trail shapes scored zero gross (exits-cannot-move-the-mean); the cut sells at a 10 bp+ loss and the 10 bp cost is already sunk. RECLAIM: skeptical - every timing rule matched random minutes. ROTATION: the five-pillars study (9/27) found low float adds no drift and doubles the spread; rotation (volume / float) was not tested. HEDGE: cannot change the mean (SPY drift over 10 minutes is ~0); it only lowers variance.",
+  "data": "tools/studies/early_entry_honest.py cache (ai_reports/early_entry_honest/<day>.pkl; IEX + SIP 1-minute OHLCV 04:00-16:05, board from decision_ledger); ai_reports/float_cache.json (CURRENT float, no history). Forward sessions are fetched nightly (scripts/nightly.sh). SPY for HEDGE fetched after the close.",
+  "signals": "Every PRE fire (live pre-square on IEX bars, on board, 09:50-15:30, 15-minute refractory), limit_below_study.signals; reference P = IEX close of the signal minute m.",
+  "base_trade": "Today's entry: SIP open of m+1, SIP close of m+10 (last close carried over a missing bar), 10 bp round trip.",
+  "tests": {
+    "CUT": {
+      "rule": "Hold the base trade, but sell when an IEX 1-minute low in m+1..m+5 is at or below entry x (1 - 10 bp). The low is known when that bar closes, so the sale is at the SIP open of the first bar after the trigger minute (never an earlier price); the SIP close of the trigger minute is information only.",
+      "statistic": "Per day: cut_net = mean net of all base trades with the cut applied; lift = cut_net - hold_net (same trades, no cut).",
+      "graded_on": "forward sessions >= 2026-10-15; one read at 10 sessions, extension to 20 only if UNDERPOWERED at 10.",
+      "information": "share of trades cut; the slot-reuse view (a cut frees the slot for the next signal, which earns the market arm's average net - negative so far)"
+    },
+    "RECLAIM": {
+      "rule": "After the signal, an IEX low in m+1..m+10 at or below P x (1 - 10 bp), then an IEX close at or above P later in that window (the same bar counts: low before close): buy the SIP open of the next minute, hold 10 minutes. No dip-and-reclaim = no trade.",
+      "statistic": "Per day: reclaim_net; lift = reclaim_net - mkt_net (base trade on every signal that day).",
+      "graded_on": "forward, as CUT.",
+      "control": "the same rule from the harness's later-only random minute of the same name and day (IEX close there as P); its n and net are printed. GRADED: reclaim net - control net, paired per day, must be >= 0 for a PASS (a generic dip-and-recover bounce is not the signal's)."
+    },
+    "ROTATION": {
+      "universe": "Premarket gappers market-wide, 2025-09-01..2026-09-26, rebuilt after the close from 1-minute SIP data: candidates are name-days whose premarket (04:00-09:29) high is >= +10% over the prior close, prior close $1-25 - decided from 09:29 minute data, never from the full-day daily high (skeptic #5). Asset list includes INACTIVE (delisted) symbols; the read reports how many candidates have no bars or no float. Reuses five_pillars_study.py fetch code where it fits; the reader and any changed candidate step get their own skeptic pass before returns.",
+      "rule": "rot = SIP volume 04:00-09:29 ET / (current float_m x 1e6), name-days with >= +10% premarket gain by 09:29 (the premarket gappers - the operator's charts). Rotated = rot >= 1.0.",
+      "trade": "Buy the SIP open of 09:30 plus half the 09:31 SIP quoted spread; sell the SIP close of 09:59 minus half the 10:15 quoted spread (the five-pillars samples are 09:31/09:45/10:15; 10:15 named for the exit, skeptic round 2).",
+      "statistic": "Per day: rotated_net; lift_gross = rotated gross - non-rotated gappers' gross the same day (spread differs by group, so the edge claim is gross; the money claim is net).",
+      "pass": "BOTH halves (alternate sessions): rotated_net > 0 with t >= 2.7 AND lift_gross >= +25 bp with t >= 2.7, AND >= 60 rotated name-days IN EACH HALF. Otherwise FAIL (wrong-side point estimates) / UNDERPOWERED.",
+      "information": "thresholds 0.25, 0.5, 2.0; price >= $10; float < 10M; catalyst yes/no; the desk-board version printed by dip_ideas_study.py --rotation (thresholds 0.25/0.5/2.0, labelled INFORMATION)",
+      "schedule": "data rebuild after the 10/14 night queue finishes (shares the 200/min Alpaca budget; never 04:00-16:15 ET); the reader is written against the rebuilt files BEFORE any return is computed, and gets its own skeptic pass.",
+      "float_bias": "Float is CURRENT (desk float_cache / Finnhub); volume is split-adjusted, so reverse splits are consistent, but later offerings inflate today's float and understate the old rot for exactly the names that later diluted (rot biased DOWN for diluters: rotated group under-includes them). The read prints float ages; point-in-time shares outstanding (SEC) is the fix if the result is close.",
+      "transfer": "A pass does NOT transfer to the live desk as is: the desk does not trade at 09:30, refuses names under $10, and a 09:29 decision misses the opening auction cutoff. A pass earns a desk-shaped prereg (09:45 start, live floors), nothing more."
+    },
+    "HEDGE": {
+      "rule": "Information only: beta of base-trade gross to SPY's move over the same minutes (SIP), hedged gross = gross - beta x SPY move, mean and standard deviation, before SPY's ~1 bp spread.",
+      "reading": "Not graded: hedging can lower variance, never create mean."
+    }
+  },
+  "pass": "Each graded CUT/RECLAIM test: net > 0 with t >= 2.7, AND lift >= +5 bp with t >= 2.7, AND >= 60 trades on >= 10 days (RECLAIM also: reclaim - control >= 0). FAIL when net <= 0 or lift < +5 bp. Point estimates passing with t < 2.7, or too few trades/days = UNDERPOWERED. t >= 2.7: four tests (CUT, RECLAIM, ROTATION, wait_held) at df ~9 need ~2.7 for a Bonferroni 5% (skeptic round 1 #8); requiring both net and lift helps further. Forward: one read at the 10th session; ONLY a test UNDERPOWERED there is re-read at 20; a test decided at 10 is printed 'not graded' at 20. ROTATION has its own pass rule (tests.ROTATION.pass).",
+  "in_sample_floor": "CUT and RECLAIM on the 26 sessions that suggested them, printed once: KILL (forward read cancelled) when that test's lift is <= 0 in BOTH halves (net is not part of the floor: the base net is negative). NO KILL is not evidence.",
+  "power": "~21.5 signals/session. CUT uses every signal (~215 in 10 sessions). RECLAIM keeps only dip-and-reclaim signals (unknown share; maybe 10-25%) and may read UNDERPOWERED at 10. ROTATION depends on how many board names out-trade their float premarket; the inventory prints the count before any return. The inventory prints cut share and dip-and-reclaim counts (counts only) before any return.",
+  "no_retuning": "10 bp, 5-minute cut window, 10-minute reclaim window, 10-minute hold, rot >= 1.0, 10 bp cost, read dates fixed. Any other cell is a new prereg on later sessions.",
+  "if_pass": "Result-skeptic review of the positive, then a live paper A/B with its own prereg.",
+  "if_fail": "That idea is closed at these settings.",
+  "script": "tools/studies/dip_ideas_study.py (CUT, RECLAIM, HEDGE; --rotation prints the desk-board version as information); ROTATION reader to be written on the rebuilt five-pillars files.",
+  "cost": "10 bp round trip on every graded arm; a 20 bp sensitivity is printed for CUT and RECLAIM (the 0.15% spread cap from 10/14 admits wider names from 10/15).",
+  "amended": "2026-10-14 before any return, after result-skeptic round 1 FIX FIRST: per-test extension; CUT sells at the next SIP open; RECLAIM graded against its control; in-sample KILL defined on lift; ROTATION candidates from 09:29 minute data incl. delisted, float bias, spreads, per-half minimum, no-transfer note; family t 2.7; 20 bp sensitivity; inventory counts.",
+  "review": "result-skeptic round 2 READY 2026-10-14 (CUT, RECLAIM; ROTATION spec READY, reader and candidate step need their own pass). The --forward read must honour the in-sample KILL line by hand."
+}

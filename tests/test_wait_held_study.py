@@ -48,11 +48,11 @@ def test_score_separates_filter_from_delay():
 
 
 def test_verdict_and_kill():
-    assert W.half_verdict(0.001, 2.1, 0.0006, 2.1, 0.0, 60, 10) == "PASS"
+    assert W.half_verdict(0.001, 2.8, 0.0006, 2.8, 0.0, 60, 10) == "PASS"
     assert W.half_verdict(0.001, 1.9, 0.0006, 2.1, 0.0, 60, 10) == "UNDERPOWERED"   # points pass, t short
     assert W.half_verdict(-0.001, 2.5, 0.0006, 2.1, 0.0, 60, 10) == "FAIL"
-    assert W.half_verdict(0.001, 2.1, 0.0004, 2.5, 0.0, 60, 10) == "FAIL"     # lift under 5 bp
-    assert W.half_verdict(0.001, 2.1, 0.0006, 2.1, -0.0001, 60, 10) == "FAIL"  # worse than today's entry
+    assert W.half_verdict(0.001, 2.8, 0.0004, 2.8, 0.0, 60, 10) == "FAIL"     # lift under 5 bp
+    assert W.half_verdict(0.001, 2.8, 0.0006, 2.8, -0.0001, 60, 10) == "FAIL"  # worse than today's entry
     assert W.half_verdict(0.001, 2.1, 0.0006, 2.1, 0.0, 59, 10) == "UNDERPOWERED"
     assert W.kill_check({"A": {"lift": -0.0001}, "B": {"lift": 0.0}})
     assert not W.kill_check({"A": {"lift": -0.0001}, "B": {"lift": 0.0001}})
