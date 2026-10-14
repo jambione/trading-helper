@@ -25,13 +25,14 @@ from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.dirname(HERE))
 import early_entry_honest as E  # noqa: E402
 import limit_below_study as L  # noqa: E402
 
 RED = 90.0
 INFO_LEVELS = (80.0, 95.0)
 MIN_FIRED, MIN_DAYS = 60, 6
-LIFT_BAR = 0.0003
+LIFT_BAR = 0.0002     # per ELIGIBLE trade vs the hazard-matched null (skeptic round 1 #1, #8)
 
 
 # ── pure ─────────────────────────────────────────────────────────────────────
@@ -93,58 +94,100 @@ def trades(datas: list[dict]) -> list[dict]:
             continue
         day = datetime.fromtimestamp(float(et), E.ET).strftime("%Y-%m-%d")
         if day in days:
-            out.append({"sym": str(r["symbol"]).upper(), "day": day,
-                        "entry_min": E._et_min(float(et)), "exit_min": E._et_min(float(xt))})
+            out.append({"sym": str(r["symbol"]).upper(), "day": day, "entry_ts": float(et), "exit_ts": float(xt),
+                        "entry_min": E._et_min(float(et)), "exit_min": E._et_min(float(xt)),
+                        "exit_price": float(r["exit_price"]) if r.get("exit_price") else None})
     return out
 
 
-def score(datas: list[dict], level: float = RED, strict: bool = False) -> dict:
+def hazard_exit_minute(sym: str, day: str, entry_min: int, exit_min: int, p: float) -> int | None:
+    """Hazard-matched null (skeptic #1): at each eligible bar m in [entry, exit-2], exit at m+1 with probability p
+    (red's pooled fire rate per eligible bar - a count, not a return)."""
+    rng = E._rng(sym, day, entry_min, "RED_HAZARD")
+    for m in range(entry_min, exit_min - 1):
+        if rng.random() < p:
+            return m + 1
+    return None
+
+
+def prepare(datas: list[dict], level: float, strict: bool, min_m_offset: int = 0) -> tuple[list[dict], Counter]:
+    """Eligible trades (exit - entry >= 2 minutes, bars present) with red's exit minute; skips counted."""
     by = {d["day"]: d for d in datas}
-    skips = Counter()
-    res = {h: {"red": defaultdict(list), "ctl": defaultdict(list), "all": defaultdict(list), "fired": 0, "n": 0}
-           for h in "AB"}
-    cache: dict = {}
+    skips, out, cache = Counter(), [], {}
     for t in trades(datas):
         data = by[t["day"]]
         iex, sipf = data["iex"].get(t["sym"]), data["sip"].get(t["sym"])
         if iex is None or sipf is None:
             skips["no_bars"] += 1
             continue
+        if t["exit_min"] - t["entry_min"] < 2:
+            skips["hold_under_2_minutes"] += 1
+            continue
+        if t["exit_price"] is None:
+            skips["no_exit_price"] += 1
+            continue
         key = (t["day"], t["sym"])
         if key not in cache:
-            cache[key] = (rsi_by_minute((data.get("iex_prior") or {}).get(t["sym"]), iex), L.ohlc_map(sipf))
+            prior = (data.get("iex_prior") or {}).get(t["sym"])
+            if prior is None:
+                skips["traded_name_without_prior_bars"] += 1
+            cache[key] = (rsi_by_minute(prior, iex), L.ohlc_map(sipf))
         (rsi, avg), sip = cache[key]
-        base_bar = sip.get(t["exit_min"])
-        if base_bar is None or t["exit_min"] <= t["entry_min"]:
-            skips["no_exit_bar_or_same_minute"] += 1
+        rm = red_exit_minute(rsi, t["entry_min"] + min_m_offset, t["exit_min"], level, avg, strict)
+        out.append({**t, "rm": rm, "sip": sip, "eligible_bars": max(0, t["exit_min"] - 1 - t["entry_min"])})
+    return out, skips
+
+
+def score(datas: list[dict], level: float = RED, strict: bool = False, lag: int = 0, spread_of=None,
+          min_m_offset: int = 0) -> dict:
+    """lag=1 sells at m+2 (live latency, skeptic #5). spread_of(sym, ts) -> full SIP spread in bp or None;
+    red and control exits are charged half of it (a sell fills at the bid, skeptic #3)."""
+    rows, skips = prepare(datas, level, strict, min_m_offset)
+    fired = sum(1 for r in rows if r["rm"] is not None)
+    bars = sum(r["eligible_bars"] for r in rows)
+    p = fired / bars if bars else 0.0
+    res = {h: {"diff": defaultdict(list), "all": defaultdict(list), "fired": 0, "n": 0, "entry_bar": 0}
+           for h in "AB"}
+
+    def px(r, minute):
+        b = r["sip"].get(minute + lag)
+        if b is None:
+            return None
+        half = 0.0
+        if spread_of is not None:
+            ts = r["entry_ts"] + (minute + lag - r["entry_min"]) * 60.0
+            sp = spread_of(r["sym"], ts)
+            if sp is None:
+                skips["no_nbbo_at_exit"] += 1
+            else:
+                half = sp / 2e4
+        return b[0] * (1 - half)
+
+    for r in rows:
+        h = "A" if r["day"] <= L.SPLIT_END_A else "B"
+        base = r["exit_price"]
+        cm = hazard_exit_minute(r["sym"], r["day"], r["entry_min"], r["exit_min"], p)
+        red_px = px(r, r["rm"]) if r["rm"] is not None else base
+        ctl_px = px(r, cm) if cm is not None else base
+        if red_px is None or ctl_px is None:
+            skips["exit_bar_missing"] += 1
             continue
-        h = "A" if t["day"] <= L.SPLIT_END_A else "B"
         res[h]["n"] += 1
-        base = base_bar[3]
-        rm = red_exit_minute(rsi, t["entry_min"], t["exit_min"], level, avg, strict)
-        if rm is None or sip.get(rm) is None:
-            res[h]["all"][t["day"]].append(0.0)
-            continue
-        cm = control_exit_minute(t["sym"], t["day"], t["entry_min"], t["exit_min"])
-        if cm is None or sip.get(cm) is None:
-            skips["no_control_bar"] += 1
-            res[h]["all"][t["day"]].append(0.0)
-            continue
-        red_l, ctl_l = sip[rm][0] / base - 1, sip[cm][0] / base - 1
-        res[h]["fired"] += 1
-        res[h]["red"][t["day"]].append(red_l - ctl_l)
-        res[h]["ctl"][t["day"]].append(ctl_l)
-        res[h]["all"][t["day"]].append(red_l)
-    out = {}
+        if r["rm"] is not None:
+            res[h]["fired"] += 1
+            res[h]["entry_bar"] += r["rm"] == r["entry_min"] + 1
+        res[h]["diff"][r["day"]].append(red_px / base - ctl_px / base)
+        res[h]["all"][r["day"]].append(red_px / base - 1)
+    out = {"p_fire_per_bar": p, "skips": dict(skips)}
     for h, x in res.items():
-        vs, vs_t, _n, nd = E.day_equal(x["red"])
+        d, d_t, _n, nd = E.day_equal(x["diff"])
         al, al_t, _, _ = E.day_equal(x["all"])
-        ok_n = x["fired"] >= MIN_FIRED and nd >= MIN_DAYS
-        verdict = ("UNDERPOWERED" if not ok_n or None in (vs, vs_t, al) else
-                   "PASS" if vs >= LIFT_BAR and vs_t >= 2.0 and al > 0 else "FAIL")
-        out[h] = {"vs_control": vs, "vs_t": vs_t, "all_trades": al, "all_t": al_t, "fired": x["fired"],
-                  "trades": x["n"], "days": nd, "control_alone": E.day_equal(x["ctl"])[0], "verdict": verdict}
-    out["skips"] = dict(skips)
+        ok = x["fired"] >= MIN_FIRED and nd >= MIN_DAYS and None not in (d, d_t, al)
+        verdict = ("UNDERPOWERED" if not ok else
+                   "PASS" if d >= LIFT_BAR and d_t >= 2.0 and al > 0 else "FAIL")
+        out[h] = {"vs_hazard": d, "vs_t": d_t, "all_trades": al, "all_t": al_t, "fired": x["fired"],
+                  "trades": x["n"], "days": nd, "entry_bar_share": (x["entry_bar"] / x["fired"]) if x["fired"] else None,
+                  "verdict": verdict}
     return out
 
 
@@ -165,22 +208,30 @@ def main() -> None:
     if not a.score:
         print("(inventory only; --score after a result-skeptic READY)")
         return
-    L_ = ["# RSI-2 red as an exit (RSI-2 > 90 on a completed IEX bar, sell next SIP open)", "",
-          "| half | trades | red fired first | red - random early exit, per fired trade (t) | per trade, all (t) | random early exit alone | verdict |",
+    import replay_costing as RC
+    cache, box = RC.load_cache(), {}
+    spread_of = lambda sym, ts: RC.entry_spread_bp(cache, sym, ts, box)  # noqa: E731
+    L_ = ["# RSI-2 red as an exit (RSI-2 > 90 on a completed IEX bar, sell next SIP open less half the SIP spread)", "",
+          "| half | eligible trades | red fired | fired on the entry bar | red - hazard-matched random exit, per eligible trade (t) | red vs desk fill, per trade (t) | verdict |",
           "|---|---:|---:|---:|---:|---:|---|"]
-    r = score(datas)
+    r = score(datas, spread_of=spread_of)
     for h in "AB":
         x = r[h]
-        L_.append(f"| {h} | {x['trades']} | {x['fired']} | {_bp(x['vs_control'])} ({x['vs_t'] and round(x['vs_t'], 2)}) "
-                  f"| {_bp(x['all_trades'])} ({x['all_t'] and round(x['all_t'], 2)}) | {_bp(x['control_alone'])} | {x['verdict']} |")
+        eb = "—" if x["entry_bar_share"] is None else f"{x['entry_bar_share']:.0%}"
+        L_.append(f"| {h} | {x['trades']} | {x['fired']} | {eb} | {_bp(x['vs_hazard'])} ({x['vs_t'] and round(x['vs_t'], 2)}) "
+                  f"| {_bp(x['all_trades'])} ({x['all_t'] and round(x['all_t'], 2)}) | {x['verdict']} |")
     vs = [r[h]["verdict"] for h in "AB"]
     L_ += ["", f"**Red exit: {'PASS' if all(v == 'PASS' for v in vs) else 'FAIL' if 'FAIL' in vs else 'UNDERPOWERED'}**",
-           f"skips {r['skips']}", "", "Information:"]
-    for lvl in INFO_LEVELS:
-        x = score(datas, lvl)
-        L_.append(f"- RSI-2 > {lvl:.0f}: " + "; ".join(f"{h} vs random {_bp(x[h]['vs_control'])}, all {_bp(x[h]['all_trades'])}, fired {x[h]['fired']}" for h in "AB"))
-    x = score(datas, RED, strict=True)
-    L_.append("- panel-strict red (also close < SMA200 and > SMA5): " + "; ".join(f"{h} vs random {_bp(x[h]['vs_control'])}, fired {x[h]['fired']}" for h in "AB"))
+           f"red fire rate per eligible bar {r['p_fire_per_bar']:.3f}; skips {r['skips']}", "", "Information:"]
+    for lbl, kw in (("sell one minute later (m+2, live latency)", {"lag": 1}),
+                    ("red only from the bar after the entry bar", {"min_m_offset": 1}),
+                    ("no spread charge (SIP open)", {"spread_of": None}),
+                    ("RSI-2 > 80", {"level": 80.0}), ("RSI-2 > 95", {"level": 95.0}),
+                    ("panel-strict red (also < SMA200, > SMA5)", {"strict": True})):
+        kw = {"spread_of": spread_of, **kw}
+        x = score(datas, **kw)
+        L_.append(f"- {lbl}: " + "; ".join(f"{h} vs hazard {_bp(x[h]['vs_hazard'])} (t {x[h]['vs_t'] and round(x[h]['vs_t'], 2)}), vs fill {_bp(x[h]['all_trades'])}, fired {x[h]['fired']}" for h in "AB"))
+    RC.save_cache(cache)
     out = "\n".join(L_)
     print(out)
     with open(os.path.join(E.OUT_DIR, "rsi2_red_exit_result.md"), "w") as f:

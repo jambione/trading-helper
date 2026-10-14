@@ -23,3 +23,10 @@ def test_control_is_inside_the_hold_and_seeded():
     a = R.control_exit_minute("X", "2026-10-01", 600, 610)
     assert 601 <= a <= 609 and a == R.control_exit_minute("X", "2026-10-01", 600, 610)
     assert R.control_exit_minute("X", "2026-10-01", 600, 601) is None
+
+
+def test_hazard_control_is_seeded_and_respects_the_hold():
+    a = R.hazard_exit_minute("X", "2026-10-01", 600, 610, 0.5)
+    assert a == R.hazard_exit_minute("X", "2026-10-01", 600, 610, 0.5) and (a is None or 601 <= a <= 609)
+    assert R.hazard_exit_minute("X", "2026-10-01", 600, 610, 0.0) is None
+    assert R.hazard_exit_minute("X", "2026-10-01", 600, 610, 1.0) == 601
