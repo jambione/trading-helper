@@ -162,7 +162,7 @@ def sources(day: str) -> dict[str, str]:
     return src
 
 
-def fetch_daily(syms: list[str], start: str, end: str) -> dict:
+def fetch_daily(syms: list[str], start: str, end: str, errors: list | None = None) -> dict:
     import bars
     import pandas as pd
     from alpaca.data.enums import Adjustment, DataFeed
@@ -194,6 +194,8 @@ def fetch_daily(syms: list[str], start: str, end: str) -> dict:
                 print(f"  daily try {attempt}: {str(e)[:80]}", file=sys.stderr)
                 time.sleep(5 * (attempt + 1))
                 df = None
+        if df is None and chunk and errors is not None:
+            errors.append(("daily", len(chunk)))       # every try failed
         if df is None or df.empty:
             continue
         if not isinstance(df.index, pd.MultiIndex):

@@ -273,7 +273,7 @@ def ledger_days() -> list[str]:
                   if f.endswith(".jsonl") and len(f) == 16)
 
 
-def _fetch_feed(cl, syms: list[str], day: str, feed: str) -> dict:
+def _fetch_feed(cl, syms: list[str], day: str, feed: str, errors: list | None = None) -> dict:
     import pandas as pd
     from alpaca.data.enums import DataFeed
     from alpaca.data.requests import StockBarsRequest
@@ -305,6 +305,8 @@ def _fetch_feed(cl, syms: list[str], day: str, feed: str) -> dict:
                     continue
                 print(f"  {day} {feed} try {attempt}: {msg[:80]}", file=sys.stderr)
                 time.sleep(5 * (attempt + 1))
+        if df is None and chunk and errors is not None:
+            errors.append((day, feed, len(chunk)))      # every try failed: caller must not cache
         if df is not None and not df.empty:
             if not isinstance(df.index, pd.MultiIndex):
                 df = pd.concat({chunk[0]: df}, names=["symbol"])

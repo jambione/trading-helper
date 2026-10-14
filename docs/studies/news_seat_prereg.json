@@ -1,0 +1,43 @@
+{
+  "study": "News-triggered seating: when a fresh single-symbol headline lands during the session and the price confirms it within the first minute, does buying at the next tradable minute earn more than the spread over the following 10 minutes?",
+  "registered_at": "2026-10-14 ~04:40 ET, before any price around a headline was fetched. The only data seen: one 2026-10-08 probe of headline counts, symbols-per-article and timestamps (no prices).",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-14 after the board-name gates failed: name discovery is the bottleneck (names reach the board after their move; pre-seed minutes +37 bp gross, MOMENTUM_RUNWAY_2026-09-27.md). Seat a name when its news lands, before the move reaches the movers lists. Plan: docs/PLAN_2026-10-14.md stage 1 idea 1.",
+  "prior": "Weak and mixed. Daily-context: above-50-day + news drifted up (memory). Catalyst screen 8/22 asked a different question (did a headline exist before an admission). Earnings drift (multi-day) UNDERPOWERED with recent years negative. The main risk is speed: a free Benzinga feed via Alpaca may arrive after fast traders have priced the headline, which is why the entry waits 2 minutes and the pre-headline drift is reported.",
+  "events": {
+    "source": "Alpaca news REST /v1beta1/news (Benzinga), every article with created_at from 04:00 to 15:30 ET on each weekday 2026-07-01..2026-10-13. Premarket articles count only for freshness.",
+    "eligible": "created_at in [09:45:00, 15:20:00) ET; exactly one tagged symbol matching ^[A-Z]{1,5}$; no other article tagging that symbol in the 60 minutes before created_at (fresh news; also acts as a 60-minute refractory).",
+    "minutes": "t0 = the ET minute containing created_at. pre = SIP close of minute t0-1. Entry minute e = t0+2 (at least 60 s after publication, for receipt and decision). react = SIP close of minute e-1 / pre - 1.",
+    "liquidity": "pre >= $10, and mean daily dollar volume over the 20 prior sessions >= $10M (Alpaca SIP daily bars, split-adjusted; minute prices are raw, so on a split day the ADV gate uses the adjusted series and the $10 floor uses the raw pre price). Unknown inputs exclude the event and are counted."
+  },
+  "rule": {
+    "NEWS_UP": "Graded on the IEX reaction (what the desk can compute live; SIP is 15-minute delayed): react_iex = last IEX close in the minute e-1 (or t0) vs the last IEX close at or before t0-1 (within 15 minutes) - 1 >= +0.20%. Long at the SIP open of minute e. The SIP-reaction version is information only."
+  },
+  "outcome": "Gross 10-minute markout: SIP close of minute e+9 / SIP open of minute e - 1 (early_entry_honest.markout; exit bar before 16:00). Missing bars drop the event (counted).",
+  "cost": "10 bp round trip subtracted. News names may be wider than tight-source names; a 20 bp line is information.",
+  "statistic": "net = gross - 10 bp per event. Day-equal mean (mean of per-session means) and day-clustered t.",
+  "split": "Sessions with at least one scored NEWS_UP event, sorted; index (n-1)//2 ends half A. Printed with counts before any return.",
+  "pass": "NEWS_UP PASSES only if in BOTH halves: day-equal net at 10 bp > 0 with day-clustered t >= 2.0, AND day-equal net at 20 bp > 0, >= 100 scored events, >= 20 sessions with an event. Short of events or sessions = UNDERPOWERED. Any FAIL half = FAIL. One graded rule.",
+  "information_only": [
+    "lift vs a later same-name minute (entry+1..+60, the calibrated control) and vs a random other eligible-liquidity symbol's minute at the same e (cross-section)",
+    "all fresh eligible headlines with no reaction filter; NEWS_DOWN (react <= -0.20%) long and its sign flipped (short side, no borrow cost)",
+    "pre-headline drift: pre / SIP close of minute t0-11 - 1 (did price move before the timestamp?)",
+    "entry latency e = t0+1 and t0+5 instead of t0+2",
+    "30-minute markout; runway: best SIP close within 30 minutes of entry, and share reaching +0.5% / +1% before -0.5%",
+    "headline type: analyst action (initiat|reiterat|maintain|price target|upgrade|downgrade|rating) vs other; news_feed.BULLISH / BEARISH regex",
+    "time of day by hour; price >= $30",
+    "net at 20 bp",
+    "NEWS_UP on the SIP reaction (not computable live)",
+    "reaction articles written after the move (why is|shares are trading|moving|stocks moving|trading higher/lower) vs the rest",
+    "NEWS_UP minus SPY same-minute 10m markout (beta check)",
+    "entry at t0+1 is labelled unrealistic (as little as 1 s after publication)",
+    "the cross-sectional control draws only from other same-day news symbols"
+  ],
+  "no_retuning": "The 09:45-15:20 window, single symbol, 60-minute freshness, t0+2 entry, +0.20% reaction, $10 / $10M, 10-minute hold and 10 bp are fixed. Other values are information lines or a new prereg.",
+  "if_pass": "Provisional on three things: (1) >= 10 forward sessions after 2026-10-13 at the same bar; (2) a forward receipt log (tools/news_latency_logger.py or a REST poll) showing p90 (received - created_at) under 60 s, because the archive's created_at and symbol tags cannot be verified historically; (3) live use needs an all-symbols news feed - news_feed.refresh polls only watchlist names. Then a result-skeptic review of the positive.",
+  "if_fail": "Headline-minute seating on the free feed is closed as a standalone entry. Information lines (pre-drift, latency, headline type) decide whether a different news use is worth a prereg.",
+  "fetch_discipline": "The live desk shares the Alpaca data budget. The fetch runs at <= 20 requests per minute, backs off 30 s on HTTP 429, and pauses itself from 09:15 to 16:15 ET. 10/14 04:30: the desk alone was exhausting the 200/min budget in premarket (dashboard L2 auto-watch ~150 req/min); the headline fetch was stopped and resumes after the close.",
+  "script": "tools/studies/news_seat_study.py: --fetch-news, --fetch-bars (mini), default inventory with no returns, --score after a result-skeptic READY.",
+  "data_integrity": "A day whose minute-bar fetch logged any failed chunk is not cached (rerun resumes); failed daily-bar chunks block the daily cache. Inventory lists weekdays without news and days without bars. Scoring aborts if events without bars or ADV exceed 5% of eligible events. Same-second duplicate articles on a symbol count once.",
+  "amended": "2026-10-14 before any price around a headline was fetched, after result-skeptic FIX FIRST: graded trigger moved to the IEX reaction; if_pass needs a forward latency log and an all-symbols feed; fetches no longer cache partial days; abort above 5% missing; same-second duplicates fixed; pass also needs net > 0 at 20 bp; reaction-article, SPY and labelled-control information lines."
+}
