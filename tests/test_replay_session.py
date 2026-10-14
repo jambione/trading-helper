@@ -346,3 +346,15 @@ def test_replay_rsi_dump_fires_on_a_30_point_drop_from_the_band():
     p2 = b2.open["AAA"]
     for t, pr in ((T0 + 10, -8.0), (T0 + 30, -40.0), (T0 + 32, -41.0)):
         assert b2._live_exit(p2, 100.1, t, dash(pr), off, None) is None
+
+
+def test_set_json_pins_every_key_then_set_wins(tmp_path):
+    """--set-json loads a whole config as overrides; --set still applies on top."""
+    p = tmp_path / "cfg.json"
+    p.write_text('{"ai_watch_min_price": 10.0, "ai_no_progress_sec": 180.0, "ai_x": [1, 2]}')
+    args = rp.parse_args(["--day", "2026-10-13", "--set-json", str(p), "--set", "ai_no_progress_sec=60"])
+    ov = rp.parse_overrides(args)
+    assert ov == {"ai_watch_min_price": 10.0, "ai_no_progress_sec": 60, "ai_x": [1, 2]}
+    assert rp.set_json_digest(args) and len(rp.set_json_digest(args)) == 16
+    assert "--set-json" in rp.absolutize_argv(["--set-json", "cfg.json"], cwd=tmp_path)
+    assert str(tmp_path / "cfg.json") in rp.absolutize_argv(["--set-json", "cfg.json"], cwd=tmp_path)

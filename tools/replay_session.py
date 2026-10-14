@@ -99,6 +99,9 @@ def parse_args(argv=None):
     ap.add_argument("--sha", default="HEAD", help="code to replay (commit-ish)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                     help="config override (JSON value or string), repeatable")
+    ap.add_argument("--set-json", default=None, metavar="FILE",
+                    help="a JSON object of config overrides (e.g. a whole bot_config.json), applied "
+                         "before --set; pins every key, not only the ones named")
     ap.add_argument("--exits", choices=("live", "hold"), default="live")
     ap.add_argument("--hold-min", type=float, default=7.0, help="with --exits hold")
     ap.add_argument("--synth-warmup", type=float, default=30.0)
@@ -305,7 +308,8 @@ def live_segments(day: str, snap_dir: Path, start: str = "09:30",
 
 
 def absolutize_argv(argv: list[str], keys=("--universe", "--synthetic-universe", "--config-file",
-                                            "--config-stream", "--out", "--snapshots", "--sessions"),
+                                            "--config-stream", "--out", "--snapshots", "--sessions",
+                                            "--set-json"),
                     cwd: Path | None = None) -> list[str]:
     """Path arguments made absolute: stage 2 runs with cwd = the code export. Pure."""
     cwd = cwd or Path.cwd()
@@ -979,6 +983,33 @@ class FakeBroker:
 
 RANGE_KEYS = ("range_s_btm", "range_r_btm", "range_sup_pct", "range_room_pct", "range_ob_known_ts",
               "range_ob_bar_age_sec", "range_pctr", "range_pctr_prev")
+
+
+def parse_overrides(args) -> dict:
+    """--set-json (a whole JSON object) first, then each --set KEY=VALUE on top."""
+    overrides: dict = {}
+    path = getattr(args, "set_json", None)
+    if path:
+        with open(path, encoding="utf-8") as f:
+            loaded = json.load(f)
+        if not isinstance(loaded, dict):
+            raise SystemExit(f"--set-json {path}: not a JSON object")
+        overrides.update(loaded)
+    for kv in args.set:
+        k, _, v = kv.partition("=")
+        try:
+            overrides[k] = json.loads(v)
+        except ValueError:
+            overrides[k] = v
+    return overrides
+
+
+def set_json_digest(args) -> str | None:
+    path = getattr(args, "set_json", None)
+    if not path:
+        return None
+    import hashlib
+    return hashlib.sha256(open(path, "rb").read()).hexdigest()[:16]
 
 
 def range_fields(decision) -> dict:
@@ -1771,13 +1802,7 @@ def run_inside(args) -> int:
     _, cfg_rec = rec.get("config/bot_config.json")
     if cfg_rec is None:
         cfg_rec = json.loads((root / "config" / "bot_config.json").read_text())
-    overrides = {}
-    for kv in args.set:
-        k, _, v = kv.partition("=")
-        try:
-            overrides[k] = json.loads(v)
-        except ValueError:
-            overrides[k] = v
+    overrides = parse_overrides(args)
 
     def write_config(base: dict) -> None:
         (root / "config" / "bot_config.json").write_text(
@@ -2249,7 +2274,8 @@ def report(args, slots, broker, blocked, wall0) -> None:
         print(f"blocked network: {dict(sorted(blocked.items(), key=lambda kv: -kv[1]))}")
     print(f"wall time {_real_time.time() - wall0:.0f}s")
     out = {"day": args.day, "start": args.start, "end": args.end, "sha": os.getenv("REPLAY_SHA"),
-           "overrides": args.set, "hold_min": args.hold_min,
+           "overrides": args.set, "set_json": getattr(args, "set_json", None),
+           "set_json_sha": set_json_digest(args), "hold_min": args.hold_min,
            "closed": broker.closed, "open_at_end": list(broker.open.values()),
            "slots": {str(k): {kk: (avg(v) if isinstance(v, list) else v)
                               for kk, v in s.items()} for k, s in slots.items()},
@@ -2468,13 +2494,7 @@ def run_exact(args) -> int:
           f"({len(dirs)} recorded day(s)), "
           f"{len(events)} recorded passes to {args.end}, {len(cfgs)} config versions")
 
-    overrides = {}
-    for kv in args.set:
-        k, _, v = kv.partition("=")
-        try:
-            overrides[k] = json.loads(v)
-        except ValueError:
-            overrides[k] = v
+    overrides = parse_overrides(args)
     cfg_on = {"i": -1}
 
     def follow_config(t: float) -> None:

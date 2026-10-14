@@ -343,3 +343,26 @@ def test_exh_seat_class_counts():
     assert c["n_pre_square"] == 1
     assert c["n_far"] == 2
     assert c["n_seats"] == 4
+
+
+def test_exh_falling_seat_stays_when_the_switch_is_off(monkeypatch):
+    """SEAT_RETENTION_DESIGN_2026-10-14 option 1: exh_falling is not a dead block when switched off."""
+    dropped = []
+    monkeypatch.setattr(ew, "drop_watch_symbols", lambda s: dropped.extend(s))
+    now = time.time()
+
+    def falling():
+        return {"symbol": "EQNR", "status": "watching", "admit_ts": now - 400.0,
+                "exh_seat_class": "far", "indicator": _ind(fast=-60.0, slow=-55.0),
+                "block_code": "exh_falling", "dead_unknown_since": now - 60.0}
+    on = _cfg(ai_watch_dead_seat_evict_sec=30.0)
+    assert ew._maybe_dead_unknown_evict(falling(), sym="EQNR", cfg=on, now=now,
+                                        events=[], cp=_FakeCP(), gt=_FakeGT()) is True
+    off = _cfg(ai_watch_dead_seat_evict_sec=30.0, ai_watch_dead_evict_exh_falling=False)
+    rec = falling()
+    assert ew._maybe_dead_unknown_evict(rec, sym="EQNR", cfg=off, now=now,
+                                        events=[], cp=_FakeCP(), gt=_FakeGT()) is False
+    assert dropped == ["EQNR"]                      # only the switched-on call evicted
+    stale = dict(falling(), block_code="stale_quote")
+    assert ew._maybe_dead_unknown_evict(stale, sym="EQNR", cfg=off, now=now,
+                                        events=[], cp=_FakeCP(), gt=_FakeGT()) is True   # other dead blocks unchanged

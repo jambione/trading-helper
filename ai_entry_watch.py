@@ -3678,6 +3678,10 @@ def _maybe_dead_unknown_evict(
 
     code = str(rec.get("block_code") or "").strip().lower()
     dead_block = code in _DEAD_UNKNOWN_BLOCKS
+    # Option 1 of SEAT_RETENTION_DESIGN_2026-10-14: a falling %R is a reason
+    # not to buy now, not to leave the board (default keeps the old eviction).
+    if code == "exh_falling" and not bool(cfg.get("ai_watch_dead_evict_exh_falling", True)):
+        dead_block = False
     # One price, one clock: a lagging row label beside a young live_print
     # must not start the dead-seat timer (CDNA). Re-stamp before judging.
     if dead_block and code in ("stale_quote", "stale_tape", "no_quote", "no_quote_age"):

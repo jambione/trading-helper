@@ -1,0 +1,21 @@
+{
+  "study": "Keep falling seats: if a seat whose %R is falling is no longer evicted after 30 s (it stays on the board, the arm still refuses it), does the book open more trades without worse trades?",
+  "registered_at": "2026-10-14 ~06:00 ET, before any replay with this switch ran.",
+  "registered_before_results": true,
+  "origin": "docs/SEAT_RETENTION_DESIGN_2026-10-14.md option 1. Drops are mostly dead_unknown evictions (272 of 342 on 10/13, 1,370 of 2,069 on 10/12); on 10/12, 747 of those were exh_falling. The same names cycle all day (EQNR, TTE 77 evictions each on 10/12). A name evicted on a dip re-seats only after it rises, then must rebuild before it can arm: a mechanism for the late entries the operator sees.",
+  "prior": "Untested. Keeping a seat cannot change the arm rule, so any gain is opens (the seat is warm when %R turns) and earlier arms; trades could also be worse if warm seats arm on weaker turns.",
+  "arm": "keepfall: the np180 control config (full 73217e4 bot_config pinned via --set-json, no-progress 180 s) plus ai_watch_dead_evict_exh_falling=false (new switch in ai_entry_watch._maybe_dead_unknown_evict; default True = today's behaviour). Control = np180 of the same batch.",
+  "data": "Same ten recorded sessions, halves and run discipline as no_green_scratch_prereg.json.",
+  "statistic": "Per day: opens per 10 minutes (entries, closed + open at end), mean gross per closed trade, closed-trade count; arm minus control. Day-equal means and day-clustered t over 10 days.",
+  "pass": "PASS only if: (a) opens per 10 min higher, day-equal diff > 0 with t >= 2.0 and arm/control >= 1.10; AND (b) per-trade gross not worse: day-equal diff >= -1.0 bp in each half (non-inferiority, the busy-book goal). Fewer than 50 closed trades per arm per half = UNDERPOWERED.",
+  "information_only": [
+    "day total gross, and charged at 10 bp and 3 bp per round trip (more trades pay more spread)",
+    "avg book size and concurrency per arm",
+    "exit-reason counts; win rate"
+  ],
+  "caveats": "Replay fills at the recorded dashboard price (can be stale), starts at 09:30 with an empty book (premarket seating not replayed), and is gross. Fidelity ~0.7 recall (10/13).",
+  "no_retuning": "One switch, ten days, the bar above.",
+  "if_pass": "Operator decides; switch on live, read >= 10 sessions against the replay (opens, minutes from turn to arm).",
+  "if_fail": "Keep evicting on exh_falling; try design option 2 (longer clock for feed-state blocks).",
+  "script": "scripts/no_green_scratch_replays.sh (keepfall arm); scorer tools/studies/no_green_scratch_score.py."
+}

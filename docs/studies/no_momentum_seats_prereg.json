@@ -1,0 +1,22 @@
+{
+  "study": "Momentum seats: if the momentum source stops seating names, do the freed slots go to names that trade better, without fewer opens?",
+  "registered_at": "2026-10-14 ~05:25 ET, before any replay with this arm ran.",
+  "registered_before_results": true,
+  "origin": "docs/PLAN_2026-10-14.md queue item 5. BOARD_NAMES_2026-10-14.md (information line): momentum-sourced board names faded most in both halves (-36 / -26 bp per 10 min, 83 name-days); lifetime momentum trades -0.066 R (t -4.3) through 9/15 (memory loss-concentrates-in-the-momentum-source). Since the $10 floor (9/29) momentum names rarely trade but still take seats.",
+  "prior": "The board-minute line is information from a FAILED study and cannot be promoted on its own; this is its own test. The effect, if any, is capacity: seats freed for other sources.",
+  "arm": "nomom: the np180 control config (whole 73217e4 bot_config pinned via --set-json, no-progress 180 s; see no_green_scratch_prereg.json) plus ai_watch_seed_momentum=false, ai_watch_seed_momentum_open=false, ai_watch_soft_seed_momentum=false. Everything else identical. Control = the np180 runs of the same batch.",
+  "data": "Same ten recorded sessions and halves as no_green_scratch_prereg.json (A = 09-30..10-06, B = 10-07..10-13). Same code sha, run discipline, INCOMPLETE rule and fresh batch directory as no_green_scratch_prereg.json.",
+  "statistic": "Unpaired (the book differs): per day, mean gross per closed trade, arm minus control; day-equal mean and day-clustered t over 10 days. Also per day: total charged at 10 bp per round trip (3 bp sensitivity), and entries per 10 minutes (closed plus open at end).",
+  "pass": "PASS only if: per-trade day-equal diff > 0 with t >= 2.0, AND > 0 in each half, AND charged (10 bp) day total >= control on >= 6 of 10 days, AND opens per 10 min >= 90% of control (the busy-book goal: dropping a source must not thin the book). Fewer than 50 closed trades per arm per half = UNDERPOWERED.",
+  "information_only": [
+    "closed trades by source per arm",
+    "board size (avg book) per arm",
+    "win rate per arm"
+  ],
+  "caveats": "Replay re-decides seating from the recorded source lists, so the arm sees exactly what live could have seated. Gross, no spread: more trades in the arm would pay more spread in reality (reported via opens).",
+  "no_retuning": "The three switches, the 10 days and the bar are fixed.",
+  "if_pass": "Operator decides; then live forward read >= 10 sessions.",
+  "if_fail": "Keep momentum seating. If opens fall by more than 10%, momentum seats are part of what keeps the book full even though they fade.",
+  "script": "scripts/no_green_scratch_replays.sh (adds the nomom arm per day); scorer tools/studies/no_green_scratch_score.py --nomom section.",
+  "amended": "2026-10-14 before any run: whole-config pin, charged day totals, INCOMPLETE rule, opens include open positions (same round as no_green_scratch_prereg.json)."
+}
