@@ -34,11 +34,6 @@ DEFAULTS = {
     # max simultaneously monitored symbols (each runs its own engine task)
     "max_engines": 12,
 
-    # keep an engine running for every momentum ticker (newest first,
-    # capped by max_engines) so the list shows stances and monitors open warm
-    "auto_watch": True,
-    "auto_watch_interval": 15,
-
     # alpaca provider: same env keys as alpaca_trader
     "alpaca_api_key": "",
     "alpaca_secret_key": "",
