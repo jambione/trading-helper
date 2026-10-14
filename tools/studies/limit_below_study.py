@@ -125,7 +125,7 @@ def signals(datas: list[dict]) -> list[dict]:
             sigs, _off = E.rule_fires(ser, board)["PRE"]
             for m in sigs:
                 out.append({"day": day, "sym": sym, "m": m, "bars": bars, "ref": iex_close.get(m),
-                            "board": board})
+                            "iex_close": iex_close, "board": board})
     return out
 
 
@@ -138,6 +138,7 @@ def score_cell(sigs: list[dict], k: float, n: int, cost_limit: float = COST, ref
         part = [s for s in sigs if (s["day"] <= SPLIT_END_A) == (h == "A")]
         fill_by, mkt_by, per_sig_by, fill_mins = defaultdict(list), defaultdict(list), defaultdict(list), Counter()
         same_by = defaultdict(list)
+        ctl_sip_fallback = 0
         unfilled_mkt, filled_mkt = [], []
         n_fill = n_drop = 0
         for s in part:
@@ -152,7 +153,14 @@ def score_cell(sigs: list[dict], k: float, n: int, cost_limit: float = COST, ref
             if mk is None:
                 continue
             mkt_by[s["day"]].append(mk - COST)
-            ref = None if (ref_mode == "sip" or control) else s.get("ref")
+            if control:
+                # Same reference type as the graded arm (skeptic round 2 #4a): the IEX close at the
+                # control's signal minute; the SIP close only when IEX has no bar there (counted).
+                ref = None if ref_mode == "sip" else s["iex_close"].get(m0)
+                if ref is None and ref_mode != "sip":
+                    ctl_sip_fallback += 1
+            else:
+                ref = None if ref_mode == "sip" else s.get("ref")
             if ref_mode == "iex" and not control and ref is None:
                 continue
             lt = limit_trade(s["bars"], m0, k, n, ref=ref, through=through)
@@ -183,7 +191,7 @@ def score_cell(sigs: list[dict], k: float, n: int, cost_limit: float = COST, ref
                      "days": nd, "dropped": n_drop,
                      "mkt_of_filled": statistics.fmean(filled_mkt) if filled_mkt else None,
                      "mkt_of_unfilled": statistics.fmean(unfilled_mkt) if unfilled_mkt else None,
-                     "fill_minute": dict(sorted(fill_mins.items())),
+                     "fill_minute": dict(sorted(fill_mins.items())), "ctl_sip_fallback": ctl_sip_fallback,
                      "verdict": half_verdict(mu, t, fn, n_fill, nd, fn_t)}
     return halves
 
@@ -217,7 +225,7 @@ def report(sigs: list[dict]) -> str:
           "", "### Information only", ""]
     ctl = score_cell(sigs, k, n, control=True)
     L.append("- CONTROL (same limit at a random later minute of the same name and day): " + "; ".join(
-        f"half {h} fill net {_bp(x['fill_net'])} (fill rate {_pct(x['fill_rate'])})" for h, x in ctl.items())
+        f"half {h} fill net {_bp(x['fill_net'])} (fill rate {_pct(x['fill_rate'])}, SIP-reference fallbacks {x['ctl_sip_fallback']})" for h, x in ctl.items())
         + " - if control fill net >= the signal's, the result is a fill-model artifact (forward test only)")
     for h, x in pc.items():
         L.append(f"- half {h}: limit fills exited at the MARKET arm's exit bar: {_bp(x['same_exit_net'])} (price gain over the same window)")
