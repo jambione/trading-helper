@@ -7,8 +7,8 @@ For every desk fill on the cached sessions (outcomes.jsonl, entry_path 'watch'),
 desk's own exit minute. Otherwise the trade keeps the desk's exit. Both exits are priced on SIP bars, so the
 entry cancels: lift = red exit / desk exit - 1 per trade (0 when red never fired first).
 
-Control: the same number of early exits at a random minute between entry and the desk's exit (seeded), so a
-pass is not just 'any earlier exit' (holding longer loses more on this book).
+Control: a hazard-matched random exit - at each bar offset after the entry it exits with red's own fire rate at
+that offset (bars at risk), so a pass is not just 'any earlier exit' (holding longer loses more on this book).
 
   (default)  inventory: trades, red fires; no returns
   --score    after a result-skeptic READY
@@ -100,14 +100,32 @@ def trades(datas: list[dict]) -> list[dict]:
     return out
 
 
-def hazard_exit_minute(sym: str, day: str, entry_min: int, exit_min: int, p: float) -> int | None:
-    """Hazard-matched null (skeptic #1): at each eligible bar m in [entry, exit-2], exit at m+1 with probability p
-    (red's pooled fire rate per eligible bar - a count, not a return)."""
-    rng = E._rng(sym, day, entry_min, "RED_HAZARD")
-    for m in range(entry_min, exit_min - 1):
-        if rng.random() < p:
+def _bin(k: int) -> int:
+    return min(k, 3)
+
+
+def hazard_exit_minute(sym: str, day: str, start_min: int, exit_min: int, p) -> int | None:
+    """Hazard-matched null: at each eligible bar m in [start, exit-2], exit at m+1 with red's fire rate at that
+    bar offset (p: {0, 1, 2, 3(+)} -> rate, or one float). Seeded per trade."""
+    rng = E._rng(sym, day, start_min, "RED_HAZARD")
+    for m in range(start_min, exit_min - 1):
+        pk = p.get(_bin(m - start_min), 0.0) if isinstance(p, dict) else float(p)
+        if rng.random() < pk:
             return m + 1
     return None
+
+
+def hazard_by_offset(rows: list[dict]) -> dict:
+    """Red's fire rate per bar offset over BARS AT RISK (skeptic round 2 #1a-b): a fired trade is at risk from its
+    start bar through the firing bar; one that never fired, through exit-2."""
+    risk, fire = Counter(), Counter()
+    for r in rows:
+        last = (r["rm"] - 1) if r["rm"] is not None else (r["exit_min"] - 2)
+        for m in range(r["start"], last + 1):
+            risk[_bin(m - r["start"])] += 1
+        if r["rm"] is not None:
+            fire[_bin(r["rm"] - 1 - r["start"])] += 1
+    return {k: (fire[k] / risk[k]) if risk[k] else 0.0 for k in range(4)}
 
 
 def prepare(datas: list[dict], level: float, strict: bool, min_m_offset: int = 0) -> tuple[list[dict], Counter]:
@@ -133,8 +151,12 @@ def prepare(datas: list[dict], level: float, strict: bool, min_m_offset: int = 0
                 skips["traded_name_without_prior_bars"] += 1
             cache[key] = (rsi_by_minute(prior, iex), L.ohlc_map(sipf))
         (rsi, avg), sip = cache[key]
-        rm = red_exit_minute(rsi, t["entry_min"] + min_m_offset, t["exit_min"], level, avg, strict)
-        out.append({**t, "rm": rm, "sip": sip, "eligible_bars": max(0, t["exit_min"] - 1 - t["entry_min"])})
+        start = t["entry_min"] + min_m_offset
+        if t["exit_min"] - start < 2:
+            skips["hold_under_2_minutes_after_offset"] += 1
+            continue
+        rm = red_exit_minute(rsi, start, t["exit_min"], level, avg, strict)
+        out.append({**t, "rm": rm, "sip": sip, "start": start})
     return out, skips
 
 
@@ -143,22 +165,23 @@ def score(datas: list[dict], level: float = RED, strict: bool = False, lag: int 
     """lag=1 sells at m+2 (live latency, skeptic #5). spread_of(sym, ts) -> full SIP spread in bp or None;
     red and control exits are charged half of it (a sell fills at the bid, skeptic #3)."""
     rows, skips = prepare(datas, level, strict, min_m_offset)
-    fired = sum(1 for r in rows if r["rm"] is not None)
-    bars = sum(r["eligible_bars"] for r in rows)
-    p = fired / bars if bars else 0.0
+    p = hazard_by_offset(rows)
+    nbbo = Counter()
     res = {h: {"diff": defaultdict(list), "all": defaultdict(list), "fired": 0, "n": 0, "entry_bar": 0}
            for h in "AB"}
 
-    def px(r, minute):
+    def px(r, minute, arm):
         b = r["sip"].get(minute + lag)
         if b is None:
             return None
         half = 0.0
         if spread_of is not None:
-            ts = r["entry_ts"] + (minute + lag - r["entry_min"]) * 60.0
+            # The exit minute's open + 1 s, not the entry's second-of-minute (skeptic round 2 #3).
+            ts = (r["entry_ts"] // 60) * 60 + (minute + lag - r["entry_min"]) * 60.0 + 1.0
             sp = spread_of(r["sym"], ts)
+            nbbo[arm + "_n"] += 1
             if sp is None:
-                skips["no_nbbo_at_exit"] += 1
+                nbbo[arm + "_missing"] += 1
             else:
                 half = sp / 2e4
         return b[0] * (1 - half)
@@ -166,9 +189,9 @@ def score(datas: list[dict], level: float = RED, strict: bool = False, lag: int 
     for r in rows:
         h = "A" if r["day"] <= L.SPLIT_END_A else "B"
         base = r["exit_price"]
-        cm = hazard_exit_minute(r["sym"], r["day"], r["entry_min"], r["exit_min"], p)
-        red_px = px(r, r["rm"]) if r["rm"] is not None else base
-        ctl_px = px(r, cm) if cm is not None else base
+        cm = hazard_exit_minute(r["sym"], r["day"], r["start"], r["exit_min"], p)
+        red_px = px(r, r["rm"], "red") if r["rm"] is not None else base
+        ctl_px = px(r, cm, "hazard") if cm is not None else base
         if red_px is None or ctl_px is None:
             skips["exit_bar_missing"] += 1
             continue
@@ -178,12 +201,14 @@ def score(datas: list[dict], level: float = RED, strict: bool = False, lag: int 
             res[h]["entry_bar"] += r["rm"] == r["entry_min"] + 1
         res[h]["diff"][r["day"]].append(red_px / base - ctl_px / base)
         res[h]["all"][r["day"]].append(red_px / base - 1)
-    out = {"p_fire_per_bar": p, "skips": dict(skips)}
+    miss = {a: (nbbo[a + "_missing"] / nbbo[a + "_n"]) if nbbo[a + "_n"] else 0.0 for a in ("red", "hazard")}
+    out = {"p_fire_per_bar": p, "skips": dict(skips), "nbbo_missing": miss,
+           "aborted": spread_of is not None and max(miss.values()) > 0.05}
     for h, x in res.items():
         d, d_t, _n, nd = E.day_equal(x["diff"])
         al, al_t, _, _ = E.day_equal(x["all"])
         ok = x["fired"] >= MIN_FIRED and nd >= MIN_DAYS and None not in (d, d_t, al)
-        verdict = ("UNDERPOWERED" if not ok else
+        verdict = ("NO VERDICT (NBBO missing > 5% in an arm)" if out["aborted"] else "UNDERPOWERED" if not ok else
                    "PASS" if d >= LIFT_BAR and d_t >= 2.0 and al > 0 else "FAIL")
         out[h] = {"vs_hazard": d, "vs_t": d_t, "all_trades": al, "all_t": al_t, "fired": x["fired"],
                   "trades": x["n"], "days": nd, "entry_bar_share": (x["entry_bar"] / x["fired"]) if x["fired"] else None,
@@ -222,7 +247,8 @@ def main() -> None:
                   f"| {_bp(x['all_trades'])} ({x['all_t'] and round(x['all_t'], 2)}) | {x['verdict']} |")
     vs = [r[h]["verdict"] for h in "AB"]
     L_ += ["", f"**Red exit: {'PASS' if all(v == 'PASS' for v in vs) else 'FAIL' if 'FAIL' in vs else 'UNDERPOWERED'}**",
-           f"red fire rate per eligible bar {r['p_fire_per_bar']:.3f}; skips {r['skips']}", "", "Information:"]
+           f"red fire rate by bar offset (bars at risk) {r['p_fire_per_bar']}; NBBO missing by arm {r['nbbo_missing']}; skips {r['skips']}",
+           "", "Information:"]
     for lbl, kw in (("sell one minute later (m+2, live latency)", {"lag": 1}),
                     ("red only from the bar after the entry bar", {"min_m_offset": 1}),
                     ("no spread charge (SIP open)", {"spread_of": None}),

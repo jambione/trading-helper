@@ -30,3 +30,11 @@ def test_hazard_control_is_seeded_and_respects_the_hold():
     assert a == R.hazard_exit_minute("X", "2026-10-01", 600, 610, 0.5) and (a is None or 601 <= a <= 609)
     assert R.hazard_exit_minute("X", "2026-10-01", 600, 610, 0.0) is None
     assert R.hazard_exit_minute("X", "2026-10-01", 600, 610, 1.0) == 601
+
+
+def test_hazard_uses_bars_at_risk_by_offset():
+    rows = [{"rm": 601, "start": 600, "exit_min": 610},     # fired on offset 0: one bar at risk
+            {"rm": None, "start": 600, "exit_min": 604}]    # never fired: offsets 0, 1, 2 at risk
+    h = R.hazard_by_offset(rows)
+    assert h[0] == 0.5 and h[1] == 0.0 and h[2] == 0.0
+    assert R.hazard_exit_minute("X", "d", 600, 610, {0: 1.0}) == 601
