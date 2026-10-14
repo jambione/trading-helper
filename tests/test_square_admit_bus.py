@@ -366,3 +366,23 @@ def test_exh_falling_seat_stays_when_the_switch_is_off(monkeypatch):
     stale = dict(falling(), block_code="stale_quote")
     assert ew._maybe_dead_unknown_evict(stale, sym="EQNR", cfg=off, now=now,
                                         events=[], cp=_FakeCP(), gt=_FakeGT()) is True   # other dead blocks unchanged
+
+
+def test_feed_state_blocks_get_their_own_longer_clock(monkeypatch):
+    """SEAT_RETENTION_DESIGN_2026-10-14 option 2: stale quote / no %R wait ai_watch_dead_feed_evict_sec."""
+    dropped = []
+    monkeypatch.setattr(ew, "drop_watch_symbols", lambda s: dropped.extend(s))
+    monkeypatch.setattr(ew, "promote_stream_src_if_print_fresh", lambda *a, **k: False)
+    now = time.time()
+
+    def rec(block, since):
+        return {"symbol": "VZ", "status": "watching", "admit_ts": now - 900.0, "exh_seat_class": "far",
+                "indicator": _ind(fast=-60.0, slow=-55.0), "block_code": block, "dead_unknown_since": now - since}
+    cfg = _cfg(ai_watch_dead_seat_evict_sec=30.0, ai_watch_dead_feed_evict_sec=180.0)
+
+    def evict(r, c):
+        return ew._maybe_dead_unknown_evict(r, sym="VZ", cfg=c, now=now, events=[], cp=_FakeCP(), gt=_FakeGT())
+    assert evict(rec("stale_quote", 60.0), cfg) is False      # 60 s < 180 s
+    assert evict(rec("stale_quote", 200.0), cfg) is True
+    assert evict(rec("exh_falling", 60.0), cfg) is True       # not a feed block: 30 s clock
+    assert evict(rec("stale_quote", 60.0), _cfg(ai_watch_dead_seat_evict_sec=30.0)) is True   # default unchanged

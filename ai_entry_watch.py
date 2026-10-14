@@ -3579,6 +3579,9 @@ _DEAD_UNKNOWN_BLOCKS = frozenset({
     "no_rsi_data", "no_exhaustion_data", "exh_falling",
 })
 
+# Feed / warm-up states among the dead blocks (SEAT_RETENTION_DESIGN option 2).
+_DEAD_FEED_BLOCKS = frozenset({"stale_quote", "stale_tape", "no_quote", "no_quote_age"})
+
 _PROTECTED_DEAD_CLASSES = frozenset({
     "square", "pre_square", "os_square", "os_triangle", "os_leave",
 })
@@ -3719,6 +3722,15 @@ def _maybe_dead_unknown_evict(
         else:
             since = float(now)
         rec["dead_unknown_since"] = float(since)
+    # Option 2 of SEAT_RETENTION_DESIGN_2026-10-14: feed / warm-up states (stale or
+    # missing quote, no %R yet) are data problems, not signals about the stock;
+    # give them their own, longer clock. 0 = same clock as every dead block.
+    try:
+        feed_limit = float(cfg.get("ai_watch_dead_feed_evict_sec", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        feed_limit = 0.0
+    if feed_limit > 0 and (code in _DEAD_FEED_BLOCKS or (missing_unknown and not dead_block)):
+        limit = max(limit, feed_limit)
     if (float(now) - float(since)) < limit:
         return False
 
