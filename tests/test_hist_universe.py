@@ -206,3 +206,15 @@ def test_score_day_window_and_traded():
     assert r["prec_any"] == 3 and r["prec_win"] == 2
     assert r["per_source"]["tight"]["late"] == 1
     assert math.isclose(r["uncovered_share"], 0.5)
+
+
+def test_score_day_excludes_levered_names_from_recorded_and_traded():
+    rec = {("2026-09-24", "AAA"): {"ts": 1000.0, "source": "movers"},
+           ("2026-09-24", "KORU"): {"ts": 1000.0, "source": "movers"}}
+    trades = {("2026-09-24", "KORU"): {"ts": 1100.0}}
+    admits = [{"symbol": "AAA", "first_ts": 1000.0, "source": "movers"}]
+    full = HU.score_day("2026-09-24", admits, rec, trades)
+    ex = HU.score_day("2026-09-24", admits, rec, trades, exclude={"KORU"})
+    assert full["covered_n"] == 2 and full["traded_n"] == 1
+    assert ex["covered_n"] == 1 and ex["covered_win"] == 1 and ex["traded_n"] == 0
+    assert ex["excluded_levered"] == ["KORU"]

@@ -1268,12 +1268,15 @@ def recorded_trades(lo, hi):
     return out
 
 
-def score_day(day, admits, rec, trades, *, window_min=10):
-    """Recall / precision of one reconstructed day against the recorded admit_range."""
+def score_day(day, admits, rec, trades, *, window_min=10, exclude=None):
+    """Recall / precision of one reconstructed day against the recorded admit_range.
+    `exclude`: symbols left out of both the recorded admits and trades (amended_4: names today's
+    filter rejects as levered ETPs that the then-live filter admitted - a code-version difference)."""
+    ex = set(exclude or ())
     recon = {a["symbol"]: a for a in admits}
-    rday = {s: r for (d, s), r in rec.items() if d == day}
-    tday = {s: t for (d, s), t in trades.items() if d == day}
-    res = {"day": day, "recorded": len(rday), "reconstructed": len(recon)}
+    rday = {s: r for (d, s), r in rec.items() if d == day and s not in ex}
+    tday = {s: t for (d, s), t in trades.items() if d == day and s not in ex}
+    res = {"day": day, "recorded": len(rday), "reconstructed": len(recon), "excluded_levered": sorted(ex)}
     by_src = Counter(r.get("source") for r in rday.values())
     res["recorded_by_source"] = dict(by_src)
     res["uncovered_share"] = round(sum(v for k, v in by_src.items() if k not in COVERED) / max(1, len(rday)), 3)
@@ -1326,11 +1329,25 @@ def cmd_check(span, *, knobs=None, use_cache=True, out_name="check"):
     rec = recorded_admits(lo, hi)
     trades = recorded_trades(lo, hi)
     rows = []
+    raw_rows, void = [], []
     for d in trading_days(lo, hi):
-        out, _ = build_day(d, cfg_mode="recorded", knobs=knobs, use_cache=use_cache, write=True, quiet=True)
-        r = score_day(d, out["admits"], rec, trades)
+        out, mk = build_day(d, cfg_mode="recorded", knobs=knobs, use_cache=use_cache, write=True, quiet=True)
+        day_syms = {s for (dd, s) in list(rec) + list(trades) if dd == d}
+        excl = {s for s in day_syms if is_levered(s, mk.names.get(s, ""))}
+        r = score_day(d, out["admits"], rec, trades, exclude=excl)
+        raw = score_day(d, out["admits"], rec, trades)
         r["universe_size"], r["failed"] = out["universe_size"], out["failed_fetch_names"]
+        r["spread_fetch_failures"] = len(mk._sq[2])
+        r["failed_fetch_share"] = out["failed_fetch_share"]
+        # amended_4 void criteria, declared before the read: only a void allows a rerun.
+        if r["covered_n"] <= 0:
+            void.append(f"{d}: no recorded movers/tight admissions")
+        if (r["failed_fetch_share"] or 0) > 0.10:
+            void.append(f"{d}: {r['failed_fetch_share']:.0%} of the universe failed to fetch")
+        if r["spread_fetch_failures"]:
+            void.append(f"{d}: {r['spread_fetch_failures']} spread lookups failed")
         rows.append(r)
+        raw_rows.append(raw)
         print(f"{d}: prereg recall {_pct(r['prereg_win'], r['prereg_n'])}% ({r['prereg_win']}/{r['prereg_n']}) "
               f"covered {_pct(r['covered_win'], r['covered_n'])}% traded {_pct(r['traded_win'], r['traded_n'])}% "
               f"({r['traded_win']}/{r['traded_n']}) prec {_pct(r['prec_win'], r['reconstructed'])}% "
@@ -1367,6 +1384,16 @@ def cmd_check(span, *, knobs=None, use_cache=True, out_name="check"):
         "movers_tight": (rep["pooled_pct"]["covered_recall"] or 0) >= 70.0,
         "traded_movers_tight_position_shadow": (rep["pooled_pct"]["traded_cov_recall"] or 0) >= 70.0,
     }
+    raw_p = {k: sum(r[k] for r in raw_rows) for k in ("covered_n", "covered_win", "traded_cov_n", "traded_cov_win")}
+    rep["pooled_pct_without_exclusion"] = {
+        "covered_recall": _pct(raw_p["covered_win"], raw_p["covered_n"]),
+        "traded_cov_recall": _pct(raw_p["traded_cov_win"], raw_p["traded_cov_n"]),
+    }
+    rep["excluded_levered"] = {r["day"]: r["excluded_levered"] for r in rows}
+    rep["void"] = void
+    rep["git_sha"] = os.popen(f"git -C {ROOT} rev-parse --short HEAD").read().strip()
+    if void:
+        rep["pass_pooled"] = {k: None for k in rep["pass_pooled"]}
     os.makedirs(OUT_DIR, exist_ok=True)
     json.dump(rep, open(os.path.join(OUT_DIR, f"{out_name}.json"), "w"), indent=1)
     print(json.dumps({"pooled_pct": rep["pooled_pct"], "pass_pooled": rep["pass_pooled"],
