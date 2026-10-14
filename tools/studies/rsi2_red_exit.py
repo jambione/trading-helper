@@ -235,6 +235,7 @@ def main() -> None:
         return
     import replay_costing as RC
     cache, box = RC.load_cache(), {}
+    known = set(cache)      # entries cached before this run; failed fetches this run (429s) are not saved as "no NBBO"
     spread_of = lambda sym, ts: RC.entry_spread_bp(cache, sym, ts, box)  # noqa: E731
     L_ = ["# RSI-2 red as an exit (RSI-2 > 90 on a completed IEX bar, sell next SIP open less half the SIP spread)", "",
           "| half | eligible trades | red fired | fired on the entry bar | red - hazard-matched random exit, per eligible trade (t) | red vs desk fill, per trade (t) | verdict |",
@@ -257,6 +258,8 @@ def main() -> None:
         kw = {"spread_of": spread_of, **kw}
         x = score(datas, **kw)
         L_.append(f"- {lbl}: " + "; ".join(f"{h} vs hazard {_bp(x[h]['vs_hazard'])} (t {x[h]['vs_t'] and round(x[h]['vs_t'], 2)}), vs fill {_bp(x[h]['all_trades'])}, fired {x[h]['fired']}" for h in "AB"))
+    for k in [k for k, v in cache.items() if v is None and k not in known]:
+        del cache[k]
     RC.save_cache(cache)
     out = "\n".join(L_)
     print(out)
