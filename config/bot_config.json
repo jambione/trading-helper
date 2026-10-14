@@ -200,6 +200,7 @@
   "ai_movers_premarket_scan": true,
   "ai_movers_premarket_feed": true,
   "ai_movers_scan_sec": 45.0,
+  "ai_movers_daily_bar_lag_min": 15.0,
   "ai_movers_scan_top": 25,
   "ai_movers_scan_min_rvol": 1.0,
   "ai_movers_scan_min_iex_dollars": 500000.0,
