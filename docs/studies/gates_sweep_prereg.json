@@ -1,0 +1,10 @@
+{
+  "study": "Admission gates that keep READY names out of the book. Operator 2026-10-14: 'should the book be more filled with names ready to open?'",
+  "registered_at": "2026-10-14 ~12:30 ET, before any replay of these arms.",
+  "finding_that_prompted_it": "The book server (live) already ranks seats by runway + 2.5 x closeness to a square. On 10/14 to 10:59 its top 12 held a ready name (closeness >= 0.5) 1,306 times; 971 of those were NOT seated. Rejections behind them: below_min_price (TCRT, TGL, GLND, FFAI - cheap names, floor kept on the loss evidence), above_max_price (TTWO 357, ALB 32; ai_max_price $100), stale_tape_admit / no_tape (GME 232 - a liquid name the IEX tape marks stale), spread_wide (BRKR, SE, BBWI, AEHL; swept separately), float_too_big (CVS; ai_watch_max_float_m 800M), gapped_down (AEHL, FFAI; kept: gap-down fades all day).",
+  "arms": {"base": "live (94f2576)", "px250": "ai_max_price and ai_movers_max_price 100 -> 250", "nofloat": "float cap 800M -> off", "tape300": "admit tape age 120 s (movers 60 s) -> 300 s", "allthree": "all three"},
+  "method": "scripts/gates_sweep.sh: replay_session.py on 2026-10-06..10-13 with the whole live config of 94f2576 pinned, after 16:15 ET and after the evening batch and the spread x RVOL sweep, <= 3 of its own, deadline 03:30.",
+  "metrics_and_pick": "tools/studies/spread_rvol_score.py --arms ... --refs base: opens/10m, concurrency, win %, net bp/trade, VALUE (sum net bp per day). Recommend an arm for live only if its paired per-day VALUE vs base is > 0 with t >= 2 and it is not worse on more than 1 of 6 days; an arm that adds opens at equal value (|t| < 2) is reported as 'busier, no evidence of cost' - the operator's call under busy-book-is-the-goal.",
+  "prior": "$100 cap came from volatile $100+ losers 9/14-23; float cap from the five-pillars/low-float work; the 15-60 s IEX staleness rule marks liquid names stale 16-63% of the time (iex-trade-gaps-are-not-staleness).",
+  "script": "scripts/gates_sweep.sh"
+}
