@@ -1,0 +1,38 @@
+{
+  "study": "Wait, and buy only if it held: when the pre-square fires at minute m, wait W minutes; buy at the SIP open of m+W+1 only if the price the desk sees (IEX 1-minute lows) never traded k bp below the signal's IEX close during m+1..m+W. The inverse of the limit-below entry.",
+  "registered_at": "2026-10-14 after the close, before any return of this rule was computed on any session.",
+  "registered_before_results": true,
+  "origin": "Limit-below FAIL (docs/studies/LIMIT_BELOW_2026-10-14.md): signals the 10 bp / 5 min limit did NOT fill earned +57.7 bp (half A) / -3.8 (half B) at market vs -65.6 / -22.6 for those that dipped. Those unfilled numbers include the gain during m+1..m+5, which a waiting entry forfeits, and they were seen on the same 26 sessions - so the idea is suggested by those sessions and cannot be graded on them.",
+  "prior": "Skeptical. Part of the unfilled +57.7 bp is the move this rule waits through. Every earlier timing rule matched random minutes (memory: entry-setups-are-noise-equivalent, wr-triggers-see-no-runway). Two things favour it: the separation was large in half A, and the rule removes the trades the dip predicts rather than picking a new entry point.",
+  "data": "tools/studies/early_entry_honest.py cache (ai_reports/early_entry_honest/<day>.pkl): board minutes from decision_ledger, IEX + SIP 1-minute OHLC. Forward sessions are fetched nightly by scripts/nightly.sh (16:40 ET, after the close; one line added 2026-10-14).",
+  "signal": "Every PRE fire as in early_entry_honest / limit_below_study (live pre-square on IEX 1-minute bars, on-board, 09:50-15:30, 15-minute refractory). Reference P = the IEX close of minute m. A signal with no IEX close at m is skipped (counted).",
+  "arms": {
+    "held": "Enter at the SIP open of m+W+1 only if every IEX 1-minute low in m+1..m+W is above P x (1 - k/10000). Missing IEX minutes are no dip (live sees nothing there either). Exit at the SIP close of entry+9 (10-minute hold), the last close carried over a missing bar; none past 16:00.",
+    "wait_all": "Enter at the SIP open of m+W+1 on EVERY signal, same exit. Separates the hold filter from the effect of entering later.",
+    "market": "Enter at the SIP open of m+1 on every signal (today's entry), early_entry_honest.markout."
+  },
+  "primary_cell": "W = 5 minutes, k = 10 bp (the exact complement of the limit-below primary cell).",
+  "cost": "10 bp round trip on every arm.",
+  "statistics": "Per day: held_net = mean net of held trades; wait_net, mkt_net = mean net over all signals. lift = held_net - wait_net; held - market = held_net - mkt_net. Day-equal means, day-clustered t (early_entry_honest.day_equal).",
+  "graded_read": "FORWARD only: sessions >= 2026-10-15 (none of them seen when this was written). One read at the 10th forward session with a usable cache (about 2026-10-28). If UNDERPOWERED there (and only then), one extension: re-read at the 20th. No other looks are graded; the nightly line prints NOT DUE until the 10th.",
+  "pass": "PASS only if: held_net > 0 with t >= 2.0, AND lift >= +5 bp with t >= 2.0, AND held - market >= 0 (not worse than today's entry), AND >= 60 held trades on >= 10 days. FAIL when any point estimate is on the wrong side (held_net <= 0, lift < +5 bp, or held - market < 0). Point estimates all passing but a t below 2, or too few held trades/days = UNDERPOWERED (no evidence either way; extension at 20 sessions; still UNDERPOWERED at 20 = no conclusion, not closed).",
+  "in_sample_kill": "A sanity floor, not a test (it will almost surely pass given half A's +57.7 bp non-dippers), on the 26 sessions 2026-09-08..10-13 (halves A to 09-24 / B), computed once after the result-skeptic READY: if the lift over wait_all is <= 0 in BOTH halves, the forward run is cancelled (the idea fails even on the days that suggested it). Any positive in-sample number is NOT evidence and is never quoted as such.",
+  "information_only": [
+    "control: the same rule at the harness's later-only random minute of the same name and day (early_entry_honest.control_minute, entry+1..+60), IEX close there as P. If the control's lift >= the signal's, the hold filter is a generic 'quiet five minutes' effect not tied to the signal: a pass then goes to a separate prereg, not to live. The read prints the control lift with its t and an explicit CONTROL >= SIGNAL flag.",
+    "SIP-low version of the hold check (not what live sees)",
+    "the grid W in {2, 5, 10} x k in {5, 10, 20}: kept share, held net, lift, held - market",
+    "kept share of signals (busy-book cost: the operator wants several opens; a rule that keeps 20% of signals is reported as such)",
+    "price >= $30 subset",
+    "skipped signals by reason",
+    "publication lag: held and wait_all entered at the SIP open of m+W+2 (IEX bar m+W lands seconds after m+W+1 opens); report whether lift keeps its sign",
+    "signals with an IEX bar in every wait minute only (missing minutes count as held, which favours thin names)",
+    "skip counts per call, not cumulative"
+  ],
+  "no_retuning": "W = 5, k = 10, the IEX-low check, the 10-minute hold, the 10 bp cost and the read dates are fixed. A different cell is a new prereg on later sessions.",
+  "if_pass": "Result-skeptic review of the positive, then a live paper A/B (confirm-after-wait as an arm option) with its own prereg.",
+  "if_fail": "Waiting for a hold is closed at these settings; the dip is not avoidable by waiting it out.",
+  "script": "tools/studies/wait_held_study.py (--in-sample, --score); tests/test_wait_held_study.py.",
+  "power": "In-sample: ~21.5 signals/session, held share 27% (half A) / 57% (half B): 10 forward sessions give ~60-120 held trades. Minimum detectable effect at 10 day clusters (skeptic estimate): held net and lift of roughly +25-30 bp for t 2; ~+18-20 bp at 20 sessions. Smaller true effects will read UNDERPOWERED.",
+  "read_context": "The read prints bot_config.json's last commit (RVOL option A floors go in the evening of 10/14, so the forward board is not the in-sample board) and each forward day's IEX/SIP miss rate (fetch_day caches partial fetches; days over 5% are excluded by load_days).",
+  "amended": "2026-10-14 before any score, after result-skeptic round 1 FIX FIRST: extension only after an UNDERPOWERED first read; t-only misses are UNDERPOWERED; power/MDE stated; publication-lag, full-coverage and per-call skip lines; control t and flag; kill renamed a sanity floor; config sha and miss rates in the read."
+}

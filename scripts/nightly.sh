@@ -23,6 +23,8 @@ if [[ "$d" > "2026-10-07" ]]; then
 fi
 .venv/bin/python tools/studies/tight_shadow.py $d > /tmp/nightly/tight_shadow-$d.log 2>&1
 .venv/bin/python tools/studies/ob_fills_daily.py $d > /tmp/nightly/ob_fills-$d.log 2>&1
+.venv/bin/python tools/studies/early_entry_honest.py --fetch --days $d > /tmp/nightly/eeh_fetch-$d.log 2>&1   # bar cache for wait_held_prereg.json (forward from 10/15)
+.venv/bin/python tools/studies/wait_held_study.py --score >> /tmp/nightly/eeh_fetch-$d.log 2>&1   # prints NOT DUE until 10 forward sessions
 .venv/bin/python tools/studies/day_hold.py forward > /tmp/nightly/day_hold-$d.log 2>&1   # day_hold_prereg.json forward run (read at 40 sessions)
 scripts/tight_trail_replay.sh $d > /tmp/nightly/tt_replay-$d.log 2>&1
 .venv/bin/python tools/studies/replay_costing.py /tmp/tt_run/$d-*.json > /tmp/nightly/tt_costing-$d.txt 2>&1
