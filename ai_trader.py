@@ -1491,6 +1491,49 @@ def main() -> None:
         tick_sec = 2.0
         shelf_sec = 0.25
         last_book = 0.0
+        # Stop-check latency (operator 10/14: exits take > 5 s). The shelf pass only runs between heavy book
+        # passes on this thread; timing shows how long it is starved. ai_shelf_interleave (default off) also
+        # runs it between the heavy steps. One timing event a minute.
+        timing = {"heavy": [], "steps": {}, "shelf_n": 0, "shelf_gap_max": 0.0, "last_shelf": 0.0,
+                  "last_emit": time.time()}
+
+        def _shelf_pass(cfg_now: dict) -> None:
+            if not (0 < shelf_sec < tick_sec):
+                return
+            try:
+                ai_positions.tick_local_trail(shelf_sec)
+            except Exception as e:  # noqa: BLE001
+                print(f"[ai] tick_local_trail failed: {e}", flush=True)
+            now_s = time.time()
+            if timing["last_shelf"]:
+                timing["shelf_gap_max"] = max(timing["shelf_gap_max"], now_s - timing["last_shelf"])
+            timing["last_shelf"] = now_s
+            timing["shelf_n"] += 1
+
+        def _step(name: str, t_start: float, cfg_now: dict) -> float:
+            now_s = time.time()
+            timing["steps"].setdefault(name, []).append((now_s - t_start) * 1000.0)
+            if bool(cfg_now.get("ai_shelf_interleave", False)):
+                _shelf_pass(cfg_now)
+            return time.time()
+
+        def _emit_timing() -> None:
+            now_s = time.time()
+            if now_s - timing["last_emit"] < 60.0 or not timing["heavy"]:
+                return
+            h = sorted(timing["heavy"])
+            q = lambda xs, f: round(xs[int(f * (len(xs) - 1))], 1)  # noqa: E731
+            try:
+                ai_positions.log_event(
+                    "book_loop_timing", heavy_ms_p50=q(h, 0.5), heavy_ms_p90=q(h, 0.9), heavy_ms_max=round(h[-1], 1),
+                    n_heavy=len(h), shelf_passes=timing["shelf_n"],
+                    shelf_gap_max_ms=round(timing["shelf_gap_max"] * 1000.0, 1),
+                    steps_ms_p50={k: q(sorted(v), 0.5) for k, v in timing["steps"].items() if v},
+                    steps_ms_max={k: round(max(v), 1) for k, v in timing["steps"].items() if v})
+            except Exception:  # noqa: BLE001
+                pass
+            timing.update(heavy=[], steps={}, shelf_n=0, shelf_gap_max=0.0, last_emit=now_s)
+
         while True:
             t0 = time.time()
             try:
@@ -1509,10 +1552,7 @@ def main() -> None:
                 if shelf_sec <= 0 or shelf_sec > tick_sec:
                     shelf_sec = tick_sec
                 if shelf_sec < tick_sec:
-                    try:
-                        ai_positions.tick_local_trail(shelf_sec)
-                    except Exception as e:  # noqa: BLE001
-                        print(f"[ai] tick_local_trail failed: {e}", flush=True)
+                    _shelf_pass(live_cfg)
                     if (t0 - last_book) < tick_sec:
                         time.sleep(shelf_sec)
                         continue
@@ -1557,7 +1597,9 @@ def main() -> None:
                     print(f"[ai] duel trial liquidate failed: {e}", flush=True)
 
                 # Fast path: seed/prune/publish so UI never goes stale.
+                _ts = time.time()
                 _publish_book(t0)
+                _ts = _step("publish", _ts, live_cfg)
 
                 # Every book tick (~2s): raise the software shelf and
                 # market-flatten if any print is at/under TRAIL. Do not wait
@@ -1569,6 +1611,7 @@ def main() -> None:
                 except Exception as e:  # noqa: BLE001
                     print(f"[ai] manage_open_positions failed: {e}",
                           flush=True)
+                _ts = _step("manage", _ts, live_cfg)
 
                 # Broker-confirmed fills → append-only audit ledger. Paces
                 # itself on ai_fill_ledger_poll_sec, so calling every tick is
@@ -1579,6 +1622,7 @@ def main() -> None:
                     fill_ledger.poll_fills(live_cfg)
                 except Exception as e:  # noqa: BLE001
                     print(f"[ai] fill_ledger poll failed: {e}", flush=True)
+                _ts = _step("fill_ledger", _ts, live_cfg)
 
                 # Phase B premarket session (Hybrid C). Default OFF / dry —
                 # no broker orders when ai_phase_b_dry_run. Isolated from
@@ -1606,6 +1650,7 @@ def main() -> None:
                         )
                 except Exception as e:  # noqa: BLE001
                     print(f"[ai] phase_b tick failed: {e}", flush=True)
+                _ts = _step("phase_b", _ts, live_cfg)
 
                 # 15:50 ET (configurable): cancel open orders + flatten positions.
                 try:
@@ -1665,6 +1710,8 @@ def main() -> None:
                         ).start()
             except Exception as e:  # noqa: BLE001
                 print(f"[ai] book thread error: {e}", flush=True)
+            timing["heavy"].append((time.time() - t0) * 1000.0)
+            _emit_timing()
             time.sleep(shelf_sec if 0 < shelf_sec < tick_sec else tick_sec)
 
     if trading:
