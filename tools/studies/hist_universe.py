@@ -77,7 +77,7 @@ for _p in (ROOT, os.path.join(ROOT, "tools")):
         sys.path.insert(0, _p)
 
 ET = ZoneInfo("America/New_York")
-RULE_VERSION = "hist_universe/u1"
+RULE_VERSION = "hist_universe/u2"  # 2026-10-14: quote_mode rt, premarket prior-session gainers
 OUT_DIR = os.path.join(ROOT, "ai_reports", "hist_universe")
 CACHE_DIR = os.path.join(OUT_DIR, "cache")
 CALIB_LO, CALIB_HI = "2026-09-24", "2026-10-09"
@@ -95,7 +95,15 @@ SIP_DELAY = 16        # live sip_spread_pct / free-plan bars: data older than ~1
 KNOBS_DEFAULT = {
     "gainers_top": 50,          # Alpaca top-N gainers; ranked over every listed symbol we hold bars for
     "actives_top": None,        # None = cfg ai_movers_actives_top
-    "quote_mode": "file",       # seed price/pct: "file" (producer numbers) or "rt" (real-time SIP last)
+    # seed price/pct: "file" (producer numbers) or "rt" (real-time SIP last). "rt" since 2026-10-14:
+    # the live movers seed takes price/pct from a live quote first, the file second
+    # (ai_entry_watch movers seed, "Live quote first, the file second"); "file" judged every name
+    # on 16-minute-delayed numbers and made it cross its floor late or never (trace 10/05-10/09).
+    "quote_mode": "rt",
+    # Premarket (04:00-09:30): Alpaca's market-movers list still shows the PRIOR session's gainers,
+    # so live seated yesterday's movers at 04:00 with yesterday's % (XP, PCVX, MN: 16 of the traced
+    # never-candidates). True = rank gainers by the prior session's daily change before 09:30.
+    "premarket_prior_gainers": True,
     "soft_seed": True,          # interval soft seed of the first 40 movers rows
     "soft_seed_rth_only": False,
     "seed_start_min": 0,        # first decision minute index (0 = 04:00)
@@ -519,6 +527,13 @@ def simulate_day(mk: DayMarket, cfg_at, knobs=None, *, end_i: int = N_MIN) -> di
     kn = {**KNOBS_DEFAULT, **(knobs or {})}
     syms = mk.syms
     pc_sip = np.array([mk.prev_close(s) or np.nan for s in syms], dtype=np.float64)
+
+    def _prior_pct(s):
+        p = mk.prior(s)
+        if len(p) < 2 or not p[-2][2] or not p[-1][2]:
+            return np.nan
+        return (p[-1][2] / p[-2][2] - 1.0) * 100.0
+    prior_pct_v = np.array([_prior_pct(s) for s in syms], dtype=np.float64)
     common = {s for s in syms if is_common(s) and not is_levered(s, mk.names.get(s, ""))}
     ok = common.__contains__
     session_syms: set[str] = set()
@@ -536,8 +551,11 @@ def simulate_day(mk: DayMarket, cfg_at, knobs=None, *, end_i: int = N_MIN) -> di
         top = int(kn["gainers_top"] or _i(cfg, "ai_movers_top", 50))
         min_pct = _f(cfg, "ai_movers_min_pct_change", 10.0)
         lo, hi = _f(cfg, "ai_movers_min_price", 2.0), _f(cfg, "ai_movers_max_price", 20.0)
-        last = mk.sip_c[:, T - 1]
-        pct_v = (last / pc_sip - 1.0) * 100.0
+        if kn.get("premarket_prior_gainers") and T < I_OPEN:
+            last, pct_v = pc_sip, prior_pct_v              # yesterday's list, yesterday's %
+        else:
+            last = mk.sip_c[:, T - 1]
+            pct_v = (last / pc_sip - 1.0) * 100.0
         good = ~np.isnan(pct_v)
         order = np.argsort(-np.where(good, pct_v, -np.inf), kind="stable")[:top]
         pcts = {syms[k]: float(pct_v[k]) for k in order if good[k]}
