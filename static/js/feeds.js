@@ -324,6 +324,8 @@ function _bookRows(book) {
       cm_rsi_rising: !!w.cm_rsi_rising,
       cm_rsi_src: w.cm_rsi_src || null,
       cm_rsi_age_sec: w.cm_rsi_age_sec != null ? w.cm_rsi_age_sec : null,
+      rsi2_red_px: w.rsi2_red_px != null ? w.rsi2_red_px : null,
+      rsi2_green_px: w.rsi2_green_px != null ? w.rsi2_green_px : null,
       // MACD — the entry lever. This builder rebuilds every row field by
       // field, so anything not listed is dropped before the renderer ever
       // sees it: the wire carried macd_gap for all seven rows and the MACD
@@ -2217,6 +2219,13 @@ function _fmtExhTitle(r) {
     bits.push(`window ${Number(r.exh_window_min).toFixed(1)}m`);
   }
   if (r.exh_bars != null) bits.push(`${r.exh_bars} bars`);
+  if (r.cm_rsi != null && Number.isFinite(Number(r.cm_rsi))) {
+    // Next 1-minute close that would flip RSI-2 (operator 10/14). Green also needs price over SMA200, under SMA5.
+    let t = `RSI-2 ${Number(r.cm_rsi).toFixed(0)}`;
+    if (r.rsi2_red_px != null) t += ` · red at ≥ $${Number(r.rsi2_red_px).toFixed(2)}`;
+    if (r.rsi2_green_px != null) t += ` · green at ≤ $${Number(r.rsi2_green_px).toFixed(2)}`;
+    bits.push(t);
+  }
   if (r.pctr_src === 'sparse_window') {
     return 'No 1m %R — not enough prints in the clock window to trust a reading';
   }

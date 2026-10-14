@@ -1,0 +1,16 @@
+{
+  "study": "RSI-2 'red' as an exit: sell the desk's open trade at the next SIP open after a completed 1-minute IEX bar with RSI-2 > 90, if that comes before the desk's own exit. Operator 2026-10-14 ('can we determine when we are going to hit red in RSI?').",
+  "registered_at": "2026-10-14 ~15:00 ET, before any return of this rule was computed.",
+  "registered_before_results": true,
+  "prior": "LOW-to-mixed. Exits move win rate, not the mean (exits-cannot-move-the-mean, 42 shapes ~0 gross); holding longer loses more on this book, so ANY earlier exit tends to help - hence the random-early-exit control. RSI-2 > 95 as an entry filter was noise (10/2). Red as an exit was never tested.",
+  "data": "Desk trades (outcomes.jsonl, entry_path 'watch') on the 26 cached sessions 2026-09-08..10-13; IEX 1-minute bars with the prior-session warm-up added for connors_green_prereg.json (--fetch-prior, days with > 5% of board names lacking it excluded and listed); SIP bars for prices.",
+  "rule": "RSI-2 = Wilder alpha 1/2 on raw IEX closes with the last 220 prior-session bars prepended (early_entry_honest.rsi2_series, = live cm_rsi_series). First completed bar m with m >= the entry minute and m <= desk exit minute - 2 and RSI-2 > 90 -> exit at the SIP open of m+1. Otherwise the trade keeps the desk's exit.",
+  "pricing": "Desk exit = SIP close of the desk's exit minute; red exit = SIP open of m+1; the entry cancels. Per trade: red/base - 1 (0 when red does not fire first).",
+  "control": "For each trade where red fires first: a random minute uniformly in entry+1 .. desk exit-1 (seed sha256(symbol|day|entry_minute|RED_CTRL|early-honest-v1)), exit at its SIP open. Graded: red minus control per fired trade.",
+  "pass": "Each half (A to 09-24, B after): red - control >= +3 bp per fired trade with day-clustered t >= 2.0, AND the per-trade average over ALL trades (0 for not fired) > 0, AND >= 60 fired trades on >= 6 days. PASS only if both halves pass; FAIL if either fails; else UNDERPOWERED.",
+  "information_only": ["RSI-2 > 80 and > 95", "panel-strict red (also close < SMA200 and > SMA5)", "the random early exit alone vs the desk exit", "skips by reason"],
+  "multiplicity": "1 exit rule (3 levels and a strict variant as information) on trades already used by 42 exit-shape tests.",
+  "if_pass": "Forward confirmation on >= 10 sessions after 2026-10-14 (the desk's own trades), then a result-skeptic review, before any exit change.",
+  "if_fail": "RSI-2 red is closed as an exit on completed 1-minute bars.",
+  "script": "tools/studies/rsi2_red_exit.py (--score after READY); tests/test_rsi2_red_exit.py"
+}

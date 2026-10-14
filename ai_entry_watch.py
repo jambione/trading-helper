@@ -11269,6 +11269,29 @@ def cm_rsi_series(closes: list[float], period: int) -> list[float]:
     return series
 
 
+def rsi2_trigger_prices(closes: list[float]) -> tuple[float | None, float | None]:
+    """(red_px, green_px): the next bar's close at which Wilder RSI-2 (alpha 1/2, cm_rsi_series) would cross
+    above 90 (red) or below 10 (green), given the completed closes. Operator 10/14 ('can we determine when we
+    hit red?'). With U, D the running up/down averages after the last close c:
+      up move d:   RSI > 90  <=>  (U + d) / D > 9  <=>  d > 9D - U          -> red at   c + max(9D - U, 0.01)
+      down move d: RSI < 10  <=>  (D + d) / U > 9  <=>  d > 9U - D          -> green at c - max(9U - D, 0.01)
+    Display only; green on the panel also needs close > SMA200 and < SMA5. None with fewer than 3 closes."""
+    if len(closes) < 3:
+        return None, None
+    up = down = 0.0
+    for i in range(1, len(closes)):
+        d = closes[i] - closes[i - 1]
+        g, l_ = (d if d > 0 else 0.0), (-d if d < 0 else 0.0)
+        if i == 1:
+            up, down = g, l_
+        else:
+            up, down = 0.5 * g + 0.5 * up, 0.5 * l_ + 0.5 * down
+    c = closes[-1]
+    red = c + max(9.0 * down - up, 0.01)
+    green = c - max(9.0 * up - down, 0.01)
+    return round(red, 4), (round(green, 4) if green > 0 else None)
+
+
 def live_cm_rsi(
     symbol: str,
     price: float,
@@ -11669,6 +11692,12 @@ def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> boo
             ind["cm_rsi"] = round(float(rsi_got[0]), 1)
             ind["cm_rsi_green"] = bool(rsi_got[1])
             ind["cm_rsi_rising"] = bool(rsi_got[2])
+            try:
+                _rows = symbol_ohlc(sym, cfg, now)
+                _red, _green = rsi2_trigger_prices([float(r[2]) for r in _rows])
+                ind["rsi2_red_px"], ind["rsi2_green_px"] = _red, _green
+            except Exception:  # noqa: BLE001 - display only
+                pass
             ind["cm_rsi_src"] = "realtime" if rsi_stream else "local_iex"
             ind["cm_rsi_age_sec"] = 0.0 if rsi_stream else None
             try:
@@ -11914,6 +11943,8 @@ def _rsi_wire_fields(rec: dict) -> dict:
         "cm_rsi_low": bool(ind.get("cm_rsi_low")),
         "cm_rsi_src": str(ind.get("cm_rsi_src") or "") or None,
         "cm_rsi_age_sec": _f_or_none(ind.get("cm_rsi_age_sec")),
+        "rsi2_red_px": _f_or_none(ind.get("rsi2_red_px")),
+        "rsi2_green_px": _f_or_none(ind.get("rsi2_green_px")),
     }
 
 
@@ -11985,6 +12016,7 @@ def _exhaustion_wire_fields(rec: dict) -> dict:
             "pctr_ob": False, "pctr_tight": False, "pctr_gap": None,
             "cm_rsi": None, "cm_rsi_green": False, "cm_rsi_low": False,
             "cm_rsi_rising": False, "cm_rsi_src": None, "cm_rsi_age_sec": None,
+            "rsi2_red_px": None, "rsi2_green_px": None,
             "exh_bars": None, "exh_window_min": None,
             "exh_hh": None, "exh_ll": None,
         }
@@ -12008,6 +12040,8 @@ def _exhaustion_wire_fields(rec: dict) -> dict:
         "cm_rsi_rising": bool(ind.get("cm_rsi_rising")),
         "cm_rsi_src": str(ind.get("cm_rsi_src") or "") or None,
         "cm_rsi_age_sec": _f_or_none(ind.get("cm_rsi_age_sec")),
+        "rsi2_red_px": _f_or_none(ind.get("rsi2_red_px")),
+        "rsi2_green_px": _f_or_none(ind.get("rsi2_green_px")),
         "exh_bars": (
             int(ind["pctr_bars"])
             if isinstance(ind.get("pctr_bars"), (int, float))
