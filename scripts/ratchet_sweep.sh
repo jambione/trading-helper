@@ -19,7 +19,7 @@ git diff --quiet HEAD -- || { echo "tracked files differ from HEAD - commit firs
 echo "sha $SHA cfg $CFG_SHA keys $N out $OUT"
 
 while [ "$(TZ=America/New_York date +%H%M)" -lt 1615 ] && [ "$(TZ=America/New_York date +%H%M)" -ge 0400 ]; do sleep 120; done
-while pgrep -f "no_green_scratch_replays.sh|knobs/one.sh|spread_rvol_sweep.sh" > /dev/null; do sleep 60; done
+while pgrep -f "knobs/one.sh" > /dev/null; do sleep 60; done   # operator 10/14: the ratchet runs first, before the evening batch
 
 arm_sets() {   # the leash only; everything else is the pinned live config (idle 4 s, step 0.05R, overtake on, cushion $0.01)
   case $1 in

@@ -19,7 +19,7 @@ git diff --quiet HEAD -- || { echo "tracked files differ from HEAD - commit firs
 echo "sha $SHA cfg $CFG_SHA keys $N out $OUT"
 
 while [ "$(TZ=America/New_York date +%H%M)" -lt 1615 ] && [ "$(TZ=America/New_York date +%H%M)" -ge 0400 ]; do sleep 120; done
-while pgrep -f "no_green_scratch_replays.sh|knobs/one.sh|spread_rvol_sweep.sh" > /dev/null; do sleep 60; done
+while pgrep -f "no_green_scratch_replays.sh|knobs/one.sh|ratchet_sweep.sh|spread_rvol_sweep.sh" > /dev/null; do sleep 60; done
 
 arm_sets() {   # admission gates only; everything else is the pinned live config
   case $1 in
