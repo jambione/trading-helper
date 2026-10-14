@@ -77,7 +77,7 @@ for _p in (ROOT, os.path.join(ROOT, "tools")):
         sys.path.insert(0, _p)
 
 ET = ZoneInfo("America/New_York")
-RULE_VERSION = "hist_universe/u2"  # 2026-10-14: quote_mode rt, premarket prior-session gainers
+RULE_VERSION = "hist_universe/u2.1"  # 2026-10-14: quote_mode rt, premarket prior gainers, real-time daily bar
 OUT_DIR = os.path.join(ROOT, "ai_reports", "hist_universe")
 CACHE_DIR = os.path.join(OUT_DIR, "cache")
 CALIB_LO, CALIB_HI = "2026-09-24", "2026-10-09"
@@ -104,6 +104,12 @@ KNOBS_DEFAULT = {
     # so live seated yesterday's movers at 04:00 with yesterday's % (XP, PCVX, MN: 16 of the traced
     # never-candidates). True = rank gainers by the prior session's daily change before 09:30.
     "premarket_prior_gainers": True,
+    # Today's SIP DAILY bar is served (close and volume) through ~T-1 on the free plan, not
+    # T-16: live recorded rvol matches the real-time volume to 0.01 (PEG 2.73/2.73, CRWV
+    # 1.59/1.59, AAL 1.00/1.00 on 10/06) and the T-16 read gives 0.0-1.1. Only minute data is
+    # delayed. Live still paces it with mins_open = clock - 15 (movers_screener.sip_data_mins_open),
+    # so the rebuild keeps that pacing. True = read today's daily bar at T-1.
+    "daily_bar_realtime": True,
     "soft_seed": True,          # interval soft seed of the first 40 movers rows
     "soft_seed_rth_only": False,
     "seed_start_min": 0,        # first decision minute index (0 = 04:00)
@@ -444,10 +450,11 @@ class DayMarket:
 
     def delayed_today(self, s, T):
         """(close, volume) of today's SIP daily bar as served at T, or None (not served yet).
-        Today's bar exists once an RTH minute at or before T-16 has printed; its volume counts
-        every trade since 04:00 (the SIP daily bar includes extended hours) up to T-16."""
+        Today's bar exists once an RTH minute at or before the served minute has printed; its volume
+        counts every trade since 04:00 (the SIP daily bar includes extended hours). Served through
+        T-1 when self.daily_lag == 1 (knob daily_bar_realtime, measured 2026-10-14), else T-16."""
         k = self.idx.get(s)
-        j = min(T, N_MIN) - SIP_DELAY
+        j = min(T, N_MIN) - getattr(self, "daily_lag", SIP_DELAY)
         if k is None or j < I_OPEN:
             return None
         cl = self.sip_rc[k, j]
@@ -525,6 +532,7 @@ def simulate_day(mk: DayMarket, cfg_at, knobs=None, *, end_i: int = N_MIN) -> di
     """
     import numpy as np
     kn = {**KNOBS_DEFAULT, **(knobs or {})}
+    mk.daily_lag = 1 if kn.get("daily_bar_realtime") else SIP_DELAY
     syms = mk.syms
     pc_sip = np.array([mk.prev_close(s) or np.nan for s in syms], dtype=np.float64)
 
