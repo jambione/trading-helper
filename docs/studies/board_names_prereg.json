@@ -1,0 +1,37 @@
+{
+  "study": "Which names belong on the board? Do four name gates, each known at the minute a name is seated, pick board names that fade less over the following minutes than the board names they exclude, in both halves of 26 recorded sessions?",
+  "registered_at": "2026-10-13 evening, before any gate below was computed on these days. The only number already seen on this population is the board-wide base rate (every board minute, gross 10-minute forward return, -8.3 bp, t -2.8) from EARLY_ENTRY_HONEST_2026-10-13.md.",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-13, after all four early-entry arms failed and the exit replays showed exits move the win rate, not the mean: 'test which names to put on the board.' The board fades -8.3 bp per 10 minutes whatever minute is bought, so the lever left is the names.",
+  "prior": "Name selection has mostly failed here: five-pillars (540 cells, FAIL), needle cells (FAIL out of period), combined score (FAIL out of period), name history (null). Names are seeded after their move: pre-seed minutes +37 bp gross vs ~0 after (MOMENTUM_RUNWAY_2026-09-27.md). The four gates are the leads with a prior; the prior for each is weak.",
+  "population": "Board minutes: a symbol's ET minute m is a board minute when ai_reports/decision_ledger has a 'watch' or 'arm' row for it in m (as in early_entry_honest). Window 09:50-15:30. Name-day = symbol x session with at least one board minute in the window. Seat minute = its first board minute in the window. The cached days of ai_reports/early_entry_honest/ (26 sessions, 2026-09-08..2026-10-13, 0% bar misses).",
+  "gates": {
+    "G1_price": "SIP close of the seat minute >= $30. Prior: <$10 fills were 28% of trades and 81% of lifetime loss (cheap-names-carry-the-loss); the $10 floor helped; this asks whether stepping further up helps.",
+    "G2_runway": "Graded only among name-days seated by 10:46 ET: SIP close of the seat minute / prior session's close (rescaled to the raw minute basis on split days) - 1 >= +2.35%. Out group = morning seats up less than 2.35%. Name-days seated after 10:46 are not graded for G2. The as-first-written version (out group includes afternoon seats) is information only. Prior: steady-runway-definition.",
+    "G3_above_50d": "Prior session's daily close > the mean of the 50 prior daily closes (ending with the prior session). Prior: daily-context-picks-names-not-timing (above-50ma + news drifts up; no news field here).",
+    "G4_liquid": "Mean daily dollar volume (close x volume) over the 20 prior sessions >= $500M. Prior: the-universe-fades-at-every-horizon (megacaps off the screen are flat, not fading)."
+  },
+  "daily_data": "Alpaca SIP daily bars, split-adjusted, for every board symbol from 2026-05-01 to the session before each scored day. A name-day without 50 prior daily closes (G3) or 20 prior sessions (G4) or a prior close (G2) is 'unknown' for that gate: counted, and excluded from that gate's in AND out groups.",
+  "outcome": "For each board minute m in the window: fwd = SIP close of minute m+10 / SIP open of minute m+1 - 1 (early_entry_honest.markout at entry m+1, 10-minute hold, exit bar before 16:00). Gross. Every board minute of a name-day counts, so names that sit longer weigh more, as they do for the desk.",
+  "statistic": "Per gate and per day: in = mean fwd over board minutes of gated name-days; out = same for the rest. Day lift = in - out, only on days with >= 30 board minutes a side; 'in' is averaged over those same days. Day-equal mean, day-clustered t. Also a name-day-equal lift: one mean per name-day, in - out per day (>= 3 name-days a side), day-equal.",
+  "split": "Same as the early-entry studies: half A ends 2026-09-24, half B is 2026-09-25..2026-10-13.",
+  "pass": "A gate PASSES only if in BOTH halves: day-equal lift >= +5 bp per 10 minutes with day-clustered t >= 2.0, AND day-equal 'in' mean >= 0 (the gated board does not fade), AND >= 8 days with a lift, AND >= 20 gated name-days, AND the name-day-equal lift > 0 (minute weighting favours names that sit long, and tenure depends on the price path). A half short of days or name-days is UNDERPOWERED; any FAIL half makes the gate FAIL; otherwise UNDERPOWERED. Four gates are graded on the same days; a single pass is reported as 1 of 4. 'in' >= 0 is not profitability: the desk still pays ~3-10 bp a round trip, and profit would need 'in' above that (information line).",
+  "information_only": [
+    "every pairwise AND of two gates (in mean, lift, n) - cannot pass",
+    "gap-down > 1% at the open (live gate exists): in/out",
+    "intraday winner at seat (SIP close / day open > 1)",
+    "RVOL at seat by tercile: cumulative SIP minute volume to the seat / (20-day mean DAILY volume x elapsed RTH fraction) - granularity mismatch, tercile cuts from both halves; descriptive only",
+    "seat time by hour",
+    "source (admit_ledger, 9/16+)",
+    "refused vs seated (9/16+): every admit_ledger candidate with kept=false, scored from its first refusal to its seat minute if seated later that day, else to 15:30, vs the board. Bars fetched for refused symbols not on the board; counted",
+    "30-minute hold version of the main table",
+    "None of the information lines can be promoted to a gate; each would need its own prereg."
+  ],
+  "no_retuning": "$30, +2.35% by 10:46, 50 days, 20 days, $500M, the 10-minute hold and the window are fixed. Another threshold is a new prereg.",
+  "if_pass": "A pass is provisional on the same reasoning as the mid/RSI-2 prereg: it must repeat on >= 10 forward sessions after 2026-10-13 at the same bar, then gets a result-skeptic review of the positive, before any board or config change.",
+  "if_fail": "The four leads are closed as board gates on recorded data. Name selection would then need data the desk does not have (news, catalysts, SIP real-time) or a different population.",
+  "script": "tools/studies/board_names_study.py. --fetch-daily (mini) builds the daily cache; default prints inventory; --score after a result-skeptic READY.",
+  "split_handling": "Daily bars are split-adjusted, minute bars raw. For G2 and gap_down the prior close is multiplied by raw/adjusted close of the scored session (its last RTH SIP minute close vs its adjusted daily close) when they differ by more than 5%. G3 and G4 stay on the adjusted series. Rescaled name-days are counted.",
+  "feed": "SIP minute bars throughout. The live desk reads IEX; a pass here is about the names, and does not by itself transfer to the IEX-fed arm.",
+  "amended": "2026-10-14, before any score, after result-skeptic FIX FIRST: split rescaling for G2/gap_down; G2 graded within morning seats only (as-written version to information); 'in' on lift days only; name-day-equal lift required for PASS; refused line keeps names seated later and stops at their seat; daily fetch resets per chunk and reports misses; SIP-only feed note; RVOL and promotion caveats."
+}
