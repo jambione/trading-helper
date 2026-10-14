@@ -1167,40 +1167,28 @@ def load_pool_ohlc(day, mk, cfg_at, knobs) -> dict:
 
 
 def fetch_ohlc(cl, syms: list[str], day: str) -> dict:
-    """IEX 1-minute bars 04:00-16:00 with high/low, {sym: [(i, o, h, l, c, v)]} (i = minutes since 04:00)."""
-    import pandas as pd
-    from alpaca.data.enums import DataFeed
+    """IEX 1-minute bars 04:00-16:00 with high/low, {sym: [(i, o, h, l, c, v)]} (i = minutes since 04:00).
+    Same raw-data client, retry and bisect path as fetch_minutes; failed names raise (no silent holes)."""
+    from alpaca.data.enums import Adjustment, DataFeed
     from alpaca.data.requests import StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-    d0 = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
+    from alpaca.data.timeframe import TimeFrame
+    d0 = datetime.strptime(day, "%Y-%m-%d").replace(hour=4, tzinfo=ET)
     out: dict = {}
-    for i in range(0, len(syms), 100):
-        chunk = syms[i:i + 100]
-        for attempt in range(5):
-            try:
-                df = cl.get_stock_bars(StockBarsRequest(
-                    symbol_or_symbols=chunk, timeframe=TimeFrame(1, TimeFrameUnit.Minute),
-                    start=d0.replace(hour=4).astimezone(timezone.utc), end=d0.replace(hour=16).astimezone(timezone.utc),
-                    feed=DataFeed.IEX, limit=5_000_000)).df
-                break
-            except Exception as e:  # noqa: BLE001
-                print(f"  {day} ohlc try {attempt}: {str(e)[:80]}", flush=True)
-                time.sleep(5 * (attempt + 1))
-        else:
-            raise RuntimeError(f"{day}: IEX OHLC fetch failed for {len(chunk)} names")
-        if df is None or df.empty:
-            continue
-        if not isinstance(df.index, pd.MultiIndex):
-            df = pd.concat({chunk[0]: df}, names=["symbol"])
-        for s_ in df.index.get_level_values("symbol").unique():
-            sub = df.xs(s_, level="symbol")
-            rows = []
-            for ts, r in sub.iterrows():
-                t = ts.tz_convert(ET)
-                rows.append((t.hour * 60 + t.minute - DAY0_MIN, float(r["open"]), float(r["high"]),
-                             float(r["low"]), float(r["close"]), float(r["volume"])))
-            out[str(s_).upper()] = rows
-        time.sleep(0.4)
+    failed: set = set()
+    for i in range(0, len(syms), 200):
+        chunk = syms[i:i + 200]
+
+        def fetch(ch):
+            return _call(cl.get_stock_bars, StockBarsRequest(
+                symbol_or_symbols=ch, timeframe=TimeFrame.Minute, start=d0,
+                end=d0 + timedelta(hours=12), feed=DataFeed.IEX, adjustment=Adjustment.RAW))
+        r = _bisect_fetch(fetch, chunk, failed, f"{day} iex ohlc")
+        base = d0.timestamp()
+        for s_, rows in (r or {}).items():
+            out[s_] = [(int((datetime.fromisoformat(b["t"].replace("Z", "+00:00")).timestamp() - base) // 60),
+                        float(b["o"]), float(b["h"]), float(b["l"]), float(b["c"]), float(b["v"])) for b in rows]
+    if failed:
+        raise RuntimeError(f"{day}: IEX OHLC fetch failed for {len(failed)} names")
     return out
 
 
