@@ -76,7 +76,7 @@ for d in $DAYS; do
   if [ ! -f "$UNI/${d}.json" ]; then
     .venv/bin/python -c "
 import sys; sys.path.insert(0,'tools/studies'); import hist_universe as HU
-HU.cmd_build_range('$d','$d', config_path='$FROZEN')" >> "$OUT/universe_build.log" 2>&1 || { echo "universe failed $d" >> "$OUT/failures.txt"; continue; }
+HU.cmd_build_range('$d','$d', config_path='$FROZEN', knobs={'quote_mode': 'file'})" >> "$OUT/universe_build.log" 2>&1 || { echo "universe failed $d" >> "$OUT/failures.txt"; continue; }
   fi
   [ -f "$OUT/${d}-dayinfo.json" ] || .venv/bin/python -c "
 import json; u=json.load(open('$UNI/${d}.json'))

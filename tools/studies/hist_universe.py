@@ -1352,7 +1352,7 @@ def build_day(day, *, cfg_mode="live", knobs=None, use_cache=False, write=True, 
     return out, mk
 
 
-def cmd_build_range(lo, hi, newest_first=True, skip_existing=True, config_path=None):
+def cmd_build_range(lo, hi, newest_first=True, skip_existing=True, config_path=None, knobs=None):
     days = [d for d in trading_days(lo, hi)]
     if newest_first:
         days = days[::-1]
@@ -1362,7 +1362,7 @@ def cmd_build_range(lo, hi, newest_first=True, skip_existing=True, config_path=N
         if skip_existing and os.path.exists(p):
             continue
         try:
-            out, _ = build_day(d, config_path=config_path)
+            out, _ = build_day(d, config_path=config_path, knobs=knobs)
             rec = {k: out[k] for k in ("day", "universe_size", "failed_fetch_names", "failed_fetch_share",
                                         "excluded_gt10pct_failed", "n_admits", "by_source",
                                         "spread_fetch_failures", "secs", "config")}

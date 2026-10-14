@@ -255,6 +255,8 @@ def cmd_score(a) -> dict:
                     missing.append(f"{leg}/{d}-{v}")
                     continue
                 res = json.loads(p.read_text())
+                if getattr(a, "sha", None) and not str(res.get("sha") or "").startswith(a.sha):
+                    raise SystemExit(f"{p}: replay sha {res.get('sha')} != {a.sha} (mixed code versions; rerun)")
                 if leg == "syn":
                     vac[f"{d}-{v}"] = res.get("vacuity")
                 for t in res.get("closed") or []:
@@ -276,6 +278,8 @@ def cmd_score(a) -> dict:
                     "symbol": t["symbol"], "t": float(t.get("decision_ts") or t["entry_ts"]),
                     "gross": t["ret"] * 1e4, "net": t["ret"] * 1e4 - spr})
         RC.save_cache(cache)
+    if missing:
+        raise SystemExit("part A not ready (no verdict on missing runs):\n" + "\n".join(missing[:20]))
     n_days = len(a.days)
     report: dict = {"days": a.days, "universe_kind": a.universe_kind, "missing": missing,
                     "no_nbbo": {f"{k[0]}/{k[1]}": n for k, n in no_nbbo.items()}, "per_day": {}, "pooled": {},
@@ -363,6 +367,9 @@ HELD_OUT_HOLIDAYS = ("2026-04-03", "2026-05-25", "2026-06-19", "2026-07-03", "20
 B_DIFF_BP = 3.0
 B_PAIRED_BP = 1.5
 B_RECALL = 0.70
+B_MIN_TRADED = 30           # amended_6: recorded-replay traded movers/tight names before part B can be read
+B_REPRO = 0.65              # skeptic round 1 #7: as part A, recorded trades reproduced within 90 s
+B_COUNT_BAND = (0.67, 1.5)  # synthetic / recorded trades
 Z_80 = 1.959963984540054 + 0.8416212335729143   # two-sided 5%, 80% power
 
 
@@ -486,11 +493,38 @@ def cmd_gate(a) -> dict:
             shutil.copy2(real, cache_path)
     RC.CACHE = str(cache_path)
     cache, box = RC.load_cache(), {}
+    # amended_6 void rules (amended_4(g)): the untouched-day rebuild must exist, be u3, and carry no void.
+    info_p = ROOT / "ai_reports" / "hist_universe" / "check_u3_untouched_file_INFO.json"
+    if not info_p.exists():
+        raise SystemExit(f"NOT READY: {info_p} missing")
+    INFO = json.loads(info_p.read_text())
+    if not str(INFO.get("rule_version", "")).startswith("hist_universe/u3"):
+        raise SystemExit(f"NOT READY: {info_p} is {INFO.get('rule_version')}, not u3")
+    if INFO.get("void"):
+        raise SystemExit(f"VOID: {INFO['void']}")
+    for d in a.days:
+        for v in VARIANTS:
+            for p in (rec_dir / f"{d}-{v}.json", syn_dir / f"{d}-{v}.json"):
+                sha_ = json.loads(p.read_text()).get("sha")
+                if getattr(a, "sha", None) and not str(sha_ or "").startswith(a.sha):
+                    raise SystemExit(f"{p}: replay sha {sha_} != {a.sha} (mixed code versions; rerun)")
     admit = [json.loads(x) for x in open(ROOT / "ai_reports" / "admit_range.jsonl") if x.strip()]
     recall = {"admit_hit": 0, "admit_n": 0, "traded_hit": 0, "traded_n": 0}
+    repro = {"hit": 0, "n": 0, "n_rec": 0, "n_syn": 0}
     for d in a.days:
-        traded = {str(t["symbol"]).upper() for t in (_closed(rec_dir / f"{d}-base.json") or [])
+        # Union over the three variants (skeptic #6), not base only.
+        traded = {str(t["symbol"]).upper() for v in VARIANTS for t in (_closed(rec_dir / f"{d}-{v}.json") or [])
                   if t.get("ret") is not None}
+        for v in VARIANTS:
+            rt = [{"symbol": t["symbol"], "t": float(t.get("decision_ts") or t["entry_ts"])}
+                  for t in (_closed(rec_dir / f"{d}-{v}.json") or []) if t.get("ret") is not None]
+            st_ = [{"symbol": t["symbol"], "t": float(t.get("decision_ts") or t["entry_ts"])}
+                   for t in (_closed(syn_dir / f"{d}-{v}.json") or []) if t.get("ret") is not None]
+            h, n_ = match_share(rt, st_)
+            repro["hit"] += h
+            repro["n"] += n_
+            repro["n_rec"] += len(rt)
+            repro["n_syn"] += len(st_)
         one = recall_pair(recorded_universe(admit, d), _recon_rows(
             ROOT / "ai_reports" / "hist_universe" / f"calib_{d}.json"), traded)
         for k in recall:
@@ -499,7 +533,16 @@ def cmd_gate(a) -> dict:
     RC.save_cache(cache)
     admit_recall = recall["admit_hit"] / recall["admit_n"] if recall["admit_n"] else None
     traded_recall = recall["traded_hit"] / recall["traded_n"] if recall["traded_n"] else None
+    if recall["traded_n"] < B_MIN_TRADED:
+        raise SystemExit(f"NOT READY: {recall['traded_n']} recorded traded movers/tight names < {B_MIN_TRADED}; "
+                         "add the next untouched sessions (amended_6)")
     b_flag = part_b_pass(admit_recall, traded_recall, diffs, paired_diff)
+    # skeptic #7: trade reproduction floor (as part A) and a trades-per-day band.
+    rep_share = repro["hit"] / repro["n"] if repro["n"] else None
+    ratio = repro["n_syn"] / repro["n_rec"] if repro["n_rec"] else None
+    b_flag["repro_ok"] = rep_share is not None and rep_share >= B_REPRO
+    b_flag["count_ok"] = ratio is not None and B_COUNT_BAND[0] <= ratio <= B_COUNT_BAND[1]
+    b_flag["pass"] = bool(b_flag["pass"] and b_flag["repro_ok"] and b_flag["count_ok"])
     n = len(held_out_trading_days())
     mde_bp, mde_paired = mde_80(sd_bp, n), mde_80(sd_paired, n)
     power = {"n_window_days": n, "sd_wrrsi_st_net_bp": sd_bp, "sd_paired_bp": sd_paired,
@@ -510,6 +553,8 @@ def cmd_gate(a) -> dict:
     if power["mde_gt_4bp"]:
         power["note"] = "a FAIL on the held-out run is uninformative about effects below the MDE"
     B = {"admit_recall": admit_recall, "traded_recall": traded_recall, "counts": recall,
+         "reproduced_within_90s": rep_share, "trades_syn_over_rec": ratio, "repro_counts": repro,
+         "diff_ci90_bp": _boot_ci(out, a.days, cache, box),
          "pooled_diff_bp": diffs, "paired_diff_bp": paired_diff, "verdict": b_flag}
     doc = fidelity_document(bool(A["verdict"].get("PASS")), bool(b_flag["pass"]), A, B, power)
     dest = Path(a.dest)
@@ -518,6 +563,31 @@ def cmd_gate(a) -> dict:
     print(f"FIDELITY {doc['verdict']}  A {A['verdict'].get('PASS')}  B {b_flag['pass']}  "
           f"admit {admit_recall} traded {traded_recall}  wrote {dest}")
     return doc
+
+
+def _boot_ci(out: Path, days, cache, box, n_boot: int = 2000) -> list | None:
+    """Information: 90% day-block bootstrap CI of the pooled base-variant net diff (syn - rec), bp."""
+    import random
+    import replay_costing as RC
+    per = {}
+    for d in days:
+        legs = {}
+        for leg, p in (("rec", out / "rec" / f"{d}-base.json"), ("syn", out / "syn_hist" / f"{d}-base.json")):
+            legs[leg] = [t["ret"] * 1e4 - (RC.entry_spread_bp(cache, t["symbol"], t["entry_ts"], box) or 0.0)
+                         for t in (_closed(p) or []) if t.get("ret") is not None]
+        per[d] = legs
+    rng = random.Random(20261014)
+    stats_ = []
+    for _ in range(n_boot):
+        pick = [rng.choice(days) for _ in days]
+        r = [x for d in pick for x in per[d]["rec"]]
+        s_ = [x for d in pick for x in per[d]["syn"]]
+        if r and s_:
+            stats_.append(sum(s_) / len(s_) - sum(r) / len(r))
+    if not stats_:
+        return None
+    stats_.sort()
+    return [round(stats_[int(0.05 * len(stats_))], 2), round(stats_[int(0.95 * len(stats_)) - 1], 2)]
 
 
 def _b_trade_pool(out: Path, days, cache, box) -> tuple[dict, float | None, float | None, float | None]:
@@ -585,9 +655,11 @@ def main(argv=None):
             p.add_argument("--sha", default=None)
         if name == "score":
             p.add_argument("--cost-cache", default="/tmp/ws_r_out/costing_cache.json")
+            p.add_argument("--sha", default=None, help="refuse outputs from another code version")
         if name == "gate":
             p.add_argument("--cost-cache", default="/tmp/ws_r_out/costing_cache.json")
             p.add_argument("--dest", default="/tmp/hs/FIDELITY.json")
+            p.add_argument("--sha", default=None, help="refuse outputs from another code version")
     a = ap.parse_args(argv)
     check_days(a.days)
     {"export": cmd_export, "run": cmd_run, "score": cmd_score, "gate": cmd_gate}[a.cmd](a)
