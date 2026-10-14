@@ -4260,7 +4260,16 @@ def _trail_min_cushion_px(
         if max_r > 0:
             floor = min(floor, max_r * r)
     # One tick when no dollar floor is configured (live min_give_px=0).
-    return max(0.01, float(floor) if floor > 0 else 0.01)
+    out = max(0.01, float(floor) if floor > 0 else 0.01)
+    # Percent-of-price cushion for the catch-up leash (operator 10/14, BBWI: last - $0.01 leaves no room to
+    # run). Default 0 = unchanged. Only the green / underwater catch-up call this, never the static give.
+    try:
+        pct = float(cfg.get("ai_local_trail_decay_cushion_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        pct = 0.0
+    if pct > 0 and last is not None and float(last) > 0:
+        out = max(out, round(float(last) * pct / 100.0, 2))
+    return out
 
 
 def _underwater_catchup_raise(

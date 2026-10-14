@@ -39,7 +39,7 @@ def day_stat(xs: list[float]) -> dict:
 
 
 def arm_day(closed: list[dict], spread_of, med: float | None) -> dict:
-    nets, hold, miss = [], 0.0, 0
+    nets, hold, miss, holds = [], 0.0, 0, []
     for t in closed:
         if t.get("ret") is None:
             continue
@@ -51,8 +51,11 @@ def arm_day(closed: list[dict], spread_of, med: float | None) -> dict:
             continue
         nets.append(t["ret"] * 1e4 - s)
         if t.get("exit_ts"):
-            hold += max(0.0, float(t["exit_ts"]) - float(t["entry_ts"]))
-    return {"n": len(nets), "per10": len(nets) / (WINDOW_SEC / 600), "conc": hold / WINDOW_SEC,
+            h = max(0.0, float(t["exit_ts"]) - float(t["entry_ts"]))
+            hold += h
+            holds.append(h)
+    return {"win": (sum(1 for x in nets if x > 0) / len(nets)) if nets else None,
+            "hold_med": statistics.median(holds) if holds else None, "n": len(nets), "per10": len(nets) / (WINDOW_SEC / 600), "conc": hold / WINDOW_SEC,
             "net": statistics.fmean(nets) if nets else None, "value": sum(nets), "no_nbbo": miss}
 
 
@@ -65,7 +68,14 @@ def pick(summary: dict) -> str | None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", required=True)
+    ap.add_argument("--arms", help="comma list (default: the spread x RVOL arms)")
+    ap.add_argument("--refs", help="comma list of reference arms for the paired differences")
     a = ap.parse_args()
+    global ARMS, REFS
+    if a.arms:
+        ARMS = tuple(a.arms.split(","))
+    if a.refs:
+        REFS = tuple(a.refs.split(","))
     import replay_costing as RC
     cache, box = RC.load_cache(), {}
     spread_of = lambda s, ts: RC.entry_spread_bp(cache, s, ts, box)  # noqa: E731
@@ -92,8 +102,8 @@ def main() -> None:
     scored = sorted(set(per[ARMS[0]]))
     print(f"days found {len(days)}; scored {len(scored)} {scored}; incomplete {incomplete}; vacuous {vacuous}\n")
     summary = {}
-    print("| arm | opens/day | opens/10m | concurrency | net bp/trade (t) | value bp/day (t) | no NBBO |")
-    print("|---|---:|---:|---:|---:|---:|---:|")
+    print("| arm | opens/day | opens/10m | concurrency | win % | median hold s | net bp/trade (t) | value bp/day (t) | no NBBO |")
+    print("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for arm in ARMS:
         rows = [per[arm][d] for d in scored]
         if not rows:
@@ -101,11 +111,13 @@ def main() -> None:
         nets = [r["net"] for r in rows if r["net"] is not None]
         s = {"n": statistics.fmean(r["n"] for r in rows), "per10": statistics.fmean(r["per10"] for r in rows),
              "conc": statistics.fmean(r["conc"] for r in rows), "net": day_stat(nets),
-             "value": day_stat([r["value"] for r in rows]), "miss": sum(r["no_nbbo"] for r in rows)}
+             "value": day_stat([r["value"] for r in rows]), "miss": sum(r["no_nbbo"] for r in rows),
+             "win": statistics.fmean([r["win"] for r in rows if r["win"] is not None] or [0.0]),
+             "hold": statistics.median([r["hold_med"] for r in rows if r["hold_med"] is not None] or [0.0])}
         summary[arm] = s
         f = lambda x: "—" if x is None else f"{x:+.1f}"  # noqa: E731
         g = lambda x: "—" if x is None else f"{x:+.2f}"  # noqa: E731
-        print(f"| {arm} | {s['n']:.1f} | {s['per10']:.2f} | {s['conc']:.2f} | {f(s['net']['mean'])} ({g(s['net']['t'])}) "
+        print(f"| {arm} | {s['n']:.1f} | {s['per10']:.2f} | {s['conc']:.2f} | {s['win']:.0%} | {s['hold']:.0f} | {f(s['net']['mean'])} ({g(s['net']['t'])}) "
               f"| {f(s['value']['mean'])} ({g(s['value']['t'])}) | {s['miss']} |")
     print("\nPaired per-day VALUE differences vs the references (t >= 2 needed to call one better):")
     for ref in REFS:
@@ -115,6 +127,8 @@ def main() -> None:
             st = day_stat([per[arm][d]["value"] - per[ref][d]["value"] for d in scored])
             print(f"  {arm} - {ref}: {st['mean']:+.1f} bp/day (t {st['t'] if st['t'] is None else round(st['t'], 2)}, {st['n']} days)")
     best = pick(summary)
+    if a.arms:
+        return      # other sweeps state their own pick rule in their prereg
     print(f"\nPRE-REGISTERED PICK (highest mean daily value among arms with >= {OPENS_BAR} open / 10 min): {best}")
     print("A pick whose paired value vs s15r06 has t < 2 is a SUGGESTION, not evidence; the live change is the operator's call.")
 

@@ -1,0 +1,21 @@
+{
+  "study": "Catch-up ratchet (time-decay leash): which setting captures the most profit while leaving room to run? Operator 2026-10-14 on BBWI: filled 18.39 10:41:25, peak 18.415, the leash overtook to last at 10:42:22 and sold 18.41 a minute in; the stop at last - $0.01 leaves no room for progress.",
+  "registered_at": "2026-10-14 ~11:20 ET, before any replay of these arms.",
+  "live_leash": "ai_local_trail_time_decay_enabled true, decay_idle_sec 4 (a step after every 4 s without a new peak), decay_step_r 0.05R, decay_overtake true (when a step reaches last - cushion the stop jumps to last and the trade sells), cushion $0.01 (min_give_px 0). Static trail: give_r 0.12, peak_give_pct 0.35.",
+  "new_knob": "ai_local_trail_decay_cushion_pct (default 0 = unchanged): the leash parks at least this % of price under last instead of $0.01. Code + test 2026-10-14; the live desk does not use it.",
+  "arms": {
+    "base": "live leash",
+    "ot_off": "overtake off: park at last - $0.01 and wait for a dip into it",
+    "idle15": "step after 15 s idle", "idle30": "30 s", "idle60": "60 s",
+    "cush10": "overtake off + cushion 0.10% of price", "cush25": "overtake off + cushion 0.25%",
+    "cush25i30": "overtake off + cushion 0.25% + 30 s idle",
+    "nodecay": "leash off (static trail, no-progress and the rest stay)"
+  },
+  "method": "tools/replay_session.py on recorded sessions 2026-10-06..10-13 (6 days), whole live config of 94f2576 pinned, only the leash knobs vary; scripts/ratchet_sweep.sh after 16:15 ET and after the evening batch and the spread x RVOL sweep, <= 3 replays, deadline 03:30. Exits run every 2 s on the recorded prices (the replay's _live_exit is the desk's exit code).",
+  "costing": "net bp = replay ret - full SIP quoted spread at entry, charged once (tools/studies/spread_rvol_score.py --arms ... --refs base).",
+  "metrics": "per arm: opens/day, opens/10m, concurrency, win %, median hold, net bp/trade (t), VALUE = sum net bp per day (t), paired per-day value vs base.",
+  "pick_rule": "Recommend an arm for a live paper A/B only if its paired per-day VALUE vs base is > 0 with t >= 2 and it is not worse than base on more than 1 of 6 days. Otherwise: no change; report the best point estimate as direction only.",
+  "prior": "Skeptical of 'more room': exits-cannot-move-the-mean (42 shapes ~0 gross), holding-longer-loses-more (fills drift -9/-28/-43 bp at 5/15/30 min; every wider trail worse; the decay leash caps the fade). The 10/13 replay (one day): base -2.8, np_lob -3.5, np_lob_slow30 (30 s idle) -2.4, np_lob_step02 -3.4, leash off -3.4 net bp/trade: within ~1 bp. Expect win rate and hold time to move, not the mean.",
+  "replay_fidelity": "Recall vs live 0.54-0.62; exit changes alter slot use and therefore later entries (stated, not corrected).",
+  "script": "scripts/ratchet_sweep.sh, tools/studies/spread_rvol_score.py, ai_positions._trail_min_cushion_px (new knob), tests/test_ai_positions.py::test_decay_cushion_pct_widens_the_leash_ceiling"
+}

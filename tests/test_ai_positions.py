@@ -5015,3 +5015,11 @@ def test_market_entry_confirm_does_not_dead_on_limit_slip(
     # Slip vs submit ask (40.50), not a phantom limit.
     assert pos.get("entry_slippage_r") == pytest.approx(0.12)
 
+
+
+def test_decay_cushion_pct_widens_the_leash_ceiling():
+    import ai_positions as cp
+    live = {"ai_local_trail_min_give_px": 0}
+    assert cp._trail_min_cushion_px(18.40, 0.9, live) == 0.01                            # live setting unchanged
+    assert cp._trail_min_cushion_px(18.40, 0.9, {**live, "ai_local_trail_decay_cushion_pct": 0.25}) == 0.05
+    assert cp._trail_min_cushion_px(2.00, 0.1, {**live, "ai_local_trail_decay_cushion_pct": 0.25}) == 0.01   # never under a tick
