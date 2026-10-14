@@ -21,6 +21,9 @@ The board fades −8.6 bp per 10 minutes whatever minute is bought. Do four name
 - Information lines (none can be promoted): momentum source worst in both halves (−36 / −26 bp per 10 min); names seated in the 13:00 hour least bad (+23 / +3); RVOL top tercile and "intraday winner at seat" worse in half A. Each would need its own prereg and forward test.
 - SIP minute bars throughout; the live arm reads IEX.
 
+## Erratum (10/14, same day)
+The 'pre-seed +37 bp' comparison cited above and in the prereg's prior is hindsight: it is measured only on names that were later seeded, which happened because they rose. It describes the move, not a catchable window. None of this study's verdicts depend on it.
+
 ## Raw output
 # Board names — 2026-09-08 .. 2026-10-13
 

@@ -7,7 +7,7 @@
   "arm": "nomom: the np180 control config (whole 73217e4 bot_config pinned via --set-json, no-progress 180 s; see no_green_scratch_prereg.json) plus ai_watch_seed_momentum=false, ai_watch_seed_momentum_open=false, ai_watch_soft_seed_momentum=false. Everything else identical. Control = the np180 runs of the same batch.",
   "data": "Same ten recorded sessions and halves as no_green_scratch_prereg.json (A = 09-30..10-06, B = 10-07..10-13). Same code sha, run discipline, INCOMPLETE rule and fresh batch directory as no_green_scratch_prereg.json.",
   "statistic": "Unpaired (the book differs): per day, mean gross per closed trade, arm minus control; day-equal mean and day-clustered t over 10 days. Also per day: total charged at 10 bp per round trip (3 bp sensitivity), and entries per 10 minutes (closed plus open at end).",
-  "pass": "PASS only if: per-trade day-equal diff > 0 with t >= 2.0, AND > 0 in each half, AND charged (10 bp) day total >= control on >= 6 of 10 days, AND opens per 10 min >= 90% of control (the busy-book goal: dropping a source must not thin the book). Fewer than 50 closed trades per arm per half = UNDERPOWERED.",
+  "pass": "PASS only if: per-trade day-equal diff > 0 with t >= 2.0, AND > 0 in each half, AND charged (10 bp) day total >= control on >= 6 of 10 days, AND opens per 10 min >= 90% of control (the busy-book goal: dropping a source must not thin the book). Fewer than 50 closed trades per arm per half = UNDERPOWERED. VACUOUS if the control's proposal ledger has no momentum proposals or the arm still has any (work_counts).",
   "information_only": [
     "closed trades by source per arm",
     "board size (avg book) per arm",
@@ -18,5 +18,5 @@
   "if_pass": "Operator decides; then live forward read >= 10 sessions.",
   "if_fail": "Keep momentum seating. If opens fall by more than 10%, momentum seats are part of what keeps the book full even though they fade.",
   "script": "scripts/no_green_scratch_replays.sh (adds the nomom arm per day); scorer tools/studies/no_green_scratch_score.py --nomom section.",
-  "amended": "2026-10-14 before any run: whole-config pin, charged day totals, INCOMPLETE rule, opens include open positions (same round as no_green_scratch_prereg.json)."
+  "amended": "2026-10-14 before any run: whole-config pin, charged day totals, INCOMPLETE rule, opens include open positions (same round as no_green_scratch_prereg.json). Round 2: vacuity check added."
 }

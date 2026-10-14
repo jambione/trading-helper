@@ -25,7 +25,9 @@ DAYS = ["2026-09-30", "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06",
         "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-12", "2026-10-13"]
 HALF_A = set(DAYS[:5])
 CONTROL = "np180"
-ARMS = ("np180", "np90", "np60", "nomom", "keepfall")
+ARMS = ("np180", "np90", "np60", "nomom", "np180rt", "keepfall")
+RT_CONTROL = "np180rt"            # keepfall's control: both on --engine rt (re-seats rebuild %R)
+RATE_LIMIT_RE = re.compile(r"\b429\b|too many requests", re.I)
 PAIRED = ("np90", "np60")
 MATCH_SEC = 90.0
 MIN_MATCHED_HALF = 30
@@ -92,13 +94,36 @@ def nomom_verdict(mu, t, half_mu: dict, half_n: dict, days_not_worse: int, opens
     return "PASS" if ok else "FAIL"
 
 
-def keepfall_verdict(open_mu, open_t, opens_ratio, half_trade_mu: dict, half_n: dict) -> str:
+def keepfall_verdict(open_mu, open_t, opens_ratio, half_trade_mu: dict, half_n: dict,
+                     days_not_worse: int = 10) -> str:
     if any(half_n.get(h, 0) < MIN_TRADES_HALF for h in "AB"):
         return "UNDERPOWERED"
     ok = (open_mu is not None and open_mu > 0 and open_t is not None and open_t >= 2.0
           and opens_ratio is not None and opens_ratio >= 1.10
-          and all(half_trade_mu.get(h) is not None and half_trade_mu[h] >= -0.0001 for h in "AB"))
+          and all(half_trade_mu.get(h) is not None and half_trade_mu[h] >= -0.0001 for h in "AB")
+          and days_not_worse >= 6)
     return "PASS" if ok else "FAIL"
+
+
+def vacuity(control_results: list[dict], arm_results: list[dict], key: str, match) -> str | None:
+    """None when the arm demonstrably changed something; else a reason.
+    key: 'watch_drop' or 'proposals' in each result's work_counts; match(label) -> bool."""
+    def count(rs):
+        tot = 0
+        for r in rs:
+            wc = r.get("work_counts")
+            if not isinstance(wc, dict):
+                return None
+            tot += sum(v for k, v in (wc.get(key) or {}).items() if match(k))
+        return tot
+    c, a = count(control_results), count(arm_results)
+    if c is None or a is None:
+        return "UNVERIFIED: results lack work_counts"
+    if c == 0:
+        return f"VACUOUS: control has 0 {key} events the switch acts on"
+    if a > 0:
+        return f"VACUOUS: arm still has {a} (control {c})"
+    return None
 
 
 def completeness(results: dict, sha: str | None, failures: list[str]) -> list[str]:
@@ -168,11 +193,11 @@ def score(d: str, sha: str | None = None) -> str:
         for arm in ARMS:
             lp = os.path.join(d, f"{day}_{arm}.log")
             if os.path.exists(lp):
-                n429 = len(re.findall(r"429|too many requests", open(lp, errors="replace").read()))
+                n429 = len(RATE_LIMIT_RE.findall(open(lp, errors="replace").read()))
                 if n429:
                     rl[f"{day} {arm}"] = n429
     if rl:
-        L.append(f"Rate-limit lines in logs (names may be data-starved): {rl}")
+        probs.append(f"rate-limited replays (a starved name can drop from one arm only): {rl}")
     if probs:
         L += ["**INCOMPLETE - no verdicts.**", ""] + [f"- {p}" for p in probs]
         return "\n".join(L)
@@ -235,17 +260,23 @@ def score(d: str, sha: str | None = None) -> str:
     mu, t, _n = day_equal(per_day)
     hm = {h: (statistics.mean(v) if v else None) for h, v in halves.items()}
     ratio = statistics.mean(op_a) / statistics.mean(op_c) if statistics.mean(op_c) > 0 else None
+    nv = vacuity([ctrl[x] for x in DAYS], [results[(x, "nomom")] for x in DAYS], "proposals",
+                 lambda k: k.split("|")[0] == "momentum")
+    nomom_v = nomom_verdict(mu, t, hm, n_half, not_worse, ratio)
+    if nv:
+        nomom_v = f"{nv} ({nomom_v})"
     L += ["", "## No momentum seats (no_momentum_seats_prereg.json)", "",
           "| per-trade diff (bp) | t | half A | half B | charged day total >= control | opens vs control | verdict |",
           "|---:|---:|---:|---:|---:|---:|---|",
           f"| {bp(mu)} | {tt(t)} | {bp(hm['A'])} | {bp(hm['B'])} | {not_worse}/10 "
-          f"| {'—' if ratio is None else f'{ratio:.2f}x'} | {nomom_verdict(mu, t, hm, n_half, not_worse, ratio)} |"]
+          f"| {'—' if ratio is None else f'{ratio:.2f}x'} | {nomom_v} |"]
 
     # keepfall
     op_diff, tr_half, n_half = {}, {"A": [], "B": []}, Counter()
-    op_c, op_a = [], []
+    op_c, op_a, kf_not_worse = [], [], 0
     for day in DAYS:
-        c, a = ctrl[day], results[(day, "keepfall")]
+        c, a = results[(day, RT_CONTROL)], results[(day, "keepfall")]
+        kf_not_worse += charged_total(a, COSTS[0]) >= charged_total(c, COSTS[0])
         op_diff[day] = opens_per_10m(a) - opens_per_10m(c)
         op_c.append(opens_per_10m(c))
         op_a.append(opens_per_10m(a))
@@ -257,11 +288,16 @@ def score(d: str, sha: str | None = None) -> str:
     omu, ot, _n = day_equal(op_diff)
     ratio = statistics.mean(op_a) / statistics.mean(op_c) if statistics.mean(op_c) > 0 else None
     thm = {h: (statistics.mean(v) if v else None) for h, v in tr_half.items()}
-    L += ["", "## Keep falling seats (keep_falling_seats_prereg.json)", "",
-          "| opens/10m diff | t | opens ratio | per-trade diff half A (bp) | half B | verdict |",
-          "|---:|---:|---:|---:|---:|---|",
+    kv = vacuity([results[(x, RT_CONTROL)] for x in DAYS], [results[(x, "keepfall")] for x in DAYS], "watch_drop",
+                 lambda k: k == "dead_unknown|exh_falling")
+    kf_v = keepfall_verdict(omu, ot, ratio, thm, n_half, kf_not_worse)
+    if kv:
+        kf_v = f"{kv} ({kf_v})"
+    L += ["", "## Keep falling seats (keep_falling_seats_prereg.json) - vs np180rt, both --engine rt", "",
+          "| opens/10m diff | t | opens ratio | per-trade diff half A (bp) | half B | charged day total >= control | verdict |",
+          "|---:|---:|---:|---:|---:|---:|---|",
           f"| {'—' if omu is None else f'{omu:+.2f}'} | {tt(ot)} | {'—' if ratio is None else f'{ratio:.2f}x'} "
-          f"| {bp(thm['A'])} | {bp(thm['B'])} | {keepfall_verdict(omu, ot, ratio, thm, n_half)} |"]
+          f"| {bp(thm['A'])} | {bp(thm['B'])} | {kf_not_worse}/10 | {kf_v} |"]
 
     live = live_no_progress_share()
     rep_share = {day: (sum(t["reason"] == "no_progress" for t in ctrl[day]["closed"]) / len(ctrl[day]["closed"])

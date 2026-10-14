@@ -358,3 +358,17 @@ def test_set_json_pins_every_key_then_set_wins(tmp_path):
     assert rp.set_json_digest(args) and len(rp.set_json_digest(args)) == 16
     assert "--set-json" in rp.absolutize_argv(["--set-json", "cfg.json"], cwd=tmp_path)
     assert str(tmp_path / "cfg.json") in rp.absolutize_argv(["--set-json", "cfg.json"], cwd=tmp_path)
+
+
+def test_work_counts_reads_drops_and_proposals(tmp_path):
+    (tmp_path / "events.jsonl").write_text(
+        '{"kind": "watch_drop", "reason": "dead_unknown", "block": "exh_falling"}\n'
+        '{"kind": "watch_drop", "reason": "dead_unknown", "block": "exh_falling"}\n'
+        '{"kind": "entry_ok"}\n')
+    (tmp_path / "proposal_ledger").mkdir()
+    (tmp_path / "proposal_ledger" / "2026-10-13.jsonl").write_text(
+        '{"proposer_norm": "momentum", "decision": "kept"}\n{"proposer_norm": "movers", "decision": "dropped"}\n')
+    c = rp.work_counts(str(tmp_path))
+    assert c["watch_drop"] == {"dead_unknown|exh_falling": 2}
+    assert c["proposals"] == {"momentum|kept": 1, "movers|dropped": 1}
+    assert rp.work_counts(None) == {"watch_drop": {}, "proposals": {}}

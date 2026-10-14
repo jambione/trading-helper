@@ -39,6 +39,23 @@ def test_nomom_and_keepfall_verdicts():
     assert S.keepfall_verdict(0.2, 2.5, 1.12, {"A": -0.00015, "B": 0.0}, hn) == "FAIL"   # worse trades
     assert S.keepfall_verdict(0.2, 2.5, 1.05, {"A": 0.0, "B": 0.0}, hn) == "FAIL"         # < +10% opens
     assert S.keepfall_verdict(0.2, 2.5, 1.12, {"A": 0.0, "B": 0.0}, {"A": 49, "B": 60}) == "UNDERPOWERED"
+    assert S.keepfall_verdict(0.2, 2.5, 1.12, {"A": 0.0, "B": 0.0}, hn, days_not_worse=5) == "FAIL"   # loses net
+
+
+def test_vacuity():
+    ctrl = [{"work_counts": {"watch_drop": {"dead_unknown|exh_falling": 3}}}]
+    arm0 = [{"work_counts": {"watch_drop": {}}}]
+    match = lambda k: k == "dead_unknown|exh_falling"  # noqa: E731
+    assert S.vacuity(ctrl, arm0, "watch_drop", match) is None
+    assert S.vacuity(ctrl, ctrl, "watch_drop", match).startswith("VACUOUS: arm still")
+    assert S.vacuity(arm0, arm0, "watch_drop", match).startswith("VACUOUS: control has 0")
+    assert S.vacuity([{}], arm0, "watch_drop", match).startswith("UNVERIFIED")
+
+
+def test_rate_limit_pattern_ignores_prices():
+    assert S.RATE_LIMIT_RE.search('{"message": "too many requests."}')
+    assert S.RATE_LIMIT_RE.search("HTTP 429")
+    assert not S.RATE_LIMIT_RE.search("price 104.29 at 1791429000")
 
 
 def test_opens_count_open_positions_and_charging():

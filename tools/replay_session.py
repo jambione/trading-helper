@@ -1004,6 +1004,40 @@ def parse_overrides(args) -> dict:
     return overrides
 
 
+def work_counts(report_dir: str | None) -> dict:
+    """Counts from this replay's own state files, so a batch can prove an arm changed
+    something: watch_drop reason|block (events.jsonl) and seed proposals by source
+    (proposal_ledger). Empty when the files are absent."""
+    out: dict = {"watch_drop": {}, "proposals": {}}
+    if not report_dir:
+        return out
+    base = Path(report_dir)
+    drops: Counter = Counter()
+    ev = base / "events.jsonl"
+    if ev.exists():
+        for line in ev.open(encoding="utf-8", errors="replace"):
+            if '"watch_drop"' not in line:
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            drops[f"{r.get('reason')}|{r.get('block')}"] += 1
+    props: Counter = Counter()
+    pl = base / "proposal_ledger"
+    if pl.is_dir():
+        for f in pl.glob("*.jsonl"):
+            for line in f.open(encoding="utf-8", errors="replace"):
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                props[f"{r.get('proposer_norm') or r.get('proposer')}|{r.get('decision')}"] += 1
+    out["watch_drop"] = dict(drops)
+    out["proposals"] = dict(props)
+    return out
+
+
 def set_json_digest(args) -> str | None:
     path = getattr(args, "set_json", None)
     if not path:
@@ -2276,6 +2310,8 @@ def report(args, slots, broker, blocked, wall0) -> None:
     out = {"day": args.day, "start": args.start, "end": args.end, "sha": os.getenv("REPLAY_SHA"),
            "overrides": args.set, "set_json": getattr(args, "set_json", None),
            "set_json_sha": set_json_digest(args), "hold_min": args.hold_min,
+           "engine": getattr(args, "engine", None),
+           "work_counts": work_counts(os.environ.get("AI_REPORT_DIR")),
            "closed": broker.closed, "open_at_end": list(broker.open.values()),
            "slots": {str(k): {kk: (avg(v) if isinstance(v, list) else v)
                               for kk, v in s.items()} for k, s in slots.items()},
