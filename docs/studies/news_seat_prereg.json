@@ -7,14 +7,14 @@
   "events": {
     "source": "Alpaca news REST /v1beta1/news (Benzinga), every article with created_at from 04:00 to 15:30 ET on each weekday 2026-07-01..2026-10-13. Premarket articles count only for freshness.",
     "eligible": "created_at in [09:45:00, 15:20:00) ET; exactly one tagged symbol matching ^[A-Z]{1,5}$; no other article tagging that symbol in the 60 minutes before created_at (fresh news; also acts as a 60-minute refractory).",
-    "minutes": "t0 = the ET minute containing created_at. pre = SIP close of minute t0-1. Entry minute e = t0+2 (at least 60 s after publication, for receipt and decision). react = SIP close of minute e-1 / pre - 1.",
+    "minutes": "t0 = the ET minute containing created_at. pre = SIP close of minute t0-1. Entry minute e = t0+2 (at least 60 s after publication, for receipt and decision). react = SIP close of minute e-1 / pre - 1. This SIP react is information only; the graded trigger is react_iex as defined under rule.",
     "liquidity": "pre >= $10, and mean daily dollar volume over the 20 prior sessions >= $10M (Alpaca SIP daily bars, split-adjusted; minute prices are raw, so on a split day the ADV gate uses the adjusted series and the $10 floor uses the raw pre price). Unknown inputs exclude the event and are counted."
   },
   "rule": {
     "NEWS_UP": "Graded on the IEX reaction (what the desk can compute live; SIP is 15-minute delayed): react_iex = last IEX close in the minute e-1 (or t0) vs the last IEX close at or before t0-1 (within 15 minutes) - 1 >= +0.20%. Long at the SIP open of minute e. The SIP-reaction version is information only."
   },
   "outcome": "Gross 10-minute markout: SIP close of minute e+9 / SIP open of minute e - 1 (early_entry_honest.markout; exit bar before 16:00). Missing bars drop the event (counted).",
-  "cost": "10 bp round trip subtracted. News names may be wider than tight-source names; a 20 bp line is information.",
+  "cost": "10 bp round trip subtracted for the main net and its t. The pass ALSO requires day-equal net at 20 bp > 0 in both halves (news names may be wider than tight-source names).",
   "statistic": "net = gross - 10 bp per event. Day-equal mean (mean of per-session means) and day-clustered t.",
   "split": "Sessions with at least one scored NEWS_UP event, sorted; index (n-1)//2 ends half A. Printed with counts before any return.",
   "pass": "NEWS_UP PASSES only if in BOTH halves: day-equal net at 10 bp > 0 with day-clustered t >= 2.0, AND day-equal net at 20 bp > 0, >= 100 scored events, >= 20 sessions with an event. Short of events or sessions = UNDERPOWERED. Any FAIL half = FAIL. One graded rule.",
@@ -39,5 +39,5 @@
   "fetch_discipline": "The live desk shares the Alpaca data budget. The fetch runs at <= 20 requests per minute, backs off 30 s on HTTP 429, and pauses itself from 09:15 to 16:15 ET. 10/14 04:30: the desk alone was exhausting the 200/min budget in premarket (dashboard L2 auto-watch ~150 req/min); the headline fetch was stopped and resumes after the close.",
   "script": "tools/studies/news_seat_study.py: --fetch-news, --fetch-bars (mini), default inventory with no returns, --score after a result-skeptic READY.",
   "data_integrity": "A day whose minute-bar fetch logged any failed chunk is not cached (rerun resumes); failed daily-bar chunks block the daily cache. Inventory lists weekdays without news and days without bars. Scoring aborts if events without bars or ADV exceed 5% of eligible events. Same-second duplicate articles on a symbol count once.",
-  "amended": "2026-10-14 before any price around a headline was fetched, after result-skeptic FIX FIRST: graded trigger moved to the IEX reaction; if_pass needs a forward latency log and an all-symbols feed; fetches no longer cache partial days; abort above 5% missing; same-second duplicates fixed; pass also needs net > 0 at 20 bp; reaction-article, SPY and labelled-control information lines."
+  "amended": "2026-10-14 before any price around a headline was fetched, after result-skeptic FIX FIRST: graded trigger moved to the IEX reaction; if_pass needs a forward latency log and an all-symbols feed; fetches no longer cache partial days; abort above 5% missing; same-second duplicates fixed; pass also needs net > 0 at 20 bp; reaction-article, SPY and labelled-control information lines. Round 2 READY; afterwards: cost and events.minutes wording aligned with pass/rule, and a no_iex_react count added (events the IEX trigger cannot see)."
 }

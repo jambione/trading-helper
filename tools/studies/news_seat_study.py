@@ -340,6 +340,7 @@ def report(rows: list[dict], drops: Counter) -> str:
     # Graded: the IEX reaction (what the desk can compute live). SIP react is information.
     up = [r for r in rows if r["react_iex"] is not None and r["react_iex"] >= REACT_MIN]
     up_sip = [r for r in rows if r["react"] >= REACT_MIN]
+    drops["no_iex_react"] = sum(1 for r in rows if r["react_iex"] is None)   # events the IEX trigger cannot see
     days = sorted({r["day"] for r in up})
     cut = days[(len(days) - 1) // 2] if days else None
     L = [f"# News seat — {FIRST_DAY} .. {LAST_DAY}", "",
