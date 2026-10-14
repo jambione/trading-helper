@@ -136,9 +136,12 @@ def install(tr: Tracer):
     def movers_seed(rows, cfg, **k):
         out = ms0(rows, cfg, **k)
         kept = {r["symbol"] for r in out}
-        for r in rows:
+        for i, r in enumerate(rows):
             if r["symbol"] in tr.t:
-                tr.note(r["symbol"], "seed:kept" if r["symbol"] in kept else "seed:dropped")
+                if r["symbol"] in kept:
+                    tr.note(r["symbol"], "seed:kept")
+                else:
+                    tr.note(r["symbol"], "seed:dropped", seed_reason(r, cfg, k.get("max_price"), i, rows, kept))
         return out
     wrap("movers_seed", movers_seed)
 
@@ -147,7 +150,9 @@ def install(tr: Tracer):
     def door_gates(row, cfg, **k):
         why = dg0(row, cfg, **k)
         if row.get("symbol") in tr.t:
-            tr.note(row["symbol"], f"door:{why or 'pass'}")
+            tr.note(row["symbol"], f"door:{why or 'pass'}",
+                    {"spread": k.get("spread"), "cap": cfg.get("ai_watch_max_sip_spread_pct"),
+                     "gap": k.get("gap"), "price": row.get("price")} if why else None)
         return why
     wrap("door_gates", door_gates)
 
@@ -156,6 +161,31 @@ def install(tr: Tracer):
         for n, f in saved.items():
             setattr(HU, n, f)
     return undo
+
+
+def seed_reason(r: dict, cfg: dict, max_price, idx: int, rows: list, kept: set) -> str:
+    """Which movers_seed check dropped the row, in movers_seed's own order."""
+    from ai_entry_watch import rvol_blocks_admit
+    s = r["symbol"]
+    if HU.is_levered(s):
+        return "levered"
+    px, pct = r.get("seed_price", r.get("price")), r.get("seed_pct", r.get("pct_change"))
+    if max_price and px is not None and not px < max_price:
+        return f"price_cap {px}"
+    mv_min_px = HU._f(cfg, "ai_watch_movers_min_price", 0.0)
+    if mv_min_px > 0 and (px is None or px < mv_min_px):
+        return f"below_min_price {px}"
+    mv_min_pct = HU._f(cfg, "ai_watch_movers_min_pct_change", 10.0)
+    if pct is None or pct < mv_min_pct:
+        return f"pct_low {None if pct is None else round(pct, 2)} < {mv_min_pct}"
+    if rvol_blocks_admit(r.get("rvol"), pct, cfg, source="movers", record=None) == "thin_rvol":
+        return f"thin_rvol {r.get('rvol')}"
+    mv_min_dv = HU._f(cfg, "ai_watch_movers_min_dollar_volume", 0.0)
+    dv = r.get("dollar_volume")
+    if mv_min_dv > 0 and (dv is None or dv < mv_min_dv):
+        return f"dollar_vol {dv}"
+    n = max(1, HU._i(cfg, "ai_watch_seed_movers_n", 12))
+    return f"seed_cap n={n} (row {idx} of {len(rows)}, {len(kept)} kept)"
 
 
 def summarize(day: str, targets: dict, ev: dict) -> dict:
@@ -183,10 +213,19 @@ def summarize(day: str, targets: dict, ev: dict) -> dict:
         stage[where.split(" (")[0]] += 1
         rec_min = HU.et_min_of(t["recorded_ts"]) if hasattr(HU, "et_min_of") else None
         sample = [d for _T, k, d in e if k in ("measure:discard", "measure:none")][:3]
+        seed_why = Counter(str(d).split(" ")[0] for _T, k, d in e if k == "seed:dropped")
+        door_why = [d for _T, k, d in e if k.startswith("door:") and d][:2]
+        try:
+            from ticker_filters import is_levered_etp
+            lev = bool(is_levered_etp(s))
+        except Exception:  # noqa: BLE001
+            lev = None
         res[s] = {"status": t["status"], "recorded_et": t["recorded"].get("ts"), "recorded_pct": t["recorded"].get("pct_change"),
                   "recorded_price": t["recorded"].get("price"), "where": where, "kinds": dict(kinds),
                   "first": {k: HU.hhmm(T) if T is not None else None for k, T in first.items()},
-                  "measure_samples": sample, "rec_min": rec_min}
+                  "measure_samples": sample, "rec_min": rec_min, "seed_why": dict(seed_why),
+                  "seed_why_first": next((d for _T, k, d in e if k == "seed:dropped"), None),
+                  "door_samples": door_why, "levered_now": lev}
     return {"day": day, "n_targets": len(targets), "stages": dict(stage), "names": res}
 
 
