@@ -1054,8 +1054,26 @@ def cmd_daily(lo, hi):
             if i % 2000 == 0:
                 print(f"  {feed} {i}/{len(syms)} -> {len(data)} with bars", flush=True)
         # Daily bars are stamped 04:00Z = the ET session date (00:00 ET).
-        pickle.dump({"lo": lo, "hi": hi, "data": data, "failed": sorted(failed)}, open(daily_path(feed), "wb"))
-        print(f"{feed}: {len(data)} symbols, {len(failed)} failed", flush=True)
+        # MERGE into the existing cache (skeptic 10/14: a short range used to REPLACE the whole history the builds
+        # read through _prior_daily / trading_days). New rows win on the same date.
+        p_ = daily_path(feed)
+        if os.path.exists(p_):
+            old = pickle.load(open(p_, "rb"))
+            merged = {k: list(v) for k, v in (old.get("data") or {}).items()}
+            for k, rows in data.items():
+                by = {r[0]: r for r in merged.get(k, [])}
+                by.update({r[0]: r for r in rows})
+                merged[k] = [by[d] for d in sorted(by)]
+            blob = {"lo": min(old.get("lo") or lo, lo), "hi": max(old.get("hi") or hi, hi), "data": merged,
+                    "failed": sorted(set(old.get("failed") or []) | failed)}
+        else:
+            blob = {"lo": lo, "hi": hi, "data": data, "failed": sorted(failed)}
+        tmp = p_ + ".tmp"
+        pickle.dump(blob, open(tmp, "wb"))
+        os.replace(tmp, p_)
+        _DAILY.pop(feed, None)
+        print(f"{feed}: {len(data)} symbols fetched, cache {blob['lo']}..{blob['hi']} {len(blob['data'])} symbols, "
+              f"{len(failed)} failed", flush=True)
 
 
 _DAILY = {}

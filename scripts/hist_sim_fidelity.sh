@@ -9,8 +9,8 @@
 #   nohup bash scripts/hist_sim_fidelity.sh [extra untouched days...] > /tmp/fid_run.log 2>&1 &
 set -uo pipefail
 cd "$(dirname "$0")/.."
-OUT=ai_reports/hist_sim/fid_u3
-COST=ai_reports/hist_sim/fid_u3/costing_cache.json
+OUT="$PWD/ai_reports/hist_sim/fid_u3"     # absolute: replay_session absolutizes --out for its child (guard match)
+COST="$OUT/costing_cache.json"
 CAL="2026-09-24 2026-09-25 2026-09-28 2026-09-29 2026-09-30 2026-10-01 2026-10-02"
 NEW="2026-10-12 2026-10-13 2026-10-14 $*"
 PY=.venv/bin/python
@@ -24,14 +24,27 @@ SHA=$(git rev-parse --short HEAD)
 GUARD=$!
 trap 'kill $GUARD 2>/dev/null' EXIT
 echo "sha $SHA out $OUT days A [$CAL] B [$NEW] $(date)"
-if [ ! -f ai_reports/hist_universe/check_u3_untouched_file_INFO.json ]; then
+INFO=ai_reports/hist_universe/check_u3_untouched_file_INFO.json
+WANT_SPAN="$(echo $NEW | tr ' ' '\n' | sort | head -1)..$(echo $NEW | tr ' ' '\n' | sort | tail -1)"
+HAVE=$($PY -c "import json,sys; j=json.load(open(sys.argv[1])); print(j.get('span',''), j.get('git_sha',''))" "$INFO" 2>/dev/null || true)
+if [ "$HAVE" != "$WANT_SPAN $SHA" ]; then     # rebuild when the graded days OR the code sha changed
+  # cmd_daily MERGES into the cache (never replaces the January-October history the builds read).
   $PY tools/studies/hist_universe.py daily 2026-10-10 2026-10-16 || exit 1
+  $PY - "$NEW" <<'PY' || exit 1
+import sys, pickle
+sys.path.insert(0, "tools/studies")
+import hist_universe as HU
+d = pickle.load(open(HU.daily_path("sip"), "rb"))["data"].get("SPY") or []
+last = sorted(sys.argv[1].split())[-1]
+assert d and d[0][0] <= "2026-01-05" and d[-1][0] >= last, f"daily cache SPY span {d[:1]}..{d[-1:]} does not cover Jan..{last}"
+print("daily cache SPY", d[0][0], "..", d[-1][0])
+PY
   $PY - "$NEW" <<'PY' || exit 1
 import sys, json
 sys.path.insert(0, "tools/studies")
 import hist_universe as HU
 assert HU.RULE_VERSION.startswith("hist_universe/u3"), HU.RULE_VERSION
-days = sys.argv[1].split()
+days = sorted(sys.argv[1].split())
 r = HU.cmd_check(f"{days[0]}..{days[-1]}", knobs={"quote_mode": "file"}, out_name="check_u3_untouched_file_INFO")
 print("u3 untouched (information under amended_6):", json.dumps({k: r[k] for k in ("pooled_pct", "void", "git_sha")}))
 PY

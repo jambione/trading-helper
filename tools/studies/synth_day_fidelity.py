@@ -446,6 +446,32 @@ def part_b_pass(admit_recall, traded_recall, diffs: dict, paired_diff) -> dict:
     return out
 
 
+def traded_ready(traded_n: int) -> bool:
+    return traded_n >= B_MIN_TRADED
+
+
+def b_extra_floors(rep_share, ratio) -> dict:
+    """amended_7(7): reproduction floor and trades-per-day band. Pure."""
+    return {"repro_ok": rep_share is not None and rep_share >= B_REPRO,
+            "count_ok": ratio is not None and B_COUNT_BAND[0] <= ratio <= B_COUNT_BAND[1]}
+
+
+def info_problem(info: dict, days, sha: str | None) -> str | None:
+    """amended_7(4) + skeptic round 2: the untouched rebuild must be u3, unvoided, cover exactly the graded days,
+    and come from the same code sha. None = fine. Pure."""
+    if not str(info.get("rule_version", "")).startswith("hist_universe/u3"):
+        return f"NOT READY: untouched rebuild is {info.get('rule_version')}, not u3"
+    if info.get("void"):
+        return f"VOID: {info['void']}"
+    span = str(info.get("span") or "")
+    lo, hi = (span.split("..") + [span])[:2] if ".." in span else (span, span)
+    if not days or lo != min(days) or hi != max(days):
+        return f"NOT READY: untouched rebuild span {span} != graded days {min(days)}..{max(days)}; rebuild it"
+    if sha and not str(info.get("git_sha") or "").startswith(sha):
+        return f"NOT READY: untouched rebuild sha {info.get('git_sha')} != {sha}"
+    return None
+
+
 def fidelity_document(a_pass: bool, b_pass: bool, A: dict, B: dict, power: dict) -> dict:
     """The file hist_sim_read.py requires before it will score. Pure."""
     return {"verdict": "PASS" if a_pass and b_pass else "FAIL", "A": A, "B": B, "power": power}
@@ -497,11 +523,9 @@ def cmd_gate(a) -> dict:
     info_p = ROOT / "ai_reports" / "hist_universe" / "check_u3_untouched_file_INFO.json"
     if not info_p.exists():
         raise SystemExit(f"NOT READY: {info_p} missing")
-    INFO = json.loads(info_p.read_text())
-    if not str(INFO.get("rule_version", "")).startswith("hist_universe/u3"):
-        raise SystemExit(f"NOT READY: {info_p} is {INFO.get('rule_version')}, not u3")
-    if INFO.get("void"):
-        raise SystemExit(f"VOID: {INFO['void']}")
+    why = info_problem(json.loads(info_p.read_text()), a.days, getattr(a, "sha", None))
+    if why:
+        raise SystemExit(why)
     for d in a.days:
         for v in VARIANTS:
             for p in (rec_dir / f"{d}-{v}.json", syn_dir / f"{d}-{v}.json"):
@@ -533,15 +557,13 @@ def cmd_gate(a) -> dict:
     RC.save_cache(cache)
     admit_recall = recall["admit_hit"] / recall["admit_n"] if recall["admit_n"] else None
     traded_recall = recall["traded_hit"] / recall["traded_n"] if recall["traded_n"] else None
-    if recall["traded_n"] < B_MIN_TRADED:
+    if not traded_ready(recall["traded_n"]):
         raise SystemExit(f"NOT READY: {recall['traded_n']} recorded traded movers/tight names < {B_MIN_TRADED}; "
                          "add the next untouched sessions (amended_6)")
     b_flag = part_b_pass(admit_recall, traded_recall, diffs, paired_diff)
-    # skeptic #7: trade reproduction floor (as part A) and a trades-per-day band.
     rep_share = repro["hit"] / repro["n"] if repro["n"] else None
     ratio = repro["n_syn"] / repro["n_rec"] if repro["n_rec"] else None
-    b_flag["repro_ok"] = rep_share is not None and rep_share >= B_REPRO
-    b_flag["count_ok"] = ratio is not None and B_COUNT_BAND[0] <= ratio <= B_COUNT_BAND[1]
+    b_flag.update(b_extra_floors(rep_share, ratio))
     b_flag["pass"] = bool(b_flag["pass"] and b_flag["repro_ok"] and b_flag["count_ok"])
     n = len(held_out_trading_days())
     mde_bp, mde_paired = mde_80(sd_bp, n), mde_80(sd_paired, n)

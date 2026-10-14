@@ -349,3 +349,18 @@ def test_gate_writes_nothing_until_both_legs_exist(tmp_path):
     assert not dest.exists()
     with pytest.raises(SystemExit):
         sf.main(["run", "--out", str(tmp_path), "--leg", "syn", "--universe-kind", "nope", "2026-10-08"])
+
+
+def test_amended_7_gate_helpers():
+    import synth_day_fidelity as sf
+    assert not sf.traded_ready(29) and sf.traded_ready(30)
+    assert sf.b_extra_floors(0.65, 1.0) == {"repro_ok": True, "count_ok": True}
+    assert sf.b_extra_floors(0.64, 1.0)["repro_ok"] is False
+    assert sf.b_extra_floors(0.9, 1.6)["count_ok"] is False and sf.b_extra_floors(0.9, None)["count_ok"] is False
+    good = {"rule_version": "hist_universe/u3", "void": [], "span": "2026-10-12..2026-10-14", "git_sha": "abc1234"}
+    days = ["2026-10-12", "2026-10-13", "2026-10-14"]
+    assert sf.info_problem(good, days, "abc1234") is None
+    assert "not u3" in sf.info_problem({**good, "rule_version": "hist_universe/u2.1"}, days, None)
+    assert sf.info_problem({**good, "void": ["x"]}, days, None).startswith("VOID")
+    assert "span" in sf.info_problem(good, days + ["2026-10-15"], None)
+    assert "sha" in sf.info_problem(good, days, "def5678")
