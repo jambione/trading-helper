@@ -151,7 +151,14 @@ def con_flags(closes, rsi) -> list[bool]:
     return out
 
 
-CON_PRIOR_BARS = 220      # live symbol_ohlc loads the last 220 raw IEX bars (alpaca_api, config ai bars limit)
+CON_PRIOR_BARS = 220
+CON_PRIOR_MAX_MISS = 0.05  # a day with more board names lacking prior bars is excluded from CON (skeptic round 2 #5)
+
+
+def prior_miss_share(data: dict) -> float:
+    n = len(data.get("board") or {})
+    pr = data.get("iex_prior") or {}
+    return (sum(1 for s_ in data["board"] if pr.get(s_) is None) / n) if n else 1.0      # live symbol_ohlc loads the last 220 raw IEX bars (alpaca_api, config ai bars limit)
 
 
 def rsi2_series(closes: list[float]) -> list[float]:
@@ -529,9 +536,13 @@ def score(datas: list[dict]) -> dict:
     drops = Counter()
     fire_log = defaultdict(list)          # (sym, day) -> [(rule, signal_min)]
     artifact = defaultdict(list)
+    con_excluded = []
     for data in datas:
         day = data["day"]
         half = "A" if day <= cut else "B"
+        con_off_day = "CON" in RULES and prior_miss_share(data) > CON_PRIOR_MAX_MISS
+        if con_off_day:
+            con_excluded.append((day, round(prior_miss_share(data), 3)))
         sips_day = {s_: sip_map(f) for s_, f in data["sip"].items() if f is not None}
         for sym, board in data["board"].items():
             iex, sipf = data["iex"].get(sym), data["sip"].get(sym)
@@ -552,6 +563,8 @@ def score(datas: list[dict]) -> dict:
                     if g0 is not None:
                         board_mean[day].append(g0)
             for rule, (sigs, off) in rule_fires(ser, board).items():
+                if rule == "CON" and con_off_day:
+                    continue
                 drops[f"{rule}_off_board"] += off
                 for sm in sigs:
                     fire_log[(sym, day)].append((rule, sm))
@@ -591,7 +604,7 @@ def score(datas: list[dict]) -> dict:
                 if None in (now, back, ent, early, ex) or now[1] / back[1] - 1 < 0.0014:
                     continue
                 artifact[day].append(ex[1] / early[0] - ex[1] / ent[0])
-    res = {"days": days, "cut": cut, "drops": dict(drops), "rules": {}}
+    res = {"days": days, "cut": cut, "drops": dict(drops), "rules": {}, "con_excluded": con_excluded}
     for r in RULES:
         halves = {}
         for h in "AB":
@@ -659,7 +672,11 @@ def report(res: dict) -> str:
             t = "—" if x["t"] is None else f"{x['t']:+.2f}"
             L.append(f"| {r} | {h} | {x['n']} | {x['days']} | {_bp(x['gross'])} | {_bp(x['net'])} "
                      f"| {_bp(x['lift'])} | {t} | {x['verdict']} |")
-    L += ["", "**Verdicts:** " + ", ".join(f"{r} {v['verdict']}" for r, v in res["rules"].items()), "",
+    L += ["", "**Verdicts:** " + ", ".join(f"{r} {v['verdict']}" for r, v in res["rules"].items()), ""]
+    if "CON" in res["rules"]:
+        L += [f"CON prior-bar coverage: name-days without prior bars {res['drops'].get('CON_no_prior_bars', 0)}; "
+              f"days excluded (> {CON_PRIOR_MAX_MISS:.0%} of board names lacking them) {res.get('con_excluded') or []}", ""]
+    L += [
           "### Information only", "", "Lift at other holds (day-equal, t):"]
     for r, v in res["rules"].items():
         L.append(f"- {r}: " + "; ".join(
@@ -706,7 +723,7 @@ def main() -> None:
                 continue
             pth = os.path.join(OUT_DIR, fn)
             data = pickle.load(open(pth, "rb"))
-            if data.get("iex_prior") or (a.days and data["day"] not in set(a.days)):
+            if (data.get("iex_prior") and prior_miss_share(data) <= CON_PRIOR_MAX_MISS) or (a.days and data["day"] not in set(a.days)):
                 continue
             d0 = datetime.strptime(data["day"], "%Y-%m-%d").replace(tzinfo=ET)
             errs: list = []

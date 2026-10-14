@@ -23,5 +23,7 @@
     "Live symbol_ohlc may include the Finnhub stream overlay; the harness uses Alpaca IEX bars only."
   ],
   "multiplicity": "6th entry rule graded on these same 26 sessions (PRE, IGN, MID, RSI2T, limit-below primary, CON; SQ information only). The operator's chart that prompted it is from 2026-10-14, outside the cache (ends 10-13). 'Outside rule' stands only together with the forward test in if_pass.",
-  "amended": "2026-10-14 before any score, after result-skeptic round 1 FIX FIRST: live-shaped raw-bar series with prior-session warm-up (the grid version could not fire before ~12:49), missing-close guard, declared deviations, multiplicity and chart date."
+  "amended": "2026-10-14 before any score, after result-skeptic round 1 FIX FIRST: live-shaped raw-bar series with prior-session warm-up (the grid version could not fire before ~12:49), missing-close guard, declared deviations, multiplicity and chart date.",
+  "prior_bar_coverage": "Before scoring, --fetch-prior refetches any day where more than 5% of board names lack iex_prior; a day still above 5% is EXCLUDED from CON (listed with its miss share). Name-days without prior bars on included days are scored with in-session warm-up and counted (CON_no_prior_bars). Both are printed with the verdict. The synthetic null has no prior bars, so its calibration (above) is of the in-session method; the scoring method is unchanged otherwise.",
+  "amended_2": "2026-10-14 before any score, after result-skeptic round 2: prior-bar coverage rule (5% day exclusion, refetch, counts printed with the verdict)."
 }
