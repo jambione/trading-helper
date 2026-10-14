@@ -28,7 +28,7 @@ echo "sha $SHA cfg $CFG_SHA keys $N out $OUT"
 while [ "$(TZ=America/New_York date +%H%M)" -lt 1615 ]; do sleep 120; done
 # Operator 10/14: the catch-up ratchet sweep goes first.
 sleep 300
-while pgrep -f "knobs/one.sh|ratchet_sweep.sh" > /dev/null; do sleep 60; done
+while pgrep -f "knobs/one.sh|ratchet_sweep.sh|hist_sim_fidelity.sh" > /dev/null; do sleep 60; done
 
 arm_sets() {
   case $1 in

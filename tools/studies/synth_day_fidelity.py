@@ -429,11 +429,13 @@ def recall_pair(recorded_rows, recon_rows, traded_syms, window_sec: float = 600.
 def part_b_pass(admit_recall, traded_recall, diffs: dict, paired_diff) -> dict:
     """Fidelity B: recall floors, |net diff| <= 3 bp per variant, paired |diff| <= 1.5 bp. Pure."""
     d_ok = bool(diffs) and all(v is not None and abs(v) <= B_DIFF_BP for v in diffs.values())
-    out = {"admit_recall_ok": admit_recall is not None and admit_recall >= B_RECALL,
-           "traded_recall_ok": traded_recall is not None and traded_recall >= B_RECALL,
+    out = {"traded_recall_ok": traded_recall is not None and traded_recall >= B_RECALL,
            "diff_ok": d_ok,
            "paired_ok": paired_diff is not None and abs(paired_diff) <= B_PAIRED_BP}
     out["pass"] = all(out.values())
+    # amended_6 (operator 2026-10-14): admissions recall is information, not a pass condition. Logged beside the
+    # graded flags so a reader sees it was not met.
+    out["admit_recall_info_ok"] = admit_recall is not None and admit_recall >= B_RECALL
     return out
 
 

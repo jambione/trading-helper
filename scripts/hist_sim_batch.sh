@@ -25,15 +25,11 @@ while [ "$(TZ=America/New_York date +%H%M)" -lt 1615 ] && [ "$(TZ=America/New_Yo
 # ── gates ──
 .venv/bin/python - <<'PY'
 import json, os, sys
-b = "ai_reports/hist_universe/check_u2_untouched_file_GRADED.json"
 a = "ai_reports/hist_sim/FIDELITY.json"
-if not os.path.exists(b):
-    sys.exit("gate B result missing - run scripts/hist_universe_u2_check.sh first")
-B = json.load(open(b))
-if B.get("void") or not all(v is True for v in (B.get("pass_pooled") or {}).values()):
-    sys.exit(f"gate B not passed: pass_pooled={B.get('pass_pooled')} void={B.get('void')}")
+# amended_6: gate B (traded-name recall + trade-result conditions on untouched 10/12-10/14) lives in FIDELITY.json
+# beside gate A; the u2 admissions-recall file is information. Run scripts/hist_sim_fidelity.sh first.
 if not os.path.exists(a) or json.load(open(a)).get("verdict") != "PASS":
-    sys.exit("synthetic-day fidelity gate not passed or not run - held-out batch refused")
+    sys.exit("fidelity gates A+B not passed or not run - held-out batch refused")
 print("gates A and B passed")
 PY
 

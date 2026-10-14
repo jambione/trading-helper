@@ -282,8 +282,11 @@ def test_recall_pair_movers_tight_window_and_vacuous_zero():
 def test_part_b_pass_and_fidelity_document():
     diffs = {"base": 1.0, "st": -2.9, "wrrsi_st": 0.2}
     assert sf.part_b_pass(0.70, 0.70, diffs, 1.5)["pass"]
-    assert not sf.part_b_pass(0.69, 0.70, diffs, 1.5)["pass"]
-    assert not sf.part_b_pass(None, 0.80, diffs, 0.0)["pass"]
+    # amended_6: admissions recall is information only; traded recall is graded.
+    assert sf.part_b_pass(0.69, 0.70, diffs, 1.5)["pass"]
+    assert not sf.part_b_pass(0.69, 0.70, diffs, 1.5)["admit_recall_info_ok"]
+    assert sf.part_b_pass(None, 0.80, diffs, 0.0)["pass"]
+    assert not sf.part_b_pass(0.80, 0.69, diffs, 0.0)["pass"]
     assert not sf.part_b_pass(0.8, 0.8, {"base": 3.1}, 0.0)["pass"]
     assert not sf.part_b_pass(0.8, 0.8, {}, 0.0)["pass"]
     assert not sf.part_b_pass(0.8, 0.8, diffs, None)["pass"]
