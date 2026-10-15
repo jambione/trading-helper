@@ -116,6 +116,10 @@ LOG = OUT / "run.log"
 SNAPSHOT = OUT / "snapshot.json"
 SNAPSHOT_EVERY = 5 * 60
 BACKTEST_BP = 16.1
+# Weekly undervalued-trending book (operator 2026-10-15, docs/briefs/CLAUDE_WEEKLY_BOOK_2026-10-15.md): the PAPER
+# account holds weekly_book's agreed 20 from one week's close to the next. Live stays nightly (and disarmed).
+BOOK_MODE = os.getenv("OVERNIGHT_BOOK_MODE", "nightly" if ACCOUNT == "live" else "weekly").strip().lower()
+WEEKLY = BOOK_MODE == "weekly" and ACCOUNT != "live"
 # Opening balance, for the dashboard's "since start": the paper account
 # (PA36S0LLDMZY) opened at $25,000, the live test account at $100.
 START_EQUITY = float(os.getenv("OVERNIGHT_START_EQUITY", "100" if LIVE else "25000"))
@@ -164,7 +168,7 @@ LIVE_MAX_SHARES = int(os.getenv("OVERNIGHT_LIVE_MAX_SHARES", "1"))
 # disarm; checked before each buy step, so no restart either way. Writing
 # a start date into it (`echo 2026-10-05 > ...`) arms it from that day.
 ARMED_FILE = ROOT / "config" / "overnight_live.armed"
-ORDER_STEPS = frozenset({"sell", "sell_check", "sell_fallback", "sell_topup",
+ORDER_STEPS = frozenset({"weekly_rebalance", "sell", "sell_check", "sell_fallback", "sell_topup",
                          "buy", "buy_check", "buy_fallback", "buy_topup"})
 # Only BUY steps wait for the arm switch (2026-10-03 skeptic review): gating
 # the sells too meant disarming while shares were held left them held, with
@@ -1646,7 +1650,17 @@ def build_snapshot(plan_row: dict | None, ledger: list[dict], nights: list[dict]
 
 
 def _next_step(tc, now: datetime) -> dict | None:
-    """The next scheduled step, looking up to a week ahead."""
+    """The next scheduled step, looking up to a week ahead. Weekly mode: the next order (the order day's close)."""
+    if WEEKLY:
+        import weekly_book as WB
+        sess = _sessions_ahead(tc, now.date())
+        for day in sess:
+            if WB.order_day(day, sess):
+                ses = session(tc, day)
+                if ses and ses[1] - MKT_BUY_BEFORE_CLOSE > now:
+                    return {"name": "weekly_rebalance", "at": (ses[1] - MKT_BUY_BEFORE_CLOSE).timestamp(),
+                            "mode": "weekly"}
+        return None
     for k in range(8):
         day = now.date() + timedelta(days=k)
         ses = session(tc, day)
@@ -1659,6 +1673,38 @@ def _next_step(tc, now: datetime) -> dict | None:
             if when > now:
                 return {"name": name, "at": when.timestamp(), "mode": ORDER_MODE}
     return None
+
+
+def weekly_snapshot(positions: list[dict], now: datetime) -> dict:
+    """The weekly strip: the latest agreed list (ranks, tags, held), the held book, week scores, and on
+    non-order days who would enter or leave at the next order."""
+    import weekly_book as WB
+    agreed_files = sorted(OUT.glob("weekly_agreed_*.json"))
+    ag = None
+    if agreed_files:
+        try:
+            ag = json.loads(agreed_files[-1].read_text())
+        except (OSError, ValueError):
+            ag = None
+    held = {str(x.get("symbol")): x for x in positions}
+    book = (ag or {}).get("book", [])
+    sell, buy, keep = WB.week_diff({s: 1.0 for s in held}, [r["sym"] for r in book])
+    orders = _read_jsonl(OUT / "weekly_orders.jsonl")
+    held_since = max((r["day"] for r in orders if not r.get("dry_run")), default=None)
+    weeks = _read_jsonl(OUT / "weeks.jsonl")
+    scored = [w for w in weeks if w.get("net_bp") is not None]
+    totals = None
+    if scored:
+        totals = {"weeks": len(scored), "mean_bp": sum(w["net_bp"] for w in scored) / len(scored),
+                  "green": sum(w["net_bp"] > 0 for w in scored),
+                  "screen_mean_bp": (sum(w["screen_eq_bp"] for w in scored if w.get("screen_eq_bp") is not None)
+                                     / max(1, sum(w.get("screen_eq_bp") is not None for w in scored)))}
+    return {"agreed_day": (ag or {}).get("day"), "held_since": held_since,
+            "rows": [{"sym": r["sym"], "held": r["sym"] in held, "agy_rank": r["agy_rank"],
+                      "grok_rank": r["grok_rank"], "tag": r["tag"]} for r in book]
+                    + [{"sym": s, "held": True, "agy_rank": None, "grok_rank": None, "tag": "leaving"} for s in sell],
+            "would_enter": buy, "would_leave": sell, "keep": keep, "one_model": (ag or {}).get("one_model", []),
+            "weeks": scored[-10:][::-1], "totals": totals}
 
 
 def write_snapshot(tc) -> None:
@@ -1685,6 +1731,9 @@ def write_snapshot(tc) -> None:
         nxt = None
     snap = build_snapshot(plan_row, _read_jsonl(LEDGER), _read_jsonl(NIGHTS), positions, account,
                           load_state().get(now.date().isoformat(), {}), nxt, now)
+    if WEEKLY:
+        snap["weekly"] = weekly_snapshot(positions, now)
+        snap["backtest_bp"] = None
     if LIVE:
         try:
             snap["compare"] = compare(print_it=False)
@@ -1715,9 +1764,87 @@ def run_step(tc, today: date, name: str, fn, now: datetime, done: dict) -> None:
         account_audit(tc, today, name)
 
 
+def weekly_steps(op: datetime, cl: datetime, is_order_day: bool) -> list[tuple[str, datetime]]:
+    """(step, when) for one session of the weekly book. Pure. Every session: the screen and both models from
+    06:30 (no lateness - it only needs to finish before the order cutoff). Order day only: the close rebalance,
+    a top-up, reconcile, and the week's score. No morning sells and no sell catch-up on any day."""
+    steps = [("weekly_screen", op.replace(hour=6, minute=30, second=0, microsecond=0))]
+    if is_order_day:
+        steps += [("weekly_rebalance", cl - MKT_BUY_BEFORE_CLOSE),
+                  ("buy_topup", cl - MKT_BUY_TOPUP_BEFORE_CLOSE),
+                  ("reconcile_buy", cl + timedelta(minutes=30)),
+                  ("weekly_score", cl + timedelta(minutes=40))]
+    return steps
+
+
+WEEKLY_MODEL_CUTOFF = timedelta(minutes=20)          # agreed file must exist by close - 20 min (15:40)
+
+
+def _sessions_ahead(tc, day: date, days: int = 14) -> list[date]:
+    return [c.date for c in calendar(tc, day, day + timedelta(days=days))]
+
+
+def run_weekly_tick(tc, now: datetime, st: dict) -> bool:
+    """One scheduler pass in weekly mode. Returns True when a step ran."""
+    import weekly_book as WB
+    today = now.date()
+    done = st.setdefault(today.isoformat(), {})
+    ses = session(tc, today)
+    if not ses:
+        return False
+    op, cl = ses
+    is_od = WB.order_day(today, _sessions_ahead(tc, today))
+    ran = False
+    for name, when in weekly_steps(op, cl, is_od):
+        if now < when:
+            continue
+        if name in done:
+            # The screen/models step retries every 15 minutes after an error, until the cutoff.
+            prev = str(done[name])
+            last = done.get(f"{name}_at")
+            if not (name == "weekly_screen" and prev.startswith("error") and last
+                    and now - datetime.fromisoformat(last) >= timedelta(minutes=15)):
+                continue
+            done.pop(name)
+        if name == "weekly_screen":
+            done[f"{name}_at"] = now.isoformat()
+        if name == "weekly_screen":
+            if now >= cl - WEEKLY_MODEL_CUTOFF:
+                done[name] = f"skipped: past {(cl - WEEKLY_MODEL_CUTOFF):%H:%M}"
+                if is_od:
+                    alert(f"weekly book: no agreed list before the cutoff on order day {today}; no orders",
+                          key=f"wk-cutoff-{today}")
+            else:
+                run_step(tc, today, name, lambda: WB.run_models(sys.modules[__name__], today,
+                                                                WB.build_screen(sys.modules[__name__], tc, today)),
+                         now, done)
+        elif now - when > timedelta(minutes=10) and not name.startswith(("reconcile", "weekly_score")):
+            done[name] = f"skipped late at {now:%H:%M}"
+            alert(f"weekly book: {name} {today} missed its {when:%H:%M} window", key=f"late-{today}-{name}")
+        elif name == "weekly_rebalance":
+            run_step(tc, today, name, lambda: WB.rebalance(sys.modules[__name__], tc, today), now, done)
+        elif name == "buy_topup":
+            has = any(r.get("event") == "submit" and r.get("side") == "buy" and r.get("night") == today.isoformat()
+                      for r in _read_jsonl(LEDGER))
+            if has:
+                run_step(tc, today, name, lambda: buy_topup(tc, today), now, done)
+            else:
+                done[name] = "nothing bought today"
+        elif name == "reconcile_buy":
+            run_step(tc, today, name, lambda: reconcile(tc, today, "buy"), now, done)
+        elif name == "weekly_score":
+            run_step(tc, today, name, lambda: WB.score_week(sys.modules[__name__], today), now, done)
+        save_state(st)
+        ran = True
+    return ran
+
+
 def run() -> None:
     tc = book_client()
     log("run: overnight book scheduler started")
+    if WEEKLY:
+        _run_weekly(tc)
+        return
     last_snap = last_catchup = 0.0
     while True:
         try:
@@ -1796,6 +1923,28 @@ def run() -> None:
                 last_snap = time.time()
         except Exception as e:  # noqa: BLE001
             log(f"run loop error: {e!s:.200}")
+        time.sleep(30)
+
+
+def _run_weekly(tc) -> None:
+    import weekly_book as WB
+    now = datetime.now(ET)
+    held = len(tc.get_all_positions())
+    nxt = _next_step(tc, now)
+    log(f"run: WEEKLY book (paper), holding {held}; next order "
+        + (f"{datetime.fromtimestamp(nxt['at'], ET):%a %Y-%m-%d %H:%M} ({nxt['name']})" if nxt else "unknown"))
+    last_snap = 0.0
+    while True:
+        try:
+            now = datetime.now(ET)
+            st = load_state()
+            if run_weekly_tick(tc, now, st):
+                last_snap = 0.0
+            if time.time() - last_snap >= SNAPSHOT_EVERY:
+                write_snapshot(tc)
+                last_snap = time.time()
+        except Exception as e:  # noqa: BLE001
+            log(f"weekly run loop error: {e!s:.200}")
         time.sleep(30)
 
 

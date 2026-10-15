@@ -1231,6 +1231,11 @@ function _paintOvernight(sectionEl, book) {
     acctEl.innerHTML = parts.join(' · ');
   }
 
+  // Weekly undervalued-trending book (operator 2026-10-15): same strip and hooks, weekly words.
+  if (snap.weekly && typeof snap.weekly === 'object') {
+    _paintWeeklyStrip(snap, label, score, status, list, nightsEl);
+    return;
+  }
 
   const rows = Array.isArray(snap.rows) ? snap.rows : [];
   const bits = [];
@@ -1319,6 +1324,71 @@ function _paintOvernight(sectionEl, book) {
         + (x.vs_rsp_bp != null ? ` · RSP <span class="${_bpCls(x.vs_rsp_bp)}">${_esc(_fmtBp(x.vs_rsp_bp))} vs</span>` : '')
         + `</span>`
         + `<span class="on-dim">${_esc(paper)}</span>`
+        + `</div>`;
+    }).join('');
+  }
+}
+
+function _paintWeeklyStrip(snap, label, score, status, list, nightsEl) {
+  const w = snap.weekly;
+  const since = String(w.held_since || '');
+  if (label) label.textContent = since ? `Weekly book · ${_fmtHistDay(since)}` : 'Weekly book';
+  const t = w.totals && typeof w.totals === 'object' ? w.totals : null;
+  if (score) {
+    score.innerHTML = (t && Number(t.weeks) > 0)
+      ? `${_esc(String(t.weeks))} week${Number(t.weeks) === 1 ? '' : 's'} · `
+        + `<span class="${_bpCls(t.mean_bp)}">${_esc(_fmtBp(t.mean_bp))}/week</span> · `
+        + `${_esc(String(t.green))}/${_esc(String(t.weeks))} green`
+        + (t.screen_mean_bp != null ? ` <span class="on-dim">(screen ${_esc(_fmtBp(t.screen_mean_bp))}/week)</span>` : '')
+      : '<span class="on-dim">no scored weeks yet</span>';
+  }
+  const bits = [];
+  const holding = Number(snap.holding) || 0;
+  bits.push(`Holding ${holding}`);
+  const nxt = snap.next_step && typeof snap.next_step === 'object' ? snap.next_step : null;
+  if (nxt && nxt.at) {
+    let today = '';
+    try {
+      const parts = _etDayFmt.formatToParts(new Date());
+      const g = k => (parts.find(p => p.type === k) || {}).value;
+      today = `${g('year')}-${g('month')}-${g('day')}`;
+    } catch (e) { /* the clock alone still reads */ }
+    bits.push(`next order: ${_fmtEtClock(nxt.at, today).replace(/:\d{2}$/, '')}`);
+  } else {
+    bits.push('no order today');
+  }
+  const enter = Array.isArray(w.would_enter) ? w.would_enter : [];
+  const leave = Array.isArray(w.would_leave) ? w.would_leave : [];
+  if (enter.length || leave.length) {
+    bits.push(`would enter ${enter.length ? enter.join(' ') : '—'} · leave ${leave.length ? leave.join(' ') : '—'}`);
+  }
+  const errs = snap.errors && typeof snap.errors === 'object' ? Object.keys(snap.errors) : [];
+  let html = bits.map(_esc).join(' · ');
+  if (errs.length) html += ` · <span class="on-err">error: ${_esc(errs.join(', '))}</span>`;
+  if (status) status.innerHTML = html;
+  if (list) {
+    const rows = Array.isArray(w.rows) ? w.rows : [];
+    list.innerHTML = rows.length ? rows.map((r) => {
+      const x = r && typeof r === 'object' ? r : {};
+      const ranks = x.agy_rank != null ? `AGY #${x.agy_rank} · Grok #${x.grok_rank}` : '';
+      const tag = x.tag && x.tag !== 'none' ? `<span class="on-err">${_esc(String(x.tag))}</span>` : '';
+      return `<div class="on-row">`
+        + `<span class="on-sym">${_esc(String(x.sym || ''))}</span>`
+        + `<span class="on-dim">${x.held ? 'held' : 'not held'}</span>`
+        + `<span class="on-buy on-dim">${_esc(ranks)}</span>`
+        + `<span class="on-night">${tag}</span>`
+        + `</div>`;
+    }).join('') : '<div class="dh-empty">No agreed list yet</div>';
+  }
+  if (nightsEl) {
+    const weeks = Array.isArray(w.weeks) ? w.weeks : [];
+    nightsEl.innerHTML = weeks.slice(0, 5).map((k) => {
+      const x = k && typeof k === 'object' ? k : {};
+      return `<div class="on-nightrow">`
+        + `<span>${_esc(_fmtHistDay(x.week_end))}</span>`
+        + `<span class="${_bpCls(x.net_bp)}">${_esc(_fmtBp(x.net_bp))}</span>`
+        + `<span class="on-dim">${_esc(String(x.priced || 0))}/${_esc(String(x.n || 0))} names</span>`
+        + `<span class="on-dim">screen ${_esc(_fmtBp(x.screen_eq_bp))}</span>`
         + `</div>`;
     }).join('');
   }
