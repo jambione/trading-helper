@@ -43,6 +43,9 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 - Opens review + exit review (items 1 and 6)
 - Arm-proximity scan design
 
+### Incidents tonight
+- 17:40: the scheduled nightly --exact replay of 10/15 (restarts + Alpaca outage) grew to a 17 GB footprint and stalled every replay (swap); killed (10/15 is degraded anyway). TODO: memory cap / guard on nightly replays
+
 ### Parked / for later
 - Volume profile (operator: never mind)
 - JEV model (park until a timing edge exists)
