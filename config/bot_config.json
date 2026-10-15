@@ -77,7 +77,7 @@
   "ai_local_trail_be_at_pct": 0.15,
   "ai_local_trail_be_at_r": 0.15,
   "ai_local_trail_be_at_spread_k": 0.0,
-  "ai_local_trail_decay_idle_sec": 4.0,
+  "ai_local_trail_decay_idle_sec": 15.0,
   "ai_local_trail_decay_max_mfe_r": 0.0,
   "ai_local_trail_decay_overtake": true,
   "ai_profit_capture_pct": 0.0,
