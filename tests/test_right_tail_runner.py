@@ -23,7 +23,7 @@ def test_trail_arms_after_one_percent_and_eod():
     bars[602] = (100.0, 103.0, 100.0, 102.5)                # high 103 arms the trail: stop 101.97
     bars[603] = bars[604] = (102.5, 102.6, 102.2, 102.4)    # holds above the trail
     bars[605] = (102.0, 102.0, 101.5, 101.8)                # low 101.5 hits it
-    px, m, why = R.runner_exit(bars, 600, 100.0)
+    px, m, why = R.runner_exit(bars, 600, 100.0, worse=False)
     assert abs(px - 101.97) < 1e-9 and m == 605 and why == "trail"
     late = {949 + i: (100.0, 100.0, 100.0, 100.5) for i in range(3)}
     assert R.runner_exit(late, 948, 100.0) == (100.5, 949, "eod")   # 15:49 close is the latest exit
@@ -32,3 +32,14 @@ def test_trail_arms_after_one_percent_and_eod():
 def test_tail_stats():
     t = R.tail_stats([0.06, 0.03, 0.0, -0.01] + [0.0] * 16)
     assert t["share_ge_2pct"] == 0.1 and t["share_ge_5pct"] == 0.05 and abs(t["max_bp"] - 600) < 1e-9
+
+
+def test_entry_bar_low_and_worse_ordering():
+    bars = _flat()
+    bars[600] = (100.0, 100.5, 97.9, 100.0)                 # the entry bar itself trades through the 2% stop
+    assert R.runner_exit(bars, 600, 100.0) == (98.0, 600, "stop")
+    bars = _flat()
+    bars[602] = (100.0, 103.0, 101.5, 102.0)                # new high 103 arms 101.97 and the same bar's low 101.5
+    assert R.runner_exit(bars, 600, 100.0)[2] == "trail"                    # graded: worse ordering exits
+    assert R.runner_exit(bars, 600, 100.0, worse=False)[1] != 602           # information ordering keeps it open
+    assert R.max_concurrent([(600, 610), (605, 620), (611, 612)]) == 2

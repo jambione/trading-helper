@@ -3,13 +3,23 @@
   "registered_at": "2026-10-15 ~04:00 ET, before any return of this rule was computed.",
   "registered_before_results": true,
   "prior": "LOW for the mean: holding-longer-loses-more (fills drift -9/-28/-43 bp at 5/15/30 min), exits-cannot-move-the-mean (42 shapes ~0 gross), the 10/14 ratchet sweep (leash off -7.9 bp vs -3.9; cushions worse). The right tail itself was never measured.",
-  "data": "Desk fills 2026-09-08..10-13 (outcomes.jsonl, entry_path 'watch', entry and exit price present) on the early_entry_honest cached sessions; SIP 1-minute OHLC.",
-  "rule": "Keep the real entry (fill price, minute). Walk SIP bars from the next minute: hard stop entry x 0.98 (a bar's low at or below it exits at min(stop, that bar's open)); once a high reaches entry x 1.01 the stop rises to running high x 0.99; otherwise the SIP close of 15:49. Runner exits pay 5 bp (half a typical spread); the actual arm is the desk's real exit fill.",
+  "data": "Desk fills 2026-09-08..10-13 ONLY (enforced), FIRST fill per (day, symbol) - a runner holds from it, so re-entries could not happen; all fills in the name during the runner's hold are summed as information.",
+  "rule": "Keep the real first entry (fill price, minute). The entry bar's LOW is checked against the hard stop (its high never arms the trail). Then SIP bars from the next minute: hard stop entry x 0.98; once a high reaches entry x 1.01 the stop rises to running high x 0.99. GRADED ordering per bar: update the high and trail first, then test the bar's low against the new stop (the worse case); low-first ordering is information. Exits at min(stop, the bar's open); otherwise the SIP close of 15:49.",
   "statistic": "Per trade: runner return - actual return (same entry). Day-equal mean, day-clustered t; also the runner's own net.",
   "split": "Halves A (to 2026-09-24) and B (after), as the harness studies.",
-  "pass": "Each half: runner - actual >= +5 bp with t >= 2.0, AND runner net > 0, AND >= 100 trades on >= 6 days. PASS only if both halves pass; FAIL if either fails; else UNDERPOWERED.",
-  "information_only": ["right tail, runner vs actual: share of trades >= +2% and >= +5%, the top 5% of trades' share of the total, the largest trade", "exit reasons and median hold", "grid: stop/arm/trail 1%/0.5%/0.5%, 3%/2%/1.5%, and 3% stop with no trail held to 15:49"],
+  "pass": "Each half: runner - actual >= +5 bp with t >= 2.0 against BOTH the real fill and the SIP-priced exit, AND runner net > 0, at BOTH cost levels (5 bp, and 5 bp + measured stop slippage), AND >= 100 trades on >= 6 days, AND skipped first fills <= 5% of that half (else UNDERPOWERED). PASS only if every condition holds in both halves.",
+  "information_only": [
+    "right tail, runner vs actual: share of trades >= +2% and >= +5%, the top 5% of trades' share of the total, the largest trade",
+    "exit reasons and median hold",
+    "grid: stop/arm/trail 1%/0.5%/0.5%, 3%/2%/1.5%, and 3% stop with no trail held to 15:49",
+    "max runners open at once per day (vs 30 slots; a runner would also block entries the leash allowed)",
+    "skips per half by reason"
+  ],
   "if_pass": "Result-skeptic review of the positive, then a live paper A/B tagging a random 1 in 5 entries as runners (own scorecard).",
   "if_fail": "If the tail is visible (runner >= +2% share well above actual) but the mean fails, report it and consider a live 1-in-5 runner tag only with the operator's explicit OK, as a tail measurement, not a profit claim. Otherwise the leash stays.",
-  "script": "tools/studies/right_tail_runner.py (--score after READY); tests/test_right_tail_runner.py"
+  "script": "tools/studies/right_tail_runner.py (--score after READY); tests/test_right_tail_runner.py",
+  "arms": "Two graded comparisons, same first entries: runner vs the desk's REAL exit fill, and runner vs the desk's exit minute priced on the SAME SIP model (close of the exit minute less 5 bp). Runner exits pay 5 bp, and stop/trail exits additionally the measured live slippage (median exit_slippage_r x risk / price on local_trail exits).",
+  "no_promotion": "No grid cell or ordering variant can be promoted without a new prereg.",
+  "expectation_before_scoring": "Skeptic estimate: with 13 day-means per half and multi-hour holds, the difference must be about +50 bp or more for t >= 2; UNDERPOWERED or FAIL is the expected outcome unless the effect is large. The right-tail lines are the main information either way.",
+  "amended": "2026-10-15 before any score, after result-skeptic round 1 FIX FIRST: first fill per name-day, SIP-priced actual arm + measured stop slippage, entry-bar low, worse ordering graded, period enforced, skip cap, concurrency and no-promotion lines."
 }
