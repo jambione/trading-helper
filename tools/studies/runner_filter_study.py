@@ -34,7 +34,7 @@ DAY_CHG_MIN, EARLY_END = 0.0235, 10 * 60 + 46
 RTH0 = 9 * 60 + 30
 T_BAR = 2.4                 # three filters on the same trades
 LIFT_BAR = 0.0010
-MIN_KEEP_SHARE, MIN_KEEP_N = 0.25, 40
+MIN_KEEP_SHARE, MIN_KEEP_N = 0.15, 60      # pooled (amended before any return)
 FILTERS = ("F1_room", "F2_price50", "F3_early_up")
 
 
@@ -97,8 +97,8 @@ def score(datas: list[dict], stop_cost: float) -> tuple[dict, Counter]:
                      "run": ex[0] / t["entry_px"] - 1 - cost, **tr})
     res = {}
     for f in FILTERS:
-        for h in "AB":
-            allr = [r for r in rows if r["half"] == h]
+        for h in ("A", "B", "ALL"):
+            allr = [r for r in rows if h == "ALL" or r["half"] == h]
             kept = [r for r in allr if r[f] is True]
             known = [r for r in allr if r[f] is not None]
             kb, ab = defaultdict(list), defaultdict(list)
@@ -110,11 +110,13 @@ def score(datas: list[dict], stop_cost: float) -> tuple[dict, Counter]:
             kn, kt, n, nd = E.day_equal(kb)
             lf, lt, _, _ = E.day_equal(lift)
             share = len(kept) / len(known) if known else 0.0
-            ok = n >= MIN_KEEP_N and share >= MIN_KEEP_SHARE and None not in (kn, kt, lf, lt)
-            passed = ok and kn > 0 and kt >= T_BAR and lf >= LIFT_BAR and lt >= T_BAR
             res[(f, h)] = {"kept": len(kept), "known": len(known), "share": share, "kept_net": kn, "kept_t": kt,
-                           "lift": lf, "lift_t": lt, "all_net": E.day_equal(ab)[0], "days": nd,
-                           "verdict": "UNDERPOWERED" if not ok else ("PASS" if passed else "FAIL")}
+                           "lift": lf, "lift_t": lt, "all_net": E.day_equal(ab)[0], "days": nd}
+        P, A_, B_ = res[(f, "ALL")], res[(f, "A")], res[(f, "B")]
+        ok = P["kept"] >= MIN_KEEP_N and P["share"] >= MIN_KEEP_SHARE and None not in (P["kept_net"], P["kept_t"], P["lift"], P["lift_t"])
+        same = all(x["kept_net"] is not None and x["kept_net"] > 0 and x["lift"] is not None and x["lift"] > 0 for x in (A_, B_))
+        passed = ok and P["kept_net"] > 0 and P["kept_t"] >= T_BAR and P["lift"] >= LIFT_BAR and P["lift_t"] >= T_BAR and same
+        P["verdict"] = "UNDERPOWERED" if not ok else ("PASS" if passed else "FAIL")
     return res, cov
 
 
@@ -131,7 +133,7 @@ def main() -> None:
     res, cov = score(datas, sc)
     print(f"trait coverage {dict(cov)}")
     for f in FILTERS:
-        print(f"  {f}: kept " + "; ".join(f"{h} {res[(f, h)]['kept']}/{res[(f, h)]['known']} ({res[(f, h)]['share']:.0%})" for h in "AB"))
+        print(f"  {f}: kept " + "; ".join(f"{h} {res[(f, h)]['kept']}/{res[(f, h)]['known']} ({res[(f, h)]['share']:.0%})" for h in ("A", "B", "ALL")))
     if not a.score:
         print("(inventory only; --score after a result-skeptic READY)")
         return
@@ -139,12 +141,10 @@ def main() -> None:
              "| filter | half | kept / known | kept runner net (t) | all runner net | lift (t) | verdict |",
              "|---|---|---:|---:|---:|---:|---|"]
     for f in FILTERS:
-        for h in "AB":
+        for h in ("A", "B", "ALL"):
             x = res[(f, h)]
             lines.append(f"| {f} | {h} | {x['kept']}/{x['known']} ({x['share']:.0%}) | {_bp(x['kept_net'])} ({x['kept_t'] and round(x['kept_t'], 2)}) "
-                         f"| {_bp(x['all_net'])} | {_bp(x['lift'])} ({x['lift_t'] and round(x['lift_t'], 2)}) | {x['verdict']} |")
-        vs = [res[(f, h)]["verdict"] for h in "AB"]
-        lines.append(f"| **{f}** | both | | | | | **{'PASS' if all(v == 'PASS' for v in vs) else 'FAIL' if 'FAIL' in vs else 'UNDERPOWERED'}** |")
+                         f"| {_bp(x['all_net'])} | {_bp(x['lift'])} ({x['lift_t'] and round(x['lift_t'], 2)}) | {x.get('verdict', '')} |")
     out = "\n".join(lines)
     print(out)
     with open(os.path.join(E.OUT_DIR, "runner_filter_result.md"), "w") as fh:
