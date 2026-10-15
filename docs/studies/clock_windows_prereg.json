@@ -44,5 +44,11 @@
     "days": "only days with alerts; split at the median of those; days with >5% of names missing bars are dropped and listed; OCR-outage days listed.",
     "quotes": "quote errors are retried, never cached as 'no spread', and counted separately (quote_error vs no_nbbo); partial bar days are never cached.",
     "feed": "all SIP; live desk is IEX and blind premarket, so a premarket PASS is tradeable only with real-time SIP."
+  },
+  "amended_2": {
+    "date": "2026-10-15, before any scoring (skeptic round 2: N1-N3 + split)",
+    "early_alert_check": "a PASS must also show lift in the predicted direction on names whose first alert came more than 30 min before the window (or before 12:30 for power hour); otherwise FAIL",
+    "quotes": "look back 2 s first, then 60 s; a 60 s request that hits the 10,000-quote limit is a quote_error, not a spread",
+    "days": "a day is dropped only when its SIP bar fetch failed (not cached); names with no bars are counted, not a reason to drop the day; the half split uses days with at least one scored pair"
   }
 }

@@ -31,7 +31,6 @@ T_BAR, MIN_N, MIN_DAYS = 3.0, 60, 8
 POWER_PICKS = 2
 OPEN = 9 * 60 + 30
 QUOTE_DELAY = 10          # seconds into the entry minute (09:30: after the opening cross)
-MAX_DROP = 0.05
 
 
 def _m(h, mi):
@@ -123,18 +122,23 @@ def spread_bp(cache: dict, box: dict, sym: str, ts: float) -> float | None:
         box["cl"] = box.get("cl") or bars.client()
         t = datetime.fromtimestamp(ts, timezone.utc)
         q = None
-        for attempt in range(3):
-            try:
-                rows = box["cl"].get_stock_quotes(StockQuotesRequest(
-                    symbol_or_symbols=sym, start=t - timedelta(seconds=60), end=t + timedelta(milliseconds=1),
-                    feed=DataFeed.SIP, limit=10000)).data.get(sym) or []
-                rows = [r for r in rows if r.bid_price and r.ask_price and r.ask_price >= r.bid_price]
-                q = [float(rows[-1].bid_price), float(rows[-1].ask_price)] if rows else None
+        for back in (2, 60):              # short window first: results come oldest first and stop at the limit
+            for attempt in range(3):
+                try:
+                    rows = box["cl"].get_stock_quotes(StockQuotesRequest(
+                        symbol_or_symbols=sym, start=t - timedelta(seconds=back), end=t + timedelta(milliseconds=1),
+                        feed=DataFeed.SIP, limit=10000)).data.get(sym) or []
+                    break
+                except Exception as e:  # noqa: BLE001
+                    if attempt == 2:
+                        raise QuoteError(str(e)[:80]) from e
+                    time.sleep(5 * (attempt + 1))
+            rows = [r for r in rows if r.bid_price and r.ask_price and r.ask_price >= r.bid_price]
+            if len(rows) >= 10000 and back > 2:
+                raise QuoteError("quote limit hit: latest quote not reached")
+            if rows:
+                q = [float(rows[-1].bid_price), float(rows[-1].ask_price)]
                 break
-            except Exception as e:  # noqa: BLE001
-                if attempt == 2:
-                    raise QuoteError(str(e)[:80]) from e
-                time.sleep(5 * (attempt + 1))
         cache[key] = q
         time.sleep(0.3)
     q = cache[key]
@@ -158,6 +162,7 @@ def main() -> None:
     names = list(WINDOWS) + ["power_hour"]
     win = {k: defaultdict(list) for k in names}           # day -> [net bp]
     lift = {k: defaultdict(list) for k in names}
+    lift_early = {k: defaultdict(list) for k in names}    # first alert > SPAN before the window
     info10 = {k: [] for k in names}
     absmv = {k: [] for k in names}
     tried = Counter()
@@ -178,9 +183,8 @@ def main() -> None:
             if kind == "first_alert":
                 first[s] = M.et_min(ts)
         bars_ = M.fetch_bars(day, sorted(first))
-        missing = sum(1 for s in first if s not in bars_)
-        if first and missing / len(first) > MAX_DROP:
-            day_notes.append(f"{day}: dropped, {missing}/{len(first)} names without bars")
+        if not os.path.exists(os.path.join(M.CACHE, f"{day}.pkl")):
+            day_notes.append(f"{day}: dropped, the SIP bar fetch failed (partial day, not cached)")
             continue
         if min(first.values()) >= OPEN:
             day_notes.append(f"{day}: no premarket alerts (OCR started {min(first.values()) // 60:02d}:"
@@ -191,7 +195,7 @@ def main() -> None:
             if not b:
                 skips["no_bars"] += 1
                 continue
-            pairs = []
+            pairs = []                                    # (window, entry, control, early)
             for k, (lo, hi) in WINDOWS.items():
                 if fm >= lo:
                     continue                              # not yet on the list at the window
@@ -204,15 +208,15 @@ def main() -> None:
                 if c is None:
                     drops[k]["no_control"] += 1
                     continue
-                pairs.append((k, m, c))
+                pairs.append((k, m, c, fm < lo - SPAN))
             if fm < POWER[0]:
                 tried["power_hour"] += 1
                 pw = power_minutes(b, day, s, fm, POWER, "power")
                 pc = power_minutes(b, day, s, fm, POWER_CTL, "power_ctl", k=len(pw))
                 if not pw or len(pc) < len(pw):
                     drops["power_hour"]["no_print_or_control"] += 1
-                pairs += [("power_hour", m, c) for m, c in zip(pw, pc)]
-            for k, m, c in pairs:
+                pairs += [("power_hour", m, c, fm < POWER_CTL[0] - SPAN) for m, c in zip(pw, pc)]
+            for k, m, c, early in pairs:
                 try:
                     w, w10, mv = leg(s, day, m)
                     cn, _c10, _ = leg(s, day, c)
@@ -224,11 +228,14 @@ def main() -> None:
                     continue
                 win[k][day].append(w)
                 lift[k][day].append(w - cn)
+                if early:
+                    lift_early[k][day].append(w - cn)
                 if w10 is not None:
                     info10[k].append(w10)
                 absmv[k].append(mv)
         RC.save_cache(cache)
 
+    used_days = [d for d in used_days if any(d in win[k] and win[k][d] for k in names)]
     mid = used_days[(len(used_days) - 1) // 2] if used_days else ""
     f = lambda x: "-" if x is None else f"{x:+.1f}"  # noqa: E731
     lines = ["# Clock windows: entering alerted names at set times (SIP, 5-min hold, full spread)", "",
@@ -236,20 +243,25 @@ def main() -> None:
              f"split after {mid}; t bar {T_BAR} (10 windows); skips {dict(skips)}", ""]
     lines += [f"- {n}" for n in day_notes] + [""]
     lines += ["| window | name-windows | days | net 5m day-mean | lift vs control (t) | lift halves | net 10m mean | "
-              "mean abs move | per day | drops | verdict |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|"]
+              "mean abs move | per day | lift, alerted >30m before | drops | verdict |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|"]
     for k in names:
         n = sum(len(v) for v in win[k].values())
         mu, _, nd = day_t(win[k])
         lm, lt, _ = day_t(lift[k])
         h1, _, _ = day_t({d: v for d, v in lift[k].items() if d <= mid})
         h2, _, _ = day_t({d: v for d, v in lift[k].items() if d > mid})
+        le, _, _ = day_t(lift_early[k])
         v = verdict(k, lt, [h1, h2], n, nd)
+        sign = -1 if k in WORSE else 1
+        if v == "PASS" and (le is None or sign * le <= 0):
+            v = "FAIL (not on names alerted >30 min earlier)"
         if v == "PASS" and k not in WORSE and (mu is None or mu <= 0):
             v = "PASS (least bad, net < 0)"
         dr = ", ".join(f"{r} {c}" for r, c in drops[k].items()) or "-"
         lines.append(f"| {k} | {n}/{tried[k]} | {nd} | {f(mu)} | {f(lm)} ({f(lt)}) | {f(h1)} / {f(h2)} | "
                      f"{f(st.fmean(info10[k]) if info10[k] else None)} | {f(st.fmean(absmv[k]) if absmv[k] else None)} | "
-                     f"{n / max(nd, 1):.1f} | {dr} | {v} |")
+                     f"{n / max(nd, 1):.1f} | {f(le)} | {dr} | {v} |")
     lines += ["", "Feed note: all SIP. The live desk is on IEX, which is blind premarket; a premarket PASS is tradeable "
               "only with real-time SIP (the SIP month)."]
     out = "\n".join(lines)
