@@ -43,3 +43,10 @@ def test_entry_bar_low_and_worse_ordering():
     assert R.runner_exit(bars, 600, 100.0)[2] == "trail"                    # graded: worse ordering exits
     assert R.runner_exit(bars, 600, 100.0, worse=False)[1] != 602           # information ordering keeps it open
     assert R.max_concurrent([(600, 610), (605, 620), (611, 612)]) == 2
+
+
+def test_stop_raised_by_the_bar_fills_at_the_new_stop():
+    bars = _flat()
+    bars[601] = (101.8, 103.0, 101.5, 102.0)                # opens 101.8, high 103 raises the trail to 101.97, low 101.5
+    px, m, why = R.runner_exit(bars, 600, 100.0)
+    assert abs(px - 101.97) < 1e-9 and m == 601 and why == "trail"

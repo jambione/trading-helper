@@ -67,10 +67,14 @@ def runner_exit(bars: dict, entry_min: int, entry_px: float, stop_pct: float = S
             if arm_pct < 9 and high >= entry_px * (1 + arm_pct):
                 stop = max(stop, high * (1 - trail_pct))
                 armed = True
+        stop_in = stop                      # the stop in force at this bar's open
         if worse:
             arm(h)
         if lo <= stop:
-            return min(stop, o), m, "trail" if armed else "stop"
+            # open -> high -> low: a gap below the stop already in force fills at the open; a stop the bar's own
+            # high raised is hit on the way down, at the new stop (skeptic round 2).
+            px = o if o <= stop_in else (stop if stop > stop_in else min(stop, o))
+            return px, m, "trail" if armed else "stop"
         if not worse:
             arm(h)
     if last is None:
