@@ -35,7 +35,7 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 - Exit sweep, 10 arms × 8 days → tomorrow's exit config
 - Oversold ▲ entry test → **FAIL** both halves (net -28 / -10 bp, lift -4.2 / +0.6 vs random later minute); ▲ arm stays off
 - Momentum-alert studies → SIP-month keep-bar ($4.70/day)
-- Simulator fidelity gates (hist_sim_fidelity.sh)
+- Simulator fidelity gates (hist_sim_fidelity.sh) - PAUSED 16:55 (kill -STOP 48464 22892 23630) so the exit sweep and alert studies get the Alpaca budget; resume with kill -CONT after the sweep
 
 ### Build tonight (before the open)
 - Arm decision on the 3 s book tick; profile and cut the watch poll
