@@ -1899,7 +1899,7 @@ function _bookGateChecks(r) {
   const rv = num(r.g_rvol), rvMin = num(r.g_rvol_min);
   if (rvMin != null && rvMin > 0) {
     out.push({
-      key: 'rvol', text: rv == null ? 'RV ?' : `RV ${rv < 10 ? rv.toFixed(2) : rv.toFixed(0)}`,
+      key: 'rvol', text: rv == null ? 'RV ?' : `RV ${rv < 10 ? rv.toFixed(1) : rv.toFixed(0)}`,
       ok: rv == null ? null : rv + 1e-12 >= rvMin,
       title: `RVOL ${rv == null ? 'unknown (the arm abstains)' : rv.toFixed(2)} vs floor ${rvMin.toFixed(2)}`,
     });
@@ -1907,7 +1907,7 @@ function _bookGateChecks(r) {
   const sp = num(r.g_spread), spMax = num(r.g_spread_max);
   if (spMax != null && spMax > 0) {
     out.push({
-      key: 'spread', text: sp == null ? 'sp ?' : `${sp.toFixed(2)}%`,
+      key: 'spread', text: sp == null ? 'sp ?' : `${sp.toFixed(2).replace(/^0(?=\.)/, '')}%`,
       ok: sp == null ? null : sp <= spMax + 1e-12,
       title: `SIP spread ${sp == null ? 'unknown (the arm refuses unknown)' : `${sp.toFixed(3)}%`} vs cap ${spMax.toFixed(2)}%`,
     });
