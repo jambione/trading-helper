@@ -1,5 +1,5 @@
 {
-  "study": "Leave-oversold (the desk's off-by-default \u25b2 arm, ai_watch_exh_oversold_arm) as a 1-minute entry: an oversold triangle (fast and slow %R both <= -80 and within 15) on one of the previous 3 minutes, then the first minute a line is back above -80 with fast %R rising, fired from completed bars on every board name, against a random later minute of the same name.",
+  "study": "Leave-oversold (the desk's \u25b2 arm, off in bot_config (config.py defaults it on), ai_watch_exh_oversold_arm) as a 1-minute entry: an oversold triangle (fast and slow %R both <= -80 and within 15) on one of the previous 3 minutes, then the first minute a line is back above -80 with fast %R rising, fired from completed bars on every board name, against a random later minute of the same name.",
   "registered_at": "2026-10-15 ~15:05 ET, before any return of this rule was computed on market data.",
   "registered_before_results": true,
   "origin": "Operator 2026-10-15 (EBAY chart: \u25b2 at 14:45 at the low, +0.4% in the next 10 minutes while the pre-square arm waited for the top). The rule already exists in ai_entry_watch._os_leave_allows_buy and was never graded. The prompting chart is outside the cache (cache ends 2026-10-14).",
@@ -23,5 +23,6 @@
     "Live 180 s leave window = 3 bars here."
   ],
   "multiplicity": "7th entry rule graded on these 28 sessions (PRE, IGN, MID, RSI2T, limit-below, CON, OSL). Stands only with the forward test in if_pass.",
-  "calibration": "Null run on the synthetic walk (30 days x 15 names, early_entry_honest_null.py --study os_leave): OSL lift +2.5 / +0.3 bp (t +1.23 / +0.17), both halves FAIL. No method bias."
+  "calibration": "Null run on the synthetic walk (30 days x 15 names, early_entry_honest_null.py --study os_leave): OSL lift +2.5 / +0.3 bp (t +1.23 / +0.17), both halves FAIL. No method bias. Re-run after the warm-up change (synthetic days have no prior bars, so this checks the code path only).",
+  "amended": "2026-10-15 before any score, after result-skeptic round 1 NOT READY: (1) both %R lines are computed on the prior sessions' IEX bars (iex_prior, last 220 bars) + the day's bars and only the day's minutes are kept (WARM_LINES, os_leave only), as live loads 5 days; without it the slow line did not exist before ~11:20 and the morning was untested. Prior-bar coverage rule as connors: --fetch-prior refetches any day with > 5% of board names lacking iex_prior (2026-10-14 is 100% missing now); a day still above 5% is EXCLUDED and listed. 2026-09-05 (board of 2) contributes nothing either way. (3) wording. (7) the synthetic null cannot detect a bounce-specific bias (no bid-ask bounce); a PASS must also be read against the 20 bp information cell. PRE/SQ in earlier studies share the cold start: noted, not re-scored here."
 }

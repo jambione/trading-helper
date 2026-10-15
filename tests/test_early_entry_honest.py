@@ -220,3 +220,24 @@ def test_os_leave_needs_triangle_then_leave_rising():
     assert not E.os_leave_flag(late, lslow, 6)           # triangle more than 3 bars back
     assert not E.os_leave_flag([-95, -90, -80], [-60, -60, -60], 2)   # lines never together: no triangle
     assert not E.os_leave_flag([-95, -90, -85], [-90, -90, -84], 2)   # both still deep: not a leave
+
+
+def test_warm_lines_give_a_slow_line_from_the_first_minute(monkeypatch):
+    import math
+    import pandas as pd
+    import tools.studies.early_entry_honest as E
+
+    def frame(start, n, base):
+        t = pd.date_range(start, periods=n, freq="1min", tz="UTC")
+        px = [base + 0.01 * ((i * 7) % 13) for i in range(n)]
+        return pd.DataFrame({"time": t, "open": px, "high": [p + 0.02 for p in px],
+                             "low": [p - 0.02 for p in px], "close": px, "volume": [1000.0] * n})
+    prior = frame("2026-10-14 17:40", 220, 10.0)
+    day = frame("2026-10-15 13:30", 60, 10.0)
+    monkeypatch.setattr(E, "WARM_LINES", False)
+    cold = E.name_day_series(day, prior)
+    assert not math.isfinite(cold["slow"][0])
+    monkeypatch.setattr(E, "WARM_LINES", True)
+    warm = E.name_day_series(day, prior)
+    assert len(warm["minutes"]) == len(cold["minutes"]) and warm["minutes"][0] == cold["minutes"][0]
+    assert math.isfinite(warm["slow"][0]) and math.isfinite(warm["fast"][0])

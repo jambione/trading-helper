@@ -474,10 +474,26 @@ def grid_fill(frame):
     return pd.DataFrame(rows, columns=["time", "open", "high", "low", "close", "volume"])
 
 
+# os_leave_prereg (skeptic 10/15 #1): warm both %R lines on the prior sessions' IEX bars, as live loads 5 days, then
+# keep only the day's minutes. Off for the older studies so their recorded results stay reproducible.
+WARM_LINES = False
+
+
 def name_day_series(iex_frame, prior_frame=None) -> dict:
+    import pandas as pd
     import signals
-    df = signals.compute_percent_r_exhaustion(grid_fill(iex_frame), CFG)
-    df = signals.compute_cm_rsi_lower(df, CFG)
+    if WARM_LINES and prior_frame is not None and len(prior_frame):
+        day0 = pd.to_datetime(iex_frame["time"], utc=True).min()
+        both = pd.concat([prior_frame[["time", "open", "high", "low", "close", "volume"]],
+                          iex_frame[["time", "open", "high", "low", "close", "volume"]]])
+        both = both.assign(time=pd.to_datetime(both["time"], utc=True)).sort_values("time")
+        both = both.drop_duplicates("time", keep="last").reset_index(drop=True)
+        df = signals.compute_percent_r_exhaustion(grid_fill(both), CFG)
+        df = signals.compute_cm_rsi_lower(df, CFG)
+        df = df[pd.to_datetime(df["time"], utc=True) >= day0].reset_index(drop=True)
+    else:
+        df = signals.compute_percent_r_exhaustion(grid_fill(iex_frame), CFG)
+        df = signals.compute_cm_rsi_lower(df, CFG)
     minutes = [_et_min(t.timestamp()) for t in df["time"]]
     con_m, con_f = con_live_series(prior_frame, iex_frame)
     return {
@@ -741,6 +757,8 @@ def main() -> None:
     a = ap.parse_args()
     global RULES, GRADED
     RULES, GRADED = STUDIES[a.study]["rules"], STUDIES[a.study]["graded"]
+    global WARM_LINES
+    WARM_LINES = a.study == "os_leave"
     if a.fetch_prior:
         import bars
         from datetime import timedelta
