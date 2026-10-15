@@ -22,3 +22,17 @@ def test_prior_close_is_strictly_before_the_day():
     daily = {"X": [("2026-10-08", 1, 10.0, 1), ("2026-10-09", 1, 11.0, 1), ("2026-10-12", 1, 12.0, 1)]}
     assert F.prior_close_for(daily, "X", "2026-10-12") == 11.0
     assert F.prior_close_for(daily, "Y", "2026-10-12") is None
+
+
+def test_prior_close_must_be_the_previous_session():
+    daily = {"X": [("2026-10-08", 1, 10.0, 1), ("2026-10-09", 1, 11.0, 1)], "SPY": [("2026-10-08", 1, 1, 1), ("2026-10-09", 1, 1, 1)]}
+    prevs = F.prev_sessions(["2026-10-09", "2026-10-12", "2026-10-13"], daily)
+    assert prevs["2026-10-13"] == "2026-10-12" and prevs["2026-10-12"] == "2026-10-09"
+    assert F.prior_close_for(daily, "X", "2026-10-12", prevs["2026-10-12"]) == 11.0
+    assert F.prior_close_for(daily, "X", "2026-10-13", prevs["2026-10-13"]) is None    # cache gap: unknown, not 10/09
+
+
+def test_robustness_drops_the_best():
+    rows = [{"day": f"d{i % 4}", "sym": f"S{i}", "run": (0.05 if i < 5 else -0.001), "half": "A"} for i in range(20)]
+    rob = F.robustness([r for r in rows if r["sym"] != "S19"], rows)
+    assert rob["drop_top5_trades"]["kept_net"] < 0                     # without its five big winners it loses

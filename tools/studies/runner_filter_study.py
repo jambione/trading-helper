@@ -66,16 +66,30 @@ def prior_closes() -> dict:
     return data
 
 
-def prior_close_for(daily: dict, sym: str, day: str) -> float | None:
+def prior_close_for(daily: dict, sym: str, day: str, prev_session: str | None = None) -> float | None:
+    """The close of the session IMMEDIATELY before `day` (skeptic #1: the cache ends 10/09, so 10/13 would read a
+    two-session-old close). prev_session None = no check (tests)."""
     rows = daily.get(sym) or []
     prev = [r for r in rows if r[0] < day]
-    return float(prev[-1][2]) if prev else None
+    if not prev:
+        return None
+    if prev_session is not None and prev[-1][0] != prev_session:
+        return None
+    return float(prev[-1][2])
+
+
+def prev_sessions(days: list[str], daily: dict) -> dict:
+    """{day: the trading session before it}, from the union of cached session days and SPY's daily dates."""
+    spy = [r[0] for r in (daily.get("SPY") or [])]
+    allv = sorted(set(days) | set(spy))
+    return {d: (allv[i - 1] if i > 0 else None) for i, d in enumerate(allv)}
 
 
 def score(datas: list[dict], stop_cost: float) -> tuple[dict, Counter]:
     by_day = {d["day"]: d for d in datas}
     first, _groups = R.trades(datas)
     daily = prior_closes()
+    prevs = prev_sessions(sorted(by_day), daily)
     cov = Counter()
     rows = []
     for t in first:
@@ -88,12 +102,12 @@ def score(datas: list[dict], stop_cost: float) -> tuple[dict, Counter]:
         if ex is None:
             cov["skipped"] += 1
             continue
-        pc = prior_close_for(daily, t["sym"], t["day"])
+        pc = prior_close_for(daily, t["sym"], t["day"], prevs.get(t["day"]))
         tr = traits(bars, t["entry_min"], t["entry_px"], pc)
         for k, v in tr.items():
             cov[f"{k}_{'known' if v is not None else 'unknown'}"] += 1
         cost = R.EXIT_COST + (stop_cost if ex[2] in ("stop", "trail") else 0.0)
-        rows.append({"day": t["day"], "half": "A" if t["day"] <= L.SPLIT_END_A else "B",
+        rows.append({"day": t["day"], "sym": t["sym"], "half": "A" if t["day"] <= L.SPLIT_END_A else "B",
                      "run": ex[0] / t["entry_px"] - 1 - cost, **tr})
     res = {}
     for f in FILTERS:
@@ -113,11 +127,41 @@ def score(datas: list[dict], stop_cost: float) -> tuple[dict, Counter]:
             res[(f, h)] = {"kept": len(kept), "known": len(known), "share": share, "kept_net": kn, "kept_t": kt,
                            "lift": lf, "lift_t": lt, "all_net": E.day_equal(ab)[0], "days": nd}
         P, A_, B_ = res[(f, "ALL")], res[(f, "A")], res[(f, "B")]
+        kept_all = [r for r in rows if r[f] is True]
+        P["robust"] = robustness(kept_all, rows)
         ok = P["kept"] >= MIN_KEEP_N and P["share"] >= MIN_KEEP_SHARE and None not in (P["kept_net"], P["kept_t"], P["lift"], P["lift_t"])
         same = all(x["kept_net"] is not None and x["kept_net"] > 0 and x["lift"] is not None and x["lift"] > 0 for x in (A_, B_))
-        passed = ok and P["kept_net"] > 0 and P["kept_t"] >= T_BAR and P["lift"] >= LIFT_BAR and P["lift_t"] >= T_BAR and same
+        rob_ok = all(v["kept_net"] is not None and v["kept_net"] > 0 and v["lift"] is not None and v["lift"] > 0
+                     for v in P["robust"].values())
+        passed = (ok and P["kept_net"] > 0 and P["kept_t"] >= T_BAR and P["lift"] >= LIFT_BAR and P["lift_t"] >= T_BAR
+                  and same and rob_ok)
         P["verdict"] = "UNDERPOWERED" if not ok else ("PASS" if passed else "FAIL")
     return res, cov
+
+
+def _net_lift(kept: list[dict], allr: list[dict]) -> dict:
+    kb, ab = defaultdict(list), defaultdict(list)
+    for r in kept:
+        kb[r["day"]].append(r["run"])
+    for r in allr:
+        ab[r["day"]].append(r["run"])
+    lift = {d: [sum(v) / len(v) - sum(ab[d]) / len(ab[d])] for d, v in kb.items() if v and ab.get(d)}
+    return {"kept_net": E.day_equal(kb)[0], "lift": E.day_equal(lift)[0]}
+
+
+def robustness(kept: list[dict], allr: list[dict]) -> dict:
+    """Skeptic #3: the runner's money is in a few trades. Kept net and lift must stay > 0 after dropping the kept
+    set's top 3 days (by kept sum), top 5 names (by kept sum) and top 5 trades."""
+    by_day, by_sym = defaultdict(float), defaultdict(float)
+    for r in kept:
+        by_day[r["day"]] += r["run"]
+        by_sym[r["sym"]] += r["run"]
+    top_days = set(sorted(by_day, key=by_day.get, reverse=True)[:3])
+    top_syms = set(sorted(by_sym, key=by_sym.get, reverse=True)[:5])
+    top_tr = set(id(r) for r in sorted(kept, key=lambda r: r["run"], reverse=True)[:5])
+    return {"drop_top3_days": _net_lift([r for r in kept if r["day"] not in top_days], [r for r in allr if r["day"] not in top_days]),
+            "drop_top5_names": _net_lift([r for r in kept if r["sym"] not in top_syms], allr),
+            "drop_top5_trades": _net_lift([r for r in kept if id(r) not in top_tr], allr)}
 
 
 def _bp(x):
@@ -143,6 +187,8 @@ def main() -> None:
     for f in FILTERS:
         for h in ("A", "B", "ALL"):
             x = res[(f, h)]
+            if h == "ALL":
+                lines.append(f"| {f} | robust | " + "; ".join(f"{k}: net {_bp(v['kept_net'])}, lift {_bp(v['lift'])}" for k, v in x["robust"].items()) + " | | | | |")
             lines.append(f"| {f} | {h} | {x['kept']}/{x['known']} ({x['share']:.0%}) | {_bp(x['kept_net'])} ({x['kept_t'] and round(x['kept_t'], 2)}) "
                          f"| {_bp(x['all_net'])} | {_bp(x['lift'])} ({x['lift_t'] and round(x['lift_t'], 2)}) | {x.get('verdict', '')} |")
     out = "\n".join(lines)
