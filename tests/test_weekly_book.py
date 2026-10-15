@@ -114,9 +114,9 @@ def test_old_rank_is_still_12_1_momentum():
     assert [r["sym"] for r in rows] == ["UP", "FLAT"] and rows[0]["mom"] > 0
 
 
-def test_agy_model_comes_from_config_not_the_stale_default(monkeypatch):
+def test_agy_model_is_the_weekly_setting_not_the_desks(monkeypatch):
     import config
     monkeypatch.setattr(config, "load_config", lambda: {"agy_model": "gemini-3.1-pro-high"})
-    assert WB.agy_model_from_config() == "gemini-3.1-pro-high"
-    monkeypatch.setattr(config, "load_config", lambda: {"claude_model": "gemini-x"})
-    assert WB.agy_model_from_config() == "gemini-x"
+    assert WB.agy_model_from_config() == "gemini-3.8-flash-high"
+    monkeypatch.setattr(config, "load_config", lambda: {"weekly_agy_model": "gemini-3.8-flash-medium"})
+    assert WB.agy_model_from_config() == "gemini-3.8-flash-medium"

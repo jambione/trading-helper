@@ -238,15 +238,19 @@ def build_screen(ob, tc, day: date) -> dict:
     return scr
 
 
+WEEKLY_AGY_MODEL = "gemini-3.8-flash-high"
+
+
 def agy_model_from_config() -> str:
-    """The AGY model the desk itself runs (agy_model, else claude_model). ai_suggest's DEFAULT_AGY_MODEL is not
-    a model the installed CLI recognises (2026-10-15 09:56: 'gemini-3.7-flash-high ... not recognized')."""
+    """The weekly book's AGY model: weekly_agy_model, else gemini-3.8-flash-high. Not the desk's agy_model /
+    claude_model: the AGY CLI update of 2026-10-14 dropped gemini-3.1-pro-high (the desk's setting) and
+    ai_suggest's default gemini-3.7-flash-high, and only Gemini 3.8 Flash (low/medium/high) remains."""
     try:
         from config import load_config
         cfg = load_config()
     except Exception:  # noqa: BLE001
         cfg = {}
-    return str(cfg.get("agy_model") or cfg.get("claude_model") or "gemini-3.1-pro-high")
+    return str(cfg.get("weekly_agy_model") or WEEKLY_AGY_MODEL)
 
 
 def run_models(ob, day: date, screen: dict, ask=None) -> dict:
