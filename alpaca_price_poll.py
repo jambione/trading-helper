@@ -115,7 +115,7 @@ def _poll_once():
         # batch if possible
         req = StockLatestTradeRequest(
             symbol_or_symbols=symbols if len(symbols) > 1 else symbols[0],
-            feed=DataFeed.IEX,
+            feed=__import__("alpaca_api").live_data_feed(),   # S1: alpaca_bar_feed (iex default)
         )
         trades = _client.get_stock_latest_trade(req)
         if not isinstance(trades, dict):

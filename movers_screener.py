@@ -268,7 +268,7 @@ def universe_scan(cfg: dict, api: str, sec: str, lo: float, hi: float,
     for i in range(0, len(syms), 500):
         try:
             got = cl.get_stock_snapshot(StockSnapshotRequest(
-                symbol_or_symbols=syms[i:i + 500], feed=DataFeed.IEX))
+                symbol_or_symbols=syms[i:i + 500], feed=__import__('alpaca_api').live_data_feed()))
         except Exception as e:  # noqa: BLE001
             print(f"[movers] scan chunk failed: {str(e)[:100]}", flush=True)
             time.sleep(1.0)
@@ -365,7 +365,7 @@ def premarket_scan(cfg: dict, api: str, sec: str) -> list[dict]:
     for i in range(0, len(syms), 500):
         try:
             got = cl.get_stock_snapshot(StockSnapshotRequest(
-                symbol_or_symbols=syms[i:i + 500], feed=DataFeed.IEX))
+                symbol_or_symbols=syms[i:i + 500], feed=__import__('alpaca_api').live_data_feed()))
         except Exception as e:  # noqa: BLE001
             print(f"[movers] premarket chunk failed: {str(e)[:100]}", flush=True)
             time.sleep(1.0)

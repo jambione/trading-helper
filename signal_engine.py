@@ -682,7 +682,14 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
 
     # iex is free. sip needs Algo Trader Plus and matches TradingView highs/lows.
     # Live engine stays on IEX unless explicitly configured — do not enable paid SIP here.
-    feed_name = (os.getenv("ALPACA_BAR_FEED") or "iex").strip().lower()
+    # S1 (2026-10-15): the env var still wins; otherwise bot_config alpaca_bar_feed (iex default).
+    feed_name = (os.getenv("ALPACA_BAR_FEED") or "").strip().lower()
+    if not feed_name:
+        try:
+            from config import load_config
+            feed_name = str((load_config() or {}).get("alpaca_bar_feed") or "iex").strip().lower()
+        except Exception:  # noqa: BLE001
+            feed_name = "iex"
     feeds = ("sip",) if feed_name == "sip" else ("iex",)
     max_retries = max(1, int(ALPACA_BAR_MAX_RETRIES))
 

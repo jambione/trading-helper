@@ -1243,7 +1243,7 @@ def _one_quote_book(symbol: str) -> tuple[float | None, float | None, float | No
         from alpaca.data.requests import StockLatestQuoteRequest
         from alpaca.data.enums import DataFeed
         q = cl.get_stock_latest_quote(
-            StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX))
+            StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=__import__('alpaca_api').live_data_feed()))
         quote = q.get(symbol) if isinstance(q, dict) else q
         if quote is None:
             return None, None, None

@@ -961,6 +961,7 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         # a band AND a turn, and the book has to be able to say which feed
         # drew the reading it is showing.
         "cm_rsi_rising", "cm_rsi_src", "cm_rsi_age_sec",
+        "rsi2_red_px", "rsi2_green_px",
         "exh_bars", "exh_window_min",
         "exh_hh", "exh_ll",
         "agreement", "reason", "source", "ready", "in_zone",

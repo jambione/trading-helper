@@ -262,6 +262,33 @@ def _get_feed_arg(cfg: dict = None) -> dict:
         return {}
 
 
+def live_data_feed(cfg: dict | None = None):
+    """The DataFeed every live quote / trade / snapshot / bar request uses (SIP month plan S1, 2026-10-15).
+
+    ``alpaca_bar_feed`` in bot_config ("iex" default; "sip" only while the account has Algo Trader Plus).
+    One knob for every live path; switching back to IEX is the same knob."""
+    from alpaca.data.enums import DataFeed as _DF
+    if cfg is None:
+        try:
+            from config import load_config
+            cfg = load_config() or {}
+        except Exception:  # noqa: BLE001
+            cfg = {}
+    name = str(cfg.get("alpaca_bar_feed") or cfg.get("alpaca_data_feed") or "iex").strip().lower()
+    return _DF.SIP if name == "sip" else _DF.IEX
+
+
+def sip_is_realtime(cfg: dict | None = None) -> bool:
+    """S1: ``ai_sip_realtime`` true only while the account has live SIP; then the 15-16 min SIP delay terms are 0."""
+    if cfg is None:
+        try:
+            from config import load_config
+            cfg = load_config() or {}
+        except Exception:  # noqa: BLE001
+            cfg = {}
+    return bool(cfg.get("ai_sip_realtime", False))
+
+
 def normalize_research_feed(feed) -> str:
     """`iex` or `sip`. Live code must not call this for latest-trade/stream."""
     name = str(feed or "iex").strip().lower().replace("-", "_")

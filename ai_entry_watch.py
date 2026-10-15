@@ -9065,7 +9065,7 @@ def _data_client():
 
 
 def sip_spread_pct(sym: str, *, now: float | None = None, ttl: float = 180.0,
-                   delay_min: float = 16.0, fetch=None,
+                   delay_min: float | None = None, fetch=None,
                    record: bool = True) -> float | None:
     """Median SIP (ask-bid)/mid, %, over the minute ending delay_min ago.
 
@@ -9080,6 +9080,9 @@ def sip_spread_pct(sym: str, *, now: float | None = None, ttl: float = 180.0,
     """
     sym = str(sym or "").upper()
     t = float(now if now is not None else time.time())
+    if delay_min is None:          # S1: 16 min on the free plan, 0 while ai_sip_realtime (paid SIP) is on
+        import alpaca_api as _aa
+        delay_min = 0.0 if _aa.sip_is_realtime() else 16.0
     hit = _SIP_SPREAD_CACHE.get(sym)
     if hit is not None and t - hit[1] < ttl:
         return hit[0]
@@ -9125,7 +9128,7 @@ _RVOL_OBS_LOGGED: dict[str, float] = {}
 
 
 def rvol_pace_sip(sym: str, *, now: float | None = None, ttl: float = 120.0,
-                  delay_min: float = 16.0, fetch=None) -> float | None:
+                  delay_min: float | None = None, fetch=None) -> float | None:
     """Today's SIP volume pace vs this stock's own 20-day normal, delayed 16 min.
 
     pace = SIP volume 09:30 -> (now - 16 min)
@@ -9140,6 +9143,9 @@ def rvol_pace_sip(sym: str, *, now: float | None = None, ttl: float = 120.0,
     """
     sym = str(sym or "").upper()
     t = float(now if now is not None else time.time())
+    if delay_min is None:          # S1: as sip_spread_pct
+        import alpaca_api as _aa
+        delay_min = 0.0 if _aa.sip_is_realtime() else 16.0
     hit = _RVOL_PACE_CACHE.get(sym)
     if hit is not None and t - hit[1] < ttl:
         return hit[0]

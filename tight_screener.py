@@ -405,7 +405,7 @@ def _fetch_quotes(syms: list[str]) -> dict[str, tuple[float, float]]:
     for i in range(0, len(syms), 500):
         try:
             got = cl.get_stock_snapshot(StockSnapshotRequest(
-                symbol_or_symbols=syms[i:i + 500], feed=DataFeed.IEX))
+                symbol_or_symbols=syms[i:i + 500], feed=__import__('alpaca_api').live_data_feed()))
         except Exception as e:  # noqa: BLE001
             print(f"[tight] snapshot chunk failed: {str(e)[:100]}", flush=True)
             continue

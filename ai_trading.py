@@ -296,7 +296,7 @@ def prime_quotes(symbols: list[str]) -> int:
         from alpaca.data.enums import DataFeed
         client = StockHistoricalDataClient(api, sec)
         q = client.get_stock_latest_quote(
-            StockLatestQuoteRequest(symbol_or_symbols=wanted, feed=DataFeed.IEX))
+            StockLatestQuoteRequest(symbol_or_symbols=wanted, feed=__import__('alpaca_api').live_data_feed()))
     except Exception:
         return 0
     if not isinstance(q, dict):
@@ -479,7 +479,7 @@ def _latest_ask(symbol: str) -> float | None:
         client = StockHistoricalDataClient(api, sec)
         try:
             q = client.get_stock_latest_quote(
-                StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX))
+                StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=__import__('alpaca_api').live_data_feed()))
             quote = q.get(symbol) if isinstance(q, dict) else q
             ask = float(getattr(quote, "ask_price", 0) or 0)
             if ask > 0:
@@ -500,7 +500,7 @@ def _latest_ask(symbol: str) -> float | None:
         # because decision_price still labels this src="rest", so a trade print
         # is reported to the desk as if it were a quote.
         tr = client.get_stock_latest_trade(
-            StockLatestTradeRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX))
+            StockLatestTradeRequest(symbol_or_symbols=symbol, feed=__import__('alpaca_api').live_data_feed()))
         t = tr.get(symbol) if isinstance(tr, dict) else tr
         px = float(getattr(t, "price", 0) or 0)
         if px > 0:
