@@ -1862,6 +1862,11 @@ function _bookNearArm(r) {
   if (!Number.isFinite(ex) && r.pctr != null) ex = 100 + Number(r.pctr);
   const hi = 100 - pre;
   if (!Number.isFinite(ex) || ex < hi - 10 || ex >= hi || r.pctr_rising !== true) return false;
+  // The two lines must already be (nearly) together: the pre-square needs them within rte_confluence_max.
+  // 10/15 EBAY lit amber at 63% with the lines 33 points apart ("EXH wide") - nowhere near an arm.
+  const fast = Number(r.pctr), slow = Number(r.pctr_slow);
+  const tight = Number.isFinite(Number(cfg.rte_confluence_max)) ? Number(cfg.rte_confluence_max) : 15;
+  if (!Number.isFinite(fast) || !Number.isFinite(slow) || Math.abs(fast - slow) > tight + 5) return false;
   const c = _bookGateChecks(r);
   return c.length > 0 && c.every(x => x.ok === true);
 }

@@ -116,6 +116,7 @@ def test_near_arm_highlight_needs_rising_exh_below_presquare_and_all_gates_green
     i = _JS.index("function _bookNearArm(")
     body = _JS[i:_JS.index("\n}", i)]
     assert "r.pctr_rising !== true" in body and "x.ok === true" in body and "hi - 10" in body
+    assert "Math.abs(fast - slow) > tight + 5" in body          # lines must be nearly together (10/15 EBAY)
     assert "toggle('feed-row--ai-near', _bookNearArm(r))" in _JS
 
 
