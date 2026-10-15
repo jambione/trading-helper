@@ -761,11 +761,13 @@ def main() -> None:
     ap.add_argument("--days", nargs="*", help="limit to these days (default: every ledger day)")
     ap.add_argument("--score", action="store_true")
     ap.add_argument("--study", choices=sorted(STUDIES), default="pre_ign")
+    ap.add_argument("--warm", action="store_true",
+                    help="warm both %%R lines on prior-session bars (live loads 5 days); result file gets _warm")
     a = ap.parse_args()
     global RULES, GRADED
     RULES, GRADED = STUDIES[a.study]["rules"], STUDIES[a.study]["graded"]
     global WARM_LINES
-    WARM_LINES = a.study == "os_leave"
+    WARM_LINES = a.study == "os_leave" or a.warm
     if a.fetch_prior:
         import bars
         from datetime import timedelta
@@ -817,7 +819,10 @@ def main() -> None:
     md = report(res)
     print(md)
     os.makedirs(OUT_DIR, exist_ok=True)
-    with open(os.path.join(OUT_DIR, STUDIES[a.study]["out"]), "w") as f:
+    out_name = STUDIES[a.study]["out"]
+    if a.warm and a.study != "os_leave":
+        out_name = out_name.replace(".md", "_warm.md")       # keep the original cold-start result
+    with open(os.path.join(OUT_DIR, out_name), "w") as f:
         f.write(md + "\n")
 
 
