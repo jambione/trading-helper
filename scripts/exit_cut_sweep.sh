@@ -10,7 +10,7 @@ SHA=${SWEEP_SHA:-$(git rev-parse --short HEAD)}   # SWEEP_SHA pins a relaunch to
 CFG_SHA=$SHA
 OUT=${1:-/tmp/ecs_$(date +%Y%m%d)}
 mkdir -p "$OUT"
-MAXP=4
+MAXP=7
 git show "$CFG_SHA:config/bot_config.json" > "$OUT/base_config.json"
 N=$(.venv/bin/python -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$OUT/base_config.json")
 if [ "$N" -lt 300 ]; then echo "base config has only $N keys - refusing to run unpinned"; exit 1; fi
