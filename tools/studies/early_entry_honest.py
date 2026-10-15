@@ -586,6 +586,10 @@ def score(datas: list[dict]) -> dict:
         con_off_day = "CON" in RULES and prior_miss_share(data) > CON_PRIOR_MAX_MISS
         if con_off_day:
             con_excluded.append((day, round(prior_miss_share(data), 3)))
+        if WARM_LINES and prior_miss_share(data) > CON_PRIOR_MAX_MISS:
+            # os_leave_prereg amended: a day whose names lack warm-up bars is EXCLUDED, not scored cold.
+            con_excluded.append((day, round(prior_miss_share(data), 3)))
+            continue
         sips_day = {s_: sip_map(f) for s_, f in data["sip"].items() if f is not None}
         for sym, board in data["board"].items():
             iex, sipf = data["iex"].get(sym), data["sip"].get(sym)
@@ -716,6 +720,9 @@ def report(res: dict) -> str:
             L.append(f"| {r} | {h} | {x['n']} | {x['days']} | {_bp(x['gross'])} | {_bp(x['net'])} "
                      f"| {_bp(x['lift'])} | {t} | {x['verdict']} |")
     L += ["", "**Verdicts:** " + ", ".join(f"{r} {v['verdict']}" for r, v in res["rules"].items()), ""]
+    if "OSL" in res["rules"]:
+        L += [f"OSL warm-up coverage: days excluded (> {CON_PRIOR_MAX_MISS:.0%} of board names lacking prior bars) "
+              f"{res.get('con_excluded') or []}", ""]
     if "CON" in res["rules"]:
         L += [f"CON prior-bar coverage: name-days without prior bars {res['drops'].get('CON_no_prior_bars', 0)}; "
               f"days excluded (> {CON_PRIOR_MAX_MISS:.0%} of board names lacking them) {res.get('con_excluded') or []}", ""]
