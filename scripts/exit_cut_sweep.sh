@@ -6,15 +6,15 @@
 #   nohup bash scripts/exit_cut_sweep.sh [OUT] > /tmp/ecs_run.log 2>&1 &
 set -euo pipefail
 cd "$(dirname "$0")/.."
-SHA=$(git rev-parse --short HEAD)
+SHA=${SWEEP_SHA:-$(git rev-parse --short HEAD)}   # SWEEP_SHA pins a relaunch to the first run's code
 CFG_SHA=$SHA
 OUT=${1:-/tmp/ecs_$(date +%Y%m%d)}
 mkdir -p "$OUT"
-MAXP=3
+MAXP=4
 git show "$CFG_SHA:config/bot_config.json" > "$OUT/base_config.json"
 N=$(.venv/bin/python -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$OUT/base_config.json")
 if [ "$N" -lt 300 ]; then echo "base config has only $N keys - refusing to run unpinned"; exit 1; fi
-git diff --quiet HEAD -- || { echo "tracked files differ from HEAD - commit first"; exit 1; }
+[ -n "${SWEEP_SHA:-}" ] || git diff --quiet HEAD -- || { echo "tracked files differ from HEAD - commit first"; exit 1; }
 echo "sha $SHA cfg $CFG_SHA keys $N out $OUT"
 
 while [ "$(TZ=America/New_York date +%H%M)" -lt 1615 ] && [ "$(TZ=America/New_York date +%H%M)" -ge 0400 ]; do sleep 120; done
@@ -37,9 +37,12 @@ arm_sets() {   # base = HEAD config (no-progress off, double check off)
   esac
 }
 
-for d in 2026-10-06 2026-10-07 2026-10-08 2026-10-09 2026-10-12 2026-10-13 2026-10-14 2026-10-15; do
-  for a in off np180 dc180 np_dc np120_dc np300_dc trend60 trend120 trail_dc trail_dc_np_dc; do
+# Deciding arms across every day first (operator 10/15 evening: ~35 min per replay, so a day-major order left all arms
+# on only 4-5 days by 03:30); the rest after.
+for a in off np180 np_dc trail_dc trail_dc_np_dc dc180 np120_dc np300_dc trend60 trend120; do
+  for d in 2026-10-06 2026-10-07 2026-10-08 2026-10-09 2026-10-12 2026-10-13 2026-10-14 2026-10-15; do
     [ -s "$OUT/${d}_${a}.json" ] && continue
+    pgrep -f -- "--out $OUT/${d}_${a}.json" > /dev/null && continue   # already running (relaunch after a reorder)
     HM=$(TZ=America/New_York date +%H%M)
     if [ "$HM" -ge 0330 ] && [ "$HM" -lt 1615 ]; then echo "deadline: not launched $d $a" >> "$OUT/failures.txt"; continue; fi
     while [ "$(pgrep -f 'tools/replay_session.py --day' | wc -l)" -ge $((MAXP * 2)) ]; do sleep 20; done
