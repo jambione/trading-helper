@@ -1606,8 +1606,21 @@ def main() -> None:
                 # for ai_positions_poll_sec — that lag is a gap through the stop.
                 book_state["last_positions_tick"] = t0
                 try:
-                    ai_positions.manage_open_positions(
-                        t0, unconfirmed_ttl_sec=unconfirmed_ttl)
+                    _prof_path = str(live_cfg.get("ai_book_profile_path") or "")
+                    if _prof_path and not os.path.exists(_prof_path):
+                        # One profiled pass (operator 10/15: the manage step takes ~3.2 s with no positions).
+                        import cProfile
+                        import pstats
+                        _pr = cProfile.Profile()
+                        _pr.enable()
+                        ai_positions.manage_open_positions(
+                            t0, unconfirmed_ttl_sec=unconfirmed_ttl)
+                        _pr.disable()
+                        with open(_prof_path, "w") as _fh:
+                            pstats.Stats(_pr, stream=_fh).sort_stats("cumulative").print_stats(45)
+                    else:
+                        ai_positions.manage_open_positions(
+                            t0, unconfirmed_ttl_sec=unconfirmed_ttl)
                 except Exception as e:  # noqa: BLE001
                     print(f"[ai] manage_open_positions failed: {e}",
                           flush=True)
