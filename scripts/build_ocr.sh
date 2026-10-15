@@ -92,4 +92,4 @@ echo "     spammy dialog; OCR does not need Python to capture."
 echo "  4. Verify:  python3 discord_source.py --check"
 echo
 # Open the privacy pane to make the click path obvious.
-open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" 2>/dev/null || true
+[ -n "${SSH_CONNECTION:-}" ] || open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" 2>/dev/null || true

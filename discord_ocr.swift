@@ -16,6 +16,7 @@ import Vision
 import CoreGraphics
 import AppKit
 import Darwin
+import ScreenCaptureKit
 
 let _app = NSApplication.shared
 _app.setActivationPolicy(.accessory)
@@ -151,6 +152,47 @@ func captureWindow(_ win: WinMeta) -> CGImage? {
     return full.cropping(to: local)
 }
 
+// ── ScreenCaptureKit (2026-10-15) ─────────────────────────────────────────────
+// CGDisplayCreateImage is a legacy API that recent macOS restricts: it worked for the first minute after a
+// restart and then failed on every poll (display capture/crop failed). ScreenCaptureKit captures the window
+// itself (no display crop; works when another window covers it) and is the supported path.
+var sckError = ""
+
+func captureSCK(ownerNeedle: String, titleNeedle: String?) -> CGImage? {
+    guard #available(macOS 14.0, *) else { sckError = "macOS < 14"; return nil }
+    let sem = DispatchSemaphore(value: 0)
+    var out: CGImage? = nil
+    let needle = ownerNeedle.lowercased()
+    let titleN = titleNeedle?.lowercased()
+    Task.detached {
+        defer { sem.signal() }
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
+            let cands = content.windows.filter { w in
+                let owner = (w.owningApplication?.applicationName ?? "").lowercased()
+                guard owner.contains(needle), w.frame.width >= 200, w.frame.height >= 200 else { return false }
+                if let t = titleN, !t.isEmpty { return (w.title ?? "").lowercased().contains(t) }
+                return true
+            }
+            guard let w = cands.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
+                sckError = "no window for owner '\(ownerNeedle)'"
+                return
+            }
+            let filter = SCContentFilter(desktopIndependentWindow: w)
+            let cfg = SCStreamConfiguration()
+            let scale = CGFloat(filter.pointPixelScale)
+            cfg.width = max(1, Int(w.frame.width * scale))
+            cfg.height = max(1, Int(w.frame.height * scale))
+            cfg.showsCursor = false
+            out = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: cfg)
+        } catch {
+            sckError = "\(error)"
+        }
+    }
+    if sem.wait(timeout: .now() + 10) == .timedOut { sckError = "timed out" }
+    return out
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 if !CGPreflightScreenCaptureAccess() {
     _ = CGRequestScreenCaptureAccess()
@@ -163,17 +205,22 @@ if !CGPreflightScreenCaptureAccess() {
     }
 }
 
-guard let win = findWindow(ownerNeedle: ownerName, titleNeedle: titleSub) else {
-    fail("no on-screen window found for owner '\(ownerName)' — is Discord open and visible?")
+var captured: CGImage? = captureSCK(ownerNeedle: ownerName, titleNeedle: titleSub)
+if captured == nil {
+    // Fallback: the legacy display capture + crop.
+    guard let win = findWindow(ownerNeedle: ownerName, titleNeedle: titleSub) else {
+        fail("no on-screen window found for owner '\(ownerName)' — is Discord open and visible? (ScreenCaptureKit: \(sckError))")
+    }
+    captured = captureWindow(win)
+    if captured == nil {
+        fail(
+            "display capture/crop failed for window id=\(win.id) " +
+            "(\(Int(win.bounds.width))x\(Int(win.bounds.height))). " +
+            "Grant Screen Recording; keep Discord on-screen. (ScreenCaptureKit: \(sckError))"
+        )
+    }
 }
-
-guard let cg = captureWindow(win) else {
-    fail(
-        "display capture/crop failed for window id=\(win.id) " +
-        "(\(Int(win.bounds.width))x\(Int(win.bounds.height))). " +
-        "Grant Screen Recording; keep Discord on-screen."
-    )
-}
+let cg = captured!
 
 let lines = recognize(cg, accurate: accurate)
 FileHandle.standardOutput.write(Data((lines.joined(separator: "\n") + "\n").utf8))
