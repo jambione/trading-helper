@@ -102,3 +102,11 @@ def test_levels_is_cache_only(monkeypatch):
     assert (lv["ob_res_btm"], lv["ob_res_top"]) == (10.2, 10.3)
     assert ob_observe.levels("NOPE", 10.0) == {}
     assert ob_observe.levels("ABC", None) == {}
+
+
+def test_status_stale_uses_the_arms_reading_and_fails_sort_first():
+    i = _JS.index("function _bookTapeStale(")
+    body = _JS[i:_JS.index("\n}", i)]
+    assert body.index("r.g_tape_age") < body.index("last_ask_src")
+    j = _JS.index("function _bookGatesText(")
+    assert "x.ok === false ? 0" in _JS[j:_JS.index("\n}", j)]

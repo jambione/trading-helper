@@ -1534,6 +1534,12 @@ function _createBookRow(r, owner) {
  *  the tape recovers (2026-08-25 locked the whole book that way). */
 function _bookTapeStale(r) {
   if (!r) return false;
+  // The arm's own reading first (Gates column, 10/15): print age vs this name's tape ceiling. The flat
+  // decision_max_age rule below ignores the per-name ceiling and said "stale quote" on KMB/LEN at 12-14 s
+  // while the arm accepted them.
+  const gAge = r.g_tape_age != null ? Number(r.g_tape_age) : NaN;
+  const gMax = r.g_tape_max != null ? Number(r.g_tape_max) : NaN;
+  if (Number.isFinite(gAge) && Number.isFinite(gMax) && gMax > 0) return gAge > gMax;
   const src = String(r.last_ask_src || r.price_src || '').toLowerCase().trim();
   if (src === 'stale_tape' || src === 'none') return true;
   const age = r.last_ask_age_sec != null ? Number(r.last_ask_age_sec)
@@ -1934,7 +1940,9 @@ function _bookGateChecks(r) {
 }
 
 function _bookGatesText(r) {
-  const c = _bookGateChecks(r);
+  // Failing gates first: if the cell ellipses, it cuts a passing reading, never the blocker.
+  const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : 2);
+  const c = _bookGateChecks(r).slice().sort((a, b) => rank(a) - rank(b));
   return c.length ? c.map(x => x.text).join(' · ') : '—';
 }
 
