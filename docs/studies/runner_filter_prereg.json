@@ -1,0 +1,19 @@
+{
+  "study": "Runner entry filter: does an entry-time trait, chosen from earlier studies, keep the runner's big winners while dropping enough of its losers to make the runner profitable? Operator 2026-10-15 after the right-tail runner FAIL (tail real: top 5% of runner trades +3,300 bp per half; the rest lose more).",
+  "registered_at": "2026-10-15 ~04:30 ET, before any filtered return was computed. The runner's unfiltered result (FAIL) has been seen; no filtered split has.",
+  "registered_before_results": true,
+  "filters_and_sources": {
+    "F1_room": "price at entry <= 97.26% of the day's SIP high so far (09:30 .. entry minute - 1). Source: name_selection_study 9/25 - room below HOD <= -2.74% was the only name input that lifted the mean in both halves.",
+    "F2_price50": "entry price >= $50. Source: steady_runway_study 9/29 - steady +5% climb vs steady -5% fall best above $50 (1.42% vs 0.24%).",
+    "F3_early_up": "day change at entry > +2.35% vs the prior raw SIP close AND entry 09:30-10:46 ET. Source: steady-runway 60-day check - 'up > 2.35% + first 76 min' 4.5% vs 3.0% steady climbs."
+  },
+  "trades_and_exit": "Exactly right_tail_runner.py: first fill per name-day 2026-09-08..10-13, runner = 2% stop, 1% trail after +1%, graded worse bar ordering, 15:49 close; cost 5 bp + the measured live stop/trail slippage on stop/trail exits.",
+  "statistic": "Per filter and half: kept-trade runner net (day-equal mean, day-clustered t); lift = kept mean - all-trades mean per day (same day), day-equal and t.",
+  "pass": "A filter PASSES only if in BOTH halves: kept runner net > 0 with t >= 2.4, lift >= +10 bp with t >= 2.4, kept >= 25% of trades with a known trait, and >= 40 kept trades. t 2.4 because three filters are read on the same trades. Otherwise FAIL (UNDERPOWERED when the size floors fail).",
+  "no_retuning": "Thresholds 97.26%, $50, +2.35% / 10:46, the runner exit and the costs are fixed. Combinations of filters are not graded (a combination is a new prereg on new sessions).",
+  "if_pass": "A pass is in-sample for the trades (the runner was designed on them): forward confirmation on >= 10 sessions after 2026-10-15 with the same bar, then a result-skeptic review, before any live runner tag.",
+  "if_fail": "None of the three name traits rescues the runner; next: earnings-gap continuation (different structure) rather than more filters on these trades.",
+  "power_note": "~170 / 262 first fills per half; a 25-40% keep leaves ~40-100 trades on 13 days per half - only a large effect can reach t 2.4.",
+  "data_note": "Prior close from ai_reports/hist_universe/cache/daily_raw_sip.pkl (raw SIP daily through 2026-10-09); 10/13 entries whose prior close (10/12) is missing have F3 unknown and are excluded from F3's known count (counted).",
+  "script": "tools/studies/runner_filter_study.py (--score after READY); tests/test_runner_filter_study.py"
+}
