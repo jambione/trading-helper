@@ -3591,6 +3591,19 @@ def double_check_sell_due(
         return False, {"error": str(e)[:120]}
 
 
+def _double_check_store_bars(ticker: str) -> tuple | None:
+    """Session 1m bars from the in-memory ob_observe store only (never fetches): the trail-hold check runs inside
+    an exit and must not wait on the network. None under 20 bars."""
+    try:
+        import ob_observe
+        b = ob_observe.bars(ticker)
+    except Exception:  # noqa: BLE001
+        return None
+    if not b or len(b) < 20:
+        return None
+    return ([float(x[0]) for x in b], [float(x[2]) for x in b], [float(x[3]) for x in b], [float(x[4]) for x in b])
+
+
 def trend_reentry_idle_sec(pos: dict | None, cfg: dict | None) -> float:
     """Trending-day hold (operator 10/15, exit-cut sweep arm): on the 2nd+ entry of a name that was up at least
     ai_trend_reentry_min_pct on the day at admission, the decay leash waits ai_trend_reentry_idle_sec (instead of
@@ -3617,7 +3630,7 @@ def trail_exit_trend_hold(pos: dict | None, ticker: str, px: float, now: float |
     below entry (+ ai_trail_exit_trend_hold_band_pct), hold while the double check's %R reading is NOT both
     lines falling. Never holds at or under the original hard stop (entry_stop_price / stop_price). Off (default)
     = False. Any error or missing bars = False (sell). 10/15 AAL: the leash sold ~$12.04 at entry with %R still
-    rising, then the name printed $12.06. Wired into the replay; live exit path not yet (inert live)."""
+    rising, then the name printed $12.06. Live in apply_local_trail (in-memory bars only) and the replay."""
     cfg = cfg if isinstance(cfg, dict) else _cfg_all()
     if not bool(cfg.get("ai_trail_exit_trend_hold", False)) or not isinstance(pos, dict):
         return False
@@ -3633,7 +3646,9 @@ def trail_exit_trend_hold(pos: dict | None, ticker: str, px: float, now: float |
             return False                       # the hard stop is absolute
         from tools import sell_double_check as sdc
         t_now = float(now if now is not None else time.time())
-        bars = _symbol_bars_for_double_check(ticker, t_now)
+        bars = _double_check_store_bars(ticker)
+        if bars is None:
+            return False                       # no bars in memory: sell (never fetch inside an exit)
         lookback = int(cfg.get("ai_double_check_lookback_min", sdc.LOOKBACK_MIN) or sdc.LOOKBACK_MIN)
         res = sdc.evaluate_symbol(ticker, bars, float(px), lookback=lookback, now=t_now)
         return res.get("sell") == "no"
@@ -5151,6 +5166,16 @@ def apply_local_trail(
     # still runs only when the shelf was actually hit.
     _trail_hit = (not raise_only and trigger is not None and loc is not None
                   and trigger <= loc + 1e-9)
+    # Trail-exit trend hold (ai_trail_exit_trend_hold, default off; exit-cut sweep arm trail_dc): a hit at or under
+    # entry waits while the double check's %R is not both-lines-falling. Never under the hard stop; the shelf keeps
+    # raising; re-read every tick. Logged once a minute per name so holds can be audited.
+    if _trail_hit and trail_exit_trend_hold(pos, ticker, float(trigger), now):
+        _trail_hit = False
+        _t_hold = float(now if now is not None else time.time())
+        if _t_hold - float(pos.get("trail_hold_logged_at") or 0) >= 60:
+            pos["trail_hold_logged_at"] = _t_hold
+            log_event("trail_trend_hold", symbol=ticker, last=trigger, stop=loc,
+                      entry=pos.get("entry_price"))
     # A print through the working stop is a market exit, not a wait.
     # VICR / PSKY 2026-09-23: last was under the shelf, State said
     # "open · SELL", and triangle-first (still dual OB) deferred the

@@ -50,6 +50,7 @@ def test_trend_reentry_idle_only_on_reentries_into_names_up_enough():
 
 def test_trail_exit_trend_hold_only_at_or_under_entry_above_the_hard_stop(monkeypatch):
     cfg = {"ai_trail_exit_trend_hold": True, "ai_trail_exit_trend_hold_band_pct": 0.05}
+    monkeypatch.setattr(cp, "_double_check_store_bars", lambda t: ([1.0] * 30, [1.0] * 30, [1.0] * 30, [1.0] * 30))
     pos = {"entry_price": 12.04, "entry_stop_price": 11.50}
     _patch(monkeypatch, "no")                                         # %R not both falling -> hold
     assert cp.trail_exit_trend_hold(pos, "AAL", 12.04, 1.0, cfg)
@@ -58,3 +59,39 @@ def test_trail_exit_trend_hold_only_at_or_under_entry_above_the_hard_stop(monkey
     assert not cp.trail_exit_trend_hold(pos, "AAL", 12.04, 1.0, {})    # off by default
     _patch(monkeypatch, "yes")                                        # both falling -> sell
     assert not cp.trail_exit_trend_hold(pos, "AAL", 12.04, 1.0, cfg)
+
+
+def _trail_pos():
+    return {"entry_price": 10.0, "entry_stop_price": 9.5, "stop_price": 9.5, "local_stop_price": 10.0,
+            "entry_confirmed": True, "entry_confirmed_at": 1.0, "entry_time": 1.0, "qty": 10,
+            "peak_price": 10.05, "risk_per_share": 0.5}
+
+
+def test_live_trail_hit_at_entry_holds_when_on_and_sells_when_off(monkeypatch):
+    import tools.sell_double_check as sdc
+    sold = []
+    import alpaca_trader as at
+    monkeypatch.setattr(at, "cancel_open_orders", lambda t: None)
+    monkeypatch.setattr(at, "close_out", lambda t, **k: sold.append(t) or {"order_id": "x1"})
+    monkeypatch.setattr(cp, "_double_check_store_bars", lambda t: ([1.0] * 30, [1.0] * 30, [1.0] * 30, [1.0] * 30))
+    monkeypatch.setattr(sdc, "evaluate_symbol", lambda *a, **k: {"sell": "no"})
+    monkeypatch.setattr(cp, "log_event", lambda *a, **k: None)
+    on = {"ai_trail_exit_trend_hold": True, "ai_trail_exit_trend_hold_band_pct": 0.05}
+    monkeypatch.setattr(cp, "_cfg_all", lambda: dict(on))
+    pos = _trail_pos()
+    cp.apply_local_trail("ABC", pos, 9.99, [], {})
+    assert sold == [] and pos.get("closing_reason") is None
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {})
+    pos = _trail_pos()
+    cp.apply_local_trail("ABC", pos, 9.99, [], {})
+    assert sold == ["ABC"] and pos.get("closing_reason") == "local_trail"
+
+
+def test_trail_hold_never_fetches_bars(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cp, "_symbol_bars_for_double_check", lambda *a: calls.append(a))
+    import ob_observe
+    monkeypatch.setattr(ob_observe, "bars", lambda t: [])
+    cfg = {"ai_trail_exit_trend_hold": True}
+    assert not cp.trail_exit_trend_hold({"entry_price": 10.0, "stop_price": 9.0}, "ABC", 10.0, 1.0, cfg)
+    assert calls == []
