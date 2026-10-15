@@ -23,7 +23,9 @@
     "np120_dc": "as np_dc at 120 s",
     "np300_dc": "as np_dc at 300 s",
     "trend60": "off + on a name's 2nd+ entry, if it was up >= 2% at admission, the decay leash waits 60 s (not 15 s) for a new high",
-    "trend120": "as trend60 with 120 s"
+    "trend120": "as trend60 with 120 s",
+    "trail_dc": "off + when the trail/leash would sell at or below entry (+0.05%), hold while the double check's %R is not both-lines-falling; the hard stop stays absolute",
+    "trail_dc_np_dc": "trail_dc + np_dc together"
   },
   "metric": "VALUE = sum of net bp per day (net = return minus full SIP spread at entry), day-clustered, paired vs off; also net bp per trade, opens, hold.",
   "decision": "Ship the arm with the highest mean daily VALUE if it beats 'off' in BOTH halves and its paired t vs off is >= 1.5 (8 days; this is a config choice on paper, not an edge claim). If no arm qualifies, keep 'off'. Ties within 2 bp/day go to the arm that holds longer (operator preference to keep positions open).",
@@ -32,5 +34,6 @@
     "replay recall vs live is ~0.5-0.6, so absolute values differ from live; the comparison is between arms on the same replayed opens",
     "exits cannot move the mean (42 shapes ~0 gross): expect differences of a few bp"
   ],
-  "amended_1": "2026-10-15 ~12:45 ET, before any arm ran: operator added the trending-day hold (10/14 BBWI/GFS/PRGO re-entries shaken out at ~breakeven before 50-120 bp runs; 10/15 the same names faded). Same decision rule; trend arms are judged vs off like the rest."
+  "amended_1": "2026-10-15 ~12:45 ET, before any arm ran: operator added the trending-day hold (10/14 BBWI/GFS/PRGO re-entries shaken out at ~breakeven before 50-120 bp runs; 10/15 the same names faded). Same decision rule; trend arms are judged vs off like the rest.",
+  "amended_2": "2026-10-15 ~12:50 ET, before any arm ran: operator added the trail-exit trend hold (10/15 AAL sold at entry by the leash with %R rising, then +2 cents). Same decision rule; judged vs off."
 }

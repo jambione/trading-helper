@@ -959,7 +959,8 @@ class FakeBroker:
                            or (cap_px <= 0 and cap_pct > 0
                                and (px - _entry) / _entry * 100.0 + 1e-9 >= cap_pct)):
             return "profit_capture"
-        if px <= float(p["local_stop_price"]) + 1e-9:
+        if px <= float(p["local_stop_price"]) + 1e-9 \
+                and not cp.trail_exit_trend_hold(p, pos["symbol"], px, now, cfg):
             return "local_trail"
         entry, risk = float(p["entry"]), float(p["risk_per_share"])
         t1_rr = max(0.0, float(cfg.get("ai_watch_synth_rr", 0.6) or 0.0))

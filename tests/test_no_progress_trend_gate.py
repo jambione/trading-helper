@@ -46,3 +46,15 @@ def test_trend_reentry_idle_only_on_reentries_into_names_up_enough():
     assert cp.trend_reentry_idle_sec({"features": {"pct_change": 1.5}, "entry_n": 3}, cfg) == 0
     assert cp.trend_reentry_idle_sec({**up, "entry_n": 2}, {}) == 0           # off by default
     assert cp.trend_reentry_idle_sec({"entry_n": 2}, cfg) == 0                # unknown move: normal leash
+
+
+def test_trail_exit_trend_hold_only_at_or_under_entry_above_the_hard_stop(monkeypatch):
+    cfg = {"ai_trail_exit_trend_hold": True, "ai_trail_exit_trend_hold_band_pct": 0.05}
+    pos = {"entry_price": 12.04, "entry_stop_price": 11.50}
+    _patch(monkeypatch, "no")                                         # %R not both falling -> hold
+    assert cp.trail_exit_trend_hold(pos, "AAL", 12.04, 1.0, cfg)
+    assert not cp.trail_exit_trend_hold(pos, "AAL", 12.10, 1.0, cfg)   # green exit: take it
+    assert not cp.trail_exit_trend_hold(pos, "AAL", 11.50, 1.0, cfg)   # hard stop is absolute
+    assert not cp.trail_exit_trend_hold(pos, "AAL", 12.04, 1.0, {})    # off by default
+    _patch(monkeypatch, "yes")                                        # both falling -> sell
+    assert not cp.trail_exit_trend_hold(pos, "AAL", 12.04, 1.0, cfg)

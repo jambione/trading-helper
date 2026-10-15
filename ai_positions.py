@@ -3611,6 +3611,36 @@ def trend_reentry_idle_sec(pos: dict | None, cfg: dict | None) -> float:
     return hold
 
 
+def trail_exit_trend_hold(pos: dict | None, ticker: str, px: float, now: float | None = None,
+                          cfg: dict | None = None) -> bool:
+    """ai_trail_exit_trend_hold (operator 10/15, exit-cut sweep arm): when the trail/leash stop would sell at or
+    below entry (+ ai_trail_exit_trend_hold_band_pct), hold while the double check's %R reading is NOT both
+    lines falling. Never holds at or under the original hard stop (entry_stop_price / stop_price). Off (default)
+    = False. Any error or missing bars = False (sell). 10/15 AAL: the leash sold ~$12.04 at entry with %R still
+    rising, then the name printed $12.06. Wired into the replay; live exit path not yet (inert live)."""
+    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
+    if not bool(cfg.get("ai_trail_exit_trend_hold", False)) or not isinstance(pos, dict):
+        return False
+    try:
+        entry = _num(pos.get("entry_price")) or _num(pos.get("entry"))
+        hard = _num(pos.get("entry_stop_price")) or _num(pos.get("stop_price"))
+        band = float(cfg.get("ai_trail_exit_trend_hold_band_pct", 0.05) or 0.0)
+        if entry is None or px is None:
+            return False
+        if px > entry * (1 + band / 100.0) + 1e-9:
+            return False                       # a green trail exit: take it
+        if hard is not None and px <= hard + 1e-9:
+            return False                       # the hard stop is absolute
+        from tools import sell_double_check as sdc
+        t_now = float(now if now is not None else time.time())
+        bars = _symbol_bars_for_double_check(ticker, t_now)
+        lookback = int(cfg.get("ai_double_check_lookback_min", sdc.LOOKBACK_MIN) or sdc.LOOKBACK_MIN)
+        res = sdc.evaluate_symbol(ticker, bars, float(px), lookback=lookback, now=t_now)
+        return res.get("sell") == "no"
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def no_progress_trend_says_sell(
     pos: dict[str, Any] | None,
     ticker: str,
