@@ -4839,7 +4839,6 @@ body.mobile .book-call-btn { display: none; }
   .panel-ai-watch .feed-cols--ai-book .cell-exh,
   .panel-ai-watch .feed-cols--ai-book .th-gates,
   .panel-ai-watch .feed-cols--ai-book .th-exh { text-align: left; font-size: 12px; }
-  .panel-ai-watch .feed-cols--ai-book .ai-book-status { text-align: right; }
 }
 body.mobile .panel-ai-watch .feed-cols--ai-book {
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.85fr) minmax(0, 0.7fr) minmax(0, 0.75fr) minmax(0, 1.1fr);
@@ -4863,4 +4862,3 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-gates,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh,
 body.mobile .panel-ai-watch .feed-cols--ai-book .th-gates,
 body.mobile .panel-ai-watch .feed-cols--ai-book .th-exh { text-align: left; font-size: 12px; }
-body.mobile .panel-ai-watch .feed-cols--ai-book .ai-book-status { text-align: right; }
