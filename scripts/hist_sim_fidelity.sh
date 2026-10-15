@@ -29,7 +29,9 @@ WANT_SPAN="$(echo $NEW | tr ' ' '\n' | sort | head -1)..$(echo $NEW | tr ' ' '\n
 HAVE=$($PY -c "import json,sys; j=json.load(open(sys.argv[1])); print(j.get('span',''), j.get('git_sha',''))" "$INFO" 2>/dev/null || true)
 if [ "$HAVE" != "$WANT_SPAN $SHA" ]; then     # rebuild when the graded days OR the code sha changed
   # cmd_daily MERGES into the cache (never replaces the January-October history the builds read).
-  $PY tools/studies/hist_universe.py daily 2026-10-10 2026-10-16 || exit 1
+  # hi = the last graded day: the free plan refuses SIP bars from the last 15 minutes (a future end date fails).
+  LASTDAY=$(echo $NEW | tr ' ' '\n' | sort | tail -1)
+  $PY tools/studies/hist_universe.py daily 2026-10-10 "$LASTDAY" || exit 1
   $PY - "$NEW" <<'PY' || exit 1
 import sys, pickle
 sys.path.insert(0, "tools/studies")
