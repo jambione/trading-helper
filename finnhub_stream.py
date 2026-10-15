@@ -279,6 +279,22 @@ def request_unsubscribe(tickers: list, *, force: bool = False):
 
 # ── WebSocket Stream ─────────────────────────────────────────
 
+def write_side_lost(ws) -> bool:
+    """True when the socket's transport has dropped writes (asyncio's _conn_lost counter) or is closing."""
+    tr = getattr(ws, "transport", None)
+    if tr is None:
+        return False
+    try:
+        if tr.is_closing():
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        return int(getattr(tr, "_conn_lost", 0) or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 async def _drain_pending(ws):
     """Send any queued (un)subscriptions to the live WebSocket."""
     while not _pending_subs.empty():
@@ -370,6 +386,14 @@ async def _finnhub_stream(api_key: str, tickers: list):
                         message = await asyncio.wait_for(ws.recv(), timeout=1.0)
                         last_msg_at = time.time()
                     except asyncio.TimeoutError:
+                        # Half-dead socket (2026-10-15 05:52 and 12:5x): reads still arrive for the names
+                        # subscribed at connect, but every write is dropped. asyncio only logs
+                        # "socket.send() raised exception." and ws.send does not raise, so new names were
+                        # marked subscribed and never got a print (no_tape / stale_tape_admit emptied the
+                        # book). The transport counts lost writes; any lost write = reconnect, which
+                        # re-subscribes the whole set.
+                        if write_side_lost(ws):
+                            raise RuntimeError("Finnhub WS write side lost - reconnecting")
                         # Only silence-kill once we actually have subscriptions.
                         # Engine starts the socket with tickers=[] and enqueues
                         # names later — an empty socket is quiet by design.
