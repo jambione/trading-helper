@@ -1,0 +1,15 @@
+{
+  "study": "Right-tail runner: would our real trades, held with a wide stop and a wide trail instead of the 1-2 minute leash, catch big winners the leash cuts - enough to raise the average? Operator 2026-10-15 ('there may be a day-trading edge you are unable to see'; my point 4: the leash caps the right tail).",
+  "registered_at": "2026-10-15 ~04:00 ET, before any return of this rule was computed.",
+  "registered_before_results": true,
+  "prior": "LOW for the mean: holding-longer-loses-more (fills drift -9/-28/-43 bp at 5/15/30 min), exits-cannot-move-the-mean (42 shapes ~0 gross), the 10/14 ratchet sweep (leash off -7.9 bp vs -3.9; cushions worse). The right tail itself was never measured.",
+  "data": "Desk fills 2026-09-08..10-13 (outcomes.jsonl, entry_path 'watch', entry and exit price present) on the early_entry_honest cached sessions; SIP 1-minute OHLC.",
+  "rule": "Keep the real entry (fill price, minute). Walk SIP bars from the next minute: hard stop entry x 0.98 (a bar's low at or below it exits at min(stop, that bar's open)); once a high reaches entry x 1.01 the stop rises to running high x 0.99; otherwise the SIP close of 15:49. Runner exits pay 5 bp (half a typical spread); the actual arm is the desk's real exit fill.",
+  "statistic": "Per trade: runner return - actual return (same entry). Day-equal mean, day-clustered t; also the runner's own net.",
+  "split": "Halves A (to 2026-09-24) and B (after), as the harness studies.",
+  "pass": "Each half: runner - actual >= +5 bp with t >= 2.0, AND runner net > 0, AND >= 100 trades on >= 6 days. PASS only if both halves pass; FAIL if either fails; else UNDERPOWERED.",
+  "information_only": ["right tail, runner vs actual: share of trades >= +2% and >= +5%, the top 5% of trades' share of the total, the largest trade", "exit reasons and median hold", "grid: stop/arm/trail 1%/0.5%/0.5%, 3%/2%/1.5%, and 3% stop with no trail held to 15:49"],
+  "if_pass": "Result-skeptic review of the positive, then a live paper A/B tagging a random 1 in 5 entries as runners (own scorecard).",
+  "if_fail": "If the tail is visible (runner >= +2% share well above actual) but the mean fails, report it and consider a live 1-in-5 runner tag only with the operator's explicit OK, as a tail measurement, not a profit claim. Otherwise the leash stays.",
+  "script": "tools/studies/right_tail_runner.py (--score after READY); tests/test_right_tail_runner.py"
+}
