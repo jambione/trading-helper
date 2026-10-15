@@ -8,7 +8,7 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 ### Operator concerns (end of day)
 | # | Item | Status | Where |
 |---|---|---|---|
-| 1 | Few opens today | running | opens review tonight (funnel 10/13-10/15, where names were lost, how late each entry was vs its run) |
+| 1 | Few opens today | done (review) | opens/10m 1.59 / 1.10 / 0.58 (10/13/14/15; 10/15 = outages). Refusals: setup 63-68% (exh_falling 32-37%, exh_not_tight 20-24%), data 26-31% (tape_only 17-24%). Entries at 88-93% of the prior 30-min range since pre-square-only (~70% of the run done). NEXT: replay tight gap 15→20 and after-square wait 10→5 for opens and net/trade |
 | 2 | Delays when we should have opened (AAL ~70 s) | running | confirm 2→1, volume gate off, G2 limit tests off (live 12:45). Replay profile: poll_once = 16 ms CPU, so the live 13-40 s is network waiting. Live profile on from tonight's restart (ai_watch_profile_path) → read ~06:00, fix the slow calls before the open; arm on the 3 s tick still to build |
 | 3 | No-progress exits | running | exit sweep: off / np180 / dc180 / np_dc / np120_dc / np300_dc (scripts/exit_cut_sweep.sh) |
 | 4 | Double check holds a sell at or below entry | running | exit sweep arms trail_dc, trail_dc_np_dc; live code wired tonight (ai_trail_exit_trend_hold, OFF; needs a restart) so a win is a config switch |
