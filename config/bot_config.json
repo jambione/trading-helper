@@ -218,6 +218,7 @@
   "ai_watch_open_seed_min_pct": 8.0,
   "ai_watch_open_seed_stream_min_pct": 5.0,
   "ai_watch_poll_sec": 10.0,
+  "ai_watch_profile_path": "/tmp/live_poll.prof",
   "ai_watch_rank_move_band": 2.0,
   "ai_watch_rank_rvol_band": 0.5,
   "ai_watch_require_agreement": false,

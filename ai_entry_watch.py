@@ -19214,9 +19214,14 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
 
 def _bind_poll_profiler() -> None:
-    """TH_POLL_PROFILE=<path>: accumulate a cProfile of every poll_once call and dump it at exit (the replay's
+    """TH_POLL_PROFILE=<path> (or bot_config ai_watch_profile_path, read at import = restart): accumulate a cProfile of every poll_once call and dump it at exit (the replay's
     child process inherits the variable). Diagnoses the 13-40 s watch poll (operator 10/15). Off = no cost."""
     path = os.environ.get("TH_POLL_PROFILE", "")
+    if not path:
+        try:
+            path = str(_push_cfg().get("ai_watch_profile_path") or "")
+        except Exception:  # noqa: BLE001
+            path = ""
     if not path:
         return
     import atexit
@@ -19238,6 +19243,8 @@ def _bind_poll_profiler() -> None:
             stats["n"] += 1
             stats["sec"] += dt
             stats["max"] = max(stats["max"], dt)
+            if stats["n"] % 20 == 0:          # live desk never exits cleanly: write every 20 polls
+                dump()
 
     def dump():
         try:
