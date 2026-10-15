@@ -65,6 +65,8 @@ STUDIES = {
                  "prereg": "early_entry_mid_rsi2_prereg.json", "out": "result_mid_rsi2.md"},
     "connors": {"rules": ("CON", "SQ"), "graded": ("CON",),
                 "prereg": "connors_green_prereg.json", "out": "result_connors.md"},
+    "os_leave": {"rules": ("OSL", "SQ"), "graded": ("OSL",),
+                 "prereg": "os_leave_prereg.json", "out": "result_os_leave.md"},
 }
 RULES = STUDIES["pre_ign"]["rules"]
 GRADED = STUDIES["pre_ign"]["graded"]
@@ -98,6 +100,30 @@ def pre_flag(fast, slow, i: int) -> bool:
     tight = abs(f - s) <= TIGHT + 1e-9
     full = f >= -OB_THR and s >= -OB_THR
     return f >= -PRE_THR and s >= -PRE_THR and tight and not full and rising(fast, i)
+
+
+OS_LEAVE_BARS = 3   # ai_watch_os_leave_max_age_sec 180 s on 1-minute bars
+
+
+def os_tri(fast, slow, i: int) -> bool:
+    """Oversold triangle: both lines <= -(100 - OB_THR) (-80) and within TIGHT."""
+    f, s = fast[i], slow[i]
+    return _fin(f) and _fin(s) and f <= -100 + OB_THR + 1e-9 and s <= -100 + OB_THR + 1e-9 \
+        and abs(f - s) <= TIGHT + 1e-9
+
+
+def os_leave_flag(fast, slow, i: int) -> bool:
+    """Live _os_leave_allows_buy at bar close: an oversold triangle on one of the previous OS_LEAVE_BARS minutes,
+    this minute out of it (a line back above -80, not 'both deep but wide'), and fast %R rising."""
+    f, s = fast[i], slow[i]
+    if not (_fin(f) and _fin(s)) or os_tri(fast, slow, i):
+        return False
+    deep = f <= -100 + OB_THR + 1e-9 and s <= -100 + OB_THR + 1e-9
+    if deep:
+        return False                      # both still deep but wide: live 'exh_not_tight', not a leave
+    if not any(os_tri(fast, slow, k) for k in range(max(0, i - OS_LEAVE_BARS), i)):
+        return False
+    return rising(fast, i)
 
 
 def sq_flag(fast, slow, i: int) -> bool:
@@ -482,6 +508,7 @@ def rule_fires(ser: dict, board: set) -> dict[str, tuple[list[int], int]]:
         "MID": [mid_flag(f, s, ser["rsi"], i) for i in range(n)],
         "MIDCAP": [mid_flag(f, s, ser["rsi"], i, cap=True) for i in range(n)],
         "RSI2T": [rsi2_turn_flag(f, ser["rsi"], i) for i in range(n)],
+        "OSL": [os_leave_flag(f, s, i) for i in range(n)],
     }
     out = {r: fires(m, flags[r], board) for r in RULES if r != "CON"}
     if "CON" in RULES:

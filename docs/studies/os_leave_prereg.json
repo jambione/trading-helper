@@ -1,0 +1,27 @@
+{
+  "study": "Leave-oversold (the desk's off-by-default \u25b2 arm, ai_watch_exh_oversold_arm) as a 1-minute entry: an oversold triangle (fast and slow %R both <= -80 and within 15) on one of the previous 3 minutes, then the first minute a line is back above -80 with fast %R rising, fired from completed bars on every board name, against a random later minute of the same name.",
+  "registered_at": "2026-10-15 ~15:05 ET, before any return of this rule was computed on market data.",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-15 (EBAY chart: \u25b2 at 14:45 at the low, +0.4% in the next 10 minutes while the pre-square arm waited for the top). The rule already exists in ai_entry_watch._os_leave_allows_buy and was never graded. The prompting chart is outside the cache (cache ends 2026-10-14).",
+  "prior": "LOW-MEDIUM. Bounce entries failed before (Connors RSI-2 green 10/14, RSI-2 turn 10/13, RSI <30 over 60 days, limit-below dips kept falling 10/14). This one needs both %R lines exhausted together and then turning, which none of those required.",
+  "rule": "early_entry_honest.os_leave_flag on the gridded IEX minute series (same %R lines as PRE): os_tri(i-k) for some k in 1..3 (both <= -80, |fast-slow| <= 15), minute i not in the triangle and not 'both <= -80 but wide', fast rising (> previous + 0.05). Onsets with the harness refractory (15 min), 09:50-15:30 window, board minutes only.",
+  "fill_markout_control_cost_statistic_split": "Identical to early_entry_mid_rsi2_prereg.json: entry at the SIP open of the next minute, exit at the SIP close 9 minutes after the entry bar (10-minute hold); control = random LATER minute of the same name (entry+1..+60, seed sha256(symbol|day|entry_minute|OSL|early-honest-v1)); 10 bp round trip on both; lift = rule net - control net, day-equal mean, day-clustered t; half A ends 2026-09-24.",
+  "pass": "Each half PASS = day-equal lift >= +5 bp with day-clustered t >= 2.0, day-equal net > 0, >= 100 scored signals, >= 6 days. OSL is PASS only if both halves PASS; FAIL if either FAILs; else UNDERPOWERED (not evidence either way).",
+  "information_only": [
+    "SQ scored the same way",
+    "gross; 5, 15, 30 minute markouts",
+    "cross control (another board name, same minute), close entry, 20 bp cost",
+    "lead before desk fills"
+  ],
+  "no_retuning": "-80 / 15 / 3 bars, the window, refractory, hold, cost and split are fixed. Other levels, leave windows or holds are a new prereg.",
+  "if_pass": "Provisional: forward test on >= 10 sessions after 2026-10-15 with the same bar (the live \u25b2 arm in shadow), then a result-skeptic review of the positive, before any arm change.",
+  "if_fail": "The completed-bar leave-oversold entry is closed on the free feed; the \u25b2 arm stays off.",
+  "script": "tools/studies/early_entry_honest.py --study os_leave (--score only after a result-skeptic READY); tests/test_early_entry_honest.py::test_os_leave_needs_triangle_then_leave_rising",
+  "declared_deviations": [
+    "Live fires intrabar on the live print; the harness uses completed 1-minute bars (entry at the next minute's SIP open).",
+    "Live needs ai_watch_square_min_count consecutive triangle polls (now 1); one triangle minute qualifies here.",
+    "Live 180 s leave window = 3 bars here."
+  ],
+  "multiplicity": "7th entry rule graded on these 28 sessions (PRE, IGN, MID, RSI2T, limit-below, CON, OSL). Stands only with the forward test in if_pass.",
+  "calibration": "Null run on the synthetic walk (30 days x 15 names, early_entry_honest_null.py --study os_leave): OSL lift +2.5 / +0.3 bp (t +1.23 / +0.17), both halves FAIL. No method bias."
+}

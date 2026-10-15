@@ -206,3 +206,17 @@ def test_con_live_series_uses_prior_bars_for_warmup():
     closes = [100.0 + 0.01 * i for i in range(205)]
     closes[100] = float("nan")
     assert not any(E.con_flags(closes, [5.0] * 205))           # a missing close inside the window
+
+
+def test_os_leave_needs_triangle_then_leave_rising():
+    import tools.studies.early_entry_honest as E
+    fast = [-95, -92, -85, -70, -60]
+    slow = [-90, -90, -88, -84, -82]
+    assert E.os_tri(fast, slow, 0) and E.os_tri(fast, slow, 1)
+    assert not E.os_leave_flag(fast, slow, 2)            # still in the triangle
+    assert E.os_leave_flag(fast, slow, 3)                # fast back above -80, rising, triangle 1 bar ago
+    late = [-95, -92, -90, -89, -88, -87, -70]
+    lslow = [-90, -90, -90, -60, -60, -60, -60]
+    assert not E.os_leave_flag(late, lslow, 6)           # triangle more than 3 bars back
+    assert not E.os_leave_flag([-95, -90, -80], [-60, -60, -60], 2)   # lines never together: no triangle
+    assert not E.os_leave_flag([-95, -90, -85], [-90, -90, -84], 2)   # both still deep: not a leave
