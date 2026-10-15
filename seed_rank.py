@@ -779,7 +779,7 @@ def run_one(
     if source in ("agy", "anthropic", "claude", "a", "google", "gemini"):
         # Config keys still named claude_* historically; this slot is Google AGY.
         backend = str(_cfg(cfg, "agy_backend", _cfg(cfg, "claude_backend", "agy")))
-        model = str(_cfg(cfg, "agy_model", _cfg(cfg, "claude_model", "gemini-3-pro-high")))
+        model = str(_cfg(cfg, "agy_model", _cfg(cfg, "claude_model", "gemini-3.8-flash-high")))
         cli_bin = str(_cfg(cfg, "agy_cli_bin", _cfg(cfg, "claude_cli_bin", "agy")))
         timeout = float(_cfg(cfg, "agy_request_timeout", _cfg(cfg, "claude_request_timeout", 600.0)))
         live_search = bool(_cfg(cfg, "agy_live_search", _cfg(cfg, "claude_live_search", True)))

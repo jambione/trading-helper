@@ -106,9 +106,9 @@ DEFAULT_CLI_BIN = "grok"
 DEFAULT_CLAUDE_CLI_BIN = "claude"
 DEFAULT_CLAUDE_MODEL = "sonnet"
 DEFAULT_AGY_CLI_BIN = "agy"
-DEFAULT_AGY_MODEL = "gemini-3.7-flash-high"
+DEFAULT_AGY_MODEL = "gemini-3.8-flash-high"
 # JSON-trailer repair is extraction — cheapest Gemini, no extra tools.
-DEFAULT_AGY_REPAIR_MODEL = "gemini-3.7-flash-low"
+DEFAULT_AGY_REPAIR_MODEL = "gemini-3.8-flash-low"
 DEFAULT_AGY_EFFORT = "high"
 AGY_BACKENDS = frozenset({"agy", "gemini", "gemini_cli", "antigravity"})
 # JSON-trailer repair is trivial extraction — cheapest model, no web tools.

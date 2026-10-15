@@ -849,7 +849,7 @@ def resolve_model_settings(cfg: dict) -> dict[str, dict]:
             "cli_bin": str(_cfg(cfg, "grok_cli_bin", "grok")),
         },
         "agy": {
-            "model": str(_cfg(cfg, "agy_model", _cfg(cfg, "claude_model", "gemini-3.1-pro-high"))),
+            "model": str(_cfg(cfg, "agy_model", _cfg(cfg, "claude_model", "gemini-3.8-flash-high"))),
             "cli_bin": str(_cfg(cfg, "agy_cli_bin", _cfg(cfg, "claude_cli_bin", "agy"))),
         },
     }
