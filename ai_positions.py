@@ -3591,6 +3591,33 @@ def double_check_sell_due(
         return False, {"error": str(e)[:120]}
 
 
+def no_progress_trend_says_sell(
+    pos: dict[str, Any] | None,
+    ticker: str,
+    now: float | None = None,
+    cfg: dict | None = None,
+) -> bool:
+    """ai_no_progress_require_double_check (operator 10/15): the no-progress cut sells only when the double check's
+    %R reading agrees (both lines trending down). Rising, flat or split lines hold the position and are re-read
+    on the next tick. Off (default) = True, the old cut. Any error or missing bars = True (sell), as the double
+    check itself fails safe."""
+    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
+    if not bool(cfg.get("ai_no_progress_require_double_check", False)):
+        return True
+    try:
+        from tools import sell_double_check as sdc
+        t_now = float(now if now is not None else time.time())
+        last = _num((pos or {}).get("last_seen_price"))
+        if last is None:
+            return True
+        bars = _symbol_bars_for_double_check(ticker, t_now)
+        lookback = int(cfg.get("ai_double_check_lookback_min", sdc.LOOKBACK_MIN) or sdc.LOOKBACK_MIN)
+        res = sdc.evaluate_symbol(ticker, bars, last, lookback=lookback, now=t_now)
+        return res.get("sell") == "yes"
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def no_progress_due(
     pos: dict[str, Any] | None,
     now: float | None = None,
@@ -8118,7 +8145,7 @@ def manage_open_positions(
 
         # Fast no-progress flatten (seconds after fill confirm). Fires before
         # the minute-scale dead_trade backstop; ignores min_hold past T.
-        if no_progress_due(pos, now):
+        if no_progress_due(pos, now) and no_progress_trend_says_sell(pos, ticker, now):
             mfe = _num(pos.get("mfe_r"))
             start = _num(pos.get("entry_confirmed_at")) or _num(
                 pos.get("entry_time")) or now

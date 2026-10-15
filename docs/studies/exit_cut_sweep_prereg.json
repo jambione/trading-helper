@@ -1,0 +1,33 @@
+{
+  "study": "exit_cut_sweep",
+  "registered": "2026-10-15 (before any arm ran)",
+  "asked_by": "operator 10/15: no-progress cut was turned off live at 11:25; test what is best, including the no-progress cut gated by the double check (sell only if both %R lines are falling)",
+  "script": "scripts/exit_cut_sweep.sh, scored by tools/studies/spread_rvol_score.py",
+  "engine": "tools/replay_session.py (live code), whole config pinned to the commit the sweep runs at; only the exit-cut knobs vary. Double check reads only the replay-fed point-in-time ob_observe bars (never the live fetch, which has no end time).",
+  "days": [
+    "2026-10-06",
+    "2026-10-07",
+    "2026-10-08",
+    "2026-10-09",
+    "2026-10-12",
+    "2026-10-13",
+    "2026-10-14",
+    "2026-10-15"
+  ],
+  "halves": "A = 10/06-10/09, B = 10/12-10/15",
+  "arms": {
+    "off": "no-progress off, double check off (live since 10/15 11:25)",
+    "np180": "no-progress 180 s (live 10/08-10/15 11:25)",
+    "dc180": "double check alone at 180 s (under entry, both %R lines down)",
+    "np_dc": "no-progress 180 s, sells only when the double check says both lines down (operator's proposal)",
+    "np120_dc": "as np_dc at 120 s",
+    "np300_dc": "as np_dc at 300 s"
+  },
+  "metric": "VALUE = sum of net bp per day (net = return minus full SIP spread at entry), day-clustered, paired vs off; also net bp per trade, opens, hold.",
+  "decision": "Ship the arm with the highest mean daily VALUE if it beats 'off' in BOTH halves and its paired t vs off is >= 1.5 (8 days; this is a config choice on paper, not an edge claim). If no arm qualifies, keep 'off'. Ties within 2 bp/day go to the arm that holds longer (operator preference to keep positions open).",
+  "caveats": [
+    "8 days; in-sample for nothing (no arm was tuned on these days)",
+    "replay recall vs live is ~0.5-0.6, so absolute values differ from live; the comparison is between arms on the same replayed opens",
+    "exits cannot move the mean (42 shapes ~0 gross): expect differences of a few bp"
+  ]
+}

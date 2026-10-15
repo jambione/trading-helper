@@ -936,6 +936,17 @@ class FakeBroker:
             due, _info = cp.supertrend_exit_due(p, pos["symbol"], now, cfg)
             if due:
                 return "supertrend"
+        # Sell double-check (ai_double_check_sell_enabled), the desk's own double_check_sell_due right after the
+        # supertrend exit as live. Bars come ONLY from the point-in-time ob_observe store the replay feeds: the live
+        # fallback fetch has no end time and would hand the replay the whole day (look-ahead). Added 2026-10-15
+        # for the exit-cut sweep; before that this mirror never fired double_check.
+        if bool(cfg.get("ai_double_check_sell_enabled", False)) and not p["t1_hit"]:
+            view = {"entry_confirmed": True, "entry_price": float(p["entry"]),
+                    "local_stop_price": float(p["local_stop_price"]), "entry_time": float(p["entry_ts"]),
+                    "last_seen_price": px}
+            due, _info = cp.double_check_sell_due(view, pos["symbol"], now, cfg)
+            if due:
+                return "double_check"
         # Hard profit capture, as ai_positions.apply_local_trail (689dfca): checked on the
         # print BEFORE the board stop. Before 2026-10-13 this mirror lacked it, so
         # ai_profit_capture_pct replayed identical to off.
@@ -971,7 +982,8 @@ class FakeBroker:
                 and float(p["local_stop_price"]) <= entry + 1e-9:
             np_sec = float(cfg.get("ai_no_progress_sec", cp.DEFAULT_NO_PROGRESS_SEC) or 0.0)
             np_mfe = float(cfg.get("ai_no_progress_mfe_r", cp.DEFAULT_NO_PROGRESS_MFE_R) or 0.0)
-            if np_sec > 0 and now - float(p["entry_ts"]) >= np_sec and float(p["mfe_r"]) + 1e-12 < np_mfe:
+            if np_sec > 0 and now - float(p["entry_ts"]) >= np_sec and float(p["mfe_r"]) + 1e-12 < np_mfe \
+                    and cp.no_progress_trend_says_sell({"last_seen_price": px}, pos["symbol"], now, cfg):
                 return "no_progress"
         if (dead_min > 0 and not p["t1_hit"] and float(p["local_stop_price"]) <= entry + 1e-9
                 and (now - float(p["entry_ts"])) / 60 >= dead_min and p["mfe_r"] < dead_mfe):
@@ -979,6 +991,18 @@ class FakeBroker:
         if et_min(now) >= EOD_MIN:
             return "eod_flatten"
         return None
+
+
+def _dc_store_bars(ticker: str):
+    """(stamps, highs, lows, closes) from the replay-fed ob_observe store, or None (never fetches)."""
+    try:
+        import ob_observe
+        b = ob_observe.bars(ticker)
+    except Exception:  # noqa: BLE001
+        return None
+    if not b or len(b) < 20:
+        return None
+    return ([float(x[0]) for x in b], [float(x[2]) for x in b], [float(x[3]) for x in b], [float(x[4]) for x in b])
 
 
 RANGE_KEYS = ("range_s_btm", "range_r_btm", "range_sup_pct", "range_room_pct", "range_ob_known_ts",
@@ -1875,6 +1899,10 @@ def run_inside(args) -> int:
 
     patched: set = set()
     patch_clocks(clock, root, patched)
+    # The double check's live fallback fetch (sell_double_check.fetch_session_bars) has no end time: in a replay it
+    # would return bars from after the replay clock. Point-in-time ob store only; < 20 bars = no bars (sell yes,
+    # as live does when it has none).
+    cp._symbol_bars_for_double_check = lambda t, t_now: _dc_store_bars(t)
 
     dash = {"state": {}}
     ew.dashboard_state = lambda *, force=False: dash["state"]
