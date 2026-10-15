@@ -4806,3 +4806,61 @@ body.engine-visible .engine-bar                         { display: none !importa
 
 /* Desktop only: the Buy? call button is hidden on the mobile layout. */
 body.mobile .book-call-btn { display: none; }
+
+
+/* Near the arm (operator 10/15): EXH within 10 points under pre-square, rising, every gate green. */
+.panel-ai-watch .feed-row--ai-book.feed-row--ai-near {
+  border-color: rgba(251, 191, 36, 0.6);
+  box-shadow: inset 3px 0 0 rgba(251, 191, 36, 0.85);
+}
+
+/* Mobile book, operator 10/15: Gates gets a full-width half of line 2; Entry/Stop only on open rows.
+   Watching: "ticker last chg state" / "exh gates..."   Open: "ticker last chg pl" / "entry stop exh". */
+@media (max-width: 700px) {
+  .panel-ai-watch .feed-cols--ai-book {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.85fr) minmax(0, 0.7fr) minmax(0, 0.75fr) minmax(0, 1.1fr);
+    grid-template-areas:
+      "ticker last chg   state state"
+      "exh    exh  gates gates gates";
+  }
+  .panel-ai-watch .feed-row--ai-book:not(.feed-row--ai-open) .cell-entry,
+  .panel-ai-watch .feed-row--ai-book:not(.feed-row--ai-open) .cell-trail,
+  .panel-ai-watch .feed-row--ai-book:not(.feed-row--ai-open) .cell-pl,
+  .panel-ai-watch .ai-book-table-header .th-entry,
+  .panel-ai-watch .ai-book-table-header .th-stop,
+  .panel-ai-watch .ai-book-table-header .th-pl { display: none; }
+  .panel-ai-watch .feed-row--ai-open .feed-cols--ai-book {
+    grid-template-areas:
+      "ticker last chg  pl   pl"
+      "entry  stop exh  exh  state";
+  }
+  .panel-ai-watch .feed-row--ai-open .cell-gates { display: none; }
+  .panel-ai-watch .feed-cols--ai-book .cell-gates,
+  .panel-ai-watch .feed-cols--ai-book .cell-exh,
+  .panel-ai-watch .feed-cols--ai-book .th-gates,
+  .panel-ai-watch .feed-cols--ai-book .th-exh { text-align: left; font-size: 12px; }
+  .panel-ai-watch .feed-cols--ai-book .ai-book-status { text-align: right; }
+}
+body.mobile .panel-ai-watch .feed-cols--ai-book {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.85fr) minmax(0, 0.7fr) minmax(0, 0.75fr) minmax(0, 1.1fr);
+  grid-template-areas:
+    "ticker last chg   state state"
+    "exh    exh  gates gates gates";
+}
+body.mobile .panel-ai-watch .feed-row--ai-book:not(.feed-row--ai-open) .cell-entry,
+body.mobile .panel-ai-watch .feed-row--ai-book:not(.feed-row--ai-open) .cell-trail,
+body.mobile .panel-ai-watch .feed-row--ai-book:not(.feed-row--ai-open) .cell-pl,
+body.mobile .panel-ai-watch .ai-book-table-header .th-entry,
+body.mobile .panel-ai-watch .ai-book-table-header .th-stop,
+body.mobile .panel-ai-watch .ai-book-table-header .th-pl { display: none; }
+body.mobile .panel-ai-watch .feed-row--ai-open .feed-cols--ai-book {
+  grid-template-areas:
+    "ticker last chg  pl   pl"
+    "entry  stop exh  exh  state";
+}
+body.mobile .panel-ai-watch .feed-row--ai-open .cell-gates { display: none; }
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-gates,
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh,
+body.mobile .panel-ai-watch .feed-cols--ai-book .th-gates,
+body.mobile .panel-ai-watch .feed-cols--ai-book .th-exh { text-align: left; font-size: 12px; }
+body.mobile .panel-ai-watch .feed-cols--ai-book .ai-book-status { text-align: right; }

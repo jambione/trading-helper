@@ -1846,7 +1846,24 @@ function _updateBookRow(el, r) {
   }
   el.classList.toggle('feed-row--ai-open', isOpen);
   el.classList.toggle('feed-row--ai-ready', phase === 'ready' || statusLabel === 'ready' || statusLabel === 'buy');
+  el.classList.toggle('feed-row--ai-near', _bookNearArm(r));
   if (el.title) el.title = '';
+}
+
+/** Near the arm (operator 10/15): not open/ready, EXH within 10 points under the pre-square level and rising,
+ *  and every gate already passing — the next likely open. Display only. */
+function _bookNearArm(r) {
+  if (!r || r.is_position) return false;
+  const phase = String(r.phase || '').toLowerCase();
+  if (phase === 'open' || phase === 'ready' || phase === 'submitted' || r.ready) return false;
+  const cfg = get('config') || {};
+  const pre = Number.isFinite(Number(cfg.ai_watch_exh_pre_thr)) ? Number(cfg.ai_watch_exh_pre_thr) : 35;
+  let ex = r.exhaustion != null ? Number(r.exhaustion) : NaN;
+  if (!Number.isFinite(ex) && r.pctr != null) ex = 100 + Number(r.pctr);
+  const hi = 100 - pre;
+  if (!Number.isFinite(ex) || ex < hi - 10 || ex >= hi || r.pctr_rising !== true) return false;
+  const c = _bookGateChecks(r);
+  return c.length > 0 && c.every(x => x.ok === true);
 }
 
 function _bookRowHtml(r) {
@@ -1878,7 +1895,8 @@ function _bookRowHtml(r) {
     : ((phase === 'ready' || statusLabel === 'ready' || statusLabel === 'buy')
       ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-ready'
       : 'ticker-row feed-row feed-row--ai-book');
-  return `<div class="${rowCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}">`
+  const nearCls = _bookNearArm(r) ? ' feed-row--ai-near' : '';
+  return `<div class="${rowCls}${nearCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}">`
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}${r.bro_call
       ? `<span class="bro-badge" title="Trader Bro called this one out">BRO</span>`

@@ -110,3 +110,16 @@ def test_status_stale_uses_the_arms_reading_and_fails_sort_first():
     assert body.index("r.g_tape_age") < body.index("last_ask_src")
     j = _JS.index("function _bookGatesText(")
     assert "x.ok === false ? 0" in _JS[j:_JS.index("\n}", j)]
+
+
+def test_near_arm_highlight_needs_rising_exh_below_presquare_and_all_gates_green():
+    i = _JS.index("function _bookNearArm(")
+    body = _JS[i:_JS.index("\n}", i)]
+    assert "r.pctr_rising !== true" in body and "x.ok === true" in body and "hi - 10" in body
+    assert "toggle('feed-row--ai-near', _bookNearArm(r))" in _JS
+
+
+def test_mobile_layout_gives_gates_line_two_and_hides_empty_entry_stop():
+    css = (_ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
+    assert '"exh    exh  gates gates gates"' in css
+    assert ":not(.feed-row--ai-open) .cell-entry" in css and ".feed-row--ai-open .cell-gates { display: none; }" in css
