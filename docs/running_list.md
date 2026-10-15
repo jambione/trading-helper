@@ -9,7 +9,7 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 | # | Item | Status | Where |
 |---|---|---|---|
 | 1 | Few opens today | running | opens review tonight (funnel 10/13-10/15, where names were lost, how late each entry was vs its run) |
-| 2 | Delays when we should have opened (AAL ~70 s) | running | confirm 2→1, volume gate off, G2 limit tests off (live 12:45); tonight: arm decision on the 3 s tick + profile the 13-40 s watch poll |
+| 2 | Delays when we should have opened (AAL ~70 s) | running | confirm 2→1, volume gate off, G2 limit tests off (live 12:45). Replay profile: poll_once = 16 ms CPU, so the live 13-40 s is network waiting. Live profile on from tonight's restart (ai_watch_profile_path) → read ~06:00, fix the slow calls before the open; arm on the 3 s tick still to build |
 | 3 | No-progress exits | running | exit sweep: off / np180 / dc180 / np_dc / np120_dc / np300_dc (scripts/exit_cut_sweep.sh) |
 | 4 | Double check holds a sell at or below entry | running | exit sweep arms trail_dc, trail_dc_np_dc |
 | 5 | Test momentum names when they appear on the data seed | running | momentum_alert_markouts, momentum_alert_ticks (30-60 s, premarket split), clock_windows (from 16:15) |
