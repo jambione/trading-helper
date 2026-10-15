@@ -13,7 +13,7 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 | 3 | No-progress exits | running | exit sweep: off / np180 / dc180 / np_dc / np120_dc / np300_dc (scripts/exit_cut_sweep.sh) |
 | 4 | Double check holds a sell at or below entry | running | exit sweep arms trail_dc, trail_dc_np_dc; live code wired tonight (ai_trail_exit_trend_hold, OFF; needs a restart) so a win is a config switch |
 | 5 | Test momentum names when they appear on the data seed | running | momentum_alert_markouts, momentum_alert_ticks (30-60 s, premarket split), clock_windows (from 16:15) |
-| 8 | Earlier entry to capture more of the ~70% run (pre-square forms near the top) | running | re-score 10/13 earlier arms (mid-rise, ignition, pre-square, RSI-2 turn) with warmed %R lines - the originals were blind before ~11:20 |
+| 8 | Earlier entry to capture more of the ~70% run (pre-square forms near the top) | done - FAIL | warm re-score (morning visible): PRE +15.2/+0.1, IGN -8.2/+27.1, MID +6.4/+2.1 (closest; net -1.4/-12.9), RSI2T +1.6/+0.6 bp vs random later minute; none clears +5 bp t>=2 both halves |
 | 7 | Limit orders 1-2 cents under the bid to save spread | open | score with the G2 read (passive arms filled ~25%, adverse); limit-below FAILED 10/14 (dipped fills -65.6 vs unfilled +57.7 bp). Test bid-$0.01 / bid-$0.02 fill rate + adverse selection on recorded ticks |
 | 6 | Review today's exits: trail updates and no-progress | done (first pass) | 21 trades: np on (before 11:25) -3.5 bp / 36% win; np off -10.1 bp / 20% (3 dead_trade exits at 22 min: -15/-21/-32 vs np cuts -15.5 avg). Trail gives back small peaks (+5-8 → ~0). After-exit move mixed (FIG +139 vs WMT -128). TODO: stop-path per trade (event field names) |
 
