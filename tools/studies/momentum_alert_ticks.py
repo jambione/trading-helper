@@ -50,6 +50,16 @@ def quote_at(qts: list, quotes: list, t: float):
     return (b, a) if b > 0 and a >= b else None
 
 
+def clock_bucket(m: int) -> str:
+    """Operator's clock windows (2026-10-15): 04:00 hour, 07:00, 08:00, 08:30 news, 09:30 open, power hour."""
+    for lo, hi, name in ((240, 300, "t04"), (300, 420, "t05-07"), (420, 480, "t07"), (480, 510, "t08"),
+                         (510, 570, "t0830"), (570, 575, "t0930-34"), (575, 660, "t0935-11"),
+                         (660, 900, "t11-15"), (900, 960, "t15-power")):
+        if lo <= m < hi:
+            return name
+    return "t_post"
+
+
 def exit_time(rule: str, t0: float, entry: float, trades: list) -> float:
     """When the rule sells (the sale is at the bid then). trades = [(ts, price)] after t0, sorted."""
     if rule == "hold30":
@@ -147,7 +157,7 @@ def main() -> None:
                 continue
             tc = ts + random.Random(f"{day}|{s}|{ts}|ctl").randint(900, 4500)
             got_c = scalp(*fetch_window(cl, s, tc), tc)
-            for key in (kind, f"{kind}|{sess}"):
+            for key in (kind, f"{kind}|{sess}", f"clock|{clock_bucket(M.et_min(ts))}"):
                 spreads[key].append(got["spread_bp"])
                 for r in RULES:
                     if got[r] is not None:

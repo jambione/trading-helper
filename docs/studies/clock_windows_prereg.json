@@ -1,0 +1,27 @@
+{
+  "study": "clock_windows",
+  "registered": "2026-10-15",
+  "asked_by": "operator 2026-10-15: open at 04:00, 07:00, 08:00/08:30 (news), each top of the hour to 11:00; avoid 09:30; power hour 15:00-16:00",
+  "script": "tools/studies/clock_windows.py",
+  "population": "Momentum-alert names (ai_reports/sessions/DAY/discord.jsonl.gz), counted for a window only if the name's FIRST alert of the day came before the window starts (no hindsight in who is in play). SIP 1-minute bars 04:00-20:00 from ai_reports/momentum_alerts/DAY.pkl (built by momentum_alert_markouts.py).",
+  "entry": "Buy at the SIP open of the minute; exit at the SIP close 5 minutes later (primary) and 10 minutes later (information). Cost = full SIP quoted spread at the entry minute (replay_costing.entry_spread_bp). No usable spread = event dropped and counted.",
+  "windows": {
+    "w0700": "07:00-07:04", "w0800": "08:00-08:04", "w0830": "08:30-08:34",
+    "w0500": "05:00-05:04", "w0600": "06:00-06:04", "w0900": "09:00-09:04",
+    "w1000": "10:00-10:04", "w1100": "11:00-11:04",
+    "w0930_avoid": "09:30-09:34 (predicted WORSE than control)",
+    "power_hour": "15:00-15:54 (control 13:00-14:54, same name-day)"
+  },
+  "w0400_note": "No name has alerted before 04:00, so 04:00 cannot be tested this way; the tick replay (momentum_alert_ticks.py) reports alerts fired 04:00-04:59 as its own bucket instead.",
+  "control": "Clock windows: one random minute of the same name-day within 30 minutes either side of the window start, outside the window, same hold and cost (a clock rule is not triggered by a run-up, so a two-sided control is fair). Seeded per (day, sym, window).",
+  "per_window_test": "lift = window net minus control net, averaged within each day first, then across days (day-clustered t).",
+  "pass": {
+    "lift": "day-clustered t >= 2.5 in the predicted direction (better; worse for w0930_avoid), using family-wise bar for 10 windows",
+    "halves": "same sign in both halves (days split at the median day)",
+    "power": "n >= 60 events and >= 8 days, else UNDERPOWERED",
+    "worth_trading": "a PASSed window is a trading candidate only if its own NET 5-min mean is > 0; a positive lift on a negative net is 'least bad', not a trade"
+  },
+  "information_only": ["10-minute hold", "median and share > 0", "mean |move| per window (runway proxy)", "events per day per window (opportunity count)"],
+  "if_pass": "pre-register a forward test of entering at that window on the live/sim desk; nothing ships from this sample alone",
+  "if_fail": "time-of-day entry rules stay out of the live config"
+}

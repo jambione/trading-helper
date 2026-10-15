@@ -28,3 +28,10 @@ def test_rules_exit_when_they_should():
 
 def test_stale_quote_means_no_entry():
     assert T.scalp([], [10.0], [(9.9, 10.0)], t_alert=100.0) is None   # quote 95 s old at entry
+
+
+def test_clock_buckets():
+    assert T.clock_bucket(4 * 60 + 10) == "t04"
+    assert T.clock_bucket(8 * 60 + 30) == "t0830"
+    assert T.clock_bucket(9 * 60 + 31) == "t0930-34"
+    assert T.clock_bucket(15 * 60 + 30) == "t15-power"
