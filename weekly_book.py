@@ -273,6 +273,10 @@ def run_models(ob, day: date, screen: dict, ask=None) -> dict:
         except Exception as e:  # noqa: BLE001
             raw[model] = ""
             ob.log(f"weekly models {day}: {model} failed: {e!s:.150}")
+        try:   # audit trail: what each model actually said (the agreed file keeps only the parsed picks)
+            (ob.OUT / f"weekly_raw_{day.isoformat()}_{model}.txt").write_text(str(raw[model] or ""))
+        except OSError:
+            pass
         picks[model] = parse_picks(raw[model], syms)
         ob.log(f"weekly models {day}: {model} {len(picks[model])} valid picks in {time.time() - t0:.0f}s")
     book, one = agree(picks["agy"], picks["grok"])
