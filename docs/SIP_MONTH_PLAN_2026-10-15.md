@@ -67,7 +67,15 @@ Work item **S1** (build now, test on paper with the knob still `iex`): one `alpa
 - **Weeks 2-4:** the surviving tests, each with its fixed read date.
 - **End of month:** keep or cancel on one number - measured improvement in net $/day on paper versus the $99 cost, plus whatever premarket shows.
 
-## 6. Decisions for the operator
+## 6. One month, then back to IEX unless it pays (operator 2026-10-15)
+
+The subscription is a one-month test. After it the desk returns to IEX unless trading has shown it can pay for SIP.
+- **Reversible by design:** S1 is two knobs; switching back to IEX is the same two knobs. No SIP-only code path may become required.
+- **The bar to keep it:** measured improvement in net $/day from SIP, times ~21 sessions, must cover ~$99 at the account size we will actually trade. At the paper desk's ~$2,250 sizing that is about +$4.70 a day (~+21 bp a day on the book), which is large next to today's results; state it plainly at month end rather than round up.
+- **What must carry over to IEX when the month ends:** every SIP-vs-IEX comparison (T2, T3, T5) is designed to teach an IEX rule - e.g. which stale-tape refusals were false, which spread readings were wrong - so the free desk improves even if SIP is cancelled.
+- **What SIP uniquely gives during the month:** live real-time execution behaviour (stops, fills, premarket limit fills). Historical SIP stays free afterwards, so nothing needs to be "recorded" for later backtests except our own live fills.
+
+## 7. Decisions for the operator
 
 1. Confirm the plan and the price on Alpaca's page.
 2. Approve S1 now (code only, defaults off - no live change until the month).
