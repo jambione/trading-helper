@@ -2773,7 +2773,10 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .ai-book-overnight .chg-neg { color: #f87171; }
 .panel-ai-watch .on-dim { color: #6f9bb3; font-weight: 400; }
 .panel-ai-watch .on-err { color: #fbbf24; }
-body.mobile .panel-ai-watch .ai-book-day-hist__list { max-height: 9rem; }
+/* Operator 10/15: the positions history stays visible under the one-line mobile book. Rows scroll inside half
+   the screen; the history gets ~6 trades of room. */
+body.mobile .panel-ai-watch .ai-book-rows.feed-rows { flex: 0 1 auto; max-height: 50vh; }
+body.mobile .panel-ai-watch .ai-book-day-hist__list { max-height: 18rem; }
 body.mobile .panel-ai-watch .ai-book-overnight__list { max-height: 9rem; }
 /* Collapse: phone only. Hides both blocks; the tab row stays as the handle. */
 .panel-ai-watch .ai-book-slot__collapse { display: none; }
