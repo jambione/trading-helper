@@ -13,7 +13,7 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 | 3 | No-progress exits | running | exit sweep: off / np180 / dc180 / np_dc / np120_dc / np300_dc (scripts/exit_cut_sweep.sh) |
 | 4 | Double check holds a sell at or below entry | running | exit sweep arms trail_dc, trail_dc_np_dc |
 | 5 | Test momentum names when they appear on the data seed | running | momentum_alert_markouts, momentum_alert_ticks (30-60 s, premarket split), clock_windows (from 16:15) |
-| 6 | Review today's exits: trail updates and no-progress | open | per-exit reason, trail path, after-exit move; split at 11:25 (no-progress off) |
+| 6 | Review today's exits: trail updates and no-progress | done (first pass) | 21 trades: np on (before 11:25) -3.5 bp / 36% win; np off -10.1 bp / 20% (3 dead_trade exits at 22 min: -15/-21/-32 vs np cuts -15.5 avg). Trail gives back small peaks (+5-8 → ~0). After-exit move mixed (FIG +139 vs WMT -128). TODO: stop-path per trade (event field names) |
 
 ### Shipped today
 - Weekly book live (paper); AGY on gemini-3.8-flash-high; first order Fri 10/16 15:58
