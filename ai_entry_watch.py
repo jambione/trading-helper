@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 import desk_auth  # noqa: E402
 import desk_core  # noqa: E402
 from ai_paths import resolve_report_dir  # noqa: E402
-from ticker_filters import is_levered_etp  # noqa: E402
+from ticker_filters import is_not_stock as is_levered_etp  # noqa: E402  (levered ETPs AND ETFs/funds since 10/15)
 
 REPORT_DIR = resolve_report_dir()
 WATCH_STATE_PATH = REPORT_DIR / "entry_watch_state.json"

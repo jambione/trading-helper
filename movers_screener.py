@@ -75,7 +75,7 @@ if _loaded:
           flush=True)
 
 from config import load_config  # noqa: E402
-from ticker_filters import is_common, is_levered_etp  # noqa: E402
+from ticker_filters import is_common, is_not_stock as is_levered_etp  # noqa: E402  (levered ETPs AND ETFs/funds since 10/15)
 
 MOVERS_FILE = ROOT / "movers_stocks.json"
 ET = ZoneInfo("America/New_York")

@@ -6,6 +6,7 @@ module's env bootstrap.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -114,3 +115,21 @@ def is_levered_etp(sym: str, name: str = "") -> bool:
     if s.startswith("CIF") and s != "CIFR":
         return True
     return s in _LEVERED_DENY
+
+
+# ETFs, ETNs and funds (operator 2026-10-15: book seats only for names the arm can trade; TLT, XLP, SLV, SCHD,
+# IHI, XHB, XRT held most of the 10/15 movers seats and none of them ever set up). Issuer-name markers, so it
+# needs the name or the daily asset_names.json cache; unknown name = not a fund (never blocks a stock blind).
+FUND_NAME = re.compile(
+    r"\b(ETFS?|ETNS?|FUNDS?|ISHARES|SPDR|PROSHARES|DIREXION|VANGUARD|GRAYSCALE|WISDOMTREE|GLOBAL X|VANECK|"
+    r"(SILVER|GOLD|PLATINUM|PALLADIUM|BITCOIN|ETHER(EUM)?|COMMODITY) TRUST|CLOSED.END)\b")
+
+
+def is_fund(sym: str, name: str = "") -> bool:
+    n = str(name or cached_asset_name(str(sym or "").upper().strip()) or "").upper()
+    return bool(n) and bool(FUND_NAME.search(n))
+
+
+def is_not_stock(sym: str, name: str = "") -> bool:
+    """Levered/inverse products or ETFs/ETNs/funds: never a seat on the day book."""
+    return is_levered_etp(sym, name) or is_fund(sym, name)
