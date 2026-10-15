@@ -15,7 +15,8 @@ def test_lost_writes_or_closing_transport_trigger_reconnect():
     assert not fs.write_side_lost(SimpleNamespace())          # no transport attribute: no false alarm
 
 
-def test_check_runs_on_the_idle_tick_before_the_silence_kill():
+def test_check_runs_every_second_even_on_a_busy_socket():
     src = open(fs.__file__, encoding="utf-8").read()
-    i = src.index("except asyncio.TimeoutError:")
-    assert src.index("write_side_lost(ws)", i) < src.index("silence_limit > 0", i)
+    i = src.index("message = await asyncio.wait_for(ws.recv(), timeout=1.0)")
+    j = src.rindex("write_side_lost(ws)", 0, i)
+    assert "last_wcheck >= 1.0" in src[j - 200:j]

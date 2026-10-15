@@ -380,8 +380,15 @@ async def _finnhub_stream(api_key: str, tickers: list):
                 # desk then freezes on stale_quote (2026-09-16: ages ~180s+
                 # with subscribed=28, fresh=0). Break out and reconnect.
                 last_msg_at = time.time()
+                last_wcheck = 0.0
                 silence_limit = float(os.getenv("FINNHUB_WS_SILENCE_SEC", "45") or 45)
                 while True:
+                    # Write-side check at most once a second whatever the traffic: a busy socket never
+                    # reaches the TimeoutError branch (10/15 13:29 the first fix never fired).
+                    if time.time() - last_wcheck >= 1.0:
+                        last_wcheck = time.time()
+                        if write_side_lost(ws):
+                            raise RuntimeError("Finnhub WS write side lost - reconnecting")
                     try:
                         message = await asyncio.wait_for(ws.recv(), timeout=1.0)
                         last_msg_at = time.time()
