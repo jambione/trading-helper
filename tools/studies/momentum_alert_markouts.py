@@ -72,7 +72,7 @@ def fetch_bars(day: str, syms: list[str]) -> dict:
     from alpaca.data.timeframe import TimeFrame
     cl = B.client()
     d0 = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
-    out = {}
+    out, failed = {}, False
     for i in range(0, len(syms), 100):
         chunk = syms[i:i + 100]
         for attempt in range(4):
@@ -91,6 +91,7 @@ def fetch_bars(day: str, syms: list[str]) -> dict:
                 print(f"  {day} bars try {attempt}: {msg[:80]}", flush=True)
                 time.sleep(5 * (attempt + 1))
         else:
+            failed = True                    # every try failed: use the bars, but never cache a partial day
             continue
         if df is None or df.empty:
             continue
@@ -98,8 +99,9 @@ def fetch_bars(day: str, syms: list[str]) -> dict:
             sub = df.xs(s, level="symbol")
             out[str(s)] = {et_min(t.timestamp()): (float(r.open), float(r.close)) for t, r in sub.iterrows()}
         time.sleep(0.4)
-    os.makedirs(CACHE, exist_ok=True)
-    pickle.dump(out, open(p, "wb"))
+    if not failed:
+        os.makedirs(CACHE, exist_ok=True)
+        pickle.dump(out, open(p, "wb"))
     return out
 
 

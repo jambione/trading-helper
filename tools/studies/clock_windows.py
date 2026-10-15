@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Do some clock times make better entries? Spec: docs/studies/clock_windows_prereg.json.
+"""Do some clock times make better entries? Spec: docs/studies/clock_windows_prereg.json (amended_1 after review).
 
-Buy alerted names (first alert before the window) at the SIP open of a window minute, sell 5 minutes later,
-pay the full SIP spread; compare with a random minute of the same name-day within 30 minutes of the window.
+One entry per name per window: buy alerted names (first alert before the window) at the SIP open of the first
+minute in the window that prints, sell at the last SIP close at or before 4 minutes later (5-minute hold), pay
+the full SIP spread 10 s into the entry minute. Control: one random minute of the same name-day AFTER its first
+alert, within 30 minutes of the window, on the same side of 09:30 (09:30 itself: 09:35-10:04), outside every
+window, scored the same way. Power hour: 2 random minutes per name in 15:00-15:54 vs 13:00-14:54.
 USAGE (mini, after 16:15 ET, after momentum_alert_markouts.py has cached the bars):
   .venv/bin/python tools/studies/clock_windows.py
 """
@@ -13,8 +16,9 @@ import os
 import random
 import statistics as st
 import sys
+import time
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 ROOT = os.getcwd()
@@ -23,7 +27,11 @@ import momentum_alert_markouts as M  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
 HOLD, INFO_HOLD, SPAN = 5, 10, 30
-T_BAR, MIN_N, MIN_DAYS = 2.5, 60, 8
+T_BAR, MIN_N, MIN_DAYS = 3.0, 60, 8
+POWER_PICKS = 2
+OPEN = 9 * 60 + 30
+QUOTE_DELAY = 10          # seconds into the entry minute (09:30: after the opening cross)
+MAX_DROP = 0.05
 
 
 def _m(h, mi):
@@ -36,35 +44,51 @@ WINDOWS["w0930_avoid"] = (_m(9, 30), _m(9, 35))
 POWER = (_m(15, 0), _m(15, 55))
 POWER_CTL = (_m(13, 0), _m(14, 55))
 WORSE = {"w0930_avoid"}
+IN_ANY_WINDOW = {m for lo, hi in WINDOWS.values() for m in range(lo, hi)}
 
 
 # ── pure ─────────────────────────────────────────────────────────────────────
 
 def ret(b: dict, m: int, hold: int) -> float | None:
-    """Open of minute m to the close of minute m + hold - 1 (no fill-in for missing bars)."""
-    a, z = b.get(m), b.get(m + hold - 1)
-    if not a or not z or not a[0]:
+    """Open of minute m (must print) to the last close at or before m + hold - 1 (no later than the hold)."""
+    a = b.get(m)
+    if not a or not a[0]:
         return None
-    return z[1] / a[0] - 1
+    c = M.close_at_or_before(b, m + hold - 1, back=hold - 1)
+    return c / a[0] - 1 if c else None
 
 
 def _rng(*parts) -> random.Random:
     return random.Random(int.from_bytes(hashlib.sha256("|".join(map(str, parts)).encode()).digest()[:8], "big"))
 
 
-def window_minutes(b: dict, lo: int, hi: int, hold: int = HOLD) -> list[int]:
-    return [m for m in range(lo, hi) if ret(b, m, hold) is not None]
+def window_entry(b: dict, lo: int, hi: int, hold: int = HOLD) -> int | None:
+    """The first minute of the window that prints (the clock-tick entry)."""
+    return next((m for m in range(lo, hi) if ret(b, m, hold) is not None), None)
 
 
-def control_minute(b: dict, day: str, sym: str, name: str, lo: int, hi: int, hold: int = HOLD) -> int | None:
-    """Random minute within SPAN of the window start, outside the window, with an exit bar."""
-    elig = [m for m in range(lo - SPAN, lo + SPAN) if not lo <= m < hi and ret(b, m, hold) is not None]
+def control_span(name: str, lo: int) -> range:
+    if name == "w0930_avoid":
+        return range(OPEN + 5, OPEN + 35)
+    span = range(lo - SPAN, lo + SPAN)
+    pre = lo < OPEN
+    return range(max(span.start, 0) if pre else max(span.start, OPEN + 5),
+                 min(span.stop, OPEN) if pre else span.stop)
+
+
+def control_minute(b: dict, day: str, sym: str, name: str, lo: int, first_alert: int,
+                   hold: int = HOLD) -> int | None:
+    """Random minute after the name's first alert, near the window, same session side, outside every window."""
+    elig = [m for m in control_span(name, lo)
+            if m > first_alert and m not in IN_ANY_WINDOW and ret(b, m, hold) is not None]
     return _rng(day, sym, name).choice(elig) if elig else None
 
 
-def power_control(b: dict, day: str, sym: str, hold: int = HOLD) -> int | None:
-    elig = [m for m in range(*POWER_CTL) if ret(b, m, hold) is not None]
-    return _rng(day, sym, "power").choice(elig) if elig else None
+def power_minutes(b: dict, day: str, sym: str, first_alert: int, span: tuple, tag: str,
+                  k: int = POWER_PICKS, hold: int = HOLD) -> list[int]:
+    elig = [m for m in range(*span) if m > first_alert and ret(b, m, hold) is not None]
+    r = _rng(day, sym, tag)
+    return sorted(r.sample(elig, min(k, len(elig))))
 
 
 def day_t(by_day: dict) -> tuple[float | None, float | None, int]:
@@ -84,71 +108,135 @@ def verdict(name: str, lift_t, halves: list[float | None], n: int, days: int) ->
     return "PASS"
 
 
+# ── quotes (errors are never cached as "no spread") ──────────────────────────
+
+class QuoteError(Exception):
+    pass
+
+
+def spread_bp(cache: dict, box: dict, sym: str, ts: float) -> float | None:
+    key = f"{sym}|{ts:.0f}"
+    if key not in cache:
+        import bars
+        from alpaca.data.enums import DataFeed
+        from alpaca.data.requests import StockQuotesRequest
+        box["cl"] = box.get("cl") or bars.client()
+        t = datetime.fromtimestamp(ts, timezone.utc)
+        q = None
+        for attempt in range(3):
+            try:
+                rows = box["cl"].get_stock_quotes(StockQuotesRequest(
+                    symbol_or_symbols=sym, start=t - timedelta(seconds=60), end=t + timedelta(milliseconds=1),
+                    feed=DataFeed.SIP, limit=10000)).data.get(sym) or []
+                rows = [r for r in rows if r.bid_price and r.ask_price and r.ask_price >= r.bid_price]
+                q = [float(rows[-1].bid_price), float(rows[-1].ask_price)] if rows else None
+                break
+            except Exception as e:  # noqa: BLE001
+                if attempt == 2:
+                    raise QuoteError(str(e)[:80]) from e
+                time.sleep(5 * (attempt + 1))
+        cache[key] = q
+        time.sleep(0.3)
+    q = cache[key]
+    if not q or q[1] <= q[0] or q[0] <= 0:
+        return None
+    return (q[1] - q[0]) / ((q[0] + q[1]) / 2) * 1e4
+
+
 # ── run ──────────────────────────────────────────────────────────────────────
 
 def _ts(day: str, m: int) -> float:
     d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
-    return d.replace(hour=m // 60, minute=m % 60).timestamp()
+    return d.replace(hour=m // 60, minute=m % 60).timestamp() + QUOTE_DELAY
 
 
 def main() -> None:
     import replay_costing as RC
     cache, box = RC.load_cache(), {}
     ev = M.events()
-    days = sorted(ev)
-    mid = days[(len(days) - 1) // 2] if days else ""
+    days = [d for d in sorted(ev) if any(k == "first_alert" for k, _s, _t in ev[d])]
     names = list(WINDOWS) + ["power_hour"]
     win = {k: defaultdict(list) for k in names}           # day -> [net bp]
     lift = {k: defaultdict(list) for k in names}
     info10 = {k: [] for k in names}
     absmv = {k: [] for k in names}
-    skips = Counter()
+    tried = Counter()
+    drops = defaultdict(Counter)                          # window -> reason
+    skips, day_notes = Counter(), []
 
-    def spread(sym, day, m):
-        sp = RC.entry_spread_bp(cache, sym, _ts(day, m), box)
+    def leg(s, day, m):
+        sp = spread_bp(cache, box, s, _ts(day, m))
         if sp is None:
-            skips["no_nbbo"] += 1
-        return sp
+            raise LookupError("no_nbbo")
+        r5, r10 = ret(b, m, HOLD), ret(b, m, INFO_HOLD)
+        return r5 * 1e4 - sp, (None if r10 is None else r10 * 1e4 - sp), abs(r5) * 1e4
 
+    used_days = []
     for day in days:
         first = {}
         for kind, s, ts in ev[day]:
             if kind == "first_alert":
                 first[s] = M.et_min(ts)
-        bars = M.fetch_bars(day, sorted(first))
+        bars_ = M.fetch_bars(day, sorted(first))
+        missing = sum(1 for s in first if s not in bars_)
+        if first and missing / len(first) > MAX_DROP:
+            day_notes.append(f"{day}: dropped, {missing}/{len(first)} names without bars")
+            continue
+        if min(first.values()) >= OPEN:
+            day_notes.append(f"{day}: no premarket alerts (OCR started {min(first.values()) // 60:02d}:"
+                             f"{min(first.values()) % 60:02d})")
+        used_days.append(day)
         for s, fm in first.items():
-            b = bars.get(s)
+            b = bars_.get(s)
             if not b:
                 skips["no_bars"] += 1
                 continue
-            spans = {k: v for k, v in WINDOWS.items()}
-            spans["power_hour"] = POWER
-            for k, (lo, hi) in spans.items():
+            pairs = []
+            for k, (lo, hi) in WINDOWS.items():
                 if fm >= lo:
-                    continue                                  # not yet on the list at the window
-                for m in window_minutes(b, lo, hi):
-                    c = power_control(b, day, f"{s}{m}") if k == "power_hour" else \
-                        control_minute(b, day, s, f"{k}{m}", lo, hi)
-                    if c is None:
-                        skips[f"{k}_no_control"] += 1
-                        continue
-                    sw, sc = spread(s, day, m), spread(s, day, c)
-                    if sw is None or sc is None:
-                        continue
-                    w = ret(b, m, HOLD) * 1e4 - sw
-                    cn = ret(b, c, HOLD) * 1e4 - sc
-                    win[k][day].append(w)
-                    lift[k][day].append(w - cn)
-                    r10 = ret(b, m, INFO_HOLD)
-                    if r10 is not None:
-                        info10[k].append(r10 * 1e4 - sw)
-                    absmv[k].append(abs(ret(b, m, HOLD)) * 1e4)
+                    continue                              # not yet on the list at the window
+                tried[k] += 1
+                m = window_entry(b, lo, hi)
+                if m is None:
+                    drops[k]["window_no_print"] += 1
+                    continue
+                c = control_minute(b, day, s, k, lo, fm)
+                if c is None:
+                    drops[k]["no_control"] += 1
+                    continue
+                pairs.append((k, m, c))
+            if fm < POWER[0]:
+                tried["power_hour"] += 1
+                pw = power_minutes(b, day, s, fm, POWER, "power")
+                pc = power_minutes(b, day, s, fm, POWER_CTL, "power_ctl", k=len(pw))
+                if not pw or len(pc) < len(pw):
+                    drops["power_hour"]["no_print_or_control"] += 1
+                pairs += [("power_hour", m, c) for m, c in zip(pw, pc)]
+            for k, m, c in pairs:
+                try:
+                    w, w10, mv = leg(s, day, m)
+                    cn, _c10, _ = leg(s, day, c)
+                except LookupError:
+                    drops[k]["no_nbbo"] += 1
+                    continue
+                except QuoteError:
+                    drops[k]["quote_error"] += 1
+                    continue
+                win[k][day].append(w)
+                lift[k][day].append(w - cn)
+                if w10 is not None:
+                    info10[k].append(w10)
+                absmv[k].append(mv)
         RC.save_cache(cache)
 
+    mid = used_days[(len(used_days) - 1) // 2] if used_days else ""
+    f = lambda x: "-" if x is None else f"{x:+.1f}"  # noqa: E731
     lines = ["# Clock windows: entering alerted names at set times (SIP, 5-min hold, full spread)", "",
-             f"days {len(days)} ({days[0] if days else '-'} .. {days[-1] if days else '-'}), split after {mid}; skips {dict(skips)}", "",
-             "| window | n | days | net 5m day-mean | lift vs ±30m (t) | lift halves | net 10m mean | mean |move| | per day | verdict |",
-             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
+             f"days used {len(used_days)} ({used_days[0] if used_days else '-'} .. {used_days[-1] if used_days else '-'}), "
+             f"split after {mid}; t bar {T_BAR} (10 windows); skips {dict(skips)}", ""]
+    lines += [f"- {n}" for n in day_notes] + [""]
+    lines += ["| window | name-windows | days | net 5m day-mean | lift vs control (t) | lift halves | net 10m mean | "
+              "mean abs move | per day | drops | verdict |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|"]
     for k in names:
         n = sum(len(v) for v in win[k].values())
         mu, _, nd = day_t(win[k])
@@ -156,12 +244,14 @@ def main() -> None:
         h1, _, _ = day_t({d: v for d, v in lift[k].items() if d <= mid})
         h2, _, _ = day_t({d: v for d, v in lift[k].items() if d > mid})
         v = verdict(k, lt, [h1, h2], n, nd)
-        if v == "PASS" and (mu is None or mu <= 0):
+        if v == "PASS" and k not in WORSE and (mu is None or mu <= 0):
             v = "PASS (least bad, net < 0)"
-        f = lambda x: "-" if x is None else f"{x:+.1f}"  # noqa: E731
-        lines.append(f"| {k} | {n} | {nd} | {f(mu)} | {f(lm)} ({f(lt)}) | {f(h1)} / {f(h2)} | "
+        dr = ", ".join(f"{r} {c}" for r, c in drops[k].items()) or "-"
+        lines.append(f"| {k} | {n}/{tried[k]} | {nd} | {f(mu)} | {f(lm)} ({f(lt)}) | {f(h1)} / {f(h2)} | "
                      f"{f(st.fmean(info10[k]) if info10[k] else None)} | {f(st.fmean(absmv[k]) if absmv[k] else None)} | "
-                     f"{n / max(nd, 1):.1f} | {v} |")
+                     f"{n / max(nd, 1):.1f} | {dr} | {v} |")
+    lines += ["", "Feed note: all SIP. The live desk is on IEX, which is blind premarket; a premarket PASS is tradeable "
+              "only with real-time SIP (the SIP month)."]
     out = "\n".join(lines)
     print(out)
     with open(os.path.join(ROOT, "ai_reports", "momentum_alerts", "clock_windows_result.md"), "w") as fh:
