@@ -68,6 +68,7 @@
   "ai_watch_tape_gap_max_sec": 60.0,
   "ai_watch_quote_max_age_sec": 15.0,
   "ai_shelf_interleave": true,
+  "ai_book_profile_path": "/tmp/manage_profile.txt",
   "ai_exit_limit_collar_wait_sec": 2.0,
   "ai_exit_limit_collar_pct": 0.0,
   "ai_watch_exh_mid_rise_arm": false,
