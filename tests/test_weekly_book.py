@@ -112,3 +112,11 @@ def test_old_rank_is_still_12_1_momentum():
     flat = {k: (10.0, 10_000_000) for k in keys}
     rows = OB.rank({"UP": up, "FLAT": flat}, keys)
     assert [r["sym"] for r in rows] == ["UP", "FLAT"] and rows[0]["mom"] > 0
+
+
+def test_agy_model_comes_from_config_not_the_stale_default(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "load_config", lambda: {"agy_model": "gemini-3.1-pro-high"})
+    assert WB.agy_model_from_config() == "gemini-3.1-pro-high"
+    monkeypatch.setattr(config, "load_config", lambda: {"claude_model": "gemini-x"})
+    assert WB.agy_model_from_config() == "gemini-x"

@@ -238,6 +238,17 @@ def build_screen(ob, tc, day: date) -> dict:
     return scr
 
 
+def agy_model_from_config() -> str:
+    """The AGY model the desk itself runs (agy_model, else claude_model). ai_suggest's DEFAULT_AGY_MODEL is not
+    a model the installed CLI recognises (2026-10-15 09:56: 'gemini-3.7-flash-high ... not recognized')."""
+    try:
+        from config import load_config
+        cfg = load_config()
+    except Exception:  # noqa: BLE001
+        cfg = {}
+    return str(cfg.get("agy_model") or cfg.get("claude_model") or "gemini-3.1-pro-high")
+
+
 def run_models(ob, day: date, screen: dict, ask=None) -> dict:
     """Both models rank the frozen screen; write weekly_agreed_DAY.json and point plan_DAY.json at the book.
     *ask(model, prompt) -> text* replaces the CLIs in tests."""
@@ -249,8 +260,10 @@ def run_models(ob, day: date, screen: dict, ask=None) -> dict:
     if ask is None:
         from ai_suggest import call_agy_cli, call_grok_cli
 
+        agy_model = agy_model_from_config()
+
         def ask(model, p):
-            return call_agy_cli(p, live_search=False, phase="weekly") if model == "agy" else \
+            return call_agy_cli(p, model=agy_model, live_search=False, phase="weekly") if model == "agy" else \
                 call_grok_cli(p, live_search=False, phase="weekly")
     raw, picks = {}, {}
     for model in ("agy", "grok"):
