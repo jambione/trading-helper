@@ -993,7 +993,7 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         # Display-only order-block keys (book SR column) are optional: present
         # only when there is a reading, or a note saying why there is none.
         assert keys <= set(row.keys())
-        assert set(row.keys()) - keys <= set(ew._OB_WIRE_KEYS)
+        assert set(row.keys()) - keys <= set(ew._GATE_WIRE_KEYS)
         assert "blocker" in row
         assert "pct_change" in row
     zzz = snap[1]

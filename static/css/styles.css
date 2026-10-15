@@ -2548,7 +2548,7 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .feed-cols--ai-book .cell-entry,
 .panel-ai-watch .feed-cols--ai-book .cell-hold,
 .panel-ai-watch .feed-cols--ai-book .cell-exh,
-.panel-ai-watch .feed-cols--ai-book .cell-sr,
+.panel-ai-watch .feed-cols--ai-book .cell-gates,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
 
@@ -2831,15 +2831,15 @@ body.mobile .panel-ai-watch .feed-cols--ai-book {
     minmax(0, 0.9fr);
   grid-template-areas:
     "ticker state last chg entry pl"
-    "stop   exh   exh  sr  .     .";
+    "stop   exh   exh  gates  .     .";
   row-gap: 5px;
   column-gap: 8px;
   align-items: center;
 }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-exh,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
-body.mobile .panel-ai-watch .feed-cols--ai-book > .th-sr,
-body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-sr { grid-area: sr; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-gates,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-gates { grid-area: gates; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-ticker,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-state,
@@ -2891,15 +2891,15 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
       minmax(0, 0.9fr);
     grid-template-areas:
       "ticker state last chg entry pl"
-      "stop   exh   exh  sr  .     .";
+      "stop   exh   exh  gates  .     .";
     row-gap: 5px;
     column-gap: 8px;
     align-items: center;
   }
   .panel-ai-watch .feed-cols--ai-book > .th-exh,
   .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
-  .panel-ai-watch .feed-cols--ai-book > .th-sr,
-  .panel-ai-watch .feed-cols--ai-book > .cell-sr { grid-area: sr; }
+  .panel-ai-watch .feed-cols--ai-book > .th-gates,
+  .panel-ai-watch .feed-cols--ai-book > .cell-gates { grid-area: gates; }
   .panel-ai-watch .feed-cols--ai-book > .th-ticker,
   .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
   .panel-ai-watch .feed-cols--ai-book > .th-state,
@@ -4787,10 +4787,10 @@ body.engine-visible .engine-bar                         { display: none !importa
 
 
 /* Book SR cell: inside / within 0.3% under resistance (the ob_resist skip zone). */
-.panel-ai-watch .feed-cols--ai-book .cell-sr.sr--resist { color: #f87171; font-weight: 600; }
-.panel-ai-watch .feed-cols--ai-book .cell-sr.sr--chase { color: #f87171; font-weight: 600; }
-.panel-ai-watch .feed-cols--ai-book .cell-sr.sr--clean { color: #4ade80; font-weight: 600; }
-.panel-ai-watch .feed-cols--ai-book .cell-sr.sr--none { color: var(--text-dim, #9aa); font-style: italic; }
+.panel-ai-watch .feed-cols--ai-book .cell-gates { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.panel-ai-watch .feed-cols--ai-book .cell-gates.gates--fail { color: #f87171; font-weight: 600; }
+.panel-ai-watch .feed-cols--ai-book .cell-gates.gates--ok { color: #4ade80; }
+.panel-ai-watch .feed-cols--ai-book .cell-gates.gates--unknown { color: var(--text-dim, #9aa); font-style: italic; }
 
 /* Book "Buy?" button: logs the operator's call, never trades. */
 .book-call-btn {

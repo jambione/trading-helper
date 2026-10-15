@@ -184,8 +184,7 @@ def test_stale_store_withholds_reading_so_skip_fails_open(monkeypatch):
     f = ew._ob_observe_stamp(rec, "ABC", 10.0, SKIP_ON, now)
     assert f == {} and ew._ob_resist_refusal(f, SKIP_ON) is False
     assert "ob_resist_0.3" not in rec["indicator"]
-    monkeypatch.setattr(ew, "_push_cfg", lambda: dict(SKIP_ON))
-    assert ew._ob_no_reading_note("ABC") == {"ob_stale": True}
+    assert ew._ob_reading_stale("ABC")
     # fresh again -> reading back
     ob_observe._LAST_ABSORB["ABC"] = time.time()
     assert ew._ob_observe_stamp(rec, "ABC", 10.0, SKIP_ON, now)
@@ -242,10 +241,11 @@ def test_counter_log_line(capsys):
     assert "short_window=0" in out and "sessions=3" in out
 
 
-def test_ob_stale_on_wire_keys_and_js():
-    assert "ob_stale" in ew._OB_WIRE_KEYS
+def test_sr_display_is_gone_but_the_reader_stays():
+    """2026-10-15: the book's SR column was replaced by Gates; ob_observe keeps stamping for the forward test."""
+    assert not hasattr(ew, "_OB_WIRE_KEYS") and hasattr(ew, "_ob_observe_stamp")
     body = (ROOT / "static/js/feeds.js").read_text(encoding="utf-8")
-    assert "ob_stale: !!w.ob_stale" in body and "'stale'" in body
+    assert "ob_stale: !!w.ob_stale" not in body
 
 
 # --- 3-session live window (operator override 2026-10-06 10:14 ET) ---------

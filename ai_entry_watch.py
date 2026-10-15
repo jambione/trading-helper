@@ -4732,8 +4732,8 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             # this next to Last; without it only Momentum dual-lists colored.
             "pct_change": _wire_pct_change(sym, rec),
             "admit_pct_change": _f_or_none(rec.get("admit_pct_change")),
-            # Display only (book SR column); {} when there is no reading.
-            **_ob_wire_fields(rec, sym, last_ask_f),
+            # Display only (book Gates column).
+            **_gate_wire_fields(rec, sym),
         })
     # Ready first, then higher score, then symbol for stable UI.
     rows.sort(key=lambda r: (
@@ -4812,8 +4812,8 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "source": src,
         "score": score_f,
         "rvol": _f_or_none(rec.get("admit_rvol")),
-        # Display only (book SR column); {} when there is no reading.
-        **_ob_wire_fields(rec, sym, last_ask_f),
+        # Display only (book Gates column): the arm's live gate readings.
+        **_gate_wire_fields(rec, sym),
         "exhaustion": _f_or_none(exhaustion_pct(rec)),
         "exhaustion_state": exhaustion_state(rec, _push_cfg()),
         "exh_seat_class": (
@@ -5000,8 +5000,8 @@ def book_table_rows(
                 "plpc": None,
                 "mkt_val": None,
                 "is_position": False,
-                # Display only (book SR column).
-                **{k: w[k] for k in _OB_WIRE_KEYS if k in w},
+                # Display only (book Gates column).
+                **{k: w[k] for k in _GATE_WIRE_KEYS if k in w},
             }
 
     for sym_raw, p in pos_map.items():
@@ -14387,57 +14387,37 @@ def _ob_narrow_refusal(ob_fields: dict, cfg: dict | None, rec: dict | None) -> b
     return bool(isinstance(ind, dict) and ind.get("pctr_ob") is True)
 
 
-_OB_WIRE_KEYS = ("ob_resist", "ob_room_pct", "ob_brk_dist_pct", "ob_bars", "ob_sup_btm", "ob_sup_top",
-                 "ob_res_btm", "ob_res_top", "ob_levels_ts", "ob_nobars", "ob_off",
-                 "ob_stale")
+_GATE_WIRE_KEYS = ("g_rvol", "g_rvol_min", "g_spread", "g_spread_max", "g_tape_age", "g_tape_max",
+                   "g_gap", "g_gap_block", "g_sq_wait")
 
 
-def _ob_no_reading_note(sym: str) -> dict:
-    """Why there is no order-block reading, for the SR cell (display only):
-    ob_off = neither ai_watch_ob_observe nor the skip is on; ob_nobars = on, but
-    the block store holds no 1-minute bars for this name yet (the background
-    warm fetch fills it), so neither the panel nor the ob_resist skip has a
-    reading; ob_stale = bars exist but no refresh for OB_WARM_STALE_SEC, so the
-    reading is withheld (skip fails open). {} when it cannot tell. Never
-    raises, never fetches."""
+def _gate_wire_fields(rec: Any, sym: str, now: float | None = None) -> dict:
+    """DISPLAY ONLY: the book's Gates column (operator 10/15: show the arm's live gates while they pass, not
+    only the first one that fails). Cache reads only (the same values should_arm_buy / admit_arm_gates use);
+    never fetches, never raises; None = no reading yet. Limits ride along so the page never hard-codes them."""
+    out: dict = {}
     try:
-        if not _ob_observe_on(_push_cfg()):
-            return {"ob_off": True}
-        import ob_observe
-        if ob_observe.store_size(sym) == 0:
-            return {"ob_nobars": True}
-        return {"ob_stale": True} if _ob_reading_stale(sym) else {}
+        cfg = _push_cfg()
+        t = float(now if now is not None else time.time())
+        rec = rec if isinstance(rec, dict) else {}
+        out["g_rvol"] = _arm_rvol(rec)
+        out["g_rvol_min"] = _f_or_none(cfg.get("ai_watch_arm_min_rvol")) or 0.0
+        hit = _SIP_SPREAD_CACHE.get(sym)
+        out["g_spread"] = None if not hit or hit[0] is None else round(float(hit[0]), 3)
+        out["g_spread_max"] = _spread_gate_max(rec.get("source"), cfg)
+        tape = live_print(sym)
+        out["g_tape_age"] = None if not tape or tape[1] is None else round(float(tape[1]), 1)
+        out["g_tape_max"] = round(max(decision_max_age_sec(cfg), name_tape_ceiling(sym, cfg)), 1)
+        g = _GAP_CACHE.get(sym)
+        out["g_gap"] = None if not g or g[0] is None else round(float(g[0]), 2)
+        out["g_gap_block"] = _f_or_none(cfg.get("ai_watch_gap_down_block_pct")) or 0.0
+        mins = _f_or_none(cfg.get("ai_watch_presquare_after_square_min")) or 0.0
+        sq = _LAST_SQUARE.get(sym)
+        left = (mins * 60.0 - (t - sq[0])) if (mins > 0 and sq and sq[0] is not None) else 0.0
+        out["g_sq_wait"] = round(left) if left > 0 else None
     except Exception:  # noqa: BLE001
-        return {}
-
-
-def _ob_wire_fields(rec: Any, sym: str, price: Any) -> dict:
-    """DISPLAY ONLY: the book's SR column. Copies the order-block reading the
-    poll already stamped on the record's indicator dict (ob_resist_0.3 /
-    ob_room_pct: the same values the ob_resist skip reads) and adds cache-only
-    block levels for the tooltip. Never computes blocks, never fetches, never
-    raises, and nothing in the arm/place path reads these keys. {} = no reading.
-    """
-    try:
-        ind = rec.get("indicator") if isinstance(rec, dict) else None
-        if not isinstance(ind, dict) or "ob_resist_0.3" not in ind:
-            return _ob_no_reading_note(sym) if isinstance(rec, dict) else {}
-        out = {
-            "ob_resist": bool(ind.get("ob_resist_0.3")),
-            "ob_room_pct": _f_or_none(ind.get("ob_room_pct")),
-            "ob_brk_dist_pct": _f_or_none(ind.get("ob_brk_dist_pct")),
-            "ob_bars": _f_or_none(ind.get("ob_bars")),
-        }
-        px = _f_or_none(price)
-        if px:
-            import ob_observe
-            lv = ob_observe.levels(sym, px)
-            for k in ("ob_sup_btm", "ob_sup_top", "ob_res_btm", "ob_res_top", "ob_levels_ts"):
-                if lv.get(k) is not None:
-                    out[k] = _f_or_none(lv.get(k))
-        return out
-    except Exception:  # noqa: BLE001
-        return {}
+        pass
+    return out
 
 
 def _ob_support_pct(sym: str, price: Any, now: float) -> float | None:

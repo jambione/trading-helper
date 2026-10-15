@@ -360,20 +360,16 @@ function _bookRows(book) {
       // Day move — wire first; Momentum overlay below may refresh it.
       pct_change: w.pct_change != null ? w.pct_change : null,
       admit_pct_change: w.admit_pct_change != null ? w.admit_pct_change : null,
-      // Order blocks (display only, SR column): the desk's own ob_observe
-      // reading. Fifth field to travel this whitelist chain.
-      ob_resist: w.ob_resist != null ? !!w.ob_resist : null,
-      ob_room_pct: w.ob_room_pct != null ? w.ob_room_pct : null,
-      ob_brk_dist_pct: w.ob_brk_dist_pct != null ? w.ob_brk_dist_pct : null,
-      ob_bars: w.ob_bars != null ? w.ob_bars : null,
-      ob_sup_btm: w.ob_sup_btm != null ? w.ob_sup_btm : null,
-      ob_sup_top: w.ob_sup_top != null ? w.ob_sup_top : null,
-      ob_res_btm: w.ob_res_btm != null ? w.ob_res_btm : null,
-      ob_res_top: w.ob_res_top != null ? w.ob_res_top : null,
-      ob_levels_ts: w.ob_levels_ts != null ? w.ob_levels_ts : null,
-      ob_nobars: !!w.ob_nobars,
-      ob_off: !!w.ob_off,
-      ob_stale: !!w.ob_stale,
+      // Gates column (display only): the arm's live gate readings and their limits (_gate_wire_fields).
+      g_rvol: w.g_rvol != null ? w.g_rvol : null,
+      g_rvol_min: w.g_rvol_min != null ? w.g_rvol_min : null,
+      g_spread: w.g_spread != null ? w.g_spread : null,
+      g_spread_max: w.g_spread_max != null ? w.g_spread_max : null,
+      g_tape_age: w.g_tape_age != null ? w.g_tape_age : null,
+      g_tape_max: w.g_tape_max != null ? w.g_tape_max : null,
+      g_gap: w.g_gap != null ? w.g_gap : null,
+      g_gap_block: w.g_gap_block != null ? w.g_gap_block : null,
+      g_sq_wait: w.g_sq_wait != null ? w.g_sq_wait : null,
     };
   }
   // Live positions always win (P&L / qty).
@@ -555,8 +551,8 @@ function _bookSortVal(r, col) {
       const p = num(r.pctr);
       return p == null ? null : Math.max(0, Math.min(100, 100 + p));
     }
-    case 'sr':
-      return r.ob_resist == null ? null : num(r.ob_room_pct);
+    case 'gates':
+      return _bookGateChecks(r).length ? _bookGatesFailCount(r) : null;
     case 'macd':
       return num(r.macd_gap) ?? num(r.macd_hist);
     case 'pl':
@@ -1830,11 +1826,11 @@ function _updateBookRow(el, r) {
     const exhTip = _fmtExhTitle(r);
     if (exhTip) exhEl.title = exhTip;
   }
-  const srEl = el.querySelector('.cell-sr');
-  if (srEl) {
-    _setText(srEl, _bookSrText(r));
-    srEl.className = `cell-sr${_bookSrClass(r)}`;
-    srEl.title = _bookSrTitle(r);
+  const gatesEl = el.querySelector('.cell-gates');
+  if (gatesEl) {
+    _setText(gatesEl, _bookGatesText(r));
+    gatesEl.className = `cell-gates${_bookGatesClass(r)}`;
+    gatesEl.title = _bookGatesTitle(r);
   }
   _setText(el.querySelector('.cell-qty'), qty);
   const plEl = el.querySelector('.cell-pl');
@@ -1887,99 +1883,79 @@ function _bookRowHtml(r) {
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
     + `<div class="cell-exh${_bookExhClass(r)}${crit.exh === true ? ' crit--pass' : ''}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
-    + `<div class="cell-sr${_bookSrClass(r)}" title="${_esc(_bookSrTitle(r))}">${_esc(_bookSrText(r))}</div>`
+    + `<div class="cell-gates${_bookGatesClass(r)}" title="${_esc(_bookGatesTitle(r))}">${_esc(_bookGatesText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
 }
 
-/** SR column (display only): room up to the nearest charted resistance order
- *  block, from the desk's own point-in-time reading (ob_observe /
- *  tools/order_blocks.py, 1-min, last 3 per side) — the same ob_room_pct /
- *  ob_resist_0.3 the live ob_resist skip reads. '—' = no reading. */
-function _bookSrText(r) {
-  if (!r) return '\u2014';
-  if (r.ob_resist == null) return r.ob_nobars ? 'no bars' : (r.ob_stale ? 'stale' : (r.ob_off ? 'off' : '\u2014'));
-  const sup = _bookSrSupText(r);
-  const pre = sup ? `${sup} \u00b7 ` : '';
-  const brk = _bookSrBrk(r);
-  if (brk != null) return `${pre}brk +${brk.toFixed(2)}%`;
-  const room = r.ob_room_pct != null && Number.isFinite(Number(r.ob_room_pct))
-    ? Number(r.ob_room_pct) : null;
-  if (room == null) return `${pre}no R`;
-  if (room <= 0) return `${pre}in R`;
-  return `${pre}R +${room < 1 ? room.toFixed(2) : room.toFixed(1)}%`;
-}
-
-/** Support side of the SR cell (display only): % down to the top of the nearest
- *  charted support block (ob_sup_top / ob_sup_btm from ob_observe.levels), 'in S'
- *  inside it, 'no S' when none is charted below, '' when levels are missing. */
-function _bookSrSupText(r) {
-  if (!r || r.ob_levels_ts == null) return '';
-  const px = r.price != null && Number.isFinite(Number(r.price)) ? Number(r.price) : null;
-  const top = r.ob_sup_top != null && Number.isFinite(Number(r.ob_sup_top)) ? Number(r.ob_sup_top) : null;
-  const btm = r.ob_sup_btm != null && Number.isFinite(Number(r.ob_sup_btm)) ? Number(r.ob_sup_btm) : null;
-  if (px == null || !(px > 0)) return '';
-  if (top == null) return 'no S';
-  if (btm != null && px <= top && px >= btm) return 'in S';
-  const d = (px / top - 1) * 100;
-  return `S \u2212${d < 1 ? d.toFixed(2) : d.toFixed(1)}%`;
-}
-
-/** % above the top of a sell zone broken in the last 15 min (ob_brk_dist_pct), or null. */
-function _bookSrBrk(r) {
-  if (!r || r.ob_brk_dist_pct == null) return null;
-  const v = Number(r.ob_brk_dist_pct);
-  return Number.isFinite(v) ? v : null;
-}
-
-/** Breakout bands from docs/studies/sr_breakout_forward_prereg.json (UNPROVEN leads, display only):
- *  clean 0.10-0.30% (green), chase >= 0.30% (red), poke < 0.10% (plain). */
-function _bookSrBrkBand(brk) {
-  if (brk == null) return null;
-  if (brk >= 0.30) return 'chase';
-  if (brk >= 0.10) return 'clean';
-  return 'poke';
-}
-
-function _bookSrClass(r) {
-  if (r && r.ob_resist == null && (r.ob_nobars || r.ob_off || r.ob_stale)) return ' sr--none';
-  const band = _bookSrBrkBand(_bookSrBrk(r));
-  if (band === 'clean') return ' sr--clean';
-  if (band === 'chase') return ' sr--chase';
-  return r && r.ob_resist === true ? ' sr--resist' : '';
-}
-
-function _bookSrTitle(r) {
-  if (r && r.ob_resist == null && r.ob_nobars) {
-    return 'No 1-min bars in the order-block store for this name yet (the background IEX bar fetch fills it within ~2 min of seating). '
-      + 'Until then neither this column nor the live ob_resist skip has a reading (the skip fails open).';
+/** Gates column (operator 10/15): the arm's live gate readings while they PASS, not only the first one that
+ *  fails (Status shows that). Values and limits come off the wire (_gate_wire_fields: the trader's own caches, no
+ *  fetches), so the page never hard-codes a threshold. Each check is pass / fail / unknown. */
+function _bookGateChecks(r) {
+  const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+  const out = [];
+  if (!r) return out;
+  const rv = num(r.g_rvol), rvMin = num(r.g_rvol_min);
+  if (rvMin != null && rvMin > 0) {
+    out.push({
+      key: 'rvol', text: rv == null ? 'RV ?' : `RV ${rv < 10 ? rv.toFixed(2) : rv.toFixed(0)}`,
+      ok: rv == null ? null : rv + 1e-12 >= rvMin,
+      title: `RVOL ${rv == null ? 'unknown (the arm abstains)' : rv.toFixed(2)} vs floor ${rvMin.toFixed(2)}`,
+    });
   }
-  if (r && r.ob_resist == null && r.ob_stale) {
-    return 'Order-block bars have not refreshed for 10+ min (fetch failing or rate limited): reading withheld, the ob_resist skip fails open.';
+  const sp = num(r.g_spread), spMax = num(r.g_spread_max);
+  if (spMax != null && spMax > 0) {
+    out.push({
+      key: 'spread', text: sp == null ? 'sp ?' : `${sp.toFixed(2)}%`,
+      ok: sp == null ? null : sp <= spMax + 1e-12,
+      title: `SIP spread ${sp == null ? 'unknown (the arm refuses unknown)' : `${sp.toFixed(3)}%`} vs cap ${spMax.toFixed(2)}%`,
+    });
   }
-  if (r && r.ob_resist == null && r.ob_off) return 'Order-block reading is off (ai_watch_ob_observe and ai_watch_ob_resist_skip both off)';
-  if (!r || r.ob_resist == null) return 'No order-block reading yet for this name';
-  const f = v => (v != null && Number.isFinite(Number(v)) ? `$${Number(v).toFixed(2)}` : null);
-  const bits = ['Order blocks (point-in-time, 1-min, last 3 per side)'];
-  const rb = f(r.ob_res_btm), rt = f(r.ob_res_top);
-  const sb = f(r.ob_sup_btm), st = f(r.ob_sup_top);
-  bits.push(rb ? `resistance ${rb}\u2013${rt}` : 'resistance: none charted above');
-  bits.push(sb ? `support ${sb}\u2013${st}` : 'support: none charted below');
-  const brk = _bookSrBrk(r);
-  if (brk != null) {
-    const band = _bookSrBrkBand(brk);
-    bits.push(`BREAKOUT: ${brk.toFixed(2)}% above a sell zone broken in the last 15 min (${band}`
-      + `${band === 'clean' ? ': 0.10-0.30%, the one band that did better in the 10/5 study' : band === 'chase' ? ': over 0.30%, chasing; the worst bands in the 10/5 study' : ': under 0.10%'})`
-      + ' \u2014 an unproven lead, being tested forward');
+  const age = num(r.g_tape_age), ageMax = num(r.g_tape_max);
+  if (ageMax != null && ageMax > 0) {
+    out.push({
+      key: 'tape', text: age == null ? 'tape ?' : `${Math.round(age)}s`,
+      ok: age == null ? null : age <= ageMax + 1e-9,
+      title: `Last print ${age == null ? 'age unknown' : `${age.toFixed(1)} s old`} vs ceiling ${ageMax.toFixed(0)} s`,
+    });
   }
-  if (r.ob_resist === true) bits.push('IN THE 0.3% RESIST ZONE (inside or within 0.3% under): the live ob_resist skip refuses arms here');
-  if (r.ob_bars != null) bits.push(`${Math.round(Number(r.ob_bars))} bars`);
-  if (r.ob_levels_ts != null && Number.isFinite(Number(r.ob_levels_ts))) {
-    const d = new Date(Number(r.ob_levels_ts) * 1000);
-    bits.push(`levels as of ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' })} ET`);
+  const gap = num(r.g_gap), block = num(r.g_gap_block);
+  if (block != null && block > 0 && gap != null && gap < -block) {
+    out.push({ key: 'gap', text: `gap ${gap.toFixed(1)}%`, ok: false,
+      title: `Gapped down ${gap.toFixed(2)}% at the open (block below -${block.toFixed(1)}%)` });
   }
-  return bits.join(' \u00b7 ');
+  const wait = num(r.g_sq_wait);
+  if (wait != null && wait > 0) {
+    out.push({ key: 'square', text: `sq ${_fmtHoldClock(wait)}`, ok: false,
+      title: `Full square in the last 10 min: pre-square arms wait ${_fmtHoldClock(wait)} more` });
+  }
+  return out;
+}
+
+function _bookGatesText(r) {
+  const c = _bookGateChecks(r);
+  return c.length ? c.map(x => x.text).join(' · ') : '—';
+}
+
+function _bookGatesFailCount(r) {
+  return _bookGateChecks(r).filter(x => x.ok !== true).length;
+}
+
+function _bookGatesClass(r) {
+  const c = _bookGateChecks(r);
+  if (!c.length) return '';
+  if (c.some(x => x.ok === false)) return ' gates--fail';
+  if (c.some(x => x.ok == null)) return ' gates--unknown';
+  return ' gates--ok';
+}
+
+function _bookGatesTitle(r) {
+  const c = _bookGateChecks(r);
+  if (!c.length) return 'No gate readings yet for this name';
+  const mark = (ok) => (ok === true ? 'pass' : ok === false ? 'FAIL' : '?');
+  return c.map(x => `${mark(x.ok)}: ${x.title}`).join('\n')
+    + '\nEXH (pre-square, rising) is its own column; Status shows the first gate that is refusing.';
 }
 
 const _rstopHigh = Object.create(null);
