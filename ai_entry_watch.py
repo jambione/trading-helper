@@ -19211,3 +19211,45 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
     merge_watch_records(touched)
     return events
+
+
+def _bind_poll_profiler() -> None:
+    """TH_POLL_PROFILE=<path>: accumulate a cProfile of every poll_once call and dump it at exit (the replay's
+    child process inherits the variable). Diagnoses the 13-40 s watch poll (operator 10/15). Off = no cost."""
+    path = os.environ.get("TH_POLL_PROFILE", "")
+    if not path:
+        return
+    import atexit
+    import cProfile
+    import functools
+    prof = cProfile.Profile()
+    inner = poll_once
+    stats = {"n": 0, "sec": 0.0, "max": 0.0}
+
+    @functools.wraps(inner)
+    def wrapped(*a, **k):
+        t = time.time()
+        prof.enable()
+        try:
+            return inner(*a, **k)
+        finally:
+            prof.disable()
+            dt = time.time() - t
+            stats["n"] += 1
+            stats["sec"] += dt
+            stats["max"] = max(stats["max"], dt)
+
+    def dump():
+        try:
+            prof.dump_stats(path)
+            with open(path + ".txt", "w") as fh:
+                fh.write(f"polls {stats['n']} total {stats['sec']:.1f}s mean "
+                         f"{stats['sec'] / max(stats['n'], 1):.2f}s max {stats['max']:.2f}s\n")
+        except Exception:  # noqa: BLE001
+            pass
+
+    atexit.register(dump)
+    globals()["poll_once"] = wrapped
+
+
+_bind_poll_profiler()
