@@ -36,3 +36,13 @@ def test_replay_never_fetches_bars_for_the_double_check(monkeypatch):
     monkeypatch.setattr(ob_observe, "bars", lambda t: [(i * 60.0, 1, 2, 0.5, 1.5) for i in range(25)])
     st, hi, lo, cl = rs._dc_store_bars("ABC")
     assert len(st) == 25 and hi[0] == 2.0 and cl[-1] == 1.5
+
+
+def test_trend_reentry_idle_only_on_reentries_into_names_up_enough():
+    cfg = {"ai_trend_reentry_idle_sec": 60, "ai_trend_reentry_min_pct": 2.0}
+    up = {"features": {"pct_change": 3.1}}
+    assert cp.trend_reentry_idle_sec({**up, "entry_n": 2}, cfg) == 60
+    assert cp.trend_reentry_idle_sec({**up, "entry_n": 1}, cfg) == 0          # first entry: normal leash
+    assert cp.trend_reentry_idle_sec({"features": {"pct_change": 1.5}, "entry_n": 3}, cfg) == 0
+    assert cp.trend_reentry_idle_sec({**up, "entry_n": 2}, {}) == 0           # off by default
+    assert cp.trend_reentry_idle_sec({"entry_n": 2}, cfg) == 0                # unknown move: normal leash

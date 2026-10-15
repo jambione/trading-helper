@@ -3591,6 +3591,26 @@ def double_check_sell_due(
         return False, {"error": str(e)[:120]}
 
 
+def trend_reentry_idle_sec(pos: dict | None, cfg: dict | None) -> float:
+    """Trending-day hold (operator 10/15, exit-cut sweep arm): on the 2nd+ entry of a name that was up at least
+    ai_trend_reentry_min_pct on the day at admission, the decay leash waits ai_trend_reentry_idle_sec (instead of
+    the normal idle) for a new high. 10/14 BBWI/GFS/PRGO were bought ~5 times each and shaken out near breakeven
+    before 50-120 bp runs. 0 (default) = off. Needs pos["entry_n"] (stamped by the replay; live does not stamp it
+    yet, so this is inert live until it does)."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        hold = float(cfg.get("ai_trend_reentry_idle_sec", 0) or 0)
+        min_pct = float(cfg.get("ai_trend_reentry_min_pct", 2.0) or 2.0)
+        n = int((pos or {}).get("entry_n") or 1)
+        feat = (pos or {}).get("features") if isinstance((pos or {}).get("features"), dict) else {}
+        pct = float(feat.get("pct_change")) if feat.get("pct_change") is not None else None
+    except (TypeError, ValueError):
+        return 0.0
+    if hold <= 0 or n < 2 or pct is None or pct + 1e-9 < min_pct:
+        return 0.0
+    return hold
+
+
 def no_progress_trend_says_sell(
     pos: dict[str, Any] | None,
     ticker: str,
@@ -4451,6 +4471,7 @@ def green_catchup_raise(
     except (TypeError, ValueError):
         idle_need = DEFAULT_LOCAL_TRAIL_DECAY_IDLE_SEC
     idle_need = max(0.0, idle_need)
+    idle_need = max(idle_need, trend_reentry_idle_sec(pos, cfg))
     try:
         step_r = float(cfg.get(
             "ai_local_trail_decay_step_r",

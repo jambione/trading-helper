@@ -836,6 +836,8 @@ class FakeBroker:
             self.open[sym]["lob"] = {"symbol": sym, "indicator": {}}
         self.open[sym].update(range_fields(decision))
         self.entries[sym] = self.entries.get(sym, 0) + 1
+        if isinstance(self.open[sym].get("pos"), dict):
+            self.open[sym]["pos"]["entry_n"] = self.entries[sym]   # trend_reentry_idle_sec (exit-cut sweep)
         return {"ok": True, "stop_price": self.open[sym]["stop"],
                 "target_1": decision.get("target_1") if isinstance(decision, dict) else None}
 
