@@ -119,7 +119,7 @@ def test_near_arm_highlight_needs_rising_exh_below_presquare_and_all_gates_green
     assert "toggle('feed-row--ai-near', _bookNearArm(r))" in _JS
 
 
-def test_mobile_layout_gives_gates_line_two_and_hides_empty_entry_stop():
+def test_mobile_layout_is_ticker_last_entry_stop():
     css = (_ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
-    assert '"exh    exh  gates gates gates"' in css
-    assert ":not(.feed-row--ai-open) .cell-entry" in css and ".feed-row--ai-open .cell-gates { display: none; }" in css
+    assert css.count('grid-template-areas: "ticker last entry stop";') == 2
+    assert "> .cell-gates,\n" in css and "> .cell-pl { display: none; }" in css
