@@ -91,7 +91,7 @@ The poll profiler (`ai_watch_profile_path`) is still on. Remove it after the loo
   - trail_dc vs off: the same rule decides keep or revert.
 - Winners ship after the close as one config batch. Tell the operator to restart from the Terminal.
 
-### 2. Gap-down short study
+### 2. Gap-down short study: DONE 10/16 ~18:40, FAIL (docs/studies/GAPDOWN_SHORT_2026-10-16.md); nothing to do
 - Log `/tmp/gapdown.log`, about 450/2416 days at 12:05 and a few hours more. Prereg `docs/studies/gapdown_short_prereg.json` (amended_1 + _2, READY).
 - When the log says done: `cd ~/repo/trading-helper && nice -n 19 .venv/bin/python tools/studies/gapdown_short.py --score`.
 - It is resumable: rerun `--minute` if it died. A positive result needs a result-skeptic review before anything.
