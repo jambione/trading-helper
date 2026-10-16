@@ -1,5 +1,6 @@
 secrets.json
 secrets.json.*
+secrets_data.json
 # Per-machine credentials — ship signal_engine.env.example instead.
 signal_engine.env
 .env
