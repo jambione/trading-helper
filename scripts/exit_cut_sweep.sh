@@ -24,7 +24,7 @@ fi
 while pgrep -f "knobs/one.sh" > /dev/null; do sleep 60; done
 
 arm_sets() {   # base = HEAD config (no-progress off, double check off)
-  local OFF="--set ai_no_progress_flatten_enabled=false --set ai_double_check_sell_enabled=false --set ai_no_progress_require_double_check=false --set ai_trend_reentry_idle_sec=0 --set ai_trail_exit_trend_hold=false"
+  local OFF="--set ai_no_progress_flatten_enabled=false --set ai_double_check_sell_enabled=false --set ai_no_progress_require_double_check=false --set ai_trend_reentry_idle_sec=0 --set ai_trail_exit_trend_hold=false --set ai_watch_profile_path="
   case $1 in
     off)      echo "$OFF" ;;
     np180)    echo "$OFF --set ai_no_progress_flatten_enabled=true --set ai_no_progress_sec=180" ;;
