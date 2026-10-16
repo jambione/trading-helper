@@ -120,3 +120,35 @@ def test_agy_model_is_the_weekly_setting_not_the_desks(monkeypatch):
     assert WB.agy_model_from_config() == "gemini-3.8-flash-high"
     monkeypatch.setattr(config, "load_config", lambda: {"weekly_agy_model": "gemini-3.8-flash-medium"})
     assert WB.agy_model_from_config() == "gemini-3.8-flash-medium"
+
+
+def test_silent_model_forfeits_its_vote():
+    screen = {"AAA", "BBB", "CCC"}
+    grok = WB.parse_picks('{"picks": [{"sym": "CCC", "rank": 2, "tag": "none"}, {"sym": "AAA", "rank": 1, '
+                          '"tag": "none"}, {"sym": "BBB", "rank": 3, "tag": "falling"}]}', screen)
+    book, one, how = WB.vote([], grok, cap=2)
+    assert how == "grok_only" and [r["sym"] for r in book] == ["AAA", "CCC"] and one == []
+    assert book[0]["agy_rank"] is None and book[0]["grok_rank"] == 1
+    assert WB.vote(grok, [], cap=1)[2] == "agy_only"
+    assert WB.vote([], []) == ([], [], "none")
+    agy = WB.parse_picks('{"picks": [{"sym": "BBB", "rank": 1, "tag": "none"}]}', screen)
+    b2, one2, how2 = WB.vote(agy, grok)
+    assert how2 == "both" and [r["sym"] for r in b2] == ["BBB"]                # both answered: intersection only
+
+
+def test_run_models_retries_then_gives_grok_the_full_vote(tmp_path, monkeypatch):
+    import types
+    monkeypatch.setattr(WB, "RETRY_WAIT_SEC", 0.0)
+    ob = types.SimpleNamespace(OUT=tmp_path, ET=None, log=lambda m: None)
+    import datetime as dt
+    ob.ET = dt.timezone.utc
+    screen = {"rows": [{"sym": s} for s in ("AAA", "BBB")], "data_through": "2026-10-16"}
+    monkeypatch.setattr(WB, "prompt_for", lambda sc: "p")
+    calls = []
+
+    def ask(model, p):
+        calls.append(model)
+        return "" if model == "agy" else '{"picks": [{"sym": "BBB", "rank": 1, "tag": "none"}]}'
+    out = WB.run_models(ob, dt.date(2026, 10, 16), screen, ask=ask)
+    assert calls == ["agy", "agy", "grok"]                                     # AGY retried once
+    assert out["vote"] == "grok_only" and [r["sym"] for r in out["book"]] == ["BBB"]

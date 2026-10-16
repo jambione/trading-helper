@@ -3,6 +3,8 @@
 Twenty names held from one week's close to the next. A name must be a liquid common stock, cheap on trailing
 earnings (Finnhub P/E > 0 and <= 12), and already in an uptrend. AGY and Grok each rank 30 names from the frozen
 screen; the book is the names BOTH list, ordered by the sum of their ranks, at most 20, never padded from one model.
+Operator 10/16: if one model gives NO response (0 valid picks after a retry), the other model gets the full vote: its
+own top 20 by rank. Both silent = no book, no orders.
 The code places the orders; neither model trades.
 
 This module holds the pure rules (screen, agreement, order day, weekly diff, week score) and the I/O steps
@@ -24,6 +26,7 @@ SPREAD_MAX_PCT = 0.20
 BOOK_N, PICK_N = 20, 30
 TAGS = {"none", "cycle-peak", "falling", "dilution"}
 TURN_COST_BP = 4.0
+RETRY_WAIT_SEC = 60.0
 SESSIONS_NEEDED = BACK_LONG + 5
 
 
@@ -126,6 +129,23 @@ def agree(agy: list[dict], grok: list[dict], cap: int = BOOK_N) -> tuple[list[di
     both.sort(key=lambda r: (r["rank_sum"], r["sym"]))
     one = sorted(set(a) ^ set(g))
     return both[:cap], one
+
+
+def vote(agy: list[dict], grok: list[dict], cap: int = BOOK_N) -> tuple[list[dict], list[str], str]:
+    """(book, one-model names, vote). Operator 10/16: a model that gave NO valid picks forfeits its vote and the
+    other model's own ranking makes the book (top *cap* by its rank). Both present = agree() unchanged (never
+    padded). Both empty = no book. Pure."""
+    if agy and grok:
+        book, one = agree(agy, grok, cap)
+        return book, one, "both"
+    solo, name = (grok, "grok") if grok else (agy, "agy")
+    if not solo:
+        return [], [], "none"
+    rows = sorted(solo, key=lambda p: (p["rank"], p["sym"]))[:cap]
+    book = [{"sym": p["sym"], "agy_rank": p["rank"] if name == "agy" else None,
+             "grok_rank": p["rank"] if name == "grok" else None, "rank_sum": p["rank"], "tag": p["tag"]}
+            for p in rows]
+    return book, [], f"{name}_only"
 
 
 # ── pure: calendar and orders ────────────────────────────────────────────────
@@ -272,25 +292,31 @@ def run_models(ob, day: date, screen: dict, ask=None) -> dict:
     raw, picks = {}, {}
     for model in ("agy", "grok"):
         t0 = time.time()
-        try:
-            raw[model] = ask(model, prompt)
-        except Exception as e:  # noqa: BLE001
-            raw[model] = ""
-            ob.log(f"weekly models {day}: {model} failed: {e!s:.150}")
+        raw[model] = ""
+        for attempt in range(2):           # one retry on an empty or failed response (AGY 10/16 06:36 was empty)
+            try:
+                raw[model] = ask(model, prompt)
+            except Exception as e:  # noqa: BLE001
+                raw[model] = ""
+                ob.log(f"weekly models {day}: {model} failed (try {attempt + 1}): {e!s:.150}")
+            if parse_picks(raw[model], syms):
+                break
+            if attempt == 0:
+                time.sleep(RETRY_WAIT_SEC)
         try:   # audit trail: what each model actually said (the agreed file keeps only the parsed picks)
             (ob.OUT / f"weekly_raw_{day.isoformat()}_{model}.txt").write_text(str(raw[model] or ""))
         except OSError:
             pass
         picks[model] = parse_picks(raw[model], syms)
         ob.log(f"weekly models {day}: {model} {len(picks[model])} valid picks in {time.time() - t0:.0f}s")
-    book, one = agree(picks["agy"], picks["grok"])
+    book, one, how = vote(picks["agy"], picks["grok"])
     out = {"day": day.isoformat(), "made": datetime.now(ob.ET).isoformat(), "screen_n": len(syms),
-           "agy": picks["agy"], "grok": picks["grok"], "book": book, "one_model": one}
+           "agy": picks["agy"], "grok": picks["grok"], "book": book, "one_model": one, "vote": how}
     path.write_text(json.dumps(out, indent=1))
     plan = {"day": day.isoformat(), "made": out["made"], "data_through": screen.get("data_through"),
             "n_liquid": len(syms), "weekly": True, "picks": [{"sym": r["sym"], "mom": 0.0} for r in book]}
     (ob.OUT / f"plan_{day.isoformat()}.json").write_text(json.dumps(plan, indent=1))
-    ob.log(f"weekly agreed {day}: {len(book)} names " + " ".join(r["sym"] for r in book)
+    ob.log(f"weekly agreed {day} ({how}): {len(book)} names " + " ".join(r["sym"] for r in book)
            + (f"; one-model (not bought) {len(one)}" if one else ""))
     return out
 

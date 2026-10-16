@@ -134,7 +134,10 @@ Check their branches before touching the same files.
      3. Check how `weekly_book`/`overnight_book.run()` choose the order day and order type (the normal path is Friday 15:58 close). Run the rebalance as a **DRY RUN** first and show the operator the buy list.
      4. Then place Monday-open orders (market-on-open or the first-minute market order the code supports) on the PAPER weekly account only.
      5. Score week 1 as Monday open → Friday 10/23 close and flag it non-comparable (shorter, open-entry). From 10/23 on, normal Friday-close rebalances.
-     6. Do not change the selection rules (P/E <= 12, uptrend, both-models agreement, max 20, never padded).
+     6. Do not change the selection rules otherwise (P/E <= 12, uptrend, max 20).
+     7. **NEW rule (operator 10/16, commit below):** if a model gives NO valid picks after one retry (60 s later), it forfeits its vote, and the other model's own top 20 by rank make the book (`weekly_book.vote`, logged as `grok_only` / `agy_only`). Both answered = intersection as before, never padded. Both silent = no orders.
+     8. The 10/16 agreed file (0 names) is cached: run_models returns it if `ai_reports/overnight/weekly_agreed_2026-10-16.json` exists. RENAME it (e.g. `.failed_agy`, do not delete) before re-picking, and also the 10/16 plan file. The new run then retries AGY and falls back to Grok's full vote if AGY is still silent.
+     9. The dry-run buy list goes to the operator before any order.
 8. **Morning scorecard script.** Build it if missing; the inputs are above.
 
 ## Key files
