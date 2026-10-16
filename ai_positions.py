@@ -3661,6 +3661,13 @@ def trail_exit_trend_hold(pos: dict | None, ticker: str, px: float, now: float |
         if bars is None:
             _dc_note("trail:no_bars")
             return False                       # no bars in memory: sell (never fetch inside an exit)
+        # Skeptic 10/16: live refreshes the store only while the watch poll stamps the name; a held name that
+        # left the watch would read frozen pre-entry bars and hold forever. Stale store -> sell. 300 s clears the
+        # replay's 120 s feed (last closed bar starts <= ~180 s back) and catches a name off the watch.
+        max_age = float(cfg.get("ai_trail_exit_trend_hold_max_bar_age_sec", 300) or 0)
+        if max_age > 0 and t_now - float(bars[0][-1]) > max_age:
+            _dc_note("trail:stale_bars")
+            return False
         lookback = int(cfg.get("ai_double_check_lookback_min", sdc.LOOKBACK_MIN) or sdc.LOOKBACK_MIN)
         res = sdc.evaluate_symbol(ticker, bars, float(px), lookback=lookback, now=t_now)
         _dc_note(f"trail:{res.get('sell')}:{res.get('reason') or res.get('trend') or ''}"[:60])

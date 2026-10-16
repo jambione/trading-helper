@@ -61,6 +61,17 @@ def test_trail_exit_trend_hold_only_at_or_under_entry_above_the_hard_stop(monkey
     assert not cp.trail_exit_trend_hold(pos, "AAL", 12.04, 1.0, cfg)
 
 
+def test_trail_hold_sells_on_stale_bars(monkeypatch):
+    cfg = {"ai_trail_exit_trend_hold": True, "ai_trail_exit_trend_hold_band_pct": 0.05}
+    pos = {"entry_price": 12.04, "entry_stop_price": 11.50}
+    _patch(monkeypatch, "no")
+    monkeypatch.setattr(cp, "_double_check_store_bars", lambda t: ([1000.0] * 30, [1.0] * 30, [1.0] * 30, [1.0] * 30))
+    assert cp.trail_exit_trend_hold(pos, "AAL", 12.04, 1000.0 + 299, cfg)          # fresh enough: hold
+    assert not cp.trail_exit_trend_hold(pos, "AAL", 12.04, 1000.0 + 301, cfg)      # name left the watch: sell
+    assert cp.trail_exit_trend_hold(pos, "AAL", 12.04, 1000.0 + 9999,
+                                    {**cfg, "ai_trail_exit_trend_hold_max_bar_age_sec": 0})   # 0 = guard off
+
+
 def _trail_pos():
     return {"entry_price": 10.0, "entry_stop_price": 9.5, "stop_price": 9.5, "local_stop_price": 10.0,
             "entry_confirmed": True, "entry_confirmed_at": 1.0, "entry_time": 1.0, "qty": 10,
@@ -73,7 +84,9 @@ def test_live_trail_hit_at_entry_holds_when_on_and_sells_when_off(monkeypatch):
     import alpaca_trader as at
     monkeypatch.setattr(at, "cancel_open_orders", lambda t: None)
     monkeypatch.setattr(at, "close_out", lambda t, **k: sold.append(t) or {"order_id": "x1"})
-    monkeypatch.setattr(cp, "_double_check_store_bars", lambda t: ([1.0] * 30, [1.0] * 30, [1.0] * 30, [1.0] * 30))
+    import time as _t
+    fresh = _t.time()
+    monkeypatch.setattr(cp, "_double_check_store_bars", lambda t: ([fresh] * 30, [1.0] * 30, [1.0] * 30, [1.0] * 30))
     monkeypatch.setattr(sdc, "evaluate_symbol", lambda *a, **k: {"sell": "no"})
     monkeypatch.setattr(cp, "log_event", lambda *a, **k: None)
     on = {"ai_trail_exit_trend_hold": True, "ai_trail_exit_trend_hold_band_pct": 0.05}
