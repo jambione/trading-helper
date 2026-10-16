@@ -10,14 +10,17 @@ SHA=${SWEEP_SHA:-$(git rev-parse --short HEAD)}   # SWEEP_SHA pins a relaunch to
 CFG_SHA=$SHA
 OUT=${1:-/tmp/ecs_$(date +%Y%m%d)}
 mkdir -p "$OUT"
-MAXP=7
+MAXP=${SWEEP_MAXP:-7}
 git show "$CFG_SHA:config/bot_config.json" > "$OUT/base_config.json"
 N=$(.venv/bin/python -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$OUT/base_config.json")
 if [ "$N" -lt 300 ]; then echo "base config has only $N keys - refusing to run unpinned"; exit 1; fi
 [ -n "${SWEEP_SHA:-}" ] || git diff --quiet HEAD -- || { echo "tracked files differ from HEAD - commit first"; exit 1; }
 echo "sha $SHA cfg $CFG_SHA keys $N out $OUT"
 
-while [ "$(TZ=America/New_York date +%H%M)" -lt 1615 ] && [ "$(TZ=America/New_York date +%H%M)" -ge 0400 ]; do sleep 120; done
+# SWEEP_ANYTIME=1 (operator 10/16 05:00): launch now, but never start a replay 09:15-16:15 (the desk needs the budget).
+if [ -z "${SWEEP_ANYTIME:-}" ]; then
+  while [ "$(TZ=America/New_York date +%H%M)" -lt 1615 ] && [ "$(TZ=America/New_York date +%H%M)" -ge 0400 ]; do sleep 120; done
+fi
 while pgrep -f "knobs/one.sh" > /dev/null; do sleep 60; done
 
 arm_sets() {   # base = HEAD config (no-progress off, double check off)
@@ -39,12 +42,14 @@ arm_sets() {   # base = HEAD config (no-progress off, double check off)
 
 # Deciding arms across every day first (operator 10/15 evening: ~35 min per replay, so a day-major order left all arms
 # on only 4-5 days by 03:30); the rest after.
-for a in off np180 np_dc trail_dc trail_dc_np_dc dc180 np120_dc np300_dc trend60 trend120; do
+for a in ${SWEEP_ARMS:-off np180 np_dc trail_dc trail_dc_np_dc dc180 np120_dc np300_dc trend60 trend120}; do
   for d in 2026-10-06 2026-10-07 2026-10-08 2026-10-09 2026-10-12 2026-10-13 2026-10-14 2026-10-15; do
     [ -s "$OUT/${d}_${a}.json" ] && continue
     pgrep -f -- "--out $OUT/${d}_${a}.json" > /dev/null && continue   # already running (relaunch after a reorder)
     HM=$(TZ=America/New_York date +%H%M)
-    if [ "$HM" -ge 0330 ] && [ "$HM" -lt 1615 ]; then echo "deadline: not launched $d $a" >> "$OUT/failures.txt"; continue; fi
+    if [ -n "${SWEEP_ANYTIME:-}" ]; then
+      if [ "$HM" -ge 0915 ] && [ "$HM" -lt 1615 ]; then echo "deadline: not launched $d $a" >> "$OUT/failures.txt"; continue; fi
+    elif [ "$HM" -ge 0330 ] && [ "$HM" -lt 1615 ]; then echo "deadline: not launched $d $a" >> "$OUT/failures.txt"; continue; fi
     while [ "$(pgrep -f 'tools/replay_session.py --day' | wc -l)" -ge $((MAXP * 2)) ]; do sleep 20; done
     # shellcheck disable=SC2046
     ( .venv/bin/python tools/replay_session.py --day "$d" --sha "$SHA" --set-json "$OUT/base_config.json" \
@@ -55,5 +60,6 @@ for a in off np180 np_dc trail_dc trail_dc_np_dc dc180 np120_dc np300_dc trend60
 done
 wait
 HM=$(TZ=America/New_York date +%H%M)
-if [ "$HM" -ge 0400 ] && [ "$HM" -lt 1615 ]; then echo "scoring deferred (quote fetches need the evening)"; exit 0; fi
+if [ -n "${SWEEP_ANYTIME:-}" ] && [ "$HM" -lt 0915 ]; then :   # operator 10/16: score before the open
+elif [ "$HM" -ge 0400 ] && [ "$HM" -lt 1615 ]; then echo "scoring deferred (quote fetches need the evening)"; exit 0; fi
 .venv/bin/python tools/studies/spread_rvol_score.py --dir "$OUT" --arms off,np180,dc180,np_dc,np120_dc,np300_dc,trend60,trend120,trail_dc,trail_dc_np_dc --refs off | tee "$OUT/result.md"
