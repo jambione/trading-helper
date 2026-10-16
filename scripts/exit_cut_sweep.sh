@@ -18,7 +18,14 @@ if [ "$N" -lt 300 ]; then echo "base config has only $N keys - refusing to run u
 echo "sha $SHA cfg $CFG_SHA keys $N out $OUT"
 
 # SWEEP_ANYTIME=1 (operator 10/16 05:00): launch now, but never start a replay 09:15-16:15 (the desk needs the budget).
-if [ -z "${SWEEP_ANYTIME:-}" ]; then
+# SWEEP_DAYTIME=1 (operator 10/16 "why are we waiting?"): run during market hours on the data-only account
+# (TH_DATA_SECRETS must point at secrets_data.json), every replay at nice 19 so the live desk keeps the CPU.
+NICE=""
+if [ -n "${SWEEP_DAYTIME:-}" ]; then
+  [ -f "${TH_DATA_SECRETS:-}" ] || { echo "SWEEP_DAYTIME needs TH_DATA_SECRETS=<secrets_data.json>"; exit 1; }
+  export TH_DATA_SECRETS
+  NICE="nice -n 19"
+elif [ -z "${SWEEP_ANYTIME:-}" ]; then
   while [ "$(TZ=America/New_York date +%H%M)" -lt 1615 ] && [ "$(TZ=America/New_York date +%H%M)" -ge 0400 ]; do sleep 120; done
 fi
 while pgrep -f "knobs/one.sh" > /dev/null; do sleep 60; done
@@ -52,12 +59,13 @@ for a in ${SWEEP_ARMS:-off np180 np_dc trail_dc trail_dc_np_dc dc180 np120_dc np
     [ -s "$OUT/${d}_${a}.json" ] && continue
     pgrep -f -- "--out $OUT/${d}_${a}.json" > /dev/null && continue   # already running (relaunch after a reorder)
     HM=$(TZ=America/New_York date +%H%M)
-    if [ -n "${SWEEP_ANYTIME:-}" ]; then
+    if [ -n "${SWEEP_DAYTIME:-}" ]; then :
+    elif [ -n "${SWEEP_ANYTIME:-}" ]; then
       if [ "$HM" -ge 0915 ] && [ "$HM" -lt 1615 ]; then echo "deadline: not launched $d $a" >> "$OUT/failures.txt"; continue; fi
     elif [ "$HM" -ge 0330 ] && [ "$HM" -lt 1615 ]; then echo "deadline: not launched $d $a" >> "$OUT/failures.txt"; continue; fi
     while [ "$(pgrep -f 'tools/replay_session.py --day' | wc -l)" -ge $((MAXP * 2)) ]; do sleep 20; done
     # shellcheck disable=SC2046
-    ( .venv/bin/python tools/replay_session.py --day "$d" --sha "$SHA" --set-json "$OUT/base_config.json" \
+    ( $NICE .venv/bin/python tools/replay_session.py --day "$d" --sha "$SHA" --set-json "$OUT/base_config.json" \
         $(arm_sets "$a") --out "$OUT/${d}_${a}.json" > "$OUT/${d}_${a}.log" 2>&1 \
       || echo "FAILED $d $a" >> "$OUT/failures.txt" ) &
     sleep 5
@@ -65,6 +73,7 @@ for a in ${SWEEP_ARMS:-off np180 np_dc trail_dc trail_dc_np_dc dc180 np120_dc np
 done
 wait
 HM=$(TZ=America/New_York date +%H%M)
-if [ -n "${SWEEP_ANYTIME:-}" ] && [ "$HM" -lt 0915 ]; then :   # operator 10/16: score before the open
+if [ -n "${SWEEP_DAYTIME:-}" ]; then :   # quotes come from the data-only account
+elif [ -n "${SWEEP_ANYTIME:-}" ] && [ "$HM" -lt 0915 ]; then :   # operator 10/16: score before the open
 elif [ "$HM" -ge 0400 ] && [ "$HM" -lt 1615 ]; then echo "scoring deferred (quote fetches need the evening)"; exit 0; fi
-.venv/bin/python tools/studies/spread_rvol_score.py --dir "$OUT" --arms ${SWEEP_SCORE_ARMS:-off,np180,dc180,np_dc,np120_dc,np300_dc,trend60,trend120,trail_dc,trail_dc_np_dc,trail_dc_lob,trail_dc_seat150,trail_dc_init06,trail_dc_cool30} --refs ${SWEEP_REFS:-off,trail_dc} | tee "$OUT/result.md"
+$NICE .venv/bin/python tools/studies/spread_rvol_score.py --dir "$OUT" --arms ${SWEEP_SCORE_ARMS:-off,np180,dc180,np_dc,np120_dc,np300_dc,trend60,trend120,trail_dc,trail_dc_np_dc,trail_dc_lob,trail_dc_seat150,trail_dc_init06,trail_dc_cool30} --refs ${SWEEP_REFS:-off,trail_dc} | tee "$OUT/result.md"

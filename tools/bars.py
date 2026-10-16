@@ -55,7 +55,12 @@ def client():
     if _CLIENT is not None or _CLIENT_FAILED:
         return _CLIENT
     try:
-        sec = json.load(open(os.path.join(ROOT, "config", "secrets.json")))
+        ds = os.environ.get("TH_DATA_SECRETS", "")
+        if ds:   # daytime studies/scoring on the data-only account (operator 10/16), never the desk's budget
+            d = json.load(open(ds))
+            sec = {"api_key": d["alpaca_data_api_key"], "secret_key": d["alpaca_data_secret_key"]}
+        else:
+            sec = json.load(open(os.path.join(ROOT, "config", "secrets.json")))
         import sys
         if ROOT not in sys.path:
             sys.path.insert(0, ROOT)

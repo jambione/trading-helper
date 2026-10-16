@@ -91,6 +91,21 @@ AGE_KEYS = ("price_age_sec", "rt_price_age_sec", "bars_age_sec", "last_ask_age_s
 HELD_OUT_BEFORE = "2026-09-24"
 
 
+
+def _write_data_secrets(desk: "Path", data: "Path", out: "Path") -> None:
+    """desk secrets with every Alpaca key field replaced by the data-only account's keys (so no read in the
+    replay can touch the desk's budget or account). Never prints a key."""
+    base = json.load(open(desk)) if desk.exists() else {}
+    d = json.load(open(data))
+    k, x = d["alpaca_data_api_key"], d["alpaca_data_secret_key"]
+    for a, b in (("api_key", "secret_key"), ("ALPACA_API_KEY", "ALPACA_SECRET_KEY"),
+                 ("alpaca_api_key", "alpaca_secret_key")):
+        base[a], base[b] = k, x
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(out), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(base, f)
+
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--day", required=True)
@@ -245,7 +260,12 @@ def overlay_harness(code: Path, here: Path | None = None) -> None:
     """
     here = here or HERE
     secrets = here / "config" / "secrets.json"
-    if secrets.exists() and not (code / "config" / "secrets.json").exists():
+    data_secrets = os.environ.get("TH_DATA_SECRETS", "")
+    if data_secrets and not (code / "config" / "secrets.json").exists():
+        # Daytime replays (operator 10/16): Alpaca reads go to the data-only account (secrets_data.json), never
+        # the desk's key/budget. The merged file lives only in this replay's work dir (0600, removed on exit).
+        _write_data_secrets(secrets, Path(data_secrets), code / "config" / "secrets.json")
+    elif secrets.exists() and not (code / "config" / "secrets.json").exists():
         (code / "config").mkdir(parents=True, exist_ok=True)
         (code / "config" / "secrets.json").symlink_to(secrets)
     (code / "tools").mkdir(parents=True, exist_ok=True)
