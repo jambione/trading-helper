@@ -42,3 +42,18 @@ def test_junk_price_is_stored_as_none(client):
     c, path = client
     assert c.post("/api/ai/my-call", json={"ticker": "OXY", "price": "abc"}).status_code == 200
     assert json.loads(path.read_text())["shown_price"] is None
+
+
+def test_call_bar_fields_and_todays_list(client, monkeypatch):
+    import dashboard as dash
+    c, path = client
+    monkeypatch.setattr(dash, "snapshot", lambda: {"tickers": [{"ticker": "TGL", "price": 0.50}]})
+    r = c.post("/api/ai/my-call", json={"ticker": "tgl", "setup": "%R turn", "via": "bar",
+                                         "snapshot": {"pctr": -12.5, "g_spread": 0.04, "phase": "watching", "x" * 40: 1}})
+    assert r.status_code == 200
+    rec = json.loads(path.read_text().splitlines()[-1])
+    assert rec["setup"] == "%R turn" and rec["via"] == "bar" and rec["desk_price"] == 0.5 and rec["retroactive"] is False
+    assert rec["snapshot"]["pctr"] == -12.5 and rec["snapshot"]["phase"] == "watching"
+    monkeypatch.setattr(dash, "snapshot", lambda: {"tickers": [{"ticker": "TGL", "price": 0.51}]})
+    out = c.get("/api/ai/my-calls").json()
+    assert out["ok"] and out["calls"][0]["symbol"] == "TGL" and out["calls"][0]["move_bp"] == 200.0

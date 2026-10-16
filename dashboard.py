@@ -4471,6 +4471,56 @@ MY_CALLS_PATH = Path(__file__).resolve().parent / "ai_reports" / "my_calls.jsonl
 _my_calls_lock = threading.Lock()
 
 
+def _call_snapshot_row(ticker: str) -> dict | None:
+    """The desk's tracked row for *ticker* from the cached snapshot (never rebuilds), or None."""
+    try:
+        snap = snapshot() or {}
+        for r in snap.get("tickers") or []:
+            if isinstance(r, dict) and str(r.get("ticker") or r.get("symbol") or "").upper() == ticker:
+                return r
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+@app.get("/api/ai/my-calls")
+async def api_ai_my_calls():
+    """Today's calls (ET) with the move since each call where the desk still tracks the name. Read only."""
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    today = datetime.now(et).date()
+    rows = []
+    try:
+        with _my_calls_lock:
+            lines = MY_CALLS_PATH.read_text(encoding="utf-8").splitlines() if MY_CALLS_PATH.exists() else []
+    except OSError:
+        lines = []
+    for line in lines[-500:]:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if datetime.fromtimestamp(float(r.get("ts") or 0), et).date() != today:
+            continue
+        sym = str(r.get("symbol") or "")
+        live = _call_snapshot_row(sym) or {}
+        try:
+            now_px = float(live.get("price")) if live.get("price") is not None else None
+        except (TypeError, ValueError):
+            now_px = None
+        base = r.get("desk_price") or r.get("shown_price")
+        move = None
+        if now_px and base:
+            try:
+                move = round((now_px / float(base) - 1) * 1e4, 1)
+            except (TypeError, ValueError, ZeroDivisionError):
+                move = None
+        rows.append({"ts": r.get("ts"), "symbol": sym, "price": base, "now": now_px, "move_bp": move,
+                     "setup": r.get("setup"), "retroactive": bool(r.get("retroactive"))})
+    rows.sort(key=lambda x: -(x.get("ts") or 0))
+    return JSONResponse({"ok": True, "calls": rows})
+
+
 @app.post("/api/ai/my-call")
 async def api_ai_my_call(request: Request):
     """Book "Buy?" button: log that the operator would buy this name now.
@@ -4496,6 +4546,8 @@ async def api_ai_my_call(request: Request):
         return x if x == x and abs(x) != float("inf") else None
 
     now = time.time()
+    snap_row = _call_snapshot_row(ticker)
+    raw_snap = body.get("snapshot") if isinstance(body.get("snapshot"), dict) else {}
     rec = {
         "ts": round(now, 3),
         "at": datetime.fromtimestamp(now).astimezone().isoformat(timespec="seconds"),
@@ -4505,6 +4557,14 @@ async def api_ai_my_call(request: Request):
         "shown_exh": str(body.get("exh") or "")[:40] or None,
         "is_open": bool(body.get("is_open")),
         "note": str(body.get("note") or "")[:200] or None,
+        # Call bar (operator 10/16): setup tag, where the call came from, the desk's own price at the click, and the
+        # book row the operator was looking at (numbers only), so a call can be compared with what the desk saw.
+        "setup": str(body.get("setup") or "")[:24] or None,
+        "via": str(body.get("via") or "")[:12] or None,
+        "desk_price": _num((snap_row or {}).get("price")),
+        "snapshot": {str(k)[:24]: (_num(v) if not isinstance(v, (str, bool)) else (v if isinstance(v, bool) else str(v)[:24]))
+                     for k, v in list(raw_snap.items())[:30]},
+        "retroactive": False,
     }
     try:
         MY_CALLS_PATH.parent.mkdir(parents=True, exist_ok=True)

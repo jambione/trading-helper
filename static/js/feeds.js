@@ -14,6 +14,7 @@ import { createSymbolMembershipWatcher } from './panelFlash.js?v=136';
 import * as notifications from './notifications.js?v=133';
 
 export function init(panelEl, kind) {
+  _bindCallBar();
   if (!panelEl) return;
 
   const rowsEl  = panelEl.querySelector(`[data-${kind}-rows]`);
@@ -1393,6 +1394,7 @@ function _paintWeeklyStrip(snap, label, score, status, list, nightsEl) {
 function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
   if (!rowsEl) return;
   const rows = _sortBookRows(_bookRows(book));
+  _lastBookRowBySym = Object.fromEntries(rows.map(r => [String((r && r.symbol) || '').toUpperCase(), r]));
   try { _paintExtremeOffBook(sectionEl, book); } catch (e) { /* strip is diagnostic */ }
   try { _paintDayHistory(sectionEl, book); } catch (e) { /* history is display-only */ }
   try { _paintOvernight(sectionEl, book); } catch (e) { /* overnight strip is display-only */ }
@@ -1504,7 +1506,7 @@ function _createBookRow(r, owner) {
   wrap.innerHTML = _bookRowHtml(r, owner).trim();
   const el = /** @type {HTMLElement} */ (wrap.firstElementChild);
   const sym = String((r && r.symbol) || '').toUpperCase();
-  el.addEventListener('click', () => _add(el, sym));
+  el.addEventListener('click', () => { _add(el, sym); _callPrefill(sym); });
   const statusEl0 = el.querySelector('.ai-book-status');
   if (statusEl0) {
     statusEl0.title = _bookBlockerTitle(r);
@@ -1524,6 +1526,7 @@ function _createBookRow(r, owner) {
     tickerCell.addEventListener('click', e => {
       e.stopPropagation();
       copyTicker(e.currentTarget, sym);
+      _callPrefill(sym);
     });
   }
   return el;
@@ -2476,6 +2479,7 @@ function _createFeedRow(r, kind, book) {
     tickerCell.addEventListener('click', e => {
       e.stopPropagation();
       copyTicker(e.currentTarget, sym);
+      _callPrefill(sym);
     });
   }
   return el;
@@ -2813,6 +2817,95 @@ function _median(nums) {
   const s = [...nums].sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+/* ── Call bar (operator 10/16, desktop only) ───────────────────────────────
+ * Log "I would buy this now" for any ticker, with a setup tag and the desk's own
+ * reading of the name at that instant. Log only: /api/ai/my-call never trades.
+ * tools/studies/my_calls_score.py scores the calls honestly (SIP spread at the click,
+ * random later minute as the control, premarket included). */
+let _lastBookRowBySym = Object.create(null);
+const _CALL_SNAP_KEYS = ['price', 'pct_change', 'phase', 'source', 'exhaustion', 'exhaustion_state', 'pctr', 'pctr_slow',
+  'pctr_rising', 'g_rvol', 'g_spread', 'g_tape_age', 'g_tape_max', 'g_sq_wait', 'g_gap', 'square_streak'];
+
+function _callPrefill(sym) {
+  const inp = document.querySelector('[data-call-ticker]');
+  if (inp && sym) inp.value = sym;
+}
+
+function _callSnapshot(sym) {
+  const r = _lastBookRowBySym[sym];
+  if (!r) return null;
+  const out = {};
+  for (const k of _CALL_SNAP_KEYS) {
+    if (r[k] !== undefined && r[k] !== null) out[k] = r[k];
+  }
+  return out;
+}
+
+function _fmtCallMove(bp) {
+  if (bp == null || !Number.isFinite(Number(bp))) return '—';
+  const v = Number(bp);
+  return `${v > 0 ? '+' : ''}${(v / 100).toFixed(2)}%`;
+}
+
+async function _refreshCalls() {
+  const list = document.querySelector('[data-call-list]');
+  if (!list) return;
+  let out;
+  try { out = await api.getMyCalls(); } catch (_e) { return; }
+  const calls = (out && out.calls) || [];
+  if (!calls.length) { list.innerHTML = '<div class="ai-call-empty">No calls yet today.</div>'; return; }
+  list.innerHTML = calls.slice(0, 12).map(c => {
+    const t = c.ts ? new Date(c.ts * 1000).toLocaleTimeString('en-US', { hour12: false, timeZone: 'America/New_York' }) : '';
+    const mv = Number(c.move_bp);
+    const cls = !Number.isFinite(mv) ? '' : (mv > 0 ? ' is-up' : (mv < 0 ? ' is-down' : ''));
+    const px = c.price != null ? `$${Number(c.price).toFixed(Number(c.price) < 2 ? 4 : 2)}` : '—';
+    return `<div class="ai-call-row"><span class="ai-call-t">${_esc(t)}</span><b>${_esc(c.symbol || '')}</b>`
+      + `<span class="ai-call-setup">${_esc(c.setup || '')}</span><span class="ai-call-px">${_esc(px)}</span>`
+      + `<span class="ai-call-mv${cls}">${_esc(_fmtCallMove(c.move_bp))}</span></div>`;
+  }).join('');
+}
+
+let _callBarBound = false;
+function _bindCallBar() {
+  if (_callBarBound) return;
+  const bar = document.querySelector('[data-call-bar]');
+  if (!bar) return;
+  _callBarBound = true;
+  const inp = bar.querySelector('[data-call-ticker]');
+  const msg = bar.querySelector('[data-call-msg]');
+  const go = bar.querySelector('[data-call-go]');
+  let setup = '';
+  bar.querySelectorAll('[data-setup]').forEach(b => b.addEventListener('click', () => {
+    setup = b.classList.contains('is-on') ? '' : b.dataset.setup;
+    bar.querySelectorAll('[data-setup]').forEach(x => x.classList.toggle('is-on', x.dataset.setup === setup));
+  }));
+  const submit = async () => {
+    const sym = String(inp.value || '').trim().toUpperCase();
+    if (!/^[A-Z.]{1,6}$/.test(sym)) { msg.textContent = 'Enter a ticker'; return; }
+    const now = Date.now();
+    if (_myCallLast[sym] && now - _myCallLast[sym] < 5000) return;   // double-click guard
+    _myCallLast[sym] = now;
+    const snap = _callSnapshot(sym);
+    go.disabled = true;
+    try {
+      const out = await api.logMyCall({ ticker: sym, setup, via: 'bar', snapshot: snap,
+        price: snap && snap.price != null ? snap.price : null, status: snap && snap.phase ? snap.phase : '' });
+      const px = out && out.desk_price != null ? ` at $${out.desk_price}` : '';
+      msg.textContent = `Logged ${sym}${px} ${out && out.at ? String(out.at).slice(11, 19) : ''}`;
+      _refreshCalls();
+    } catch (err) {
+      console.error('[feeds] call failed', err);
+      msg.textContent = 'Call failed - not logged';
+    } finally {
+      go.disabled = false;
+    }
+  };
+  go.addEventListener('click', submit);
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  _refreshCalls();
+  setInterval(_refreshCalls, 15000);
 }
 
 /** "Buy?" on a book row: record that the operator would buy now. Log only —

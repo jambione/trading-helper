@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=187" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=188" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -376,6 +376,19 @@
                             </span>
                         </div>
                     </div>
+                </div>
+                <div class="ai-call-bar" data-call-bar title="Log that you would buy this name now. Log only: it never places an order. Scored after costs against random later minutes.">
+                    <label class="ai-call-label" for="call-ticker">Your call</label>
+                    <input id="call-ticker" class="ai-call-input" data-call-ticker placeholder="Ticker" maxlength="6" autocomplete="off" spellcheck="false">
+                    <div class="ai-call-setups" role="group" aria-label="Setup">
+                        <button type="button" class="ai-call-chip" data-setup="trend dip">Trend dip</button>
+                        <button type="button" class="ai-call-chip" data-setup="%R turn">%R turn</button>
+                        <button type="button" class="ai-call-chip" data-setup="breakout">Breakout</button>
+                        <button type="button" class="ai-call-chip" data-setup="other">Other</button>
+                    </div>
+                    <button type="button" class="ai-call-go" data-call-go>Log call</button>
+                    <span class="ai-call-msg" data-call-msg aria-live="polite"></span>
+                    <div class="ai-call-list" data-call-list></div>
                 </div>
                 <div class="feed-table-header ai-book-table-header">
                     <div class="feed-cols feed-cols--ai-book">
@@ -843,7 +856,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=213"></script>
+        <script type="module" src="/static/js/app.js?v=214"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

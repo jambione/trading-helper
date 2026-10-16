@@ -4850,3 +4850,29 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-ticker { font-size: 16px; 
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-price,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-entry,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-trail { font-size: 15px; }
+
+
+/* Call bar (operator 10/16, desktop only): log a would-buy call for any ticker. */
+.panel-ai-watch .ai-call-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 12px;
+  border-bottom: 1px solid rgba(139, 92, 246, 0.18); font-size: 12px; }
+.panel-ai-watch .ai-call-label { font-weight: 700; letter-spacing: .04em; text-transform: uppercase; font-size: 11px; color: #c4b5fd; }
+.panel-ai-watch .ai-call-input { width: 6.5rem; padding: 5px 8px; border-radius: 6px; border: 1px solid rgba(167, 139, 250, 0.4);
+  background: rgba(20, 14, 36, 0.6); color: #ede9fe; font: inherit; text-transform: uppercase; }
+.panel-ai-watch .ai-call-input:focus-visible, .panel-ai-watch .ai-call-chip:focus-visible, .panel-ai-watch .ai-call-go:focus-visible {
+  outline: 2px solid #a78bfa; outline-offset: 1px; }
+.panel-ai-watch .ai-call-setups { display: flex; gap: 6px; flex-wrap: wrap; }
+.panel-ai-watch .ai-call-chip { padding: 4px 9px; border-radius: 999px; border: 1px solid rgba(167, 139, 250, 0.35);
+  background: transparent; color: #c4b5fd; font: inherit; cursor: pointer; }
+.panel-ai-watch .ai-call-chip.is-on { background: rgba(167, 139, 250, 0.25); color: #ede9fe; border-color: #a78bfa; }
+.panel-ai-watch .ai-call-go { padding: 5px 12px; border-radius: 6px; border: 0; background: #7c3aed; color: #fff;
+  font: inherit; font-weight: 700; cursor: pointer; }
+.panel-ai-watch .ai-call-go:disabled { opacity: .5; cursor: default; }
+.panel-ai-watch .ai-call-msg { color: #a5b4fc; min-width: 8rem; }
+.panel-ai-watch .ai-call-list { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 14px; font-variant-numeric: tabular-nums; }
+.panel-ai-watch .ai-call-row { display: inline-flex; gap: 6px; align-items: baseline; color: #c7c2dc; }
+.panel-ai-watch .ai-call-t, .panel-ai-watch .ai-call-setup { color: #8b80a8; }
+.panel-ai-watch .ai-call-mv.is-up { color: #4ade80; }
+.panel-ai-watch .ai-call-mv.is-down { color: #f87171; }
+.panel-ai-watch .ai-call-empty { color: #8b80a8; }
+body.mobile .panel-ai-watch .ai-call-bar { display: none; }
+@media (max-width: 700px) { .panel-ai-watch .ai-call-bar { display: none; } }
