@@ -125,7 +125,11 @@ Check their branches before touching the same files.
 4. **Log the hold's decision live.** `trail_exit_trend_hold` counts its reasons only in memory (`DC_STATS`). Log one event per trail sale at or below entry, with the reason (falling / no_bars / stale_bars / green / hard_stop), so the scorecard can show why each sale was or wasn't held. EQNR 12:21 10/16 was a scratch (idle leash + green catch-up overtake to $45.91 over last $45.905), and its hold reason is unknown. Code only; ships after the close.
 5. **Entry scratches from the ratchet** (operator 10/16: "the double check was supposed to prevent stopping at entry"). EQNR 12:21 (peak +1¢) and PPL 14:03 (peak +2.5¢) were sold at entry after the 15 s idle leash plus `green_catchup_overtake` walked the stop up to entry; the hold then let them go (reason unlogged). Check whether the overtake bypasses `ai_local_trail_be_at_pct` (0.15). If so, pre-register a replay arm 'no stop raise to or above entry until the gain is at least +0.15%' vs trail_dc. Judge on value in both halves with paired t >= 1.5 and on scratch count. Do not switch it live without that: the leash is the best-tested exit (+58 bp/day).
 6. **Early seating** (running list #16, operator 10/16). Only if the pre-screen turn test is PASS or PROMISING: pre-register an early-seat replay (lower the movers admission threshold or admit on rising RVOL, plus seat150) vs trail_dc, judged on value and opens. Find the movers admission knobs in config before designing it.
-7. **Morning scorecard script.** Build it if missing; the inputs are above.
+7. **Weekly book did NOT trade 10/16.** AGY returned an empty response at 06:36 (`weekly models 2026-10-16: agy failed: Antigravity CLI returned empty response`), so the agreement was 0 names and the 15:58 rebalance bought 0, as designed. Steps:
+   - Check AGY auth on the mini. If it is logged out, the operator restarts from the Terminal; never `claude /login`, never an API key.
+   - Add an alert: if either model returns fewer than 30 valid picks, or the agreed book is under 10 names, raise a desktop banner (decisions-2026-10-03 alert style) by 06:45. A silent zero-buy must not repeat.
+   - Operator decision pending on the start: (a) next Friday 15:58 (recommended) or (b) re-pick this weekend and buy Monday's open.
+8. **Morning scorecard script.** Build it if missing; the inputs are above.
 
 ## Key files
 
