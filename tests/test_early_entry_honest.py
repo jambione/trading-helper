@@ -253,3 +253,28 @@ def test_steep_turn_needs_slope_dip_and_rising_slow():
     assert not E.steep_flag(lazy, slow, 12)                # only +8 in 3 bars: sideways-ish
     high = [-30] * 10 + [-25, -15, -10]
     assert not E.steep_flag(high, slow, 12)                # no dip in the last 10 minutes
+
+
+def test_confirm_sigs_buy_only_if_the_price_held():
+    minutes = [600, 601, 602, 603, 604]
+    closes = [10.0, 10.0, 9.9, 10.1, 10.2]
+    assert E.confirm_sigs(minutes, closes, [600], 1, True) == [601]           # equal counts as held
+    assert E.confirm_sigs(minutes, closes, [600], 2, True) == []              # dipped by bar 602
+    assert E.confirm_sigs(minutes, closes, [600], 2, False) == [602]          # the skipped (dipped) signal
+    assert E.confirm_sigs(minutes, closes, [603], 2, True) == []              # no bar 605: no decision
+    assert E.confirm_sigs(minutes, [10.0, NAN, 1, 1, 1], [600], 1, True) == []
+
+
+def test_confirm_rules_derive_from_pre_onsets(monkeypatch):
+    monkeypatch.setattr(E, "RULES", ("CONF1", "DIP1", "PRE"))
+    monkeypatch.setattr(E, "pre_flag", lambda f, s, i: i == 2)
+    for name in ("sq_flag", "os_leave_flag", "steep_flag"):
+        monkeypatch.setattr(E, name, lambda f, s, i: False)
+    monkeypatch.setattr(E, "mid_flag", lambda *a, **k: False)
+    monkeypatch.setattr(E, "rsi2_turn_flag", lambda *a, **k: False)
+    monkeypatch.setattr(E, "ign_flag", lambda *a, **k: False)
+    m = list(range(600, 610))
+    ser = {"minutes": m, "fast": [0.0] * 10, "slow": [0.0] * 10, "rsi": [0.0] * 10, "vol": [1.0] * 10,
+           "close": [10, 10, 10, 10.1, 10, 10, 10, 10, 10, 10]}
+    out = E.rule_fires(ser, set(m))
+    assert out["PRE"][0] == [602] and out["CONF1"][0] == [603] and out["DIP1"][0] == []

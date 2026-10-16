@@ -1,0 +1,27 @@
+{
+  "study": "Confirm-then-buy: after a pre-square (empty-square, the live arm) signal, wait k minutes and buy only if the price held at or above the signal price.",
+  "registered_at": "2026-10-16 ~11:30 ET, before any return of this rule was computed.",
+  "registered_before_results": true,
+  "origin": "Operator 10/16: VRNS 10:18 and CRH 10:28 entries came after the move was over, and LHX 10:53 was sideways. The idea is the 'inverse' open hypothesis recorded in LIMIT_BELOW_2026-10-14.md: pre-square signals whose price dipped in the first minutes lost -65.6 / -22.6 bp, and those that held made +57.7 / -3.8 bp (by half).",
+  "prior": "LOW-MEDIUM, and NOT independent. The held-vs-dipped split was observed on 26 of these same 28 sessions, with a different construction: a 10 bp resting limit over 5 minutes, not a close-vs-close check after k minutes. A PASS here is in-sample for the idea and stands only with the forward test. The base arm (PRE) itself has measured at random-minute quality (square-arms-show-no-runway; early_entry_honest PRE lift +15.2 / +0.1 warm).",
+  "rule": "Base: early_entry_honest PRE onsets (completed IEX bars, warmed lines, 09:50-15:30, board minutes, 15-minute refractory). CONFk (k = 1, 2): confirmed if the IEX close of bar sm+k >= the IEX close of the signal bar sm (live sees IEX). Entry at the SIP open of bar sm+k+1. A missing bar means no decision and the signal is dropped (counted). DIPk = the signals that failed the check, entered the same way (information).",
+  "fill_markout_control_cost_statistic_split": "Identical to steep_turn_prereg.json / early_entry_mid_rsi2_prereg.json: 10-minute hold (SIP open of the entry bar to the SIP close 9 minutes later); control = random LATER minute of the same name (entry+1..+60, seed sha256(symbol|day|entry_minute|rule|early-honest-v1)); 10 bp round trip on both; lift = rule net - control net, day-equal mean, day-clustered t; half A ends 2026-09-24. Warm lines (--warm); days lacking warm-up bars are excluded.",
+  "pass": "Each half PASS = day-equal lift >= +5 bp with t >= 2.0, day-equal net > 0 at 10 bp, >= 100 scored signals, >= 6 days. CONFk PASSES only if both halves PASS; FAIL if either FAILs; else UNDERPOWERED. CONF1 and CONF2 are graded separately (2 rules; multiplicity noted, not corrected).",
+  "promising": "Per docs/PLAN_2026-10-16_bottlenecks.md (declared before this run): right sign of lift in both halves, combined t >= 1.5, and day-equal net > 0 at the measured ~3 bp round trip. Reported for CONF1/CONF2; it earns a paper slot only, never money.",
+  "information_only": [
+    "PRE (the unconfirmed base) and SQ scored the same way, so CONFk can be read against the live arm",
+    "DIP1, DIP2 (the skipped signals)",
+    "share of PRE signals confirmed at k = 1, 2",
+    "gross; 5, 15, 30 minute markouts; cross control; close entry; 20 bp cost"
+  ],
+  "no_retuning": "k = 1 and 2, close >= close as the held test, the window, refractory, hold, cost and split are fixed. Any other threshold (a held margin, k = 3, a high/low test) is a new prereg.",
+  "if_pass": "Forward test on paper: a live arm option that waits k minutes after the pre-square and buys only if held, for >= 10 sessions, then result-skeptic review before it becomes the default.",
+  "if_promising": "Paper slot as above; no default change.",
+  "if_fail": "Confirm-then-buy on the pre-square is closed; the arm's timing problem stays open.",
+  "declared_deviations": [
+    "Completed 1-minute bars; live acts intrabar on the stream.",
+    "The held test uses IEX bar closes (what live sees); the markout uses SIP."
+  ],
+  "multiplicity": "9th and 10th entry rules on these 28 sessions; stands only with the forward test.",
+  "warm": "Run with --warm semantics, as os_leave and steep_turn."
+}

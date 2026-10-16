@@ -69,6 +69,8 @@ STUDIES = {
                  "prereg": "os_leave_prereg.json", "out": "result_os_leave.md"},
     "steep_turn": {"rules": ("STEEP", "MID", "SQ"), "graded": ("STEEP",),
                    "prereg": "steep_turn_prereg.json", "out": "result_steep_turn.md"},
+    "confirm": {"rules": ("CONF1", "CONF2", "DIP1", "DIP2", "PRE", "SQ"), "graded": ("CONF1", "CONF2"),
+                "prereg": "confirm_entry_prereg.json", "out": "result_confirm.md"},
 }
 RULES = STUDIES["pre_ign"]["rules"]
 GRADED = STUDIES["pre_ign"]["graded"]
@@ -529,6 +531,22 @@ def sip_map(frame) -> dict:
             for t, o, c in zip(frame["time"], frame["open"], frame["close"])}
 
 
+def confirm_sigs(minutes, closes, base_sigs, k: int, held: bool = True) -> list[int]:
+    """Confirm-then-buy (confirm_entry_prereg): a base signal at completed bar sm is CONFIRMED if the IEX close of
+    bar sm+k is >= the IEX close of bar sm (the price held); the returned signal minute is sm+k, so the harness
+    enters at the SIP open of sm+k+1. held=False returns the signals that dipped (what the rule skips; info).
+    A missing bar at sm or sm+k means no decision (dropped)."""
+    idx = {m: i for i, m in enumerate(minutes)}
+    out = []
+    for sm in base_sigs:
+        i, j = idx.get(sm), idx.get(sm + k)
+        if i is None or j is None or not (_fin(closes[i]) and _fin(closes[j])):
+            continue
+        if (closes[j] >= closes[i] - 1e-12) == held:
+            out.append(sm + k)
+    return out
+
+
 def rule_fires(ser: dict, board: set) -> dict[str, tuple[list[int], int]]:
     m, f, s = ser["minutes"], ser["fast"], ser["slow"]
     n = len(m)
@@ -543,7 +561,14 @@ def rule_fires(ser: dict, board: set) -> dict[str, tuple[list[int], int]]:
         "OSL": [os_leave_flag(f, s, i) for i in range(n)],
         "STEEP": [steep_flag(f, s, i) for i in range(n)],
     }
-    out = {r: fires(m, flags[r], board) for r in RULES if r != "CON"}
+    out = {r: fires(m, flags[r], board) for r in RULES if r in flags}
+    if any(r[:4] in ("CONF", "DIP1", "DIP2") for r in RULES):
+        pre, pre_off = fires(m, flags["PRE"], board)
+        for k in (1, 2):
+            if f"CONF{k}" in RULES:
+                out[f"CONF{k}"] = (confirm_sigs(m, ser["close"], pre, k, True), pre_off)
+            if f"DIP{k}" in RULES:
+                out[f"DIP{k}"] = (confirm_sigs(m, ser["close"], pre, k, False), pre_off)
     if "CON" in RULES:
         out["CON"] = fires(ser["con_minutes"], ser["con_flags"], board)
     return out
