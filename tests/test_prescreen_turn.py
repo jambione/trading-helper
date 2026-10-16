@@ -64,6 +64,8 @@ def test_main_score_applies_cross_gate(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(P, "WH", str(wh))
     monkeypatch.setattr(P, "ROOT", str(tmp_path))
     monkeypatch.setattr(sys, "argv", ["prescreen_turn.py", "--score"])
+    for name in ("RULES", "GRADED", "WARM_LINES"):           # main() sets these module globals; restore after
+        monkeypatch.setattr(E, name, getattr(E, name))
     P.main()
     out = capsys.readouterr().out
     assert "Pre-screen gates" in out and "cross-name lift" in out and "days excluded for missing warm-up: 0" in out
