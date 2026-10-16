@@ -76,7 +76,7 @@ The poll profiler (`ai_watch_profile_path`) is still on. Remove it after the loo
 | trail_dc_seat150 | seats wait 150 s before eviction |
 | trail_dc_cool30 | re-entry cooldown 30 s instead of 120 s |
 | trail_dc_lob | engine-only triangle exit |
-| trail_dc_init06 | initial stop about 0.3% |
+| trail_dc_init06 | tighter initial stop, about 0.3% (0.06R) instead of about 0.6% (0.12R). The UPS question |
 | trail_dc_np_dc | no-progress cut gated by the double check |
 
 - Expected done around 17:00. It scores itself into `/tmp/ecs_20261016n/result.md` (refs off and trail_dc).
@@ -95,7 +95,7 @@ The poll profiler (`ai_watch_profile_path`) is still on. Remove it after the loo
 
 ### 3. Warehouse
 - Log `/tmp/warehouse.log`: 120 sessions 2026-04-27..2026-10-15, liquid universe, IEX + SIP 1m bars, written to `ai_reports/warehouse/{iex,sip}/*.npz`.
-- About 2–3 h from 12:00. It is resumable: rerun `tools/studies/warehouse_fetch.py --sessions 120 --feeds iex,sip`.
+- Not today. About 6 day-files in 25 minutes while it shares the data account with the gap-down download is roughly 12–16 h for all 240 files. The pre-screen score is tomorrow morning, before the open. It speeds up once gap-down finishes and frees the rate budget. Do not shrink the 120-session window or score a partial set; that needs a new amendment and review. If the download dies, rerun `tools/studies/warehouse_fetch.py --sessions 120 --feeds iex,sip` (it resumes).
 
 ### 4. Pre-screen turn test
 - Prereg `docs/studies/prescreen_turn_prereg.json`, amended_1 at 5b260f8. **Skeptic round 2: READY.**
@@ -112,11 +112,12 @@ Check their branches before touching the same files.
 
 ## Next items (in order)
 
-1. **Tonight:** score items 1–4 above, ship sweep winners after the close, and update `docs/running_list.md`.
+1. **Tonight:** score the exit sweep and the gap-down study (items 1–2). Ship sweep winners after the close, and update `docs/running_list.md`. The warehouse and the pre-screen score (items 3–4) wait until the 240 day-files are complete, tomorrow morning before the open.
 2. **Cost re-grade** (plan item 2), never done: re-score past gross-positive results at the measured ~3 bp cost in one pre-registered batch with a multiplicity bar.
    - Candidates: SIP volume breakout +9 bp, day-hold pilot, re-entry after a win (t 2.9), needle C2, mid-rise.
 3. **Stale-quote guard.** Stop exiting liquid names on IEX trade gaps (CRH 11:07 10/16 sold after 78 s on "stale quote"). See memory iex-trade-gaps-are-not-staleness. Test, then ship after the close.
-4. **Morning scorecard script.** Build it if missing; the inputs are above.
+4. **Log the hold's decision live.** `trail_exit_trend_hold` counts its reasons only in memory (`DC_STATS`). Log one event per trail sale at or below entry, with the reason (falling / no_bars / stale_bars / green / hard_stop), so the scorecard can show why each sale was or wasn't held. EQNR 12:21 10/16 was a scratch (idle leash + green catch-up overtake to $45.91 over last $45.905), and its hold reason is unknown. Code only; ships after the close.
+5. **Morning scorecard script.** Build it if missing; the inputs are above.
 
 ## Key files
 
