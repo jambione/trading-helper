@@ -19,5 +19,24 @@
   ],
   "no_retuning": "-1%, $10, $20M, 20 names, open-to-close and the cost are fixed; any other threshold is a new prereg.",
   "if_pass": "pre-register a paper forward test on the overnight/weekly account plumbing (market-on-open / market-on-close orders) for >= 30 sessions; result-skeptic review of the positive before any trading.",
-  "if_fail": "the gap-down signal stays an avoid-filter only; record it as tested."
+  "if_fail": "the gap-down signal stays an avoid-filter only; record it as tested.",
+  "amended_1": {
+    "at": "2026-10-16, after result-skeptic round 1 (NOT READY, findings 1-8), before any data was fetched.",
+    "entry_timing": "(#1) the signal uses the official open(d)/close(d-1) - 1 <= -1%, so entry CANNOT be the open. Short at the OPEN of the 09:31 one-minute SIP bar, cover at the official close(d). Minute bars are fetched only for the 09:31 bar, multi-symbol per day. Names with no 09:31 bar (halted or late open) are dropped and counted. Open-to-close is reported as information only.",
+    "filters": "(#2) the $10 price and $20M 20-day dollar-volume rules use RAW (unadjusted) prior-day closes and volumes. The gap and the returns use split- and dividend-adjusted bars (Alpaca adjustment=all), so an ex-dividend drop is not a gap (#7).",
+    "universe": "(#3) ACTIVE plus INACTIVE US common stock, through the allsym_daily_fetch.py asset listing. Tickers later reused by another company are still lost, and this is stated with the result. The pass rests on the gap-minus-control difference, not on the absolute mean.",
+    "short_constraints": "(#4) exclude gaps <= -10% and names that closed <= -10% on d-1 (Rule 201 SSR). Report the share of picks that are not easy-to-borrow at Alpaca today (information; historical borrow is unknowable). Borrow fee dropped (same-day cover); cost is 10 bp round trip, with a 25 bp stress line.",
+    "control": "(#5) deterministic: the equal-weight mean of ALL universe names with gaps in (-1%, +1%) that day, entered and exited the same way (09:31 open to close). No random seed.",
+    "statistic": "(#5) the paired per-day difference, short-gap minus short-control, net of cost, with a day-clustered t (one value per day). A SPY-hedged line (short gap names, long SPY equal dollars, both from the 09:31 open) is part of the pass bar.",
+    "pass": "PASS only if, in BOTH halves: (a) the paired difference > 0 with t >= 2.0; (b) the SPY-hedged short return > 0 with t >= 2.0; (c) net short return >= 55% positive months; (d) (a) still > 0 after dropping the top 3 days and the top 5 names by contribution in that half (#6). Otherwise FAIL. UNDERPOWERED if fewer than 500 signal days in a half.",
+    "logging": "(#8) log every symbol dropped for missing bars, 429s or failed fetches. A day with fewer than 300 universe names is excluded and counted.",
+    "unchanged": "-1% threshold, at most 20 names per day (largest gaps first, among names passing the SSR exclusion), $10, $20M, halves, if_pass and if_fail."
+  },
+  "amended_2": {
+    "at": "2026-10-16, after result-skeptic round 2 (NOT READY, 4 items), before any data was fetched. Fixes applied exactly as specified; no round 3.",
+    "signal_timing": "(r2 #1) signal = close of the 09:30 SIP one-minute bar / adjusted close(d-1) - 1 <= -1% (known at 09:31:00). Enter at the OPEN of the 09:31 bar, cover at the official close(d). Names with no 09:30 bar or no 09:31 bar are dropped and counted. The control band (-1%, +1%) and the SSR gap exclusion (<= -10%) use the same 09:30-close gap.",
+    "adjustment": "(r2 #2) daily bars AND the 09:30/09:31 minute bars use adjustment=all for the gap and returns. A separate RAW daily pull drives the $10 price and $20M dollar-volume filters. allsym_daily_fetch.py's split-only cache is NOT reused for returns.",
+    "cost": "(r2 #3) base cost is 20 bp round trip (09:31 market order plus close auction); 25 bp stress line. Pass legs (b) and (c) must hold at 25 bp.",
+    "etf_exclusion": "(r2 #4) exclude any asset whose Alpaca asset name matches ticker_filters.FUND_NAME / is_not_stock (ETF, Fund, Trust, ProShares, Direxion, iShares, etc.) on top of is_common; log the count excluded."
+  }
 }
