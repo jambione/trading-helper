@@ -69,7 +69,8 @@ STUDIES = {
                  "prereg": "os_leave_prereg.json", "out": "result_os_leave.md"},
     "steep_turn": {"rules": ("STEEP", "MID", "SQ"), "graded": ("STEEP",),
                    "prereg": "steep_turn_prereg.json", "out": "result_steep_turn.md"},
-    "sideways": {"rules": ("TRER", "SLOWUP", "CHOP", "SLOWFLAT", "PRE", "SQ"), "graded": ("TRER", "SLOWUP"),
+    "sideways": {"rules": ("TRER", "SLOWUP", "CHOP", "SLOWFLAT", "PREER", "PRESLOW", "RNDTRER", "RNDSLOWUP",
+                           "PRE", "SQ"), "graded": ("TRER", "SLOWUP"),
                  "prereg": "sideways_filter_prereg.json", "out": "result_sideways.md"},
     "confirm": {"rules": ("CONF1", "CONF2", "DIP1", "DIP2", "HELD1", "HELD2", "PRE", "SQ"),
                 "graded": ("CONF1", "CONF2"),
@@ -591,21 +592,33 @@ def slow_rise(slow, i: int, n: int = SLOW_BARS) -> float | None:
     return slow[i] - slow[i - n]
 
 
+SIDEWAYS_SUBSETS = ("TRER", "CHOP", "SLOWUP", "SLOWFLAT", "PREER", "PRESLOW")
+
+
+def _window_ok(minutes, i: int, n: int) -> bool:
+    """sideways_filter_prereg amended_1: the read window must be exactly n minutes (no gap wider than the
+    15-minute grid fill hiding inside it) and start at or after 09:30 (RTH only; no premarket, no open jump)."""
+    return i - n >= 0 and minutes[i] - minutes[i - n] == n and minutes[i - n] >= RTH_START
+
+
 def sideways_split(minutes, closes, slow, sigs) -> dict[str, list[int]]:
-    """Split PRE onsets by the two pre-registered trend reads. A signal without enough history for a read is in
-    neither side of that read (dropped from it)."""
+    """Split signals by the two pre-registered trend reads. A signal without a valid window for a read is in
+    neither side of that read. PREER / PRESLOW = the signals that HAD a valid read (kept + skipped), the fair
+    unfiltered comparison."""
     idx = {m: i for i, m in enumerate(minutes)}
-    out = {"TRER": [], "CHOP": [], "SLOWUP": [], "SLOWFLAT": []}
+    out = {k: [] for k in SIDEWAYS_SUBSETS}
     for sm in sigs:
         i = idx.get(sm)
         if i is None:
             continue
-        er = efficiency_ratio(closes, i)
+        er = efficiency_ratio(closes, i) if _window_ok(minutes, i, ER_BARS) else None
         if er is not None:
             out["TRER" if er >= ER_MIN else "CHOP"].append(sm)
-        sr = slow_rise(slow, i)
+            out["PREER"].append(sm)
+        sr = slow_rise(slow, i) if _window_ok(minutes, i, SLOW_BARS) else None
         if sr is not None:
             out["SLOWUP" if sr >= SLOW_RISE else "SLOWFLAT"].append(sm)
+            out["PRESLOW"].append(sm)
     return out
 
 
@@ -624,11 +637,22 @@ def rule_fires(ser: dict, board: set, key: tuple = ("inventory",)) -> dict[str, 
         "STEEP": [steep_flag(f, s, i) for i in range(n)],
     }
     out = {r: fires(m, flags[r], board) for r in RULES if r in flags}
-    if any(r in ("TRER", "CHOP", "SLOWUP", "SLOWFLAT") for r in RULES):
+    if any(r in SIDEWAYS_SUBSETS or r.startswith("RND") for r in RULES):
         pre_s, _off = fires(m, flags["PRE"], board)
         for r, v in sideways_split(m, ser["close"], s, pre_s).items():
             if r in RULES:
                 out[r] = (v, 0)
+        if any(r.startswith("RND") for r in RULES):
+            # Selection null (skeptic 10/16): random board minutes, same name and day, as many as PRE onsets,
+            # that pass the same read, scored with the same later control. If kept PRE signals are no better
+            # than random minutes passing the read, the read selects a market state, not better arms.
+            cand = [x for x in sorted(board) if WIN_START <= x <= WIN_END]
+            rnd = sorted(_rng(*key, "side-null").sample(cand, min(len(pre_s), len(cand)))) if pre_s else []
+            sp = sideways_split(m, ser["close"], s, rnd)
+            if "RNDTRER" in RULES:
+                out["RNDTRER"] = (sp["TRER"], 0)
+            if "RNDSLOWUP" in RULES:
+                out["RNDSLOWUP"] = (sp["SLOWUP"], 0)
     if any(r[:4] in ("CONF", "DIP1", "DIP2", "HELD") for r in RULES):
         # The off-board count returned for CONF/DIP/HELD is 0: PRE's own off-board onsets are counted under PRE,
         # and the at-decision off-board drops are in CONF_STATS.
@@ -744,7 +768,8 @@ def score(datas: list[dict]) -> dict:
                     if g is None:
                         drops[f"{rule}_no_bar"] += 1
                         continue
-                    km = control_minute(sym, day, rule, sip, board, em)
+                    crule = "PRE" if rule in SIDEWAYS_SUBSETS else rule   # same control as the unfiltered arm
+                    km = control_minute(sym, day, crule, sip, board, em)
                     if km is None:
                         drops[f"{rule}_no_control"] += 1
                         continue
@@ -763,7 +788,7 @@ def score(datas: list[dict]) -> dict:
                     gross[rule][half][day].append(g)
                     for H in INFO_HOLDS:
                         a = markout(sip, em, H)
-                        kc = control_minute(sym, day, rule, sip, board, em, H)
+                        kc = control_minute(sym, day, crule, sip, board, em, H)
                         if a is not None and kc is not None:
                             info[rule][H][day].append(a - markout(sip, kc, H))
             # artifact demo: AGY's shift on rule-free rising board minutes
@@ -809,15 +834,29 @@ def score(datas: list[dict]) -> dict:
             "info_x": {k: day_equal(v)[:3] for k, v in x_info[r].items()},
             "ctrl_overlap": (overlap[r] / overlap[r + "_n"]) if overlap[r + "_n"] else None,
         }
-    # sideways_filter_prereg: a filter is PROMISING only if its kept set beats the unfiltered PRE and its skipped set.
-    for keep, skip in (("TRER", "CHOP"), ("SLOWUP", "SLOWFLAT")):
-        kr, sr, pr = res["rules"].get(keep), res["rules"].get(skip), res["rules"].get("PRE")
-        if kr is not None:
-            kl = kr["pooled"]["lift"]
-            sl = None if sr is None else sr["pooled"]["lift"]
-            pl_ = None if pr is None else pr["pooled"]["lift"]
-            kr["pooled"]["promising"] = bool(kr["pooled"]["promising"] and None not in (kl, sl, pl_)
-                                             and kl > sl and kl > pl_)
+    # sideways_filter_prereg amended_1: kept must beat the unfiltered arm on the SAME signals (PREER/PRESLOW), its
+    # skipped set (lift AND net), and the random-minute null passing the same read; the skipped set must itself
+    # have >= MIN_SIGNALS / MIN_DAYS per half. Applies to PROMISING and to PASS.
+    for keep, skip, base, null in (("TRER", "CHOP", "PREER", "RNDTRER"), ("SLOWUP", "SLOWFLAT", "PRESLOW", "RNDSLOWUP")):
+        kr, sr, br, nr = (res["rules"].get(x) for x in (keep, skip, base, null))
+        if kr is None:
+            continue
+        lifts = [None if x is None else x["pooled"]["lift"] for x in (kr, sr, br, nr)]
+        nets = []
+        for x in (kr, sr):
+            g = None if x is None else x["pooled"].get("net3")
+            nets.append(g)
+        skip_ok = sr is not None and all(sr["halves"][h]["n"] >= MIN_SIGNALS and sr["halves"][h]["days"] >= MIN_DAYS
+                                         for h in "AB")
+        comp = (None not in lifts and None not in nets and skip_ok
+                and lifts[0] > lifts[1] and lifts[0] > lifts[2] and lifts[0] > lifts[3] and nets[0] > nets[1])
+        kr["comparisons_ok"] = bool(comp)
+        kr["comparisons"] = {"kept": lifts[0], "skipped": lifts[1], "same_signals_pre": lifts[2],
+                             "random_null": lifts[3], "kept_net3": nets[0], "skipped_net3": nets[1],
+                             "skipped_powered": skip_ok}
+        kr["pooled"]["promising"] = bool(kr["pooled"]["promising"] and comp)
+        if kr["verdict"] == "PASS" and not comp:
+            kr["verdict"] = "FAIL"
     # confirm_entry_prereg amended_1.null_held (skeptic round 2): CONFk is PROMISING only above its HELDk null.
     for k in (1, 2):
         c, h = res["rules"].get(f"CONF{k}"), res["rules"].get(f"HELD{k}")
@@ -895,11 +934,14 @@ def report(res: dict) -> str:
                 L.append(f"- CONF{k} minus PRE (pooled lift difference, the value of waiting on the live arm): "
                          f"{_bp(c - pre)}; CONF{k} minus HELD{k} (confirmation of PRE beyond a universe "
                          f"{k}-minute effect): {_bp(None if h is None else c - h)}")
-        for keep, skip in (("TRER", "CHOP"), ("SLOWUP", "SLOWFLAT")):
-            a_, b_ = res["rules"].get(keep, {}).get("pooled", {}), res["rules"].get(skip, {}).get("pooled", {})
-            if a_.get("lift") is not None and b_.get("lift") is not None:
-                L.append(f"- {keep} minus {skip} (kept vs skipped PRE signals, pooled lift): "
-                         f"{_bp(a_['lift'] - b_['lift'])}; {keep} n {a_['n']}, {skip} n {b_['n']}")
+        for keep in ("TRER", "SLOWUP"):
+            c = res["rules"].get(keep, {}).get("comparisons")
+            if c:
+                L.append(f"- {keep} comparisons (pooled lift): kept {_bp(c['kept'])}, skipped {_bp(c['skipped'])}, "
+                         f"same signals unfiltered {_bp(c['same_signals_pre'])}, random minutes passing the read "
+                         f"{_bp(c['random_null'])}; net@3bp kept {_bp(c['kept_net3'])} vs skipped "
+                         f"{_bp(c['skipped_net3'])}; skipped set powered {c['skipped_powered']} -> "
+                         f"{'all comparisons pass' if res['rules'][keep]['comparisons_ok'] else 'comparisons FAIL'}")
         cs = res.get("conf_stats") or {}
         for tag in ("CONF", "HELD"):
             for k in (1, 2):

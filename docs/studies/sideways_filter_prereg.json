@@ -11,12 +11,23 @@
   },
   "fill_markout_control_cost_statistic_split": "Identical to confirm_entry_prereg.json / steep_turn_prereg.json: entry at the SIP open of the next minute, 10-minute hold, control = random LATER minute of the same name (entry+1..+60), 10 bp round trip on both, lift = rule net - control net, day-equal mean, day-clustered t, half A ends 2026-09-24.",
   "pass": "Each half PASS = day-equal lift >= +5 bp with t >= 2.0, day-equal net > 0 at 10 bp, >= 100 scored signals, >= 6 days. A rule PASSES only if both halves PASS; FAIL if either FAILs; else UNDERPOWERED. SLOWUP and TRER graded separately (multiplicity noted, not corrected).",
-  "promising": "As confirm_entry_prereg amended_1: pooled day-equal lift > 0 with t >= 1.5, lift > 0 in each half, pooled net at 3 bp > 0, >= 100 signals and 6 days per half. In addition a filter is PROMISING only if its kept set's pooled lift is above both PRE's (the unfiltered arm) and its skipped set's (TRER > CHOP, SLOWUP > SLOWFLAT). Null calibration: on a random walk kept-minus-skipped reads within about +-11 bp, so a smaller gap is not evidence.",
-  "information_only": ["PRE, SQ, CHOP, SLOWFLAT scored the same way", "kept minus skipped pooled lift", "5/15/30 minute markouts, cross control, close entry, 20 bp cost"],
+  "promising": "As confirm_entry_prereg amended_1: pooled day-equal lift > 0 with t >= 1.5, lift > 0 in each half, pooled net at 3 bp > 0, >= 100 signals and 6 days per half. In addition a filter is PROMISING only if its kept set's pooled lift is above both PRE's (the unfiltered arm) and its skipped set's (TRER > CHOP, SLOWUP > SLOWFLAT).",
+  "information_only": [
+    "PRE, SQ, CHOP, SLOWFLAT scored the same way",
+    "kept minus skipped pooled lift",
+    "5/15/30 minute markouts, cross control, close entry, 20 bp cost"
+  ],
   "no_retuning": "5 points / 15 bars and +0.30 / 30 bars, the window, refractory, hold, cost and split are fixed. Any other threshold is a new prereg.",
   "if_pass": "Forward test on paper as an arm option (arm only if the read is trending up) for >= 10 sessions, then result-skeptic review before it becomes the default.",
   "if_promising": "Paper slot as above; no default change.",
   "if_fail": "Sideways/downtrend filtering of the pre-square by these reads is closed.",
   "null_calibration": "early_entry_honest_null.py --study sideways --days 30 --names 15 before scoring: all |t| < 1.6, none PROMISING; TRER-CHOP -11.0 bp, SLOWUP-SLOWFLAT +3.4 bp on pure noise.",
-  "command": ".venv/bin/python tools/studies/early_entry_honest.py --study sideways --score (warm lines on by default)"
+  "command": ".venv/bin/python tools/studies/early_entry_honest.py --study sideways --score (warm lines on by default)",
+  "amended_1": {
+    "at": "2026-10-16 ~13:10 ET, after result-skeptic round 1 (NOT READY), before any score on market data.",
+    "windows": "(#1) a read is valid only if its window spans exactly n minutes (minutes[i] - minutes[i-n] == n, so no hidden gap) and starts at or after 09:30 (RTH only). TRER can therefore first read at 10:00, SLOWUP at 09:45; signals without a valid read are in neither side.",
+    "selection_null": "(#3) RNDTRER / RNDSLOWUP: random board minutes of the same name and day (seed sha256(symbol|day|side-null|early-honest-v1)), as many as PRE onsets, that pass the same read, scored with the same later control. The subsets TRER/CHOP/SLOWUP/SLOWFLAT/PREER/PRESLOW use the SAME control seed as PRE, so kept-minus-unfiltered measures only the filter.",
+    "comparisons": "(#4, #5) PREER / PRESLOW = PRE signals that had a valid read (kept + skipped). A graded filter must, on pooled day-equal lift: beat its skipped set, beat PREER/PRESLOW (same signals unfiltered), and beat its random-minute null; and its pooled net at 3 bp must beat the skipped set's. The skipped set must have >= 100 signals and >= 6 days in each half. These comparisons gate BOTH PASS (a half-bar PASS that fails them is FAIL) and PROMISING. The +-11 bp sentence is withdrawn (one seed set, not a calibration).",
+    "null_calibration": "Random walk rerun with these fixes (early_entry_honest_null.py --study sideways --days 30 --names 15): TRER and SLOWUP comparisons FAIL, nothing PROMISING."
+  }
 }

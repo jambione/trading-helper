@@ -306,3 +306,8 @@ def test_sideways_split_partitions_pre_signals():
     slow = [-50.0 + 0.5 * j for j in range(50)]
     out = E.sideways_split(m, closes, slow, [645, 610])
     assert out["TRER"] == [645] and out["CHOP"] == [] and out["SLOWUP"] == [645] and out["SLOWFLAT"] == []
+    assert out["PREER"] == [645] and out["PRESLOW"] == [645]                 # 610: no 30-minute history
+    gap = m[:20] + [x + 40 for x in m[20:]]                                  # a 40-minute hole inside the window
+    assert E.sideways_split(gap, closes, slow, [gap[45]])["PREER"] == []
+    early = list(range(560, 610))                                            # window would start before 09:30
+    assert E.sideways_split(early, closes, slow, [595])["PREER"] == []        # starts 09:25
