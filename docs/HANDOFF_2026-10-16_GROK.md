@@ -120,6 +120,7 @@ Check their branches before touching the same files.
    - Cases: CRH 11:07 10/16 sold after 78 s; EQNR 12:23:59 10/16 sold 18 s after entry (`stale_data`, src `stream_old`, 17.9 s).
    - Code: the blind-book flatten in `ai_positions.py` (~line 7390, `quote_is_live` + `ai_stale_data_max_age_sec`).
    - Fix: judge liveness by NBBO quote age (bid/ask updates) rather than the last IEX trade, and require a longer gap (e.g. 60 s with a REST quote check) before the market flatten, so a truly dead feed is still caught. See memory iex-trade-gaps-are-not-staleness.
+   - **Stopgap live since 13:40 10/16** (operator OK): `ai_stale_data_max_age_sec` 15 → 60 s in config (3e0169b, hot-reloaded). After the quote-age fix ships, decide whether to keep 60 or go back to 15.
    - Test, then ship after the close.
 4. **Log the hold's decision live.** `trail_exit_trend_hold` counts its reasons only in memory (`DC_STATS`). Log one event per trail sale at or below entry, with the reason (falling / no_bars / stale_bars / green / hard_stop), so the scorecard can show why each sale was or wasn't held. EQNR 12:21 10/16 was a scratch (idle leash + green catch-up overtake to $45.91 over last $45.905), and its hold reason is unknown. Code only; ships after the close.
 5. **Morning scorecard script.** Build it if missing; the inputs are above.
