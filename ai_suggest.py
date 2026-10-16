@@ -1500,11 +1500,20 @@ def load_token_metrics(
     ``limit`` keeps only the last N rows (still returned oldest→newest).
     """
     p = path or TOKEN_METRICS_PATH
-    rows: list[dict[str, Any]] = []
     try:
-        text = p.read_text(encoding="utf-8")
+        import desk_core
+        parsed = desk_core.parse_file_cached(p, _parse_token_metrics)
     except (OSError, FileNotFoundError):
         return []
+    rows = parsed
+    if limit is not None and limit > 0 and len(rows) > limit:
+        rows = rows[-limit:]
+    # The parse is shared across calls (mtime-cached); hand out copies.
+    return [dict(r) for r in rows]
+
+
+def _parse_token_metrics(text: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -1515,8 +1524,6 @@ def load_token_metrics(
             continue
         if isinstance(row, dict):
             rows.append(row)
-    if limit is not None and limit > 0 and len(rows) > limit:
-        rows = rows[-limit:]
     return rows
 
 
@@ -2658,8 +2665,8 @@ def tag_agreement_on_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _entry_runtime_cfg() -> dict[str, Any]:
     """Load bot_config knobs used when entry kwargs are left at defaults."""
     try:
-        from config import load_config
-        return load_config() or {}
+        from config import load_config_ro
+        return load_config_ro() or {}
     except Exception:
         return {}
 

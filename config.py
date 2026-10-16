@@ -2701,6 +2701,55 @@ def load_config() -> dict:
     return _copy(cfg)
 
 
+class ReadOnlyConfig(dict):
+    """A dict that refuses writes — the shared view load_config_ro() hands out.
+
+    A dict subclass (not MappingProxyType) so isinstance(cfg, dict) checks,
+    json.dumps, {**cfg} and dict(cfg) all keep working in the callers.
+    Nested lists/dicts are SHARED with the cache: a caller must not mutate
+    them either. .copy() returns a plain, writable dict.
+    """
+
+    def _refuse(self, *_a, **_k):
+        raise TypeError("load_config_ro() is read-only; use load_config() to mutate")
+
+    __setitem__ = __delitem__ = __ior__ = _refuse
+    update = setdefault = pop = popitem = clear = _refuse
+
+    def copy(self) -> dict:  # type: ignore[override]
+        return _copy(self)
+
+
+_load_config_impl = load_config
+_ro_view: ReadOnlyConfig | None = None
+_ro_for: dict | None = None
+
+
+def load_config_ro() -> dict:
+    """load_config() without the per-call copy, for callers that only read.
+
+    load_config() copies the whole config on every call (402k calls, 60 s on
+    the 10/16 live profile). This returns one shared read-only view, rebuilt
+    only when the files' stamp changes — so a live settings edit is still seen
+    on the next read. When load_config has been replaced (tests monkeypatch
+    it), defer to the replacement so a patched config is honoured here too.
+    """
+    global _ro_view, _ro_for
+    if load_config is not _load_config_impl:
+        return load_config()
+    cache = _cache
+    if cache is None or _stamp() != _cache_stamp:
+        load_config()           # refreshes _cache / _cache_stamp
+        cache = _cache
+        if cache is None:       # invalidated by another thread mid-read
+            return load_config()
+    view = _ro_view
+    if view is None or _ro_for is not cache:
+        view = ReadOnlyConfig(cache)
+        _ro_view, _ro_for = view, cache
+    return view
+
+
 def _write_json(path: Path, data: dict):
     """Save config, complaining rather than raising.
 

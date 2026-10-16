@@ -270,8 +270,8 @@ def live_data_feed(cfg: dict | None = None):
     from alpaca.data.enums import DataFeed as _DF
     if cfg is None:
         try:
-            from config import load_config
-            cfg = load_config() or {}
+            from config import load_config_ro
+            cfg = load_config_ro() or {}
         except Exception:  # noqa: BLE001
             cfg = {}
     name = str(cfg.get("alpaca_bar_feed") or cfg.get("alpaca_data_feed") or "iex").strip().lower()

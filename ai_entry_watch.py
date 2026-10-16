@@ -8112,8 +8112,8 @@ def extreme_off_book_rows(
 
 def _push_cfg() -> dict:
     try:
-        from config import load_config
-        return load_config() or {}
+        from config import load_config_ro
+        return load_config_ro() or {}
     except Exception:
         return {}
 

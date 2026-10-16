@@ -769,9 +769,25 @@ def realized_r_today(now: float | None = None) -> float:
         day = datetime.fromtimestamp(time.time(), tz=ET).date()
     total = 0.0
     try:
-        text = OUTCOMES_PATH.read_text(encoding="utf-8")
+        import desk_core
+        rows = desk_core.parse_file_cached(OUTCOMES_PATH, _parse_outcome_r_rows)
     except FileNotFoundError:
         return 0.0
+    for row_day, r in rows:
+        if row_day != day:
+            continue
+        total += float(r)
+    return total
+
+
+def _parse_outcome_r_rows(text: str) -> list[tuple]:
+    """(exit ET date, raw realized_r_multiple) per closed outcome row.
+
+    Parsed once per outcomes-file change (desk_core.parse_file_cached):
+    realized_r_today runs inside pre_entry_gate on every arm and re-parsed the
+    whole file each time.
+    """
+    out: list[tuple] = []
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -790,10 +806,8 @@ def realized_r_today(now: float | None = None) -> float:
             row_day = datetime.fromtimestamp(exit_ts, tz=ET).date()
         except (OverflowError, OSError, ValueError):
             continue  # corrupt row must not take down the gate
-        if row_day != day:
-            continue
-        total += float(r)
-    return total
+        out.append((row_day, r))
+    return out
 
 
 _pdt_guard_inst = None
@@ -1076,8 +1090,8 @@ def _entry_cfg() -> dict[str, Any]:
     ai_entry_watch on every poll.
     """
     try:
-        from config import load_config
-        return load_config() or {}
+        from config import load_config_ro
+        return load_config_ro() or {}
     except Exception:  # noqa: BLE001
         return {}
 
@@ -1946,6 +1960,10 @@ def place_scaled_entry(
 
     def _held_qty(ticker_s: str) -> float:
         try:
+            # Did the order fill? Ask the broker, not the per-tick read cache.
+            _inv = getattr(alpaca_trader, "invalidate_broker_reads", None)
+            if callable(_inv):
+                _inv()
             pos = alpaca_trader.get_open_positions() or {}
             row = pos.get(ticker_s) or pos.get(ticker_s.upper())
             if isinstance(row, dict):
@@ -2752,8 +2770,8 @@ def _opt_float(value: Any, default: float) -> float:
 def _cfg_flag(key: str, default: bool = True) -> bool:
     """One config read, never raising — these run inside the position tick."""
     try:
-        from config import load_config
-        return bool(load_config().get(key, default))
+        from config import load_config_ro
+        return bool(load_config_ro().get(key, default))
     except Exception:
         return bool(default)
 
@@ -2761,8 +2779,8 @@ def _cfg_flag(key: str, default: bool = True) -> bool:
 def _cfg_all() -> dict:
     """Whole config, never raising — for helpers that take a cfg dict."""
     try:
-        from config import load_config
-        return load_config() or {}
+        from config import load_config_ro
+        return load_config_ro() or {}
     except Exception:
         return {}
 

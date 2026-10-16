@@ -183,11 +183,15 @@ def _restore_market_session():
     import alpaca_trader as _at
     orig_clock = _at.market_is_open
     orig_cache = _at._clock_cache
+    # market_is_open() now holds the broker clock itself; a reading from one
+    # test's fake client must not answer the next test's.
+    _at._raw_clock_cache = (0.0, False)
     try:
         yield
     finally:
         _at.market_is_open = orig_clock
         _at._clock_cache = orig_cache
+        _at._raw_clock_cache = (0.0, False)
 
 
 @pytest.fixture(autouse=True)

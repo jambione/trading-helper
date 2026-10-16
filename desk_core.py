@@ -126,6 +126,31 @@ def load_desk_env(
     return from_file + [k for k in applied if k not in from_file]
 
 
+_env_stamp: tuple | None = None
+
+
+def load_desk_env_cached() -> None:
+    """load_desk_env(), skipped while neither file nor the keys changed.
+
+    The quote paths (ai_trading._latest_ask / prime_quotes, stocktwits
+    _alpaca_client) called load_desk_env on every quote: a re-read of
+    signal_engine.env plus a json.loads of secrets.json per call (10/16
+    profile). A repeat with unchanged files sets nothing new — keys already in
+    os.environ are never overwritten by a repeat — so it is skipped. A key
+    removed from the environment (tests, restarts) forces a real reload.
+    """
+    global _env_stamp
+
+    def _now_stamp() -> tuple:
+        return (file_stamp(ENV_FILE), file_stamp(SECRETS_FILE),
+                "ALPACA_API_KEY" in os.environ, "ALPACA_SECRET_KEY" in os.environ)
+
+    if _now_stamp() == _env_stamp:
+        return
+    load_desk_env()
+    _env_stamp = _now_stamp()
+
+
 def parse_hhmm(raw: Any, default: tuple[int, int]) -> tuple[int, int]:
     """``"15:50"`` -> ``(15, 50)``. Returns *default* on anything unparseable."""
     try:
@@ -133,6 +158,43 @@ def parse_hhmm(raw: Any, default: tuple[int, int]) -> tuple[int, int]:
         return int(hh), int(mm)
     except Exception:
         return default
+
+
+def file_stamp(path: Path | str) -> tuple | None:
+    """(mtime_ns, size) of ``path``, or None when it cannot be stat'ed."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+# path+tag -> (stamp, parsed). See parse_file_cached.
+_PARSE_CACHE: dict[tuple[str, str], tuple[tuple, Any]] = {}
+
+
+def parse_file_cached(path: Path | str, parse, *, tag: str = "") -> Any:
+    """``parse(text)`` of ``path``, re-run only when its (mtime, size) changes.
+
+    The desk re-read and re-parsed the same unchanged JSON/JSONL files on every
+    poll (json.loads: 39.7M calls / 113 s on the 10/16 live profile). An
+    unchanged file is now parsed once. The parsed value is SHARED between
+    callers: treat it as read-only, or copy it. ``tag`` separates two parsers
+    of the same file. Raises OSError like ``read_text`` when the file is
+    missing; a ``parse`` exception propagates and is not cached.
+    """
+    key = (str(path), tag)
+    stamp = file_stamp(path)
+    hit = _PARSE_CACHE.get(key)
+    if stamp is not None and hit is not None and hit[0] == stamp:
+        return hit[1]
+    text = Path(path).read_text(encoding="utf-8")
+    # Stamp taken BEFORE the read: a write that lands mid-read leaves a newer
+    # mtime on disk, so the next call re-parses instead of keeping a torn view.
+    value = parse(text)
+    if stamp is not None:
+        _PARSE_CACHE[key] = (stamp, value)
+    return value
 
 
 def write_json_atomic(path: Path, payload: Any, *, indent: int = 2) -> None:

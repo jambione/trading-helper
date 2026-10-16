@@ -50,7 +50,23 @@ TRADE_LOG_PATH = resolve_report_dir() / "trades.jsonl"
 
 import desk_core  # noqa: E402
 
-_load_env = desk_core.load_desk_env
+_load_env = desk_core.load_desk_env_cached
+
+
+_data_clients: dict[tuple, Any] = {}
+
+
+def _data_client(api: str, sec: str):
+    """One StockHistoricalDataClient per key pair, so its HTTP session (and
+    TLS connection) is reused instead of rebuilt on every quote."""
+    from alpaca.data.historical import StockHistoricalDataClient
+    key = (api, sec, StockHistoricalDataClient)
+    client = _data_clients.get(key)
+    if client is None:
+        client = StockHistoricalDataClient(api, sec)
+        _data_clients.clear()          # keys rotated: drop the old client
+        _data_clients[key] = client
+    return client
 
 
 def init_for_ai(
@@ -294,7 +310,7 @@ def prime_quotes(symbols: list[str]) -> int:
         from alpaca.data.historical import StockHistoricalDataClient
         from alpaca.data.requests import StockLatestQuoteRequest
         from alpaca.data.enums import DataFeed
-        client = StockHistoricalDataClient(api, sec)
+        client = _data_client(api, sec)
         q = client.get_stock_latest_quote(
             StockLatestQuoteRequest(symbol_or_symbols=wanted, feed=__import__('alpaca_api').live_data_feed()))
     except Exception:
@@ -476,7 +492,7 @@ def _latest_ask(symbol: str) -> float | None:
         from alpaca.data.historical import StockHistoricalDataClient
         from alpaca.data.requests import StockLatestTradeRequest, StockLatestQuoteRequest
         from alpaca.data.enums import DataFeed
-        client = StockHistoricalDataClient(api, sec)
+        client = _data_client(api, sec)
         try:
             q = client.get_stock_latest_quote(
                 StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=__import__('alpaca_api').live_data_feed()))
@@ -563,8 +579,8 @@ def _book_limits(equity: float | None = None):
     if eq is None:
         return None
     try:
-        from config import load_config
-        cfg = load_config()
+        from config import load_config_ro
+        cfg = load_config_ro()
         max_p = int(cfg.get("ai_max_positions", _max_positions) or _max_positions)
         max_pct = float(cfg.get("ai_max_position_pct", _max_position_pct) or _max_position_pct)
         slot_eq = float(cfg.get("ai_position_slot_equity", _slot_equity) or _slot_equity)
@@ -586,8 +602,8 @@ def effective_max_positions(equity: float | None = None) -> int:
     if lim is not None:
         return int(lim.max_positions)
     try:
-        from config import load_config
-        return int(load_config().get("ai_max_positions", _max_positions) or _max_positions)
+        from config import load_config_ro
+        return int(load_config_ro().get("ai_max_positions", _max_positions) or _max_positions)
     except Exception:
         return _max_positions
 

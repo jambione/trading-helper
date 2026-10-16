@@ -373,7 +373,10 @@ def _overnight_snapshot(sub: str = "overnight") -> dict | None:
     """
     path = Path(__file__).resolve().parent / "ai_reports" / sub / "snapshot.json"
     try:
-        snap = json.loads(path.read_text(encoding="utf-8"))
+        import desk_core
+        # Rewritten only per overnight step; parsed once per change (it was
+        # ~36 ms a read, twice per payload — 10/16 profile). Shared: read-only.
+        snap = desk_core.parse_file_cached(path, json.loads)
     except (OSError, ValueError):
         return None
     return snap if isinstance(snap, dict) else None

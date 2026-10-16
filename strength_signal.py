@@ -71,6 +71,7 @@ _BURSTS: dict[str, tuple[float, set[str]]] = {}   # day -> (loaded_at, symbols)
 RTH_OPEN_MIN = 9 * 60 + 30
 PREMARKET_MIN = 4 * 60
 BURST_REFRESH_SEC = 300.0
+BURST_FINAL_AFTER_MIN = 5
 
 # Honest fill for this rule: decide on a CLOSED bar, so the earliest
 # executable print is the NEXT bar's open. signal_close is the optimistic
@@ -125,9 +126,14 @@ def premarket_bursts(day: str, now: float) -> set[str]:
         return hit[1]
     syms: set[str] = set()
     path = os.path.join(report_dir(), "signal_shadow.jsonl")
+    read_ok = False
     try:
         with open(path) as fh:
             for line in fh:
+                # Most rows are other signals: skip them before json.loads,
+                # which was the cost of re-reading this file (10/16 profile).
+                if "mention_burst" not in line:
+                    continue
                 try:
                     r = json.loads(line)
                     ts = float(r["ts"])
@@ -143,12 +149,19 @@ def premarket_bursts(day: str, now: float) -> set[str]:
                 sym = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
                 if sym:
                     syms.add(sym)
+        read_ok = True
     except OSError:
         # A missing burst file is not "no bursts", it is no information. With
         # require_burst on, nothing fires — the safe way for a logger to be
         # wrong is to record less, never to record something it did not see.
         pass
-    _BURSTS[day] = (now, syms)
+    # Once a successful read lands after the open (+ a margin for the last
+    # premarket rows to be written), the premarket set is final for the day.
+    loaded_at = now
+    if read_ok and datetime.fromtimestamp(now, ET).strftime("%Y-%m-%d") == day \
+            and _et_minutes(now) >= RTH_OPEN_MIN + BURST_FINAL_AFTER_MIN:
+        loaded_at = float("inf")
+    _BURSTS[day] = (loaded_at, syms)
     return syms
 
 

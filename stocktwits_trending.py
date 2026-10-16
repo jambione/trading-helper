@@ -269,16 +269,27 @@ def snapshot_fields(snap, now: float, today_et: date) -> dict[str, Any]:
 
 def _alpaca_client():
     """Alpaca data client, or None when keys are absent."""
-    _load_env()
+    desk_core.load_desk_env_cached()
     api = os.getenv("ALPACA_API_KEY", "")
     sec = os.getenv("ALPACA_SECRET_KEY", "")
     if not api or not sec:
         return None
     try:
         from alpaca.data.historical import StockHistoricalDataClient
-        return StockHistoricalDataClient(api, sec)
+        # One client per key pair: rebuilding it per call threw away the HTTP
+        # session, so every snapshot paid a fresh TLS handshake (10/16 profile).
+        key = (api, sec, StockHistoricalDataClient)
+        client = _DATA_CLIENTS.get(key)
+        if client is None:
+            client = StockHistoricalDataClient(api, sec)
+            _DATA_CLIENTS.clear()
+            _DATA_CLIENTS[key] = client
+        return client
     except Exception:
         return None
+
+
+_DATA_CLIENTS: dict = {}
 
 
 def _feed_arg() -> dict:

@@ -18,6 +18,7 @@ import logging
 import os
 import math
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -157,8 +158,8 @@ def _stop_use_market() -> bool:
     sell rests and software exhaustion owns the upside take-profit.
     """
     try:
-        from config import load_config
-        return bool(load_config().get("ai_stop_use_market", True))
+        from config import load_config_ro
+        return bool(load_config_ro().get("ai_stop_use_market", True))
     except Exception:
         return False
 
@@ -166,8 +167,8 @@ def _stop_use_market() -> bool:
 def _stop_limit_slip_pct() -> float:
     """Room below the trigger for the stop-LIMIT form, in percent."""
     try:
-        from config import load_config
-        return float(load_config().get("ai_stop_limit_slip_pct", 1.0) or 0.0)
+        from config import load_config_ro
+        return float(load_config_ro().get("ai_stop_limit_slip_pct", 1.0) or 0.0)
     except Exception:
         return 1.0
 
@@ -185,8 +186,8 @@ def _require_protective_exit() -> bool:
     and the failure mode of being too loose is an unhedged account.
     """
     try:
-        from config import load_config
-        cfg = load_config()
+        from config import load_config_ro
+        cfg = load_config_ro()
         # Software-only stop desk: local trail market-flattens; no broker SL.
         if cfg.get("ai_broker_stop_enabled") is False:
             return False
@@ -226,8 +227,8 @@ def _host_allowed() -> bool:
     silently corrupts both books.
     """
     try:
-        from config import load_config
-        want = str(load_config().get("ai_trading_host", "") or "").strip()
+        from config import load_config_ro
+        want = str(load_config_ro().get("ai_trading_host", "") or "").strip()
     except Exception:
         return False  # cannot verify identity -> do not act
     if not want:
@@ -377,8 +378,8 @@ def symbol_fractionable(ticker: str) -> bool:
 def _fractional_shares_enabled() -> bool:
     """Config gate for RTH float qty. Default false (dark ship)."""
     try:
-        from config import load_config
-        return bool(load_config().get("ai_fractional_shares_enabled", False))
+        from config import load_config_ro
+        return bool(load_config_ro().get("ai_fractional_shares_enabled", False))
     except Exception:
         return False
 
@@ -447,10 +448,45 @@ def market_is_open() -> bool:
     """
     if not is_active():
         return False
+    global _raw_clock_cache
+    now = time.time()
+    exp, val = _raw_clock_cache
+    if now < exp:
+        return val
     try:
-        return bool(_client.get_clock().is_open)
+        clock = _client.get_clock()
+        val = bool(clock.is_open)
     except Exception:
+        # Do not hammer a rate-limited clock either, but retry soon.
+        _raw_clock_cache = (now + _RAW_CLOCK_ERR_TTL_SEC, False)
         return False
+    exp = now + _RAW_CLOCK_TTL_SEC
+    # Never hold a reading past the session boundary the clock itself names.
+    boundary = getattr(clock, "next_close" if val else "next_open", None)
+    try:
+        b = boundary.timestamp() if boundary is not None else None
+    except Exception:
+        b = None
+    if isinstance(b, (int, float)) and b > now:
+        exp = min(exp, b)
+    _raw_clock_cache = (exp, val)
+    return val
+
+
+# market_is_open() was a broker round trip on EVERY call: 1483 calls / 48 s on
+# the 10/16 live profile, inside the 3 s book tick. The clock only flips at a
+# session boundary it reports itself (next_open / next_close), so a reading is
+# held up to _RAW_CLOCK_TTL_SEC and never past that boundary. Errors are held
+# briefly so a 429 storm is not retried per call. (expires_at, is_open)
+_RAW_CLOCK_TTL_SEC = 30.0
+_RAW_CLOCK_ERR_TTL_SEC = 5.0
+_raw_clock_cache: tuple[float, bool] = (0.0, False)
+
+
+def invalidate_clock_cache() -> None:
+    global _raw_clock_cache, _clock_cache
+    _raw_clock_cache = (0.0, False)
+    _clock_cache = (0.0, False)
 
 
 # Clock reads are cheap but this is consulted per order LEG, and the desk
@@ -542,7 +578,7 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
                 return _refuse_unprotected(
                     ticker, price, rsi, hist, why="extended_hours_no_bracket")
             limit_px = round(price * (1 + _limit_offset / 100.0), 2)
-            order = _client.submit_order(
+            order = _submit_order(
                 LimitOrderRequest(
                     symbol         = ticker,
                     notional       = round(_trade_amount, 2),
@@ -561,7 +597,7 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
             sl = round(price * (1 - _stop_loss_pct / 100.0), 2)
             # stop limit a tick under stop to reduce gap skips
             sl_limit = round(sl * 0.999, 2)
-            order = _client.submit_order(
+            order = _submit_order(
                 MarketOrderRequest(
                     symbol=ticker,
                     qty=qty,
@@ -581,7 +617,7 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
             if _require_protective_exit():
                 return _refuse_unprotected(
                     ticker, price, rsi, hist, why="brackets_not_configured")
-            order = _client.submit_order(
+            order = _submit_order(
                 MarketOrderRequest(
                     symbol        = ticker,
                     notional      = round(_trade_amount, 2),
@@ -685,7 +721,7 @@ def buy_limit_at_price(
         from alpaca.trading.requests import LimitOrderRequest
         from alpaca.trading.enums import OrderSide, TimeInForce
 
-        order = _client.submit_order(
+        order = _submit_order(
             LimitOrderRequest(
                 symbol=ticker,
                 qty=submit_qty,
@@ -797,7 +833,7 @@ def buy_market_shares(
         from alpaca.trading.requests import MarketOrderRequest
         from alpaca.trading.enums import OrderSide, TimeInForce
 
-        order = _client.submit_order(
+        order = _submit_order(
             MarketOrderRequest(
                 symbol        = ticker,
                 qty           = submit_qty,
@@ -947,7 +983,7 @@ def sell(ticker: str, price: float, rsi: float, hist: float,
             from alpaca.trading.requests import LimitOrderRequest
             from alpaca.trading.enums   import OrderSide, TimeInForce
             limit_px = round(price * (1 - _limit_offset / 100.0), 2)
-            order = _client.submit_order(
+            order = _submit_order(
                 LimitOrderRequest(
                     symbol         = ticker,
                     qty            = qty_held,
@@ -958,7 +994,7 @@ def sell(ticker: str, price: float, rsi: float, hist: float,
                 )
             )
         else:
-            order = _client.close_position(ticker)
+            order = _close_position(ticker)
         order_id = str(order.id)
         status   = str(order.status)
         print(f"  [TRADER] ✓  SELL order submitted  id={order_id}  status={status}")
@@ -997,7 +1033,7 @@ def cancel_open_orders(ticker: str | None = None) -> dict:
 
     for o in open_orders:
         try:
-            _client.cancel_order_by_id(o.id)
+            _cancel_order_by_id(o.id)
             canceled += 1
         except Exception as e:
             errors.append(f"{getattr(o, 'id', '?')}: {e}")
@@ -1062,7 +1098,7 @@ def dedupe_open_orders(keep: str = "newest") -> dict:
         by_symbol[sym] = by_symbol.get(sym, 0) + 1
         for o in orders[1:]:
             try:
-                _client.cancel_order_by_id(o.id)
+                _cancel_order_by_id(o.id)
                 canceled += 1
             except Exception as e:
                 log.warning("[TRADER] dedupe cancel %s failed: %s",
@@ -1115,7 +1151,7 @@ def liquidate_all(*, except_symbols: set | None = None) -> dict:
             if not sym or sym in keep:
                 continue
             try:
-                _client.cancel_order_by_id(o.id)
+                _cancel_order_by_id(o.id)
                 canceled += 1
             except Exception as e:  # noqa: BLE001
                 errors.append(f"{getattr(o, 'id', '?')}: {e}")
@@ -1124,6 +1160,7 @@ def liquidate_all(*, except_symbols: set | None = None) -> dict:
         canceled = int(cancel.get("canceled") or 0)
         errors = list(cancel.get("errors") or [])
     symbols: list[str] = []
+    invalidate_broker_reads()     # verify against the broker, not the tick cache
     detail = get_positions_detail()
     if detail is None:
         errors.append("get_positions_detail failed")
@@ -1157,6 +1194,7 @@ def liquidate_all(*, except_symbols: set | None = None) -> dict:
                 log.warning("[TRADER] liquidate_all %s failed: %s", sym, e)
         if attempt < _LIQUIDATE_ATTEMPTS - 1:
             time.sleep(_CANCEL_SETTLE_SEC)
+            invalidate_broker_reads()
             detail = get_positions_detail() or {}
 
     # ok means THE BOOK IS FLAT — nothing weaker. It used to be
@@ -1166,6 +1204,7 @@ def liquidate_all(*, except_symbols: set | None = None) -> dict:
     # error, the caller stamped the day done, and a naked position went into
     # the weekend. Verify against the broker rather than inferring from what we
     # attempted.
+    invalidate_broker_reads()
     still_open = get_positions_detail()
     if still_open is None:
         errors.append("post-liquidate position check failed")
@@ -1216,7 +1255,7 @@ def _collared_sell(ticker: str, qty_held: float, ref: float, collar_pct: float,
     from alpaca.trading.requests import LimitOrderRequest
     from alpaca.trading.enums import OrderSide, TimeInForce
     limit_px = _collar_limit_px(ref, collar_pct)
-    order = _client.submit_order(LimitOrderRequest(
+    order = _submit_order(LimitOrderRequest(
         symbol=ticker, qty=qty_held, side=OrderSide.SELL,
         time_in_force=TimeInForce.DAY, limit_price=limit_px))
     deadline = time.time() + max(0.0, float(wait_sec))
@@ -1231,7 +1270,7 @@ def _collared_sell(ticker: str, qty_held: float, ref: float, collar_pct: float,
     if status.split(".")[-1] == "filled":
         return order, f"collar_limit {limit_px}"
     try:
-        _client.cancel_order_by_id(order.id)
+        _cancel_order_by_id(order.id)
     except Exception:
         pass
     try:
@@ -1240,7 +1279,7 @@ def _collared_sell(ticker: str, qty_held: float, ref: float, collar_pct: float,
         left = 0.0
     if left <= 0:
         return order, f"collar_limit {limit_px} (filled on cancel)"
-    return _client.close_position(ticker), f"collar_limit {limit_px} -> market {left:g}"
+    return _close_position(ticker), f"collar_limit {limit_px} -> market {left:g}"
 
 
 def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0.0,
@@ -1284,7 +1323,7 @@ def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0
             order, note = _collared_sell(ticker, qty_held, float(price),
                                          float(collar_pct), float(collar_wait_sec))
         elif market_is_open():
-            order = _client.close_position(ticker)      # market, whole position
+            order = _close_position(ticker)      # market, whole position
         else:
             from alpaca.trading.requests import LimitOrderRequest
             from alpaca.trading.enums import OrderSide, TimeInForce
@@ -1293,7 +1332,7 @@ def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0
             if limit_px <= 0:
                 return {"ok": False, "order_id": None, "status": "no_price",
                         "note": "off-hours sell needs a price", "canceled": canceled}
-            order = _client.submit_order(
+            order = _submit_order(
                 LimitOrderRequest(symbol=ticker, qty=qty_held, side=OrderSide.SELL,
                                   time_in_force=TimeInForce.DAY, limit_price=limit_px,
                                   extended_hours=True))
@@ -1313,6 +1352,89 @@ def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0
                 "note": str(e), "canceled": canceled}
 
 
+# ── Per-tick broker read cache ───────────────────────────────────────────────
+# One book tick asked the broker the same question many times: get_open_orders
+# 1983 calls / 61 s and get_all_positions (detail + plain) on the 10/16 live
+# profile, and every extra request spends the shared 200/min budget — the 429
+# retries are what made single reads take ~6 s (_held_qty). A read is shared
+# for _BROKER_READ_TTL_SEC, and EVERY submit / cancel / close (and any observed
+# fill) bumps _broker_gen, which drops the cache and refuses to store a read
+# that was in flight across the write. Callers that verify the result of their
+# own order pass fresh=True.
+_BROKER_READ_TTL_SEC = 1.5
+_broker_reads: dict = {}          # key -> (monotonic_ts, gen, client, raw)
+_broker_gen = 0
+_broker_lock = threading.Lock()
+
+
+_BOOK_CHANGING_STATUSES = frozenset(
+    {"filled", "partially_filled", "canceled", "expired", "replaced", "rejected"})
+
+
+def invalidate_broker_reads() -> None:
+    """Drop every cached broker read. Called after any order-book write."""
+    global _broker_gen
+    with _broker_lock:
+        _broker_gen += 1
+        _broker_reads.clear()
+
+
+def _cached_broker_read(key, fetch, *, fresh: bool = False) -> list:
+    """Shared raw list for ``key``; ``fetch`` raises on failure (never cached)."""
+    now = time.monotonic()
+    client = _client
+    if not fresh:
+        with _broker_lock:
+            hit = _broker_reads.get(key)
+            if (hit is not None and hit[1] == _broker_gen and hit[2] is client
+                    and now - hit[0] < _BROKER_READ_TTL_SEC):
+                return list(hit[3])
+    gen = _broker_gen
+    raw = list(fetch() or [])
+    with _broker_lock:
+        if gen == _broker_gen:
+            _broker_reads[key] = (time.monotonic(), gen, client, raw)
+    return list(raw)
+
+
+def _all_positions(*, fresh: bool = False) -> list:
+    return _cached_broker_read(("positions",), _client.get_all_positions, fresh=fresh)
+
+
+def _fetch_open_orders_raw(limit: int) -> list:
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+        return list(_client.get_orders(
+            filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=limit)) or [])
+    except Exception:
+        raw = _client.get_orders() or []
+        return [o for o in raw
+                if str(getattr(o, "status", "")).lower()
+                in ("new", "accepted", "pending_new", "partially_filled",
+                    "orderstatus.accepted", "orderstatus.new")]
+
+
+def _broker_write(fn, *args, **kwargs):
+    """Run one order-book write, then invalidate every cached broker read."""
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        invalidate_broker_reads()
+
+
+def _submit_order(*args, **kwargs):
+    return _broker_write(_client.submit_order, *args, **kwargs)
+
+
+def _cancel_order_by_id(*args, **kwargs):
+    return _broker_write(_client.cancel_order_by_id, *args, **kwargs)
+
+
+def _close_position(*args, **kwargs):
+    return _broker_write(_client.close_position, *args, **kwargs)
+
+
 # ── Order / position lookups (fill reconciliation) ────────────────────────────
 
 def get_order(order_id: str) -> Optional[dict]:
@@ -1326,6 +1448,8 @@ def get_order(order_id: str) -> Optional[dict]:
         o = _client.get_order_by_id(order_id)
         fap = getattr(o, "filled_avg_price", None)
         fq  = getattr(o, "filled_qty", None)
+        if str(o.status).split(".")[-1].lower() in _BOOK_CHANGING_STATUSES:
+            invalidate_broker_reads()
         return {
             "status":           str(o.status),
             "filled_avg_price": float(fap) if fap is not None else None,
@@ -1336,7 +1460,7 @@ def get_order(order_id: str) -> Optional[dict]:
         return None
 
 
-def get_open_positions() -> Optional[dict]:
+def get_open_positions(*, fresh: bool = False) -> Optional[dict]:
     """
     All open Alpaca positions as {symbol: {"qty", "avg_entry_price"}}.
     Returns None when the trader is off or the call fails (so callers can
@@ -1346,7 +1470,7 @@ def get_open_positions() -> Optional[dict]:
         return None
     try:
         out = {}
-        for pos in _client.get_all_positions():
+        for pos in _all_positions(fresh=fresh):
             out[str(pos.symbol).upper()] = {
                 "qty":             float(pos.qty),
                 "avg_entry_price": float(pos.avg_entry_price),
@@ -1357,7 +1481,7 @@ def get_open_positions() -> Optional[dict]:
         return None
 
 
-def get_open_orders(limit: int = 50) -> list[dict]:
+def get_open_orders(limit: int = 50, *, fresh: bool = False) -> list[dict]:
     """
     Resting orders as plain dicts: {symbol, side, qty, filled, type, status, limit}.
     Empty list when the trader is off or the call fails — callers render a
@@ -1366,17 +1490,9 @@ def get_open_orders(limit: int = 50) -> list[dict]:
     if not is_active() or _client is None:
         return []
     try:
-        try:
-            from alpaca.trading.requests import GetOrdersRequest
-            from alpaca.trading.enums import QueryOrderStatus
-            raw = _client.get_orders(
-                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=limit))
-        except Exception:
-            raw = _client.get_orders() or []
-            raw = [o for o in raw
-                   if str(getattr(o, "status", "")).lower()
-                   in ("new", "accepted", "pending_new", "partially_filled",
-                       "orderstatus.accepted", "orderstatus.new")]
+        raw = _cached_broker_read(("open_orders", int(limit)),
+                                  lambda: _fetch_open_orders_raw(limit),
+                                  fresh=fresh)
         out: list[dict] = []
         seen: set[tuple] = set()
         for o in raw or []:
@@ -1471,7 +1587,7 @@ def _f(obj, attr) -> float:
         return 0.0
 
 
-def get_positions_detail() -> Optional[dict]:
+def get_positions_detail(*, fresh: bool = False) -> Optional[dict]:
     """
     All open positions with live P&L for display:
       {SYM: {qty, avg_entry, current, pl, plpc, mkt_val}}
@@ -1482,7 +1598,7 @@ def get_positions_detail() -> Optional[dict]:
         return None
     try:
         out = {}
-        for pos in _client.get_all_positions():
+        for pos in _all_positions(fresh=fresh):
             out[str(pos.symbol).upper()] = {
                 "qty":       _f(pos, "qty"),
                 "avg_entry": _f(pos, "avg_entry_price"),
@@ -1665,7 +1781,7 @@ def buy_limit_bracket(
             # on QMCO/AIFA/SOUN while the desk kept re-arming the same name.
             # OrderClass.OTO holds the stop contingent on the parent fill.
             shape = "stop_mkt" if use_mkt else "stop_lmt"
-            buy_order = _client.submit_order(
+            buy_order = _submit_order(
                 LimitOrderRequest(
                     symbol=ticker, qty=int(qty), side=OrderSide.BUY,
                     time_in_force=TimeInForce.DAY, limit_price=lim,
@@ -1695,7 +1811,7 @@ def buy_limit_bracket(
                 "limit_px": lim, "stop_px": sl, "target_px": None, "note": None,
             }
 
-        order = _client.submit_order(
+        order = _submit_order(
             LimitOrderRequest(
                 symbol=ticker,
                 qty=int(qty),
@@ -1794,7 +1910,7 @@ def buy_bracket_exact(ticker: str, qty: float, stop_price: float,
 
         if target_price is not None and float(target_price) > 0:
             tp = round(float(target_price), 2)
-            order = _client.submit_order(
+            order = _submit_order(
                 MarketOrderRequest(
                     symbol=ticker, qty=qty,
                     side=OrderSide.BUY, time_in_force=TimeInForce.DAY,
@@ -1828,14 +1944,14 @@ def buy_bracket_exact(ticker: str, qty: float, stop_price: float,
         # Shape follows ai_stop_use_market (stop-LIMIT is the AI desk default
         # when a single protective sell rests and exhaustion owns the upside).
         from alpaca.trading.requests import StopLimitOrderRequest
-        buy_order = _client.submit_order(
+        buy_order = _submit_order(
             MarketOrderRequest(
                 symbol=ticker, qty=qty,
                 side=OrderSide.BUY, time_in_force=TimeInForce.DAY,
             )
         )
         if _stop_use_market():
-            stop_order = _client.submit_order(
+            stop_order = _submit_order(
                 StopOrderRequest(
                     symbol=ticker, qty=qty,
                     side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
@@ -1844,7 +1960,7 @@ def buy_bracket_exact(ticker: str, qty: float, stop_price: float,
             )
             shape = "stop_mkt"
         else:
-            stop_order = _client.submit_order(
+            stop_order = _submit_order(
                 StopLimitOrderRequest(
                     symbol=ticker, qty=qty,
                     side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
@@ -1877,7 +1993,7 @@ def cancel_order_id(order_id: str | None) -> bool:
     if not _can_mutate() or not order_id:
         return False
     try:
-        _client.cancel_order_by_id(str(order_id))
+        _cancel_order_by_id(str(order_id))
         return True
     except Exception:
         return False
@@ -1936,7 +2052,7 @@ def place_stop_sell(
         if sell_qty < 1:
             return {"ok": False, "order_id": None, "status": "no_qty"}
         if _stop_use_market():
-            order = _client.submit_order(
+            order = _submit_order(
                 StopOrderRequest(
                     symbol=ticker, qty=sell_qty,
                     side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
@@ -1946,7 +2062,7 @@ def place_stop_sell(
         else:
             slip = max(0.0, _stop_limit_slip_pct()) / 100.0
             lim = round(sl * (1.0 - slip), 2)
-            order = _client.submit_order(
+            order = _submit_order(
                 StopLimitOrderRequest(
                     symbol=ticker, qty=sell_qty,
                     side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
@@ -2019,7 +2135,7 @@ def place_limit_sell(
             if sell_qty <= 0:
                 return {"ok": False, "order_id": None, "status": "no_qty",
                         "error": "qty<=0 after clamp"}
-        order = _client.submit_order(
+        order = _submit_order(
             LimitOrderRequest(
                 symbol=ticker,
                 qty=sell_qty,
@@ -2087,7 +2203,7 @@ def working_sell_replace(
     try:
         from alpaca.trading.requests import LimitOrderRequest
         from alpaca.trading.enums import OrderSide, TimeInForce
-        order = _client.submit_order(
+        order = _submit_order(
             LimitOrderRequest(
                 symbol=ticker,
                 qty=sell_qty,
@@ -2146,7 +2262,7 @@ def sell_qty_market(ticker: str, qty: float) -> dict:
         sell_qty = math.floor(sell_qty * 1_000_000_000 + 1e-15) / 1_000_000_000
         if sell_qty <= 0:
             return {"ok": False, "order_id": None, "status": "no_qty"}
-        order = _client.submit_order(
+        order = _submit_order(
             MarketOrderRequest(
                 symbol=ticker,
                 qty=sell_qty,
@@ -2185,7 +2301,7 @@ def replace_stop(ticker: str, old_stop_order_id: Optional[str],
     ticker = ticker.upper()
     if old_stop_order_id:
         try:
-            _client.cancel_order_by_id(old_stop_order_id)
+            _cancel_order_by_id(old_stop_order_id)
         except Exception:
             pass  # already filled/canceled — fine, we still replace below
     if trail_percent is not None and float(trail_percent) > 0:
@@ -2202,7 +2318,7 @@ def replace_stop(ticker: str, old_stop_order_id: Optional[str],
             # Match entry stops: market by default, stop-limit when configured
             # (operator preference when a single protective sell rests).
             if _stop_use_market():
-                order = _client.submit_order(
+                order = _submit_order(
                     StopOrderRequest(
                         symbol=ticker, qty=qty,
                         side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
@@ -2212,7 +2328,7 @@ def replace_stop(ticker: str, old_stop_order_id: Optional[str],
             else:
                 slip = max(0.0, _stop_limit_slip_pct()) / 100.0
                 lim = round(sl * (1.0 - slip), 2)
-                order = _client.submit_order(
+                order = _submit_order(
                     StopLimitOrderRequest(
                         symbol=ticker, qty=qty,
                         side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
@@ -2252,7 +2368,7 @@ def place_trailing_stop(ticker: str, trail_percent: float,
         if qty <= 0:
             return {"ok": False, "order_id": None, "status": "no_qty"}
 
-        order = _client.submit_order(
+        order = _submit_order(
             TrailingStopOrderRequest(
                 symbol=ticker,
                 qty=qty,
