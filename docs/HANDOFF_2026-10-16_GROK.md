@@ -65,6 +65,8 @@ The poll profiler (`ai_watch_profile_path`) is still on. Remove it after the loo
 
 ## Running jobs on the mini (check each, in order)
 
+**UPDATE 18:20 10/16: the exit sweep is DONE and scored** (docs/studies/EXIT_SWEEP_2026-10-16.md). trail_dc is KEPT (vs off +40.8 bp/day, t 2.29, both halves positive). No new arm qualifies, so there is no config change tonight. Still to run: trail_dc_sqwait0 / sqwait5.
+
 ### 1. Exit sweep, daytime mode on the data account
 - Log `/tmp/ecs16n.log`; outputs `/tmp/ecs_20261016n`; sha 8bbede5; 4 replays at nice 19.
 - Arms (prereg `docs/studies/exit_cut_sweep_prereg.json` amended_3):
