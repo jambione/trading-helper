@@ -41,8 +41,10 @@
     "rerun": "all arms below on all 8 days at the new sha (stale-bar guard 6b16c3c, ai_trail_exit_trend_hold_max_bar_age_sec 300 in every trail arm through the base config); 10/15 trail_dc and trail_dc_np_dc died in the disk-full incident. The trail_dc decision is re-judged under the original rule (beats off in both halves, paired t >= 1.5); if it fails, ai_trail_exit_trend_hold goes back to false.",
     "new_arms": {
       "trail_dc_lob": "trail_dc + triangle exit (ai_exit_left_overbought) judged only on the engine's smoothed minute %R (ai_exit_triangle_engine_only). Operator 10/16 CRH: bought 84.52 at the 10:28 top, the triangle printed ~10:31 near 84.40, the trail sold 84.01 at 10:40.",
-      "trail_dc_seat150": "trail_dc + seats wait 150 s instead of 30 s before a dead/unarmable eviction (ai_watch_dead_seat_evict_sec, ai_watch_unarmable_evict_sec). Operator 10/16: 4 opens 09:30-10:53, 199 evictions, most ~30 s after admission."
+      "trail_dc_seat150": "trail_dc + seats wait 150 s instead of 30 s before a dead/unarmable eviction (ai_watch_dead_seat_evict_sec, ai_watch_unarmable_evict_sec). Operator 10/16: 4 opens 09:30-10:53, 199 evictions, most ~30 s after admission.",
+      "trail_dc_init06": "trail_dc + initial stop at 0.06R (~0.3% of price at the 5% plan R) instead of 0.12R (~0.6%), trail unchanged (ai_local_trail_initial_give_r). Operator 10/16 UPS: bought 99.48, never green, stop 98.89 hit 11:17, filled 98.79 (-69 bp). Prior: give_r 0.05-0.50 sweep was flat noise; the initial/trail split itself was never swept."
     },
-    "decision_new_arms": "judged vs trail_dc (paired per-day VALUE): ship if it beats trail_dc in BOTH halves and paired t >= 1.5. trail_dc_seat150 must also not lower opens per 10 min; report opens/10m vs the book-open standard (>= 1). Ties within 2 bp/day: the arm with more opens (busy-book goal), then longer holds."
+    "decision_new_arms": "judged vs trail_dc (paired per-day VALUE): ship if it beats trail_dc in BOTH halves and paired t >= 1.5. trail_dc_seat150 must also not lower opens per 10 min; report opens/10m vs the book-open standard (>= 1). Ties within 2 bp/day: the arm with more opens (busy-book goal), then longer holds.",
+    "at_init06": "added 2026-10-16 ~12:50 ET, before any of these arms ran."
   }
 }
