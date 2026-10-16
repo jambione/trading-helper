@@ -1,0 +1,24 @@
+{
+  "study": "Steep %R turn out of a dip as a 1-minute entry (operator 10/16 TGL chart: 'sharp trending angles' enter, 'not smooth sideways' avoid).",
+  "registered_at": "2026-10-16 ~05:45 ET, before any return of this rule was computed on market data.",
+  "registered_before_results": true,
+  "origin": "Operator 10/16 annotated TGL premarket (04:30, 04:48, 05:00, 05:06 turns). The prompting chart is outside the cache (ends 2026-10-14). The arm's 'rising' check uses any +0.05 uptick, so slope has never been an entry input.",
+  "prior": "LOW-MEDIUM. Mid-rise (-50 cross, slow rising) was the closest of all entry rules (+6.4 / +2.1 bp vs random, warm re-score 10/15) but failed; this adds steepness and a dip origin. The 10/9 in-sample look at fills: fast-rising +15/10min fills -1.6 bp vs flat -6.1 (gross).",
+  "rule": "early_entry_honest.steep_flag: fast %R(t) - fast %R(t-3) >= 15 points, slow line rising (> previous + 0.05), fast %R <= -50 on at least one of the previous 10 minutes; completed bars, warmed lines (prior-session bars), onsets with the harness refractory (15 min), 09:50-15:30, board minutes only. Thresholds 15/3/-50/10 are set before the run and are not tuned.",
+  "fill_markout_control_cost_statistic_split": "Identical to early_entry_mid_rsi2_prereg.json: entry at the SIP open of the next minute, exit at the SIP close 9 minutes after the entry bar (10-minute hold); control = random LATER minute of the same name (entry+1..+60, seed sha256(symbol|day|entry_minute|STEEP|early-honest-v1)); 10 bp round trip on both; lift = rule net - control net, day-equal mean, day-clustered t; half A ends 2026-09-24.",
+  "pass": "Each half PASS = day-equal lift >= +5 bp with day-clustered t >= 2.0, day-equal net > 0, >= 100 scored signals, >= 6 days. STEEP is PASS only if both halves PASS; FAIL if either FAILs; else UNDERPOWERED (not evidence either way).",
+  "information_only": [
+    "MID and SQ scored the same way",
+    "gross; 5, 15, 30 minute markouts",
+    "cross control, close entry, 20 bp cost"
+  ],
+  "no_retuning": "15 / 3 / -50 / 10, the window, refractory, hold, cost and split are fixed. Any other threshold is a new prereg.",
+  "if_pass": "Provisional: forward test (the operator's Call bar calls tagged '%R turn' are a parallel human check) on >= 10 sessions, result-skeptic review, before any arm change.",
+  "if_fail": "Slope out of a dip is closed as an entry trigger on 1-minute completed bars; the operator's discretionary read is still measured by the Call bar.",
+  "declared_deviations": [
+    "Completed 1-minute bars, entry at the next minute's SIP open; live and the operator act intrabar.",
+    "Regular hours 09:50-15:30 only (the cache's board minutes); the prompting chart was premarket."
+  ],
+  "multiplicity": "8th entry rule on these 28 sessions; stands only with the forward test.",
+  "warm": "Run with --warm semantics (both lines warmed on prior-session bars), as os_leave."
+}

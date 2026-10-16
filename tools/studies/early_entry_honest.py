@@ -67,6 +67,8 @@ STUDIES = {
                 "prereg": "connors_green_prereg.json", "out": "result_connors.md"},
     "os_leave": {"rules": ("OSL", "SQ"), "graded": ("OSL",),
                  "prereg": "os_leave_prereg.json", "out": "result_os_leave.md"},
+    "steep_turn": {"rules": ("STEEP", "MID", "SQ"), "graded": ("STEEP",),
+                   "prereg": "steep_turn_prereg.json", "out": "result_steep_turn.md"},
 }
 RULES = STUDIES["pre_ign"]["rules"]
 GRADED = STUDIES["pre_ign"]["graded"]
@@ -124,6 +126,20 @@ def os_leave_flag(fast, slow, i: int) -> bool:
     if not any(os_tri(fast, slow, k) for k in range(max(0, i - OS_LEAVE_BARS), i)):
         return False
     return rising(fast, i)
+
+
+STEEP_RISE, STEEP_BARS, STEEP_DIP, STEEP_LOOK = 15.0, 3, -50.0, 10
+
+
+def steep_flag(fast, slow, i: int) -> bool:
+    """Operator 10/16 (TGL chart: 'sharp trending angles', not 'smooth sideways'): fast %R up >= STEEP_RISE points over
+    the last STEEP_BARS minutes, the slow line rising, and fast %R was <= STEEP_DIP within the last STEEP_LOOK minutes
+    (the turn comes out of a dip). Completed bars only."""
+    if i < STEEP_LOOK or not (_fin(fast[i]) and _fin(fast[i - STEEP_BARS])):
+        return False
+    if fast[i] - fast[i - STEEP_BARS] < STEEP_RISE - 1e-9 or not rising(slow, i):
+        return False
+    return any(_fin(fast[k]) and fast[k] <= STEEP_DIP + 1e-9 for k in range(i - STEEP_LOOK, i))
 
 
 def sq_flag(fast, slow, i: int) -> bool:
@@ -525,6 +541,7 @@ def rule_fires(ser: dict, board: set) -> dict[str, tuple[list[int], int]]:
         "MIDCAP": [mid_flag(f, s, ser["rsi"], i, cap=True) for i in range(n)],
         "RSI2T": [rsi2_turn_flag(f, ser["rsi"], i) for i in range(n)],
         "OSL": [os_leave_flag(f, s, i) for i in range(n)],
+        "STEEP": [steep_flag(f, s, i) for i in range(n)],
     }
     out = {r: fires(m, flags[r], board) for r in RULES if r != "CON"}
     if "CON" in RULES:

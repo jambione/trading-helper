@@ -241,3 +241,15 @@ def test_warm_lines_give_a_slow_line_from_the_first_minute(monkeypatch):
     warm = E.name_day_series(day, prior)
     assert len(warm["minutes"]) == len(cold["minutes"]) and warm["minutes"][0] == cold["minutes"][0]
     assert math.isfinite(warm["slow"][0]) and math.isfinite(warm["fast"][0])
+
+
+def test_steep_turn_needs_slope_dip_and_rising_slow():
+    import tools.studies.early_entry_honest as E
+    fast = [-70, -65, -60, -58, -56, -55, -54, -60, -62, -61, -60, -50, -40]
+    slow = [-50] * 11 + [-49, -48]
+    assert E.steep_flag(fast, slow, 12)                    # +20 in 3 bars, slow rising, dip <= -50 earlier
+    assert not E.steep_flag(fast, [-50] * 13, 12)          # slow flat
+    lazy = fast[:11] + [-57, -52]
+    assert not E.steep_flag(lazy, slow, 12)                # only +8 in 3 bars: sideways-ish
+    high = [-30] * 10 + [-25, -15, -10]
+    assert not E.steep_flag(high, slow, 12)                # no dip in the last 10 minutes
