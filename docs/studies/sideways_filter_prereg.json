@@ -1,0 +1,22 @@
+{
+  "study": "Skip sideways or falling setups: filter the pre-square (empty-square, live arm) by a trend read, so the desk arms only when the name is trending UP.",
+  "registered_at": "2026-10-16 ~12:30 ET, before any return of these filters was computed on market data.",
+  "registered_before_results": true,
+  "origin": "Operator 10/16: UPS 11:07 and CRH 11:06 'sideways opens' (lines parallel and flat at the range top), LHX 10:53 sideways; operator: 'look at the %R lines and see they are sideways, both relatively parallel ... or trending down'.",
+  "prior": "LOW. Related reads failed: the order-block skip under resistance (10/6, half A skipping cost -17.9 bp t -3.6), multi-day trendiness (10/9, ~0), the steep %R turn (10/16), mid-rise with a 'slow rising' per-bar check (closest miss). The base PRE arm measures at random-minute quality. 12th/13th entry rules on these sessions.",
+  "rules": {
+    "SLOWUP (operator's %R read, graded)": "PRE onsets where the slow %R line rose >= 5 points over the last 15 bars (slow[t] - slow[t-15] >= 5). Flat, parallel or falling slow line = sideways/down = skipped (SLOWFLAT, information).",
+    "TRER (price read, graded)": "PRE onsets where the SIGNED 30-bar efficiency ratio of IEX closes, (close[t] - close[t-30]) / sum |close[j] - close[j-1]|, is >= +0.30 (a random walk averages ~0.18 in absolute value). Below +0.30, including any decline, is skipped (CHOP, information).",
+    "common": "Completed IEX bars, warmed lines (prior-session bars), PRE onsets as early_entry_honest (09:50-15:30, board minutes, 15-minute refractory). A signal without enough history for a read is dropped from that read."
+  },
+  "fill_markout_control_cost_statistic_split": "Identical to confirm_entry_prereg.json / steep_turn_prereg.json: entry at the SIP open of the next minute, 10-minute hold, control = random LATER minute of the same name (entry+1..+60), 10 bp round trip on both, lift = rule net - control net, day-equal mean, day-clustered t, half A ends 2026-09-24.",
+  "pass": "Each half PASS = day-equal lift >= +5 bp with t >= 2.0, day-equal net > 0 at 10 bp, >= 100 scored signals, >= 6 days. A rule PASSES only if both halves PASS; FAIL if either FAILs; else UNDERPOWERED. SLOWUP and TRER graded separately (multiplicity noted, not corrected).",
+  "promising": "As confirm_entry_prereg amended_1: pooled day-equal lift > 0 with t >= 1.5, lift > 0 in each half, pooled net at 3 bp > 0, >= 100 signals and 6 days per half. In addition a filter is PROMISING only if its kept set's pooled lift is above both PRE's (the unfiltered arm) and its skipped set's (TRER > CHOP, SLOWUP > SLOWFLAT). Null calibration: on a random walk kept-minus-skipped reads within about +-11 bp, so a smaller gap is not evidence.",
+  "information_only": ["PRE, SQ, CHOP, SLOWFLAT scored the same way", "kept minus skipped pooled lift", "5/15/30 minute markouts, cross control, close entry, 20 bp cost"],
+  "no_retuning": "5 points / 15 bars and +0.30 / 30 bars, the window, refractory, hold, cost and split are fixed. Any other threshold is a new prereg.",
+  "if_pass": "Forward test on paper as an arm option (arm only if the read is trending up) for >= 10 sessions, then result-skeptic review before it becomes the default.",
+  "if_promising": "Paper slot as above; no default change.",
+  "if_fail": "Sideways/downtrend filtering of the pre-square by these reads is closed.",
+  "null_calibration": "early_entry_honest_null.py --study sideways --days 30 --names 15 before scoring: all |t| < 1.6, none PROMISING; TRER-CHOP -11.0 bp, SLOWUP-SLOWFLAT +3.4 bp on pure noise.",
+  "command": ".venv/bin/python tools/studies/early_entry_honest.py --study sideways --score (warm lines on by default)"
+}

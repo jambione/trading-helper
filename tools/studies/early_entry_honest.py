@@ -69,6 +69,8 @@ STUDIES = {
                  "prereg": "os_leave_prereg.json", "out": "result_os_leave.md"},
     "steep_turn": {"rules": ("STEEP", "MID", "SQ"), "graded": ("STEEP",),
                    "prereg": "steep_turn_prereg.json", "out": "result_steep_turn.md"},
+    "sideways": {"rules": ("TRER", "SLOWUP", "CHOP", "SLOWFLAT", "PRE", "SQ"), "graded": ("TRER", "SLOWUP"),
+                 "prereg": "sideways_filter_prereg.json", "out": "result_sideways.md"},
     "confirm": {"rules": ("CONF1", "CONF2", "DIP1", "DIP2", "HELD1", "HELD2", "PRE", "SQ"),
                 "graded": ("CONF1", "CONF2"),
                 "prereg": "confirm_entry_prereg.json", "out": "result_confirm.md"},
@@ -566,6 +568,47 @@ def confirm_sigs(minutes, closes, base_sigs, k: int, held: bool = True, vols=Non
     return out
 
 
+ER_BARS, ER_MIN = 30, 0.30          # sideways_filter_prereg: price efficiency ratio over the last 30 bars
+SLOW_BARS, SLOW_RISE = 15, 5.0      # sideways_filter_prereg: slow %R rise over the last 15 bars, in points
+
+
+def efficiency_ratio(closes, i: int, n: int = ER_BARS) -> float | None:
+    """SIGNED efficiency ratio: (close[i] - close[i-n]) / sum |close[j] - close[j-1]| over j in (i-n, i], in
+    [-1, 1]. Operator 10/16: sideways OR trending down is a skip, so a clean decline scores -1, not +1. None
+    without n prior bars or with no movement at all (flat filler)."""
+    if i - n < 0:
+        return None
+    seg = closes[i - n:i + 1]
+    if not all(_fin(x) for x in seg):
+        return None
+    path = sum(abs(seg[j] - seg[j - 1]) for j in range(1, len(seg)))
+    return None if path <= 0 else (seg[-1] - seg[0]) / path
+
+
+def slow_rise(slow, i: int, n: int = SLOW_BARS) -> float | None:
+    if i - n < 0 or not (_fin(slow[i]) and _fin(slow[i - n])):
+        return None
+    return slow[i] - slow[i - n]
+
+
+def sideways_split(minutes, closes, slow, sigs) -> dict[str, list[int]]:
+    """Split PRE onsets by the two pre-registered trend reads. A signal without enough history for a read is in
+    neither side of that read (dropped from it)."""
+    idx = {m: i for i, m in enumerate(minutes)}
+    out = {"TRER": [], "CHOP": [], "SLOWUP": [], "SLOWFLAT": []}
+    for sm in sigs:
+        i = idx.get(sm)
+        if i is None:
+            continue
+        er = efficiency_ratio(closes, i)
+        if er is not None:
+            out["TRER" if er >= ER_MIN else "CHOP"].append(sm)
+        sr = slow_rise(slow, i)
+        if sr is not None:
+            out["SLOWUP" if sr >= SLOW_RISE else "SLOWFLAT"].append(sm)
+    return out
+
+
 def rule_fires(ser: dict, board: set, key: tuple = ("inventory",)) -> dict[str, tuple[list[int], int]]:
     m, f, s = ser["minutes"], ser["fast"], ser["slow"]
     n = len(m)
@@ -581,6 +624,11 @@ def rule_fires(ser: dict, board: set, key: tuple = ("inventory",)) -> dict[str, 
         "STEEP": [steep_flag(f, s, i) for i in range(n)],
     }
     out = {r: fires(m, flags[r], board) for r in RULES if r in flags}
+    if any(r in ("TRER", "CHOP", "SLOWUP", "SLOWFLAT") for r in RULES):
+        pre_s, _off = fires(m, flags["PRE"], board)
+        for r, v in sideways_split(m, ser["close"], s, pre_s).items():
+            if r in RULES:
+                out[r] = (v, 0)
     if any(r[:4] in ("CONF", "DIP1", "DIP2", "HELD") for r in RULES):
         # The off-board count returned for CONF/DIP/HELD is 0: PRE's own off-board onsets are counted under PRE,
         # and the at-decision off-board drops are in CONF_STATS.
@@ -761,6 +809,15 @@ def score(datas: list[dict]) -> dict:
             "info_x": {k: day_equal(v)[:3] for k, v in x_info[r].items()},
             "ctrl_overlap": (overlap[r] / overlap[r + "_n"]) if overlap[r + "_n"] else None,
         }
+    # sideways_filter_prereg: a filter is PROMISING only if its kept set beats the unfiltered PRE and its skipped set.
+    for keep, skip in (("TRER", "CHOP"), ("SLOWUP", "SLOWFLAT")):
+        kr, sr, pr = res["rules"].get(keep), res["rules"].get(skip), res["rules"].get("PRE")
+        if kr is not None:
+            kl = kr["pooled"]["lift"]
+            sl = None if sr is None else sr["pooled"]["lift"]
+            pl_ = None if pr is None else pr["pooled"]["lift"]
+            kr["pooled"]["promising"] = bool(kr["pooled"]["promising"] and None not in (kl, sl, pl_)
+                                             and kl > sl and kl > pl_)
     # confirm_entry_prereg amended_1.null_held (skeptic round 2): CONFk is PROMISING only above its HELDk null.
     for k in (1, 2):
         c, h = res["rules"].get(f"CONF{k}"), res["rules"].get(f"HELD{k}")
@@ -821,7 +878,7 @@ def report(res: dict) -> str:
             L.append(f"| {r} | {h} | {x['n']} | {x['days']} | {_bp(x['gross'])} | {_bp(x['net'])} "
                      f"| {_bp(x['lift'])} | {t} | {x['verdict']} |")
     L += ["", "**Verdicts:** " + ", ".join(f"{r} {v['verdict']}" for r, v in res["rules"].items()), ""]
-    if any(r.startswith("CONF") for r in res["rules"]):
+    if any(r.startswith("CONF") or r in ("TRER", "SLOWUP") for r in res["rules"]):
         L += ["**PROMISING tier** (pooled day-equal lift > 0 with t >= 1.5, lift > 0 in each half, pooled net at "
               f"{MEASURED_COST * 1e4:.0f} bp > 0, >= {MIN_SIGNALS} signals and {MIN_DAYS} days per half):", ""]
         for r, v in res["rules"].items():
@@ -838,6 +895,11 @@ def report(res: dict) -> str:
                 L.append(f"- CONF{k} minus PRE (pooled lift difference, the value of waiting on the live arm): "
                          f"{_bp(c - pre)}; CONF{k} minus HELD{k} (confirmation of PRE beyond a universe "
                          f"{k}-minute effect): {_bp(None if h is None else c - h)}")
+        for keep, skip in (("TRER", "CHOP"), ("SLOWUP", "SLOWFLAT")):
+            a_, b_ = res["rules"].get(keep, {}).get("pooled", {}), res["rules"].get(skip, {}).get("pooled", {})
+            if a_.get("lift") is not None and b_.get("lift") is not None:
+                L.append(f"- {keep} minus {skip} (kept vs skipped PRE signals, pooled lift): "
+                         f"{_bp(a_['lift'] - b_['lift'])}; {keep} n {a_['n']}, {skip} n {b_['n']}")
         cs = res.get("conf_stats") or {}
         for tag in ("CONF", "HELD"):
             for k in (1, 2):
@@ -895,7 +957,7 @@ def main() -> None:
     global RULES, GRADED
     RULES, GRADED = STUDIES[a.study]["rules"], STUDIES[a.study]["graded"]
     global WARM_LINES
-    WARM_LINES = a.study in ("os_leave", "confirm") or a.warm
+    WARM_LINES = a.study in ("os_leave", "confirm", "sideways") or a.warm
     if a.fetch_prior:
         import bars
         from datetime import timedelta

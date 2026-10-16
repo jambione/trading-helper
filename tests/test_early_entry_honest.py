@@ -286,3 +286,23 @@ def test_confirm_rules_derive_from_pre_onsets(monkeypatch):
     a = E.rule_fires(ser, set(m), ("X", "2026-10-01"))["HELD1"][0]
     assert a == E.rule_fires(ser, set(m), ("X", "2026-10-01"))["HELD1"][0]     # seeded: reproducible
     assert len(a) <= 1
+
+
+def test_efficiency_ratio_and_slow_rise():
+    up = [10.0 + 0.01 * j for j in range(31)]
+    assert abs(E.efficiency_ratio(up, 30) - 1.0) < 1e-9                      # clean climb
+    chop = [10.0 + (0.01 if j % 2 else 0.0) for j in range(31)]
+    assert E.efficiency_ratio(chop, 30) < 0.1                                # back and forth
+    assert abs(E.efficiency_ratio(list(reversed(up)), 30) + 1.0) < 1e-9      # clean decline: -1 (a skip)
+    assert E.efficiency_ratio(up, 29) is None                                # not enough history
+    assert E.efficiency_ratio([10.0] * 31, 30) is None                       # no movement
+    slow = [-40.0] * 10 + [-40.0 + j for j in range(10)]
+    assert E.slow_rise(slow, 19, 15) == 9.0 and E.slow_rise(slow, 10, 15) is None
+
+
+def test_sideways_split_partitions_pre_signals():
+    m = list(range(600, 650))
+    closes = [10.0 + 0.01 * j for j in range(50)]
+    slow = [-50.0 + 0.5 * j for j in range(50)]
+    out = E.sideways_split(m, closes, slow, [645, 610])
+    assert out["TRER"] == [645] and out["CHOP"] == [] and out["SLOWUP"] == [645] and out["SLOWFLAT"] == []
