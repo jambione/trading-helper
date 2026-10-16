@@ -128,7 +128,13 @@ Check their branches before touching the same files.
 7. **Weekly book did NOT trade 10/16.** AGY returned an empty response at 06:36 (`weekly models 2026-10-16: agy failed: Antigravity CLI returned empty response`), so the agreement was 0 names and the 15:58 rebalance bought 0, as designed. Steps:
    - Check AGY auth on the mini. If it is logged out, the operator restarts from the Terminal; never `claude /login`, never an API key.
    - Add an alert: if either model returns fewer than 30 valid picks, or the agreed book is under 10 names, raise a desktop banner (decisions-2026-10-03 alert style) by 06:45. A silent zero-buy must not repeat.
-   - Operator decision pending on the start: (a) next Friday 15:58 (recommended) or (b) re-pick this weekend and buy Monday's open.
+   - **Operator decided (b), 10/16 ~16:05:** re-pick this weekend, buy at Monday 10/19's open.
+     1. Fix or confirm AGY first (the operator restarts from the Terminal if needed).
+     2. Over the weekend or before 09:00 Monday, rerun the screen and both models for 2026-10-16's close (`weekly_book` screen + models). Confirm that the agreed file has both models' picks.
+     3. Check how `weekly_book`/`overnight_book.run()` choose the order day and order type (the normal path is Friday 15:58 close). Run the rebalance as a **DRY RUN** first and show the operator the buy list.
+     4. Then place Monday-open orders (market-on-open or the first-minute market order the code supports) on the PAPER weekly account only.
+     5. Score week 1 as Monday open → Friday 10/23 close and flag it non-comparable (shorter, open-entry). From 10/23 on, normal Friday-close rebalances.
+     6. Do not change the selection rules (P/E <= 12, uptrend, both-models agreement, max 20, never padded).
 8. **Morning scorecard script.** Build it if missing; the inputs are above.
 
 ## Key files
