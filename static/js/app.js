@@ -8,7 +8,7 @@
 import { connect, on, api }                      from './api.js?v=184';
 import { subscribe, set, selectTicker }          from './store.js?v=134';
 import { init as initFeeds }                     from './feeds.js?v=213';
-import { init as initTickers }                   from './tickers.js?v=150';
+import { init as initTickers, copyTicker }       from './tickers.js?v=150';
 import { init as initTradingView }               from './tradingview.js?v=134';
 import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=133';
 import { init as initResizer }                   from './resizer.js?v=133';
@@ -89,7 +89,7 @@ function _renderBbLive(bb) {
       ts.className    = 'bb-suggest-past-ts';
       ts.textContent  = _bbWhen(c);
       el.append(sym, ts);
-      el.addEventListener('click', () => selectTicker(c.ticker));
+      el.addEventListener('click', () => { selectTicker(c.ticker); copyTicker(null, c.ticker); });
       past.appendChild(el);
     }
   }
@@ -119,6 +119,7 @@ function _renderBbLive(bb) {
     li.append(ts, sym, txt);
     li.addEventListener('click', () => {
       selectTicker(c.ticker);
+      copyTicker(null, c.ticker);   // like every other ticker click: TradingView (when on), copy, Call bar
       const pop = wrap.querySelector('[data-bb-live-pop]');
       if (pop) pop.hidden = true;
     });
