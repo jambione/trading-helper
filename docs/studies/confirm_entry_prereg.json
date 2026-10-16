@@ -23,5 +23,14 @@
     "The held test uses IEX bar closes (what live sees); the markout uses SIP."
   ],
   "multiplicity": "9th and 10th entry rules on these 28 sessions; stands only with the forward test.",
-  "warm": "Run with --warm semantics, as os_leave and steep_turn."
+  "warm": "Run with --warm semantics, as os_leave and steep_turn.",
+  "amended_1": {
+    "at": "2026-10-16 ~12:00 ET, after result-skeptic round 1 (NOT READY, 5 fixes), before any score on market data.",
+    "missing_bars": "(#2) a zero-volume bar at sm or sm+k (grid_fill's flat no-print filler) is a MISSING bar: no decision, dropped and counted. Ties (equal closes on printed bars) count as held. Tie share reported for k = 1, 2.",
+    "board": "(#2) the name must be on the board at the decision minute sm+k; otherwise dropped and counted (off board at decision). CONF/DIP report 0 off-board onsets themselves (PRE's are under PRE).",
+    "null_held": "(#1) information lines HELD1, HELD2: random board minutes of the same name and day (seeded sha256(symbol|day|held-null|early-honest-v1)), as many as PRE onsets, 09:50-15:30, the same held test, the same later control. If CONFk's pooled lift is not above HELDk's, the gain is a universe 1-2 minute effect, NOT confirmation of PRE, and CONFk cannot be PROMISING on that basis (reported as such). Also reported: CONFk minus PRE pooled lift (the value of waiting on the live arm).",
+    "promising": "(#3) PROMISING = pooled day-equal lift over all scored days > 0 with day-clustered t >= 1.5, lift > 0 in EACH half, pooled day-equal net at 3 bp (gross - 3 bp) > 0, and >= 100 signals and >= 6 days in each half. Printed per rule.",
+    "warm": "(#4) the confirm study warms lines automatically (WARM_LINES for os_leave and confirm). Command: .venv/bin/python tools/studies/early_entry_honest.py --study confirm --score",
+    "null_calibration": "Synthetic random walk (early_entry_honest_null.py --study confirm --days 30 --names 15) run before scoring: every rule |t| < 1.7, none PROMISING; held share 48-50%, ties 0%. Code path checked; the synthetic frame cannot test real 1-2 minute autocorrelation, which is what HELDk is for."
+  }
 }

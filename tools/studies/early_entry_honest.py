@@ -69,7 +69,8 @@ STUDIES = {
                  "prereg": "os_leave_prereg.json", "out": "result_os_leave.md"},
     "steep_turn": {"rules": ("STEEP", "MID", "SQ"), "graded": ("STEEP",),
                    "prereg": "steep_turn_prereg.json", "out": "result_steep_turn.md"},
-    "confirm": {"rules": ("CONF1", "CONF2", "DIP1", "DIP2", "PRE", "SQ"), "graded": ("CONF1", "CONF2"),
+    "confirm": {"rules": ("CONF1", "CONF2", "DIP1", "DIP2", "HELD1", "HELD2", "PRE", "SQ"),
+                "graded": ("CONF1", "CONF2"),
                 "prereg": "confirm_entry_prereg.json", "out": "result_confirm.md"},
 }
 RULES = STUDIES["pre_ign"]["rules"]
@@ -531,23 +532,41 @@ def sip_map(frame) -> dict:
             for t, o, c in zip(frame["time"], frame["open"], frame["close"])}
 
 
-def confirm_sigs(minutes, closes, base_sigs, k: int, held: bool = True) -> list[int]:
-    """Confirm-then-buy (confirm_entry_prereg): a base signal at completed bar sm is CONFIRMED if the IEX close of
-    bar sm+k is >= the IEX close of bar sm (the price held); the returned signal minute is sm+k, so the harness
-    enters at the SIP open of sm+k+1. held=False returns the signals that dipped (what the rule skips; info).
-    A missing bar at sm or sm+k means no decision (dropped)."""
+CONF_STATS: Counter = Counter()    # per k: decided / ties / missing / off-board at the decision minute
+
+
+def confirm_sigs(minutes, closes, base_sigs, k: int, held: bool = True, vols=None, board: set | None = None,
+                 tag: str = "") -> list[int]:
+    """Confirm-then-buy (confirm_entry_prereg amended_1): a base signal at completed bar sm is CONFIRMED if the
+    IEX close of bar sm+k is >= the IEX close of bar sm (the price held); the returned signal minute is sm+k, so
+    the harness enters at the SIP open of sm+k+1. held=False returns the signals that dipped (what the rule skips).
+    No decision (dropped, counted): a missing or non-finite bar at sm or sm+k, or a zero-volume bar there
+    (grid_fill's flat no-print filler, which would otherwise read as a tie = held). The name must still be on
+    the board at the decision minute sm+k (live cannot buy a name that left the watch); counted when not."""
     idx = {m: i for i, m in enumerate(minutes)}
     out = []
     for sm in base_sigs:
         i, j = idx.get(sm), idx.get(sm + k)
-        if i is None or j is None or not (_fin(closes[i]) and _fin(closes[j])):
+        if i is None or j is None or not (_fin(closes[i]) and _fin(closes[j])) or (
+                vols is not None and (not vols[i] or not vols[j])):
+            if held:
+                CONF_STATS[f"{tag}k{k}_missing"] += 1
             continue
+        if board is not None and (sm + k) not in board:
+            if held:
+                CONF_STATS[f"{tag}k{k}_off_board_at_decision"] += 1
+            continue
+        tie = abs(closes[j] - closes[i]) <= 1e-12
+        if held:
+            CONF_STATS[f"{tag}k{k}_decided"] += 1
+            CONF_STATS[f"{tag}k{k}_ties"] += tie
+            CONF_STATS[f"{tag}k{k}_held"] += closes[j] >= closes[i] - 1e-12
         if (closes[j] >= closes[i] - 1e-12) == held:
             out.append(sm + k)
     return out
 
 
-def rule_fires(ser: dict, board: set) -> dict[str, tuple[list[int], int]]:
+def rule_fires(ser: dict, board: set, key: tuple = ("inventory",)) -> dict[str, tuple[list[int], int]]:
     m, f, s = ser["minutes"], ser["fast"], ser["slow"]
     n = len(m)
     vol_at = dict(zip(m, ser["vol"]))
@@ -562,13 +581,24 @@ def rule_fires(ser: dict, board: set) -> dict[str, tuple[list[int], int]]:
         "STEEP": [steep_flag(f, s, i) for i in range(n)],
     }
     out = {r: fires(m, flags[r], board) for r in RULES if r in flags}
-    if any(r[:4] in ("CONF", "DIP1", "DIP2") for r in RULES):
-        pre, pre_off = fires(m, flags["PRE"], board)
+    if any(r[:4] in ("CONF", "DIP1", "DIP2", "HELD") for r in RULES):
+        # The off-board count returned for CONF/DIP/HELD is 0: PRE's own off-board onsets are counted under PRE,
+        # and the at-decision off-board drops are in CONF_STATS.
+        pre, _pre_off = fires(m, flags["PRE"], board)
+        vol = ser["vol"]
+        rnd = []
+        if any(r.startswith("HELD") for r in RULES):
+            # Null for a universe 1-2 minute effect (skeptic 10/16): random board minutes, same name and day,
+            # as many as PRE onsets, same held test and the same later control.
+            cand = [x for x in sorted(board) if WIN_START <= x <= WIN_END]
+            rnd = sorted(_rng(*key, "held-null").sample(cand, min(len(pre), len(cand)))) if pre else []
         for k in (1, 2):
             if f"CONF{k}" in RULES:
-                out[f"CONF{k}"] = (confirm_sigs(m, ser["close"], pre, k, True), pre_off)
+                out[f"CONF{k}"] = (confirm_sigs(m, ser["close"], pre, k, True, vol, board, "CONF"), 0)
             if f"DIP{k}" in RULES:
-                out[f"DIP{k}"] = (confirm_sigs(m, ser["close"], pre, k, False), pre_off)
+                out[f"DIP{k}"] = (confirm_sigs(m, ser["close"], pre, k, False, vol, board, "DIP"), 0)
+            if f"HELD{k}" in RULES:
+                out[f"HELD{k}"] = (confirm_sigs(m, ser["close"], rnd, k, True, vol, board, "HELD"), 0)
     if "CON" in RULES:
         out["CON"] = fires(ser["con_minutes"], ser["con_flags"], board)
     return out
@@ -608,7 +638,11 @@ def desk_fills(days: set) -> dict:
     return out
 
 
+MEASURED_COST = 0.0003    # ~3 bp round trip on $10+ names (focus-is-day-trading, 10/9); PROMISING tier only
+
+
 def score(datas: list[dict]) -> dict:
+    CONF_STATS.clear()
     days = sorted(d["day"] for d in datas)
     cut = split(days)
     lift = {r: {h: defaultdict(list) for h in "AB"} for r in RULES}
@@ -651,7 +685,7 @@ def score(datas: list[dict]) -> dict:
                     g0 = markout(sip, bm + 1)
                     if g0 is not None:
                         board_mean[day].append(g0)
-            for rule, (sigs, off) in rule_fires(ser, board).items():
+            for rule, (sigs, off) in rule_fires(ser, board, (sym, day)).items():
                 if rule == "CON" and con_off_day:
                     continue
                 drops[f"{rule}_off_board"] += off
@@ -693,7 +727,8 @@ def score(datas: list[dict]) -> dict:
                 if None in (now, back, ent, early, ex) or now[1] / back[1] - 1 < 0.0014:
                     continue
                 artifact[day].append(ex[1] / early[0] - ex[1] / ent[0])
-    res = {"days": days, "cut": cut, "drops": dict(drops), "rules": {}, "con_excluded": con_excluded}
+    res = {"days": days, "cut": cut, "drops": dict(drops), "rules": {}, "con_excluded": con_excluded,
+           "conf_stats": dict(CONF_STATS)}
     for r in RULES:
         halves = {}
         for h in "AB":
@@ -702,7 +737,24 @@ def score(datas: list[dict]) -> dict:
             mg = day_equal(gross[r][h])[0]
             halves[h] = {"lift": ml, "t": tl, "net": mn, "gross": mg, "n": n, "days": nd,
                          "verdict": half_verdict(ml, tl, mn, n, nd)}
+        pooled = defaultdict(list)
+        for h in "AB":
+            for dkey, v in lift[r][h].items():
+                pooled[dkey].extend(v)
+        pl, pt, pn, pd_ = day_equal(pooled)
+        for h in "AB":
+            g3 = {dk: [x - MEASURED_COST for x in v] for dk, v in gross[r][h].items()}
+            halves[h]["net3"] = day_equal(g3)[0]
+        g3all = defaultdict(list)
+        for h in "AB":
+            for dk, v in gross[r][h].items():
+                g3all[dk].extend(x - MEASURED_COST for x in v)
+        net3 = day_equal(g3all)[0]
+        promising = (pl is not None and pt is not None and pl > 0 and pt >= 1.5 and net3 is not None and net3 > 0
+                     and all(halves[h]["lift"] is not None and halves[h]["lift"] > 0
+                             and halves[h]["n"] >= MIN_SIGNALS and halves[h]["days"] >= MIN_DAYS for h in "AB"))
         res["rules"][r] = {
+            "pooled": {"lift": pl, "t": pt, "n": pn, "days": pd_, "net3": net3, "promising": promising},
             "halves": halves,
             "verdict": rule_verdict([halves[h]["verdict"] for h in "AB"]) if r in GRADED else "INFO",
             "info_holds": {H: day_equal(info[r][H])[:3] for H in INFO_HOLDS},
@@ -762,6 +814,33 @@ def report(res: dict) -> str:
             L.append(f"| {r} | {h} | {x['n']} | {x['days']} | {_bp(x['gross'])} | {_bp(x['net'])} "
                      f"| {_bp(x['lift'])} | {t} | {x['verdict']} |")
     L += ["", "**Verdicts:** " + ", ".join(f"{r} {v['verdict']}" for r, v in res["rules"].items()), ""]
+    if any(r.startswith("CONF") for r in res["rules"]):
+        L += ["**PROMISING tier** (pooled day-equal lift > 0 with t >= 1.5, lift > 0 in each half, pooled net at "
+              f"{MEASURED_COST * 1e4:.0f} bp > 0, >= {MIN_SIGNALS} signals and {MIN_DAYS} days per half):", ""]
+        for r, v in res["rules"].items():
+            p = v["pooled"]
+            t = "—" if p["t"] is None else f"{p['t']:+.2f}"
+            L.append(f"- {r}: pooled lift {_bp(p['lift'])} (t {t}, n {p['n']}, {p['days']} days); net@3bp pooled "
+                     f"{_bp(p['net3'])}, A {_bp(v['halves']['A']['net3'])}, B {_bp(v['halves']['B']['net3'])}"
+                     f" -> {'PROMISING' if p['promising'] else 'not promising'}")
+        pre = res["rules"].get("PRE", {}).get("pooled", {}).get("lift")
+        for k in (1, 2):
+            c = res["rules"].get(f"CONF{k}", {}).get("pooled", {}).get("lift")
+            h = res["rules"].get(f"HELD{k}", {}).get("pooled", {}).get("lift")
+            if c is not None and pre is not None:
+                L.append(f"- CONF{k} minus PRE (pooled lift difference, the value of waiting on the live arm): "
+                         f"{_bp(c - pre)}; CONF{k} minus HELD{k} (confirmation of PRE beyond a universe "
+                         f"{k}-minute effect): {_bp(None if h is None else c - h)}")
+        cs = res.get("conf_stats") or {}
+        for tag in ("CONF", "HELD"):
+            for k in (1, 2):
+                dcd = cs.get(f"{tag}k{k}_decided", 0)
+                if dcd:
+                    L.append(f"- {tag} k={k}: decided {dcd}, held {cs.get(f'{tag}k{k}_held', 0) / dcd:.0%}, ties "
+                             f"{cs.get(f'{tag}k{k}_ties', 0) / dcd:.0%}, dropped missing/no-print "
+                             f"{cs.get(f'{tag}k{k}_missing', 0)}, off board at decision "
+                             f"{cs.get(f'{tag}k{k}_off_board_at_decision', 0)}")
+        L.append("")
     if "OSL" in res["rules"]:
         L += [f"OSL warm-up coverage: days excluded (> {CON_PRIOR_MAX_MISS:.0%} of board names lacking prior bars) "
               f"{res.get('con_excluded') or []}", ""]
@@ -809,7 +888,7 @@ def main() -> None:
     global RULES, GRADED
     RULES, GRADED = STUDIES[a.study]["rules"], STUDIES[a.study]["graded"]
     global WARM_LINES
-    WARM_LINES = a.study == "os_leave" or a.warm
+    WARM_LINES = a.study in ("os_leave", "confirm") or a.warm
     if a.fetch_prior:
         import bars
         from datetime import timedelta

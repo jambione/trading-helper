@@ -263,6 +263,10 @@ def test_confirm_sigs_buy_only_if_the_price_held():
     assert E.confirm_sigs(minutes, closes, [600], 2, False) == [602]          # the skipped (dipped) signal
     assert E.confirm_sigs(minutes, closes, [603], 2, True) == []              # no bar 605: no decision
     assert E.confirm_sigs(minutes, [10.0, NAN, 1, 1, 1], [600], 1, True) == []
+    vols = [5, 0, 5, 5, 5]
+    assert E.confirm_sigs(minutes, closes, [600], 1, True, vols) == []         # no-print filler bar: no decision
+    assert E.confirm_sigs(minutes, closes, [602], 1, True, vols, {602}) == []  # left the board before the decision
+    assert E.confirm_sigs(minutes, closes, [602], 1, True, vols, {602, 603}) == [603]
 
 
 def test_confirm_rules_derive_from_pre_onsets(monkeypatch):
@@ -276,5 +280,9 @@ def test_confirm_rules_derive_from_pre_onsets(monkeypatch):
     m = list(range(600, 610))
     ser = {"minutes": m, "fast": [0.0] * 10, "slow": [0.0] * 10, "rsi": [0.0] * 10, "vol": [1.0] * 10,
            "close": [10, 10, 10, 10.1, 10, 10, 10, 10, 10, 10]}
-    out = E.rule_fires(ser, set(m))
+    out = E.rule_fires(ser, set(m), ("X", "2026-10-01"))
     assert out["PRE"][0] == [602] and out["CONF1"][0] == [603] and out["DIP1"][0] == []
+    monkeypatch.setattr(E, "RULES", ("HELD1", "PRE"))
+    a = E.rule_fires(ser, set(m), ("X", "2026-10-01"))["HELD1"][0]
+    assert a == E.rule_fires(ser, set(m), ("X", "2026-10-01"))["HELD1"][0]     # seeded: reproducible
+    assert len(a) <= 1
