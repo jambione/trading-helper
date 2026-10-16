@@ -39,6 +39,7 @@ PX_MIN, DV_MIN, DV_DAYS = 10.0, 20e6, 20
 MIN_UNIVERSE = 300
 COST_BP, STRESS_BP, SPY_COST_BP = 20.0, 25.0, 2.0
 T_BAR, MIN_SIGNAL_DAYS, POS_MONTHS = 2.0, 500, 0.55
+MINUTE_WORKERS = 6                   # days fetched in parallel (each paced by REQ_GAP_S; ~6 x 2 req/s peak)
 REQ_GAP_S = 0.5                      # <= ~120 requests/min; daily pagination bursts above the 0.34 s pace
 
 
@@ -244,26 +245,34 @@ def fetch_minute() -> None:
     have = pickle.load(open(path, "rb")) if os.path.exists(path) else {"days": {}, "log": []}
     cl = _client()
     todo = [x for x in sorted(by_day) if x not in have["days"]]
-    print(f"minute: {len(by_day)} days, {len(todo)} to fetch", flush=True)
-    for n, x in enumerate(todo):
+    print(f"minute: {len(by_day)} days, {len(todo)} to fetch ({MINUTE_WORKERS} days in parallel)", flush=True)
+
+    def one_day(x: str) -> tuple[str, dict, list]:
+        log: list = []
         names = sorted(set(by_day[x]) | {"SPY"})
         y, m, dd = map(int, x.split("-"))
         t0, t1 = datetime(y, m, dd, 9, 30, tzinfo=ET), datetime(y, m, dd, 9, 31, 59, tzinfo=ET)
         got, failed = {}, 0
         for i in range(0, len(names), 200):
-            r = _bars(cl, names[i:i + 200], TimeFrame.Minute, t0, t1, Adjustment.ALL, have["log"])
+            r = _bars(cl, names[i:i + 200], TimeFrame.Minute, t0, t1, Adjustment.ALL, log)
             if r is None:
                 failed += len(names[i:i + 200])
                 continue
-            for s, rows in r.items():
+            for s_, rows in r.items():
                 bm = {b.timestamp.astimezone(ET).strftime("%H:%M"): (float(b.open), float(b.close)) for b in rows}
                 if "09:30" in bm and "09:31" in bm:
-                    got[s] = (bm["09:30"][1], bm["09:31"][0])
-        have["days"][x] = {"bars": got, "asked": len(names), "failed": failed}
-        if n % 25 == 0 or n == len(todo) - 1:
-            pickle.dump(have, open(path + ".tmp", "wb"))
-            os.replace(path + ".tmp", path)
-            print(f"  {x}: {len(got)}/{len(names)} with 09:30+09:31 bars ({n + 1}/{len(todo)})", flush=True)
+                    got[s_] = (bm["09:30"][1], bm["09:31"][0])
+        return x, {"bars": got, "asked": len(names), "failed": failed}, log
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(MINUTE_WORKERS) as ex:
+        for n, (x, rec, log) in enumerate(ex.map(one_day, todo)):
+            have["days"][x] = rec
+            have["log"].extend(log)
+            if n % 50 == 0 or n == len(todo) - 1:
+                pickle.dump(have, open(path + ".tmp", "wb"))
+                os.replace(path + ".tmp", path)
+                print(f"  {x}: {len(rec['bars'])}/{rec['asked']} with 09:30+09:31 bars ({n + 1}/{len(todo)})", flush=True)
 
 
 # ── score ─────────────────────────────────────────────────────────────────────
