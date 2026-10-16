@@ -15,6 +15,7 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 | 5 | Test momentum names when they appear on the data seed | running | momentum_alert_markouts, momentum_alert_ticks (30-60 s, premarket split), clock_windows (from 16:15) |
 | 8 | Earlier entry to capture more of the ~70% run (pre-square forms near the top) | done - FAIL | warm re-score (morning visible): PRE +15.2/+0.1, IGN -8.2/+27.1, MID +6.4/+2.1 (closest; net -1.4/-12.9), RSI2T +1.6/+0.6 bp vs random later minute; none clears +5 bp t>=2 both halves |
 | 9 | Operator's TGL read (05:06 10/16): uptrend (trending momentum) + dip, buy when squares resume after the ▼ pullback | open | operator: 'overall trending momentum and dip with an up trend'. Encode: established uptrend (higher highs, price above short EMA), pullback with %R staying high, entry when squares resume, price above the pullback low; pre-register; score honestly (spread, later-only control) on cached sessions + premarket SIP. Desk blocks this today (post-square wait 10 min, presquare_only) |
+| 12 | New options (operator 10/16): gap-down short + calendar family | running | preregs gapdown_short / calendar_flows (2a11973) under skeptic review; calendar script ready (Yahoo data, can run before the open once READY); gap-down needs 10 yrs of Alpaca daily bars - tonight. NOTE gap-down evidence was in-sample z -3.7 but UNCONFIRMED out of sample (10/4: refused gap-downs rose +258 bp) |
 | 11 | Operator 'sharp trending angles vs smooth sideways' (TGL 10/16) | done - FAIL as a rule | steep turn: A lift +7.0 (t 0.42) / B -0.4; net -15/-13 bp; fires ~5 min before 42% of desk fills. Discretionary read measured by the Call bar instead |
 | 10 | Human-in-the-loop calls | live 10/16 05:18 | desktop Call bar (any ticker; any clicked name fills it; setup tags; desk snapshot; today's calls with move since). Scorer: premarket included, SIP spread, later-only control; scored nightly, read at 50-100 calls |
 | 7 | Limit orders 1-2 cents under the bid to save spread | open | score with the G2 read (passive arms filled ~25%, adverse); limit-below FAILED 10/14 (dipped fills -65.6 vs unfilled +57.7 bp). Test bid-$0.01 / bid-$0.02 fill rate + adverse selection on recorded ticks |
@@ -55,7 +56,6 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 - Exit sweep stopped at 03:30 (7 days): np180 vs off -36.6 bp/day (t -0.87) - no change, cut stays off. Gated arms were BLIND: the replay never fed the bar store (ob_feeds 0), so np_dc == np180 and trail_dc == off. Fixed (ob_feed_on + DC_STATS counters); rerun all deciding arms at the new sha tonight
 
 ### Proposed (waiting on the operator)
-- Calendar-flow family on daily SPY/IWM (turn of month, quarter/year-end, tax-loss January, pre-holiday, options-expiry week) - the family of the one proven effect (month-end); operator 10/15: see tomorrow's session first
 - Longer-horizon exits/sizing for the weekly book and day hold on 10 yrs of daily bars
 - Strategy map: https://claude.ai/artifact/HiTvNTRPc6ZGat9zs4Q2J9
 
