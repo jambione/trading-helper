@@ -138,6 +138,7 @@ Check their branches before touching the same files.
      7. **NEW rule (operator 10/16, commit below):** if a model gives NO valid picks after one retry (60 s later), it forfeits its vote, and the other model's own top 20 by rank make the book (`weekly_book.vote`, logged as `grok_only` / `agy_only`). Both answered = intersection as before, never padded. Both silent = no orders.
      8. The 10/16 agreed file (0 names) is cached: run_models returns it if `ai_reports/overnight/weekly_agreed_2026-10-16.json` exists. RENAME it (e.g. `.failed_agy`, do not delete) before re-picking, and also the 10/16 plan file. The new run then retries AGY and falls back to Grok's full vote if AGY is still silent.
      9. The dry-run buy list goes to the operator before any order.
+     10. **AGY tested OK 10/16 ~16:15 from the mini's Terminal:** a short prompt and the full weekly prompt for 10/16 both returned 30 valid picks (GAP, MAT, ...). This morning's empty response was a one-off; the retry covers it. **AGY only authenticates from the mini's local Terminal session (Keychain). Over ssh it fails with 'not logged in'**, which the new rule would treat as silence and give Grok the full vote. Run the weekend re-pick FROM THE MINI'S TERMINAL (the operator pastes the command), never over ssh.
 8. **Morning scorecard script.** Build it if missing; the inputs are above.
 
 ## Key files
