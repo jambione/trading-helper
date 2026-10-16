@@ -47,6 +47,10 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 ### Incidents tonight
 - 17:40: the scheduled nightly --exact replay of 10/15 (restarts + Alpaca outage) grew to a 17 GB footprint and stalled every replay (swap); killed (10/15 is degraded anyway). TODO: memory cap / guard on nightly replays
 
+### Incidents 10/16 (overnight)
+- 03:30-04:28: the mini's disk filled (187 replay work dirs, 66 GB); trader + engine died. Operator removed them 04:4x (68 GB free). Replay fixed (fe2df1b). Desk restart pending
+- Exit sweep stopped at 03:30: off/np180/np_dc 7 days, trail_dc 2, dc180 1; rest tonight
+
 ### Proposed (waiting on the operator)
 - Calendar-flow family on daily SPY/IWM (turn of month, quarter/year-end, tax-loss January, pre-holiday, options-expiry week) - the family of the one proven effect (month-end); operator 10/15: see tomorrow's session first
 - Longer-horizon exits/sizing for the weekly book and day hold on 10 yrs of daily bars
