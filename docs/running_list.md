@@ -49,7 +49,7 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 
 ### Incidents 10/16 (overnight)
 - 03:30-04:28: the mini's disk filled (187 replay work dirs, 66 GB); trader + engine died. Operator removed them 04:4x (68 GB free). Replay fixed (fe2df1b). Desk restart pending
-- Exit sweep stopped at 03:30: off/np180/np_dc 7 days, trail_dc 2, dc180 1; rest tonight
+- Exit sweep stopped at 03:30 (7 days): np180 vs off -36.6 bp/day (t -0.87) - no change, cut stays off. Gated arms were BLIND: the replay never fed the bar store (ob_feeds 0), so np_dc == np180 and trail_dc == off. Fixed (ob_feed_on + DC_STATS counters); rerun all deciding arms at the new sha tonight
 
 ### Proposed (waiting on the operator)
 - Calendar-flow family on daily SPY/IWM (turn of month, quarter/year-end, tax-loss January, pre-holiday, options-expiry week) - the family of the one proven effect (month-end); operator 10/15: see tomorrow's session first
