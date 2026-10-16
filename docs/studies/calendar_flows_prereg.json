@@ -22,5 +22,24 @@
   ],
   "no_retuning": "window definitions above are fixed; other lengths are a new prereg.",
   "if_pass": "add passing windows to the month-end pilot as score-only, then paper forward for >= 6 months of windows before any money.",
-  "if_fail": "calendar effects beyond month-end are closed for this desk."
+  "if_fail": "calendar effects beyond month-end are closed for this desk.",
+  "amended_1": {
+    "at": "2026-10-16, after result-skeptic round 1 (NOT READY, findings 9-15), before any score was computed by this script.",
+    "prior_disclosure": "NOT fully unseen (#9): Round 5 T3 (STRATEGY_EDGE_ROUND5_2026-09-26.md:203-229) scored SPY TOM and pre-holiday 2021-2026 (TOM excess -23/-20/+69 bp, PREHOL t <= 1.5); MONTH_END_REBAL_2026-10-01.md reported first-3-sessions and quarter-end weakness. The 2010+ half of SPY TOM/PREHOL/QE is partly seen; the <2010 half and IWM are the cleaner test. Month-end itself is a SIGNED SPY-TLT rule, unproven until forward months score, not a long-only pass.",
+    "windows": {
+      "TOM": "first 3 trading days of the month; the month's last trading day is EXCLUDED (that is the month-end lead)",
+      "QE": "the second-to-last trading day of Mar/Jun/Sep/Dec only (the last day is month-end, excluded)",
+      "PREHOL": "the last trading day before a SCHEDULED NYSE full-day holiday, from a rule list (New Year, MLK from 1998, Presidents, Good Friday, Memorial, Juneteenth from 2022, July 4, Labor, Thanksgiving, Christmas; Saturday New Year not observed). Unscheduled closures (9/11/2001, Sandy 2012, state funerals) and missing data rows are NOT holidays (#11).",
+      "TAXJAN": "unchanged (IWM only)",
+      "OPEX": "unchanged"
+    },
+    "out_of_window": "days in NO window and not a month's last trading day (#10); windows may overlap each other but each is compared with the same clean NONE set.",
+    "statistic": "one difference per calendar YEAR: mean in-window daily return minus mean NONE daily return that year; the pass t is the t of those yearly differences (#12). Pooled Welch t is dropped.",
+    "underpowered": "a half with fewer than 8 years or fewer than 30 in-window days is UNDERPOWERED, not FAIL (#12).",
+    "pass": "a cell PASSES only if, in BOTH halves (split 2010-01-01), the yearly-difference mean > 0 with t >= 2.6. The in-window strategy after 2 bp is information only (#13). Otherwise FAIL (or UNDERPOWERED).",
+    "data_pin": "yfinance auto_adjust=True adjusted closes, as month_end_rebal.py:142 (#14); early-close half days kept.",
+    "multiplicity": "unchanged, t >= 2.6 for 9 cells (#15).",
+    "script": "tools/studies/calendar_flows.py; window logic tested in tests/test_calendar_flows.py.",
+    "verdict_rule": "FAIL if any powered half misses t >= 2.6; UNDERPOWERED only if no powered half fails and fewer than 2 halves are powered; PASS needs both halves powered and passing. Strategy line, combined book and by-decade table are not computed (information only, omitted). Skeptic round 2: READY 2026-10-16."
+  }
 }
