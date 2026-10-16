@@ -123,7 +123,8 @@ Check their branches before touching the same files.
    - **Stopgap live since 13:40 10/16** (operator OK): `ai_stale_data_max_age_sec` 15 → 60 s in config (3e0169b, hot-reloaded). After the quote-age fix ships, decide whether to keep 60 or go back to 15.
    - Test, then ship after the close.
 4. **Log the hold's decision live.** `trail_exit_trend_hold` counts its reasons only in memory (`DC_STATS`). Log one event per trail sale at or below entry, with the reason (falling / no_bars / stale_bars / green / hard_stop), so the scorecard can show why each sale was or wasn't held. EQNR 12:21 10/16 was a scratch (idle leash + green catch-up overtake to $45.91 over last $45.905), and its hold reason is unknown. Code only; ships after the close.
-5. **Morning scorecard script.** Build it if missing; the inputs are above.
+5. **Entry scratches from the ratchet** (operator 10/16: "the double check was supposed to prevent stopping at entry"). EQNR 12:21 (peak +1¢) and PPL 14:03 (peak +2.5¢) were sold at entry after the 15 s idle leash plus `green_catchup_overtake` walked the stop up to entry; the hold then let them go (reason unlogged). Check whether the overtake bypasses `ai_local_trail_be_at_pct` (0.15). If so, pre-register a replay arm 'no stop raise to or above entry until the gain is at least +0.15%' vs trail_dc. Judge on value in both halves with paired t >= 1.5 and on scratch count. Do not switch it live without that: the leash is the best-tested exit (+58 bp/day).
+6. **Morning scorecard script.** Build it if missing; the inputs are above.
 
 ## Key files
 
