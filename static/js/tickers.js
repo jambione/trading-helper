@@ -429,7 +429,20 @@ async function _removeTicker(ticker) {
 
 /** Copy symbol to clipboard; track in today's list (shared with Trending / AI).
  *  `el` is the symbol cell (or any element) — flash feedback on success/failure. */
+/** Call bar (operator 10/16): any name clicked anywhere on the dashboard also lands in the book's call box,
+ *  ready to log with one click. The box only exists on desktop; elsewhere this does nothing. */
+function _fillCallBar(ticker) {
+  const inp = document.querySelector('[data-call-ticker]');
+  const sym = String(ticker || '').trim().toUpperCase();
+  if (!inp || !sym) return;
+  inp.value = sym;
+  inp.classList.add('is-filled');
+  clearTimeout(inp._filledTimer);
+  inp._filledTimer = setTimeout(() => inp.classList.remove('is-filled'), 900);
+}
+
 export async function copyTicker(el, ticker) {
+  _fillCallBar(ticker);
   if (isTvClickOpenEnabled()) {
     try {
       openTradingViewChart(ticker);

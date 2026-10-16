@@ -4876,3 +4876,5 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-trail { font-size: 15px; }
 .panel-ai-watch .ai-call-empty { color: #8b80a8; }
 body.mobile .panel-ai-watch .ai-call-bar { display: none; }
 @media (max-width: 700px) { .panel-ai-watch .ai-call-bar { display: none; } }
+
+.panel-ai-watch .ai-call-input.is-filled { border-color: #a78bfa; background: rgba(124, 58, 237, 0.25); transition: background .2s; }
