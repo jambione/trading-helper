@@ -1,0 +1,26 @@
+{
+  "study": "Calendar-flow family on SPY and IWM: do the turn-of-month, quarter-end, pre-holiday, tax-loss-January and options-expiration windows earn more than other days, after costs?",
+  "registered_at": "2026-10-16 ~06:00 ET, before any data for these windows was computed.",
+  "registered_before_results": true,
+  "origin": "Operator 10/16; the family of the one effect that passed here (month-end SPY, +20.6 bp, t 3.7, 289 months; docs/studies/MONTH_END_REBAL_2026-10-01.md).",
+  "prior": "MEDIUM for turn-of-month and pre-holiday (widely published, may be weaker since publication), LOW for options expiration, LOW-MEDIUM for tax-loss January in small caps (IWM).",
+  "data": "Yahoo adjusted daily closes (yfinance, as month_end_rebal.py) for SPY 1993-02 and IWM 2000-06 to 2026-10-15; close-to-close returns; NYSE trading calendar from the data itself.",
+  "windows": {
+    "TOM": "turn of month: last trading day of the month through the 3rd trading day of the next (4 days)",
+    "QE": "quarter-end: last 2 trading days of Mar/Jun/Sep/Dec",
+    "PREHOL": "the trading day before a market holiday (a weekday the market is closed)",
+    "TAXJAN": "IWM only: last 3 trading days of December through the 5th trading day of January",
+    "OPEX": "options-expiration week: Monday through the third Friday of the month"
+  },
+  "statistic": "per window: mean daily return in-window minus mean daily return out-of-window (all other days), with a t from a two-sample test on daily returns and a year-clustered check; also the strategy return of holding the ETF only in-window, net of 2 bp per round trip (ETF spread at the close).",
+  "multiplicity": "9 window x ETF cells (5 windows on SPY, 4 on IWM incl. TAXJAN; TAXJAN not on SPY): pass t >= 2.6 (Bonferroni-ish for 9 cells at one-sided 0.05 ~ 2.5-2.6).",
+  "split": "halves: before and after 2010-01-01 (publication-decay check).",
+  "pass": "a cell PASSES only if in BOTH halves: in-minus-out > 0 with t >= 2.6 AND the in-window strategy is positive after cost. Month-end alone (already passed) is reported, not re-graded.",
+  "information_only": [
+    "combined calendar book (SPY in any passing window) - cumulative return, max drawdown, days invested",
+    "by-decade table"
+  ],
+  "no_retuning": "window definitions above are fixed; other lengths are a new prereg.",
+  "if_pass": "add passing windows to the month-end pilot as score-only, then paper forward for >= 6 months of windows before any money.",
+  "if_fail": "calendar effects beyond month-end are closed for this desk."
+}

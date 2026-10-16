@@ -1,0 +1,23 @@
+{
+  "study": "Short gap-down names for the day: stocks that open more than 1% below the prior close, shorted at the open and covered at the close.",
+  "registered_at": "2026-10-16 ~06:00 ET, before any data for this test was fetched or computed.",
+  "registered_before_results": true,
+  "origin": "Operator 10/16 asked for more options; candidate #1 from the desk's gap-down gate (ai_watch_gap_down_block_pct 1.0).",
+  "prior": "LOW-MEDIUM and conflicted: in-sample 9/14-23 gap-downs >1% fell 1% before rising 1% more often (z -3.7); the out-of-sample grade 10/4 (42 refused name-days, 7 days) found them RISING into the close (+258 bp mean) - UNCONFIRMED. Short-horizon shorts of admitted (up) names were a coin flip with a squeeze tail (short-the-fade-has-no-edge).",
+  "data": "Alpaca SIP daily bars (split/dividend adjusted where available) 2016-01-01 to 2026-10-15 for the current liquid universe: US common stock (ticker_filters.is_common, no ETFs/funds), price >= $10 and 20-day average dollar volume >= $20M on the PRIOR day. Survivorship: delisted names are missing; for shorts that omission is conservative (names that collapsed are absent) and is stated with the result.",
+  "signal": "open(d) / close(d-1) - 1 <= -1.0% (the official SIP open). Name must also pass the liquidity rule on d-1. Both measured with information available at the open.",
+  "trade": "short at open(d), cover at close(d); equal dollar weight per name per day; at most 20 names per day (largest gaps first) so a crash day cannot dominate.",
+  "cost": "10 bp round trip (open and close auctions on liquid names) plus 2 bp borrow for one day; also reported at 25 bp as a stress line.",
+  "statistic": "daily portfolio return (mean of the day's names), net of cost; mean, day-clustered t, Sharpe (annualized), worst day, worst month, share of positive months; and the same short on a random set of NON-gap names the same day (same count, seeded) as the control.",
+  "split": "halves: 2016-01-01..2020-12-31 and 2021-01-01..2026-10-15; also by year (information).",
+  "pass": "PASS only if, in BOTH halves: mean net daily return > 0 with t >= 2.0, above the random-short control with t >= 2.0, and >= 55% positive months. Otherwise FAIL (or UNDERPOWERED if fewer than 500 trading days with a signal per half).",
+  "information_only": [
+    "gap bins -1..-2 / -2..-4 / < -4%",
+    "price bins $10-20 / $20-50 / $50+",
+    "hold to 10:30 and to 12:00 instead of the close (needs intraday bars: only if daily PASSES)",
+    "a SPY-hedged version (short gap-downs, long SPY equal dollars)"
+  ],
+  "no_retuning": "-1%, $10, $20M, 20 names, open-to-close and the cost are fixed; any other threshold is a new prereg.",
+  "if_pass": "pre-register a paper forward test on the overnight/weekly account plumbing (market-on-open / market-on-close orders) for >= 30 sessions; result-skeptic review of the positive before any trading.",
+  "if_fail": "the gap-down signal stays an avoid-filter only; record it as tested."
+}
