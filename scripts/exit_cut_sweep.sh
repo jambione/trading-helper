@@ -40,6 +40,7 @@ arm_sets() {   # base = HEAD config (no-progress off, double check off)
     trail_dc_lob) echo "$OFF --set ai_trail_exit_trend_hold=true --set ai_trail_exit_trend_hold_band_pct=0.05 --set ai_exit_left_overbought=true --set ai_exit_triangle_engine_only=true" ;;
     trail_dc_seat150) echo "$OFF --set ai_trail_exit_trend_hold=true --set ai_trail_exit_trend_hold_band_pct=0.05 --set ai_watch_dead_seat_evict_sec=150 --set ai_watch_unarmable_evict_sec=150" ;;
     trail_dc_init06) echo "$OFF --set ai_trail_exit_trend_hold=true --set ai_trail_exit_trend_hold_band_pct=0.05 --set ai_local_trail_initial_give_r=0.06" ;;
+    trail_dc_cool30) echo "$OFF --set ai_trail_exit_trend_hold=true --set ai_trail_exit_trend_hold_band_pct=0.05 --set ai_reentry_cooldown_sec=30" ;;
     *) echo "unknown arm $1" >&2; exit 1 ;;
   esac
 }
@@ -66,4 +67,4 @@ wait
 HM=$(TZ=America/New_York date +%H%M)
 if [ -n "${SWEEP_ANYTIME:-}" ] && [ "$HM" -lt 0915 ]; then :   # operator 10/16: score before the open
 elif [ "$HM" -ge 0400 ] && [ "$HM" -lt 1615 ]; then echo "scoring deferred (quote fetches need the evening)"; exit 0; fi
-.venv/bin/python tools/studies/spread_rvol_score.py --dir "$OUT" --arms ${SWEEP_SCORE_ARMS:-off,np180,dc180,np_dc,np120_dc,np300_dc,trend60,trend120,trail_dc,trail_dc_np_dc,trail_dc_lob,trail_dc_seat150,trail_dc_init06} --refs ${SWEEP_REFS:-off,trail_dc} | tee "$OUT/result.md"
+.venv/bin/python tools/studies/spread_rvol_score.py --dir "$OUT" --arms ${SWEEP_SCORE_ARMS:-off,np180,dc180,np_dc,np120_dc,np300_dc,trend60,trend120,trail_dc,trail_dc_np_dc,trail_dc_lob,trail_dc_seat150,trail_dc_init06,trail_dc_cool30} --refs ${SWEEP_REFS:-off,trail_dc} | tee "$OUT/result.md"
