@@ -761,6 +761,13 @@ def score(datas: list[dict]) -> dict:
             "info_x": {k: day_equal(v)[:3] for k, v in x_info[r].items()},
             "ctrl_overlap": (overlap[r] / overlap[r + "_n"]) if overlap[r + "_n"] else None,
         }
+    # confirm_entry_prereg amended_1.null_held (skeptic round 2): CONFk is PROMISING only above its HELDk null.
+    for k in (1, 2):
+        c, h = res["rules"].get(f"CONF{k}"), res["rules"].get(f"HELD{k}")
+        if c is not None and h is not None:
+            cl_, hl_ = c["pooled"]["lift"], h["pooled"]["lift"]
+            c["pooled"]["promising"] = bool(c["pooled"]["promising"] and cl_ is not None and hl_ is not None
+                                            and cl_ > hl_)
     res["board_mean"] = day_equal(board_mean)[:3]
     res["lead"] = lead_report(fire_log, desk_fills(set(days)))
     res["artifact"] = day_equal(artifact)[:3]
