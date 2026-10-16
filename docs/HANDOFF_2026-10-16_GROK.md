@@ -78,6 +78,7 @@ The poll profiler (`ai_watch_profile_path`) is still on. Remove it after the loo
 | trail_dc_lob | engine-only triangle exit |
 | trail_dc_init06 | tighter initial stop, about 0.3% (0.06R) instead of about 0.6% (0.12R). The UPS question |
 | trail_dc_np_dc | no-progress cut gated by the double check |
+| trail_dc_sqwait0 / trail_dc_sqwait5 | after-square pre-square wait off / 5 min (live 10). ADD after the running sweep finishes: rerun `scripts/exit_cut_sweep.sh /tmp/ecs_20261016n` with the same env plus these two arms in `SWEEP_ARMS` and `SWEEP_SCORE_ARMS`. Finished outputs are skipped. Use the newest sha for the new arms only if `off` and `trail_dc` are rerun at it too; otherwise keep `SWEEP_SHA=8bbede5` (the arm logic is pure config). |
 
 - Expected done around 17:00. It scores itself into `/tmp/ecs_20261016n/result.md` (refs off and trail_dc).
 - Per-half split, as done on 10/16 for trail_dc: copy the day files for 10/06–10/09 and 10/12–10/15 into two dirs, then run `.venv/bin/python tools/studies/spread_rvol_score.py --dir <dir> --arms off,trail_dc,<arm> --refs off,trail_dc`.

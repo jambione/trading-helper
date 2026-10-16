@@ -43,10 +43,13 @@
       "trail_dc_lob": "trail_dc + triangle exit (ai_exit_left_overbought) judged only on the engine's smoothed minute %R (ai_exit_triangle_engine_only). Operator 10/16 CRH: bought 84.52 at the 10:28 top, the triangle printed ~10:31 near 84.40, the trail sold 84.01 at 10:40.",
       "trail_dc_seat150": "trail_dc + seats wait 150 s instead of 30 s before a dead/unarmable eviction (ai_watch_dead_seat_evict_sec, ai_watch_unarmable_evict_sec). Operator 10/16: 4 opens 09:30-10:53, 199 evictions, most ~30 s after admission.",
       "trail_dc_init06": "trail_dc + initial stop at 0.06R (~0.3% of price at the 5% plan R) instead of 0.12R (~0.6%), trail unchanged (ai_local_trail_initial_give_r). Operator 10/16 UPS: bought 99.48, never green, stop 98.89 hit 11:17, filled 98.79 (-69 bp). Prior: give_r 0.05-0.50 sweep was flat noise; the initial/trail split itself was never swept.",
-      "trail_dc_cool30": "trail_dc + re-entry cooldown 30 s instead of 120 s (ai_reentry_cooldown_sec). Operator 10/16 'more opens': 63 reentry_cooldown skips 09:30-11:43. Prior: re-entry after a WIN beat the average (t +2.9, reentry-and-time-of-day); after a loss unproven. Judged like trail_dc_seat150: value vs trail_dc in both halves, paired t >= 1.5, must not lower opens/10m."
+      "trail_dc_cool30": "trail_dc + re-entry cooldown 30 s instead of 120 s (ai_reentry_cooldown_sec). Operator 10/16 'more opens': 63 reentry_cooldown skips 09:30-11:43. Prior: re-entry after a WIN beat the average (t +2.9, reentry-and-time-of-day); after a loss unproven. Judged like trail_dc_seat150: value vs trail_dc in both halves, paired t >= 1.5, must not lower opens/10m.",
+      "trail_dc_sqwait0": "trail_dc with the pre-square-after-square wait OFF (ai_watch_presquare_after_square_min 0; live 10). Operator 10/16 'why do we have the sq timer'. The 10-min wait shipped 10/14 on IN-SAMPLE information only (PRE within 10 min after a square -48 bp n 77 vs -14 bp from below n 482), never pre-registered; it costs opens.",
+      "trail_dc_sqwait5": "as trail_dc_sqwait0 with the wait at 5 minutes."
     },
     "decision_new_arms": "judged vs trail_dc (paired per-day VALUE): ship if it beats trail_dc in BOTH halves and paired t >= 1.5. trail_dc_seat150 must also not lower opens per 10 min; report opens/10m vs the book-open standard (>= 1). Ties within 2 bp/day: the arm with more opens (busy-book goal), then longer holds.",
     "at_init06": "added 2026-10-16 ~12:50 ET, before any of these arms ran.",
-    "at_cool30": "added 2026-10-16 ~11:50 ET, before any of these arms ran."
+    "at_cool30": "added 2026-10-16 ~11:50 ET, before any of these arms ran.",
+    "at_sqwait": "added 2026-10-16 ~12:40 ET, before either arm ran. Judged like seat150/cool30: value vs trail_dc in both halves with paired t >= 1.5 to change the live 10; report opens/10m. If neither qualifies, the 10-min wait stays."
   }
 }
