@@ -737,7 +737,8 @@ def score(datas: list[dict]) -> dict:
     net = {r: {h: defaultdict(list) for h in "AB"} for r in RULES}
     gross = {r: {h: defaultdict(list) for h in "AB"} for r in RULES}
     info = {r: {H: defaultdict(list) for H in INFO_HOLDS} for r in RULES}
-    x_info = {r: {k: defaultdict(list) for k in ("cross", "close_entry", "net20")} for r in RULES}
+    x_info = {r: {k: defaultdict(list) for k in ("cross", "close_entry", "net20", "crossA", "crossB", "pre1125",
+                                                "post1125")} for r in RULES}
     overlap = Counter()
     board_mean = defaultdict(list)
     drops = Counter()
@@ -793,10 +794,12 @@ def score(datas: list[dict]) -> dict:
                     overlap[rule] += km < em + HOLD
                     overlap[rule + "_n"] += 1
                     lift[rule][half][day].append(g - gc)
+                    x_info[rule]["pre1125" if sm < 11 * 60 + 25 else "post1125"][day].append(g - gc)
                     x_info[rule]["net20"][day].append(g - 2 * COST)
                     xc = cross_control(sym, day, rule, data["board"], sips_day, sm)
                     if xc is not None:
                         x_info[rule]["cross"][day].append(g - xc)
+                        x_info[rule]["cross" + half][day].append(g - xc)
                     gce, gcc = markout_close(sip, em), markout_close(sip, km)
                     if gce is not None and gcc is not None:
                         x_info[rule]["close_entry"][day].append(gce - gcc)
@@ -933,7 +936,7 @@ def report(res: dict) -> str:
             L.append(f"| {r} | {h} | {x['n']} | {x['days']} | {_bp(x['gross'])} | {_bp(x['net'])} "
                      f"| {_bp(x['lift'])} | {t} | {x['verdict']} |")
     L += ["", "**Verdicts:** " + ", ".join(f"{r} {v['verdict']}" for r, v in res["rules"].items()), ""]
-    if any(r.startswith("CONF") or r in ("TRER", "SLOWUP") for r in res["rules"]):
+    if any(r.startswith("CONF") or r in ("TRER", "SLOWUP", "BOTHUP") for r in res["rules"]):
         L += ["**PROMISING tier** (pooled day-equal lift > 0 with t >= 1.5, lift > 0 in each half, pooled net at "
               f"{MEASURED_COST * 1e4:.0f} bp > 0, >= {MIN_SIGNALS} signals and {MIN_DAYS} days per half):", ""]
         for r, v in res["rules"].items():

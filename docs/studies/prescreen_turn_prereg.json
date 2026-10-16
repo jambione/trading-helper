@@ -13,12 +13,28 @@
   "fill_markout_control_cost_statistic_split": "early_entry_honest.score unchanged: completed IEX bars, onsets with a 15-minute refractory, 09:50-15:30; entry at the SIP open of the next minute; exit at the SIP close 9 minutes after the entry bar; control = random LATER minute of the same name (entry+1..+60); 10 bp round trip on both; lift = rule net - control net, day-equal mean, day-clustered t; halves split at the median session.",
   "pass": "Each half PASS = day-equal lift >= +5 bp with t >= 2.0, day-equal net > 0 at 10 bp, >= 100 signals, >= 6 days. A rule PASSES only if both halves PASS; FAIL if either FAILs; else UNDERPOWERED.",
   "promising": "Pooled day-equal lift > 0 with t >= 1.5, lift > 0 in each half, pooled net at the measured 3 bp > 0, >= 100 signals and 6 days per half (as confirm_entry_prereg amended_1).",
-  "information_only": ["OSL, PRE, SQ", "5/15/30 minute markouts, cross control, close entry, 20 bp cost", "board mean (all sampled RTH minutes) as the universe base rate"],
+  "information_only": [
+    "OSL, PRE, SQ",
+    "5/15/30 minute markouts, cross control, close entry, 20 bp cost",
+    "board mean (all sampled RTH minutes) as the universe base rate"
+  ],
   "no_retuning": "-70 / -40 / 10 bars / 2 rising bars, the sample size and seed, window, refractory, hold, cost and split are fixed. Any other threshold is a new prereg.",
   "if_pass": "Design a live scanner (the stream holds 50 names; a universe scan needs a polled or batched feed) and forward-test it on paper for >= 10 sessions, then result-skeptic review.",
   "if_promising": "Paper scanner slot; no live change.",
   "if_fail": "The %R turn has no edge on the unscreened universe either; recorded for the 10/30 verdict on the intraday momentum design.",
-  "declared_deviations": ["Completed 1-minute bars; live acts intrabar.", "A live scanner cannot watch 1,945 names on the 50-name stream: this tests whether the signal pays, not whether the current plumbing can trade it."],
+  "declared_deviations": [
+    "Completed 1-minute bars; live acts intrabar.",
+    "A live scanner cannot watch 1,945 names on the 50-name stream: this tests whether the signal pays, not whether the current plumbing can trade it.",
+    "Warm-up is the previous session's last 220 RTH IEX bars; live warms on extended-hours bars (alpaca_api fetch_bars extended_hours=True). Until ~11:22 the slow line mixes yesterday's afternoon with today's open, and a gap-down can read as a dip at the open (skeptic F2)."
+  ],
   "multiplicity": "BOTHUP is new; MID is a re-test on a new population. Two graded rules, noted not corrected.",
-  "command": ".venv/bin/python tools/studies/prescreen_turn.py --score (warm lines on)"
+  "command": ".venv/bin/python tools/studies/prescreen_turn.py --score (warm lines on)",
+  "amended_1": {
+    "at": "2026-10-16 ~12:45 ET, after result-skeptic round 1 (NOT READY, F1-F3), before any score.",
+    "F1_sample": "the 400-name sample is drawn only from names with today's IEX and SIP bars AND the previous session's IEX bars (known before the open), so no sampled name is scored cold. Cap: more than 6 sessions excluded for missing warm-up makes the graded rules UNDERPOWERED; the count is printed.",
+    "F2_time_split": "information: lift split by signal time before vs at/after 11:25 (pre1125 / post1125), because the warm-up differs from live before ~11:22.",
+    "F3_cross": "PASS and PROMISING for BOTHUP and MID additionally require the same-minute cross-name control lift (rule markout minus a random OTHER sampled name's markout at the same minute, same hold) to be > 0 in EACH half. It strips market-wide bounces and time-of-day drift.",
+    "bars": "'bars' are gridded 1-minute rows (gaps up to 15 minutes forward-filled flat; longer gaps not filled), as in every early_entry_honest study.",
+    "null": "the skeptic's random walk at this setup (RTH-only, prior 220 bars, 100 days x 40 names): BOTHUP -0.7 / -0.4 bp, MID +0.4 / -0.2 bp."
+  }
 }

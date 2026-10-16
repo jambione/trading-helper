@@ -52,3 +52,19 @@ def test_sample_is_seeded_and_capped():
     a = P.sample_names("2026-10-06", names)
     assert a == P.sample_names("2026-10-06", list(reversed(names))) and len(a) == P.SAMPLE
     assert a != P.sample_names("2026-10-07", names)
+
+
+def test_main_score_applies_cross_gate(tmp_path, monkeypatch, capsys):
+    wh = tmp_path / "ai_reports" / "warehouse"
+    for f in ("iex", "sip"):
+        os.makedirs(wh / f)
+    for k, day in enumerate(("2026-10-05", "2026-10-06", "2026-10-07")):
+        for f in ("iex", "sip"):
+            _day(wh / f / f"{day}.npz", day, k)
+    monkeypatch.setattr(P, "WH", str(wh))
+    monkeypatch.setattr(P, "ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["prescreen_turn.py", "--score"])
+    P.main()
+    out = capsys.readouterr().out
+    assert "Pre-screen gates" in out and "cross-name lift" in out and "days excluded for missing warm-up: 0" in out
+    assert (wh / "prescreen_turn_result.md").exists()

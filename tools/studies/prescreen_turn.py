@@ -29,6 +29,7 @@ import early_entry_honest as E  # noqa: E402
 ROOT = os.environ.get("REPO") or os.getcwd()
 WH = os.path.join(ROOT, "ai_reports", "warehouse")
 SAMPLE = 400
+MAX_EXCLUDED_DAYS = 6       # prereg amended_1: more excluded sessions -> graded rules UNDERPOWERED
 RULES = ("BOTHUP", "MID", "OSL", "PRE", "SQ")
 GRADED = ("BOTHUP", "MID")
 
@@ -76,11 +77,11 @@ class LazyDay(dict):
         LazyDay._slot = self
         iex = _frames(os.path.join(WH, "iex", f"{self['day']}.npz"))
         sip = _frames(os.path.join(WH, "sip", f"{self['day']}.npz"))
-        names = sample_names(self["day"], [s for s in iex if s in sip])
-        prior = {}
-        if self._prev:
-            p_iex = _frames(os.path.join(WH, "iex", f"{self._prev}.npz"))
-            prior = {s: p_iex[s].tail(E.CON_PRIOR_BARS).reset_index(drop=True) for s in names if s in p_iex}
+        p_iex = _frames(os.path.join(WH, "iex", f"{self._prev}.npz")) if self._prev else {}
+        # Skeptic F1: sample only names with today's IEX + SIP AND the previous session's IEX bars (known before the
+        # open), so no sampled name is scored cold and no day is dropped for missing warm-up.
+        names = sample_names(self["day"], [s for s in iex if s in sip and s in p_iex])
+        prior = {s: p_iex[s].tail(E.CON_PRIOR_BARS).reset_index(drop=True) for s in names}
         minutes = set(range(E.RTH_START, E.RTH_END))
         dict.update(self, board={s: minutes for s in names}, iex={s: iex[s] for s in names},
                     sip={s: sip[s] for s in names}, iex_prior=prior)
@@ -123,7 +124,26 @@ def main() -> None:
         print("(inventory only; --score after the prereg has a result-skeptic READY)")
         return
     res = E.score(days)
+    excluded = len(res.get("con_excluded") or [])
+    if excluded > MAX_EXCLUDED_DAYS:
+        for r in GRADED:
+            res["rules"][r]["verdict"] = "UNDERPOWERED"
+            res["rules"][r]["pooled"]["promising"] = False
+    # Skeptic F3: the same-minute cross-name control must ALSO be beaten in each half (strips market-wide bounces
+    # and time-of-day drift that a later same-name control can carry).
+    cross_note = []
+    for r in GRADED:
+        mu_a, mu_b = res["rules"][r]["info_x"]["crossA"][0], res["rules"][r]["info_x"]["crossB"][0]
+        ok = mu_a is not None and mu_b is not None and mu_a > 0 and mu_b > 0
+        cross_note.append(f"- {r}: cross-name lift A {E._bp(mu_a)}, B {E._bp(mu_b)} -> "
+                          f"{'beats the same-minute cross control in both halves' if ok else 'FAILS the cross control'}")
+        if not ok:
+            if res["rules"][r]["verdict"] == "PASS":
+                res["rules"][r]["verdict"] = "FAIL"
+            res["rules"][r]["pooled"]["promising"] = False
     md = E.report(res)
+    md += ("\n\n### Pre-screen gates (prereg amended_1)\n\n" + "\n".join(cross_note) +
+           f"\n- days excluded for missing warm-up: {excluded} (cap {MAX_EXCLUDED_DAYS})\n")
     print(md)
     out = os.path.join(ROOT, "ai_reports", "warehouse", "prescreen_turn_result.md")
     with open(out, "w") as f:
