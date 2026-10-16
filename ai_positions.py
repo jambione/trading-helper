@@ -3591,6 +3591,15 @@ def double_check_sell_due(
         return False, {"error": str(e)[:120]}
 
 
+# Outcome counts for the double-check gates (no_bars / sell / hold / error ...), read by the replay summary so a gate
+# that never gets a reading shows up as such instead of as "no effect" (10/16: np_dc == np180 and trail_dc == off).
+DC_STATS: "dict[str, int]" = {}
+
+
+def _dc_note(key: str) -> None:
+    DC_STATS[key] = DC_STATS.get(key, 0) + 1
+
+
 def _double_check_store_bars(ticker: str) -> tuple | None:
     """Session 1m bars from the in-memory ob_observe store only (never fetches): the trail-hold check runs inside
     an exit and must not wait on the network. None under 20 bars."""
@@ -3641,18 +3650,23 @@ def trail_exit_trend_hold(pos: dict | None, ticker: str, px: float, now: float |
         if entry is None or px is None:
             return False
         if px > entry * (1 + band / 100.0) + 1e-9:
+            _dc_note("trail:green")
             return False                       # a green trail exit: take it
         if hard is not None and px <= hard + 1e-9:
+            _dc_note("trail:hard_stop")
             return False                       # the hard stop is absolute
         from tools import sell_double_check as sdc
         t_now = float(now if now is not None else time.time())
         bars = _double_check_store_bars(ticker)
         if bars is None:
+            _dc_note("trail:no_bars")
             return False                       # no bars in memory: sell (never fetch inside an exit)
         lookback = int(cfg.get("ai_double_check_lookback_min", sdc.LOOKBACK_MIN) or sdc.LOOKBACK_MIN)
         res = sdc.evaluate_symbol(ticker, bars, float(px), lookback=lookback, now=t_now)
+        _dc_note(f"trail:{res.get('sell')}:{res.get('reason') or res.get('trend') or ''}"[:60])
         return res.get("sell") == "no"
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        _dc_note(f"trail:error:{type(e).__name__}")
         return False
 
 
@@ -3674,12 +3688,17 @@ def no_progress_trend_says_sell(
         t_now = float(now if now is not None else time.time())
         last = _num((pos or {}).get("last_seen_price"))
         if last is None:
+            _dc_note("np:no_price")
             return True
         bars = _symbol_bars_for_double_check(ticker, t_now)
+        if bars is None:
+            _dc_note("np:no_bars")
         lookback = int(cfg.get("ai_double_check_lookback_min", sdc.LOOKBACK_MIN) or sdc.LOOKBACK_MIN)
         res = sdc.evaluate_symbol(ticker, bars, last, lookback=lookback, now=t_now)
+        _dc_note(f"np:{res.get('sell')}:{res.get('reason') or res.get('trend') or ''}"[:60])
         return res.get("sell") == "yes"
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        _dc_note(f"np:error:{type(e).__name__}")
         return True
 
 

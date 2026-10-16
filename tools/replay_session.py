@@ -1110,10 +1110,15 @@ def range_on(cfg: dict) -> bool:
 
 
 def ob_feed_on(cfg: dict) -> bool:
-    """The ob bar store is fed synchronously for the range rules and for the SuperTrend exit
-    (tight_trail_replay_prereg.json amended_14), which reads its 1-minute bars."""
-    return (range_on(cfg) or bool((cfg or {}).get("ai_exit_supertrend"))
-            or float((cfg or {}).get("ai_watch_wr_rsi_min_rise", 0) or 0) > 0)
+    """The ob bar store is fed synchronously for the range rules, the SuperTrend exit
+    (tight_trail_replay_prereg.json amended_14) and the double-check gates, which read its 1-minute bars."""
+    c = cfg or {}
+    # 2026-10-16: the double-check gates read this store too. Without them here the 10/15 exit sweep fed nothing
+    # (ob_feeds 0), every gate call had no bars and failed safe to "sell": np_dc == np180, trail_dc == off.
+    return (range_on(c) or bool(c.get("ai_exit_supertrend"))
+            or float(c.get("ai_watch_wr_rsi_min_rise", 0) or 0) > 0
+            or bool(c.get("ai_double_check_sell_enabled")) or bool(c.get("ai_no_progress_require_double_check"))
+            or bool(c.get("ai_trail_exit_trend_hold")))
 
 
 class ObStoreFeeder:
@@ -2242,7 +2247,7 @@ def run_inside(args) -> int:
         args.range_inputs = dict(getattr(ew, "range_arm_stats", dict)(), ob_feed=ob_feed.stats())
         print(f"[replay] range_arm per-input counts: {args.range_inputs}")
     args.result_extra = {"vacuity": {
-        **tally.summary(), "place_calls": vac["place_calls"],
+        **tally.summary(), "double_check_stats": dict(getattr(cp, "DC_STATS", {}) or {}), "place_calls": vac["place_calls"],
         "trades": len(broker.closed) + len(broker.open), "ob_feeds": ob_feed.feeds,
         "synthetic_names_served": len(synth.used) if not synthetic else len(rec.served)}}
     if synthetic:

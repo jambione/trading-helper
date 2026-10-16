@@ -37,3 +37,9 @@ def test_work_dir_removed_after_run(monkeypatch, tmp_path):
     monkeypatch.setattr(rs, "_run_export", lambda args, sha, work: 0)
     assert rs.export_and_reexec(_args(out=None)) == 0          # no --out: kept, the result lives inside it
     assert (tmp_path / made["dir"]).exists()
+
+
+def test_double_check_gates_turn_on_the_bar_feed():
+    assert not rs.ob_feed_on({})
+    for k in ("ai_double_check_sell_enabled", "ai_no_progress_require_double_check", "ai_trail_exit_trend_hold"):
+        assert rs.ob_feed_on({k: True}), k
