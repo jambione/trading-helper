@@ -39,7 +39,7 @@ PX_MIN, DV_MIN, DV_DAYS = 10.0, 20e6, 20
 MIN_UNIVERSE = 300
 COST_BP, STRESS_BP, SPY_COST_BP = 20.0, 25.0, 2.0
 T_BAR, MIN_SIGNAL_DAYS, POS_MONTHS = 2.0, 500, 0.55
-REQ_GAP_S = 0.34                     # <= ~180 requests/min on the data account
+REQ_GAP_S = 0.5                      # <= ~120 requests/min; daily pagination bursts above the 0.34 s pace
 
 
 # ── pure logic (tested) ───────────────────────────────────────────────────────
@@ -140,7 +140,7 @@ def _universe() -> list[str]:
 def _bars(cl, syms, tf, start, end, adj, log):
     from alpaca.data.enums import DataFeed
     from alpaca.data.requests import StockBarsRequest
-    for attempt in range(5):
+    for attempt in range(8):
         try:
             time.sleep(REQ_GAP_S)
             r = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=syms, timeframe=tf, start=start, end=end,
@@ -148,7 +148,7 @@ def _bars(cl, syms, tf, start, end, adj, log):
             return r.data or {}
         except Exception as e:  # noqa: BLE001
             log.append(f"{syms[0]}..{syms[-1]} {start:%Y-%m-%d} try {attempt}: {type(e).__name__} {str(e)[:80]}")
-            time.sleep(5 * (attempt + 1))
+            time.sleep(10 * (attempt + 1))         # pagination bursts draw 429s; back off harder
     log.append(f"FAILED {syms[0]}..{syms[-1]} {start:%Y-%m-%d} ({len(syms)} syms)")
     return None
 
@@ -185,6 +185,48 @@ def fetch_daily() -> None:
             print(f"  adjusted {i}/{len(need)}", flush=True)
     pickle.dump({"liquid": liquid, "adj": adj, "log": log}, open(os.path.join(OUT, "daily.pkl"), "wb"))
     print(f"daily done: {len(liquid)} liquid names, {len(adj)} adjusted series, {len(log)} log lines", flush=True)
+
+
+def repair_daily() -> None:
+    """Refetch the daily chunks that FAILED (raw: the names never entered the universe; adjusted: liquid names
+    with no adjusted series), merge, and log. Clears minute days fetched before the repair."""
+    from zoneinfo import ZoneInfo
+    from alpaca.data.enums import Adjustment
+    from alpaca.data.timeframe import TimeFrame
+    global REQ_GAP_S
+    REQ_GAP_S = 1.0
+    ET = ZoneInfo("America/New_York")
+    path = os.path.join(OUT, "daily.pkl")
+    d = pickle.load(open(path, "rb"))
+    cl, log = _client(), d["log"]
+    start = datetime.strptime(LO, "%Y-%m-%d").replace(tzinfo=ET)
+    end = datetime.strptime(HI, "%Y-%m-%d").replace(hour=23, tzinfo=ET)
+    univ = _universe()
+    failed = [l.split()[1].split("..") for l in log if l.startswith("FAILED")]
+    raw_syms = sorted({s for a, b in failed for s in univ if a <= s <= b and s not in d["liquid"]})
+    for i in range(0, len(raw_syms), 50):
+        chunk = raw_syms[i:i + 50]
+        raw = _bars(cl, chunk, TimeFrame.Day, start, end, Adjustment.RAW, log)
+        for s, rows in (raw or {}).items():
+            rr = [(b.timestamp.astimezone(ET).strftime("%Y-%m-%d"), float(b.close), float(b.volume)) for b in rows]
+            ld = liquid_dates(rr)
+            if ld:
+                d["liquid"][s] = sorted(ld)
+    need = sorted(set(d["liquid"]) - set(d["adj"]))
+    print(f"repair: {len(raw_syms)} raw names re-asked, {len(need)} need adjusted series", flush=True)
+    for i in range(0, len(need), 50):
+        chunk = need[i:i + 50]
+        a = _bars(cl, chunk, TimeFrame.Day, start, end, Adjustment.ALL, log)
+        for s, rows in (a or {}).items():
+            d["adj"][s] = {b.timestamp.astimezone(ET).strftime("%Y-%m-%d"): (float(b.open), float(b.close)) for b in rows}
+    log.append(f"REPAIRED {time.strftime('%Y-%m-%d %H:%M')}: liquid {len(d['liquid'])}, adjusted {len(d['adj'])}")
+    pickle.dump(d, open(path + ".tmp", "wb"))
+    os.replace(path + ".tmp", path)
+    mp = os.path.join(OUT, "minute.pkl")
+    if os.path.exists(mp):
+        os.replace(mp, mp + ".pre_repair")
+    print(f"repair done: {len(d['liquid'])} liquid, {len(d['adj'])} adjusted, "
+          f"{len(set(d['liquid']) - set(d['adj']))} still missing", flush=True)
 
 
 def fetch_minute() -> None:
@@ -334,11 +376,14 @@ def score() -> str:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--daily", action="store_true")
+    ap.add_argument("--repair", action="store_true")
     ap.add_argument("--minute", action="store_true")
     ap.add_argument("--score", action="store_true")
     a = ap.parse_args()
     if a.daily:
         fetch_daily()
+    if a.repair:
+        repair_daily()
     if a.minute:
         fetch_minute()
     if a.score:
