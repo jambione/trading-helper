@@ -70,3 +70,17 @@ stays on the list for the busy-book goal, but below items 1-6 for profit.
 | Tonight | prereg + run the cost re-grade (item 2); warehouse fetch starts on the data account (item 1) |
 | Next 2 sessions | earnings drift and market-neutral overnight preregs (item 4) on the warehouse; desk per-trade mean tracked daily (item 3) |
 | ~30 calls | operator-eye read (item 6) |
+
+## Two-week production push (operator 10/16 ~13:20: "turn to profit in 2 weeks")
+
+Baseline (real paper fills, outcomes.jsonl, 9/28-10/16): 732 trades, -7.7 bp/trade (t -8.0), 15 of 15 sessions red; -21 bp (9/28) -> -3..-7 bp (10/5-10/15) from defensive fixes.
+
+Verdict gate 10/30: ~400 trades at sd ~26 bp detect a true +3 bp/trade at t ~2.3. Positive two-week mean = working, keep building; still negative = recommend stopping investment in this desk design. Midpoint 10/23: week below -3 bp/trade -> cut losing pieces harder.
+
+Flaws, ranked:
+1. Buys the end of the move (entries at 88-93% of range; empty square = random minute; 11 timing rules FAILED). Left: sideways/downtrend filter (scoring 10/16), mid-rise PROMISING re-grade (tonight). If both fail, the arm itself is the flaw.
+2. Half-blind on IEX (%R differs from the chart; IEX gaps fire stale-quote exits; SIP-only leads +4..+9 bp vanish on IEX). Real-time SIP ($99/mo) = the one untested structural fix - OPERATOR DECISION.
+3. Slow and leaky execution (loop 3.7 s vs 3 s; entry slippage 2-11 bp; stop slippage ~7 bp). Caching fix in progress (ship after close); slippage per trade in the daily scorecard.
+4. Churn (199 evictions 09:30-10:53; ~0.5 opens/10m). Seat-grace arm in tonight's sweep.
+
+Cadence: nightly replay -> ship only pre-registered winners as one after-close batch; never mid-session. Morning scorecard: yesterday's per-trade mean, opens/10m, slippage, cumulative vs the 10/30 gate.
