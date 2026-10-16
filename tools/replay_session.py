@@ -363,7 +363,31 @@ def export_and_reexec(args) -> int:
             print("[replay] fidelity: live commit unknown; replaying HEAD")
     sha = subprocess.check_output(
         ["git", "-C", str(HERE), "rev-parse", ref], text=True).strip()
+    # 2026-10-16 04:2x: 187 work dirs (~350 MB each, 66 GB) filled the mini's disk and killed the desk. Refuse to
+    # start under REPLAY_MIN_FREE_GB free, and remove the work dir on exit or SIGTERM unless REPLAY_KEEP_WORK=1.
+    import shutil
+    import signal
+    free_gb = shutil.disk_usage(tempfile.gettempdir()).free / 1e9
+    min_gb = float(os.environ.get("REPLAY_MIN_FREE_GB", "20") or 20)
+    if free_gb < min_gb:
+        print(f"[replay] refusing to start: {free_gb:.1f} GB free < {min_gb:g} GB", file=sys.stderr)
+        return 3
     work = Path(tempfile.mkdtemp(prefix=f"replay_{sha[:8]}_"))
+    keep = os.environ.get("REPLAY_KEEP_WORK") == "1" or not getattr(args, "out", None)   # no --out: result lives there
+
+    def _cleanup(*_a):
+        if not keep:
+            shutil.rmtree(work, ignore_errors=True)
+    signal.signal(signal.SIGTERM, lambda *_a: (_cleanup(), sys.exit(143)))
+    try:
+        return _run_export(args, sha, work)
+    finally:
+        _cleanup()
+
+
+def _run_export(args, sha: str, work: Path) -> int:
+    """Stage 1 body: unpack the commit into work/code and run the replay there (split out so the caller can
+    always remove the work dir)."""
     code = work / "code"
     code.mkdir()
     archive = subprocess.Popen(["git", "-C", str(HERE), "archive", sha], stdout=subprocess.PIPE)
@@ -390,7 +414,8 @@ def export_and_reexec(args) -> int:
         py = sys.executable
     rc = subprocess.call([py, "-u", str(code / "tools" / "replay_session.py")] + sys.argv[1:],
                          cwd=str(code), env=env)
-    print(f"[replay] work dir: {work}")
+    kept = os.environ.get("REPLAY_KEEP_WORK") == "1" or not getattr(args, "out", None)
+    print(f"[replay] work dir: {work}" + ("" if kept else " (removed on exit)"))
     return rc
 
 
