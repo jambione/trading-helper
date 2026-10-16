@@ -79,7 +79,7 @@ Verdict gate 10/30: ~400 trades at sd ~26 bp detect a true +3 bp/trade at t ~2.3
 
 Flaws, ranked:
 1. Buys the end of the move (entries at 88-93% of range; empty square = random minute; 11 timing rules FAILED). Left: sideways/downtrend filter (scoring 10/16), mid-rise PROMISING re-grade (tonight). If both fail, the arm itself is the flaw.
-2. Half-blind on IEX (%R differs from the chart; IEX gaps fire stale-quote exits; SIP-only leads +4..+9 bp vanish on IEX). Real-time SIP ($99/mo) = the one untested structural fix - OPERATOR DECISION.
+2. Half-blind on IEX (%R differs from the chart; IEX gaps fire stale-quote exits; SIP-only leads +4..+9 bp vanish on IEX). Real-time SIP ($99/mo) = the one untested structural fix - OPERATOR 10/16 ~13:40: NOT NOW. Work within IEX: stop the stale-quote guard from exiting on IEX trade gaps (CRH 11:07); revisit SIP first if 10/30 is negative.
 3. Slow and leaky execution (loop 3.7 s vs 3 s; entry slippage 2-11 bp; stop slippage ~7 bp). Caching fix in progress (ship after close); slippage per trade in the daily scorecard.
 4. Churn (199 evictions 09:30-10:53; ~0.5 opens/10m). Seat-grace arm in tonight's sweep.
 
