@@ -4878,3 +4878,6 @@ body.mobile .panel-ai-watch .ai-call-bar { display: none; }
 @media (max-width: 700px) { .panel-ai-watch .ai-call-bar { display: none; } }
 
 .panel-ai-watch .ai-call-input.is-filled { border-color: #a78bfa; background: rgba(124, 58, 237, 0.25); transition: background .2s; }
+
+.panel-ai-watch .ai-call-total { flex-basis: 100%; display: flex; gap: 10px; align-items: baseline; color: #8b80a8; }
+.panel-ai-watch .ai-call-total b { font-size: 13px; }

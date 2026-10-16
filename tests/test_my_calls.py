@@ -57,3 +57,38 @@ def test_call_bar_fields_and_todays_list(client, monkeypatch):
     monkeypatch.setattr(dash, "snapshot", lambda: {"tickers": [{"ticker": "TGL", "price": 0.51}]})
     out = c.get("/api/ai/my-calls").json()
     assert out["ok"] and out["calls"][0]["symbol"] == "TGL" and out["calls"][0]["move_bp"] == 200.0
+
+
+def test_paper_pnl_totals_use_locked_results(client, monkeypatch):
+    import dashboard as dash
+    c, path = client
+    monkeypatch.setattr(dash, "MY_CALLS_RESULTS_PATH", path.parent / "my_calls_results.json")
+    monkeypatch.setattr(dash, "_ensure_call_worker", lambda: None)
+    monkeypatch.setattr(dash, "snapshot", lambda: {"tickers": []})
+    c.post("/api/ai/my-call", json={"ticker": "AAA"})
+    c.post("/api/ai/my-call", json={"ticker": "BBB"})
+    rows = [json.loads(x) for x in path.read_text().splitlines()]
+    (path.parent / "my_calls_results.json").write_text(json.dumps({
+        f"AAA|{rows[0]['ts']}": {"status": "final", "net_bp": 25.0, "pnl_usd": 2.5},
+    }))
+    out = c.get("/api/ai/my-calls").json()
+    assert out["total"]["n"] == 1 and out["total"]["pnl_usd"] == 2.5 and out["total"]["wins"] == 1
+    assert out["total"]["pending"] == 1
+    assert {x["symbol"]: x["status"] for x in out["calls"]} == {"AAA": "final", "BBB": "live"}
+
+
+def test_score_call_charges_the_spread(monkeypatch):
+    import types
+    import pandas as pd
+    import dashboard as dash
+    import sys
+    t0 = 1792087200   # a whole minute
+    idx = pd.to_datetime([t0 + 60 * k for k in range(1, 17)], unit="s", utc=True)
+    df = pd.DataFrame({"open": [10.0] * 16, "close": [10.0] * 15 + [10.2]}, index=idx)
+    fake_bars = types.SimpleNamespace(client=lambda: types.SimpleNamespace(get_stock_bars=lambda req: types.SimpleNamespace(df=df)))
+    fake_rc = types.SimpleNamespace(load_cache=lambda: {}, save_cache=lambda c: None, entry_spread_bp=lambda *a: 10.0)
+    monkeypatch.setitem(sys.modules, "bars", fake_bars)
+    monkeypatch.setitem(sys.modules, "replay_costing", fake_rc)
+    res = dash._score_call({"symbol": "AAA", "ts": t0 + 5})
+    assert res["status"] == "final" and res["entry"] == 10.0
+    assert res["exit"] == 10.0 and res["net_bp"] == -10.0 and res["pnl_usd"] == -1.0   # 15 bars held, spread charged

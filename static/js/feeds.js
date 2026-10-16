@@ -2856,14 +2856,25 @@ async function _refreshCalls() {
   try { out = await api.getMyCalls(); } catch (_e) { return; }
   const calls = (out && out.calls) || [];
   if (!calls.length) { list.innerHTML = '<div class="ai-call-empty">No calls yet today.</div>'; return; }
-  list.innerHTML = calls.slice(0, 12).map(c => {
+  const tot = (out && out.total) || {};
+  const tp = Number(tot.pnl_usd);
+  const totCls = !tot.n ? '' : (tp > 0 ? ' is-up' : (tp < 0 ? ' is-down' : ''));
+  const totHtml = `<div class="ai-call-total" title="Paper only: $${Number(tot.notional || 1000).toFixed(0)} per call, bought at the next minute's open after the click, sold ${tot.hold_min || 15} min later, minus the SIP spread at the click. A call locks in ~30 min after you make it (SIP is 15 min delayed).">`
+    + `<span>Paper P&amp;L today</span><b class="ai-call-mv${totCls}">${tot.n ? `${tp >= 0 ? '+' : '-'}$${Math.abs(tp).toFixed(2)}` : '—'}</b>`
+    + `<span>${tot.n || 0} locked · ${tot.n ? Math.round(100 * (tot.wins || 0) / tot.n) : 0}% wins · ${tot.pending || 0} pending</span></div>`;
+  list.innerHTML = totHtml + calls.slice(0, 12).map(c => {
     const t = c.ts ? new Date(c.ts * 1000).toLocaleTimeString('en-US', { hour12: false, timeZone: 'America/New_York' }) : '';
     const mv = Number(c.move_bp);
     const cls = !Number.isFinite(mv) ? '' : (mv > 0 ? ' is-up' : (mv < 0 ? ' is-down' : ''));
     const px = c.price != null ? `$${Number(c.price).toFixed(Number(c.price) < 2 ? 4 : 2)}` : '—';
     return `<div class="ai-call-row"><span class="ai-call-t">${_esc(t)}</span><b>${_esc(c.symbol || '')}</b>`
       + `<span class="ai-call-setup">${_esc(c.setup || '')}</span><span class="ai-call-px">${_esc(px)}</span>`
-      + `<span class="ai-call-mv${cls}">${_esc(_fmtCallMove(c.move_bp))}</span></div>`;
+      + (c.status === 'final'
+        ? `<span class="ai-call-mv${Number(c.pnl_usd) > 0 ? ' is-up' : (Number(c.pnl_usd) < 0 ? ' is-down' : '')}" title="Locked: ${_esc(String(c.net_bp))} bp after the spread">${Number(c.pnl_usd) >= 0 ? '+' : '-'}$${Math.abs(Number(c.pnl_usd)).toFixed(2)}</span>`
+        : c.status === 'no_bars'
+          ? '<span class="ai-call-setup" title="No SIP bars for that window">no data</span>'
+          : `<span class="ai-call-mv${cls}" title="Live: move since the call (desk price, before the spread); locks ~30 min after the call">${_esc(_fmtCallMove(c.move_bp))}</span>`)
+      + '</div>';
   }).join('');
 }
 
