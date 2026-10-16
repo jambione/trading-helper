@@ -311,3 +311,14 @@ def test_sideways_split_partitions_pre_signals():
     assert E.sideways_split(gap, closes, slow, [gap[45]])["PREER"] == []
     early = list(range(560, 610))                                            # window would start before 09:30
     assert E.sideways_split(early, closes, slow, [595])["PREER"] == []        # starts 09:25
+
+
+def test_bothup_needs_two_rising_bars_out_of_a_dip_early():
+    fast = [-80.0] * 8 + [-75.0, -72.0, -65.0, -60.0, -55.0]
+    slow = [-50.0] * 10 + [-49.0, -48.0, -47.0]
+    assert E.bothup_flag(fast, slow, 12)                                    # both up 2 bars, dipped, still <= -40
+    assert not E.bothup_flag(fast, [-50.0] * 13, 12)                        # slow flat: not both rising
+    late = fast[:-1] + [-35.0]
+    assert not E.bothup_flag(late, slow, 12)                                # already past -40: the move is on
+    shallow = [-60.0] * 10 + [-55.0, -50.0, -45.0]
+    assert not E.bothup_flag(shallow, slow, 12)                             # never dipped to -70

@@ -134,6 +134,21 @@ def os_leave_flag(fast, slow, i: int) -> bool:
     return rising(fast, i)
 
 
+BOTH_DIP, BOTH_NOW, BOTH_LOOK = -70.0, -40.0, 10
+
+
+def bothup_flag(fast, slow, i: int) -> bool:
+    """Operator 10/16 RPRX ('why can't we see this'): both %R lines rising on this bar AND the previous bar, out of
+    a dip (fast <= -70 on one of the previous 10 bars), and still early in the turn (fast <= -40 now)."""
+    if i < BOTH_LOOK or not all(_fin(x) for x in (fast[i], fast[i - 1], slow[i], slow[i - 1])):
+        return False
+    if not (rising(fast, i) and rising(fast, i - 1) and rising(slow, i) and rising(slow, i - 1)):
+        return False
+    if fast[i] > BOTH_NOW:
+        return False
+    return any(_fin(fast[k]) and fast[k] <= BOTH_DIP for k in range(i - BOTH_LOOK, i))
+
+
 STEEP_RISE, STEEP_BARS, STEEP_DIP, STEEP_LOOK = 15.0, 3, -50.0, 10
 
 
@@ -635,6 +650,7 @@ def rule_fires(ser: dict, board: set, key: tuple = ("inventory",)) -> dict[str, 
         "RSI2T": [rsi2_turn_flag(f, ser["rsi"], i) for i in range(n)],
         "OSL": [os_leave_flag(f, s, i) for i in range(n)],
         "STEEP": [steep_flag(f, s, i) for i in range(n)],
+        "BOTHUP": [bothup_flag(f, s, i) for i in range(n)],
     }
     out = {r: fires(m, flags[r], board) for r in RULES if r in flags}
     if any(r in SIDEWAYS_SUBSETS or r.startswith("RND") for r in RULES):

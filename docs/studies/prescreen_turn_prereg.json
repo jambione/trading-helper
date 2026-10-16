@@ -1,0 +1,24 @@
+{
+  "study": "Pre-screen turn: does a %R turn out of a dip pay on ANY liquid name, before a movers screen admits it?",
+  "registered_at": "2026-10-16 ~12:20 ET, before the warehouse finished downloading and before any return was computed on it.",
+  "registered_before_results": true,
+  "origin": "Operator 10/16 RPRX: both %R lines turned up at 11:45, the run was 11:47-11:52 ($60.35 -> $60.80), the movers screen admitted RPRX at 11:52 (at +1.84% on the day, largely that run) and the desk bought at 11:57 at $60.69. Operator: 'desk starts watching a name after its turn - this doesn't sound good for profit'. Every earlier entry test (early_entry_honest family) scored only board (screened) minutes, a population that fades (the-universe-fades-at-every-horizon; board -8.6 bp/10m).",
+  "prior": "LOW-MEDIUM. On board minutes MID was the closest miss (warm +6.4 / +2.1 bp lift), OSL failed. The unscreened universe does not carry the screen's fade, which is the reason to test it, but 1-minute %R turns on liquid names are a crowded signal.",
+  "data": "Warehouse (tools/studies/warehouse_fetch.py, data-only Alpaca account): the 120 sessions 2026-04-27..2026-10-15; universe = US common stock passing the gap-down study's prior-day RAW liquidity rule ($10, 20-day $20M ADV; ETFs/funds excluded; active+inactive). IEX 1m bars (what live sees) for the %R lines, warmed with the previous session's last 220 IEX bars; SIP 1m bars for the markout. Split-adjusted. The first session (no prior bars) is excluded. A seeded sample of 400 names per session (sha256(day|prescreen-sample)) from names on both feeds; every RTH minute counts as on the board.",
+  "rules": {
+    "BOTHUP (graded; the operator's RPRX read)": "both %R lines rising (> previous + 0.05) on this bar AND the previous bar, the fast line <= -70 on one of the previous 10 bars, and the fast line still <= -40 now (early in the turn).",
+    "MID (graded; the pre-registered closest miss)": "early_entry_honest.mid_flag unchanged: fast crosses up through -50 while the slow line rises.",
+    "information": "OSL (leave oversold), PRE (pre-square), SQ (square) scored the same way."
+  },
+  "fill_markout_control_cost_statistic_split": "early_entry_honest.score unchanged: completed IEX bars, onsets with a 15-minute refractory, 09:50-15:30; entry at the SIP open of the next minute; exit at the SIP close 9 minutes after the entry bar; control = random LATER minute of the same name (entry+1..+60); 10 bp round trip on both; lift = rule net - control net, day-equal mean, day-clustered t; halves split at the median session.",
+  "pass": "Each half PASS = day-equal lift >= +5 bp with t >= 2.0, day-equal net > 0 at 10 bp, >= 100 signals, >= 6 days. A rule PASSES only if both halves PASS; FAIL if either FAILs; else UNDERPOWERED.",
+  "promising": "Pooled day-equal lift > 0 with t >= 1.5, lift > 0 in each half, pooled net at the measured 3 bp > 0, >= 100 signals and 6 days per half (as confirm_entry_prereg amended_1).",
+  "information_only": ["OSL, PRE, SQ", "5/15/30 minute markouts, cross control, close entry, 20 bp cost", "board mean (all sampled RTH minutes) as the universe base rate"],
+  "no_retuning": "-70 / -40 / 10 bars / 2 rising bars, the sample size and seed, window, refractory, hold, cost and split are fixed. Any other threshold is a new prereg.",
+  "if_pass": "Design a live scanner (the stream holds 50 names; a universe scan needs a polled or batched feed) and forward-test it on paper for >= 10 sessions, then result-skeptic review.",
+  "if_promising": "Paper scanner slot; no live change.",
+  "if_fail": "The %R turn has no edge on the unscreened universe either; recorded for the 10/30 verdict on the intraday momentum design.",
+  "declared_deviations": ["Completed 1-minute bars; live acts intrabar.", "A live scanner cannot watch 1,945 names on the 50-name stream: this tests whether the signal pays, not whether the current plumbing can trade it."],
+  "multiplicity": "BOTHUP is new; MID is a re-test on a new population. Two graded rules, noted not corrected.",
+  "command": ".venv/bin/python tools/studies/prescreen_turn.py --score (warm lines on)"
+}
