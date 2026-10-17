@@ -100,7 +100,7 @@ The poll profiler (`ai_watch_profile_path`) is still on. Remove it after the loo
 - Log `/tmp/warehouse.log`: 120 sessions 2026-04-27..2026-10-15, liquid universe, IEX + SIP 1m bars, written to `ai_reports/warehouse/{iex,sip}/*.npz`.
 - Not today. About 6 day-files in 25 minutes while it shares the data account with the gap-down download is roughly 12–16 h for all 240 files. The pre-screen score is tomorrow morning, before the open. It speeds up once gap-down finishes and frees the rate budget. Do not shrink the 120-session window or score a partial set; that needs a new amendment and review. If the download dies, rerun `tools/studies/warehouse_fetch.py --sessions 120 --feeds iex,sip` (it resumes).
 
-### 4. Pre-screen turn test
+### 4. Pre-screen turn test: DONE 10/17 00:27, BOTHUP and MID FAIL (docs/studies/PRESCREEN_TURN_2026-10-17.md); early seating (#16) skipped. For 10/30: the intraday %R signal family has no edge on our data, screened or not. Prepare the verdict memo; month-end (t 3.7) is the strongest remaining lead
 - Prereg `docs/studies/prescreen_turn_prereg.json`, amended_1 at 5b260f8. **Skeptic round 2: READY.**
 - Before scoring, check that the inventory's session list matches the calendar: `_prev` is the previous warehouse FILE, so a missing day-file would mispair warm-up.
 - Once the warehouse is complete: `nice -n 19 .venv/bin/python tools/studies/prescreen_turn.py --score`, about 15 min.
