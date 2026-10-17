@@ -152,3 +152,17 @@ Check their branches before touching the same files.
 | `docs/studies/` | preregs and results; 10/16 results: CALENDAR_FLOWS (FAIL), CONFIRM_ENTRY (FAIL), SIDEWAYS_FILTER (FAIL) |
 | `tools/studies/early_entry_honest.py` | entry-test harness: later-only control, warm lines, PROMISING |
 | `scripts/exit_cut_sweep.sh` | replay sweeps; `SWEEP_DAYTIME` + `TH_DATA_SECRETS` for market hours |
+
+
+## Added 10/17 ~01:30: 'trending together' %R grid (operator)
+
+- Prereg docs/studies/together_sweep_prereg.json + amended_1. The single skeptic round's fixes F1-F4 are applied, so it is READY.
+- Run after hours or on the weekend: `cd ~/repo/trading-helper && nohup nice -n 10 .venv/bin/python tools/studies/together_sweep.py --score --workers 6 > /tmp/together.log 2>&1 &`. It takes about 1-2 h.
+- It refuses to run unless the window is 119 sessions 2026-04-28..2026-10-15 with the cut at 2026-07-23.
+- Report:
+  - the cell picked on half A and its held-out half-B verdict;
+  - the operator-default line (information only, not graded);
+  - the A-vs-B rank correlation and the top-5 table;
+  - the name-day counts.
+- Do not re-pick on B and do not change the grid.
+- Context: the pre-screen turn test FAILED 10/17 (BOTHUP/MID = random minute, n 228-283k). The operator's goal is to enter in the first half of a run instead of the tail.

@@ -6,16 +6,64 @@
   "prior": "LOW. Every component was tested alone or in pairs and read ~0 or failed: BOTHUP (n 283k, -0.2 bp), MID (~0), PRE close-together (~0), steep turn (FAIL), slow-line rise (FAIL). The conjunction is untested. Conditions 'dip' and 'close together' pull against each other (out of a dip the fast line is usually far below the slow), so the rule fires only when both lines dipped together.",
   "data": "Identical to prescreen_turn_prereg amended_1: warehouse 119 usable sessions 2026-04-28..2026-10-15, 400 seeded names/session (sha256(day|prescreen-sample)) with today's IEX+SIP and the previous session's IEX bars, IEX %R lines warmed on the previous session's last 220 bars, SIP markouts.",
   "rule": "At completed bar i: (dip) min(fast over bars i-20..i) <= dip_fast AND min(slow over i-20..i) <= dip_slow; (close) |fast - slow| <= gap; (together) both lines rose (> previous + 0.05) on each of the last rise_bars bars; (early) fast <= early. Entry = SIP open of the minute after the FIRST bar the flag turns on (onset), 09:50-15:30, 15-minute refractory per name.",
-  "grid": {"dip_fast": [-90, -80, -70], "dip_slow": [-60, -50, -40], "gap": [10, 20, 30], "rise_bars": [2, 3, 4], "early": [-50, -30, -10], "cells": 243, "operator_default": [-80, -50, 20, 3, -30]},
+  "grid": {
+    "dip_fast": [
+      -90,
+      -80,
+      -70
+    ],
+    "dip_slow": [
+      -60,
+      -50,
+      -40
+    ],
+    "gap": [
+      10,
+      20,
+      30
+    ],
+    "rise_bars": [
+      2,
+      3,
+      4
+    ],
+    "early": [
+      -50,
+      -30,
+      -10
+    ],
+    "cells": 243,
+    "operator_default": [
+      -80,
+      -50,
+      20,
+      3,
+      -30
+    ]
+  },
   "markout_controls_cost": "10-minute hold (SIP open of the entry bar to the SIP close 9 minutes later); lift = markout minus the same name's random LATER minute (entry+1..+60, seed early-honest-v1 with rule 'TOGETHER'); cross = markout minus a random other sampled name at the same minute; cost 10 bp round trip for PASS, measured 3 bp for PROMISING; day-equal means, day-clustered t.",
   "protocol": "Discovery = half A (sessions <= the median session 2026-07-23). Pick ONE cell: the highest day-equal A lift among cells with >= 300 A signals and >= 30 A days. Confirmation = half B (sessions after 2026-07-23), never used for the pick.",
   "pass": "PASS = the picked cell in held-out B: lift >= +5 bp with t >= 2.0, net at 10 bp > 0, cross lift > 0, >= 100 signals and >= 6 days. PROMISING = B lift > 0 with t >= 1.5, net at 3 bp > 0, cross > 0. Else FAIL (UNDERPOWERED under the minimums).",
-  "information_only": ["the operator's default cell graded the same way on B", "rank correlation of A vs B lift across all cells (about 0 = the grid is noise) and the share of cells with B lift > 0", "top 5 A cells with their B results"],
+  "information_only": [
+    "the operator's default cell graded the same way on B",
+    "rank correlation of A vs B lift across all cells (about 0 = the grid is noise) and the share of cells with B lift > 0",
+    "top 5 A cells with their B results"
+  ],
   "no_retuning": "The grid, the pick rule, the split, the hold, the controls and the cost are fixed. A new grid or a different pick rule is a new prereg.",
   "if_pass": "Forward test on paper as a scanner arm for >= 10 sessions, then result-skeptic review.",
   "if_promising": "Paper slot only.",
   "if_fail": "Strict 'trending together' %R rules have no edge at any of these thresholds; recorded for the 10/30 verdict.",
-  "declared_deviations": ["Completed 1-minute bars; live acts intrabar.", "Warm-up on the previous session's RTH IEX bars; live warms on extended-hours bars (prescreen amended F2)."],
+  "declared_deviations": [
+    "Completed 1-minute bars; live acts intrabar.",
+    "Warm-up on the previous session's RTH IEX bars; live warms on extended-hours bars (prescreen amended F2)."
+  ],
   "multiplicity": "243 cells are handled by picking on A and confirming one cell on B; the 'capture 50% of the run' goal is measured by the 10-minute lift vs a later minute of the same name.",
-  "command": "cd ~/repo/trading-helper && nohup nice -n 10 .venv/bin/python tools/studies/together_sweep.py --score --workers 6 > /tmp/together.log 2>&1 &"
+  "command": "cd ~/repo/trading-helper && nohup nice -n 10 .venv/bin/python tools/studies/together_sweep.py --score --workers 6 > /tmp/together.log 2>&1 &",
+  "amended_1": {
+    "at": "2026-10-17 ~01:30 ET, after the single result-skeptic round (NOT READY, F1-F4, READY once applied as written), before any score.",
+    "F1": "dip minimum uses min_periods=1 (causal, over the bars seen so far); the old min_periods=21 faked an onset at 09:50 for names already in the state at the open. Test: f=-90+0.5t, s=-85+0.5t from 09:30 -> no onset at 09:50.",
+    "F2": "window pinned: sessions <= 2026-10-15 only; the run refuses unless n = 119, first = 2026-04-28 and cut = 2026-07-23.",
+    "F3": "per-day counts of sampled names, skipped (short/missing) and indicator failures are printed; indicator failures above 1% of name-days make the run UNDERPOWERED.",
+    "F4": "the operator-default cell line is labelled 'Information only, not graded'."
+  }
 }

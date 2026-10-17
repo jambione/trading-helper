@@ -43,8 +43,16 @@ def test_grid_and_day_job_end_to_end(tmp_path, monkeypatch):
     monkeypatch.setattr(P, "WH", str(tmp_path))
     monkeypatch.setattr(E, "WARM_LINES", True)
     day, acc = T.day_job(("2026-10-06", "2026-10-05"))
-    assert day == "2026-10-06" and set(acc) == set(T.CELLS)
+    cnt = acc.pop("_counts")
+    assert day == "2026-10-06" and set(acc) == set(T.CELLS) and cnt["sampled"] == 3
     per_day = {"2026-10-06": acc, "2026-10-07": acc}
     s = T.summarize(per_day, ["2026-10-06", "2026-10-07"], "2026-10-06")
     md = T.report(s, "2026-10-06", 2)
     assert "Trending together" in md
+
+
+def test_no_fake_onset_at_window_start():
+    f = -90 + 0.5 * np.arange(60)
+    s = -85 + 0.5 * np.arange(60)
+    m = list(range(570, 630))
+    assert 590 not in T.onsets(m, T.cell_flags(f, s, T.BASE))          # state began at the open, not at 09:50

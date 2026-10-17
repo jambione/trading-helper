@@ -32,6 +32,7 @@ GRID = {"dip_fast": (-90.0, -80.0, -70.0), "dip_slow": (-60.0, -50.0, -40.0), "g
 BASE = (-80.0, -50.0, 20.0, 3, -30.0)        # the operator's stated defaults, reported on its own
 CELLS = list(itertools.product(*GRID.values()))
 MIN_A_SIGNALS, MIN_A_DAYS = 300, 30
+LAST_DAY = "2026-10-15"
 EPS = E.EPS
 
 
@@ -61,8 +62,10 @@ def prep(fast: np.ndarray, slow: np.ndarray) -> dict:
     with np.errstate(invalid="ignore"):
         rf = np.r_[False, fast[1:] > fast[:-1] + EPS]
         rs = np.r_[False, slow[1:] > slow[:-1] + EPS]
-    return {"minf": pd.Series(fast).rolling(DIP_LOOK + 1, min_periods=DIP_LOOK + 1).min().to_numpy(),
-            "mins": pd.Series(slow).rolling(DIP_LOOK + 1, min_periods=DIP_LOOK + 1).min().to_numpy(),
+    # skeptic F1: min_periods=1 (min over the bars seen so far; still causal). DIP_LOOK+1 left the dip NaN until
+    # bar 20 = 09:50 = WIN_START and faked an 'earliest trigger' for names already in the state at the open.
+    return {"minf": pd.Series(fast).rolling(DIP_LOOK + 1, min_periods=1).min().to_numpy(),
+            "mins": pd.Series(slow).rolling(DIP_LOOK + 1, min_periods=1).min().to_numpy(),
             "rlf": _runlen(rf), "rls": _runlen(rs)}
 
 
@@ -90,12 +93,15 @@ def day_job(args) -> tuple[str, dict]:
     board, iex, sip_f, prior = lz["board"], lz["iex"], lz["sip"], lz["iex_prior"]
     sips = {s: E.sip_map(f) for s, f in sip_f.items()}
     acc = {c: [0, 0.0, 0.0, 0, 0.0] for c in CELLS}
+    cnt = {"sampled": len(board), "skipped_short": 0, "indicator_fail": 0}
     for sym in sorted(board):
         if sym not in iex or sym not in sips or len(iex[sym]) < 30:
+            cnt["skipped_short"] += 1
             continue
         try:
             ser = E.name_day_series(iex[sym], prior.get(sym))
         except Exception:  # noqa: BLE001
+            cnt["indicator_fail"] += 1
             continue
         f, s = np.array(ser["fast"], float), np.array(ser["slow"], float)
         pre = prep(f, s)
@@ -113,6 +119,7 @@ def day_job(args) -> tuple[str, dict]:
                 xc = E.cross_control(sym, day, "TOGETHER", board, sips, sm)
                 if xc is not None:
                     a[3] += 1; a[4] += g - xc
+    acc["_counts"] = cnt
     return day, acc
 
 
@@ -188,7 +195,7 @@ def report(summary: dict, cut: str, ndays: int) -> str:
           f"**Held-out B:** lift {bp(b['lift'])} bp (t {tt(b['t'])}), n {b['n']}, {b['days']} days, net@10 "
           f"{bp(b['net10'])}, net@3 {bp(b['net3'])}, cross {bp(b['cross'])} -> **{v}**", ""]
     bs = summary[BASE]
-    L += [f"Operator default {BASE}: A lift {bp(bs['A']['lift'])} (t {tt(bs['A']['t'])}, n {bs['A']['n']}); "
+    L += [f"Information only, not graded: operator default {BASE}: A lift {bp(bs['A']['lift'])} (t {tt(bs['A']['t'])}, n {bs['A']['n']}); "
           f"B lift {bp(bs['B']['lift'])} (t {tt(bs['B']['t'])}, n {bs['B']['n']}, cross {bp(bs['B']['cross'])}) -> "
           f"{verdict(bs['B'])}", ""]
     valid = [c for c in CELLS if summary[c]["A"]["lift"] is not None and summary[c]["B"]["lift"] is not None]
@@ -211,9 +218,12 @@ def main() -> None:
     ap.add_argument("--score", action="store_true")
     ap.add_argument("--workers", type=int, default=6)
     a = ap.parse_args()
-    lz = P.usable_days()
+    lz = [d for d in P.usable_days() if d["day"] <= LAST_DAY]          # skeptic F2: pin the registered window
     days = [d["day"] for d in lz]
     cut = E.split(days)
+    if a.score and not (len(days) == 119 and days[0] == "2026-04-28" and cut == "2026-07-23"):
+        print(f"REFUSING: window differs from the prereg (n {len(days)}, first {days[0] if days else '-'}, cut {cut})")
+        return
     print(f"sessions {len(days)} {days[0] if days else '-'}..{days[-1] if days else '-'}; A ends {cut}; "
           f"{len(CELLS)} cells; {P.SAMPLE} names/session", flush=True)
     if not a.score:
@@ -226,7 +236,14 @@ def main() -> None:
             per_day[day] = acc
             if k % 10 == 0:
                 print(f"  {day} ({k + 1}/{len(jobs)})", flush=True)
+    tot = {k: sum(per_day[d]["_counts"][k] for d in per_day) for k in ("sampled", "skipped_short", "indicator_fail")}
+    for d in per_day:
+        per_day[d].pop("_counts")
     md = report(summarize(per_day, days, cut), cut, len(days))
+    fail_share = tot["indicator_fail"] / max(1, tot["sampled"])
+    md += (f"\n\nName-days: sampled {tot['sampled']}, skipped (short/missing) {tot['skipped_short']}, indicator "
+           f"failures {tot['indicator_fail']} ({fail_share:.2%})" +
+           ("\n**UNDERPOWERED: indicator failures exceed 1% of name-days (skeptic F3).**" if fail_share > 0.01 else ""))
     print(md)
     with open(os.path.join(ROOT, "ai_reports", "warehouse", "together_sweep_result.md"), "w") as f:
         f.write(md + "\n")
