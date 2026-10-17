@@ -38,8 +38,17 @@ def test_selection_uses_only_bars_before_1030(tmp_path, monkeypatch):
         sip_t[s].loc[sip_t[s]["time"].map(lambda t: E._et_min(t.timestamp())) >= D.PICK_MIN, "close"] *= 3
     assert D.select_trending(sip_t, sip_p) == a
     monkeypatch.setattr(E, "WARM_LINES", True)
+    monkeypatch.setattr(D, "macro_class", lambda sym, prev: "unknown")
     day, acc = D.day_job(("2026-10-06", "2026-10-05"))
     info = acc.pop("_info")
-    assert set(acc) == set(D.CELLS) and info["n_top"] == len(a)
+    assert set(acc) == set(D.CELLS) and info["n_top"] == len(a) and info["ind_fail"] == 0
     md = D.report(D.summarize({day: {**acc, "_info": info}}, [day], day), {day: {**acc, "_info": info}}, [day], day)
     assert "Trending names" in md
+
+
+def test_macro_class(monkeypatch):
+    up = {f"2026-{1 + k // 28:02d}-{1 + k % 28:02d}": (1.0, 10.0 + 0.1 * k) for k in range(60)}
+    monkeypatch.setattr(D, "_DAILY", {"UP": up, "DN": {k: (1.0, 20.0 - 0.1 * i) for i, k in enumerate(sorted(up))}})
+    last = sorted(up)[-1]
+    assert D.macro_class("UP", last) == "up" and D.macro_class("DN", last) == "other"
+    assert D.macro_class("UP", sorted(up)[40]) == "unknown" and D.macro_class("ZZZ", last) == "unknown"

@@ -166,3 +166,13 @@ Check their branches before touching the same files.
   - the name-day counts.
 - Do not re-pick on B and do not change the grid.
 - Context: the pre-screen turn test FAILED 10/17 (BOTHUP/MID = random minute, n 228-283k). The operator's goal is to enter in the first half of a run instead of the tail.
+
+## Added 10/17 ~02:30: trending names, buy the %R dips (operator)
+
+- Prereg docs/studies/trend_dip_prereg.json + amended_1. The single skeptic round's fixes F1-F4 are applied, plus the operator's macro/micro split (information only), so it is READY.
+- Run after the together grid (not at the same time; both use 6 workers): `cd ~/repo/trading-helper && nohup nice -n 10 .venv/bin/python tools/studies/trend_dip_sweep.py --score --workers 6 > /tmp/trenddip.log 2>&1 &`. Result in ai_reports/warehouse/trend_dip_result.md.
+- Report:
+  - the picked cell and its held-out B verdict, plus the drop-3-best-days line;
+  - the 9-cell table;
+  - the information lines: dips on comparison names, random minutes in trending vs comparison names, the 10:31->close hold, and the macro up/other split.
+- Do not re-pick on B.

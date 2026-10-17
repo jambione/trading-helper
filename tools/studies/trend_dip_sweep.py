@@ -90,6 +90,26 @@ def dip_onsets(minutes: list[int], fast: np.ndarray, close: np.ndarray, prev_clo
     return out
 
 
+_DAILY: dict | None = None
+
+
+def macro_class(sym: str, prev: str) -> str:
+    """Operator 10/17 (macro vs micro trend), information only: 'up' = the previous session's adjusted close is above
+    its 50-session average AND above its close 20 sessions earlier; 'other' otherwise; 'unknown' without 51 sessions.
+    Daily adjusted closes from ai_reports/gapdown/daily.pkl, known before the open."""
+    global _DAILY
+    if _DAILY is None:
+        import pickle
+        _DAILY = pickle.load(open(os.path.join(ROOT, "ai_reports", "gapdown", "daily.pkl"), "rb"))["adj"]
+    series = _DAILY.get(sym) or {}
+    ks = sorted(k for k in series if k <= prev)
+    if len(ks) < 51:
+        return "unknown"
+    closes = [series[k][1] for k in ks]
+    last = closes[-1]
+    return "up" if last > st.fmean(closes[-50:]) and last > closes[-21] else "other"
+
+
 def _seeded(day: str, tag: str) -> random.Random:
     return random.Random(int.from_bytes(hashlib.sha256(f"{day}|{tag}".encode()).digest()[:8], "big"))
 
@@ -102,8 +122,12 @@ def day_job(args) -> tuple[str, dict]:
     sip_p = P._frames(os.path.join(wh, "sip", f"{prev}.npz"))
     iex_t = P._frames(os.path.join(wh, "iex", f"{day}.npz"))
     iex_p = P._frames(os.path.join(wh, "iex", f"{prev}.npz"))
-    top = [s for s in select_trending(sip_t, sip_p) if s in iex_t and s in iex_p]
-    pool = sorted(s for s in sip_t if s in iex_t and s in iex_p and s in sip_p and s not in top)
+    # skeptic F1: eligibility known at 10:30 (prior-session SIP+IEX bars and >= 1 IEX bar before 10:30), filtered
+    # BEFORE the top-N slice so top-3 takes the next name rather than shrinking.
+    elig = {s: f for s, f in sip_t.items() if s in sip_p and s in iex_p and s in iex_t
+            and E._et_min(iex_t[s]["time"].iloc[0].timestamp()) < PICK_MIN}
+    top = select_trending(elig, sip_p)
+    pool = sorted(s for s in elig if s not in top)
     comp = sorted(_seeded(day, "trend-compare").sample(pool, min(COMPARE_N, len(pool))))
     names = top + comp
     sips = {s: E.sip_map(sip_t[s]) for s in names}
@@ -111,15 +135,19 @@ def day_job(args) -> tuple[str, dict]:
     pclose = {s: float(sip_p[s]["close"].iloc[-1]) for s in names}
     acc = {c: [0, 0.0, 0.0, 0, 0.0] for c in CELLS}
     info = {"cmp_dip": {d: [0, 0.0] for d in GRID["dip"]}, "rnd_top": [0, 0.0], "rnd_cmp": [0, 0.0],
-            "hold_top": [0, 0.0], "hold_cmp": [0, 0.0], "n_top": len(top)}
+            "hold_top": [0, 0.0], "hold_cmp": [0, 0.0], "n_top": len(top), "names": len(names), "ind_fail": 0,
+            "ind_fail_top": 0, "macro": {(c, k): [0, 0.0] for c in CELLS for k in ("up", "other", "unknown")}}
     for s in names:
+        rank = top.index(s) if s in top else None
         try:
             ser = E.name_day_series(iex_t[s], iex_p[s].tail(E.CON_PRIOR_BARS).reset_index(drop=True))
         except Exception:  # noqa: BLE001
+            info["ind_fail"] += 1
+            info["ind_fail_top"] += rank is not None
             continue
         f, c, m = np.array(ser["fast"], float), np.array(ser["close"], float), ser["minutes"]
         sip = sips[s]
-        rank = top.index(s) if s in top else None
+        mac = macro_class(s, prev) if rank is not None else None
         for dip in GRID["dip"]:
             for sm in dip_onsets(m, f, c, pclose[s], dip):
                 em = sm + 1
@@ -137,6 +165,8 @@ def day_job(args) -> tuple[str, dict]:
                     if rank < n:
                         a = acc[(n, dip)]
                         a[0] += 1; a[1] += g - gc; a[2] += g
+                        mm = info["macro"][((n, dip), mac)]
+                        mm[0] += 1; mm[1] += g - gc
                         if xc is not None:
                             a[3] += 1; a[4] += g - xc
         rng = _seeded(f"{day}|{s}", "trend-rnd")
@@ -179,6 +209,15 @@ def report(summary: dict, per_day: dict, days: list[str], cut: str) -> str:
           and summary[c]["A"]["lift"] is not None]
     L = ["# Trending names, buy the %R dips (trend_dip_prereg)", "",
          f"{len(CELLS)} cells (top N x dip); {len(days)} sessions; pick on half A (<= {cut}), confirm on held-out B.", ""]
+    names_tot = sum(per_day[d]["_info"]["names"] for d in days)
+    fails = sum(per_day[d]["_info"]["ind_fail"] for d in days)
+    fails_top = sum(per_day[d]["_info"]["ind_fail_top"] for d in days)
+    fs = fails / max(1, names_tot)
+    under = fs > 0.01
+    L += [f"Name-days {names_tot}; indicator failures {fails} ({fs:.2%}), of which trending names {fails_top}.", ""]
+    if under:
+        L += ["**UNDERPOWERED: indicator failures exceed 1% of name-days.**", ""]
+    vd = (lambda b: "UNDERPOWERED") if under else T.verdict
     if not ok:
         L.append("No cell met the discovery minimums: UNDERPOWERED.")
     else:
@@ -187,18 +226,31 @@ def report(summary: dict, per_day: dict, days: list[str], cut: str) -> str:
         L += [f"**Picked on A:** top {best[0]} names, dip {best[1]} (A lift {bp(summary[best]['A']['lift'])} bp, t "
               f"{tt(summary[best]['A']['t'])}, n {summary[best]['A']['n']})",
               f"**Held-out B:** lift {bp(b['lift'])} bp (t {tt(b['t'])}), n {b['n']}, {b['days']} days, net@10 "
-              f"{bp(b['net10'])}, net@3 {bp(b['net3'])}, cross {bp(b['cross'])} -> **{T.verdict(b)}**", ""]
+              f"{bp(b['net10'])}, net@3 {bp(b['net3'])}, cross {bp(b['cross'])} -> **{vd(b)}**"]
+        bdays = [d for d in days if d > cut and per_day[d][best][0]]
+        bl = sorted(per_day[d][best][1] / per_day[d][best][0] for d in bdays)
+        L += [f"Information: held-out B lift with the 3 best B days dropped: {bp(T._de(bl[:-3])[0] if len(bl) > 3 else None)} bp", ""]
     L += ["| cell (N, dip) | A lift (t, n) | B lift (t, n) | B cross | B verdict |", "|---|---:|---:|---:|---|"]
     for c in CELLS:
         a, bb = summary[c]["A"], summary[c]["B"]
         L.append(f"| {c} | {bp(a['lift'])} ({tt(a['t'])}, {a['n']}) | {bp(bb['lift'])} ({tt(bb['t'])}, {bb['n']}) | "
-                 f"{bp(bb['cross'])} | {T.verdict(bb)} |")
+                 f"{bp(bb['cross'])} | {vd(bb)} |")
 
     def pooled(key):
         vals = [per_day[d]["_info"][key][1] / per_day[d]["_info"][key][0] for d in days
                 if per_day[d]["_info"][key][0]]
         return T._de(vals)
-    L += ["", "## Information only", ""]
+    L += ["", "## Information only", "", "Macro (multi-day) split of the trending-name dips, pooled over all sessions "
+          "(operator 10/17; 'up' = above the 50-session average and up over 20 sessions, known before the open):", "",
+          "| cell | macro up lift (n) | macro other lift (n) |", "|---|---:|---:|"]
+    for c in CELLS:
+        cols = []
+        for k in ("up", "other"):
+            n_ = sum(per_day[d]["_info"]["macro"][(c, k)][0] for d in days)
+            sm_ = sum(per_day[d]["_info"]["macro"][(c, k)][1] for d in days)
+            cols.append(f"{bp(sm_ / n_ if n_ else None)} ({n_})")
+        L.append(f"| {c} | {cols[0]} | {cols[1]} |")
+    L += [""]
     for dip in GRID["dip"]:
         vals = [per_day[d]["_info"]["cmp_dip"][dip][1] / per_day[d]["_info"]["cmp_dip"][dip][0] for d in days
                 if per_day[d]["_info"]["cmp_dip"][dip][0]]
