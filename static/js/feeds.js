@@ -1111,7 +1111,7 @@ function _bindBookSlot(sectionEl, haveOvernight) {
     if (btn) {
       btn.textContent = on ? '▸' : '▾';
       btn.setAttribute('aria-expanded', on ? 'false' : 'true');
-      btn.setAttribute('aria-label', on ? 'Expand positions and overnight' : 'Collapse positions and overnight');
+      btn.setAttribute('aria-label', on ? 'Expand positions and weekly' : 'Collapse positions and weekly');
     }
   };
   if (!slot.dataset.bound) {
@@ -1196,6 +1196,7 @@ function _paintOvernight(sectionEl, book) {
   }
 
   const acctEl = root.querySelector('[data-ai-overnight-acct]');
+  const weeklyBook = !!(snap.weekly && typeof snap.weekly === 'object');
   if (acctEl) {
     const a = snap.account && typeof snap.account === 'object' ? snap.account : {};
     const eq = Number(a.equity);
@@ -1206,14 +1207,20 @@ function _paintOvernight(sectionEl, book) {
       parts.push(`<span class="on-dim">Account</span> $${_esc(Math.round(eq).toLocaleString())}`);
       if (Number.isFinite(prior) && prior > 0) {
         const d = eq - prior;
-        parts.push(`<span class="on-dim">today</span> <span class="${_bpCls(d)}">${_esc(_fmtHistPl(d))}</span>`
+        // Weekly reuses the paper account. "since start" is vs the overnight
+        // $25,000 open, so that strip shows the day change only.
+        const dayLabel = weeklyBook ? 'daily P&L' : 'today';
+        parts.push(`<span class="on-dim">${dayLabel}</span> <span class="${_bpCls(d)}">${_esc(_fmtHistPl(d))}</span>`
           + ` <span class="on-dim">${_esc(`${d >= 0 ? '+' : ''}${(d / prior * 100).toFixed(2)}%`)}</span>`);
       }
-      if (Number.isFinite(start) && start > 0) {
+      if (!weeklyBook && Number.isFinite(start) && start > 0) {
         const d = eq - start;
         parts.push(`<span class="on-dim">since start</span> <span class="${_bpCls(d)}">${_esc(_fmtHistPl(d))}</span>`);
       }
     }
+    acctEl.title = weeklyBook
+      ? 'Paper account equity and daily P&L versus the prior close.'
+      : "The overnight paper account: equity, today's P&L (vs the prior close) and P&L since its $25,000 start.";
     // The runner reads the account every 15 minutes, so say when. A reading
     // from an earlier day carries its date (the scheduler was down).
     if (parts.length && Number(snap.updated) > 0) {
