@@ -1,0 +1,34 @@
+{
+  "study": "When the desk refuses a buy on a name it is already watching, does either of the two common setup reasons mark a profit run: %R falling, or the two %R lines not tight?",
+  "registered_at": "2026-10-17, before any forward return of these two reasons was computed.",
+  "registered_before_results": true,
+  "amended": "2026-10-17, before any score, after Mode 1 FIX FIRST. Saturday 2026-09-05 is not a session. A missing later-minute control drops the signal from gross, net, and both lifts and is counted apart from a missing SIP name. A pinned day with more than 5% of board names lacking a SIP frame aborts the run.",
+  "origin": "Operator 2026-10-17: the exits can stay; look at seating and at new entries that capture a profit run. The seated book fades about 8.6 bp per 10 minutes (BOARD_NAMES_2026-10-14). The running list already names the two setup blocks that dominate buy refusals: exh_falling and exh_not_tight. This scores those two minutes. It does not re-score the pooled admit-ledger refusals (kept=false, +5.4 bp versus the board, t 1.90), which are a different population and stay information from that study.",
+  "prior": "LOW. Refused candidates as one pool faded less than the board and still faded (mean -1.3 bp). These two codes are arm blocks on names already seated, not a reason the screen denied a seat. Buying a falling line, or buying because the lines are wide, has no positive prior.",
+  "data": "The 29 sessions that have both a decision ledger and an early-entry cache: 2026-09-08, 2026-09-09, 2026-09-10, 2026-09-11, 2026-09-14, 2026-09-15, 2026-09-16, 2026-09-17, 2026-09-18, 2026-09-21, 2026-09-22, 2026-09-23, 2026-09-24, 2026-09-25, 2026-09-28, 2026-09-29, 2026-09-30, 2026-10-01, 2026-10-02, 2026-10-05, 2026-10-06, 2026-10-07, 2026-10-08, 2026-10-09, 2026-10-12, 2026-10-13, 2026-10-14, 2026-10-15, 2026-10-16. The run refuses if that intersection, after setting aside the closed Saturday, is anything else. No new fetch.",
+  "population": "A signal is the first ET minute in 09:50-15:30, per symbol per session per reason, of a decision-ledger row with stage watch or arm, arm_ok not true, and arm_why exactly exh_falling or exactly exh_not_tight. Entry is the next SIP open. Hold is 10 minutes, exit on the SIP close, bar before 16:00. One fire per symbol per reason per session. A signal with no later-minute control is dropped from gross, net, and both lifts.",
+  "cells": {
+    "exh_falling": "arm_why == exh_falling. Graded.",
+    "exh_not_tight": "arm_why == exh_not_tight. Graded."
+  },
+  "controls": "Later minute: a random later SIP minute of the same name within the early-entry control span, same 10-minute hold. Board: the mean 10-minute SIP markout of every cached board minute that session in the same window. Both are in the pass bar. The signal minutes stay inside the board mean.",
+  "pass": "Each cell on its own. PASS only if in BOTH halves: at least 100 signals and 6 days, the signal's own net at 10 bp > 0, the day-equal lift versus the later minute >= +5 bp with day-clustered t >= 2, and the day-equal lift versus that day's board mean > 0. PROMISING if both halves have net at 3 bp > 0, both lifts > 0, and the combined t of net at 3 bp >= 1.5, with the same minimums. A half under the minimums is UNDERPOWERED unless the other half is a real FAIL. Two cells are graded. A pass is 1 of 2. Neither cell is chosen after seeing the other half.",
+  "split": "Half A is the sessions through 2026-09-24 (13). Half B is 2026-09-25 through 2026-10-16 (16). The cut date is the same as the board-name study on this tape.",
+  "information_only": [
+    "the two reasons pooled",
+    "a same-minute other-name control"
+  ],
+  "no_retuning": "The two reason strings, the window, the hold, the costs, and the split are fixed. Another block code is a new prereg.",
+  "if_pass": "Paper only, then a result-skeptic review of the positive. Not a live arm and not a seat change.",
+  "if_fail": "Refusing the buy for a falling line, or for lines that are not tight, does not mark a profit run on this tape.",
+  "declared_deviations": [
+    "The ledger poll is intrabar. The fill is the next minute's SIP open, so the study is later than the live poll.",
+    "SIP markout. The live desk reads IEX.",
+    "A name with a ledger row but no SIP bar in the early-entry cache is dropped and counted on its own.",
+    "A signal whose later-minute control has no bar is dropped from gross, net, and both lifts, and counted on its own.",
+    "Saturday 2026-09-05 has a ledger file and a cache file. The market was closed. It is excluded before the score.",
+    "A pinned day where more than 5% of cached board names have no SIP frame aborts the run. That day is not scored and not dropped quietly."
+  ],
+  "multiplicity": "Two pre-declared cells. The pooled line cannot be promoted.",
+  "command": "cd ~/repo/trading-helper && nohup nice -n 15 .venv/bin/python tools/studies/refuse_reason.py --score > /tmp/refuse_reason.log 2>&1 &"
+}
