@@ -906,13 +906,15 @@ class FakeBroker:
 
     def _close(self, sym: str, now: float, px: float, why: str, r=None) -> None:
         pos = self.open.pop(sym)
+        inner = pos.get("pos") if isinstance(pos.get("pos"), dict) else None
+        peak_px = inner.get("peak_price") if inner else None
         ret = px / pos["entry_px"] - 1
         if r is not None and pos.get("pos"):
             p = pos["pos"]
             ret = r * float(p["risk_per_share"]) / float(p["entry"])
         pos.pop("pos", None)
         pos.pop("lob", None)
-        pos.update(exit_ts=now, exit_px=px, ret=ret, reason=why, r=r)
+        pos.update(exit_ts=now, exit_px=px, ret=ret, reason=why, r=r, peak_px=peak_px)
         self.closed.append(pos)
         self.last_exit[sym] = now
 

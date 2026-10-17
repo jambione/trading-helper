@@ -50,6 +50,7 @@ arm_sets() {   # base = HEAD config (no-progress off, double check off)
     trail_dc_cool30) echo "$OFF --set ai_trail_exit_trend_hold=true --set ai_trail_exit_trend_hold_band_pct=0.05 --set ai_reentry_cooldown_sec=30" ;;
     trail_dc_sqwait0) echo "$OFF --set ai_trail_exit_trend_hold=true --set ai_trail_exit_trend_hold_band_pct=0.05 --set ai_watch_presquare_after_square_min=0" ;;
     trail_dc_sqwait5) echo "$OFF --set ai_trail_exit_trend_hold=true --set ai_trail_exit_trend_hold_band_pct=0.05 --set ai_watch_presquare_after_square_min=5" ;;
+    trail_dc_entrycap) echo "$OFF --set ai_trail_exit_trend_hold=true --set ai_trail_exit_trend_hold_band_pct=0.05 --set ai_local_trail_entry_cap_until_be=true" ;;
     *) echo "unknown arm $1" >&2; exit 1 ;;
   esac
 }

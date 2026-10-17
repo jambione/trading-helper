@@ -4699,6 +4699,37 @@ def entry_catchup_stop(
     return parked
 
 
+def _cap_shelf_under_entry_until_be(out, pos, cfg, be_hit):
+    """Do not raise the shelf to the fill before breakeven is earned.
+
+    The idle leash (``ai_local_trail_decay_overtake``) can park the stop on
+    ``last`` while the trade is only a cent green. ``be_at_pct`` does not
+    see that path. This cap is off unless
+    ``ai_local_trail_entry_cap_until_be`` is true, so the live leash is
+    unchanged. Raise-only: a shelf already at or above the fill is not
+    pulled down.
+    """
+    if out is None:
+        return None
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if be_hit or not bool(cfg.get("ai_local_trail_entry_cap_until_be", False)):
+        return out
+    entry = _num(pos.get("entry_price"))
+    if entry is None or entry <= 0:
+        return out
+    if float(out) + 1e-9 < float(entry):
+        return out
+    cap = round(float(entry) - 0.01, 2)
+    prev = _num(pos.get("local_stop_price"))
+    if prev is not None and float(prev) + 1e-9 >= float(entry):
+        return float(prev)
+    if cap <= 0:
+        return out
+    if prev is not None and cap + 1e-9 < float(prev):
+        return float(prev)
+    return cap
+
+
 def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: float | None = None) -> float | None:
     """Trail just under the damped last: rises as price grows, never lowers.
 
@@ -4817,9 +4848,10 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: floa
             catch = green_catchup_raise(pos, cfg, now=now)
             if catch is not None:
                 if float(catch) + 1e-9 >= float(last):
-                    return round(float(catch), 2)
+                    return _cap_shelf_under_entry_until_be(
+                        round(float(catch), 2), pos, cfg, be_hit)
                 out = float(catch) if out is None else max(float(out), float(catch))
-        return out
+        return _cap_shelf_under_entry_until_be(out, pos, cfg, be_hit)
     give_mfe = mfe
     if not _tight_give_clears_entry(last, entry, risk, cfg,
                                     spread_r=_pos_spread_r(pos)):
@@ -4844,7 +4876,8 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: floa
     catch = green_catchup_raise(pos, cfg, now=now)
     if catch is not None:
         if float(catch) + 1e-9 >= float(last):
-            return round(float(catch), 2)
+            return _cap_shelf_under_entry_until_be(
+                round(float(catch), 2), pos, cfg, be_hit)
         cand = max(float(cand), float(catch))
         if prev is not None:
             cand = max(cand, float(prev))
@@ -4876,7 +4909,7 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: floa
     if peak_give > 0 and peak and peak > 0:
         pstop = math.floor(round(float(peak) * (1 - peak_give / 100.0) * 100.0, 4)) / 100.0
         cand = max(float(cand), pstop)
-    return round(cand, 2)
+    return _cap_shelf_under_entry_until_be(round(cand, 2), pos, cfg, be_hit)
 
 
 def _flatten_late_hold_stop(

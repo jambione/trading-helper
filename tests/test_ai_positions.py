@@ -3570,6 +3570,77 @@ def test_green_catchup_overtake_when_already_at_ceiling():
     assert pos.get("trail_decay_overtake") is True
 
 
+def _tiny_green_pos(**extra):
+    """0.10% above a $10 fill: under the live 0.15% breakeven floor."""
+    pos = _green_catchup_pos(
+        last_seen_price=10.01,
+        peak_price=10.01,
+        mfe_r=0.01,
+        local_stop_price=9.98,
+    )
+    pos.update(extra)
+    return pos
+
+
+def test_overtake_reaches_entry_before_be_at_pct_when_cap_is_off():
+    """The live leash can sit the stop on last while gain is under 0.15%."""
+    pos = _tiny_green_pos()
+    cfg = _green_catchup_cfg(
+        ai_local_trail_decay_overtake=True,
+        ai_local_trail_be_at_pct=0.15,
+    )
+    t0 = 1_000_000.0
+    cp.local_profit_stop(pos, cfg, now=t0)
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 8.0)
+    assert got == pytest.approx(10.01)
+    assert got >= pos["entry_price"]
+
+
+def test_entry_cap_keeps_the_shelf_under_the_fill_until_be():
+    pos = _tiny_green_pos()
+    cfg = _green_catchup_cfg(
+        ai_local_trail_decay_overtake=True,
+        ai_local_trail_be_at_pct=0.15,
+        ai_local_trail_entry_cap_until_be=True,
+    )
+    t0 = 1_000_000.0
+    cp.local_profit_stop(pos, cfg, now=t0)
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 8.0)
+    assert got == pytest.approx(9.99)
+    assert got < pos["entry_price"]
+
+
+def test_entry_cap_allows_the_fill_once_be_at_pct_is_earned():
+    pos = _green_catchup_pos(
+        last_seen_price=10.02,
+        peak_price=10.02,
+        mfe_r=0.02,  # 0.20% of a $10 fill with $1 risk
+        local_stop_price=9.99,
+    )
+    cfg = _green_catchup_cfg(
+        ai_local_trail_decay_overtake=True,
+        ai_local_trail_be_at_pct=0.15,
+        ai_local_trail_entry_cap_until_be=True,
+    )
+    t0 = 1_000_000.0
+    cp.local_profit_stop(pos, cfg, now=t0)
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 8.0)
+    assert got == pytest.approx(10.02)
+
+
+def test_entry_cap_does_not_lower_a_shelf_already_at_the_fill():
+    pos = _tiny_green_pos(local_stop_price=10.00)
+    cfg = _green_catchup_cfg(
+        ai_local_trail_decay_overtake=True,
+        ai_local_trail_be_at_pct=0.15,
+        ai_local_trail_entry_cap_until_be=True,
+    )
+    t0 = 1_000_000.0
+    cp.local_profit_stop(pos, cfg, now=t0)
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 8.0)
+    assert got == pytest.approx(10.00)
+
+
 def test_green_catchup_parks_at_last_minus_cushion():
     """overtake=False: at ceiling park at last−$0.01, no trail_decay_overtake."""
     cfg = _green_catchup_cfg(ai_local_trail_decay_overtake=False)

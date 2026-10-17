@@ -1,0 +1,20 @@
+{
+  "study": "entry_cap",
+  "registered": "2026-10-17, before any replay of this arm",
+  "asked_by": "running list / handoff 10/16 item 5: EQNR 12:21 and PPL 14:03 were sold at entry after the 15s idle leash and green_catchup_overtake walked the stop up. Check whether overtake bypasses ai_local_trail_be_at_pct 0.15. It does: local_profit_stop returns last on that path without consulting be_at_pct. Live config is not changed.",
+  "code": "ai_positions._cap_shelf_under_entry_until_be. Flag ai_local_trail_entry_cap_until_be defaults false. True: until be_hit (the existing be_at_pct / be_at_r / spread-k rule), a shelf raise may not land at or above entry. Cap is entry minus 1 cent. A shelf already at or above entry is not pulled down.",
+  "arm": "trail_dc_entrycap = trail_dc plus the flag true. Reference is trail_dc rerun at the SAME sha. Do not compare with the 8bbede5 trail_dc files.",
+  "script": "scripts/exit_cut_sweep.sh. Not launched in this registration. Commit the cap first. The replay archives that commit (git archive of SHA). Do not set SWEEP_SHA to a parent of the cap commit, or both arms run identical code.",
+  "launch": {
+    "out": "/tmp/ecs_entry_cap",
+    "env": "SWEEP_DAYTIME=1 TH_DATA_SECRETS=$HOME/repo/trading-helper/secrets_data.json SWEEP_ARMS='trail_dc trail_dc_entrycap' SWEEP_SCORE_ARMS=trail_dc,trail_dc_entrycap SWEEP_REFS=trail_dc SWEEP_MAXP=2",
+    "nice": 19,
+    "note": "The script's pooled result.md is not the verdict. SWEEP_DAYTIME is required so the replays use the data-only account and do not wait for 16:15."
+  },
+  "days": ["2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15"],
+  "halves": "A = 2026-10-06..2026-10-09, B = 2026-10-12..2026-10-15. Score each half by copying exactly those four days for both arms into its own directory and running tools/studies/spread_rvol_score.py --dir <half> --arms trail_dc,trail_dc_entrycap --refs trail_dc. The printed paired line 'trail_dc_entrycap - trail_dc' is the decision t. All 8 day-files must exist for both arms (16 files). A day the scorer marks incomplete or vacuous fails the study. There is no trade-count floor and none may be added after the replays.",
+  "metric": "VALUE = sum of net bp per day (net = return minus full SIP spread at entry), day-clustered, paired vs trail_dc. Same scorer as the exit-cut sweep (tools/studies/spread_rvol_score.py).",
+  "scratch": "Counted by tools/studies/entry_cap_score.py on closed[]. A scratch is abs(exit_px - entry_px) <= 0.01, unless peak_px is present and (peak_px - entry_px) / entry_px >= 0.0015. A missing peak_px with an exit within 1 cent stays a scratch. Count per arm per half.",
+  "decision": "Ship only if the paired VALUE t is >= 1.5 in BOTH halves AND the entry-cap scratch count is strictly lower than trail_dc in both halves. Otherwise the live leash stays. No config edit in this study. No minimum trade count.",
+  "prior": "LOW. The leash is the best-tested exit (+58 bp/day on the 10/16 rerun). This arm takes away the early raise to entry. Expect fewer scratches and possibly worse value if those scratches were avoiding later losses."
+}
