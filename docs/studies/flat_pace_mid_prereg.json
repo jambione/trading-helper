@@ -1,0 +1,34 @@
+{
+  "study": "Does the live mid-rise %R entry pay when the name is busy but the run has not started: volume pace in the published 1.64–4 band, day change within 1% of the prior close, and the price not yet at the high of today's range?",
+  "registered_at": "2026-10-17 ~06:10 ET, before any return of this conjunction was computed.",
+  "registered_before_results": true,
+  "origin": "Operator 10/17: seat names with volume and pace before the run, then take the %R entry, so the book is early and directionally right. Support/resistance plus %R is not in this test: the support arm and the −60 %R gap arm both FAIL (SR_SUPPORT_ARM_2026-10-05, SR_GAP_WR60_ARM_2026-10-05).",
+  "prior": "LOW. Volume pace finds larger swings and a flat forward return (fwd60 high vs low pace −1.0 bp, t −0.5). Names already up ≥ 2.35% fade harder. The live mid-rise entry itself failed the honest bar (half B gross −2.1 bp). The conjunction — busy, and not yet extended — is the untested slice.",
+  "data": "Same warehouse window as prescreen_turn amended_1: 119 sessions 2026-04-28..2026-10-15, 400 names per session with today's IEX and SIP and the previous session's IEX. The run refuses unless that window matches. %R is IEX. Warm-up is LazyDay's last 220 prior RTH IEX bars, not the full session and not live's multi-day extended-hours load. Pace, day change and range use SIP. Pace history is exactly one SIP session before 2026-04-28 plus those 119 sessions; any other SIP file before, inside, or after that window aborts the run.",
+  "population": "Every live mid-rise onset (fast %R crosses up through −50 while the slow line rises; early_entry_honest.mid_flag) between 09:50 and 15:30, 15-minute refractory, entry at the next SIP open, 10-minute hold. A fire is measurable only when pace, day change and range position are all defined on the completed signal bar. The baseline is every measurable mid-rise fire. The kept cell is the subset below.",
+  "kept": {
+    "pace": "[1.64, 4.0). RTH SIP volume through the signal bar, divided by the mean of the prior 20 sessions' full RTH SIP volume times morning_funnel.expected_fraction. Fewer than 20 prior sessions with volume makes pace undefined. 1.64 and the 4× soft cap are the published pace band (NAME_QUALITY_RERUN_2026-09-24 correction), not fit here.",
+    "day_change": "[-1%, +1%] versus the previous session's last RTH SIP close. The ±1% bound is the round 'near unchanged' cut, registered before the score. The 2.35% runway cut is not used.",
+    "range_position": "< 0.90. (close − running low) / (running high − running low) on today's RTH SIP bars through the signal bar. 0.90 is the live admit_max_range_pos cap. A zero range is undefined."
+  },
+  "markout_controls_cost": "10-minute SIP markout (early_entry_honest.markout). Lift versus the baseline = kept day-mean minus the baseline day-mean, on days that have both. Later-minute control and same-minute cross control are information only. Cost 10 bp is the money bar. Measured cost 3 bp is the PROMISING bar.",
+  "pass": "PASS = both halves: kept lift vs baseline ≥ +5 bp with t ≥ 2, kept net at 10 bp > 0, ≥ 100 kept signals and ≥ 6 days. PROMISING = both halves kept net at 3 bp > 0 and lift vs baseline > 0, and the combined (all days) t of kept net at 3 bp ≥ 1.5, with the same minimums. Else FAIL. A half under the minimums makes the cell UNDERPOWERED unless the other half is a real FAIL.",
+  "information_only": [
+    "pace-only, flat-only, and below-range-only subsets of the same measurable fires, scored the same way and not eligible to be picked",
+    "kept lift versus a random later minute of the same name",
+    "kept lift versus a random other sampled name at the same minute"
+  ],
+  "no_retuning": "One kept cell. The thresholds, the mid-rise definition, the split (half A ends 2026-07-23), the hold and the costs are fixed. A different band or adding support/resistance is a new prereg.",
+  "if_pass": "Paper scanner only, then result-skeptic review. Not a live arm.",
+  "if_promising": "Paper slot only.",
+  "if_fail": "A busy, still-flat name does not make the mid-rise %R entry a profit run. Pace stays an observe/rank input.",
+  "declared_deviations": [
+    "Completed 1-minute bars. Live acts intrabar.",
+    "The pace curve's first point includes about 5% premarket volume, and the numerator here is RTH-only, so early pace is a bit low. That is the scale the published 1.64 cut was measured on.",
+    "Warm-up for %R is LazyDay's last 220 prior RTH IEX bars, not the full session and not live's multi-day extended-hours load.",
+    "Pace history is exactly one SIP session before 2026-04-28 plus the 119 usable sessions. Any other SIP file before, inside, or after that window aborts the run. A non-finite pace, day change, or prior close is undefined. Fires before a name has 20 prior sessions are not measurable and are in neither population."
+  ],
+  "multiplicity": "One graded cell. The three single-factor lines are information and cannot be promoted from this run.",
+  "amended": "2026-10-17, before any score, after result-skeptic round 1 NOT READY. F1: WARM_LINES is set inside day_job before name_day_series; warm-up is LazyDay's last 220 prior RTH IEX bars. F2: a powered half that misses PASS plus a thin half is FAIL; a powered half that would PASS plus a thin half stays UNDERPOWERED. The pass sentence is unchanged. F3: SIP history is exactly one session before 2026-04-28 plus the 119; any other SIP file aborts. F4: a non-finite pace, day change, or prior close is undefined and is not appended.",
+  "command": "cd ~/repo/trading-helper && nohup nice -n 10 .venv/bin/python tools/studies/flat_pace_mid.py --score --workers 6 > /tmp/flatpace.log 2>&1 &"
+}
