@@ -1,0 +1,27 @@
+{
+  "study": "After an intraday square, a pullback that keeps %R high, and a new square while price is still above that pullback low and the name is in an uptrend: does that resumption pay?",
+  "registered_at": "2026-10-17, before any return of this resumption was computed.",
+  "registered_before_results": true,
+  "origin": "Running list item 9 (operator 2026-10-16): established uptrend, pullback with %R staying high, buy when the squares resume, price above the pullback low. Trend-dip bought the dip itself and the uptrend bucket was the worst cell. This is the resumption, one cell, not that grid.",
+  "prior": "LOW. The live square and the live mid-rise failed the honest early-entry bar. Dips to -70 or lower while the name was already up did not pay. A shallow pause that never leaves the upper half of %R was not that test.",
+  "data": "Same warehouse window as the flat-pace cell: 119 sessions 2026-04-28..2026-10-15. The run refuses unless usable_days() is that window. Every name with today's IEX, today's SIP, and the previous session's IEX. Not the 400-name sample. %R is IEX. Warm-up is the previous session's last 220 RTH IEX bars, applied inside the worker. Structure (EMA, higher high, pullback low) uses today's IEX bars only. The fill is SIP.",
+  "population": "One fire per name per 15 minutes, 09:50-15:30. The bar is a square onset: fast and slow Williams %R both at or above -20, within 15 of each other, and the fast line rising, and the previous bar was not a square. A prior square already printed earlier today. Every bar strictly between that prior square and this onset has fast %R finite and above -50. The onset close is above the lowest low of those in-between bars, and the onset low does not break that low. At the onset close, close is above EMA(8), EMA(8) is above EMA(21), and the highest high of the last 21 bars is above the highest high of the 21 bars before that. EMA(8) and EMA(21) are the published display lengths. -20, 15, and -50 are the published square and mid-rise levels. Entry is the next SIP open. Hold is 10 minutes.",
+  "control": "A random later SIP minute of the same name, same 10-minute hold (early_entry_honest.control_minute). That paired lift is the graded lift. The same-minute other-name control, and the lift versus square onsets that fail this rule, are information and cannot be promoted.",
+  "pass": "PASS only if in BOTH halves: at least 100 signals and 6 days, net at 10 bp > 0, and the day-equal lift versus the later minute >= +5 bp with t >= 2. PROMISING if both halves have net at 3 bp > 0 and later-minute lift > 0, and the combined t of net at 3 bp >= 1.5, with the same minimums. A half under the minimums is UNDERPOWERED unless the other half is a real FAIL. Half A ends 2026-07-23.",
+  "information_only": [
+    "lift versus square onsets the same day that are not this resumption",
+    "same-minute other-name control"
+  ],
+  "no_retuning": "One cell. The EMA lengths, the %R levels, the 21-bar higher-high window, the hold, the split, and the costs are fixed.",
+  "if_pass": "Paper only, then a result-skeptic review of the positive. Not a live arm.",
+  "if_fail": "Buying the second square after a shallow, still-high pullback does not pay on this tape.",
+  "declared_deviations": [
+    "Completed 1-minute bars. Live acts intrabar.",
+    "A square on the previous session does not count. The pullback is intraday.",
+    "Warm-up is the last 220 prior RTH IEX bars, not the full session and not live's multi-day extended-hours load.",
+    "The EMA and the higher-high windows use today's IEX bars only, so the first possible fire is 42 minutes into the session.",
+    "SIP fill, IEX lines and structure."
+  ],
+  "multiplicity": "One graded cell. The two information lines cannot be promoted.",
+  "command": "cd ~/repo/trading-helper && nohup nice -n 10 .venv/bin/python tools/studies/resume_square.py --score --workers 6 > /tmp/resume_square.log 2>&1 &"
+}
