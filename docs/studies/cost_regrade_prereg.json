@@ -1,0 +1,52 @@
+{
+  "study": "cost_regrade",
+  "registered": "2026-10-17, before the arithmetic in tools/studies/cost_regrade.py is run",
+  "asked_by": "PLAN_2026-10-16_bottlenecks.md item 2 and HANDOFF_2026-10-16_GROK.md next item 2. One re-grade of the named past results at a 3 bp round trip, with a multiplicity bar. No warehouse rerun. No new cell.",
+  "cost_bp": 3.0,
+  "family": "K is the number of candidates with status grade. Unreadable candidates stay in this file and do not enter K.",
+  "pass": "Both halves have net3 > 0 and each half's recomputed t_net is at least the one-sided normal Bonferroni critical value of a single-test t of 2.0 across K. t_net = published_t * net3 / published_mean, and published_t must be the t of that same mean. A missing t cannot pass.",
+  "promising": "Both halves have net3 > 0. A pooled mean is scored only from an explicit pooled object {mean_bp, t} copied from the source. That object's net3 must be > 0 and its t_net must clear the Bonferroni critical value of a single-test t of 1.5 across K. These four candidates have no pooled object. Per-half t cannot make a row PROMISING. A half with net3 <= 0 is FAIL.",
+  "net3": "If the published figure is a gross, net3 = gross - 3. If it is a net at cost C, gross = net + C and net3 = gross - 3. A realized fill-to-fill mean is already after the spread that was paid; do not subtract another 3 bp. Grade that mean against 0.",
+  "not_scored": {
+    "day_hold_pilot": "Forward read earliest 2026-11-13 (PLAN_2026-10-14, HANDOFF_2026-10-10). The +17 bp/day figure is the unread pilot, not a held-out result.",
+    "pct_r_plus_rsi_sip": "The plan's parenthetical +4 bp is the inferred desk-level gross in SKEPTIC_REVIEW_2026-10-02 section 10 ('inferred, not measured'). docs/SIP_MONTH_PLAN_2026-10-15.md lists '%R + RSI confluence' at +4 bp on simulated real-time SIP with no halves, n, or t. No published held-out cell is graded here."
+  },
+  "candidates": [
+    {
+      "id": "sip_breakout_capped_rawfloor",
+      "source": "docs/studies/SIP_BREAKOUT_2026-10-03.md addendum 2026-10-10. The plan's +9 bp is the 9/16-9/25 teaser that the held-out test said did not replicate, and the control gross +9.1. This row is the signal.",
+      "kind": "gross",
+      "halves": [
+        {"name": "first", "mean_bp": -3.0, "t": null, "n": 317},
+        {"name": "second", "mean_bp": -2.5, "t": null, "n": 416}
+      ],
+      "t_note": "The published t (-1.7 / -2.2) is on net15 at the full spread, not on this gross. It is not used."
+    },
+    {
+      "id": "reentry_after_win",
+      "source": "docs/AFTER_CLOSE_2026-10-01.md. Side finding, not a pre-registered cell: 30-min re-entries after a win -0.05% vs average -0.23%, t +2.9 versus the average, both halves mentioned with no per-half means.",
+      "kind": "realized",
+      "realized_bp": -5.0,
+      "t_vs_average": 2.9
+    },
+    {
+      "id": "needle_c2",
+      "source": "docs/studies/ROOM_HOD_OOS_2026-10-09.md raw $20-100 rescore. net30 at 10 bp.",
+      "kind": "net",
+      "cost_bp": 10.0,
+      "halves": [
+        {"name": "A", "mean_bp": -11.9, "t": -2.1},
+        {"name": "B", "mean_bp": -10.3, "t": -2.7}
+      ]
+    },
+    {
+      "id": "mid_rise",
+      "source": "docs/studies/EARLY_ENTRY_MID_RSI2_2026-10-13.md. Gross of the 10-minute markout. The published t column is the lift t, so it is not used as t_net.",
+      "kind": "gross",
+      "halves": [
+        {"name": "A", "mean_bp": 10.5, "t": null, "n": 423},
+        {"name": "B", "mean_bp": -2.1, "t": null, "n": 736}
+      ]
+    }
+  ]
+}
