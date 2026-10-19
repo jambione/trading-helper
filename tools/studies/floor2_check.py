@@ -3,7 +3,7 @@
 
 Scans ~/session_snapshots/DAY/state_snapshots.jsonl.gz for every recorded file and counts the distinct symbols
 priced $2-10 per file (any dict with a symbol/ticker and a price/last/close field). Reads local files only.
-  .venv/bin/python tools/studies/floor2_check.py 2026-10-06 2026-10-16
+  .venv/bin/python tools/studies/floor2_check.py 2026-10-06 2026-10-07 ...   (each day listed; not a range)
 """
 from __future__ import annotations
 
@@ -53,7 +53,8 @@ def main() -> None:
         if not got:
             print(f"{d}: no recording")
             continue
-        print(f"{d}: " + ", ".join(f"{f} {len(s)}" for f, s in sorted(got.items()) if s) or f"{d}: none under $10")
+        per_file = ", ".join(f"{f} {len(s)}" for f, s in sorted(got.items()) if s)
+        print(f"{d}: {per_file or 'none under $10'}")
         allsyms = sorted(set().union(*got.values()))
         print(f"   sub-$10 names ({len(allsyms)}): {' '.join(allsyms[:40])}")
 

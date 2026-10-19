@@ -263,7 +263,17 @@ def test_floor2_word_drops_the_top_five_names():
 
 
 def test_load_replay_scores_positions_open_at_the_end(tmp_path):
-    t = datetime(2026, 10, 6, 15, 49, tzinfo=ET).timestamp()
+    t = datetime(2026, 10, 6, 15, 40, tzinfo=ET).timestamp()
     (tmp_path / "2026-10-06_floor2.json").write_text(json.dumps({"closed": [], "open_at_end": [
         {"symbol": "LATE", "entry_ts": t, "entry_px": 4.0}]}))
     assert [f["symbol"] for f in F.load_replay(tmp_path, days=("2026-10-06",))[0]] == ["LATE"]
+
+
+def test_load_replay_keeps_the_fill_window(tmp_path):
+    pre = datetime(2026, 10, 6, 9, 10, tzinfo=ET).timestamp()
+    late = datetime(2026, 10, 6, 15, 48, tzinfo=ET).timestamp()
+    ok = datetime(2026, 10, 6, 11, 0, tzinfo=ET).timestamp()
+    (tmp_path / "2026-10-06_floor2.json").write_text(json.dumps({"closed": [
+        {"symbol": "PRE", "entry_ts": pre}, {"symbol": "OK", "entry_ts": ok}, {"symbol": "LATE", "entry_ts": late}]}))
+    fills, n, _ = F.load_replay(tmp_path, days=("2026-10-06",))
+    assert [f["symbol"] for f in fills] == ["OK"] and n["outside_window"] == 2

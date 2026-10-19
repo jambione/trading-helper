@@ -143,6 +143,9 @@ def load_replay(rdir: Path, days=REPLAY_DAYS, arm: str = REPLAY_ARM) -> tuple[li
             if not t.get("symbol") or not t.get("entry_ts"):
                 continue
             ts = float(t["entry_ts"])
+            if not (OPEN_MIN <= et_min(ts) < LAST_FILL_MIN):
+                n["outside_window"] += 1          # same 09:30-15:45 window as the desk's fills
+                continue
             out.append({"oid": f"{t['symbol']}|{ts:.3f}", "symbol": str(t["symbol"]).upper(), "ts": ts,
                         "fill": float(t.get("entry_px") or 0), "day": datetime.fromtimestamp(ts, ET).strftime("%Y-%m-%d"),
                         "synthetic": bool(t.get("synthetic"))})
