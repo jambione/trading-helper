@@ -1,0 +1,20 @@
+{
+  "study": "Which kind of extra risk is worth taking, with exits to support it? A side-by-side description, not an edge test: SPY held, SPY with a trend exit, 1.5x SPY with and without the trend exit, and the R1 momentum book with and without its 10% trailing stop.",
+  "registered_at": "2026-10-19, before any return in this comparison was computed (the R1 rows were scored in monthly_book; their alpha is known, their drawdown and recovery are not).",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-19: 'can we take more of a risk if we have the exits to support it?' after MONTHLY_BOOK_2026-10-19 (no rule beat SPY after risk; R1's trailing stop cut the worst month from -21% to -15% at about the same alpha).",
+  "strategies": {
+    "S0_spy": "SPY held, total return (Yahoo Adj Close).",
+    "S1_spy_trend": "Faber (2007) monthly trend rule: at each month-end close, hold SPY for the next month if that close is above the mean of the last 10 month-end closes; otherwise cash at 0%. 2 bp per switch.",
+    "S2_spy_1p5x": "1.5x SPY rebalanced daily: each day 1.5 x SPY's total return minus 0.5 x 4%/252 financing. Compounded daily into months.",
+    "S3_spy_1p5x_trend": "S2, but in cash (0%) in the months S1 is in cash. 2 bp x 1.5 per switch.",
+    "S4_momentum": "monthly_book R1_smooth_momentum, top 20, net of 10 bp per side (the scored series).",
+    "S5_momentum_trail10": "monthly_book R1 with the 10% trailing stop from the best close, sold at the next open (its information row)."
+  },
+  "windows": "W1, the common window: holding months starting 2017-01-31 through 2026-08-31 (116 months), all six strategies. W2, the long window: months 2000-01 through 2026-09 for S0-S3 only. The momentum book is not run before 2016: the 2000-2015 Yahoo panel holds only names that still trade, so a stock-picking book there would see survivors only.",
+  "data": "SPY daily open/close/adj close 1998-06..2026-10 from data/yahoo_pre2016/raw/*.pkl (yfinance, auto_adjust off; the frame keyed 'SPY'). R1 rows from tools/studies/monthly_book.run on ai_reports/gapdown/daily.pkl. Cash earns 0% (T-bills are not in the data), which understates S1 and S3 in 2000-2008 and 2023-2026.",
+  "printed": "Per strategy and window: compound annual return, annualized volatility (monthly SD x sqrt 12), return / volatility, worst month, worst calendar year, maximum drawdown (peak to trough of the monthly equity curve), the longest time under water in months (peak to recovery, or to the end if not recovered), share of months positive, and for S1/S3 the number of switches and months in cash. The equity of $10,000 at the start of each window, at its end.",
+  "no_word": "No PASS or FAIL. This is a description of risk and return to choose a sizing, not a claim of edge. MONTHLY_BOOK_2026-10-19 already found no alpha over SPY. The parameters (10 months, 1.5x, 4% financing, 2 bp, 10% trail) are fixed now; a different one is a new prereg.",
+  "known_limits": "1.5x is synthetic (daily rebalanced, constant financing); a real leveraged ETF or margin account differs in costs and borrowing rate. The trend rule's history is partly known in sample: Faber published it in 2007 on data before that. Monthly drawdowns miss intra-month troughs (2020-03 was deeper intra-month).",
+  "command": "On the mini: REPO=$PWD nice -n 19 .venv/bin/python /tmp/risk_job/risk_compare.py (with monthly_book.py copied next to it). Reads local files only."
+}
