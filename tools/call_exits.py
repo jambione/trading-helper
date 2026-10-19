@@ -300,7 +300,7 @@ def score_pending(now: float | None = None) -> dict:
                                     + datetime.fromtimestamp(click, ET).minute) < 570 else "rth"}
         statuses = []
         for v in VARIANTS:
-            res = simulate(r["symbol"], click, trades, bars, cfg, horizon, spread_bp=sp, variant=v)
+            res = simulate(r["symbol"], click, trades, bars, cfg, horizon, spread_bp=sp_q, variant=v)
             if res["status"] == "open" and horizon >= session_end:
                 res = finalize_at_session_end(res, horizon)
             if res["status"] == "final":
