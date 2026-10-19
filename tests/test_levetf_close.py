@@ -142,3 +142,45 @@ def test_a_planted_flow_reads_pass_and_noise_does_not():
     assert word == "MOMENTUM ONLY"
     word, _ = _word_for(plant_lev=0.0, plant_placebo=0.0)
     assert word in ("FAIL", "UNDERPOWERED")
+
+
+def test_fetch_refuses_without_the_data_account(monkeypatch):
+    import pytest
+    monkeypatch.delenv("TH_DATA_SECRETS", raising=False)
+    with pytest.raises(SystemExit):
+        L._data_client()
+
+
+def test_early_close_sessions_are_dropped_and_counted():
+    minutes, daily = _synthetic(plant_lev=0.0, plant_placebo=0.0, n=90)
+    d = sorted(minutes)[70]
+    old = L.EARLY_CLOSE
+    L.EARLY_CLOSE = frozenset({d})
+    try:
+        rows, cnt = L.build_rows(minutes, daily, {})
+    finally:
+        L.EARLY_CLOSE = old
+    assert not any(r["day"] == d for r in rows) and cnt["early_close"] == len(L.SYMS)
+
+
+def test_fetch_problems_catch_a_gap_and_a_stale_daily(tmp_path, monkeypatch):
+    import json
+    import pickle
+    monkeypatch.setattr(L, "OUT", str(tmp_path))
+    monkeypatch.setattr(L, "MANIFEST", str(tmp_path / "manifest.json"))
+    monkeypatch.setattr(L, "FETCH_FROM", "2016-01")
+    monkeypatch.setattr(L, "FETCH_TO", "2016-03")
+    man = {}
+    for n, t in (("2016-01.pkl", 100.0), ("2016-03.pkl", 200.0), ("daily.pkl", 150.0)):
+        pickle.dump({}, open(tmp_path / n, "wb"))
+        man[n] = t
+    json.dump(man, open(tmp_path / "manifest.json", "w"))
+    probs = " ".join(L.fetch_problems())
+    assert "month files missing" in probs and "before the last minute month" in probs
+    pickle.dump({}, open(tmp_path / "2016-02.pkl", "wb"))
+    man.update({"2016-02.pkl": 120.0, "daily.pkl": 300.0})
+    json.dump(man, open(tmp_path / "manifest.json", "w"))
+    assert L.fetch_problems() == []
+    man["daily.pkl"] = 100.0 + 2 * 86400
+    json.dump(man, open(tmp_path / "manifest.json", "w"))
+    assert "more than a day apart" in " ".join(L.fetch_problems())

@@ -20,6 +20,7 @@ import pickle
 import random
 import statistics as st
 import sys
+import time
 from collections import defaultdict
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
@@ -47,6 +48,14 @@ DROP_TOP, BOOT_N = 10, 2000
 OUT = os.path.join(ROOT, "ai_reports", "levetf_bars")
 SPR = os.path.join(ROOT, "ai_reports", "levetf_spreads.json")
 RESULT = os.path.join(ROOT, "ai_reports", "levetf_close_result.md")
+MANIFEST = os.path.join(OUT, "manifest.json")
+FETCH_SPAN_S = 86400
+# NYSE 13:00 closes, 2015-10..2026-10. The 15:29-15:49 bars on these days are after-hours prints.
+EARLY_CLOSE = frozenset({
+    "2015-11-27", "2015-12-24", "2016-11-25", "2017-07-03", "2017-11-24", "2018-07-03", "2018-11-23",
+    "2018-12-24", "2019-07-03", "2019-11-29", "2019-12-24", "2020-11-27", "2020-12-24", "2021-11-26",
+    "2022-11-25", "2023-07-03", "2023-11-24", "2024-07-03", "2024-11-29", "2024-12-24", "2025-07-03",
+    "2025-11-28", "2025-12-24"})
 
 
 # ── pure parts (tested) ──────────────────────────────────────────────────────
@@ -161,26 +170,57 @@ def _months():
         y, m = (y + 1, 1) if m == 12 else (y, m + 1)
 
 
-def fetch() -> None:
+def _data_client():
+    """The data-only account, never the desk's key: bars.client() falls back to config/secrets.json without this."""
+    path = os.environ.get("TH_DATA_SECRETS", "")
+    if not path or not os.path.exists(path):
+        sys.exit("REFUSING: set TH_DATA_SECRETS to the data-only account's secrets_data.json")
     import bars as B
+    cl = B.client()
+    if cl is None:
+        sys.exit("REFUSING: the data-only client did not connect")
+    return cl
+
+
+def _manifest() -> dict:
+    return json.load(open(MANIFEST)) if os.path.exists(MANIFEST) else {}
+
+
+def _stamp(name: str) -> None:
+    m = _manifest()
+    m[name] = time.time()
+    json.dump(m, open(MANIFEST, "w"), indent=1)
+
+
+def fetch_problems() -> list[str]:
+    """Every month file present, daily fetched after the last minute month, all within one day (Adjustment.ALL
+    back-adjusts relative to the fetch date, so files fetched across an ex-dividend date disagree)."""
+    out = []
+    names = [f"{y:04d}-{m:02d}.pkl" for y, m in _months()]
+    missing = [n for n in names if not os.path.exists(os.path.join(OUT, n))]
+    if missing:
+        out.append(f"{len(missing)} month files missing, first {missing[0]}")
+    man = _manifest()
+    if "daily.pkl" not in man or not os.path.exists(os.path.join(OUT, "daily.pkl")):
+        out.append("daily.pkl missing")
+    stamps = [man[n] for n in names if n in man]
+    if len(stamps) < len(names) - len(missing):
+        out.append("a month file has no fetch time in the manifest")
+    if stamps and "daily.pkl" in man:
+        if man["daily.pkl"] < max(stamps):
+            out.append("daily.pkl was fetched before the last minute month: rerun --fetch")
+        if max(stamps + [man["daily.pkl"]]) - min(stamps) > FETCH_SPAN_S:
+            out.append("the files were fetched more than a day apart: delete ai_reports/levetf_bars and refetch")
+    return out
+
+
+def fetch() -> None:
     import edge_fetch as ef
     from alpaca.data.enums import Adjustment, DataFeed
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-    cl = B.client()
-    if cl is None:
-        sys.exit("no data client: set TH_DATA_SECRETS to secrets_data.json")
+    cl = _data_client()
     os.makedirs(OUT, exist_ok=True)
-    daily_p = os.path.join(OUT, "daily.pkl")
-    if not os.path.exists(daily_p):
-        ef.throttle()
-        bs = cl.get_stock_bars(StockBarsRequest(
-            symbol_or_symbols=list(SYMS), timeframe=TimeFrame.Day, adjustment=Adjustment.ALL, feed=DataFeed.SIP,
-            start=datetime(2015, 6, 1, tzinfo=timezone.utc), end=datetime(2026, 10, 17, tzinfo=timezone.utc)))
-        daily = {s: {r.timestamp.astimezone(ET).strftime("%Y-%m-%d"): float(r.close) for r in rs}
-                 for s, rs in (bs.data or {}).items()}
-        pickle.dump(daily, open(daily_p, "wb"))
-        print(f"daily: {', '.join(f'{s} {len(v)}' for s, v in sorted(daily.items()))}", flush=True)
     for y, m in _months():
         p = os.path.join(OUT, f"{y:04d}-{m:02d}.pkl")
         if os.path.exists(p):
@@ -205,19 +245,34 @@ def fetch() -> None:
                     out[dt.strftime("%Y-%m-%d")].setdefault(sym, {})[mm] = (
                         float(r.open), float(r.high), float(r.low), float(r.close))
         pickle.dump(dict(out), open(p, "wb"))
+        _stamp(os.path.basename(p))
         print(f"{y}-{m:02d}: {len(out)} days", flush=True)
+    missing = [f"{y:04d}-{m:02d}" for y, m in _months() if not os.path.exists(os.path.join(OUT, f"{y:04d}-{m:02d}.pkl"))]
+    if missing:
+        print(f"{len(missing)} months failed ({missing[0]}...): rerun --fetch; daily is fetched after the last month")
+        return
+    # Daily last, so its adjustment matches the minute files.
+    ef.throttle()
+    bs = cl.get_stock_bars(StockBarsRequest(
+        symbol_or_symbols=list(SYMS), timeframe=TimeFrame.Day, adjustment=Adjustment.ALL, feed=DataFeed.SIP,
+        start=datetime(2015, 6, 1, tzinfo=timezone.utc), end=datetime(2026, 10, 17, tzinfo=timezone.utc)))
+    daily = {s: {r.timestamp.astimezone(ET).strftime("%Y-%m-%d"): float(r.close) for r in rs}
+             for s, rs in (bs.data or {}).items()}
+    pickle.dump(daily, open(os.path.join(OUT, "daily.pkl"), "wb"))
+    _stamp("daily.pkl")
+    print(f"daily: {', '.join(f'{s} {len(v)}' for s, v in sorted(daily.items()))}", flush=True)
+    for p in fetch_problems():
+        print(f"PROBLEM: {p}")
 
 
 def spreads() -> None:
-    import bars as B
     import edge_fetch as ef
-    cl = B.client()
-    if cl is None:
-        sys.exit("no data client: set TH_DATA_SECRETS to secrets_data.json")
+    cl = _data_client()
     store = json.load(open(SPR)) if os.path.exists(SPR) else {}
     bym = defaultdict(list)
     for d in sorted(load_minutes()):
-        bym[d[:7]].append(d)
+        if d not in EARLY_CLOSE:
+            bym[d[:7]].append(d)
     for mo, ds in sorted(bym.items()):
         for d in (ds[0], ds[len(ds) // 2]):
             t = datetime.strptime(d, "%Y-%m-%d").replace(hour=15, minute=31, tzinfo=ET).timestamp()
@@ -248,12 +303,14 @@ def month_spread(store: dict) -> dict[tuple[str, str], float]:
 # ── scoring ──────────────────────────────────────────────────────────────────
 
 def build_rows(minutes: dict, daily: dict, spr: dict) -> tuple[list[dict], dict]:
-    cnt = {"dropped_bars": 0, "missing_spread_months": set(), "warm": 0}
+    cnt = {"dropped_bars": 0, "missing_spread_months": set(), "warm": 0, "early_close": 0}
     rows = []
     for sym in SYMS:
         dcl = daily.get(sym) or {}
         dkeys = sorted(dcl)
         days = sorted(d for d in minutes if sym in minutes[d] and d <= LAST_DAY)
+        cnt["early_close"] += sum(1 for d in days if d in EARLY_CLOSE)
+        days = [d for d in days if d not in EARLY_CLOSE]
         seq = []
         for d in days:
             k = bisect.bisect_left(dkeys, d)
@@ -377,9 +434,31 @@ def report(rows: list[dict], cnt: dict) -> str:
             mu, t, n = day_t(list(session_means(rr).values()))
             lines.append(f"| {g} | {hf} | {n} | {_f(mu)} | {_f(t, 2)} |")
         lines.append("")
-    lines += [f"dropped for a missing bar or prior close: {cnt['dropped_bars']}; warm-up sessions: {cnt['warm']}; "
+    lines += [f"early-close sessions dropped (symbol-sessions): {cnt['early_close']}",
+              f"dropped for a missing bar or prior close: {cnt['dropped_bars']}; warm-up sessions: {cnt['warm']}; "
               f"symbol-months with no spread sample (charged {FLAT_BP:.0f} bp): {cnt['missing_spread_months']}",
               "Flow size: historical shares outstanding are not available from a free source here. Not printed.", ""]
+    return "\n".join(lines)
+
+
+def coverage(minutes: dict, daily: dict) -> str:
+    """Sessions per symbol per year with a 15:29 bar, against SPY's daily calendar."""
+    cal = defaultdict(int)
+    for d in (daily.get("SPY") or {}):
+        if d <= LAST_DAY and d not in EARLY_CLOSE:
+            cal[d[:4]] += 1
+    have = defaultdict(int)
+    for d, by in minutes.items():
+        if d in EARLY_CLOSE or d > LAST_DAY:
+            continue
+        for s, bars in by.items():
+            if SIG_MIN in bars:
+                have[(s, d[:4])] += 1
+    years = sorted(cal)
+    lines = ["sessions with a 15:29 bar, by year (SPY calendar first)", "sym  " + " ".join(f"{y:>5}" for y in years),
+             "cal  " + " ".join(f"{cal[y]:>5}" for y in years)]
+    for s in SYMS:
+        lines.append(f"{s:<4} " + " ".join(f"{have[(s, y)]:>5}" for y in years))
     return "\n".join(lines)
 
 
@@ -403,10 +482,16 @@ def main() -> None:
     if not a.score:
         print("(inventory only; --score after the prereg has a result-skeptic READY)")
         return
-    if not days or days[0] > "2015-10-31" or days[-1] < LAST_DAY or not os.path.exists(daily_p) or not os.path.exists(SPR):
-        print("REFUSING: the fetch or the spreads are incomplete (need minutes from 2015-10 through 2026-10-16, daily, spreads)")
+    problems = fetch_problems()
+    if not os.path.exists(SPR):
+        problems.append("spreads file missing: run --spreads")
+    if days and days[-1] < LAST_DAY:
+        problems.append(f"last minute session {days[-1]} is before {LAST_DAY}")
+    if problems:
+        print("REFUSING: " + "; ".join(problems))
         return
     daily = pickle.load(open(daily_p, "rb"))
+    print(coverage(minutes, daily), flush=True)
     spr = month_spread(json.load(open(SPR)))
     rows, cnt = build_rows(minutes, daily, spr)
     md = report(rows, cnt)
