@@ -8,7 +8,7 @@ Universe: the warehouse names (ai_reports/warehouse/sip), ranked by median daily
 sessions: the top 300 (the pairs test's set) and every name. Options are requested by parent symbol
 (AAPL.OPT = every AAPL option). Window: 09:30-16:00 ET on each warehouse session. Schemas:
   trades  every options trade (price, size, exchange); no side
-  tbbo    every trade with the best bid and offer just before it, so a buy at the ask can be told from a sell
+  tcbbo   every trade with the consolidated best bid and offer just before it, so a buy at the ask can be told from a sell (OPRA has no tbbo)
   cbbo-1m one consolidated quote per minute per contract (information: a cheaper context file)
 
   (databento venv) REPO=$PWD python tools/studies/opra_cost.py              # all sessions
@@ -33,7 +33,7 @@ WH = os.path.join(REPO, "ai_reports", "warehouse", "sip")
 OUT = os.path.join(REPO, "ai_reports", "opra_cost.json")
 ET = ZoneInfo("America/New_York")
 DS = "OPRA.PILLAR"
-SCHEMAS = ("trades", "tbbo", "cbbo-1m")
+SCHEMAS = ("trades", "tcbbo", "cbbo-1m")
 TOP = 300
 NS = 1_000_000_000
 BATCH = 1000
