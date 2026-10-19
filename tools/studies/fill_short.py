@@ -47,7 +47,7 @@ REPLAY_ARM = "floor2"
 REPLAY_DAYS = ("2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14",
                "2026-10-15", "2026-10-16")
 REPLAY_A_END = "2026-10-09"
-REPLAY_MIN = {"min_days": 8, "min_half": 4, "min_trades": 100}
+REPLAY_MIN = {"min_days": 8, "min_half": 4, "min_trades": 100, "drop_names": 5}
 
 
 # ── pure parts (tested) ──────────────────────────────────────────────────────
@@ -138,7 +138,8 @@ def load_replay(rdir: Path, days=REPLAY_DAYS, arm: str = REPLAY_ARM) -> tuple[li
             failed = True
             n["missing_days"] += 1
             continue
-        for t in json.loads(p.read_text()).get("closed") or []:
+        rec = json.loads(p.read_text())
+        for t in (rec.get("closed") or []) + (rec.get("open_at_end") or []):
             if not t.get("symbol") or not t.get("entry_ts"):
                 continue
             ts = float(t["entry_ts"])
@@ -172,7 +173,7 @@ def by_day(rows: list[dict], key: str) -> dict[str, float]:
 
 def word(rows: list[dict], unknown_share: float, fetch_error_share: float = 0.0, *, a_end: str = A_END,
          min_days: int = MIN_DAYS, min_half: int = MIN_HALF_DAYS, min_trades: int = MIN_TRADES,
-         extra_key: str | None = None, replay_failed: bool = False) -> tuple[str, dict]:
+         extra_key: str | None = None, replay_failed: bool = False, drop_names: int = 0) -> tuple[str, dict]:
     """The prereg's call on the primary rows (each has day, net, slip). extra_key: a further line whose pooled
     day mean must be > 0 for a PASS (floor2: the tier-cost line)."""
     if replay_failed:
@@ -192,13 +193,22 @@ def word(rows: list[dict], unknown_share: float, fetch_error_share: float = 0.0,
     best3 = sorted(days, key=days.get, reverse=True)[:3]
     drop = day_stat([v for d, v in days.items() if d not in best3])
     extra = day_stat(list(by_day(rows, extra_key).values())) if extra_key else None
-    info = {"A": a, "B": b, "pool": pool, "slip": slip, "drop3": drop, "best3": best3, "extra": extra}
+    names = None
+    if drop_names:
+        tot = defaultdict(float)
+        for r in rows:
+            tot[r.get("symbol")] += r["net"]
+        top = set(sorted(tot, key=tot.get, reverse=True)[:drop_names])
+        names = day_stat(list(by_day([r for r in rows if r.get("symbol") not in top], "net").values()))
+        names["top"] = sorted(top, key=lambda k: -tot[k])
+    info = {"A": a, "B": b, "pool": pool, "slip": slip, "drop3": drop, "best3": best3, "extra": extra,
+            "drop_names": names}
 
     def pos(x):
         return x is not None and x > 0
     both = pos(a["mean"]) and pos(b["mean"])
     if (both and (pool["t"] or 0) >= T_PASS and pos(slip["mean"]) and pos(drop["mean"])
-            and (extra is None or pos(extra["mean"]))):
+            and (extra is None or pos(extra["mean"])) and (names is None or pos(names["mean"]))):
         return "PASS", info
     if both and (pool["t"] or 0) >= T_PROMISING:
         return "PROMISING", info
@@ -371,6 +381,12 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     CE.CACHE_DIR = OUT / "trades"
     cfg = config.load_config_ro()
+    if replay:
+        # The replay ran pinned to the commit's whole config (floor2_sweep.sh); exit with that, not today's file.
+        bc = Path(args.replay_dir) / "base_config.json"
+        if not bc.exists():
+            sys.exit(f"REFUSING: {bc} missing (the sweep writes it)")
+        cfg = {**cfg, **json.loads(bc.read_text())}
     if bool(cfg.get("ai_exit_supertrend", False)):
         sys.exit("REFUSING: ai_exit_supertrend is on; its bars are not mirrored (prereg)")
     replay_failed = False
@@ -480,6 +496,8 @@ def main() -> None:
         syn = [r for r in rows if r["synthetic"]]
         if syn:
             lines += block("Synthetic-row opens, any price (information)", syn, a_end=a_end)
+        ps = sum(r["synthetic"] for r in primary)
+        lines += [f"Primary opens on synthetic engine rows (last bar close, up to 60 s+ old): {ps} of {len(primary)}.", ""]
         lines += [f"Sub-$10 names seated: {dict(Counter(r['symbol'] for r in small).most_common(30))}", ""]
     else:
         lines += block("PRIMARY: $10+, shortable and easy to borrow, no SSR", primary, a_end=a_end)
@@ -494,7 +512,9 @@ def main() -> None:
         f = lambda x: "—" if x is None else f"{x:+.1f}"  # noqa: E731
         lines += [f"Pooled day-mean {f(info['pool']['mean'])} bp (t {info['pool']['t'] or 0:+.2f}); A {f(info['A']['mean'])}, "
                   f"B {f(info['B']['mean'])}; -7 bp stops {f(info['slip']['mean'])}; without the 3 best days "
-                  f"{f(info['drop3']['mean'])} (best days {', '.join(info['best3'])}).", ""]
+                  f"{f(info['drop3']['mean'])} (best days {', '.join(info['best3'])})."
+                  + (f" Without the top 5 names ({', '.join(info['drop_names']['top'])}): {f(info['drop_names']['mean'])}."
+                     if info.get("drop_names") else ""), ""]
     lines += [f"**{w}**"]
     md = "\n".join(lines)
     print(md, flush=True)

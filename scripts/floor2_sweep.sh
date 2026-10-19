@@ -3,6 +3,8 @@
 # at $2 and 20 seats, then scores every open as a short with fill_short --replay-dir. Pins the whole live config of
 # HEAD. Never launches 03:30-16:15 ET unless SWEEP_DAYTIME=1 with the data-only account.
 #   nohup bash scripts/floor2_sweep.sh [OUT] > /tmp/floor2_run.log 2>&1 &
+# SWEEP_PROBE=1: replay only the first day and print its opens by price tier and synthetic flag (no returns), to see
+# whether the test can have small names at all before the full run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 SHA=${SWEEP_SHA:-$(git rev-parse --short HEAD)}
@@ -28,6 +30,7 @@ FLOOR="--set ai_watch_profile_path= --set ai_watch_min_price=2.0 --set ai_watch_
   --set ai_max_positions=20 --set ai_max_position_pct=5"
 A=floor2
 DAYS="2026-10-06 2026-10-07 2026-10-08 2026-10-09 2026-10-12 2026-10-13 2026-10-14 2026-10-15 2026-10-16"
+[ -n "${SWEEP_PROBE:-}" ] && DAYS="2026-10-06"
 for d in $DAYS; do
   [ -s "$OUT/${d}_${A}.json" ] && continue
   pgrep -f -- "--out $OUT/${d}_${A}.json" > /dev/null && continue
@@ -43,5 +46,18 @@ for d in $DAYS; do
   sleep 5
 done
 wait
+if [ -n "${SWEEP_PROBE:-}" ]; then
+  .venv/bin/python - "$OUT/2026-10-06_${A}.json" <<'PY'
+import json, sys
+from collections import Counter
+r = json.load(open(sys.argv[1]))
+rows = (r.get("closed") or []) + (r.get("open_at_end") or [])
+tier = lambda p: "10+" if p >= 10 else "5-10" if p >= 5 else "2-5" if p >= 2 else "<2"
+c = Counter((tier(float(t.get("entry_px") or 0)), bool(t.get("synthetic"))) for t in rows)
+print(f"probe 2026-10-06: {len(rows)} opens; by (tier, synthetic): {dict(sorted(c.items()))}")
+print("sub-$10 names:", sorted({t["symbol"] for t in rows if float(t.get("entry_px") or 0) < 10}))
+PY
+  exit 0
+fi
 [ -f "${TH_DATA_SECRETS:-}" ] || { echo "replays done; score with TH_DATA_SECRETS=<secrets_data.json> .venv/bin/python tools/studies/fill_short.py --replay-dir $OUT"; exit 0; }
 $NICE .venv/bin/python tools/studies/fill_short.py --replay-dir "$OUT" 2>"$OUT/score.log" | tee "$OUT/result.md"

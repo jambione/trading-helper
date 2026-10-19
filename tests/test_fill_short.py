@@ -238,7 +238,7 @@ def _replay_rows(net, tc, days=9, n=15):
     for d in ds:
         for _ in range(n):
             x = net + rng.gauss(0, 20)
-            out.append({"day": d, "net": x, "slip": x - 2, "tiercost": x + tc - net})
+            out.append({"day": d, "symbol": f"S{rng.randrange(200)}", "net": x, "slip": x - 2, "tiercost": x + tc - net})
     return out
 
 
@@ -248,3 +248,22 @@ def test_floor2_word_needs_the_tier_cost_line_too():
     assert F.word(_replay_rows(15.0, -30.0), 0.0, **kw)[0] != "PASS"
     assert F.word(_replay_rows(15.0, 10.0), 0.0, replay_failed=True, **kw)[0].startswith("NOT READ")
     assert F.word(_replay_rows(15.0, 10.0, n=10), 0.0, **kw)[0] == "UNDERPOWERED"      # 90 trades
+
+
+def test_floor2_word_drops_the_top_five_names():
+    kw = dict(a_end=F.REPLAY_A_END, extra_key="tiercost", **F.REPLAY_MIN)
+    rows = []
+    for i, d in enumerate(F.REPLAY_DAYS):
+        for k in range(15):
+            sym = f"W{k % 5}" if k < 5 else f"L{i}{k}"
+            x = 400.0 if k < 5 else -12.0
+            rows.append({"day": d, "symbol": sym, "net": x, "slip": x, "tiercost": x})
+    w, info = F.word(rows, 0.0, **kw)
+    assert info["pool"]["mean"] > 0 and info["drop_names"]["mean"] < 0 and w != "PASS"
+
+
+def test_load_replay_scores_positions_open_at_the_end(tmp_path):
+    t = datetime(2026, 10, 6, 15, 49, tzinfo=ET).timestamp()
+    (tmp_path / "2026-10-06_floor2.json").write_text(json.dumps({"closed": [], "open_at_end": [
+        {"symbol": "LATE", "entry_ts": t, "entry_px": 4.0}]}))
+    assert [f["symbol"] for f in F.load_replay(tmp_path, days=("2026-10-06",))[0]] == ["LATE"]
