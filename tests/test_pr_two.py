@@ -70,6 +70,7 @@ def test_a_planted_speed_up_reads_higher_and_noise_does_not(tmp_path):
     md = _cache(str(a), plant=True)
     words = [x for x in md.splitlines() if x.startswith("up2:")][0]
     assert "accel_up: HIGHER" in words, words
+    assert "slow_up: HIGHER" not in words, words
     md = _cache(str(b), plant=False)
     words = [x for x in md.splitlines() if x.startswith("up2:")][0]
     assert "HIGHER" not in words, words

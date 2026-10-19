@@ -191,8 +191,8 @@ def main() -> None:
         fit = [d for d in days if d <= CUT]
         cols = [_load(cache, d) for d in fit]
         cuts = cutoffs2(np.concatenate([c[0] for c in cols]), np.concatenate([c[2] for c in cols]))
-        if cuts is None:
-            print("REFUSING: too few half-A minutes for the cutoffs")
+        if cuts is None or cuts["floor"] <= 0:
+            print("REFUSING: too few half-A minutes for the cutoffs, or a zero size floor")
             return
         per = {d: _packs(cache, d, cuts) for d in days}
         md = report(per, days, cuts) + "\n" + R.day_minutes_line(cnts) + "\n"

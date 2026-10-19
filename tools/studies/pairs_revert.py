@@ -507,6 +507,7 @@ def main() -> None:
         print(f"REFUSING: window differs from the prereg (n {len(days)}, cut {cut})")
         return
     declared = json.load(open(PREREG))["pairs_declared"]
+    print(f"pair list from {PREREG}: {len(declared)} declared pairs", flush=True)
     fit_days = [d for d in days if d <= CUT]
     print("fitting on half A (dollar volume, 5-minute returns, P2 pick)...", flush=True)
     F = fit(fit_days, days, declared)
