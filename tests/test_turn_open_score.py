@@ -8,7 +8,7 @@ import turn_open_score as T  # noqa: E402
 
 def _w(**k):
     base = dict(net_a=1.0, net_b=2.0, net_all_t=2.5, sip_a=1.0, sip_b=1.0, sip_all_t=2.2,
-                val_a=5.0, val_b=5.0, val_t=1.6, days=9, trades=500)
+                val_a=5.0, val_b=5.0, val_t=1.6, days=9, trades=500, sval_a=4.0, sval_b=4.0, sval_t=1.6)
     base.update(k)
     return T.word(**base)
 
@@ -19,6 +19,7 @@ def test_words():
     assert _w(sip_all_t=1.6) == "PROMISING"
     assert _w(sip_b=-0.5) == "FAIL"          # a dashboard-price edge that the SIP re-price does not keep
     assert _w(net_a=-1.0) == "FAIL"
+    assert _w(sval_b=-1.0) == "PROMISING"      # SIP-priced VALUE must beat live too for a PASS
     assert _w(days=7) == "UNDERPOWERED" and _w(trades=99) == "UNDERPOWERED"
 
 

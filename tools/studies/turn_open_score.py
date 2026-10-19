@@ -61,7 +61,8 @@ def stop_exit(t: dict) -> bool:
     return any(k in r for k in ("stop", "trail", "ratchet"))
 
 
-def word(net_a, net_b, net_all_t, sip_a, sip_b, sip_all_t, val_a, val_b, val_t, days: int, trades: int) -> str:
+def word(net_a, net_b, net_all_t, sip_a, sip_b, sip_all_t, val_a, val_b, val_t, days: int, trades: int,
+         sval_a=None, sval_b=None, sval_t=None) -> str:
     def pos(x):
         return x is not None and x > 0
     if days < MIN_DAYS or trades < MIN_TRADES:
@@ -70,7 +71,7 @@ def word(net_a, net_b, net_all_t, sip_a, sip_b, sip_all_t, val_a, val_b, val_t, 
     def holds(a, b, t, bar):
         return pos(a) and pos(b) and t is not None and t >= bar
     if (holds(net_a, net_b, net_all_t, T_PASS) and holds(sip_a, sip_b, sip_all_t, T_PASS)
-            and holds(val_a, val_b, val_t, T_VALUE)):
+            and holds(val_a, val_b, val_t, T_VALUE) and holds(sval_a, sval_b, sval_t, T_VALUE)):
         return "PASS"
     if holds(net_a, net_b, net_all_t, T_PROMISING) and holds(sip_a, sip_b, sip_all_t, T_PROMISING):
         return "PROMISING"
@@ -234,19 +235,29 @@ def main() -> None:
                   f"{f(sp['mean'])} ({g(sp['t'])}) | {f(sl7['mean'])} | {f(ns['mean'])} | {f(val['mean'])} ({g(val['t'])}) | "
                   f"{f(mde(net['sd'], net['n']))} | {f(statistics.fmean(seat)) if seat else '—'} |")
     print("\nA FAIL does not rule out a per-trade edge below the MDE column.")
-    print("\nPaired weighted VALUE vs live, bp/day:")
+    print("\nSIP re-price misses (trades with no SIP bar after entry or exit, left out of the SIP lines):")
+    for arm in ARMS:
+        n_all = sum(len(lines[arm][d]) for d in scored)
+        n_miss = sum(1 for d in scored for r in lines[arm][d] if r["sip"] is None)
+        print(f"  {arm}: {n_miss} of {n_all}")
+    print("\nPaired weighted VALUE vs live, bp/day (dashboard price | SIP re-price):")
     words = []
+
+    def value(arm, d, key):
+        return WEIGHT[arm] * sum(r[key] for r in lines[arm][d] if r[key] is not None)
     for arm in TURNS:
-        diffs = {}
+        diffs, sdiffs = {}, {}
         for tag in ("all", "A", "B"):
             sl = [d for d in scored if tag == "all" or d in (HALF_A if tag == "A" else HALF_B)]
-            diffs[tag] = day_stat([WEIGHT[arm] * sum(r["net"] for r in lines[arm][d])
-                                   - WEIGHT[REF] * sum(r["net"] for r in lines[REF][d]) for d in sl])
-            print(f"  {arm} - live [{tag}]: {f(diffs[tag]['mean'])} (t {g(diffs[tag]['t'])}, {diffs[tag]['n']} days)")
+            diffs[tag] = day_stat([value(arm, d, "net") - value(REF, d, "net") for d in sl])
+            sdiffs[tag] = day_stat([value(arm, d, "sip") - value(REF, d, "sip") for d in sl])
+            print(f"  {arm} - live [{tag}]: {f(diffs[tag]['mean'])} (t {g(diffs[tag]['t'])}) | "
+                  f"{f(sdiffs[tag]['mean'])} (t {g(sdiffs[tag]['t'])}), {diffs[tag]['n']} days")
         w = word(st[(arm, "A")]["net"]["mean"], st[(arm, "B")]["net"]["mean"], st[(arm, "all")]["net"]["t"],
                  st[(arm, "A")]["sip"]["mean"], st[(arm, "B")]["sip"]["mean"], st[(arm, "all")]["sip"]["t"],
                  diffs["A"]["mean"], diffs["B"]["mean"], diffs["all"]["t"],
-                 st[(arm, "all")]["days"], st[(arm, "all")]["trades"])
+                 st[(arm, "all")]["days"], st[(arm, "all")]["trades"],
+                 sdiffs["A"]["mean"], sdiffs["B"]["mean"], sdiffs["all"]["t"])
         words.append(f"{arm}: {w}")
     print("\nOpens per day, replay vs the recorded live desk:")
     for d in scored:
