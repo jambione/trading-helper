@@ -42,9 +42,9 @@ def test_the_cutoff_is_the_feature_only():
     assert "y" not in body.split(":", 1)[0]
 
 
-def _h(share, base, drop=0.05, drop_base=0.05, days=30, n=1000, edge_t=3.0):
+def _h(share, base, drop=0.05, drop_base=0.05, days=30, n=1000, edge_t=3.0, close_edge=0.01):
     return {"share": share, "base": base, "drop": drop, "drop_base": drop_base,
-            "edge_t": edge_t, "days": days, "n": n}
+            "edge_t": edge_t, "close_edge": close_edge, "days": days, "n": n}
 
 
 def test_the_word_is_the_run_share_against_the_base():
@@ -78,8 +78,7 @@ def test_pure_noise_scaled_by_bar_width_reads_wider():
         y = rng.normal(0, 0.002, 4000)
         wide = rng.random(4000) < 0.2
         y[wide] *= 2.0
-        base_up, base_dn = float((y > R.RUN30).mean()), float((y < -R.RUN30).mean())
-        row = R._slice_day(y, wide, base_up, base_dn)
+        row = R._slice_day(y, wide, np.ones(len(y), bool))
         runs.append(row["diff"])
         edges.append(row["diff"] - row["drop_diff"])
     assert min(runs) > 0
@@ -98,3 +97,41 @@ def test_the_window_and_the_run():
     assert R.HOLD == 3 and R.RUN30 == 0.0030
     assert R.SIG_START == 9 * 60 + 31 and R.SIG_END == 15 * 60 + 56
     assert R.LO == 0.20 and R.HI == 0.80
+
+
+def test_an_edge_gone_at_the_close_of_the_entry_minute_is_bounce():
+    assert R.describe(_h(0.08, 0.05), _h(0.08, 0.05, close_edge=-0.001)) == "BOUNCE"
+    assert R.describe(_h(0.08, 0.05), _h(0.08, 0.05, close_edge=None)) == "BOUNCE"
+
+
+def test_the_ret3_base_is_the_minutes_with_a_close_3_minutes_back(tmp_path):
+    # The minutes with no m-3 close fall hard. Against every minute, ret3 rows would
+    # look better than they are. Against their own minutes they look the same.
+    n = 5000
+    rng = np.random.default_rng(2)
+    r3 = rng.normal(0, 0.002, n)
+    r3[:1000] = np.nan
+    y = rng.normal(0, 0.002, n)
+    y[:1000] = -0.01
+    np.savez(tmp_path / "2026-05-01.npz", ret1=rng.normal(0, 0.002, n).astype(np.float32),
+             ret3=r3.astype(np.float32), rng=np.abs(y).astype(np.float32),
+             y=y.astype(np.float32), yc=y.astype(np.float32))
+    out = R._packs(str(tmp_path), "2026-05-01", (None, (-1.0, -1.0), None))
+    row = out["ret3_hi"]
+    assert row["n"] == 4000 and row["base_n"] == 4000
+    assert abs(row["diff"]) < 1e-12 and abs(row["drop_diff"]) < 1e-12
+
+
+def test_net_and_close_entry_are_printed(tmp_path):
+    rng = np.random.default_rng(3)
+    days = [f"2026-0{m}-{d:02d}" for m in (5, 8) for d in range(1, 29)]
+    for d in days:
+        n = 1200
+        x = rng.normal(0, 0.002, n).astype(np.float32)
+        np.savez(tmp_path / f"{d}.npz", ret1=x, ret3=x, rng=np.abs(x), y=x, yc=x)
+    cuts = R._fit_cutoffs(str(tmp_path), [d for d in days if d <= R.CUT])
+    per = {d: R._packs(str(tmp_path), d, cuts) for d in days}
+    md = R.report(per, days, cuts)
+    assert "net10_bp" in md and "net3_bp" in md and "close-entry" in md
+    assert md.count("close-entry days") == 12
+    assert "minutes per day min" in R.day_minutes_line({d: {"minutes": 1200} for d in days})

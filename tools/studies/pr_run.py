@@ -79,10 +79,11 @@ def cutoffs(ret1, ret3, rng):
 def describe(a: dict, b: dict) -> str:
     """How the row's run share compares with the base share, per half. No cost.
 
-    Each half is {share, base, drop, drop_base, edge_t, days, n}. A wider bar raises the
-    share that runs up 30 bp and the share that falls 30 bp together, so HIGHER also needs
-    the day-clustered run-minus-drop gap at t >= EDGE_T. A row that only raises both, or
-    whose edge is inside noise, is WIDER, not an open."""
+    Each half is {share, base, drop, drop_base, edge_t, close_edge, days, n}. A wider bar
+    raises the share that runs up 30 bp and the share that falls 30 bp together, so HIGHER
+    also needs the day-clustered run-minus-drop gap at t >= EDGE_T. A row that only raises
+    both, or whose edge is inside noise, is WIDER, not an open. An edge that is gone when
+    the entry is the close of m+1 instead of its first print is BOUNCE, not an open."""
     for h in (a, b):
         if (any(h[k] is None for k in ("share", "base", "drop", "drop_base"))
                 or h["days"] < MIN_DAYS or h["n"] < MIN_MINUTES):
@@ -91,7 +92,9 @@ def describe(a: dict, b: dict) -> str:
     drop = [h["drop"] - h["drop_base"] for h in (a, b)]
     if all(r > 0 and r > d and h["edge_t"] is not None and h["edge_t"] >= EDGE_T
            for r, d, h in zip(run, drop, (a, b))):
-        return "HIGHER"
+        if all(h["close_edge"] is not None and h["close_edge"] > 0 for h in (a, b)):
+            return "HIGHER"
+        return "BOUNCE"
     if all(r > 0 for r in run):
         return "WIDER"
     if all(r < 0 for r in run):
@@ -110,7 +113,7 @@ def day_job(args) -> tuple[str, dict]:
     day, prev, cache = args
     lz = P.LazyDay(day, prev)
     cnt = {"sampled": len(lz["board"]), "skipped_short": 0, "minutes": 0}
-    ret1, ret3, rng, y = [], [], [], []
+    ret1, ret3, rng, y, yc = [], [], [], [], []
     for sym in sorted(lz["board"]):
         frame = lz["sip"].get(sym)
         if frame is None:
@@ -126,12 +129,14 @@ def day_job(args) -> tuple[str, dict]:
             if ret is None:
                 continue
             r1, r3, rg = got
+            late = E.markout_close(sip, m + 1, HOLD)
+            yc.append(np.nan if late is None else late)
             ret1.append(r1)
             ret3.append(np.nan if r3 is None else r3)
             rng.append(rg)
             y.append(ret)
     arrs = {k: np.asarray(v, np.float32) for k, v in
-            (("ret1", ret1), ("ret3", ret3), ("rng", rng), ("y", y))}
+            (("ret1", ret1), ("ret3", ret3), ("rng", rng), ("y", y), ("yc", yc))}
     np.savez(os.path.join(cache, f"{day}.npz"), **arrs)
     cnt["minutes"] = int(len(y))
     return day, cnt
@@ -139,13 +144,13 @@ def day_job(args) -> tuple[str, dict]:
 
 def _load(cache: str, day: str):
     z = np.load(os.path.join(cache, f"{day}.npz"))
-    return z["ret1"], z["ret3"], z["rng"], z["y"]
+    return z["ret1"], z["ret3"], z["rng"], z["y"], z["yc"]
 
 
 def _fit_cutoffs(cache: str, days: list[str]):
     cols = [[], [], []]
     for d in days:
-        r1, r3, rg, _y = _load(cache, d)
+        r1, r3, rg, _y, _yc = _load(cache, d)
         cols[0].append(r1)
         cols[1].append(r3)
         cols[2].append(rg)
@@ -153,57 +158,62 @@ def _fit_cutoffs(cache: str, days: list[str]):
 
 
 def _blank() -> dict:
-    return {"mean": None, "n": 0, "n_run": 0, "n_drop": 0, "n_up": 0, "share": None, "base": None,
-            "diff": None, "drop_diff": None}
+    return {"mean": None, "n": 0, "n_run": 0, "n_drop": 0, "n_up": 0, "share": None,
+            "diff": None, "drop_diff": None, "base_n": 0, "base_run": 0, "base_drop": 0}
 
 
-def _slice_day(y: np.ndarray, take: np.ndarray, base_share: float, base_drop: float) -> dict:
-    n = int(take.sum()) if len(y) else 0
-    if n == 0:
+def _slice_day(y: np.ndarray, take: np.ndarray, universe: np.ndarray) -> dict:
+    """The row's minutes against the base of the minutes it could have been drawn from."""
+    take = take & universe
+    n, base_n = int(take.sum()), int(universe.sum())
+    if n == 0 or base_n == 0:
         return _blank()
-    yy = y[take]
-    n_run = int((yy > RUN30).sum())
-    n_drop = int((yy < -RUN30).sum())
-    share = n_run / n
+    yy, yb = y[take], y[universe]
+    n_run, n_drop = int((yy > RUN30).sum()), int((yy < -RUN30).sum())
+    base_run, base_drop = int((yb > RUN30).sum()), int((yb < -RUN30).sum())
     return {"mean": float(yy.mean()), "n": n, "n_run": n_run, "n_drop": n_drop,
-            "n_up": int((yy > 0).sum()), "share": share, "base": base_share,
-            "diff": share - base_share, "drop_diff": n_drop / n - base_drop}
+            "n_up": int((yy > 0).sum()), "share": n_run / n,
+            "diff": n_run / n - base_run / base_n, "drop_diff": n_drop / n - base_drop / base_n,
+            "base_n": base_n, "base_run": base_run, "base_drop": base_drop}
 
 
 def _packs(cache: str, day: str, cuts) -> dict:
-    r1, r3, rg, y = _load(cache, day)
-    y = y.astype(np.float64)
+    r1, r3, rg, y, yc = _load(cache, day)
+    y, yc = y.astype(np.float64), yc.astype(np.float64)
     base_n = int(len(y))
-    base_share = float((y > RUN30).mean()) if base_n else None
-    base_drop = float((y < -RUN30).mean()) if base_n else None
-    base_mean = float(y.mean()) if base_n else None
+    every = np.ones(base_n, bool)
+    has3 = np.isfinite(r3)
     masks = {}
     if cuts[0] is not None:
         lo, hi = cuts[0]
-        masks["ret1_hi"] = r1 >= hi
-        masks["ret1_lo"] = r1 <= lo
+        masks["ret1_hi"] = (r1 >= hi, every)
+        masks["ret1_lo"] = (r1 <= lo, every)
     if cuts[1] is not None:
         lo, hi = cuts[1]
-        ok = np.isfinite(r3)
-        masks["ret3_hi"] = ok & (r3 >= hi)
-        masks["ret3_lo"] = ok & (r3 <= lo)
+        masks["ret3_hi"] = (has3 & (r3 >= hi), has3)
+        masks["ret3_lo"] = (has3 & (r3 <= lo), has3)
     if cuts[2] is not None:
         lo, hi = cuts[2]
-        masks["range_hi"] = rg >= hi
-        masks["range_lo"] = rg <= lo
-    out = {"base": {"n": base_n, "n_run": int((y > RUN30).sum()) if base_n else 0,
-                    "n_drop": int((y < -RUN30).sum()) if base_n else 0,
-                    "mean": base_mean, "share": base_share}}
+        masks["range_hi"] = (rg >= hi, every)
+        masks["range_lo"] = (rg <= lo, every)
+    out = {"base": {"n": base_n, "n_run": int((y > RUN30).sum()),
+                    "n_drop": int((y < -RUN30).sum()),
+                    "mean": float(y.mean()) if base_n else None}}
+    late_ok = np.isfinite(yc)
     for name in ROWS:
-        take = masks.get(name)
-        out[name] = (_blank() if take is None or base_share is None
-                     else _slice_day(y, take, base_share, base_drop))
+        got = masks.get(name)
+        if got is None or not base_n:
+            out[name] = out[name + "@close"] = _blank()
+            continue
+        take, universe = got
+        out[name] = _slice_day(y, take, universe)
+        out[name + "@close"] = _slice_day(np.where(late_ok, yc, 0.0), take, universe & late_ok)
     return out
 
 
 def _collect(per: dict, days: list[str], key: str) -> dict:
     means, diffs, edges = [], [], []
-    ns = n_run = n_drop = n_up = 0
+    ns = n_run = n_drop = n_up = bn = brun = bdrop = 0
     for d in days:
         row = per[d][key]
         if row["mean"] is None:
@@ -215,12 +225,17 @@ def _collect(per: dict, days: list[str], key: str) -> dict:
         n_run += row["n_run"]
         n_drop += row["n_drop"]
         n_up += row["n_up"]
+        bn += row["base_n"]
+        brun += row["base_run"]
+        bdrop += row["base_drop"]
     mu, t, nd = R.day_t(means)
     du, dt, _ = R.day_t(diffs)
     eu, et, _ = R.day_t(edges)
     return {"mean": mu, "t": t, "days": nd, "n": ns,
             "share": None if ns == 0 else n_run / ns,
             "drop": None if ns == 0 else n_drop / ns,
+            "base": None if bn == 0 else brun / bn,
+            "drop_base": None if bn == 0 else bdrop / bn, "base_n": bn,
             "edge": eu, "t_edge": et,
             "up": None if ns == 0 else n_up / ns,
             "diff": du, "t_diff": dt}
@@ -266,47 +281,59 @@ def _pts(x) -> str:
     return "-" if x is None else f"{x * 100:+.2f} pts"
 
 
-def _half(row: dict, base: dict) -> dict:
-    return {"share": row["share"], "base": base["share"], "drop": row["drop"],
-            "drop_base": base["drop"], "edge_t": row["t_edge"], "days": row["days"], "n": row["n"]}
+def _half(row: dict, late: dict) -> dict:
+    return {"share": row["share"], "base": row["base"], "drop": row["drop"],
+            "drop_base": row["drop_base"], "edge_t": row["t_edge"], "close_edge": late["edge"],
+            "days": row["days"], "n": row["n"]}
+
+
+def _net(x, cost):
+    return None if x is None else x - cost
+
+
+def _half_line(tag: str, r: dict, late: dict) -> list[str]:
+    return [
+        f"{tag} days {r['days']} n {r['n']} run {_pct(r['share'])} drop {_pct(r['drop'])} up {_pct(r['up'])} "
+        f"vs base run {_pct(r['base'])} drop {_pct(r['drop_base'])} n {r['base_n']} "
+        f"pooled_gap {_pts(_gap(r['share'], r['base']))} drop_gap {_pts(_gap(r['drop'], r['drop_base']))} "
+        f"day_gap {_pts(r['diff'])} day_gap_t {_tt(r['t_diff'])} "
+        f"day_edge {_pts(r['edge'])} day_edge_t {_tt(r['t_edge'])} "
+        f"gross_bp {_bp(r['mean'])} t {_tt(r['t'])} "
+        f"net10_bp {_bp(_net(r['mean'], 0.0010))} net3_bp {_bp(_net(r['mean'], 0.0003))}",
+        f"{tag} close-entry days {late['days']} n {late['n']} run {_pct(late['share'])} "
+        f"drop {_pct(late['drop'])} day_edge {_pts(late['edge'])} day_edge_t {_tt(late['t_edge'])} "
+        f"gross_bp {_bp(late['mean'])}",
+    ]
 
 
 def report(per: dict, days: list[str], cuts) -> str:
     fit = [d for d in days if d <= CUT]
     check = [d for d in days if d > CUT]
     lines = ["# The bar that just closed (pr_run_prereg)", "",
-             "A run is the next 3 minutes up more than 30 bp. The base share is every scored minute.",
+             "A run is the next 3 minutes up more than 30 bp. Each row's base is every scored minute it",
+             "could have been drawn from (the ret3 rows: minutes with a close 3 minutes earlier).",
              "The fifths are taken from the earlier sessions only. Fit is through 2026-07-23.",
-             "pooled_gap is the run gap the word uses; drop_gap is the same gap for a fall of more than 30 bp.",
-             "HIGHER needs the run gap above the drop gap, day_edge_t >= 2, on both halves. WIDER: runs rose, no clear edge.",
+             "pooled_gap is the run gap; drop_gap is the same gap for a fall of more than 30 bp.",
+             "HIGHER needs the run gap above the drop gap, day_edge_t >= 2, on both halves, and a",
+             "close-entry day_edge above 0 on both halves. WIDER: runs rose, no clear edge.",
+             "BOUNCE: the edge is there at the first print of m+1 and gone at its close.",
              "day_gap is the average of each day's own run gap. day_edge is each day's run gap minus drop gap.",
+             "close-entry enters at the close of m+1 and exits at the same close of m+3. Information line.",
+             "Bars and returns are SIP. Live reads IEX. A HIGHER needs an IEX-feature replication before use.",
              ""]
     words = []
     blocks = []
     ba, bb = _base(per, fit), _base(per, check)
     for name in ROWS:
         a, b = _collect(per, fit, name), _collect(per, check, name)
-        word = describe(_half(a, ba), _half(b, bb))
+        la, lb = _collect(per, fit, name + "@close"), _collect(per, check, name + "@close")
+        word = describe(_half(a, la), _half(b, lb))
         words.append(f"{name}: {word}")
-        blocks += [
-            f"### {TITLES[name]}", "", word,
-            f"fit days {a['days']} n {a['n']} run {_pct(a['share'])} drop {_pct(a['drop'])} up {_pct(a['up'])} "
-            f"vs base run {_pct(ba['share'])} drop {_pct(ba['drop'])} "
-            f"pooled_gap {_pts(_gap(a['share'], ba['share']))} drop_gap {_pts(_gap(a['drop'], ba['drop']))} "
-            f"day_gap {_pts(a['diff'])} day_gap_t {_tt(a['t_diff'])} "
-            f"day_edge {_pts(a['edge'])} day_edge_t {_tt(a['t_edge'])} "
-            f"gross_bp {_bp(a['mean'])} t {_tt(a['t'])}",
-            f"check days {b['days']} n {b['n']} run {_pct(b['share'])} drop {_pct(b['drop'])} up {_pct(b['up'])} "
-            f"vs base run {_pct(bb['share'])} drop {_pct(bb['drop'])} "
-            f"pooled_gap {_pts(_gap(b['share'], bb['share']))} drop_gap {_pts(_gap(b['drop'], bb['drop']))} "
-            f"day_gap {_pts(b['diff'])} day_gap_t {_tt(b['t_diff'])} "
-            f"day_edge {_pts(b['edge'])} day_edge_t {_tt(b['t_edge'])} "
-            f"gross_bp {_bp(b['mean'])} t {_tt(b['t'])}",
-            ""]
+        blocks += [f"### {TITLES[name]}", "", word, *_half_line("fit", a, la), *_half_line("check", b, lb), ""]
     lines.append(" | ".join(words))
     lines += ["",
-              f"base fit run {_pct(ba['share'])} drop {_pct(ba['drop'])} gross_bp {_bp(ba['mean'])} t {_tt(ba['t'])} n {ba['n']}",
-              f"base check run {_pct(bb['share'])} drop {_pct(bb['drop'])} gross_bp {_bp(bb['mean'])} t {_tt(bb['t'])} n {bb['n']}",
+              f"all minutes fit run {_pct(ba['share'])} drop {_pct(ba['drop'])} gross_bp {_bp(ba['mean'])} t {_tt(ba['t'])} n {ba['n']}",
+              f"all minutes check run {_pct(bb['share'])} drop {_pct(bb['drop'])} gross_bp {_bp(bb['mean'])} t {_tt(bb['t'])} n {bb['n']}",
               ""]
     labels = ("1-minute return", "3-minute return", "bar range")
     for label, cut in zip(labels, cuts):
@@ -314,9 +341,20 @@ def report(per: dict, days: list[str], cuts) -> str:
             lines.append(f"cutoff {label}: missing")
         else:
             lines.append(f"cutoff {label}: 20th {_bp(cut[0])} bp, 80th {_bp(cut[1])} bp")
-    lines += ["", "10 bp and 3 bp are not in the word. The trail is not simulated.", ""]
+    lines += ["", "net10_bp and net3_bp are gross minus 10 bp and 3 bp. They are printed and are not in the word.",
+              "The trail is not simulated.", ""]
     lines.extend(blocks)
     return "\n".join(lines)
+
+
+def day_minutes_line(cnts: dict) -> str:
+    """Per-day minutes, so a thin day is visible next to the word."""
+    mins = sorted(v["minutes"] for v in cnts.values())
+    if not mins:
+        return "minutes per day: none"
+    thin = sum(1 for m in mins if m < MIN_MINUTES)
+    return (f"minutes per day min {mins[0]} median {mins[len(mins) // 2]} max {mins[-1]}; "
+            f"days under {MIN_MINUTES}: {thin}")
 
 
 def main() -> None:
@@ -353,7 +391,7 @@ def main() -> None:
         md = report(per, days, cuts)
         tot = _counts(cnts)
         md += (f"\nname-days sampled {tot['sampled']} skipped_short {tot['skipped_short']}\n"
-               f"minutes scored {tot['minutes']}\n")
+               f"minutes scored {tot['minutes']}\n{day_minutes_line(cnts)}\n")
         print(md, flush=True)
         out = os.path.join(ROOT, "ai_reports", "warehouse", "pr_run_result.md")
         os.makedirs(os.path.dirname(out), exist_ok=True)
