@@ -36,6 +36,7 @@ PLACEBO = ("XLP", "XLU")
 SYMS = LEV + PLACEBO
 FETCH_FROM, FETCH_TO = "2015-10", "2026-10"
 LAST_DAY = "2026-10-16"
+FETCH_END = datetime(2026, 10, 17, tzinfo=ET)
 A_FROM, A_TO = "2016-03-01", "2020-12-31"
 B_FROM, B_TO = "2021-01-04", LAST_DAY
 R2_FROM, R2_TO = "2025-09-29", "2026-09-25"
@@ -226,7 +227,8 @@ def fetch() -> None:
         if os.path.exists(p):
             continue
         s = datetime(y, m, 1, tzinfo=ET)
-        e = datetime(y + (m == 12), m % 12 + 1, 1, tzinfo=ET)
+        # The free plan refuses SIP inside the last 15 minutes, so the last month stops the day after LAST_DAY.
+        e = min(datetime(y + (m == 12), m % 12 + 1, 1, tzinfo=ET), FETCH_END)
         ef.throttle()
         try:
             bs = cl.get_stock_bars(StockBarsRequest(
@@ -255,7 +257,7 @@ def fetch() -> None:
     ef.throttle()
     bs = cl.get_stock_bars(StockBarsRequest(
         symbol_or_symbols=list(SYMS), timeframe=TimeFrame.Day, adjustment=Adjustment.ALL, feed=DataFeed.SIP,
-        start=datetime(2015, 6, 1, tzinfo=timezone.utc), end=datetime(2026, 10, 17, tzinfo=timezone.utc)))
+        start=datetime(2015, 6, 1, tzinfo=timezone.utc), end=FETCH_END.astimezone(timezone.utc)))
     daily = {s: {r.timestamp.astimezone(ET).strftime("%Y-%m-%d"): float(r.close) for r in rs}
              for s, rs in (bs.data or {}).items()}
     pickle.dump(daily, open(os.path.join(OUT, "daily.pkl"), "wb"))
