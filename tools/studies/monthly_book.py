@@ -31,6 +31,7 @@ MAX_GAP = 30              # sessions; a longer hole in a series suggests a reuse
 N_A, N_B = 60, 57
 STOP_PCT = 0.10           # information rows: a fixed stop from entry, and a trailing stop from the best close
 STOPS = ("stop10", "trail10")
+DIED_MIN = 0.01           # died/eligible below this in any year 2016-2019 -> old delistings missing -> R5 not read
 DROP_BEST = 3
 RULES = ("R1_smooth_momentum", "R2_near_52w_high", "R3_low_volatility", "R4_trend_low_vol", "R5_one_month_reversal")
 
@@ -170,6 +171,27 @@ class Panel:
         return None, True
 
 
+def survivorship_years(panel: Panel) -> dict[str, tuple[int, int]]:
+    ends = month_ends(panel.cal)
+    died: dict[str, set] = defaultdict(set)
+    seen: dict[str, set] = defaultdict(set)
+    for t in ends:
+        if not (A_FIRST <= t <= B_LAST):
+            continue
+        for s in panel.adj:
+            if s != "SPY" and s not in panel.joined and t in panel.liquid.get(s, ()) and t in panel.adj[s]:
+                seen[t[:4]].add(s)
+                if panel.dates[s][-1] < "2026-09-01":
+                    died[t[:4]].add(s)
+    return {y: (len(died[y]), len(seen[y])) for y in sorted(seen)}
+
+
+def r5_readable(years: dict[str, tuple[int, int]]) -> bool:
+    """False when any year 2016-2019 has died/eligible under DIED_MIN: the losers that later died are missing."""
+    early = [v for y, v in years.items() if "2016" <= y <= "2019"]
+    return bool(early) and all(n and d / n >= DIED_MIN for d, n in early)
+
+
 def survivorship(panel: Panel) -> str:
     """Per year: eligible names whose series ends before 2026-09 (died), and series excluded for a > MAX_GAP hole."""
     ends = month_ends(panel.cal)
@@ -247,7 +269,7 @@ def _f(x, nd=2, pct=True):
     return f"{x * 100:+.{nd}f}%" if pct else f"{x:+.{nd}f}"
 
 
-def report(out: dict) -> str:
+def report(out: dict, r5_ok: bool = True) -> str:
     lines = ["# Monthly book (monthly_book_prereg)", "",
              "Top 20 by each rule at a month-end close, held to the next; net of 10 bp per side on turnover.",
              "alpha = intercept of monthly net on SPY. PASS needs alpha > 0 in both halves, pooled t >= 2.33, net-SPY > 0",
@@ -265,6 +287,8 @@ def report(out: dict) -> str:
         wo = without_best(y, x)
         ex = {k: (st.fmean(m["net"] - m["spy"] for m in v) if v else None) for k, v in (("A", a_rows), ("B", b_rows))}
         w = word(ra, rb, rp, wo, ex["A"], ex["B"])
+        if r == "R5_one_month_reversal" and not r5_ok:
+            w = "NOT READ (survivorship: old delistings missing)"
         words.append(f"{r}: {w}")
         mde = None if rp["resid_sd"] is None else 2 * rp["resid_sd"] / math.sqrt(rp["n"])
         ua = ols([m["univ"] for m in both if m["univ"] is not None], [m["spy"] for m in both if m["univ"] is not None])["alpha"]
@@ -329,7 +353,8 @@ def main() -> None:
     if bad:
         print("REFUSING: " + "; ".join(bad))
         return
-    md = survivorship(p) + "\n\n" + report(out)
+    yrs = survivorship_years(p)
+    md = survivorship(p) + "\n\n" + report(out, r5_ok=r5_readable(yrs))
     print(md, flush=True)
     with open(RESULT, "w") as f:
         f.write(md + "\n")

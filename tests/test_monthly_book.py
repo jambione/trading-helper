@@ -126,3 +126,9 @@ def test_trailing_stop_follows_the_best_close():
     assert hit and abs(r - 0.06) < 1e-12           # 107 < 108 (= 120 x 0.9): sold at d3's open, 106
     r, hit = M.stop_return(path, 100.0, "stop10", final=108.0)
     assert not hit and abs(r - 0.08) < 1e-12
+
+
+def test_r5_is_not_read_when_early_years_lost_their_delistings():
+    assert M.r5_readable({"2016": (20, 1000), "2017": (15, 1000), "2018": (30, 1000), "2019": (12, 1000)})
+    assert not M.r5_readable({"2016": (2, 1000), "2017": (15, 1000), "2018": (30, 1000), "2019": (12, 1000)})
+    assert not M.r5_readable({"2021": (20, 1000)})
