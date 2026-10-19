@@ -110,3 +110,19 @@ def test_a_series_with_a_long_hole_is_excluded():
         p.adj[s].pop(d, None)
     q = M.Panel({"adj": p.adj, "liquid": {k: sorted(v) for k, v in p.liquid.items()}, "log": []})
     assert s in q.joined and "S002" not in q.joined
+
+
+def test_stop_sells_at_the_next_open_not_the_trigger_close():
+    path = [("d1", 100.0, 95.0), ("d2", 94.0, 89.0), ("d3", 85.0, 86.0), ("d4", 86.0, 120.0)]
+    r, hit = M.stop_return(path, 100.0, "stop10")
+    assert hit and abs(r - (85.0 / 100 - 1)) < 1e-12
+    r, hit = M.stop_return([("d1", 100.0, 105.0), ("d2", 105.0, 110.0)], 100.0, "stop10", final=111.0)
+    assert not hit and abs(r - 0.11) < 1e-12
+
+
+def test_trailing_stop_follows_the_best_close():
+    path = [("d1", 100.0, 120.0), ("d2", 119.0, 107.0), ("d3", 106.0, 108.0)]
+    r, hit = M.stop_return(path, 100.0, "trail10")
+    assert hit and abs(r - 0.06) < 1e-12           # 107 < 108 (= 120 x 0.9): sold at d3's open, 106
+    r, hit = M.stop_return(path, 100.0, "stop10", final=108.0)
+    assert not hit and abs(r - 0.08) < 1e-12

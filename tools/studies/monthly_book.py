@@ -29,6 +29,8 @@ T_PASS, T_PROMISING = 2.33, 1.5
 DEAD_RET = -0.30          # a picked name with no print after t (delisting with no later price), declared in the prereg
 MAX_GAP = 30              # sessions; a longer hole in a series suggests a reused ticker joining two companies
 N_A, N_B = 60, 57
+STOP_PCT = 0.10           # information rows: a fixed stop from entry, and a trailing stop from the best close
+STOPS = ("stop10", "trail10")
 DROP_BEST = 3
 RULES = ("R1_smooth_momentum", "R2_near_52w_high", "R3_low_volatility", "R4_trend_low_vol", "R5_one_month_reversal")
 
@@ -104,6 +106,24 @@ def without_best(y: list[float], x: list[float], k: int = DROP_BEST) -> float | 
     return ols([y[i] for i in keep], [x[i] for i in keep])["alpha"]
 
 
+def stop_return(path: list[tuple[str, float, float]], entry: float, kind: str, pct: float = STOP_PCT,
+                final: float | None = None) -> tuple[float, bool]:
+    """Return of one holding with a daily-close stop. path: [(date, open, close)] of the sessions after entry up to
+    the exit day. A close below the stop level sells at the NEXT session's open (no same-day fill on the close that
+    triggered it). `final` is the planned exit price when the stop never fires. kind: stop10 (from entry) or
+    trail10 (from the best close so far)."""
+    best = entry
+    for i, (_d, _o, c) in enumerate(path):
+        level = (entry if kind == "stop10" else best) * (1 - pct)
+        if c < level:
+            if i + 1 < len(path):
+                return path[i + 1][1] / entry - 1.0, True
+            return c / entry - 1.0, True          # fired on the last close: sold at that close
+        best = max(best, c)
+    end = final if final is not None else (path[-1][2] if path else entry)
+    return end / entry - 1.0, False
+
+
 def word(a: dict, b: dict, pooled: dict, wo_best: float | None, ex_a: float | None, ex_b: float | None) -> str:
     def pos(v):
         return v is not None and v > 0
@@ -134,6 +154,11 @@ class Panel:
     def history(self, s: str, before: str) -> np.ndarray:
         k = bisect.bisect_left(self.dates[s], before)
         return self.closes[s][:k]
+
+    def path(self, s: str, after: str, through: str) -> list[tuple[str, float, float]]:
+        lo = bisect.bisect_right(self.dates[s], after)
+        hi = bisect.bisect_right(self.dates[s], through)
+        return [(x, self.adj[s][x][0], self.adj[s][x][1]) for x in self.dates[s][lo:hi]]
 
     def close_on_or_before(self, s: str, day: str, after: str) -> tuple[float | None, bool]:
         """(close, delisted_or_missing). Close on `day`; else the last close in (after, day)."""
@@ -189,9 +214,25 @@ def run(panel: Panel) -> tuple[dict, list[str]]:
             gross = st.fmean(rets[s] for s in book) if book else 0.0
             to = turnover(prev[r], book)
             net = gross - to * COST_BP / 1e4
+            stop_net, fired = {}, {}
+            for k in STOPS:
+                legs = []
+                n_fired = 0
+                for s in book:
+                    pth = panel.path(s, t, t2)
+                    if not pth:
+                        legs.append(rets[s])          # never printed again: the declared -30%
+                        continue
+                    final = panel.adj[s][t2][1] if t2 in panel.adj[s] else None
+                    rr, hit = stop_return(pth, panel.adj[s][t][1], k, final=final)
+                    legs.append(rr)
+                    n_fired += hit
+                # A stopped name is sold early (10 bp more) and sits in cash; the rebalance cost is unchanged.
+                stop_net[k] = (st.fmean(legs) if legs else 0.0) - to * COST_BP / 1e4 - n_fired / max(1, len(book)) * COST_BP / 1e4
+                fired[k] = n_fired
             out[r].append({"t": t, "t2": t2, "net": net, "gross": gross, "spy": spy, "univ": univ, "book": book,
                            "turnover": to, "delisted": sum(1 for s in book if dl[s]), "eligible": len(elig),
-                           "empty": not book})
+                           "empty": not book, "stop_net": stop_net, "fired": fired})
             prev[r] = book
     return out, [t for t, _ in months]
 
@@ -240,6 +281,14 @@ def report(out: dict) -> str:
                 f"{_f(reg['beta'], 2, False)} | {_f(st.fmean(m['univ'] for m in rr if m['univ'] is not None))} | "
                 f"{sum(1 for m in rr if m['net'] > m['spy'])}/{len(rr)} | {_f(min(m['net'] for m in rr))} | "
                 f"{st.fmean(m['turnover'] for m in rr):.2f} | {sum(m['delisted'] for m in rr)} |")
+        for k in STOPS:
+            sa = ols([m["stop_net"][k] for m in a_rows], [m["spy"] for m in a_rows])
+            sb = ols([m["stop_net"][k] for m in b_rows], [m["spy"] for m in b_rows])
+            sp = ols([m["stop_net"][k] for m in both], [m["spy"] for m in both])
+            blocks.append(f"information, {k} (10% {'from entry' if k == 'stop10' else 'trailing from the best close'}, "
+                          f"sold next open): alpha A {_f(sa['alpha'])} B {_f(sb['alpha'])} all {_f(sp['alpha'])} "
+                          f"(t {_f(sp['t'], 2, False)}); worst month {_f(min(m['stop_net'][k] for m in both))}; "
+                          f"stops fired {sum(m['fired'][k] for m in both)} of {sum(len(m['book']) for m in both)} holdings")
         best = sorted(both, key=lambda m: -m["net"])[:DROP_BEST]
         blocks += ["", f"alpha without the {DROP_BEST} best months {_f(wo)}; MDE at t 2 {_f(mde)}; "
                    f"equal-weight universe alpha {_f(ua)}; rule alpha minus universe alpha "
