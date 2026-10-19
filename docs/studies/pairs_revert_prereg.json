@@ -1,0 +1,32 @@
+{
+  "study": "Intraday pairs reversion. When two stocks that normally move together drift apart inside a session, does buying the laggard and shorting the leader earn the gap back within 60 minutes, after costs on all four legs? Market-neutral. No indicator.",
+  "registered_at": "2026-10-19, before any pair spread, beta, or return in this study was computed.",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-19, after the project review: about 90 studies tested one idea (price-indicator timing on 1-minute bars, liquid names, 3-10 minute holds). This is outside it: the edge, if any, is the relative gap between two related names, not direction; the hold is tens of minutes; it is market-neutral. No pairs, cointegration, or stat-arb study exists in docs/studies.",
+  "what_a_session_is": "Every trade opens and closes inside one regular session. Half A, sessions on or before 2026-07-23, is where each pair's hedge ratio and spread scale are fit. Half B, sessions after 2026-07-23, is the call. The split is which sessions, not a hold.",
+  "arms": {
+    "P1_declared": "The pairs listed in pairs_declared, chosen on economic grounds before any data: same business, same drivers. Fixed now.",
+    "P2_chosen": "The 40 pairs with the highest correlation of 5-minute SIP returns over half A, among names present on every half-A session, restricted to pairs whose two names are both in the half-A top 300 by median dollar volume. Chosen on half A only; frozen before half B is read. A P1 pair can appear in P2."
+  },
+  "pairs_declared": [
+    ["GOOGL", "GOOG"], ["KO", "PEP"], ["XOM", "CVX"], ["V", "MA"], ["HD", "LOW"],
+    ["JPM", "BAC"], ["GS", "MS"], ["WFC", "C"], ["UPS", "FDX"], ["CAT", "DE"],
+    ["LMT", "NOC"], ["COP", "EOG"], ["SLB", "HAL"], ["PG", "CL"], ["MRK", "PFE"],
+    ["DUK", "SO"], ["T", "VZ"], ["DAL", "UAL"], ["KLAC", "LRCX"], ["AMAT", "LRCX"],
+    ["TXN", "ADI"], ["PNC", "USB"], ["MCD", "YUM"], ["ABT", "MDT"]
+  ],
+  "spread": "For pair (A, B) on a session: d_t = ln(A_t / A_0945) - beta * ln(B_t / B_0945), from SIP 1-minute closes, measured from the 09:45 close so the opening auction and the overnight gap are not in the spread. beta is the half-A least-squares slope of A's 5-minute log return on B's (no intercept). sigma is the half-A standard deviation of d_t over all minutes 10:00-15:00 of all half-A sessions. beta and sigma are frozen after half A and are the same on half B.",
+  "entry": "At the close of minute m, 10:00 <= m <= 15:00 ET, if |d_m| >= 2 sigma and the pair has no open trade: short the leg that is ahead, buy the leg that is behind. Dollar sizes: 1 on A, beta on B, opposite signs. Fill at the SIP open of minute m+1 on both legs. At most one open trade per pair; after an exit the pair may re-enter only after |d| has been below 1 sigma.",
+  "exit": "The first of: d crosses 0 (close of the minute it crosses), 60 minutes after entry, or 15:50. Exit at the SIP open of the next minute on both legs (15:50 exits at the 15:50 close). No stop. No flat fill of a missing minute: a leg with no bar at the fill minute uses its next bar; a trade whose leg has no bar within 3 minutes is dropped and counted.",
+  "return": "Trade return in bp of gross notional (1 + |beta|), the sum of the two legs. Gross is printed. Net subtracts 6 bp: the project's measured 3 bp round trip on $10+ names, for each of the two names.",
+  "controls": {
+    "same_pair_quiet": "For each trade, the same pair on the same session at a seeded random minute with |d| < 0.5 sigma, same side as the trade, same 60-minute / 15:50 exit (no zero-cross exit, since it starts near 0). Seeded sha256(pair|day|minute|pairs-revert). Tests whether the divergence adds anything over holding the same two-legged position.",
+    "random_side": "The same trade with the side flipped. Its gross is minus the trade's gross by construction and is printed only to show the sign is not a market drift."
+  },
+  "call": "One call per arm on half B, net of 6 bp, day-clustered over sessions (each session's mean trade). PASS: net > 0 with t >= 2.24 (Bonferroni for two arms), the day-clustered trade-minus-quiet-control excess > 0 with t >= 2.24, at least 30 sessions with a trade and 300 trades. PROMISING (project tier, 2026-10-16): half A and half B net both > 0, combined t >= 1.5, excess > 0 on half B. FAIL otherwise. UNDERPOWERED when half B has fewer than 30 sessions with a trade or fewer than 300 trades, or when more than 5% of trades are dropped for a missing leg. Half A is in-sample for beta and sigma and is printed, never the call.",
+  "what_is_printed": "Per arm and half: sessions, trades, trades per session, gross bp, net bp, t, quiet-control gross, excess and its t, win share, median hold minutes, exit reason counts (cross / 60 min / 15:50), dropped trades. Per pair on half B: trades, gross, net. The 5 best and 5 worst pairs are printed, and the arm's net without its single best pair. 3 bp-per-name net (6 bp) is the call; gross and a 10 bp-per-name net (20 bp) are printed.",
+  "data": "The minute-bar warehouse (tools/studies/warehouse_fetch.py): ai_reports/warehouse/sip/<day>.npz, 119 sessions 2026-04-28..2026-10-15, all names in the warehouse (not the 400-name sample). SIP for spreads and fills. A pair is scored on a session only if both names are in that session's file. The run refuses unless n = 119, first = 2026-04-28, last = 2026-10-15, and the median split is 2026-07-23.",
+  "known_limits": "SIP-only: the live desk reads IEX, so a PASS needs an IEX-feature replication under its own prereg before any use. Shorting is assumed available at no borrow fee intraday (large caps, easy to borrow); hard-to-borrow is not checked. 119 sessions is short for pairs whose relationship drifts; a PASS is a paper-forward candidate, never money.",
+  "no_retuning": "The declared list, the 40-pair rule for P2, 09:45 anchor, 2 sigma entry, 1 sigma re-arm, 0-cross / 60-minute / 15:50 exit, 10:00-15:00 entry window, 6 bp cost, the split, and the sample are fixed. A different threshold, hold, or pair list is a new prereg.",
+  "command": "On the mini, after a result-skeptic Mode 1 READY on this prereg and its script, and only then: scp tools/studies/pairs_revert.py to /tmp/pairs_job/, then REPO=$PWD nice -n 19 .venv/bin/python /tmp/pairs_job/pairs_revert.py --score. No pytest over SSH. No config edit."
+}

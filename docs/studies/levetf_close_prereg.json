@@ -1,0 +1,32 @@
+{
+  "study": "Late-day flow from leveraged-ETF rebalancing. On sessions with a large move by 15:30, does the underlying index or sector ETF keep moving in that direction from 15:30 to 15:50, net of cost? A forced-flow test, not an indicator test.",
+  "registered_at": "2026-10-19, before any return in this study was computed.",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-19, after the project review. Leveraged and inverse ETFs must trade in the direction of the day's move near the close to reset their leverage (the flow is roughly (L^2 - L) x AUM x the day's return). If that flow moves prices, big days continue into the close.",
+  "prior_evidence": "Weak and negative, stated before the run. Round 2 (2026-09-26) promoted a 15:30->15:50 rule on SPY/QQQ/IWM/DIA (prior close->10:00 and 15:00->15:30 agree, high first-30-minute vol). Round 3 re-tested it on 2020-07..2025-09 IEX history with no retuning: day-weighted -1.6 bp, t -1.71 (STRATEGY_EDGE_ROUND2_2026-09-26.md, round 3 section). This prereg is a different rule (the day's own move to 15:30, sized by the leverage flow), on SIP from 2016, and on sector ETFs that round 2-3 never tested. The 2020-07..2025-09 SPY/QQQ/IWM/DIA bars were seen by round 3, so half B is not clean for those four symbols; the per-symbol table shows this.",
+  "instruments": {
+    "SPY": "SPXL, UPRO, SPXU, SPXS, SSO, SDS",
+    "QQQ": "TQQQ, SQQQ, QLD, QID",
+    "IWM": "TNA, TZA",
+    "SMH": "SOXL, SOXS (SOXX index family; SMH is the liquid unlevered proxy)",
+    "XLF": "FAS, FAZ",
+    "XBI": "LABU, LABD",
+    "XLE": "ERX, ERY",
+    "DIA": "UDOW, SDOW"
+  },
+  "signal": "For instrument i on session s: r = SIP close at 15:30 / prior session's official SIP close - 1. Big day: |r| at or above the 80th percentile of |r| over i's previous 60 sessions (needs 60 prior sessions; the first 60 are warm-up). Trade sign(r).",
+  "trade": "Enter at the SIP 15:30 close, exit at the SIP 15:50 close (the desk's flatten time). Information: exit at the 16:00 close. Long when the day is up, short when it is down.",
+  "flow_size": "Information, not the call: the session's estimated rebalance flow in dollars, sum over the listed leveraged ETFs of (L^2 - L) x shares outstanding x price x r, divided by i's 20-day median dollar volume 15:30-16:00. Only if historical shares outstanding are available from a free source; otherwise not printed and stated as missing.",
+  "return": "Gross bp in the trade direction. Net subtracts 2 bp: SPY/QQQ spreads run about 0.3-0.7 bp (round 3 SIP sample), and 2 bp covers the sector ETFs and slippage. A 5 bp net is printed beside it.",
+  "controls": {
+    "all_days": "The same 15:30->15:50 return in the direction of r on every session (not only big days). If big days are no better than all days, the size filter adds nothing.",
+    "drift": "The plain long 15:30->15:50 return on the same big days. A long-only drift is not the flow."
+  },
+  "halves": "Half A: sessions 2016-03-01 through 2020-12-31. Half B: 2021-01-04 through 2026-10-16. Nothing is fit: the 80th percentile is a trailing window of each instrument's own past, so there is no fit half; both halves are reported and both are needed.",
+  "call": "Pooled over instruments, one trade per instrument per big day, day-clustered (each session's mean trade). PASS: net (2 bp) > 0 in both halves with day-clustered t >= 2 in each, and the big-day minus all-day excess > 0 in both halves. PROMISING (project tier): net > 0 in both halves, combined t >= 1.5. FAIL otherwise. UNDERPOWERED when a half has fewer than 150 big-day sessions. Per-instrument results are printed and are not separate calls.",
+  "what_is_printed": "Per half: big-day sessions, trades, gross, net 2 bp, net 5 bp, t, win share, all-day control and the excess with its t, the long-drift control. The same split up-days vs down-days, and by instrument. By year. The 16:00 exit as information. Flow size quintiles against gross, if shares outstanding are available.",
+  "data": "SIP 1-minute bars 15:25-16:00 and the prior session's 16:00 close for the 8 instruments, 2016-01..2026-10-16, fetched once on the data-only Alpaca account (secrets_data.json, never the desk key), cached under ai_reports/levetf_bars/. Split-adjusted. A session with a missing 15:30 or 15:50 bar for an instrument is dropped for that instrument and counted.",
+  "known_limits": "Fills: the live desk would enter with a marketable order at about 15:30 on IEX prices; SIP closes are used here, and on these ETFs the difference is a fraction of a bp. Not daily: about 1 session in 5 per instrument qualifies; across 8 instruments most sessions have at least one trade, but the instruments are highly correlated, which is why the call is clustered by session.",
+  "no_retuning": "The instrument list, the 80th percentile, the 60-session window, 15:30 entry, 15:50 exit, 2 bp cost, and the halves are fixed. Another threshold, window, entry time, or instrument is a new prereg.",
+  "command": "On the mini, after a result-skeptic Mode 1 READY on this prereg and its script: REPO=$PWD nice -n 19 .venv/bin/python tools/studies/levetf_close.py --fetch (data account, outside 09:30-16:00 ET), then --score. No pytest over SSH. No config edit."
+}
