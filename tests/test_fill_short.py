@@ -216,3 +216,35 @@ def test_word_needs_days_in_each_half_and_reads_fetch_errors():
     rows = [r for r in _rows(lambda i: 8.0, days=16) if r["day"] > F.A_END or r["day"] <= "2026-09-25"]
     assert F.word(rows, 0.0)[0] == "UNDERPOWERED"           # 3 days in half A
     assert F.word(_rows(lambda i: 8.0), 0.0, fetch_error_share=0.06)[0].startswith("NOT READ")
+
+
+def test_load_replay_reads_every_open_and_flags_missing_days(tmp_path):
+    t = datetime(2026, 10, 6, 10, 0, tzinfo=ET).timestamp()
+    (tmp_path / "2026-10-06_floor2.json").write_text(json.dumps({"closed": [
+        {"symbol": "abc", "entry_ts": t, "entry_px": 3.1, "synthetic": True},
+        {"symbol": "XYZ", "entry_ts": t + 60, "entry_px": 12.0}]}))
+    fills, n, failed = F.load_replay(tmp_path, days=("2026-10-06",))
+    assert [(f["symbol"], f["synthetic"]) for f in fills] == [("ABC", True), ("XYZ", False)]
+    assert not failed and n["synthetic"] == 1
+    assert F.load_replay(tmp_path, days=("2026-10-06", "2026-10-07"))[2]           # a missing day
+    (tmp_path / "failures.txt").write_text("FAILED 2026-10-06 floor2\n")
+    assert F.load_replay(tmp_path, days=("2026-10-06",))[2]
+
+
+def _replay_rows(net, tc, days=9, n=15):
+    out = []
+    ds = list(F.REPLAY_DAYS)[:days]
+    rng = random.Random(4)
+    for d in ds:
+        for _ in range(n):
+            x = net + rng.gauss(0, 20)
+            out.append({"day": d, "net": x, "slip": x - 2, "tiercost": x + tc - net})
+    return out
+
+
+def test_floor2_word_needs_the_tier_cost_line_too():
+    kw = dict(a_end=F.REPLAY_A_END, extra_key="tiercost", **F.REPLAY_MIN)
+    assert F.word(_replay_rows(15.0, 10.0), 0.0, **kw)[0] == "PASS"
+    assert F.word(_replay_rows(15.0, -30.0), 0.0, **kw)[0] != "PASS"
+    assert F.word(_replay_rows(15.0, 10.0), 0.0, replay_failed=True, **kw)[0].startswith("NOT READ")
+    assert F.word(_replay_rows(15.0, 10.0, n=10), 0.0, **kw)[0] == "UNDERPOWERED"      # 90 trades

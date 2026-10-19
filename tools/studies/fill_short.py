@@ -7,9 +7,11 @@ so the stop sits above, the trail and ratchet follow the low, and trail_dc reads
 first real print after the exit decision. Data-only account; never places an order.
 
   TH_DATA_SECRETS=$PWD/secrets_data.json nice -n 19 .venv/bin/python tools/studies/fill_short.py
+  ... fill_short.py --replay-dir /tmp/floor2_DATE     # docs/studies/floor2_short_prereg.json: the replay's opens
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import statistics
@@ -40,6 +42,12 @@ T_PASS, T_PROMISING = 2.0, 1.5
 UNKNOWN_MAX = 0.25
 FETCH_ERROR_MAX = 0.05
 MIN_HALF_DAYS = 5
+# floor2_short_prereg: the replay of the desk with the floor at $2 (scripts/floor2_sweep.sh)
+REPLAY_ARM = "floor2"
+REPLAY_DAYS = ("2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14",
+               "2026-10-15", "2026-10-16")
+REPLAY_A_END = "2026-10-09"
+REPLAY_MIN = {"min_days": 8, "min_half": 4, "min_trades": 100}
 
 
 # ── pure parts (tested) ──────────────────────────────────────────────────────
@@ -117,6 +125,31 @@ def load_fills(days: list[str], dirs: list[Path]) -> tuple[list[dict], Counter]:
     return out, n
 
 
+def load_replay(rdir: Path, days=REPLAY_DAYS, arm: str = REPLAY_ARM) -> tuple[list[dict], Counter, bool]:
+    """Every open of the replay arm (closed list) as a 'fill' at its decision time. failed = a day missing or a
+    line in failures.txt."""
+    n, out, failed = Counter(), [], False
+    fp = rdir / "failures.txt"
+    if fp.exists() and fp.read_text().strip():
+        failed = True
+    for d in days:
+        p = rdir / f"{d}_{arm}.json"
+        if not p.exists() or p.stat().st_size == 0:
+            failed = True
+            n["missing_days"] += 1
+            continue
+        for t in json.loads(p.read_text()).get("closed") or []:
+            if not t.get("symbol") or not t.get("entry_ts"):
+                continue
+            ts = float(t["entry_ts"])
+            out.append({"oid": f"{t['symbol']}|{ts:.3f}", "symbol": str(t["symbol"]).upper(), "ts": ts,
+                        "fill": float(t.get("entry_px") or 0), "day": datetime.fromtimestamp(ts, ET).strftime("%Y-%m-%d"),
+                        "synthetic": bool(t.get("synthetic"))})
+    n["orders"] = len(out)
+    n["synthetic"] = sum(f["synthetic"] for f in out)
+    return sorted(out, key=lambda f: f["ts"]), n, failed
+
+
 def day_stat(xs: list[float]) -> dict:
     import math
     n = len(xs)
@@ -137,28 +170,35 @@ def by_day(rows: list[dict], key: str) -> dict[str, float]:
     return {d: statistics.fmean(v) for d, v in g.items()}
 
 
-def word(rows: list[dict], unknown_share: float, fetch_error_share: float = 0.0) -> tuple[str, dict]:
-    """The prereg's call on the primary rows (each has day, net, slip)."""
+def word(rows: list[dict], unknown_share: float, fetch_error_share: float = 0.0, *, a_end: str = A_END,
+         min_days: int = MIN_DAYS, min_half: int = MIN_HALF_DAYS, min_trades: int = MIN_TRADES,
+         extra_key: str | None = None, replay_failed: bool = False) -> tuple[str, dict]:
+    """The prereg's call on the primary rows (each has day, net, slip). extra_key: a further line whose pooled
+    day mean must be > 0 for a PASS (floor2: the tier-cost line)."""
+    if replay_failed:
+        return "NOT READ (a replay day failed or is missing)", {}
     if unknown_share > UNKNOWN_MAX:
         return "NOT READ (asset flags unknown)", {}
     if fetch_error_share > FETCH_ERROR_MAX:
         return "NOT READ (fetch errors)", {}
     days = by_day(rows, "net")
-    if (len(days) < MIN_DAYS or len(rows) < MIN_TRADES or sum(d <= A_END for d in days) < MIN_HALF_DAYS
-            or sum(d > A_END for d in days) < MIN_HALF_DAYS):
+    if (len(days) < min_days or len(rows) < min_trades or sum(d <= a_end for d in days) < min_half
+            or sum(d > a_end for d in days) < min_half):
         return "UNDERPOWERED", {}
-    a = day_stat([v for d, v in days.items() if d <= A_END])
-    b = day_stat([v for d, v in days.items() if d > A_END])
+    a = day_stat([v for d, v in days.items() if d <= a_end])
+    b = day_stat([v for d, v in days.items() if d > a_end])
     pool = day_stat(list(days.values()))
     slip = day_stat(list(by_day(rows, "slip").values()))
     best3 = sorted(days, key=days.get, reverse=True)[:3]
     drop = day_stat([v for d, v in days.items() if d not in best3])
-    info = {"A": a, "B": b, "pool": pool, "slip": slip, "drop3": drop, "best3": best3}
+    extra = day_stat(list(by_day(rows, extra_key).values())) if extra_key else None
+    info = {"A": a, "B": b, "pool": pool, "slip": slip, "drop3": drop, "best3": best3, "extra": extra}
 
     def pos(x):
         return x is not None and x > 0
     both = pos(a["mean"]) and pos(b["mean"])
-    if both and (pool["t"] or 0) >= T_PASS and pos(slip["mean"]) and pos(drop["mean"]):
+    if (both and (pool["t"] or 0) >= T_PASS and pos(slip["mean"]) and pos(drop["mean"])
+            and (extra is None or pos(extra["mean"]))):
         return "PASS", info
     if both and (pool["t"] or 0) >= T_PROMISING:
         return "PROMISING", info
@@ -290,14 +330,14 @@ def pct(xs, q):
     return xs[max(0, min(len(xs) - 1, int(q * (len(xs) - 1))))] if xs else None
 
 
-def block(title: str, rows: list[dict], tier_cost: float | None = None) -> list[str]:
+def block(title: str, rows: list[dict], tier_cost: float | None = None, a_end: str = A_END) -> list[str]:
     f = lambda x: "—" if x is None else f"{x:+.1f}"  # noqa: E731
     g = lambda x: "—" if x is None else f"{x:+.2f}"  # noqa: E731
     lines = [f"### {title}", "",
              "| half | trades | days | short net/trade bp (t) | median | wins | -7 bp stops | scaled BE | fixed 30 m | long control | MDE at t 2 |"
              + (" tier cost |" if tier_cost else ""),
              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|" + ("---:|" if tier_cost else "")]
-    for tag, sl in (("all", rows), ("A", [r for r in rows if r["day"] <= A_END]), ("B", [r for r in rows if r["day"] > A_END])):
+    for tag, sl in (("all", rows), ("A", [r for r in rows if r["day"] <= a_end]), ("B", [r for r in rows if r["day"] > a_end])):
         if not sl:
             continue
         net = day_stat(list(by_day(sl, "net").values()))
@@ -318,19 +358,29 @@ def block(title: str, rows: list[dict], tier_cost: float | None = None) -> list[
 
 
 def main() -> None:
+    global OUT, RESULT
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--replay-dir", default=None, help="floor2_short: score the replay's opens instead of the desk's fills")
+    args = ap.parse_args()
     import config
     import call_exits as CE
     import replay_costing as RC
+    replay = args.replay_dir is not None
+    if replay:
+        OUT, RESULT = ROOT / "ai_reports" / "floor2_short", ROOT / "ai_reports" / "floor2_short_result.md"
     OUT.mkdir(parents=True, exist_ok=True)
     CE.CACHE_DIR = OUT / "trades"
     cfg = config.load_config_ro()
     if bool(cfg.get("ai_exit_supertrend", False)):
         sys.exit("REFUSING: ai_exit_supertrend is on; its bars are not mirrored (prereg)")
-    days = sessions()
-    fills, n = load_fills(days, [ROOT / "ai_reports" / "fills", SNAP_BASE])
+    replay_failed = False
+    if replay:
+        fills, n, replay_failed = load_replay(Path(args.replay_dir))
+    else:
+        fills, n = load_fills(sessions(), [ROOT / "ai_reports" / "fills", SNAP_BASE])
     print(f"fills: {dict(n)}; sessions with a fill {len({f['day'] for f in fills})}", file=sys.stderr, flush=True)
     if not fills:
-        sys.exit("no desk buy fills found in ai_reports/fills or ~/session_snapshots")
+        sys.exit("no opens found" if replay else "no desk buy fills found in ai_reports/fills or ~/session_snapshots")
     cl = CE._client()
     syms = {f["symbol"] for f in fills}
     flags = asset_flags(syms)
@@ -366,7 +416,7 @@ def main() -> None:
                   + [p for t, p, s in trades if t <= e_ts and s >= CE.ROUND_LOT] + [e_px])
         hold = [p for t, p, s in trades if e_ts <= t <= res["exit_ts"] and s >= CE.ROUND_LOT]
         fx = fixed_hold(CE, trades, e_ts, e_px, day)
-        rows.append({"day": day, "symbol": sym, "ts": ts, "entry": e_px, "tier": tier(e_px), "sp_q": sp_q,
+        rows.append({"day": day, "symbol": sym, "ts": ts, "synthetic": bool(fl.get("synthetic")), "entry": e_px, "tier": tier(e_px), "sp_q": sp_q,
                      "flags": flags.get(sym), "ssr": ssr_for(daily.get(sym), day, min(before)),
                      "gross": res["gross_bp"], "reason": res["reason"],
                      "scaled_gross": sc.get("gross_bp") if sc.get("status") == "final" else None,
@@ -387,35 +437,58 @@ def main() -> None:
         r["scaled"] = None if r["scaled_gross"] is None else r["scaled_gross"] - c
         r["long"] = None if r["long_gross"] is None else r["long_gross"] - sp
         r["fixed30"] = None if r["fixed30_gross"] is None else r["fixed30_gross"] - c
+        r["tiercost"] = r["gross"] - TIER_COST_BP.get(r["tier"], sp) - FEE_BP
         reasons[r["reason"]] += 1
     json.dump(rows, open(OUT / "rows.json", "w"))
 
     ten = [r for r in rows if r["tier"] == "10+"]
-    unknown = sum(1 for r in ten if r["flags"] is None) / len(ten) if ten else 1.0
+    small = [r for r in rows if r["tier"] in ("2-5", "5-10")]
+    base = small if replay else ten
+    unknown = sum(1 for r in base if r["flags"] is None) / len(base) if base else 1.0
     etb = lambda r: r["flags"] is not None and r["flags"][0] and r["flags"][1]  # noqa: E731
-    primary = [r for r in ten if etb(r) and r["ssr"] is False]
+    primary = [r for r in base if etb(r) and r["ssr"] is False]
     attempted = len(rows) + counts["fetch_error"]
     err_share = counts["fetch_error"] / attempted if attempted else 0.0
-    w, info = word(primary, unknown, err_share)
+    a_end = REPLAY_A_END if replay else A_END
+    if replay:
+        w, info = word(primary, unknown, err_share, a_end=a_end, extra_key="tiercost", replay_failed=replay_failed,
+                       **REPLAY_MIN)
+    else:
+        w, info = word(primary, unknown, err_share)
     fl = Counter("unknown" if r["flags"] is None else "easy" if etb(r) else "hard" if r["flags"][0] else "not shortable"
                  for r in rows)
-    lines = ["# Short the desk's fills with the live exits mirrored (fill_short_prereg)", "",
-             f"Sessions {FIRST}..{LAST}; half A ..{A_END}, half B after. Fills {dict(n)}. Scored {len(rows)}; "
+    title = ("# Floor at $2: short the replayed desk's sub-$10 buys with the live exits mirrored (floor2_short_prereg)"
+             if replay else "# Short the desk's fills with the live exits mirrored (fill_short_prereg)")
+    span = f"replay {args.replay_dir}, days {REPLAY_DAYS[0]}..{REPLAY_DAYS[-1]}" if replay else f"Sessions {FIRST}..{LAST}"
+    lines = [title, "",
+             f"{span}; half A ..{a_end}, half B after. Opens {dict(n)}. Scored {len(rows)}; "
              f"{dict(counts)}.", "",
              f"Price tiers {dict(Counter(r['tier'] for r in rows))}. Asset flags (today's) {dict(fl)}; "
-             f"unknown among $10+: {unknown:.0%}. SSR at entry: {sum(r['ssr'] is True for r in rows)}, "
+             f"unknown among {'$2-10' if replay else '$10+'}: {unknown:.0%}. SSR at entry: {sum(r['ssr'] is True for r in rows)}, "
              f"SSR unknown (no daily bar): {sum(r['ssr'] is None for r in rows)}. Fetch errors {counts['fetch_error']} "
              f"of {attempted} ({err_share:.1%}) by day {dict(sorted(err_days.items()))}. Fixed-30 m line missing "
              f"{sum(r['fixed30'] is None for r in rows)}.", "",
              "All prices are SIP (the consolidated tape); the live desk trades on IEX quotes.", "",
              "Net = short return - full quoted spread at entry - 0.5 bp fees. Long control = the same fill long, same exits unmirrored, minus the spread.", ""]
-    lines += block("PRIMARY: $10+, shortable and easy to borrow, no SSR", primary)
-    lines += block("$10+, any flags (information)", ten)
+    if replay:
+        lines += block("PRIMARY: $2-10, shortable and easy to borrow, no SSR (tier-cost column must be > 0 too)", primary,
+                       None, a_end=a_end)
+        pt = [r["tiercost"] for r in primary]
+        lines += [f"Primary tier-cost line pooled day mean: "
+                  f"{day_stat(list(by_day(primary, 'tiercost').values()))['mean'] or 0:+.1f} bp ({len(pt)} trades).", ""]
+        lines += block("$10+ opens of the same replay (information)", ten, a_end=a_end)
+        syn = [r for r in rows if r["synthetic"]]
+        if syn:
+            lines += block("Synthetic-row opens, any price (information)", syn, a_end=a_end)
+        lines += [f"Sub-$10 names seated: {dict(Counter(r['symbol'] for r in small).most_common(30))}", ""]
+    else:
+        lines += block("PRIMARY: $10+, shortable and easy to borrow, no SSR", primary, a_end=a_end)
+        lines += block("$10+, any flags (information)", ten, a_end=a_end)
     for t in ("5-10", "2-5"):
         tr = [r for r in rows if r["tier"] == t]
         if tr:
             lines += block(f"${t} (information; last column charges the {TIER_COST_BP[t] / 100:.2f}% tier round trip)", tr,
-                           TIER_COST_BP[t])
+                           TIER_COST_BP[t], a_end=a_end)
     lines += [f"Exit reasons: {dict(reasons.most_common(8))}", ""]
     if info:
         f = lambda x: "—" if x is None else f"{x:+.1f}"  # noqa: E731
