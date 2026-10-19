@@ -4483,105 +4483,59 @@ def _call_snapshot_row(ticker: str) -> dict | None:
     return None
 
 
-MY_CALLS_RESULTS_PATH = Path(__file__).resolve().parent / "ai_reports" / "my_calls_results.json"
-CALL_NOTIONAL = 1000.0        # paper dollars per call
-CALL_HOLD_MIN = 15            # same hold as tools/studies/my_calls_score.py net15
-CALL_SIP_DELAY_MIN = 16       # free plan: SIP bars are queryable ~15 min after the fact
-_call_results_lock = threading.Lock()
+MY_CALLS_EXITS_PATH = Path(__file__).resolve().parent / "ai_reports" / "my_calls_exits.json"
+CALL_NOTIONAL = 1000.0        # paper dollars per call (tools/call_exits.py NOTIONAL)
+CALL_EXITS_EVERY_SEC = 120
 _call_worker_started = False
 
 
 def _load_call_results() -> dict:
     try:
-        return json.loads(MY_CALLS_RESULTS_PATH.read_text(encoding="utf-8")) if MY_CALLS_RESULTS_PATH.exists() else {}
+        return json.loads(MY_CALLS_EXITS_PATH.read_text(encoding="utf-8")) if MY_CALLS_EXITS_PATH.exists() else {}
     except (OSError, ValueError):
         return {}
 
 
-def _score_call(rec: dict) -> dict:
-    """Paper result of one call: buy CALL_NOTIONAL at the open of the first SIP minute after the click, sell at the
-    close CALL_HOLD_MIN minutes later, minus the full SIP spread at the click (0.20% when there is no quote)."""
-    import sys as _sys
-    root = Path(__file__).resolve().parent
-    for sub in ("tools/studies", "tools"):
-        if str(root / sub) not in _sys.path:
-            _sys.path.insert(0, str(root / sub))
-    from datetime import timezone
-    import bars as _bars
-    import replay_costing as _rc
-    from alpaca.data.enums import DataFeed
-    from alpaca.data.requests import StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-    sym, ts = str(rec["symbol"]), float(rec["ts"])
-    start = (int(ts) // 60 + 1) * 60
-    end = start + (CALL_HOLD_MIN + 1) * 60
-    df = _bars.client().get_stock_bars(StockBarsRequest(
-        symbol_or_symbols=sym, timeframe=TimeFrame(1, TimeFrameUnit.Minute),
-        start=datetime.fromtimestamp(start, timezone.utc), end=datetime.fromtimestamp(end, timezone.utc),
-        feed=DataFeed.SIP)).df
-    if df is None or df.empty:
-        return {"status": "no_bars"}
-    if "symbol" in (df.index.names or []):
-        df = df.xs(sym, level="symbol")
-    times = [t.timestamp() for t in df.index]
-    rows = [(t, float(o), float(c)) for t, o, c in zip(times, df["open"], df["close"]) if t >= start]
-    if not rows:
-        return {"status": "no_bars"}
-    entry_t, entry = rows[0][0], rows[0][1]
-    held = [r for r in rows if r[0] <= entry_t + (CALL_HOLD_MIN - 1) * 60]
-    exit_px = held[-1][2]
-    qc, box = _rc.load_cache(), {}
-    sp = _rc.entry_spread_bp(qc, sym, ts, box)
-    _rc.save_cache(qc)
-    cost = 20.0 if sp is None else float(sp)
-    net_bp = (exit_px / entry - 1) * 1e4 - cost
-    return {"status": "final", "entry": round(entry, 4), "exit": round(exit_px, 4), "spread_bp": round(cost, 1),
-            "spread_known": sp is not None, "net_bp": round(net_bp, 1),
-            "pnl_usd": round(CALL_NOTIONAL * net_bp / 1e4, 2)}
-
-
 def _call_worker() -> None:
-    """Once a minute: lock in the paper result of any call that is CALL_HOLD_MIN + SIP delay old."""
+    """Every CALL_EXITS_EVERY_SEC: score pending calls through the desk's own exits (tools/call_exits.py).
+
+    A separate process on purpose: call_exits patches the clock inside ai_positions to replay the exits, which
+    must never happen inside this process. Data comes from the data-only account (secrets_data.json); without
+    it the calls stay pending and a warning is logged once."""
+    import subprocess
+    root = Path(__file__).resolve().parent
+    secrets = root / "secrets_data.json"
+    warned = False
     while True:
         try:
-            lines = MY_CALLS_PATH.read_text(encoding="utf-8").splitlines() if MY_CALLS_PATH.exists() else []
-            done = _load_call_results()
-            now = time.time()
-            changed = False
-            for line in lines[-500:]:
-                try:
-                    r = json.loads(line)
-                except ValueError:
-                    continue
-                key = f"{r.get('symbol')}|{r.get('ts')}"
-                if key in done or r.get("retroactive"):
-                    continue
-                if now < float(r.get("ts") or 0) + (CALL_HOLD_MIN + CALL_SIP_DELAY_MIN) * 60:
-                    continue
-                try:
-                    done[key] = _score_call(r)
-                except Exception as e:  # noqa: BLE001 - leave it for the next pass
-                    log.warning("[calls] score %s failed: %s", key, str(e)[:120])
-                    continue
-                changed = True
-            if changed:
-                with _call_results_lock:
-                    MY_CALLS_RESULTS_PATH.write_text(json.dumps(done), encoding="utf-8")
+            if not secrets.exists():
+                if not warned:
+                    log.warning("[calls] secrets_data.json missing: calls stay pending (data-only account needed)")
+                    warned = True
+            elif MY_CALLS_PATH.exists():
+                env = {**os.environ, "TH_DATA_SECRETS": str(secrets), "REPO": str(root)}
+                r = subprocess.run(["nice", "-n", "19", sys.executable, str(root / "tools" / "call_exits.py")],
+                                   cwd=str(root), env=env, capture_output=True, text=True, timeout=600)
+                if r.returncode != 0:
+                    log.warning("[calls] call_exits failed: %s", (r.stderr or r.stdout or "")[-300:])
         except Exception:  # noqa: BLE001
             log.exception("[calls] worker pass failed")
-        time.sleep(60)
+        time.sleep(CALL_EXITS_EVERY_SEC)
 
 
 def _ensure_call_worker() -> None:
     global _call_worker_started
     if not _call_worker_started:
         _call_worker_started = True
-        threading.Thread(target=_call_worker, name="my-calls-score", daemon=True).start()
+        threading.Thread(target=_call_worker, name="my-calls-exits", daemon=True).start()
 
 
 @app.get("/api/ai/my-calls")
 async def api_ai_my_calls():
-    """Today's calls (ET) with the move since each call where the desk still tracks the name. Read only."""
+    """Today's calls (ET), each scored through the desk's own exits by tools/call_exits.py. Read only.
+
+    Two lines per call: ``asis`` (the live exit config exactly) and ``scaled`` (the same exits with the
+    breakeven offset at 0.1% of the fill instead of $0.01, which on a $2 name sits above the price)."""
     from zoneinfo import ZoneInfo
     et = ZoneInfo("America/New_York")
     today = datetime.now(et).date()
@@ -4614,14 +4568,21 @@ async def api_ai_my_calls():
             except (TypeError, ValueError, ZeroDivisionError):
                 move = None
         res = results.get(f"{sym}|{r.get('ts')}") or {}
-        rows.append({"ts": r.get("ts"), "symbol": sym, "price": base, "now": now_px, "move_bp": move,
-                     "setup": r.get("setup"), "retroactive": bool(r.get("retroactive")),
-                     "status": res.get("status") or "live", "net_bp": res.get("net_bp"), "pnl_usd": res.get("pnl_usd")})
+        row = {"ts": r.get("ts"), "symbol": sym, "price": base, "now": now_px, "move_bp": move,
+               "setup": r.get("setup"), "retroactive": bool(r.get("retroactive")),
+               "status": res.get("status") or "waiting", "spread_bp": res.get("spread_bp"),
+               "session": res.get("session")}
+        for v in ("asis", "scaled"):
+            y = res.get(v) or {}
+            row[v] = {k: y.get(k) for k in ("status", "entry", "exit", "reason", "gross_bp", "net_bp", "pnl_usd", "mark")}
+        rows.append(row)
     rows.sort(key=lambda x: -(x.get("ts") or 0))
-    final = [x for x in rows if x["status"] == "final"]
-    total = {"n": len(final), "pnl_usd": round(sum(x["pnl_usd"] or 0 for x in final), 2),
-             "wins": sum(1 for x in final if (x["pnl_usd"] or 0) > 0), "pending": sum(1 for x in rows if x["status"] == "live"),
-             "notional": CALL_NOTIONAL, "hold_min": CALL_HOLD_MIN}
+    total = {"notional": CALL_NOTIONAL, "pending": sum(1 for x in rows if x["status"] in ("waiting", "open")),
+             "no_fill": sum(1 for x in rows if x["status"] == "no_fill")}
+    for v in ("asis", "scaled"):
+        fin = [x[v] for x in rows if x["status"] == "final" and x[v].get("pnl_usd") is not None]
+        total[v] = {"n": len(fin), "pnl_usd": round(sum(y["pnl_usd"] for y in fin), 2),
+                    "wins": sum(1 for y in fin if y["pnl_usd"] > 0)}
     return JSONResponse({"ok": True, "calls": rows, "total": total})
 
 
