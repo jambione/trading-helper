@@ -12158,8 +12158,9 @@ def exh_any_turn_arm_enabled(cfg: dict | None) -> bool:
     return bool(cfg.get("ai_watch_exh_any_turn_arm", False))
 
 
-# {symbol: (recent (ts, fast %R) readings, ts the turn armed or None)}. Process local, like mid-rise.
-_ANY_TURN_STATE: dict[str, tuple[list[tuple[float, float]], float | None]] = {}
+# {symbol: {"hist": [(ts, fast %R)], "since": ts armed or None, "ended": ts the last arm ended, "both": bool}}.
+# Process local, like mid-rise. Only readings that reach the exhaustion check are seen (not polls refused earlier).
+_ANY_TURN_STATE: dict[str, dict] = {}
 
 
 def _any_turn_allows_buy(
@@ -12168,9 +12169,10 @@ def _any_turn_allows_buy(
     *,
     now: float | None = None,
 ) -> tuple[bool, str]:
-    """The prescreen BOTHUP turn, read live: both %R lines rising, out of a dip (fast <= -70 within the last
-    ai_watch_any_turn_look_sec), still early (fast <= -40). Arms for ai_watch_any_turn_max_age_sec after the
-    turn is first seen; fast %R turning down cancels it."""
+    """A %R turn read on the live row: both lines rising on this reading and the one before, out of a dip
+    (fast <= -70 at a reading in the last ai_watch_any_turn_look_sec, after the previous arm ended), still
+    early (fast <= -40). Arms for ai_watch_any_turn_max_age_sec from the onset. Fast %R falling, or the arm
+    going stale, ends it; the next arm needs a new dip."""
     ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
     sym = str(record.get("symbol") or "").upper()
     fast = _f_or_none(ind.get("pctr"))
@@ -12181,23 +12183,29 @@ def _any_turn_allows_buy(
     max_age = float(cfg.get("ai_watch_any_turn_max_age_sec", 60.0) or 60.0)
     dip = float(cfg.get("ai_watch_any_turn_dip", -70.0))
     early = float(cfg.get("ai_watch_any_turn_early", -40.0))
-    hist, since = _ANY_TURN_STATE.get(sym, ([], None))
-    hist = [(ts, v) for ts, v in hist if t - ts <= look]
+    st = _ANY_TURN_STATE.get(sym) or {"hist": [], "since": None, "ended": float("-inf"), "both": False}
+    st = {**st, "hist": [(ts, v) for ts, v in st["hist"] if t - ts <= look]}
     both = ind.get("pctr_rising") is True and ind.get("pctr_slow_rising") is True
-    out_of_dip = any(v <= dip for _ts, v in hist) or fast <= dip
-    if both and out_of_dip and fast <= early and since is None:
-        since = t
+    readings = st["hist"] + [(t, float(fast))]
+    out_of_dip = any(v <= dip and ts > st["ended"] for ts, v in readings)
+    ok, why = False, "wait_turn"
+    if st["since"] is not None:
+        if ind.get("pctr_falling"):
+            st.update(since=None, ended=t)
+            why = "exh_falling"
+        elif t - st["since"] > max_age:
+            st.update(since=None, ended=t)
+            why = "turn_stale"
+        else:
+            ok, why = True, "any_turn"
+    elif both and st["both"] and out_of_dip and fast <= early:
+        st["since"] = t
+        ok, why = True, "any_turn"
+    st["both"] = both
+    st["hist"] = readings
     if not getattr(_MID_RISE_PEEK, "on", False):
-        _ANY_TURN_STATE[sym] = (hist + [(t, float(fast))], since)
-    if since is None:
-        return False, "wait_turn"
-    if t - since > max_age:
-        if not getattr(_MID_RISE_PEEK, "on", False):
-            _ANY_TURN_STATE[sym] = (hist + [(t, float(fast))], None)
-        return False, "turn_stale"
-    if ind.get("pctr_falling"):
-        return False, "exh_falling"
-    return True, "any_turn"
+        _ANY_TURN_STATE[sym] = st
+    return ok, why
 
 
 def square_min_count(cfg: dict | None = None) -> int:

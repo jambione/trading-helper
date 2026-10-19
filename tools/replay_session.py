@@ -865,8 +865,10 @@ class FakeBroker:
     def enter(self, sym: str, px: float, now: float, decision: dict,
               cfg: dict | None = None, synthetic: bool = False) -> dict:
         stop = decision.get("stop_price") if isinstance(decision, dict) else None
+        feats = decision.get("features") if isinstance(decision, dict) else None
         self.open[sym] = {"symbol": sym, "entry_ts": now, "entry_px": px, "stop": stop,
-                          "synthetic": synthetic}
+                          "synthetic": synthetic,
+                          "arm_why": (feats or {}).get("arm_why") if isinstance(feats, dict) else None}
         if self.mode == "live":
             import ai_positions as cp
             try:

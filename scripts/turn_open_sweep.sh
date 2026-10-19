@@ -25,7 +25,7 @@ fi
 
 arm_sets() {
   local BASE="--set ai_watch_profile_path="
-  local TURN="$BASE --set ai_watch_exh_any_turn_arm=true --set ai_watch_arm_cm_rsi_max=100 --set ai_watch_presquare_only=false"
+  local TURN="$BASE --set ai_watch_exh_any_turn_arm=true --set ai_watch_presquare_only=false"
   case $1 in
     live)   echo "$BASE" ;;
     turn5)  echo "$TURN" ;;
@@ -52,4 +52,5 @@ for a in live turn5 turn20; do
   done
 done
 wait
+[ -f "${TH_DATA_SECRETS:-}" ] || { echo "replays done; score with TH_DATA_SECRETS=<secrets_data.json> .venv/bin/python tools/studies/turn_open_score.py --dir $OUT"; exit 0; }
 $NICE .venv/bin/python tools/studies/turn_open_score.py --dir "$OUT" | tee "$OUT/result.md"
