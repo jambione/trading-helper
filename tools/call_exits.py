@@ -4,12 +4,15 @@
 Each "Log call" click becomes a paper position:
   entry   the first SIP round-lot print (>= 100 shares) after the click, premarket included (operator: exits
           start from the click); no print within ENTRY_WAIT_S -> no fill, counted
-  exits   the desk's own exit code, tools/replay_session.FakeBroker._live_exit (local trail + ratchet leash, the
+  exits   the replay's mirror of the desk's exit code, tools/replay_session.FakeBroker._live_exit (local trail + ratchet leash, the
           trail_dc trend hold, T1 scale, profit capture, dead trade, the 15:50 flatten), with the live config,
           run on SIP prints sampled every TICK_S on a simulated clock. The trend hold reads SIP 1-minute bars that
           had completed by that moment (never a later bar).
   exit    fills at the first SIP print strictly after the exit decision
-  cost    the full SIP quoted spread at the click, charged once (as the desk's replay costing)
+  cost    the full SIP quoted spread at the click, charged once (as the desk's replay costing); no quote at the
+          click -> NO_QUOTE_BP, flagged spread_known false
+  not modelled: stop-behind-fill and broker-side order behaviour (the live apply_local_trail extras). Open calls
+          are re-scored with the config of each pass; final calls are frozen.
   size    $1,000 paper, for the panel's dollar figure
   lines   asis   = the live config exactly. Its breakeven floor is the fill + $0.01 (ai_breakeven_offset_px) once a
                    trade is up 0.15%; on a $2 name that floor is +0.5%, above the price, so the next tick sells it.
@@ -46,7 +49,10 @@ TICK_S = 2.0
 ROUND_LOT = 100
 ENTRY_WAIT_S = 120.0
 SIP_DELAY_S = 16 * 60          # free plan: SIP is queryable about 15 minutes after the fact
-DEDUPE_S = 300                 # repeat clicks on one name within 5 minutes count once
+DEDUPE_S = 300
+NO_QUOTE_BP = 20.0             # cost when there is no NBBO at the click (the old panel's 0.20%), flagged
+RESCORE_S = 300                # an open call is re-scored at most every 5 minutes
+CACHE_DIR = ROOT / "ai_reports" / "call_exits_cache"                 # repeat clicks on one name within 5 minutes count once
 SESSION_END_MIN = 16 * 60
 BE_SCALED_PCT = 0.10           # "scaled" line: breakeven offset = 0.10% of the fill instead of the live $0.01
 VARIANTS = ("asis", "scaled")
@@ -227,6 +233,33 @@ def load_calls(path: Path) -> list[dict]:
     return dedupe(out)
 
 
+def finalize_at_session_end(res: dict, horizon: float) -> dict:
+    """An open run when the data reaches 16:00: final at the last print. A pending exit decision keeps its reason."""
+    return {**res, "status": "final", "reason": res.get("pending_exit") or "session_end", "exit": res["mark"],
+            "exit_ts": horizon, "gross_bp": round((res["mark"] / res["entry"] - 1) * 1e4, 1)}
+
+
+def after_hours(click: float) -> bool:
+    """A click after 16:00 ET or on a weekend has no session left to trade in."""
+    d = datetime.fromtimestamp(click, ET)
+    return d.weekday() >= 5 or d.hour * 60 + d.minute >= SESSION_END_MIN
+
+
+def cached_trades(cl, sym: str, key: str, click: float, horizon: float) -> list[tuple[float, float, float]]:
+    """Trades from the click to `horizon`, fetching only what is newer than the cached part."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = CACHE_DIR / (key.replace("|", "_").replace("/", "_") + ".json")
+    have = json.loads(path.read_text()) if path.exists() else {"through": click, "trades": []}
+    if horizon > have["through"]:
+        new = fetch_trades(cl, sym, have["through"], horizon)
+        have["trades"] += [list(t) for t in new if t[0] > have["through"]]
+        have["through"] = horizon
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(have))
+        tmp.replace(path)
+    return [tuple(t) for t in have["trades"] if t[0] <= horizon]
+
+
 def score_pending(now: float | None = None) -> dict:
     import config
     import replay_costing as RC
@@ -236,9 +269,15 @@ def score_pending(now: float | None = None) -> dict:
     cl, qcache, box = None, None, {}
     for r in load_calls(CALLS):
         key = call_key(r)
-        if results.get(key, {}).get("status") in ("final", "no_fill"):
+        prev = results.get(key, {})
+        if prev.get("status") in ("final", "no_fill", "after_hours"):
+            continue
+        if prev.get("status") == "open" and now - float(prev.get("scored_at") or 0) < RESCORE_S:
             continue
         click = float(r["ts"])
+        if after_hours(click):
+            results[key] = {"status": "after_hours", "symbol": r["symbol"], "ts": click, "setup": r.get("setup")}
+            continue
         day = datetime.fromtimestamp(click, ET).strftime("%Y-%m-%d")
         session_end = datetime.strptime(day, "%Y-%m-%d").replace(hour=16, tzinfo=ET).timestamp()
         horizon = min(session_end, now - SIP_DELAY_S)
@@ -247,22 +286,26 @@ def score_pending(now: float | None = None) -> dict:
             continue
         if cl is None:
             cl, qcache = _client(), RC.load_cache()
-        trades = fetch_trades(cl, r["symbol"], click, horizon)
-        bars = fetch_bars(cl, r["symbol"], day, horizon)
-        sp = RC.entry_spread_bp(qcache, r["symbol"], click, box)
-        out = {"symbol": r["symbol"], "ts": click, "setup": r.get("setup"),
-               "spread_bp": None if sp is None else round(sp, 1),
+        try:
+            trades = cached_trades(cl, r["symbol"], key, click, horizon)
+            bars = fetch_bars(cl, r["symbol"], day, horizon)
+            sp_q = RC.entry_spread_bp(qcache, r["symbol"], click, box)
+        except Exception as e:  # noqa: BLE001 - one bad request must not cost the other calls their pass
+            print(f"[call_exits] {key}: {type(e).__name__} {str(e)[:160]}", file=sys.stderr)
+            continue
+        sp = NO_QUOTE_BP if sp_q is None else sp_q
+        out = {"symbol": r["symbol"], "ts": click, "setup": r.get("setup"), "scored_at": now,
+               "spread_bp": round(sp, 1), "spread_known": sp_q is not None,
                "session": "pre" if (datetime.fromtimestamp(click, ET).hour * 60
                                     + datetime.fromtimestamp(click, ET).minute) < 570 else "rth"}
         statuses = []
         for v in VARIANTS:
             res = simulate(r["symbol"], click, trades, bars, cfg, horizon, spread_bp=sp, variant=v)
             if res["status"] == "open" and horizon >= session_end:
-                res = {**res, "status": "final", "reason": "session_end", "exit": res["mark"], "exit_ts": horizon,
-                       "gross_bp": round((res["mark"] / res["entry"] - 1) * 1e4, 1)}
+                res = finalize_at_session_end(res, horizon)
             if res["status"] == "final":
-                res["net_bp"] = None if sp is None else round(res["gross_bp"] - sp, 1)
-                res["pnl_usd"] = None if res["net_bp"] is None else round(NOTIONAL * res["net_bp"] / 1e4, 2)
+                res["net_bp"] = round(res["gross_bp"] - sp, 1)
+                res["pnl_usd"] = round(NOTIONAL * res["net_bp"] / 1e4, 2)
             out[v] = res
             statuses.append(res["status"])
         # The call is final when both lines are; no_fill is the same for both (same entry rule).

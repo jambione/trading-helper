@@ -4571,6 +4571,7 @@ async def api_ai_my_calls():
         row = {"ts": r.get("ts"), "symbol": sym, "price": base, "now": now_px, "move_bp": move,
                "setup": r.get("setup"), "retroactive": bool(r.get("retroactive")),
                "status": res.get("status") or "waiting", "spread_bp": res.get("spread_bp"),
+               "spread_known": res.get("spread_known"),
                "session": res.get("session")}
         for v in ("asis", "scaled"):
             y = res.get(v) or {}

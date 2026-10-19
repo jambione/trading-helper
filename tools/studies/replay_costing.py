@@ -30,11 +30,19 @@ CACHE = os.path.join(ROOT, "ai_reports", "replay_costing_cache.json")
 
 
 def load_cache() -> dict:
-    return json.load(open(CACHE)) if os.path.exists(CACHE) else {}
+    try:
+        return json.load(open(CACHE)) if os.path.exists(CACHE) else {}
+    except ValueError:
+        return {}          # a truncated cache is a cold cache, not a crash; quotes are refetched
 
 
 def save_cache(cache: dict) -> None:
-    json.dump(cache, open(CACHE, "w"))
+    """Atomic: write a temp file and rename it, so two writers (the calls panel, a study) never leave a
+    truncated file. The last writer wins; a lost entry is refetched."""
+    tmp = f"{CACHE}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(cache, f)
+    os.replace(tmp, CACHE)
 
 
 def entry_spread_bp(cache: dict, symbol: str, entry_ts: float, client_box: dict | None = None) -> float | None:

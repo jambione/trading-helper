@@ -91,3 +91,58 @@ def test_the_clock_patch_is_undone():
     t0 = cp.time
     C.simulate("X", _t(10, 0), _path(_t(10, 0) + 1, [3.0] * 5), [], _cfg(), _t(10, 1))
     assert cp.time is t0
+
+
+def test_after_hours_and_weekend_clicks():
+    assert C.after_hours(_t(16, 5)) and not C.after_hours(_t(15, 59))
+    sat = datetime(2026, 10, 24, 10, 0, tzinfo=ET).timestamp()
+    assert C.after_hours(sat)
+
+
+def test_session_end_keeps_a_pending_exit_reason():
+    res = {"status": "open", "entry": 2.0, "mark": 2.1, "pending_exit": "local_trail"}
+    out = C.finalize_at_session_end(res, _t(16, 0))
+    assert out["status"] == "final" and out["reason"] == "local_trail" and abs(out["gross_bp"] - 500.0) < 1e-6
+    assert C.finalize_at_session_end({"status": "open", "entry": 2.0, "mark": 2.0}, _t(16, 0))["reason"] == "session_end"
+
+
+def test_trades_are_fetched_incrementally(tmp_path, monkeypatch):
+    monkeypatch.setattr(C, "CACHE_DIR", tmp_path)
+    calls = []
+
+    def fake_fetch(_cl, _sym, start, end):
+        calls.append((start, end))
+        return [(start + 1, 1.0, 100), (end - 1, 1.1, 100)]
+    monkeypatch.setattr(C, "fetch_trades", fake_fetch)
+    a = C.cached_trades(None, "X", "X|1", 100.0, 200.0)
+    b = C.cached_trades(None, "X", "X|1", 100.0, 300.0)
+    c = C.cached_trades(None, "X", "X|1", 100.0, 300.0)
+    assert calls == [(100.0, 200.0), (200.0, 300.0)]
+    assert len(a) == 2 and len(b) == 4 and c == b
+
+
+def test_one_failing_call_does_not_stop_the_others(tmp_path, monkeypatch):
+    import json
+    import types
+    calls_file = tmp_path / "calls.jsonl"
+    t1, t2 = _t(10, 0), _t(10, 30)
+    calls_file.write_text(json.dumps({"symbol": "BAD", "ts": t1}) + "\n" + json.dumps({"symbol": "OK", "ts": t2}) + "\n")
+    monkeypatch.setattr(C, "CALLS", calls_file)
+    monkeypatch.setattr(C, "RESULTS", tmp_path / "res.json")
+    monkeypatch.setattr(C, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(C, "_client", lambda: object())
+
+    def fake_fetch(_cl, sym, start, end):
+        if sym == "BAD":
+            raise RuntimeError("429")
+        return [(start + 1 + 2 * i, 3.0, 200) for i in range(50)]
+    monkeypatch.setattr(C, "fetch_trades", fake_fetch)
+    monkeypatch.setattr(C, "fetch_bars", lambda *a: [])
+    import sys
+    rc = types.SimpleNamespace(load_cache=lambda: {}, save_cache=lambda c: None, entry_spread_bp=lambda *a: None)
+    monkeypatch.setitem(sys.modules, "replay_costing", rc)
+    out = C.score_pending(now=_t(17, 0))
+    assert "BAD|" + str(t1) not in out
+    ok = out["OK|" + str(t2)]
+    assert ok["status"] == "final" and ok["spread_known"] is False and ok["spread_bp"] == C.NO_QUOTE_BP
+    assert ok["scaled"]["pnl_usd"] is not None

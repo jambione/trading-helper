@@ -2867,7 +2867,7 @@ async function _refreshCalls() {
   const _usd = v => `${Number(v) >= 0 ? '+' : '-'}$${Math.abs(Number(v)).toFixed(2)}`;
   const _cls = v => (Number(v) > 0 ? ' is-up' : (Number(v) < 0 ? ' is-down' : ''));
   const sc = tot.scaled || {}, dk = tot.asis || {};
-  const totHtml = `<div class="ai-call-total" title="Paper only, no orders: $${Number(tot.notional || 1000).toFixed(0)} per call, bought at the first real trade after your click (premarket included) and run through the desk's own stop, trail and ratchet until they sell, minus the SIP spread at the click. Desk = the live exit settings exactly; scaled = the same exits with breakeven set to 0.1% of the price instead of $0.01 (on a $2 name $0.01 is 0.5% and sells at once). Results lock ~16 min after the exit (SIP is delayed).">`
+  const totHtml = `<div class="ai-call-total" title="Paper only, no orders: $${Number(tot.notional || 1000).toFixed(0)} per call, bought at the first real trade after your click (premarket included) and run through the replay's mirror of the desk's stop, trail and ratchet until they sell, minus the SIP spread at the click. Desk = the live exit settings exactly; scaled = the same exits with breakeven set to 0.1% of the price instead of $0.01 (on a $2 name $0.01 is 0.5% and sells at once). Results lock ~16 min after the exit (SIP is delayed).">`
     + `<span>Paper P&amp;L today</span>`
     + `<b class="ai-call-mv${_cls(sc.pnl_usd)}">${sc.n ? _usd(sc.pnl_usd) : '—'}</b><span>scaled</span>`
     + `<b class="ai-call-mv${_cls(dk.pnl_usd)}">${dk.n ? _usd(dk.pnl_usd) : '—'}</b><span>desk</span>`
@@ -2881,9 +2881,11 @@ async function _refreshCalls() {
     let res;
     if (c.status === 'final' && s2.pnl_usd != null) {
       const tip = `Scaled: ${s2.reason || ''} at ${s2.exit ?? '—'}, move ${s2.gross_bp ?? '—'} bp, net ${s2.net_bp} bp. `
-        + `Desk as live: ${a2.reason || ''} at ${a2.exit ?? '—'}, net ${a2.net_bp ?? '—'} bp ($${a2.pnl_usd ?? '—'}). Spread ${c.spread_bp ?? '—'} bp.`;
+        + `Desk as live: ${a2.reason || ''} at ${a2.exit ?? '—'}, net ${a2.net_bp ?? '—'} bp ($${a2.pnl_usd ?? '—'}). Spread ${c.spread_bp ?? '—'} bp${c.spread_known === false ? ' (no quote at the click: 20 bp charged)' : ''}.`;
       res = `<span class="ai-call-mv${_cls(s2.pnl_usd)}" title="${_esc(tip)}">${_usd(s2.pnl_usd)}</span>`
         + `<span class="ai-call-setup" title="${_esc(tip)}">${_esc(s2.reason || '')} · desk ${a2.pnl_usd != null ? _usd(a2.pnl_usd) : '—'}</span>`;
+    } else if (c.status === 'after_hours') {
+      res = '<span class="ai-call-setup" title="Clicked after 16:00 ET or on a weekend: no session left to trade">after hours</span>';
     } else if (c.status === 'no_fill') {
       res = '<span class="ai-call-setup" title="No round-lot trade printed within 2 minutes of the click">no fill</span>';
     } else {
