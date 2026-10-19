@@ -133,6 +133,21 @@ def variant_cfg(cfg: dict, variant: str, entry: float) -> dict:
     return cfg
 
 
+def t1_info(p: dict) -> dict:
+    """The T1 scale-out state: the share sold at target_1 when t1_hit (exit_r's blend)."""
+    return {"t1_hit": bool(p.get("t1_hit")), "t1_px": float(p.get("target_1") or 0.0),
+            "scale": float(p.get("scale") or 0.0)}
+
+
+def blended_bp(entry: float, exit_px: float, res: dict) -> float:
+    """Long return in bp with the T1 blend: `scale` of the shares at t1_px when T1 was hit, the rest at exit_px."""
+    full = (exit_px / entry - 1) * 1e4
+    if res.get("t1_hit") and res.get("t1_px"):
+        sc = float(res.get("scale") or 0.0)
+        return sc * (float(res["t1_px"]) / entry - 1) * 1e4 + (1 - sc) * full
+    return full
+
+
 def simulate(sym: str, click_ts: float, trades: list[tuple[float, float, float]],
              bars: list[tuple[float, float, float, float]], cfg: dict, horizon: float,
              spread_bp: float | None = None, variant: str = "asis") -> dict:
@@ -147,9 +162,12 @@ def simulate(sym: str, click_ts: float, trades: list[tuple[float, float, float]]
     entry_ts, entry = fill
     cfg = variant_cfg(cfg, variant, entry)
     clock = Clock(entry_ts)
-    old_time, old_bars = cp.time, cp._double_check_store_bars
+    old_time, old_bars, old_dc = cp.time, cp._double_check_store_bars, cp._symbol_bars_for_double_check
     cp.time = TimeProxy(clock)
     cp._double_check_store_bars = lambda _ticker: bars_upto(bars, clock.t)
+    # double_check_sell and no_progress's double check read this one; unpatched it falls back to a fetch with no
+    # end time (the whole day: look-ahead).
+    cp._symbol_bars_for_double_check = lambda _ticker, _t=None: bars_upto(bars, clock.t)
     try:
         p = RS.open_position(cp, cfg, entry, entry_ts, None)
         if p is None:
@@ -169,16 +187,16 @@ def simulate(sym: str, click_ts: float, trades: list[tuple[float, float, float]]
                 ex = first_print_after([t for t in trades if t[0] <= horizon], ts)
                 if ex is None:
                     return {"status": "open", "entry": entry, "entry_ts": entry_ts, "mark": px,
-                            "pending_exit": why, "peak": peak}
+                            "pending_exit": why, "peak": peak, **t1_info(p)}
                 ets, epx = ex
                 r = RS.exit_r(p, epx)
                 ret = r * float(p["risk_per_share"]) / entry
                 return {"status": "final", "entry": entry, "entry_ts": entry_ts, "exit": epx, "exit_ts": ets,
                         "reason": why, "gross_bp": round(ret * 1e4, 1), "peak": peak,
-                        "mfe_bp": round((peak / entry - 1) * 1e4, 1)}
-        return {"status": "open", "entry": entry, "entry_ts": entry_ts, "mark": last_px, "peak": peak}
+                        "mfe_bp": round((peak / entry - 1) * 1e4, 1), **t1_info(p)}
+        return {"status": "open", "entry": entry, "entry_ts": entry_ts, "mark": last_px, "peak": peak, **t1_info(p)}
     finally:
-        cp.time, cp._double_check_store_bars = old_time, old_bars
+        cp.time, cp._double_check_store_bars, cp._symbol_bars_for_double_check = old_time, old_bars, old_dc
 
 
 # ── data ─────────────────────────────────────────────────────────────────────
@@ -236,7 +254,7 @@ def load_calls(path: Path) -> list[dict]:
 def finalize_at_session_end(res: dict, horizon: float) -> dict:
     """An open run when the data reaches 16:00: final at the last print. A pending exit decision keeps its reason."""
     return {**res, "status": "final", "reason": res.get("pending_exit") or "session_end", "exit": res["mark"],
-            "exit_ts": horizon, "gross_bp": round((res["mark"] / res["entry"] - 1) * 1e4, 1)}
+            "exit_ts": horizon, "gross_bp": round(blended_bp(res["entry"], res["mark"], res), 1)}
 
 
 def after_hours(click: float) -> bool:

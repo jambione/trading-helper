@@ -38,6 +38,8 @@ TIER_COST_BP = {"5-10": 40.0, "2-5": 100.0}
 MIN_DAYS, MIN_TRADES = 12, 200
 T_PASS, T_PROMISING = 2.0, 1.5
 UNKNOWN_MAX = 0.25
+FETCH_ERROR_MAX = 0.05
+MIN_HALF_DAYS = 5
 
 
 # ── pure parts (tested) ──────────────────────────────────────────────────────
@@ -53,6 +55,15 @@ def mirror_bars(bars, e: float):
 
 def short_bp(entry: float, cover: float) -> float:
     return (entry - cover) / entry * 1e4
+
+
+def short_gross(e: float, cover: float, res: dict) -> float:
+    """Short return in bp with the T1 blend. res carries the mirrored target (t1_px); its real price is e^2/t1_px."""
+    full = short_bp(e, cover)
+    if res.get("t1_hit") and res.get("t1_px"):
+        sc = float(res.get("scale") or 0.0)
+        return sc * short_bp(e, e * e / float(res["t1_px"])) + (1 - sc) * full
+    return full
 
 
 def tier(px: float) -> str:
@@ -126,12 +137,15 @@ def by_day(rows: list[dict], key: str) -> dict[str, float]:
     return {d: statistics.fmean(v) for d, v in g.items()}
 
 
-def word(rows: list[dict], unknown_share: float) -> tuple[str, dict]:
+def word(rows: list[dict], unknown_share: float, fetch_error_share: float = 0.0) -> tuple[str, dict]:
     """The prereg's call on the primary rows (each has day, net, slip)."""
     if unknown_share > UNKNOWN_MAX:
         return "NOT READ (asset flags unknown)", {}
+    if fetch_error_share > FETCH_ERROR_MAX:
+        return "NOT READ (fetch errors)", {}
     days = by_day(rows, "net")
-    if len(days) < MIN_DAYS or len(rows) < MIN_TRADES:
+    if (len(days) < MIN_DAYS or len(rows) < MIN_TRADES or sum(d <= A_END for d in days) < MIN_HALF_DAYS
+            or sum(d > A_END for d in days) < MIN_HALF_DAYS):
         return "UNDERPOWERED", {}
     a = day_stat([v for d, v in days.items() if d <= A_END])
     b = day_stat([v for d, v in days.items() if d > A_END])
@@ -171,7 +185,7 @@ def run_side(CE, sym: str, key: str, ts: float, cl, bars, cfg: dict, end: float,
                     res = CE.finalize_at_session_end(res, h)
                 if short and res["status"] == "final":
                     res["exit"] = e * e / res["exit"]
-                    res["gross_bp"] = round(short_bp(e, res["exit"]), 1)
+                    res["gross_bp"] = round(short_gross(e, res["exit"], res), 1)
                 return res, trades
         h = min(end, h + 3600)
 
@@ -195,35 +209,32 @@ def data_keys() -> dict:
     return {"api_key": d["alpaca_data_api_key"], "secret_key": d["alpaca_data_secret_key"]}
 
 
-def asset_flags(syms: set[str]) -> dict[str, list]:
-    """[shortable, easy_to_borrow] or None (unknown). Today's flags, from the data-only account's keys."""
+def asset_flags(syms: set[str]) -> dict[str, list | None]:
+    """[shortable, easy_to_borrow] or None (unknown). Today's flags: one get_all_assets on the data-only account's
+    keys; missing names are retried on every run. The 10/02 shortable.json wrote errors as [False, False], so only
+    its True flags are taken from it."""
     p = OUT / "assets.json"
-    have = json.load(open(p)) if p.exists() else {}
+    have = {k: v for k, v in (json.load(open(p)) if p.exists() else {}).items() if v is not None}
+    need = syms - set(have)
+    if need:
+        try:
+            from alpaca.trading.client import TradingClient
+            from alpaca.trading.enums import AssetClass
+            from alpaca.trading.requests import GetAssetsRequest
+            k = data_keys()
+            tc = TradingClient(k["api_key"], k["secret_key"], paper=True)
+            for a in tc.get_all_assets(GetAssetsRequest(asset_class=AssetClass.US_EQUITY)):
+                if a.symbol in need:
+                    have[a.symbol] = [bool(a.shortable), bool(a.easy_to_borrow)]
+        except Exception as e:  # noqa: BLE001 - unknown flags are counted and gate the word
+            print(f"  asset list unavailable: {type(e).__name__} {str(e)[:100]}", file=sys.stderr)
     old = ROOT / "ai_reports" / "short_squares" / "shortable.json"
-    tc = None
-    try:
-        from alpaca.trading.client import TradingClient
-        k = data_keys()
-        tc = TradingClient(k["api_key"], k["secret_key"], paper=True)
-    except Exception as e:  # noqa: BLE001
-        print(f"  asset client unavailable: {str(e)[:100]}", file=sys.stderr)
-    for s in sorted(syms - set(have)):
-        got = None
-        if tc is not None:
-            try:
-                a = tc.get_asset(s)
-                got = [bool(a.shortable), bool(a.easy_to_borrow)]
-            except Exception as e:  # noqa: BLE001
-                if "not found" not in str(e).lower():
-                    print(f"  asset {s}: {str(e)[:80]}", file=sys.stderr)
-            time.sleep(0.25)
-        have[s] = got
     if old.exists():
-        for s, v in json.load(open(old)).items():
-            if have.get(s) is None and s in syms:
-                have[s] = list(v)
+        for k, v in json.load(open(old)).items():
+            if k in syms and k not in have and v and v[0]:
+                have[k] = list(v)
     json.dump(have, open(p, "w"))
-    return have
+    return {k: have.get(k) for k in syms}
 
 
 def daily_bars(cl, syms: set[str]) -> dict[str, list]:
@@ -238,8 +249,12 @@ def daily_bars(cl, syms: set[str]) -> dict[str, list]:
     end = datetime(2026, 10, 17, tzinfo=ET).astimezone(timezone.utc)
     for i in range(0, len(need), 100):
         chunk = need[i:i + 100]
-        got = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=chunk, timeframe=TimeFrame.Day, start=start,
-                                                 end=end, feed=DataFeed.SIP, adjustment=Adjustment.RAW)).data or {}
+        try:
+            got = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=chunk, timeframe=TimeFrame.Day, start=start,
+                                                     end=end, feed=DataFeed.SIP, adjustment=Adjustment.RAW)).data or {}
+        except Exception as e:  # noqa: BLE001 - these names read ssr_unknown and stay out of primary
+            print(f"  daily bars failed for {len(chunk)} names: {str(e)[:100]}", file=sys.stderr)
+            continue
         for s in chunk:
             have[s] = [(b.timestamp.astimezone(ET).strftime("%Y-%m-%d"), float(b.low), float(b.close))
                        for b in got.get(s, [])]
@@ -248,8 +263,11 @@ def daily_bars(cl, syms: set[str]) -> dict[str, list]:
     return have
 
 
-def ssr_for(daily: list, day: str, low_before: float | None) -> bool:
-    prior = [r for r in daily if r[0] < day]
+def ssr_for(daily: list | None, day: str, low_before: float | None) -> bool | None:
+    """True/False, or None when there is no prior daily bar to read (ssr unknown: kept out of primary)."""
+    prior = [r for r in (daily or []) if r[0] < day]
+    if not prior:
+        return None
     pc = prior[-1][2] if prior else None
     pl = prior[-1][1] if prior else None
     ppc = prior[-2][2] if len(prior) > 1 else None
@@ -319,7 +337,7 @@ def main() -> None:
     daily = daily_bars(cl, syms)
     qcache, box = RC.load_cache(), {}
     bar_cache: dict[tuple, list] = {}
-    rows, counts, reasons = [], Counter(), Counter()
+    rows, counts, reasons, err_days = [], Counter(), Counter(), Counter()
     for i, fl in enumerate(fills):
         sym, ts, day = fl["symbol"], fl["ts"], fl["day"]
         if i % 25 == 0:
@@ -339,14 +357,17 @@ def main() -> None:
             lg, _ = run_side(CE, sym, key, ts, cl, bars, cfg, end, sp_q, "asis", short=False)
         except Exception as e:  # noqa: BLE001 - one bad request must not end the run; counted
             counts["fetch_error"] += 1
+            err_days[day] += 1
             print(f"  {key}: {type(e).__name__} {str(e)[:120]}", file=sys.stderr)
             continue
         e_px, e_ts = res["entry"], res["entry_ts"]
-        before = [b[2] for b in bars if b[0] + 60 <= e_ts and et_min(b[0]) >= OPEN_MIN]
+        # Today's low before the short: completed RTH minute lows, the prints from the fill to the entry, the entry.
+        before = ([b[2] for b in bars if b[0] + 60 <= e_ts and et_min(b[0]) >= OPEN_MIN]
+                  + [p for t, p, s in trades if t <= e_ts and s >= CE.ROUND_LOT] + [e_px])
         hold = [p for t, p, s in trades if e_ts <= t <= res["exit_ts"] and s >= CE.ROUND_LOT]
         fx = fixed_hold(CE, trades, e_ts, e_px, day)
         rows.append({"day": day, "symbol": sym, "ts": ts, "entry": e_px, "tier": tier(e_px), "sp_q": sp_q,
-                     "flags": flags.get(sym), "ssr": ssr_for(daily.get(sym, []), day, min(before) if before else None),
+                     "flags": flags.get(sym), "ssr": ssr_for(daily.get(sym), day, min(before)),
                      "gross": res["gross_bp"], "reason": res["reason"],
                      "scaled_gross": sc.get("gross_bp") if sc.get("status") == "final" else None,
                      "long_gross": lg.get("gross_bp") if lg.get("status") == "final" else None,
@@ -372,15 +393,21 @@ def main() -> None:
     ten = [r for r in rows if r["tier"] == "10+"]
     unknown = sum(1 for r in ten if r["flags"] is None) / len(ten) if ten else 1.0
     etb = lambda r: r["flags"] is not None and r["flags"][0] and r["flags"][1]  # noqa: E731
-    primary = [r for r in ten if etb(r) and not r["ssr"]]
-    w, info = word(primary, unknown)
+    primary = [r for r in ten if etb(r) and r["ssr"] is False]
+    attempted = len(rows) + counts["fetch_error"]
+    err_share = counts["fetch_error"] / attempted if attempted else 0.0
+    w, info = word(primary, unknown, err_share)
     fl = Counter("unknown" if r["flags"] is None else "easy" if etb(r) else "hard" if r["flags"][0] else "not shortable"
                  for r in rows)
     lines = ["# Short the desk's fills with the live exits mirrored (fill_short_prereg)", "",
              f"Sessions {FIRST}..{LAST}; half A ..{A_END}, half B after. Fills {dict(n)}. Scored {len(rows)}; "
              f"{dict(counts)}.", "",
              f"Price tiers {dict(Counter(r['tier'] for r in rows))}. Asset flags (today's) {dict(fl)}; "
-             f"unknown among $10+: {unknown:.0%}. SSR at entry: {sum(r['ssr'] for r in rows)}.", "",
+             f"unknown among $10+: {unknown:.0%}. SSR at entry: {sum(r['ssr'] is True for r in rows)}, "
+             f"SSR unknown (no daily bar): {sum(r['ssr'] is None for r in rows)}. Fetch errors {counts['fetch_error']} "
+             f"of {attempted} ({err_share:.1%}) by day {dict(sorted(err_days.items()))}. Fixed-30 m line missing "
+             f"{sum(r['fixed30'] is None for r in rows)}.", "",
+             "All prices are SIP (the consolidated tape); the live desk trades on IEX quotes.", "",
              "Net = short return - full quoted spread at entry - 0.5 bp fees. Long control = the same fill long, same exits unmirrored, minus the spread.", ""]
     lines += block("PRIMARY: $10+, shortable and easy to borrow, no SSR", primary)
     lines += block("$10+, any flags (information)", ten)

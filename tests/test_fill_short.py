@@ -130,3 +130,89 @@ def test_word_refusals():
     assert F.word(_rows(lambda i: 8.0), 0.30)[0].startswith("NOT READ")
     assert F.word(_rows(lambda i: 8.0, days=10), 0.0)[0] == "UNDERPOWERED"
     assert F.word(_rows(lambda i: 8.0, n=5), 0.0)[0] == "UNDERPOWERED"
+
+
+def _hold_case(monkeypatch, answer):
+    """Real price rises 0.75% in 20 s (through the short's first stop), then falls 2.5%. Minute bars cover it all."""
+    import ai_positions as cp
+    from tools import sell_double_check as sdc
+    t0 = _t(10, 0)
+
+    def real(t):
+        if t < 0:
+            return 20.0 - t / 3600 * 3.0
+        if t < 20:
+            return 20.0 + 0.15 * t / 20
+        return 20.15 - 0.65 * min(1.0, (t - 20) / 1800)
+    bars = []
+    for m in range(-240, 60):
+        ps = [real(60 * m + k) for k in range(0, 60, 5)]
+        bars.append((t0 + 60 * m, max(ps) + 0.005, min(ps) - 0.005, ps[-1]))
+    tr = [(t0 + 1 + 2 * i, round(real(1 + 2 * i), 2), 200) for i in range(1800)]
+    monkeypatch.setattr(CE, "cached_trades", lambda cl, sym, key, click, h: [t for t in tr if t[0] <= h])
+    seen = []
+
+    def fake_eval(sym, b, px, **kw):
+        seen.append((b, px))
+        return {"sell": answer, "reason": "planted"}
+    monkeypatch.setattr(sdc, "evaluate_symbol", fake_eval)
+    monkeypatch.setattr(cp, "_dc_note", lambda *_: None)
+    res, _ = F.run_side(CE, "X", "k", t0, None, bars, _cfg(), _t(16, 0), 5.0, "asis", short=True)
+    return res, seen, bars
+
+
+def test_the_trend_hold_reads_mirrored_bars_and_its_hold_keeps_the_short(monkeypatch):
+    sold, seen, bars = _hold_case(monkeypatch, "yes")
+    assert seen, "the trend hold was never asked"
+    b, px = seen[0]
+    e = sold["entry"]
+    last = next(x for x in bars if x[0] == b[0][-1])
+    assert abs(b[1][-1] - e * e / last[2]) < 1e-9                 # mirrored high = E^2 / real low
+    assert abs(b[2][-1] - e * e / last[1]) < 1e-9                 # mirrored low = E^2 / real high
+    assert max(b[0]) + 60 <= sold["exit_ts"]                     # completed bars only
+    assert px < e                                                # a real rise is a fall in the mirror
+    assert sold["gross_bp"] < 0 and sold["exit_ts"] - _t(10, 0) < 120
+    held, _, _ = _hold_case(monkeypatch, "no")
+    assert held["exit_ts"] > sold["exit_ts"] + 300 and held["gross_bp"] > sold["gross_bp"]
+
+
+def test_double_check_bars_are_point_in_time(monkeypatch):
+    """double_check_sell / no_progress read _symbol_bars_for_double_check; simulate patches it to completed bars."""
+    import ai_positions as cp
+    t0 = _t(10, 0)
+    bars = [(t0 - 3600 + 60 * i, 20.1, 19.9, 20.0) for i in range(200)]
+    got = []
+    orig = CE.bars_upto
+    monkeypatch.setattr(CE, "bars_upto", lambda b, now: got.append(now) or orig(b, now))
+    tr = [(t0 + 1 + 2 * i, 20.0 - 0.01 * i, 200) for i in range(100)]
+    CE.simulate("X", t0, tr, bars, _cfg(), t0 + 600)
+    assert cp._symbol_bars_for_double_check.__module__ == "ai_positions"     # restored
+    seen = {}
+
+    def probe(*a, **k):
+        seen["v"] = cp._symbol_bars_for_double_check("X", 0.0)
+        return None
+    monkeypatch.setattr(cp, "initial_local_stop", lambda *a, **k: (probe(), 19.9)[1])
+    CE.simulate("X", t0, tr, bars, _cfg(), t0 + 600)
+    v = seen["v"]
+    assert v is not None and max(v[0]) + 60 <= t0 + 1 + 1e-6        # nothing after the entry print
+
+
+def test_short_t1_blend():
+    # Mirror target_1 at 21.0 for an entry at 20 = real 400/21 = 19.048: half covered there, half at 19.5.
+    res = {"t1_hit": True, "t1_px": 21.0, "scale": 0.5}
+    got = F.short_gross(20.0, 19.5, res)
+    want = 0.5 * F.short_bp(20.0, 400 / 21) + 0.5 * F.short_bp(20.0, 19.5)
+    assert abs(got - want) < 1e-9
+    assert F.short_gross(20.0, 19.5, {"t1_hit": False}) == F.short_bp(20.0, 19.5)
+
+
+def test_call_exits_session_end_keeps_the_t1_blend():
+    res = {"status": "open", "entry": 10.0, "mark": 10.0, "t1_hit": True, "t1_px": 10.5, "scale": 0.5}
+    assert CE.finalize_at_session_end(res, 0.0)["gross_bp"] == 250.0
+
+
+def test_word_needs_days_in_each_half_and_reads_fetch_errors():
+    rows = [r for r in _rows(lambda i: 8.0, days=16) if r["day"] > F.A_END or r["day"] <= "2026-09-25"]
+    assert F.word(rows, 0.0)[0] == "UNDERPOWERED"           # 3 days in half A
+    assert F.word(_rows(lambda i: 8.0), 0.0, fetch_error_share=0.06)[0].startswith("NOT READ")
