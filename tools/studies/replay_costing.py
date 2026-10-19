@@ -39,6 +39,7 @@ def load_cache() -> dict:
 def save_cache(cache: dict) -> None:
     """Atomic: write a temp file and rename it, so two writers (the calls panel, a study) never leave a
     truncated file. The last writer wins; a lost entry is refetched."""
+    os.makedirs(os.path.dirname(CACHE), exist_ok=True)   # a fresh worktree has no ai_reports/ (gitignored)
     tmp = f"{CACHE}.{os.getpid()}.tmp"
     with open(tmp, "w") as f:
         json.dump(cache, f)
