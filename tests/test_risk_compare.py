@@ -48,3 +48,10 @@ def test_report_runs_on_synthetic_series():
                     "spy_first": "1998-06-01", "spy_last": "2026-10-03"}
     md = R.report(ser)
     assert "W1 common window 2017-02..2026-09" in md and "S5_momentum_trail10" in md and "W2 long window" in md
+
+
+def test_skim_takes_profit_and_carries_a_loss():
+    k = R.skim([0.10, -0.20, 0.10, 0.20, 0.05], ["2020-01", "2020-02", "2020-03", "2020-04", "2020-05"])
+    # 11000 -> pay 1000; 8000; 8800; 10560 -> pay 560; 10500 -> pay 500
+    assert abs(k["paid"] - 2060.0) < 1e-6 and k["paid_months"] == 3 and k["longest_gap"] == 2
+    assert abs(k["low"] - 8000.0) < 1e-6 and abs(k["end"] - 10000.0) < 1e-6

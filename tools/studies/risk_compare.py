@@ -99,6 +99,29 @@ def stats(rets: list[float], labels: list[str]) -> dict:
             "pos": sum(1 for r in rets if r > 0) / len(rets), "end": 10_000 * eq, "months": len(rets)}
 
 
+def skim(rets: list[float], labels: list[str], base: float = 10_000.0) -> dict:
+    """Operator 10/19: start with `base`; at each month-end take out everything above `base`; below it, take
+    nothing and carry on with what is left (no reserve, no top-up)."""
+    eq, paid, n_paid, gap, longest_gap, low = base, 0.0, 0, 0, 0, base
+    by_year: dict[str, float] = {}
+    for r, lab in zip(rets, labels):
+        eq *= 1.0 + r
+        low = min(low, eq)
+        if eq > base:
+            out = eq - base
+            paid += out
+            n_paid += 1
+            by_year[lab[:4]] = by_year.get(lab[:4], 0.0) + out
+            eq = base
+            gap = 0
+        else:
+            gap += 1
+            longest_gap = max(longest_gap, gap)
+            by_year.setdefault(lab[:4], 0.0)
+    return {"paid": paid, "months": len(rets), "paid_months": n_paid, "longest_gap": longest_gap, "low": low,
+            "end": eq, "by_year": by_year, "per_month": paid / len(rets) if rets else 0.0}
+
+
 # ── data ─────────────────────────────────────────────────────────────────────
 
 def spy_daily():
@@ -160,6 +183,24 @@ def report(series: dict) -> str:
             s = stats([series[n][m] for m in ms], ms)
             lines.append(f"| {n} | {s['cagr']:+.1%} | {s['vol']:.1%} | {s['ratio']:.2f} | {s['worst_month']:+.1%} | "
                          f"{s['worst_year']:+.1%} | {s['mdd']:+.1%} | {s['longest_under']} | {s['pos']:.0%} | ${s['end']:,.0f} |")
+        lines.append("")
+    lines += ["## Monthly payout: $10,000 start, take everything above $10,000 at each month-end, no reserve", "",
+              "Below $10,000 nothing is paid and the account carries on with what is left until it is back above.", ""]
+    for title, months, names in (("2017-02..2026-09", w1_months, NAMES), (f"{W2[0]}..{W2[1]}", None, NAMES[:4])):
+        lines += [f"### {title}", "",
+                  "| strategy | total paid | average per month | months with a payout | longest run with no payout | lowest balance | balance at the end |",
+                  "|---|---:|---:|---:|---:|---:|---:|"]
+        yearly = {}
+        for n in names:
+            ms = months if months is not None else [m for m in sorted(series[n]) if W2[0] <= m <= W2[1]]
+            k = skim([series[n][m] for m in ms], ms)
+            yearly[n] = k["by_year"]
+            lines.append(f"| {n} | ${k['paid']:,.0f} | ${k['per_month']:,.0f} | {k['paid_months']}/{k['months']} | "
+                         f"{k['longest_gap']} months | ${k['low']:,.0f} | ${k['end']:,.0f} |")
+        years = sorted({y for v in yearly.values() for y in v})
+        lines += ["", "Paid out per year:", "", "| year | " + " | ".join(names) + " |", "|---|" + "---:|" * len(names)]
+        for y in years:
+            lines.append(f"| {y} | " + " | ".join(f"${yearly[n].get(y, 0.0):,.0f}" for n in names) + " |")
         lines.append("")
     hold = meta["hold"]
     lines += [f"Trend rule (S1/S3): {meta['switches']} switches, {meta['cash_months']} months in cash since "
