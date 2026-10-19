@@ -218,6 +218,10 @@ _BLOCKER_LABELS: dict[str, str] = {
     "wait_mid_rise": "wait -50 cross",
     "mid_rise_stale": "-50 cross stale",
     "mid_rise_lost": "back under -50",
+    "last_any_turn": "ready",
+    "any_turn": "ready",
+    "wait_turn": "wait %R turn",
+    "turn_stale": "%R turn stale",
     "wait_square": "wait ■",
     "square_confirm": "■ confirming",
     "wait_presquare": "wait ▢",
@@ -12145,6 +12149,57 @@ def exh_mid_rise_arm_enabled(cfg: dict | None) -> bool:
     return bool(cfg.get("ai_watch_exh_mid_rise_arm", False))
 
 
+def exh_any_turn_arm_enabled(cfg: dict | None) -> bool:
+    """Any-%R-turn arm (operator 10/19, replay measure lane; docs/studies/turn_open_prereg.json).
+
+    When on it is the only exhaustion lane, like mid-rise. Off live.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return bool(cfg.get("ai_watch_exh_any_turn_arm", False))
+
+
+# {symbol: (recent (ts, fast %R) readings, ts the turn armed or None)}. Process local, like mid-rise.
+_ANY_TURN_STATE: dict[str, tuple[list[tuple[float, float]], float | None]] = {}
+
+
+def _any_turn_allows_buy(
+    record: dict,
+    cfg: dict,
+    *,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    """The prescreen BOTHUP turn, read live: both %R lines rising, out of a dip (fast <= -70 within the last
+    ai_watch_any_turn_look_sec), still early (fast <= -40). Arms for ai_watch_any_turn_max_age_sec after the
+    turn is first seen; fast %R turning down cancels it."""
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    sym = str(record.get("symbol") or "").upper()
+    fast = _f_or_none(ind.get("pctr"))
+    if fast is None or not sym:
+        return False, "no_exhaustion_data"
+    t = float(now if now is not None else time.time())
+    look = float(cfg.get("ai_watch_any_turn_look_sec", 600.0) or 600.0)
+    max_age = float(cfg.get("ai_watch_any_turn_max_age_sec", 60.0) or 60.0)
+    dip = float(cfg.get("ai_watch_any_turn_dip", -70.0))
+    early = float(cfg.get("ai_watch_any_turn_early", -40.0))
+    hist, since = _ANY_TURN_STATE.get(sym, ([], None))
+    hist = [(ts, v) for ts, v in hist if t - ts <= look]
+    both = ind.get("pctr_rising") is True and ind.get("pctr_slow_rising") is True
+    out_of_dip = any(v <= dip for _ts, v in hist) or fast <= dip
+    if both and out_of_dip and fast <= early and since is None:
+        since = t
+    if not getattr(_MID_RISE_PEEK, "on", False):
+        _ANY_TURN_STATE[sym] = (hist + [(t, float(fast))], since)
+    if since is None:
+        return False, "wait_turn"
+    if t - since > max_age:
+        if not getattr(_MID_RISE_PEEK, "on", False):
+            _ANY_TURN_STATE[sym] = (hist + [(t, float(fast))], None)
+        return False, "turn_stale"
+    if ind.get("pctr_falling"):
+        return False, "exh_falling"
+    return True, "any_turn"
+
+
 def square_min_count(cfg: dict | None = None) -> int:
     """Consecutive dual-OB+tight polls required before a square open."""
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -13116,6 +13171,8 @@ def exhaustion_allows_buy(
     # Live square/triangle product keeps mid-rise off.
     if exh_mid_rise_arm_enabled(cfg):
         return _mid_rise_allows_buy(record, cfg, now=now)
+    if exh_any_turn_arm_enabled(cfg):
+        return _any_turn_allows_buy(record, cfg, now=now)
     # Full square (■), empty square (▢), and leave-oversold (▲) are
     # independent arms. A pass returns immediately. A square miss still
     # consults the empty-square and oversold arms when those flags are on.

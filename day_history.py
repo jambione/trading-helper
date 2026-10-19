@@ -39,6 +39,7 @@ _LABELS = {
     "overbought": "full square",
     "overbought_hot": "full square",
     "mid_rise": "mid rise",
+    "any_turn": "%R turn",
     "heating": "heating",
     "local_trail": "local trail",
     "left_overbought": "left overbought",
