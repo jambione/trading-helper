@@ -22,7 +22,9 @@ import numpy as np
 
 ROOT = os.environ.get("REPO") or os.getcwd()
 WH = os.path.join(ROOT, "ai_reports", "warehouse")
-PREREG = os.path.join(ROOT, "docs", "studies", "pairs_revert_prereg.json")
+# The pair list is read from the prereg: next to this script when it was copied to a job folder, else the repo's.
+_HERE_PREREG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pairs_revert_prereg.json")
+PREREG = _HERE_PREREG if os.path.exists(_HERE_PREREG) else os.path.join(ROOT, "docs", "studies", "pairs_revert_prereg.json")
 RESULT = os.path.join(ROOT, "ai_reports", "warehouse", "pairs_revert_result.md")
 
 FIRST_DAY, LAST_DAY, N_DAYS, CUT = "2026-04-28", "2026-10-15", 119, "2026-07-23"

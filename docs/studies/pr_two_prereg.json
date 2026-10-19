@@ -1,0 +1,27 @@
+{
+  "study": "Two candles. Does the shape of the last two 1-minute bars (two in a row, speeding up, slowing down, a turn, the line through two closes) mark the minutes whose next 3 minutes run? Ten pre-declared rows, each reported on both halves. No %R.",
+  "registered_at": "2026-10-19, before any return of these rows was computed.",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-19, after pr_run (five WIDER, one LOWER): if the last candle cannot pick the run start, use the last two, like a line drawn between them.",
+  "prior_evidence": "Stated before the run. pr_run's ret1 (one bar) and ret3 (close now vs 3 minutes back, a line through four closes) both read WIDER on these same 119 sessions: the next 3 minutes moved more both ways, with no lean. pr_path and pr_read used histories at 3, 5, 15 and 30 minutes and found about one point of up-odds at most. The line rows here sit between ret1 and ret3 and are expected to read WIDER. The shape rows (speeding up, slowing down, a turn) were not tested before.",
+  "method": "Identical to docs/studies/pr_run_prereg.json and its two amendments: same outcome (SIP open of m+1 to close of m+3 up more than 30 bp), same drop share, same base rule (each row against the minutes it could have been drawn from), same day-clustered run and edge gaps, same close-entry information line, same words (HIGHER needs the run gap above base and above the drop gap with day_edge_t >= 2 on both halves and a close-entry day_edge above 0 on both; else BOUNCE, WIDER, LOWER, NOT THE SAME, THIN), same cutoff discipline (half A only), same sample, split, and refusal guard. The scoring code is pr_run's (R._slice_day, R._collect, R.describe, R._half_line), imported unchanged.",
+  "rows": {
+    "up2": "Bar m and bar m-1 both up by at least the floor (close/open - 1 >= the half-A median of |bar return|).",
+    "down2": "Both down by at least the floor.",
+    "accel_up": "up2, and bar m's return larger than bar m-1's.",
+    "accel_down": "down2, and bar m's return more negative than bar m-1's.",
+    "slow_up": "up2, and bar m's return smaller than bar m-1's.",
+    "slow_down": "down2, and bar m's return less negative than bar m-1's.",
+    "turn_up": "Bar m-1 at or below the half-A 20th percentile of bar return, bar m at or above the 80th.",
+    "turn_down": "Bar m-1 at or above the 80th, bar m at or below the 20th.",
+    "line2_hi": "Close of m divided by close of m-2, minus 1, at or above the half-A 80th percentile. Minutes with no bar m-2 are left out of this row, its base, and its cutoff.",
+    "line2_lo": "That two-close line at or below the half-A 20th percentile."
+  },
+  "forward": "Known at the close of minute m: bars m, m-1 and m-2. A later bar is not an input. Both bars m and m-1 must exist for a minute to be scored. No flat fill.",
+  "window": "Minutes 09:32 through 15:56 ET, by the bar's start-of-minute label: 09:32 is the first minute with two completed bars after 09:30. 15:56 is the last minute whose return ends on the 15:59 close.",
+  "multiplicity": "Ten rows. A HIGHER on one row needs t >= 2 on both halves independently, and both halves are separate sessions; with ten rows, one HIGHER at t just above 2 is read as a candidate for a fresh forward prereg, not as a result.",
+  "data": "Same warehouse and sample as pr_run: 119 sessions 2026-04-28..2026-10-15, 400 names per session seeded sha256(day|prescreen-sample), SIP for bars and returns. The run refuses unless n = 119, first = 2026-04-28, last = 2026-10-15, and the median split is 2026-07-23.",
+  "known_limits": "SIP-only: a HIGHER needs an IEX-feature replication before any use. A description does not change config.",
+  "no_retuning": "The ten rows, the median-size floor, the 20th/80th percentiles, the window, and everything inherited from pr_run are fixed. Another shape or threshold is a new prereg.",
+  "command": "On the mini, after a result-skeptic Mode 1 READY, and only then: mkdir -p /tmp/pr_two_job; scp tools/studies/pr_two.py tools/studies/pr_run.py to /tmp/pr_two_job/, then REPO=$PWD nice -n 19 .venv/bin/python /tmp/pr_two_job/pr_two.py --score. No pytest over SSH. No config edit."
+}
