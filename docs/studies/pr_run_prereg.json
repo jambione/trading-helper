@@ -1,0 +1,25 @@
+{
+  "study": "Does the bar that just closed mark the minutes whose next 3 minutes run. Six pre-declared rows, each reported on both halves. No %R.",
+  "registered_at": "2026-10-18, before any return of these rows was computed.",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-18: find, with a test, how to pick the minute a run starts. The %R counts did not mark it. About 5% of those minutes rose more than 30 bp over the next 3 minutes, in every combination. This test asks whether the bar that just finished is different from a random minute.",
+  "what_a_session_is": "Every bet is intraday. The bar is read at its close. The return is the next 3 minutes of that same session. Half A, sessions on or before 2026-07-23, is where the two cutoffs are taken. Half B, sessions after 2026-07-23, is the other column. The split is which sessions. It is not a daily hold.",
+  "outcome": "A minute runs when the SIP return from the open of minute m+1 to the close of minute m+3 is more than 30 bp. The share of minutes that run is the number to beat. The base share is every scored minute in that half, not the minutes inside one row.",
+  "rows": {
+    "ret1_hi": "The bar that just closed, close divided by open minus 1, at or above the 80th percentile of half A.",
+    "ret1_lo": "That same 1-minute return at or below the 20th percentile of half A.",
+    "ret3_hi": "Close now divided by the close 3 minutes ago, minus 1, at or above the 80th percentile of half A. Minutes with no close 3 minutes ago are left out of this row and out of its cutoff.",
+    "ret3_lo": "That same 3-minute return at or below the 20th percentile of half A.",
+    "range_hi": "The bar's high minus low, divided by its close, at or above the 80th percentile of half A.",
+    "range_lo": "That same range at or below the 20th percentile of half A."
+  },
+  "cutoffs": "Each cutoff is the 20th and 80th percentile of that feature on half A minutes only. The return is not an input to the cutoff. Half B does not move the cutoff. A minute is not compared with a percentile computed from later minutes of its own day.",
+  "forward": "Known at the close of minute m: that bar's open, high, low, and close, and the close 3 minutes earlier. The return starts at the SIP open of m+1. A later bar is not an input. No flat fill of a missing minute.",
+  "what_is_printed": "For each row and each half: days, minutes, the share that ran (up more than 30 bp), the share that were up at all, the day-clustered gross mean and its t, and the day-clustered difference between the row's run share and that day's base share. The base share of the half is printed once. 10 bp and 3 bp are labeled printed. The trail is not simulated.",
+  "description": "HIGHER when the row's run share is above that half's base share on both halves. LOWER when it is below on both. NOT THE SAME when the two halves disagree. THIN when either half has fewer than 30 days, fewer than 1000 minutes, or no share. There is no PASS and no single call. A description does not change config. The size of the gap over the base share is the result. A HIGHER row whose gap is a fraction of a percent is not an open.",
+  "left_out": "No %R line, gap, hook, or square. Volume pace, a name already up on the day, news, sector, and a volume breakout are already closed and are not in this test.",
+  "data": "Same warehouse and sample as the path test: 119 sessions 2026-04-28..2026-10-15, 400 names per session seeded sha256(day|prescreen-sample), names with today's IEX, today's SIP, and the previous session's IEX. The parent list is the prior day's liquid names, not today's watchlist. SIP for the bar and for the return. A name is not dropped because of how many bars the finished day has. The run refuses unless n = 119, first = 2026-04-28, last = 2026-10-15, and the median split is 2026-07-23.",
+  "window": "Minutes 09:31 through 15:56 ET. 09:31 is the first completed bar. 15:56 is the last minute whose 3-minute return ends on the 15:59 close.",
+  "no_retuning": "The six rows, the 20th and 80th percentiles, the 30 bp run, the 3-minute return, the window, the sample, and the 2026-07-23 split are fixed. A different cutoff or a seventh row is a new prereg.",
+  "command": "On the mini, after a result-skeptic Mode 1 READY, and only then: scp tools/studies/pr_run.py to /tmp, then REPO=$PWD nice -n 19 .venv/bin/python /tmp/pr_run.py --score. No pytest over SSH. No config edit."
+}

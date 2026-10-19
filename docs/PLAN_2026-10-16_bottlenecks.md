@@ -83,4 +83,4 @@ Flaws, ranked:
 3. Slow and leaky execution (loop 3.7 s vs 3 s; entry slippage 2-11 bp; stop slippage ~7 bp). Caching fix in progress (ship after close); slippage per trade in the daily scorecard.
 4. Churn (199 evictions 09:30-10:53; ~0.5 opens/10m). Seat-grace arm in tonight's sweep.
 
-Cadence: nightly replay -> ship only pre-registered winners as one after-close batch; never mid-session. Morning scorecard: yesterday's per-trade mean, opens/10m, slippage, cumulative vs the 10/30 gate.
+Cadence: nightly replay -> ship only pre-registered winners as one after-close batch; never mid-session. Morning scorecard: yesterday's per-trade mean, opens/10m, entry and exit slippage, live trail-hold count and outcomes (first hold: RPRX 12:00 10/16), cumulative vs the 10/30 gate.

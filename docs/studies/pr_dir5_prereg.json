@@ -1,0 +1,22 @@
+{
+  "study": "Five-minute direction of the two %R lines and the gap, against the next 3 minutes and the next 5 minutes.",
+  "registered_at": "2026-10-17, before any return of this rule was computed.",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-17: the 10-minute path test was the wrong window. Trades last about 3 minutes, and nothing past 5 minutes matters. The belief is that the two lines trending, together with the gap, using a five-minute history for direction, lines up with what the price does next. This is that measurement. It is not a rerun of pr_path.",
+  "same_page": {
+    "gap": "Fast line minus slow line, in points. Positive means the fast line is above the slow line. Range -100 to +100. Not a price gap.",
+    "direction": "Where the reading is now minus where it was 5 minutes ago, on the 1-minute lines. Fast direction, slow direction, and gap direction. The path inside those 5 minutes is not a separate input. Yesterday's reading is not an input.",
+    "trending_together": "The fast direction and the slow direction have the same sign.",
+    "the_case": "Both lines rose over the last 5 minutes and the gap rose. That is the primary cell. Both lines fell and the gap fell is reported beside it and is not the call.",
+    "forward": "The lines are read at the close of minute m. The return starts at the SIP open of minute m+1. The 3-minute result ends at the SIP close of m+3. The 5-minute result ends at the SIP close of m+5. A minute is kept only when both of those returns exist.",
+    "causation": "The lines are computed from prices that have already printed. This test can show whether that picture lines up with the next 3 minutes. It cannot show that the lines cause the move."
+  },
+  "prior": "The 10-minute path test on this same sample found the top slice at 0.0 bp gross. That does not answer a 3-minute hold. The 5-minute direction was not a lag in that test.",
+  "data": "Same warehouse and sample as pr_path: 119 sessions 2026-04-28..2026-10-15, 400 names per session seeded sha256(day|prescreen-sample), names with today's IEX, today's SIP, and the previous session's IEX. IEX for the lines, SIP for the return. Lines warmed on the previous session. The causal minute grid from pr_path is reused: at most 14 flat minutes forward from a real print, no look at the next print, no overnight fill. The run refuses unless n = 119, first = 2026-04-28, last = 2026-10-15, and the median split is 2026-07-23.",
+  "window": "Minutes 09:35 through 15:50 ET. 09:35 is the first minute with a 5-minute history inside the regular session.",
+  "call": "One call, on one cell, on the 3-minute gross return. The cell is both lines up and the gap up over the last 5 minutes. CORRELATION requires both halves gross > 0, both halves day-clustered t >= 1.5, the held-out excess over the other minutes that day > 0 with t >= 1.5, and the held-out excess over the other names at the same minute > 0 with t >= 1.5, with at least 30 days and 1000 minutes on the held-out cell. A missing t, too few days, or indicator failures above 1% of name-days is UNDERPOWERED. Anything else is NO CORRELATION. The 5-minute return, the other seven sign cells, and the per-point slopes are pictures. They are not a second call.",
+  "pays": "Printed, not the call. On this liquid sample, 10 bp is the toll used by the other warehouse studies. 3 bp is the capped book's round trip and is printed because that is what a live trade pays. Neither number changes the call. No config change follows from this run.",
+  "why_not_a_later_minute_control": "Scoring every minute makes a later minute of the same name overlap a 3-minute hold. The controls are the other minutes that day, and the other names at the same minute.",
+  "no_retuning": "The 5-minute direction, the sign cells, the primary cell, the 3-minute call, the 5-minute picture, the window, the sample, and the split are fixed. A different history length is a new prereg.",
+  "command": "On the mini, after a result-skeptic Mode 1 READY: REPO=$PWD nice -n 19 .venv/bin/python /tmp/pr_dir5.py --score"
+}

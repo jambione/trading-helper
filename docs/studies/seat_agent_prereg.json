@@ -1,0 +1,67 @@
+{
+  "study": "One seat test. The live entry and the live exit stay as they are. Do cash-session round trips on names the 08:30 Grok and Gemini lists had already written down pay more than cash-session round trips on names the movers screen had already listed?",
+  "registered_at": "2026-10-17, after a coverage read of ~/session_snapshots and before any round-trip return was computed.",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-17: use the agents where the book is late. Find the name earlier, then keep the %R entry. One cell only. Not a new %R minute, and not a public agent as the click.",
+  "prior": "LOW. A mechanical early seat (pre-screen turn: a %R signal on any liquid name before the movers screen) already failed. The runway note on research names was a runner rate, not a costed round trip. The morning lists can name a stock that has already moved; if they do, this test keeps those round trips and the result shows it.",
+  "not_this_study": "Not a retune of prescreen_turn. Not the 11:30 or 14:30 lists. Not a new %R threshold, a new hold, or a new exit. TradingAgents is not the click. Seed-rank files are not the morning list.",
+  "coverage_before_returns": {
+    "archive": "~/session_snapshots/YYYY-MM-DD on the mini. 17 weekday folders, 2026-09-24 through 2026-10-16, each with DONE, fills.jsonl, decision_ledger.jsonl, and state_snapshots.jsonl.gz.",
+    "suggestion_files": "grok_suggestions.json and claude_suggestions.json are in the archive. agy_suggestions.json never appears; the desk still reads claude_suggestions.json, and that file is the Gemini list (claude_backend is agy). suggestions.json has no morning last_ok and is not used.",
+    "publish_clock": "data.last_ok is the research-run clock. data.updated moves all morning because quotes refresh, so it is not the publish. On the days below, last_ok is 08:31 or 08:32 except 2026-09-29, which is 09:07 (Grok) and 09:08 (Gemini), still before 09:30. A 14:30 last_ok is present on some later days and is not a seat.",
+    "excluded_days": "2026-09-24 has no suggestion snapshots. 2026-10-08 has suggestion snapshots but no last_ok on that date (a stale list). Neither day is scored and neither is added after the fact.",
+    "entry_log": "decision_ledger event_kind entry_ok is present on every archived day, and the buy-fill count is within a few of that count. No return was computed from those rows."
+  },
+  "population": {
+    "days_A": ["2026-09-25", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06"],
+    "days_B": ["2026-10-07", "2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16"],
+    "split_rule": "The 15 days that have a same-day morning publish, sorted. Half A is the earlier half and includes the median day (the 8th, 2026-10-06). Half B is the later 7. This archive starts after the board-tape cut of 2026-09-24, so that cut is not used. The lists above are pinned. A pinned day whose morning list cannot be read is dropped and counted. The halves are not rebalanced."
+  },
+  "morning_list": "For grok_suggestions.json, agy_suggestions.json, and claude_suggestions.json: a snapshot qualifies when data.last_ok falls on that ET date and the clock is in [08:30, 09:30). If last_ok is absent, the timestamp in last_report_path is the clock. The frozen rows are the first qualifying snapshot of that file, not a later quote refresh and not a 14:30 publish. Symbols are the union. A day with only one of the two models still counts. A last_ok at 09:30 or later is not the morning list.",
+  "movers_list": "movers_stocks.json snapshots whose own data.ts falls on that ET date. A symbol is movers-listed at the earliest such data.ts at which it appears in rows. A file timestamp from another date does not count.",
+  "round_trip": "ai_reports fills, from the snapshot's fills.jsonl. Drop every fill whose client_order_id starts with on-, wk-, me-, or mir- before any pairing, buys and sells. Those are other books. Fold the remaining fills to the last fill event per order_id. Pair sells to earlier buys FIFO by symbol and quantity, including same-book buys outside the entry clock, so an early lot consumes its own sell. Then drop a trip whose buy is outside the entry clock. Return is sell price / buy price - 1, in bp. Prices are the broker filled_avg_price. The spread the paper account paid is already in those prices.",
+  "live_entry": "Keep the buy only when decision_ledger has event_kind entry_ok for that symbol with timestamp in [buy - 120s, buy + 2s]. That is the desk's entry. The buy's ET clock must be in [09:30, 15:50). The sell is the desk's own exit, including the local trail and the 15:50 flatten. This study does not resimulate either.",
+  "arms": {
+    "agent": "The symbol is on that day's frozen morning list. It stays in this arm even if the movers screen also listed it before the buy. The early seat is the claim.",
+    "movers": "The symbol is not on the morning list, and its movers data.ts is at or before the buy.",
+    "neither": "Excluded. Not a third cell. A 14:30-only name is neither."
+  },
+  "statistic": "On days in a half that have at least one agent trip and one movers trip: agent day-mean minus movers day-mean. Day-equal. Day-clustered t is mean(diff) / (sample stdev(diff) / sqrt(n)). Combined t uses every paired day in A and B together. The agent mean is the day-equal mean of the agent day-means on those same paired days.",
+  "promising": "Both halves have at least 6 paired days and, on those paired days only, at least 20 agent trips and at least 20 movers trips. Trips on unpaired days do not count toward 20. On the paired days, each half has diff mean > 0 and agent mean > 0. Combined diff mean > 0, combined agent mean > 0, and combined t >= 1.5. That is the only passing grade. It earns a paper note. It does not change config, restart the desk, or move money. A result-skeptic Mode 2 review is required before any seat change.",
+  "fail": "Both halves meet the floors, and the promising bar is missed. The seat question is closed. Do not add the 14:30 list or move the 09:30 cutoff to reopen it.",
+  "underpowered": "A half under the floor is thin. If either powered half has diff mean <= 0 or agent mean <= 0, the study is FAIL. If both halves are powered and the means are positive but t cannot be computed, the study is UNDERPOWERED. If the only problem is a thin half, or both halves are thin, the study is UNDERPOWERED. Do not lower 6 days or 20 trips after seeing the counts.",
+  "cost": "No second 3 bp is subtracted. The broker prices already include the spread, and charging 3 bp again would count it twice. The 'still positive after the spread' bar is the agent mean > 0 on the realized round trips. An information line prints the agent mean minus 3 bp and cannot change the grade.",
+  "control": "The movers arm on the same days is the control. It keeps the same live entry and the same live exit. A random later minute would be a different entry and a different exit, because the live exit is the path the desk actually took. That random minute is not graded.",
+  "information_only": [
+    "overlap: agent trips whose symbol was also on the movers list at or before the buy",
+    "share of agent trips whose morning-list pct_change was already >= 10 at publish, and the count with no pct_change",
+    "days with one model rather than two",
+    "buys dropped for the other-book prefix, the clock, a missing entry_ok, or no seat",
+    "open_buys: same-book buys still open at the end of the file",
+    "agent and movers trips on days that are not paired",
+    "agent mean minus an extra 3 bp"
+  ],
+  "no_retuning": "The morning window, the entry clock, the 120s link, the 2s skew, the FIFO fold, the floors, the halves, and which files count are fixed. Another cutoff is a new prereg.",
+  "declared_deviations": [
+    "The entry is the order the desk actually sent that day (entry_ok), not a reconstruction of today's pre-square rule on older days. Both arms on a day share that day's entry and that day's exit, including the local-trail change on 2026-10-16.",
+    "A buy with no entry_ok inside 120 seconds is dropped. The drop count is printed. The window is not widened after the count.",
+    "Gemini is claude_suggestions.json on this archive. agy_suggestions.json is read when a day has it."
+  ],
+  "feed": "These are the live desk's paper fills. The live arm reads IEX. This is not a SIP markout study, and a result here does not transfer to a bar-replay rule.",
+  "price_source": "Broker filled_avg_price. Not the desk's shadow price.",
+  "look_ahead": "The morning list is frozen at the first snapshot whose last_ok is before 09:30. Entries start at 09:30, so the list is known before the buy. Movers membership uses only a data.ts at or before the buy. The day's high is not used. A name that was already up at 08:31 stays in the sample.",
+  "survivorship": "The universe is the names the desk actually bought on these archived days, classified by lists written before the buy. It is not today's watchlist, and it is not every name the morning list wrote down. A listed name with no entry_ok has no round trip.",
+  "multiplicity": "One cell.",
+  "script": "tools/studies/seat_agent.py. Default prints the pinned days and, when the archive is present, whether each day has a morning list (counts only). --score computes the returns. Do not pass --score until a result-skeptic Mode 1 review says READY.",
+  "command": "On the mini, data-account secrets are not required (the archive is local): .venv/bin/python tools/studies/seat_agent.py --score",
+  "if_promising": "Write the result. Do not edit bot_config.json and do not restart the desk. Mode 2 before any change to who is seated.",
+  "if_fail": "The 08:30 list, as a seat for the live round trip, is closed on this archive.",
+  "if_underpowered": "Say so and stop. Do not widen the clock and do not pull in 2026-10-08 or the afternoon list.",
+  "amended_1": {
+    "at": "2026-10-17, after result-skeptic Mode 1 FIX FIRST, before any score.",
+    "other_book": "Fills with an on-, wk-, me-, or mir- client_order_id are removed before FIFO, buys and sells. An other-book lot can no longer consume a day-trade sell, and an other-book sell can no longer close a day-trade buy.",
+    "floors": "The 20-trip floors count trips on paired days only. Unpaired-day trips are information.",
+    "no_t": "Both halves powered, means positive, and t impossible (zero day-to-day variance) is UNDERPOWERED, not FAIL.",
+    "open_buys": "Same-book buys left open are printed and not scored."
+  }
+}

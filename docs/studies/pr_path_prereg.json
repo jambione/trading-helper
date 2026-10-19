@@ -1,0 +1,51 @@
+{
+  "study": "The two %R lines and the gap between them, as the readings they are, including where those readings were.",
+  "registered_at": "2026-10-17, before any return of this rule was computed.",
+  "registered_before_results": true,
+  "origin": "Operator 2026-10-17: the zone tests (leave-oversold, square, together-grid cutoffs) are not a test of the indicator. Both lines at every value, and the distance between them, are one signal. Then: the passed history of the lines matters, and the passed history of the gap matters. Not a cutoff, and not a zone that means 'beyond a value.'",
+  "amendments_before_any_return": [
+    "The minute grid no longer looks at the next print. After each real print, at most 14 flat minutes are inserted forward even when the next print is farther away. A minute more than 14 minutes after the last real print is absent. Flats stop before 16:00. The overnight hole is not filled. A real print replaces a flat. The line function is not allowed to fill again.",
+    "The grade subtracts 10 bp, the same charge as the other studies on this liquid warehouse sample. 3 bp is printed and is not an input to the grade.",
+    "Excess is the slice mean minus the complement mean. A day whose complement is empty is left out of that t. The same frozen slice must also beat the other graded names at the same minute. Both clauses are part of the one grade.",
+    "The gap is not stored as its own column. Gap equals fast minus slow, so five gap columns beside the ten line readings had no unique coefficient. Both lines are kept at each of the five times, which keeps the gap and the gap's history in the model. The square of the current gap is kept, so a tight gap can differ from a wide gap."
+  ],
+  "prior": "LOW. Every scored %R entry on this book was about 0 bp before the spread: leave-oversold, both-lines-up, the 243-cell together grid, the steep turn, pre-square, square. Those rules kept only a slice past a cutoff and, when they used the gap, only a tight gap. This asks whether the reading itself, and where it came from, sorts the next 10 minutes.",
+  "data": "Same warehouse and sample as prescreen_turn / together_sweep: 119 sessions 2026-04-28..2026-10-15, 400 names per session seeded sha256(day|prescreen-sample), names that have today's IEX, today's SIP, and the previous session's IEX. IEX for the lines, SIP for the markout. Lines warmed on the previous session's last 220 RTH IEX bars (WARM_LINES). The run refuses unless n = 119, first = 2026-04-28, last = 2026-10-15, and the median split is 2026-07-23.",
+  "signal_minute": "A completed bar m from 10:00 through 15:20 ET. Entry is the SIP open of m+1. Exit is the SIP close of m+10 (10-minute hold, early_entry_honest.markout). m is used only if m, m-3, m-15, and m-30 all exist on today's causal grid, and the previous session has a finite last fast and last slow. A missing lag drops that minute. It is not filled with a cutoff and it is not given a 'no history' flag.",
+  "features": {
+    "scale": "Every raw line is divided by 100 before it enters the model. The divisor is fixed. It is not estimated. The current gap, where it is squared, is divided by 100 the same way.",
+    "now": "fast(m) and slow(m). The current gap is fast(m)-slow(m). It is in the model because both lines are. It is not a third column.",
+    "line_history": "fast and slow at m-3, m-15, and m-30, clock minutes on today's causal grid.",
+    "gap_history": "The gap at m-3, m-15, and m-30, each equal to fast minus slow at that same minute. Those past gaps are in the model because both lines are kept at each of those times. They are not stored as their own columns, and they are not a tight-gap flag.",
+    "prior_session": "fast and slow at the last minute of the previous session's causal grid (the last real print, or a flat up to 14 minutes after it, and never at or after 16:00). The prior gap is fast minus slow there. Known before the open. Computed on bars up to that minute only.",
+    "bend": "square of current fast, square of current slow, square of current gap, on the scaled values. A middle reading can differ from either end, and a tight gap can differ from a wide gap, without a cutoff.",
+    "together": "(fast(m)-fast(m-3))*(slow(m)-slow(m-3)) on the scaled values. Both lines moving the same way over 3 minutes, as a number.",
+    "count": "14 features plus an intercept. Column order: fast0, slow0, fast3, slow3, fast15, slow15, fast30, slow30, fastP, slowP, fast0sq, slow0sq, gap0sq, together3. None is dropped after seeing a return. A rank-deficient fit is UNDERPOWERED."
+  },
+  "fit": "Half A is every pinned session on or before 2026-07-23. Weighted least squares of the 10-minute gross SIP return on the 14 features and an intercept. Each minute in a day has weight 1/n_minutes_that_day, so each day weighs the same. Coefficients are frozen. Half B (after 2026-07-23) is never used to fit, to choose a feature, or to choose a bin.",
+  "score": "s is the frozen prediction. The cutoff is the day-equal weighted 80th percentile of s on A (same weights as the fit). It is frozen.",
+  "grade": "On B, minutes with s at or above the cutoff. One grade, three clauses. (1) Day-equal mean of those minutes' gross returns, minus 10 bp (early_entry_honest.COST). Day-clustered t uses the day means (sample stdev, n-1). (2) The same minutes beat the other graded minutes of that day: excess = slice mean minus complement mean, day-equal excess > 0 with day-clustered t >= 1.5. A day with an empty complement is left out of that t. (3) The same minutes beat the other graded names at that same minute: within a minute, slice-name mean minus other-name mean; within a day, the equal-weight mean of those minute excesses; across days, that day mean > 0 with day-clustered t >= 1.5. A minute that lacks either side is skipped. A day with no such minute is left out of that t. PROMISING requires all three clauses, each t >= 1.5, at least 30 B days in the slice, at least 30 B days in the complement excess, at least 30 B days in the cross-name excess, and at least 1000 qualifying minutes. A t that cannot be computed, fewer days than 30 on any of the three counts, a rank-deficient fit, or indicator failures above 1% of sampled name-days is UNDERPOWERED. Anything else powered is FAIL. There is no PASS and no money. The grade does not read 3 bp.",
+  "why_the_excess": "Scoring every minute makes a later-minute control of the same name overlap the 10-minute hold, so that control is not used. A slice that is positive only because the whole day was positive fails the complement clause. A slice that is positive only because that minute was positive for every name fails the cross-name clause.",
+  "information_only": [
+    "10-point bins of current fast (-100 to 0), current slow (-100 to 0), and current gap (-100 to +100). Current gap is computed as fast minus slow. Each bin is 'the reading is here.' The ends are closed. A value outside the range is an overflow count, not folded into the end bin. Bins are a picture. No bin is graded and no bin may be picked afterward.",
+    "The same picture, 10-point bins from -100 to +100, for gap(m)-gap(m-15), gap(m)-gap(prior), fast(m)-fast(m-15), and slow(m)-slow(m-15). Outside that range is overflow.",
+    "Day-clustered univariate slope of the 10-minute return on current fast, current slow, current gap, and on those four history differences, on A and on B separately. Not a second grade.",
+    "The 3 bp net of the B upper slice. It is not the grade.",
+    "The frozen coefficients.",
+    "The A upper-slice mean. It is in-sample.",
+    "Name-day counts: sampled, skipped short, indicator failures, minutes scored, minutes dropped for a missing lag."
+  ],
+  "underpowered_also": "Indicator failures above 1% of sampled name-days. A rank-deficient fit. Fewer than 30 B days on the slice, on the complement excess, or on the cross-name excess.",
+  "no_retuning": "Lags 3, 15, 30, the prior-session last minute, the /100 scale, the squares, the together product, the 80th percentile, the 10-minute hold, the 10 bp grade, the 3 bp information line, the window 10:00-15:20, the 14-minute forward fill, the sample, and the split are fixed. A different lag or a cutoff is a new prereg.",
+  "if_promising": "Paper note only. Result-skeptic Mode 2 before any config or live change.",
+  "if_fail": "The two lines, the gap, and their past readings do not sort the next 10 minutes on this sample. Do not promote a bin from the picture.",
+  "if_underpowered": "Stop. Do not add sessions or change the lags.",
+  "declared_deviations": [
+    "Completed 1-minute bars. Live would act inside the bar.",
+    "Warm-up is the previous session's last 220 RTH IEX bars. Live warms on extended hours.",
+    "A clock lag uses today's causal grid. After each real print, at most 14 flat minutes are inserted forward without looking at the next print. A minute more than 14 minutes after the last real print is absent and that lag drops the minute. Flats stop before 16:00. The overnight hole is not filled. A real print replaces a flat.",
+    "The grade subtracts 10 bp. 3 bp is information only. These are SIP markouts, not broker prints. The 10 bp is not a second charge on top of a spread already in a print."
+  ],
+  "multiplicity": "One frozen score, one cutoff, one grade. The bins and the univariate slopes are not cells.",
+  "command": "On the mini, after a result-skeptic Mode 1 READY: REPO=$PWD nice -n 19 .venv/bin/python tools/studies/pr_path.py --score"
+}
