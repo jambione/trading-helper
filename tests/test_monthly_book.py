@@ -83,3 +83,30 @@ def test_a_planted_52_week_high_edge_reads_pass_and_noise_does_not():
     md = M.report(M.run(_panel(0.0))[0])
     head = next(x for x in md.splitlines() if x.startswith("R1_"))
     assert "PASS" not in head, head
+
+
+def test_the_pick_does_not_see_a_name_that_stops_trading():
+    p = _panel(0.0, n_names=40)
+    ends = M.month_ends(p.cal)
+    t = next(x for x in ends if x >= M.A_FIRST)
+    # Make one name the best R2 pick at t and then never print again.
+    s = "S000"
+    for d in list(p.adj[s]):
+        if d < t:
+            p.adj[s][d] = (1.0 + 1e-6 * p.cal.index(d), 1.0 + 1e-6 * p.cal.index(d))
+        elif d > t:
+            del p.adj[s][d]
+    p.dates[s] = sorted(p.adj[s])
+    p.closes[s] = np.array([p.adj[s][x][1] for x in p.dates[s]])
+    out, _ = M.run(p)
+    first = next(m for m in out["R2_near_52w_high"] if m["t"] == t)
+    assert s in first["book"] and first["delisted"] >= 1
+
+
+def test_a_series_with_a_long_hole_is_excluded():
+    p = _panel(0.0, n_names=10)
+    s = "S001"
+    for d in p.cal[400:440]:
+        p.adj[s].pop(d, None)
+    q = M.Panel({"adj": p.adj, "liquid": {k: sorted(v) for k, v in p.liquid.items()}, "log": []})
+    assert s in q.joined and "S002" not in q.joined

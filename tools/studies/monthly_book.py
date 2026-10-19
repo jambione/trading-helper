@@ -26,6 +26,9 @@ COST_BP = 10.0
 A_FIRST, A_LAST = "2016-12-30", "2021-11-30"
 B_FIRST, B_LAST = "2021-12-31", "2026-08-31"
 T_PASS, T_PROMISING = 2.33, 1.5
+DEAD_RET = -0.30          # a picked name with no print after t (delisting with no later price), declared in the prereg
+MAX_GAP = 30              # sessions; a longer hole in a series suggests a reused ticker joining two companies
+N_A, N_B = 60, 57
 DROP_BEST = 3
 RULES = ("R1_smooth_momentum", "R2_near_52w_high", "R3_low_volatility", "R4_trend_low_vol", "R5_one_month_reversal")
 
@@ -121,6 +124,12 @@ class Panel:
         self.cal = sorted(self.adj["SPY"])
         self.dates = {s: sorted(v) for s, v in self.adj.items()}
         self.closes = {s: np.array([self.adj[s][x][1] for x in self.dates[s]], np.float64) for s in self.adj}
+        pos = {d: i for i, d in enumerate(self.cal)}
+        self.joined = set()
+        for s, ds in self.dates.items():
+            idx = [pos[x] for x in ds if x in pos]
+            if any(b - a > MAX_GAP for a, b in zip(idx, idx[1:])):
+                self.joined.add(s)
 
     def history(self, s: str, before: str) -> np.ndarray:
         k = bisect.bisect_left(self.dates[s], before)
@@ -136,6 +145,24 @@ class Panel:
         return None, True
 
 
+def survivorship(panel: Panel) -> str:
+    """Per year: eligible names whose series ends before 2026-09 (died), and series excluded for a > MAX_GAP hole."""
+    ends = month_ends(panel.cal)
+    died: dict[str, set] = defaultdict(set)
+    seen: dict[str, set] = defaultdict(set)
+    for t in ends:
+        if not (A_FIRST <= t <= B_LAST):
+            continue
+        for s in panel.adj:
+            if s != "SPY" and t in panel.liquid.get(s, ()) and t in panel.adj[s]:
+                seen[t[:4]].add(s)
+                if panel.dates[s][-1] < "2026-09-01":
+                    died[t[:4]].add(s)
+    rows = ", ".join(f"{y} {len(died[y])}/{len(seen[y])}" for y in sorted(seen))
+    return (f"eligible names whose series ends before 2026-09, by year (died/eligible): {rows}\n"
+            f"series excluded for a hole of more than {MAX_GAP} sessions (possible reused ticker): {len(panel.joined)}")
+
+
 def run(panel: Panel) -> tuple[dict, list[str]]:
     ends = month_ends(panel.cal)
     months = [(t, t2) for t, t2 in zip(ends, ends[1:]) if A_FIRST <= t <= B_LAST]
@@ -144,7 +171,7 @@ def run(panel: Panel) -> tuple[dict, list[str]]:
     for t, t2 in months:
         elig = {}
         for s in panel.adj:
-            if s == "SPY" or t not in panel.liquid.get(s, ()) or t not in panel.adj[s]:
+            if s == "SPY" or s in panel.joined or t not in panel.liquid.get(s, ()) or t not in panel.adj[s]:
                 continue
             h = panel.history(s, t)
             if len(h) >= HIST:
@@ -153,19 +180,18 @@ def run(panel: Panel) -> tuple[dict, list[str]]:
         rets, dl = {}, {}
         for s in elig:
             c1, gone = panel.close_on_or_before(s, t2, t)
-            if c1 is not None:
-                rets[s] = c1 / panel.adj[s][t][1] - 1.0
-                dl[s] = gone
+            # Every eligible name gets a return, so the pick never depends on what happened after t.
+            rets[s] = DEAD_RET if c1 is None else c1 / panel.adj[s][t][1] - 1.0
+            dl[s] = gone
         univ = st.fmean(rets.values()) if rets else None
         for r in RULES:
-            book = pick({s: v[r] for s, v in elig.items() if s in rets})
-            if not book:
-                continue
-            gross = st.fmean(rets[s] for s in book)
+            book = pick({s: v[r] for s, v in elig.items()})
+            gross = st.fmean(rets[s] for s in book) if book else 0.0
             to = turnover(prev[r], book)
             net = gross - to * COST_BP / 1e4
             out[r].append({"t": t, "t2": t2, "net": net, "gross": gross, "spy": spy, "univ": univ, "book": book,
-                           "turnover": to, "delisted": sum(1 for s in book if dl[s]), "eligible": len(elig)})
+                           "turnover": to, "delisted": sum(1 for s in book if dl[s]), "eligible": len(elig),
+                           "empty": not book})
             prev[r] = book
     return out, [t for t, _ in months]
 
@@ -200,6 +226,8 @@ def report(out: dict) -> str:
         w = word(ra, rb, rp, wo, ex["A"], ex["B"])
         words.append(f"{r}: {w}")
         mde = None if rp["resid_sd"] is None else 2 * rp["resid_sd"] / math.sqrt(rp["n"])
+        ua = ols([m["univ"] for m in both if m["univ"] is not None], [m["spy"] for m in both if m["univ"] is not None])["alpha"]
+        el = sorted(m["eligible"] for m in both)
         blocks += [f"## {r}: **{w}**", "",
                    "| half | months | net/mo | SPY/mo | net-SPY | alpha (t) | beta | universe/mo | beat SPY | worst | turnover | delisted |",
                    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
@@ -214,7 +242,9 @@ def report(out: dict) -> str:
                 f"{st.fmean(m['turnover'] for m in rr):.2f} | {sum(m['delisted'] for m in rr)} |")
         best = sorted(both, key=lambda m: -m["net"])[:DROP_BEST]
         blocks += ["", f"alpha without the {DROP_BEST} best months {_f(wo)}; MDE at t 2 {_f(mde)}; "
-                   f"eligible names per month {st.fmean(m['eligible'] for m in both):.0f}",
+                   f"equal-weight universe alpha {_f(ua)}; rule alpha minus universe alpha "
+                   f"{_f(None if rp['alpha'] is None or ua is None else rp['alpha'] - ua)}; "
+                   f"eligible names per month min {el[0]} median {el[len(el) // 2]} max {el[-1]}",
                    "best months: " + "; ".join(f"{m['t']} {_f(m['net'])} ({', '.join(m['book'][:5])}...)" for m in best),
                    "by year, net-SPY: " + ", ".join(
                        f"{y} {_f(st.fmean(m['net'] - m['spy'] for m in both if m['t'][:4] == y))}"
@@ -238,8 +268,19 @@ def main() -> None:
     if A_FIRST not in ends or B_LAST not in ends:
         print(f"REFUSING: {A_FIRST} or {B_LAST} is not a month-end session in SPY's calendar")
         return
+    print(survivorship(p), flush=True)
     out, _ = run(p)
-    md = report(out)
+    bad = []
+    for r in RULES:
+        na = len(half_rows(out[r], A_FIRST, A_LAST))
+        nb = len(half_rows(out[r], B_FIRST, B_LAST))
+        empty = sum(1 for m in out[r] if m["empty"])
+        if na != N_A or nb != N_B or empty:
+            bad.append(f"{r}: {na} A months, {nb} B months, {empty} empty")
+    if bad:
+        print("REFUSING: " + "; ".join(bad))
+        return
+    md = survivorship(p) + "\n\n" + report(out)
     print(md, flush=True)
     with open(RESULT, "w") as f:
         f.write(md + "\n")
