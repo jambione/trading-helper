@@ -27,7 +27,7 @@ fi
 
 FLOOR="--set ai_watch_profile_path= --set ai_watch_min_price=2.0 --set ai_watch_momentum_min_price=2.0 \
   --set ai_watch_movers_min_price=2.0 --set ai_tight_min_price=2.0 --set rs_min_price=2.0 --set h4_min_price=2.0 \
-  --set ai_max_positions=20 --set ai_max_position_pct=5"
+  --set ai_max_positions=20 --set ai_max_position_pct=5 --set ai_watch_max_sip_spread_pct=1.0 --set ai_max_spread_pct=1.0"
 A=floor2
 DAYS="2026-10-06 2026-10-07 2026-10-08 2026-10-09 2026-10-12 2026-10-13 2026-10-14 2026-10-15 2026-10-16"
 [ -n "${SWEEP_PROBE:-}" ] && DAYS="2026-10-06"
