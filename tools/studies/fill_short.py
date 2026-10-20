@@ -275,10 +275,14 @@ def asset_flags(syms: set[str]) -> dict[str, list | None]:
             from alpaca.trading.enums import AssetClass
             from alpaca.trading.requests import GetAssetsRequest
             k = data_keys()
-            tc = TradingClient(k["api_key"], k["secret_key"], paper=True)
+            # raw_data: the typed Asset model rejects exchange codes it does not know (10/20: one asset's exchange
+            # failed validation and the whole list was lost), so read the plain dicts.
+            tc = TradingClient(k["api_key"], k["secret_key"], paper=True, raw_data=True)
             for a in tc.get_all_assets(GetAssetsRequest(asset_class=AssetClass.US_EQUITY)):
-                if a.symbol in need:
-                    have[a.symbol] = [bool(a.shortable), bool(a.easy_to_borrow)]
+                sym = a.get("symbol") if isinstance(a, dict) else getattr(a, "symbol", None)
+                if sym in need:
+                    get = a.get if isinstance(a, dict) else (lambda f, _a=a: getattr(_a, f, None))
+                    have[sym] = [bool(get("shortable")), bool(get("easy_to_borrow"))]
         except Exception as e:  # noqa: BLE001 - unknown flags are counted and gate the word
             print(f"  asset list unavailable: {type(e).__name__} {str(e)[:100]}", file=sys.stderr)
     old = ROOT / "ai_reports" / "short_squares" / "shortable.json"
