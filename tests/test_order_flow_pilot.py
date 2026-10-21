@@ -199,3 +199,50 @@ def test_capped_flags_the_row_limit():
 def test_module_shas_cover_the_feature_code():
     sh = O.module_shas()
     assert {"order_flow_pilot", "indicator_confirm_hist", "early_entry_honest", "signals"} <= set(sh)
+
+
+def test_outcomes_for_entry_exit_and_horizons():
+    T = T0
+    qs = [(T - 10, 10.00, 10.02, 5, 5),          # entry quote (<= T + 1, 11 s old)
+          (T + 1 + 60, 10.05, 10.07, 5, 5), (T + 1 + 180, 10.10, 10.12, 5, 5), (T + 1 + 250, 10.20, 10.20, 5, 5)]
+    o = O.outcomes_for(qs, T)
+    assert o["entry"] and o["spread"] == pytest.approx(0.02 / 10.01)
+    assert o["gross60"] == pytest.approx(10.06 / 10.01 - 1) and o["net60"] == pytest.approx(10.05 / 10.02 - 1)
+    assert o["gross180"] == pytest.approx(10.11 / 10.01 - 1)
+    assert o["gross120"] is None                     # the last quote by T+121 (at T+61) is 60 s old > 30 s
+    assert o["gross300"] is None                     # T+251 is locked (dropped); T+181 is 120 s old
+    assert o["mfe_bid"] == pytest.approx(10.10 / 10.02 - 1)
+    assert not O.outcomes_for([(T - 40, 10.0, 10.02, 5, 5)], T)["entry"]   # entry quote 41 s old
+
+
+def _row(day, sym, half, side, gross, net=0.0001):
+    return {"day": day, "sym": sym, "half": half, "groups": {"G1": side, "G2": side, "G3": side},
+            "gross180": gross, "net180": net}
+
+
+def test_gated_minus_rest_and_verdicts():
+    import random as _r
+    rng = _r.Random(5)
+    rows = []
+    for d in range(25):
+        day = f"2026-06-{d + 1:02d}"
+        for i in range(60):
+            side = "IN" if i < 20 else "OUT"
+            rows.append(_row(day, f"N{i}", "A", side, (0.0012 if side == "IN" else 0.0) + rng.gauss(0, 0.0005)))
+    r = O.grade_group(rows, "G3", "A")
+    assert r["diff"] == pytest.approx(0.0012, abs=0.0002) and r["days"] == 25 and r["n_in"] == 500
+    assert r["drop_names"] is not None and r["drop_days"] is not None
+    assert O.half_verdict(r, "G3") == "PASS"                           # floors: G3 300
+    assert O.half_verdict(r, "G1") == "UNDERPOWERED"                   # G1 needs 1,000 IN
+    assert O.group_verdict(["PASS", "PASS"], [0.002, 0.002]) == "PASS"
+    assert O.group_verdict(["FAIL", "PASS"], [0.002, 0.002]) == "FAIL"
+    assert O.group_verdict(["NOT_PASSED", "NOT_PASSED"], [0.0003, 0.0004]) == "FAIL"
+    assert O.group_verdict(["NOT_PASSED", "NOT_PASSED"], [0.0003, 0.0007]) == "UNDERPOWERED"
+
+
+def test_fetch_outcomes_caches_and_resumes(tmp_path, monkeypatch):
+    monkeypatch.setattr(O, "fetch_outcome_quotes", lambda cl, sym, T, sleep=None: [(T, 10.0, 10.02, 1, 1)])
+    st = O.fetch_outcomes(_entries(4), object(), str(tmp_path), sleep=lambda s: None, log=lambda x: None)
+    assert st["fetched"] == 4
+    st2 = O.fetch_outcomes(_entries(6), object(), str(tmp_path), sleep=lambda s: None, log=lambda x: None)
+    assert st2["cached"] == 4 and st2["fetched"] == 2

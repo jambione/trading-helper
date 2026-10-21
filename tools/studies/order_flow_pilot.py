@@ -22,6 +22,7 @@ import hashlib
 import json
 import math
 import os
+import pickle
 import random
 import statistics
 import sys
@@ -445,6 +446,242 @@ def build_rows(entries: list[dict], tick_dir: str = TICK_DIR) -> tuple[list[dict
 
 
 
+# ── outcomes (fetched only after the count step; paged) ──────────────────────
+
+OUTCOME_DIR = os.path.join(OUT_DIR, "outcomes")
+HORIZONS, PRIMARY_H = (60, 120, 180, 300), 180
+OUT_BEFORE_S, OUT_AFTER_S = 30, 301                # one window [T + 1 - 30 s, T + 1 + 300 s] (budget_restated)
+
+
+def fetch_outcome_quotes(cl, sym: str, T: float, sleep=time.sleep, tries: int = 5) -> list:
+    """NBBO quotes over [T + 1 - 30 s, T + 1 + 300 s], paged (no row cap; amended_4 (2))."""
+    from alpaca.data.enums import DataFeed
+    from alpaca.data.requests import StockQuotesRequest
+
+    def utc(x):
+        return datetime.fromtimestamp(x, timezone.utc)
+    for k in range(tries):
+        try:
+            qu = cl.get_stock_quotes(StockQuotesRequest(symbol_or_symbols=sym, start=utc(T + 1 - OUT_BEFORE_S),
+                                                        end=utc(T + OUT_AFTER_S), feed=DataFeed.SIP,
+                                                        limit=None)).data.get(sym) or []
+            sleep(REQ_GAP_S)
+            return [(_ts(q), float(q.bid_price or 0), float(q.ask_price or 0), float(q.bid_size or 0),
+                     float(q.ask_size or 0)) for q in qu]
+        except Exception as e:  # noqa: BLE001
+            print(f"  {sym} {int(T)} outcome try {k}: {type(e).__name__} {str(e)[:80]}", flush=True)
+            sleep(10 * (k + 1))
+    raise RuntimeError(f"outcome fetch failed for {sym} at {int(T)}")
+
+
+def fetch_outcomes(entries: list[dict], cl, out_dir: str = OUTCOME_DIR, sleep=time.sleep, log=print) -> Counter:
+    """Resumable, atomic per-entry cache; aborts when > 2% of attempted entries fail after FAIL_MIN_ATTEMPTS."""
+    os.makedirs(out_dir, exist_ok=True)
+    st = Counter()
+    for i, e in enumerate(entries):
+        path = os.path.join(out_dir, entry_key(e) + ".pkl")
+        if os.path.exists(path):
+            st["cached"] += 1
+            continue
+        st["attempted"] += 1
+        try:
+            qs = fetch_outcome_quotes(cl, e["sym"], decision_ts(e["day"], e["m"]), sleep=sleep)
+        except RuntimeError as ex:
+            st["failed"] += 1
+            log(f"  FAILED {entry_key(e)}: {ex}")
+            if st["attempted"] >= FAIL_MIN_ATTEMPTS and st["failed"] / st["attempted"] > FAIL_ABORT:
+                log(f"ABORT: {st['failed']} of {st['attempted']} entries failed")
+                st["aborted"] = 1
+                return st
+            continue
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            pickle.dump(qs, f)
+        os.replace(tmp, path)
+        st["fetched"] += 1
+        if st["fetched"] % 500 == 0:
+            log(f"  {i + 1}/{len(entries)}: fetched {st['fetched']}, cached {st['cached']}, failed {st['failed']} "
+                f"({datetime.now(E.ET):%H:%M} ET)")
+    return st
+
+
+def outcomes_for(quotes: list, T: float) -> dict:
+    """Entry at the ask of the last clean quote <= T + 1 s (<= 30 s old); at each horizon H the last clean quote
+    <= T + 1 + H (<= 30 s old): gross = mid / entry mid - 1, net = bid / entry ask - 1. Also the max bid over
+    (T + 1, T + 1 + 180] and the entry spread (information). Missing pieces are None."""
+    qs = clean_quotes(quotes)
+    q0 = last_quote(qs, T + 1, READ_MAX_AGE)
+    if q0 is None:
+        return {"entry": False}
+    _t, b0, a0, _bs, _as = q0
+    mid0 = (a0 + b0) / 2
+    out = {"entry": True, "spread": (a0 - b0) / mid0}
+    for h in HORIZONS:
+        q = last_quote(qs, T + 1 + h, READ_MAX_AGE)
+        if q is None:
+            out[f"gross{h}"] = out[f"net{h}"] = None
+            continue
+        out[f"gross{h}"] = ((q[1] + q[2]) / 2) / mid0 - 1
+        out[f"net{h}"] = q[1] / a0 - 1
+    path_bids = [q[1] for q in qs if T + 1 < q[0] <= T + 1 + PRIMARY_H]
+    out["mfe_bid"] = (max(path_bids) / a0 - 1) if path_bids else None
+    return out
+
+
+# ── score ────────────────────────────────────────────────────────────────────
+
+LIFT_BAR = 0.0005
+
+
+def _day_t(vals: dict) -> tuple[float | None, float | None, int]:
+    xs = [v for v in vals.values() if v is not None]
+    if len(xs) < 2:
+        return (xs[0] if xs else None), None, len(xs)
+    mu, se = statistics.mean(xs), statistics.stdev(xs) / math.sqrt(len(xs))
+    return mu, (mu / se if se > 0 else None), len(xs)
+
+
+def gated_minus_rest(rows: list[dict], g: str, half: str, key: str, drop_names=frozenset(), drop_days=frozenset(),
+                     side_fn=None) -> dict:
+    """Per day: IN mean - OUT mean of `key` (days with >= 3 a side), day-equal, day-clustered t; IN mean net (at the
+    primary horizon) day-equal; name-day-equal difference."""
+    side_fn = side_fn or (lambda r: r["groups"][g])
+    per = {"IN": defaultdict(list), "OUT": defaultdict(list)}
+    nd = {"IN": defaultdict(lambda: defaultdict(list)), "OUT": defaultdict(lambda: defaultdict(list))}
+    net_in = defaultdict(list)
+    for r in rows:
+        s_ = side_fn(r)
+        if r["half"] != half or not s_ or r.get(key) is None or r["sym"] in drop_names or r["day"] in drop_days:
+            continue
+        per[s_][r["day"]].append(r[key])
+        nd[s_][r["day"]][r["sym"]].append(r[key])
+        if s_ == "IN" and r.get(f"net{PRIMARY_H}") is not None:
+            net_in[r["day"]].append(r[f"net{PRIMARY_H}"])
+    days = sorted(d for d in per["IN"] if len(per["IN"][d]) >= 3 and len(per["OUT"][d]) >= 3)
+    diff = {d: statistics.mean(per["IN"][d]) - statistics.mean(per["OUT"][d]) for d in days}
+    ndd = {d: statistics.mean(statistics.mean(v) for v in nd["IN"][d].values())
+           - statistics.mean(statistics.mean(v) for v in nd["OUT"][d].values()) for d in days}
+    mu, t, n = _day_t(diff)
+    return {"diff": mu, "t": t, "days": n, "n_in": sum(len(v) for v in per["IN"].values()),
+            "n_out": sum(len(v) for v in per["OUT"].values()), "nameday": _day_t(ndd)[0],
+            "in_net": _day_t({d: statistics.mean(v) for d, v in net_in.items() if v})[0],
+            "t_crit": t_crit3(n), "per_day": diff,
+            "ub": (mu + S.t_ppf(0.975, n - 1) * abs(mu / t)) if (mu is not None and t and n >= 2) else None}
+
+
+def grade_group(rows: list[dict], g: str, half: str) -> dict:
+    key = f"gross{PRIMARY_H}"
+    res = gated_minus_rest(rows, g, half, key)
+    # drop-3 robustness: names / days with the largest share of the difference
+    contrib, cnt = Counter(), Counter()
+    live = [r for r in rows if r["half"] == half and r["groups"][g] and r.get(key) is not None
+            and r["day"] in res["per_day"]]
+    for r in live:
+        cnt[(r["day"], r["groups"][g])] += 1
+    for r in live:
+        s_ = r["groups"][g]
+        w = r[key] / cnt[(r["day"], s_)] / max(1, len(res["per_day"]))
+        contrib[r["sym"]] += w if s_ == "IN" else -w
+    top_names = frozenset(n for n, _ in contrib.most_common(3))
+    top_days = frozenset(sorted(res["per_day"], key=lambda d: res["per_day"][d], reverse=True)[:3])
+    res["drop_names"] = gated_minus_rest(rows, g, half, key, drop_names=top_names)["diff"]
+    res["drop_days"] = gated_minus_rest(rows, g, half, key, drop_days=top_days)["diff"]
+    res.pop("per_day")
+    return res
+
+
+def half_verdict(r: dict, g: str) -> str:
+    if r["n_in"] < FLOORS[g] or r["days"] < 20 or r["t"] is None:
+        return "UNDERPOWERED"
+    if r["t"] <= -2.0:
+        return "FAIL"
+    ok = (r["diff"] >= LIFT_BAR and r["t"] >= r["t_crit"] and r["in_net"] is not None and r["in_net"] > 0
+          and r["nameday"] is not None and r["nameday"] > 0 and r["drop_names"] is not None and r["drop_names"] >= 0
+          and r["drop_days"] is not None and r["drop_days"] >= 0)
+    return "PASS" if ok else "NOT_PASSED"
+
+
+def group_verdict(halves: list[str], ubs: list) -> str:
+    if "FAIL" in halves:
+        return "FAIL"
+    if all(h == "PASS" for h in halves):
+        return "PASS"
+    if all(h != "UNDERPOWERED" for h in halves) and all(u is not None and u < LIFT_BAR for u in ubs):
+        return "FAIL"
+    return "UNDERPOWERED"
+
+
+def score_rows(features: dict, out_dir: str = OUTCOME_DIR) -> tuple[list[dict], Counter]:
+    st, rows = Counter(), []
+    for e in features["entries"]:
+        path = os.path.join(out_dir, entry_key(e) + ".pkl")
+        if not os.path.exists(path):
+            st["not_fetched"] += 1
+            continue
+        o = outcomes_for(pickle.load(open(path, "rb")), decision_ts(e["day"], e["m"]))
+        if not o["entry"]:
+            st["no_entry_quote"] += 1
+            continue
+        for h in HORIZONS:
+            st[f"missing_h{h}"] += o[f"gross{h}"] is None
+        rows.append({**e, **o})
+    return rows, st
+
+
+def information(rows: list[dict], features: dict) -> dict:
+    info = {}
+    for h in HORIZONS:
+        if h == PRIMARY_H:
+            continue
+        info[f"H={h}s"] = {g: {hf: _bp_t(gated_minus_rest(rows, g, hf, f"gross{h}")) for hf in ("A", "B")}
+                           for g in ("G1", "G2", "G3")}
+    half_a = [r for r in rows if r["half"] == "A" and r.get("micro") is not None]
+    cut = top_cut([(r["micro"], tie_u(r)) for r in half_a])
+    micro_fn = (lambda r: None if r.get("micro") is None or cut is None
+                else ("IN" if (r["micro"], tie_u(r)) >= tuple(cut) else "OUT"))
+    info["MICRO top tercile"] = {hf: _bp_t(gated_minus_rest(rows, "G1", hf, f"gross{PRIMARY_H}", side_fn=micro_fn))
+                                 for hf in ("A", "B")}
+    by_hour = {}
+    for hr in range(10, 16):
+        sub = [r for r in rows if r["m"] // 60 == hr]
+        by_hour[f"{hr}:00"] = {g: {hf: _bp_t(gated_minus_rest(sub, g, hf, f"gross{PRIMARY_H}")) for hf in ("A", "B")}
+                               for g in ("G1", "G2")}
+    info["by hour"] = by_hour
+    mfe = {}
+    for g in ("G1", "G2", "G3"):
+        for s_ in ("IN", "OUT"):
+            xs = [r for r in rows if r["groups"][g] == s_ and r.get("mfe_bid") is not None and r.get("spread")]
+            mfe[f"{g} {s_}"] = (sum(1 for r in xs if r["mfe_bid"] > 2 * r["spread"]) / len(xs)) if xs else None
+    info["share with 3-min max bid > 2x spread"] = mfe
+    info["not computed"] = {"IEX-only trade signing": "needs the if_pass feed=iex fetch (amended_4 (6))",
+                            "terciles within hour / onset-bar-return terciles": "reported as the by-hour split only"}
+    return info
+
+
+def _bp_t(r: dict) -> str:
+    return "-" if r["diff"] is None else f"{r['diff'] * 1e4:+.1f} bp (t {'-' if r['t'] is None else round(r['t'], 2)}, n_in {r['n_in']})"
+
+
+def report(res: dict) -> str:
+    def bp(x):
+        return "-" if x is None else f"{x * 1e4:+.1f}"
+    L_ = ["# Order-flow pilot: result", "",
+          "Prereg: docs/studies/order_flow_pilot_prereg.json (amended .. amended_4, budget_restated). PRE entries, SIP "
+          "ticks; gated (top tercile) minus rest on gross 180 s mid-to-mid; gated net = ask in, bid out.", "",
+          f"Rows {res['rows']}, drops {res['drops']}.", "",
+          "| group | half | IN | OUT | days | gated - rest (bp) | t | t_crit | 97.5% UB | gated net | name-day | drop 3 names / days | half |",
+          "|" + "---|" * 13]
+    for g, hs in res["graded"].items():
+        for hf, r in hs.items():
+            L_.append(f"| {g} | {hf} | {r['n_in']} | {r['n_out']} | {r['days']} | {bp(r['diff'])} | "
+                      f"{'-' if r['t'] is None else round(r['t'], 2)} | {'-' if r['t_crit'] is None else round(r['t_crit'], 2)} | "
+                      f"{bp(r['ub'])} | {bp(r['in_net'])} | {bp(r['nameday'])} | {bp(r['drop_names'])} / {bp(r['drop_days'])} | "
+                      f"{res['halves'][g][hf]} |")
+    L_ += ["", "| group | verdict |", "|---|---|"] + [f"| {g} | **{v}** |" for g, v in res["verdicts"].items()]
+    L_ += ["", "## Information (cannot pass)", "", "```", json.dumps(res["info"], indent=1, default=str), "```"]
+    return "\n".join(L_)
+
+
 def module_shas() -> dict[str, str]:
     """sha256 of this script and the modules whose code shapes the entries and features (skeptic r1 #8)."""
     import signals
@@ -482,6 +719,9 @@ def main() -> None:
     g.add_argument("--fetch-features", action="store_true")
     g.add_argument("--count", action="store_true")
     g.add_argument("--refetch-capped", action="store_true")
+    g.add_argument("--fetch-outcomes", action="store_true")
+    g.add_argument("--score", action="store_true")
+    ap.add_argument("--skeptic-ready", default="")
     ap.add_argument("--workers", type=int, default=4)
     a = ap.parse_args()
     if a.fetch_features:
@@ -491,6 +731,37 @@ def main() -> None:
         print(f"feature fetch done: {dict(st)} ({datetime.now(E.ET):%H:%M} ET)")
         if st.get("aborted"):
             raise SystemExit(1)
+        return
+    if a.fetch_outcomes:
+        feats = json.load(open(os.path.join(OUT_DIR, "features.json")))
+        if feats.get("module_sha256") is None:
+            raise SystemExit("features.json missing its module hashes; rerun --count")
+        print(f"outcome fetch: {len(feats['entries'])} entries ({datetime.now(E.ET):%H:%M} ET)", flush=True)
+        st = fetch_outcomes(feats["entries"], data_client(), log=lambda x: print(x, flush=True))
+        print(f"outcome fetch done: {dict(st)} ({datetime.now(E.ET):%H:%M} ET)")
+        if st.get("aborted"):
+            raise SystemExit(1)
+        return
+    if a.score:
+        if not a.skeptic_ready:
+            raise SystemExit("--score needs --skeptic-ready (the result-skeptic READY on this script)")
+        feats = json.load(open(os.path.join(OUT_DIR, "features.json")))
+        if feats.get("module_sha256") != module_shas():
+            raise SystemExit("features.json was written by a different script or module version; rerun --count")
+        rows, st = score_rows(feats)
+        if st["not_fetched"] > FAIL_ABORT * len(feats["entries"]):
+            raise SystemExit(f"{st['not_fetched']} entries without outcomes (> 2%); rerun --fetch-outcomes")
+        graded, halves, verdicts = {}, {}, {}
+        for g in ("G1", "G2", "G3"):
+            graded[g] = {hf: grade_group(rows, g, hf) for hf in ("A", "B")}
+            halves[g] = {hf: half_verdict(graded[g][hf], g) for hf in ("A", "B")}
+            verdicts[g] = group_verdict([halves[g][h] for h in ("A", "B")], [graded[g][h]["ub"] for h in ("A", "B")])
+        res = {"rows": len(rows), "drops": dict(st), "graded": graded, "halves": halves, "verdicts": verdicts,
+               "info": information(rows, feats), "skeptic_ready": a.skeptic_ready, "module_sha256": module_shas()}
+        md = report(res)
+        print(md)
+        open(os.path.join(OUT_DIR, "result.md"), "w").write(md + "\n")
+        write("result.json", res)
         return
     if a.refetch_capped:
         smp = json.load(open(os.path.join(OUT_DIR, "sample.json")))["entries"]
