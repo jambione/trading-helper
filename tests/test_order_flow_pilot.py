@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import pytest
 import sys
 from datetime import datetime
 from types import SimpleNamespace as NS
@@ -74,3 +75,105 @@ def test_coverage_ages_and_counts():
     assert c["qi_quote"] and c["entry_quote"] and c["quotes"] == 2 and c["requests"] == 2
     c2 = O.coverage([NS(timestamp=T - 50, conditions=["@"])], [_q(T - 115)], T)
     assert c2["signable"] == 0 and not c2["qi_quote"]                            # 65 s > 60 s; 115 s > 30 s
+
+
+T0 = 10_000.0
+
+
+def _tick(trades, quotes):
+    return {"trades": trades, "quotes": quotes}
+
+
+def test_sign_trades_lee_ready_and_tick_test():
+    qs = O.clean_quotes([(T0 - 70, 10.00, 10.02, 5, 5), (T0 - 30, 10.00, 10.02, 5, 5)])
+    trades = [(T0 - 65, 10.02, 100, ["@"], "C"),       # above mid 10.01 -> +1
+              (T0 - 50, 10.00, 50, ["@", "I"], "C"),   # below -> -1
+              (T0 - 40, 10.01, 30, ["@"], "C"),        # at mid, up from 10.00 -> +1
+              (T0 - 35, 10.01, 20, ["@"], "C"),        # at mid, unchanged -> previous sign +1
+              (T0 - 20, 10.03, 10, ["@", "4"], "C"),   # dropped by the keep-list
+              (T0 - 61, 10.02, 999, ["@"], "C"),       # outside [T - 60, T)
+              (T0, 10.02, 999, ["@"], "C")]            # at T: excluded
+    assert O.sign_trades(trades, qs, T0) == [(50, -1), (30, 1), (20, 1)]   # T0 - 65 is outside the 60 s window
+
+
+def test_unsignable_when_the_quote_is_stale():
+    qs = O.clean_quotes([(T0 - 119, 10.0, 10.02, 5, 5)])
+    assert O.sign_trades([(T0 - 50, 10.02, 10, ["@"], "C")], qs, T0) == []       # 69 s old > 60 s
+
+
+def test_features_ofi_qi_micro_and_entry_quote():
+    qs = [(T0 - 55, 10.00, 10.02, 8, 8), (T0 - 30, 10.00, 10.02, 30, 10), (T0 - 10, 10.00, 10.02, 30, 10),
+          (T0 - 5, 10.01, 10.01, 1, 1)]
+    trades = [(T0 - 50 + i, 10.02 if i % 4 else 10.00, 10, ["@"], "C") for i in range(8)]
+    f = O.features(_tick(trades, qs), T0)
+    assert f["n_signed"] == 8 and f["ofi60"] == pytest.approx((6 - 2) / 8)
+    assert f["qi"] == pytest.approx((30 - 10) / 40)                               # the locked quote is ignored
+    assert f["micro"] == pytest.approx(((10.00 * 10 + 10.02 * 30) / 40 - 10.01) / 10.01)
+    assert f["entry_quote"]
+    few = O.features(_tick(trades[:4], qs), T0)
+    assert few["ofi60"] is None                                                   # < 5 signed trades
+    stale = O.features(_tick(trades, [(T0 - 45, 10.0, 10.02, 3, 3)]), T0)
+    assert stale["qi"] is None and not stale["entry_quote"]                      # > 30 s old at T and T + 1
+
+
+def test_cuts_groups_and_g3():
+    assert O.top_cut([1, 2, 3, 4, 5, 6]) == 5 and O.top_cut([1, None]) is None
+    cuts = {"ofi60": 0.5, "qi": 0.2}
+    assert O.groups({"ofi60": 0.6, "qi": 0.3}, cuts) == {"G1": "IN", "G2": "IN", "G3": "IN"}
+    assert O.groups({"ofi60": 0.6, "qi": 0.1}, cuts) == {"G1": "IN", "G2": "OUT", "G3": "OUT"}
+    assert O.groups({"ofi60": None, "qi": 0.3}, cuts) == {"G1": None, "G2": "IN", "G3": None}
+
+
+def test_control_return_is_seeded_later_three_bars():
+    sip = {k: (10.0, 10.0 + 0.01 * (k % 7)) for k in range(570, 960)}
+    r = O.control_return("AAA", "2026-06-01", 600, sip)
+    assert r == O.control_return("AAA", "2026-06-01", 600, sip)
+    assert O.control_return("AAA", "2026-06-01", 958, sip) is None
+
+
+def test_count_step_floors_and_mde():
+    import random as _r
+    rng = _r.Random(3)
+    rows = []
+    for d in range(25):
+        for i in range(60):
+            g = "IN" if i < 20 else "OUT"
+            rows.append({"day": f"2026-06-{d + 1:02d}", "half": "A", "ctrl": rng.gauss(0, 0.002),
+                         "groups": {"G1": g, "G2": g, "G3": g}})
+    c = O.count_step(rows)["G1"]["A"]
+    assert c["n_in"] == 500 and c["days"] == 25 and c["projected_mde"] > 0 and not c["floors_met"]   # 500 < 1,000
+    assert O.count_step(rows)["G3"]["A"]["floors_met"]                                                # G3 floor 300
+
+
+class _FakeClient:
+    def __init__(self, fail_every=0):
+        self.n, self.fail_every = 0, fail_every
+
+    def get_stock_trades(self, req):
+        self.n += 1
+        if self.fail_every and self.n % self.fail_every == 0:
+            raise RuntimeError("boom")
+        return NS(data={req.symbol_or_symbols: [NS(timestamp=datetime.fromtimestamp(1, E.ET), price=10.0, size=1,
+                                                   conditions=["@"], tape="C")]})
+
+    def get_stock_quotes(self, req):
+        return NS(data={req.symbol_or_symbols: []})
+
+
+def _entries(n):
+    return [{"day": "2026-06-01", "sym": f"N{i}", "m": 600, "half": "A"} for i in range(n)]
+
+
+def test_fetch_features_caches_and_resumes(tmp_path):
+    cl = _FakeClient()
+    st = O.fetch_features(_entries(5), cl, str(tmp_path), sleep=lambda s: None, log=lambda x: None)
+    assert st["fetched"] == 5 and len(list(tmp_path.glob("*.pkl"))) == 5
+    st2 = O.fetch_features(_entries(7), cl, str(tmp_path), sleep=lambda s: None, log=lambda x: None)
+    assert st2["cached"] == 5 and st2["fetched"] == 2
+
+
+def test_fetch_features_aborts_above_two_percent(tmp_path, monkeypatch):
+    monkeypatch.setattr(O, "FAIL_MIN_ATTEMPTS", 20)
+    cl = _FakeClient(fail_every=1)                       # every trades call fails -> fetch_entry raises
+    st = O.fetch_features(_entries(50), cl, str(tmp_path), sleep=lambda s: None, log=lambda x: None)
+    assert st["aborted"] == 1 and st["attempted"] == 20

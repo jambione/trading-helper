@@ -23,6 +23,7 @@ import json
 import math
 import os
 import random
+import statistics
 import sys
 import time
 from collections import Counter, defaultdict
@@ -180,7 +181,7 @@ def data_client():
     return StockHistoricalDataClient(s["alpaca_data_api_key"], s["alpaca_data_secret_key"])
 
 
-def fetch_entry(cl, sym: str, t: float) -> tuple[list, list]:
+def fetch_entry(cl, sym: str, t: float, sleep=time.sleep) -> tuple[list, list]:
     from alpaca.data.enums import DataFeed
     from alpaca.data.requests import StockQuotesRequest, StockTradesRequest
 
@@ -190,16 +191,215 @@ def fetch_entry(cl, sym: str, t: float) -> tuple[list, list]:
         try:
             tr = cl.get_stock_trades(StockTradesRequest(symbol_or_symbols=sym, start=utc(t - WINDOW_S), end=utc(t),
                                                         feed=DataFeed.SIP, limit=10_000)).data.get(sym) or []
-            time.sleep(0.45)
+            sleep(REQ_GAP_S)
             qu = cl.get_stock_quotes(StockQuotesRequest(symbol_or_symbols=sym, start=utc(t - QUOTE_BEFORE_S),
                                                         end=utc(t + QUOTE_AFTER_S), feed=DataFeed.SIP,
                                                         limit=10_000)).data.get(sym) or []
-            time.sleep(0.45)
+            sleep(REQ_GAP_S)
             return tr, qu
         except Exception as e:  # noqa: BLE001
             print(f"  {sym} {int(t)} try {attempt}: {type(e).__name__} {str(e)[:80]}", flush=True)
-            time.sleep(10 * (attempt + 1))
+            sleep(10 * (attempt + 1))
     raise RuntimeError(f"fetch failed for {sym} at {int(t)}")
+
+
+# ── feature fetch (cached, resumable, paced) ─────────────────────────────────
+
+TICK_DIR = os.path.join(OUT_DIR, "ticks")
+REQ_GAP_S = 0.45                       # two requests per entry -> ~130 requests/min, under the 150/min cap
+FAIL_ABORT, FAIL_MIN_ATTEMPTS = 0.02, 200
+
+
+def entry_key(e: dict) -> str:
+    return f"{e['day']}_{e['sym']}_{e['m']}"
+
+
+def compact(trades: list, quotes: list) -> dict:
+    """What the features need, as plain tuples: trades (ts, price, size, codes, tape), quotes (ts, bid, ask, bid_size,
+    ask_size)."""
+    return {"trades": [(_ts(t), float(t.price), float(t.size or 0), _codes(t), str(getattr(t, "tape", "") or ""))
+                       for t in trades],
+            "quotes": [(_ts(q), float(q.bid_price or 0), float(q.ask_price or 0), float(q.bid_size or 0),
+                        float(q.ask_size or 0)) for q in quotes]}
+
+
+def fetch_features(entries: list[dict], cl, tick_dir: str = TICK_DIR, sleep=time.sleep, log=print) -> Counter:
+    """Fetch SIP trades [T - 60 s, T) and quotes [T - 120 s, T + 1 s] for every entry without a cache file. Resumable
+    (a cache file per entry, written atomically). Aborts when > 2% of attempted entries fail after
+    FAIL_MIN_ATTEMPTS attempts (prereg fetch plan)."""
+    import pickle
+    os.makedirs(tick_dir, exist_ok=True)
+    st = Counter()
+    for i, e in enumerate(entries):
+        path = os.path.join(tick_dir, entry_key(e) + ".pkl")
+        if os.path.exists(path):
+            st["cached"] += 1
+            continue
+        st["attempted"] += 1
+        try:
+            tr, qu = fetch_entry(cl, e["sym"], decision_ts(e["day"], e["m"]), sleep=sleep)
+        except RuntimeError as ex:
+            st["failed"] += 1
+            log(f"  FAILED {entry_key(e)}: {ex}")
+            if st["attempted"] >= FAIL_MIN_ATTEMPTS and st["failed"] / st["attempted"] > FAIL_ABORT:
+                log(f"ABORT: {st['failed']} of {st['attempted']} entries failed (> {FAIL_ABORT:.0%})")
+                st["aborted"] = 1
+                return st
+            continue
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            pickle.dump(compact(tr, qu), f)
+        os.replace(tmp, path)
+        st["fetched"] += 1
+        if st["fetched"] % 250 == 0:
+            log(f"  {i + 1}/{len(entries)}: fetched {st['fetched']}, cached {st['cached']}, failed {st['failed']} "
+                f"({datetime.now(E.ET):%H:%M} ET)")
+    return st
+
+
+# ── features (from cached ticks only) ────────────────────────────────────────
+
+MIN_SIGNED = 5
+
+
+def clean_quotes(quotes: list) -> list:
+    """Drop locked, crossed and zero-price / zero-size quotes; sort by time."""
+    return sorted(q for q in quotes if q[1] > 0 and q[2] > 0 and q[2] > q[1] and q[3] > 0 and q[4] > 0)
+
+
+def last_quote(qs: list, t: float, max_age: float):
+    import bisect
+    i = bisect.bisect_right([q[0] for q in qs], t) - 1
+    return qs[i] if i >= 0 and t - qs[i][0] <= max_age else None
+
+
+def sign_trades(trades: list, qs: list, T: float) -> list[tuple[float, int]]:
+    """Lee-Ready on kept trades in [T - 60 s, T): vs the prevailing mid (last clean quote at or before the trade,
+    <= 60 s old): above +1, below -1; at the mid by the tick test against the previous kept trade's price (up +1,
+    down -1, unchanged -> the previous sign). Unsignable trades are left out. Returns (size, sign) pairs."""
+    import bisect
+    qts = [q[0] for q in qs]
+    out, prev_px, prev_sign = [], None, None
+    for ts, px, size, codes, _tape in sorted(trades):
+        if not (T - WINDOW_S <= ts < T) or not codes or not all(c in KEEP_CODES for c in codes):
+            continue
+        i = bisect.bisect_right(qts, ts) - 1
+        sign = None
+        if i >= 0 and ts - qts[i] <= SIGN_MAX_AGE:
+            mid = (qs[i][1] + qs[i][2]) / 2
+            if px > mid:
+                sign = 1
+            elif px < mid:
+                sign = -1
+            elif prev_px is not None:
+                sign = 1 if px > prev_px else -1 if px < prev_px else prev_sign
+        if sign is not None:
+            out.append((size, sign))
+            prev_sign = sign
+        prev_px = px
+    return out
+
+
+def features(tick: dict, T: float) -> dict:
+    """OFI60, QI, MICRO and the entry-quote check for one entry. None = missing (entry leaves that cell)."""
+    qs = clean_quotes(tick["quotes"])
+    signed = sign_trades(tick["trades"], qs, T)
+    vol = sum(sz for sz, _ in signed)
+    ofi = (sum(sz * sg for sz, sg in signed) / vol) if len(signed) >= MIN_SIGNED and vol > 0 else None
+    q = last_quote(qs, T, READ_MAX_AGE)
+    qi = micro = None
+    if q:
+        _t, b, a, bs, as_ = q
+        qi = (bs - as_) / (bs + as_)
+        mid = (a + b) / 2
+        micro = ((b * as_ + a * bs) / (bs + as_) - mid) / mid
+    return {"ofi60": ofi, "qi": qi, "micro": micro, "n_signed": len(signed),
+            "entry_quote": last_quote(qs, T + 1, READ_MAX_AGE) is not None}
+
+
+def top_cut(values: list[float]) -> float | None:
+    """The 2/3 quantile (top-tercile cut point)."""
+    v = sorted(x for x in values if x is not None)
+    return v[(2 * len(v)) // 3] if len(v) >= 3 else None
+
+
+def groups(f: dict, cuts: dict) -> dict:
+    """G1 / G2 / G3 sides (IN = top tercile; OUT = the rest with the feature; None = feature missing)."""
+    def side(x, c):
+        return None if x is None or c is None else ("IN" if x >= c else "OUT")
+    g1, g2 = side(f["ofi60"], cuts["ofi60"]), side(f["qi"], cuts["qi"])
+    g3 = None if g1 is None or g2 is None else ("IN" if g1 == "IN" and g2 == "IN" else "OUT")
+    return {"G1": g1, "G2": g2, "G3": g3}
+
+
+CTRL_TAG, HOLD_BARS = "order-flow-ctrl", 3
+FLOORS = {"G1": 1000, "G2": 1000, "G3": 300}
+N_TESTS = 3
+
+
+def control_return(sym: str, day: str, m: int, sip: dict) -> float | None:
+    """Outcome-blind projection input: the 3-minute SIP bar return (open of c to close of c + 2) at a same-name
+    later decision minute c in m+1 .. m+60, seed sha256(symbol|day|m|order-flow-ctrl). No tick outcome is read."""
+    elig = [c for c in range(m + 1, m + S.CTRL_SPAN + 1)
+            if c + HOLD_BARS - 1 < S.RTH_END and c in sip and (c + HOLD_BARS - 1) in sip]
+    if not elig:
+        return None
+    c = random.Random(int(hashlib.sha256(f"{sym}|{day}|{m}|{CTRL_TAG}".encode()).hexdigest()[:16], 16)).choice(elig)
+    return S.net(sip, c, hold=HOLD_BARS, lag=0, cost=0.0)
+
+
+def t_crit3(days: int) -> float | None:
+    return S.t_ppf(1 - 0.025 / N_TESTS, days - 1) if days >= 2 else None
+
+
+def count_step(rows: list[dict]) -> dict:
+    """Per group and half: IN / OUT counts and days (>= 3 a side), projected MDE = (t_crit + 0.84) x the
+    day-clustered SE of per-day (IN - OUT) means of the control-minute bar returns, judged against 5 bp."""
+    out = {}
+    for g in ("G1", "G2", "G3"):
+        out[g] = {}
+        for half in ("A", "B"):
+            per = {"IN": defaultdict(list), "OUT": defaultdict(list)}
+            for r in rows:
+                s_ = r["groups"][g]
+                if r["half"] == half and s_ and r["ctrl"] is not None:
+                    per[s_][r["day"]].append(r["ctrl"])
+            n_in, n_out = (sum(len(v) for v in per[k].values()) for k in ("IN", "OUT"))
+            days = [d for d in per["IN"] if len(per["IN"][d]) >= 3 and len(per["OUT"][d]) >= 3]
+            diffs = [sum(per["IN"][d]) / len(per["IN"][d]) - sum(per["OUT"][d]) / len(per["OUT"][d]) for d in days]
+            se = (statistics.stdev(diffs) / math.sqrt(len(diffs))) if len(diffs) >= 2 else None
+            tc = t_crit3(len(diffs))
+            mde = (tc + 0.84) * se if se is not None and tc is not None else None
+            out[g][half] = {"n_in": n_in, "n_out": n_out, "days": len(days), "t_crit": tc, "projected_mde": mde,
+                            "mde_le_5bp": mde is not None and mde <= 0.0005,
+                            "floors_met": n_in >= FLOORS[g] and len(days) >= 20}
+    return out
+
+
+def build_rows(entries: list[dict], tick_dir: str = TICK_DIR) -> tuple[list[dict], Counter]:
+    """Features for every cached entry (no outcome), plus the control bar return from the warehouse."""
+    import pickle
+    st, rows, by_day = Counter(), [], defaultdict(list)
+    for e in entries:
+        by_day[e["day"]].append(e)
+    for day in sorted(by_day):
+        sip = H.load_raw("sip", day)
+        for e in by_day[day]:
+            path = os.path.join(tick_dir, entry_key(e) + ".pkl")
+            if not os.path.exists(path):
+                st["not_fetched"] += 1
+                continue
+            T = decision_ts(e["day"], e["m"])
+            f = features(pickle.load(open(path, "rb")), T)
+            if not f["entry_quote"]:
+                st["no_entry_quote"] += 1
+                continue
+            st["ofi_missing"] += f["ofi60"] is None
+            st["qi_missing"] += f["qi"] is None
+            ctrl = control_return(e["sym"], day, e["m"], H.sip_oc(sip[e["sym"]])) if e["sym"] in sip else None
+            rows.append({**e, **f, "ctrl": ctrl})
+    return rows, st
+
 
 
 def write(name: str, obj) -> str:
@@ -228,8 +428,38 @@ def main() -> None:
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--sample", action="store_true")
     g.add_argument("--prestep", action="store_true")
+    g.add_argument("--fetch-features", action="store_true")
+    g.add_argument("--count", action="store_true")
     ap.add_argument("--workers", type=int, default=4)
     a = ap.parse_args()
+    if a.fetch_features:
+        smp = json.load(open(os.path.join(OUT_DIR, "sample.json")))["entries"]
+        print(f"feature fetch: {len(smp)} entries ({datetime.now(E.ET):%H:%M} ET)", flush=True)
+        st = fetch_features(smp, data_client(), log=lambda x: print(x, flush=True))
+        print(f"feature fetch done: {dict(st)} ({datetime.now(E.ET):%H:%M} ET)")
+        if st.get("aborted"):
+            raise SystemExit(1)
+        return
+    if a.count:
+        smp = json.load(open(os.path.join(OUT_DIR, "sample.json")))["entries"]
+        rows, st = build_rows(smp)
+        if st["not_fetched"]:
+            raise SystemExit(f"{st['not_fetched']} entries not fetched yet; finish --fetch-features first")
+        half_a = [r for r in rows if r["half"] == "A"]
+        cuts = {k: top_cut([r[k] for r in half_a]) for k in ("ofi60", "qi")}
+        for r in rows:
+            r["groups"] = groups(r, cuts)
+        cnt = count_step(rows)
+        sha = hashlib.sha256(open(os.path.abspath(__file__), "rb").read()).hexdigest()
+        print(f"rows {len(rows)}, drops {dict(st)}, cuts (half A top tercile) {cuts}")
+        for g, hs in cnt.items():
+            for h, c in hs.items():
+                print(f"  {g} {h}: IN {c['n_in']} OUT {c['n_out']} days {c['days']} projected MDE "
+                      f"{H._bp(c['projected_mde'])} bp "
+                      f"(<= 5 bp: {c['mde_le_5bp']}), floors {c['floors_met']}")
+        print(write("count.json", {"script_sha256": sha, "rows": len(rows), "drops": dict(st), "cuts": cuts,
+                                   "groups": cnt, "note": "features and control bar returns only; no tick outcome read"}))
+        return
     if a.sample:
         days = H.warehouse_days()
         ks = list(range(H.LOOKBACK, len(days)))
