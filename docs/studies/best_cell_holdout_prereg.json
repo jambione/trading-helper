@@ -9,7 +9,12 @@
  "method": "three_minute_reread's code unchanged (module shas recorded), TMR_SAMPLE=confirm: S6 exactly as structure_pullback with the history adaptation, on every name with 10 prior SIP sessions; decision minute = setup bar end; entry at the SIP open of that minute, exit at the close two minutes later; d = same-name later control (seed 'three-min-v1'), x = cross-name same minute (seed 'three-min-cross'); 5 bp required cost. All 60 sessions pooled (one test, no halves needed), day-equal, day-clustered t.",
  "pass": "ALL of: pooled lift_d > 0 with one-sided t >= 1.96 (df = days - 1); pooled lift_x > 0 with t >= 1.96; name-day-equal lift_d > 0; drop-3-names and drop-3-days lift_d >= 0; >= 300 entries and >= 20 days; AND mean net3 > 0 at 5 bp. The statistical part alone (without net > 0) is reported as 'real but unpayable', not a pass.",
  "fail": "lift_d or lift_x with t <= -2, or the 97.5% upper bound of lift_d below +5 bp: closed. Anything else: UNDERPOWERED.",
- "information_only": ["the runner-up (10-minute S6) is NOT run", "net at 3 and 10 bp, lag-1 entry, MFE / MAE", "lift by month"],
+ "information_only": [
+  "the runner-up (10-minute S6) is NOT run",
+  "net at 3 and 10 bp, lag-1 entry, MFE / MAE",
+  "lift by month"
+ ],
  "no_retuning": "the selection rule, the chosen cell, the hold, the cost, the controls, the seeds and the sample are fixed; no other cell may be tested on this sample under this prereg.",
- "script": "a --oneshot mode for three_minute_reread.py (to be written): run the confirm path on the held-out sample for S6 only, ignoring the discovery-PASS requirement, which this prereg replaces for this one cell."
+ "script": "a --oneshot mode for three_minute_reread.py (to be written): run the confirm path on the held-out sample for S6 only, ignoring the discovery-PASS requirement, which this prereg replaces for this one cell.",
+ "status": "HELD, not run (operator 10/21 ~17:40 ET): the held-out sample stays unread and is reserved for confirming the order-flow pilot if it passes. This one-shot may run later only if the sample is still unread by then."
 }
