@@ -280,10 +280,25 @@ def _t_crit18(days: int) -> float | None:
 
 # ── grading ──────────────────────────────────────────────────────────────────
 
+def nameday_lift(rows, label, half, half_end=None, a_key="arm", c_key="ctrl") -> float | None:
+    """Day-equal mean of per-day means of per-NAME-DAY mean (arm - ctrl). indicator_confirm_hist.v_grade assumes one
+    entry per name-day (true for S3-S7); the %R rules fire several times a name-day (skeptic r1 #1)."""
+    per = defaultdict(lambda: defaultdict(list))
+    for r in rows:
+        if r["setup"] != label or H.half_of(r["day"], half_end) != half or "o" not in r:
+            continue
+        a, c = r["o"].get(a_key), r["o"].get(c_key)
+        if a is not None and c is not None:
+            per[r["day"]][r["sym"]].append(a - c)
+    days = {d: statistics.mean(statistics.mean(v) for v in nd.values()) for d, nd in per.items() if nd}
+    return H._day_t(days)[0]
+
+
 def grade_standalone(rows, label, half, half_end=None):
     g = H.v_grade(rows, label, half, half_end)
     for k in ("d", "x"):
         g[k]["t_crit"] = _t_crit18(g[k]["days"])
+    g["d"]["lift_nameday"] = nameday_lift(rows, label, half, half_end)
     return g
 
 
@@ -309,8 +324,34 @@ def checks(rows: list[dict], half_end: str | None, side_fns: dict | None = None,
     return out
 
 
+S.D_VARIANTS.setdefault("lag1", ("arm_lag1", "ctrl_lag1"))
+
+
+def lag1_lift(rows, label, half, half_end=None) -> float | None:
+    """The information lag-1 lift_d (entry at the open of m+1, control at c+1): standalone = day-equal mean of
+    (arm_lag1 - ctrl_lag1); filter = DiD on the same pair."""
+    if label in FILTERS:
+        rs = [r for r in pre_rows(rows) if H.half_of(r["day"], half_end) == half and "o" in r]
+        return S.grade_half(rs, lambda r: r["sides"][label], "lag1")["did"]
+    per = defaultdict(list)
+    for r in rows:
+        if r["setup"] == label and H.half_of(r["day"], half_end) == half and "o" in r:
+            a, c = r["o"].get("arm_lag1"), r["o"].get("ctrl_lag1")
+            if a is not None and c is not None:
+                per[r["day"]].append(a - c)
+    return H._day_t({d: statistics.mean(v) for d, v in per.items() if v})[0]
+
+
+def bounce_check(verdict: str, lag1: list) -> str:
+    """amended_2 (operator-approved): a discovery PASS whose lag-1 lift_d is <= 0 (or missing) in either half is
+    PASS_BOUNCE - the lag-0 edge may be the first print's bid-ask bounce - and does not go to confirmation."""
+    if verdict == "PASS" and any(x is None or x <= 0 for x in lag1):
+        return "PASS_BOUNCE"
+    return verdict
+
+
 def verdicts(rows: list[dict], count: dict) -> dict:
-    graded, halves, final = {}, {}, {}
+    graded, halves, final, lag1 = {}, {}, {}, {}
     for lab in STANDALONE + FILTERS:
         graded[lab], halves[lab] = {}, {}
         for half in ("A", "B"):
@@ -327,7 +368,10 @@ def verdicts(rows: list[dict], count: dict) -> dict:
         ub = [((graded[lab][h].get("ub_d"), graded[lab][h].get("ub_x")) if lab in FILTERS else
                (graded[lab][h].get("d", {}).get("ub"), graded[lab][h].get("x", {}).get("ub"))) for h in ("A", "B")]
         final[lab] = H.cell_verdict([halves[lab][h] for h in ("A", "B")], ub)
-    return {"graded": graded, "halves": halves, "verdicts": final}
+        if final[lab] == "PASS":
+            lag1[lab] = [lag1_lift(rows, lab, h) for h in ("A", "B")]
+            final[lab] = bounce_check(final[lab], lag1[lab])
+    return {"graded": graded, "halves": halves, "verdicts": final, "lag1_lift_d": lag1}
 
 
 def confirm_half(g: dict, is_filter: bool, k: int) -> str:
@@ -449,9 +493,46 @@ def assert_discovery(sessions: list[str]) -> None:
                          f"{sessions[:1]} .. {sessions[-1:]}")
 
 
+CONFIRM_SESSIONS = 70                     # 60 scored + 10 look-back
+CONFIRM_MIN_NAMES = 1000
+
+
 def assert_confirm(days: list[str]) -> None:
     if not days or days[-1] >= CONFIRM_BEFORE:
         raise SystemExit(f"confirmation sessions must all be before {CONFIRM_BEFORE}; got .. {days[-1:]}")
+
+
+def trading_calendar() -> list[str]:
+    import pickle
+    d = pickle.load(open(os.path.join(E.ROOT, "ai_reports", "gapdown", "daily.pkl"), "rb"))
+    return sorted(d["adj"]["SPY"])
+
+
+def check_confirm_sample(cal: list[str] | None = None, d: str = CONFIRM_DIR) -> list[str]:
+    """skeptic r1 #3: the held-out sample must be complete before discovery is scored and before --confirm: both feeds,
+    exactly CONFIRM_SESSIONS consecutive calendar sessions ending before CONFIRM_BEFORE, each SIP day with at least
+    CONFIRM_MIN_NAMES names (warehouse_fetch writes an empty file when a day's universe is empty)."""
+    have = {}
+    for f in ("iex", "sip"):
+        p = os.path.join(d, f)
+        if not os.path.isdir(p):
+            raise SystemExit(f"held-out sample missing: {p} (fetch it with warehouse_fetch.py --out first)")
+        have[f] = sorted(x[:-4] for x in os.listdir(p) if x.endswith(".npz"))
+    days = sorted(set(have["iex"]) & set(have["sip"]))
+    if have["iex"] != have["sip"] or len(days) != CONFIRM_SESSIONS:
+        raise SystemExit(f"held-out sample incomplete: iex {len(have['iex'])}, sip {len(have['sip'])} sessions, "
+                         f"need {CONFIRM_SESSIONS} on both")
+    assert_confirm(days)
+    cal = cal if cal is not None else trading_calendar()
+    want = [x for x in cal if days[0] <= x <= days[-1]]
+    if want != days:
+        raise SystemExit(f"held-out sessions are not the calendar's consecutive sessions: missing "
+                         f"{sorted(set(want) - set(days))[:5]}")
+    import numpy as np
+    thin = [x for x in days if len(np.load(os.path.join(d, "sip", f"{x}.npz"))["syms"]) < CONFIRM_MIN_NAMES]
+    if thin:
+        raise SystemExit(f"held-out SIP days with < {CONFIRM_MIN_NAMES} names: {thin[:5]}")
+    return days
 
 
 def score_gate(ready: str, sessions: list[str]) -> dict:
@@ -475,6 +556,7 @@ def score_gate(ready: str, sessions: list[str]) -> dict:
         raise SystemExit(f"null.json flags {nl['investigate']}: investigate the method before any score")
     if objs["count.json"]["scored_sessions"] != sessions:
         raise SystemExit("the session set changed since the count step; rerun the count step")
+    check_confirm_sample()          # prereg: the held-out fetch is the first step, before any discovery score
     return objs["count.json"]
 
 
@@ -535,8 +617,12 @@ def main() -> None:
         if os.environ.get("TMR_SAMPLE") != "confirm":
             raise SystemExit("run --confirm with TMR_SAMPLE=confirm (reads ai_reports/warehouse_confirm/)")
         days = H.warehouse_days()
-        assert_confirm(days)
+        if days != check_confirm_sample():
+            raise SystemExit("the loader's sessions differ from the checked held-out sample")
         disc = json.load(open(os.path.join(OUT_DIR, "result.json")))
+        if disc.get("module_sha256") != module_shas():
+            raise SystemExit("result.json was written by a different script or module version: confirmation must run "
+                             "the discovery code unchanged")
         cells = [c for c, v in disc["verdicts"].items() if v == "PASS"]
         if not cells:
             print("no discovery PASS: nothing to confirm")

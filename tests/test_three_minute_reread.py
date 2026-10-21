@@ -121,6 +121,10 @@ def test_score_gate(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="different script or module"):
         T.score_gate("READY", ["d1"])
     (tmp_path / "null.json").write_text(json.dumps(good_null))
+    monkeypatch.setattr(T, "check_confirm_sample", lambda: (_ for _ in ()).throw(SystemExit("held-out sample missing")))
+    with pytest.raises(SystemExit, match="held-out sample missing"):        # the fetch is the first step
+        T.score_gate("READY", ["d1"])
+    monkeypatch.setattr(T, "check_confirm_sample", lambda: ["d0"])
     assert T.score_gate("READY", ["d1"])["scored_sessions"] == ["d1"]
 
 
@@ -146,3 +150,52 @@ def test_end_to_end_on_the_synthetic_walk(monkeypatch):
     stats = T.checks(res["rows"], days[H.LOOKBACK])
     assert {c["cell"] for c in stats} == set(T.STANDALONE) | set(T.FILTERS)
     H._RAW.clear()
+
+
+def _r(day, sym, a, c, label="RSI2T", a1=None, c1=None):
+    return {"day": day, "sym": sym, "m": 700, "setup": label,
+            "o": {"arm": a, "ctrl": c, "cross": 0.0, "arm_lag1": a1 if a1 is not None else a,
+                  "ctrl_lag1": c1 if c1 is not None else c}}
+
+
+def test_nameday_lift_weights_each_name_day_once():
+    # day 1: name X fires 9 times at +10 bp, name Y once at -10 bp -> entry-equal +8 bp, name-day-equal 0
+    rows = [_r("2026-08-03", "X", 0.0010, 0.0) for _ in range(9)] + [_r("2026-08-03", "Y", -0.0010, 0.0)]
+    assert T.nameday_lift(rows, "RSI2T", "B") == pytest.approx(0.0)
+    g = T.grade_standalone(rows, "RSI2T", "B")
+    assert g["d"]["lift"] == pytest.approx(0.0008) and g["d"]["lift_nameday"] == pytest.approx(0.0)
+
+
+def test_bounce_check_and_lag1_lift():
+    assert T.bounce_check("PASS", [0.0002, 0.0001]) == "PASS"
+    assert T.bounce_check("PASS", [0.0002, 0.0]) == "PASS_BOUNCE"
+    assert T.bounce_check("PASS", [None, 0.0003]) == "PASS_BOUNCE"
+    assert T.bounce_check("FAIL", [-0.001, -0.001]) == "FAIL"
+    rows = [_r("2026-08-03", "X", 0.0010, 0.0, a1=-0.0002, c1=0.0), _r("2026-08-04", "X", 0.0010, 0.0, a1=-0.0004, c1=0.0)]
+    assert T.lag1_lift(rows, "RSI2T", "B") == pytest.approx(-0.0003)
+
+
+def _confirm_dir(tmp_path, days, names=1200, feeds=("iex", "sip")):
+    import numpy as np
+    for f in feeds:
+        (tmp_path / f).mkdir(parents=True, exist_ok=True)
+        for dd in days:
+            np.savez(tmp_path / f / f"{dd}.npz", syms=np.array([f"N{i}" for i in range(names)]))
+
+
+def test_check_confirm_sample(tmp_path):
+    cal = [f"2026-01-{i:02d}" for i in range(1, 31)] + [f"2026-02-{i:02d}" for i in range(1, 29)] + \
+          [f"2026-03-{i:02d}" for i in range(1, 13)] + ["2026-04-27"]
+    days = cal[:70]
+    _confirm_dir(tmp_path, days)
+    assert T.check_confirm_sample(cal, str(tmp_path)) == days
+    with pytest.raises(SystemExit, match="not the calendar's consecutive"):
+        T.check_confirm_sample(sorted(cal + ["2026-01-05a"]), str(tmp_path))     # a calendar session inside the range is missing
+    (tmp_path / "sip" / f"{days[3]}.npz").unlink()
+    with pytest.raises(SystemExit, match="incomplete"):
+        T.check_confirm_sample(cal, str(tmp_path))
+    _confirm_dir(tmp_path, [days[3]], names=10, feeds=("sip",))
+    with pytest.raises(SystemExit, match="< 1000 names"):
+        T.check_confirm_sample(cal, str(tmp_path))
+    with pytest.raises(SystemExit, match="held-out sample missing"):
+        T.check_confirm_sample(cal, str(tmp_path / "nope"))
