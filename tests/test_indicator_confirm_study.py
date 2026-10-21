@@ -157,22 +157,36 @@ def _g(**kw):
 
 
 def test_half_verdict_rules():
-    assert S.half_verdict(_g(), "H1", 0.001) == "PASS"
-    assert S.half_verdict(_g(n_in=99), "H1", 0.001) == "UNDERPOWERED"
-    assert S.half_verdict(_g(did_t=-2.0), "H1", 0.01) == "FAIL"
-    assert S.half_verdict(_g(in_net=-0.0001), "H1", 0.001) == "FAIL"            # powered, pass not met
-    assert S.half_verdict(_g(in_net=-0.0001), "H1", 0.003) == "NOT_PASSED_LOW_POWER"
-    assert S.half_verdict(_g(out_lift=0.0001), "H2", 0.001) == "FAIL"           # H2 needs OUT lift < 0
-    assert S.half_verdict(_g(out_lift=0.0001), "H1", 0.001) == "PASS"
-    assert S.half_verdict(_g(did_t=3.0), "H1", 0.001) == "FAIL"                 # below t_crit 3.05
+    assert S.half_verdict(_g(), "H1") == "PASS"
+    assert S.half_verdict(_g(n_in=99), "H1") == "UNDERPOWERED"
+    assert S.half_verdict(_g(did_t=-2.0), "H1") == "FAIL"
+    assert S.half_verdict(_g(in_net=-0.0001), "H1") == "NOT_PASSED"
+    assert S.half_verdict(_g(out_lift=0.0001), "H2") == "NOT_PASSED"           # H2 needs OUT lift < 0
+    assert S.half_verdict(_g(out_lift=0.0001), "H1") == "PASS"
+    assert S.half_verdict(_g(did_t=3.0), "H1") == "NOT_PASSED"                 # below t_crit 3.05
 
 
 def test_final_verdict():
-    assert S.final_verdict([_g(), _g()], ["PASS", "PASS"]) == "PASS"
-    assert S.final_verdict([_g(), _g()], ["PASS", "FAIL"]) == "FAIL"
-    assert S.final_verdict([_g(), _g()], ["PASS", "NOT_PASSED_LOW_POWER"]) == "UNDERPOWERED"
-    assert S.final_verdict([_g(did_t=-2.5)], ["FAIL", "UNDERPOWERED"]) == "FAIL"
-    assert S.final_verdict([_g()], ["PASS", "UNDERPOWERED"]) == "UNDERPOWERED"
+    assert S.final_verdict(["PASS", "PASS"], [0.001, 0.001]) == "PASS"
+    assert S.final_verdict(["FAIL", "PASS"], [0.004, 0.001]) == "FAIL"           # t <= -2 in a scored half
+    assert S.final_verdict(["NOT_PASSED", "NOT_PASSED"], [0.001, 0.0015]) == "FAIL"
+    assert S.final_verdict(["PASS", "NOT_PASSED"], [0.001, 0.001]) == "FAIL"     # both powered, pass not met
+    # skeptic 10/21 #1: one half's own MDE never fails the cell (H2: A 45 bp, B 13 bp)
+    assert S.final_verdict(["PASS", "NOT_PASSED"], [0.0045, 0.0013]) == "UNDERPOWERED"
+    assert S.final_verdict(["NOT_PASSED", "NOT_PASSED"], [0.0045, 0.0013]) == "UNDERPOWERED"
+    assert S.final_verdict(["PASS", "UNDERPOWERED"], [0.001, None]) == "UNDERPOWERED"
+    assert S.final_verdict(["FAIL", "UNDERPOWERED"], [0.001, None]) == "FAIL"
+
+
+def test_unscored_cell_half_prints_counts_only():
+    recs = []
+    for k in range(4):
+        for i in range(3):
+            recs.append({**_rec(f"2026-09-{10 + k:02d}", f"I{i}", "IN", 0.001), "half": "A"})
+            recs.append({**_rec(f"2026-09-{10 + k:02d}", f"O{i}", "OUT", 0.0), "half": "A"})
+    lines = S.table(recs, {"H1": lambda r: r["side"]}, scored={"H1": {"A": False, "B": True}})
+    assert "not scored" in lines[2] and "+10.0" not in lines[2]
+    assert "+10.0" in S.table(recs, {"H1": lambda r: r["side"]})[2]
 
 
 def test_cell_sides():
@@ -204,4 +218,9 @@ def test_score_refuses_without_skeptic_ready(monkeypatch, tmp_path):
         S.main()
     monkeypatch.setattr(sys, "argv", ["x", "--score", "--skeptic-ready", "READY"])
     with pytest.raises(SystemExit, match="count step"):
+        S.main()
+    import json
+    (tmp_path / "count.json").write_text(json.dumps({"script_sha256": "old", "days": []}))
+    (tmp_path / "null.json").write_text(json.dumps({"ok": True, "script_sha256": S.script_sha()}))
+    with pytest.raises(SystemExit, match="different script version"):
         S.main()

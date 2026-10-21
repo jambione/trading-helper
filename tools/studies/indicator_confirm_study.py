@@ -557,7 +557,7 @@ def grade_half(recs: list[dict], side_fn, dkey: str = "net10") -> dict:
             "dropped_names": sorted(top_names), "dropped_days": sorted(top_days)}
 
 
-def half_verdict(g: dict, cell: str, mde: float | None) -> str:
+def half_verdict(g: dict, cell: str) -> str:
     """SCORED halves only; a half short of arms or days is UNDERPOWERED and its outcomes are not used."""
     if g["n_in"] < MIN_ARMS or g["n_out"] < MIN_ARMS or g["days"] < MIN_DAYS or g["did"] is None \
             or g["did_t"] is None:
@@ -572,19 +572,18 @@ def half_verdict(g: dict, cell: str, mde: float | None) -> str:
           and g["did_drop_days"] is not None and g["did_drop_days"] >= 0)
     if cell == "H2":
         ok = ok and g["out_lift"] is not None and g["out_lift"] < 0
-    if ok:
-        return "PASS"
-    return "FAIL" if mde is not None and mde <= MDE_BAR else "NOT_PASSED_LOW_POWER"
+    return "PASS" if ok else "NOT_PASSED"
 
 
-def final_verdict(gs: list[dict], halves: list[str]) -> str:
-    """Prereg: FAIL if DiD t <= -2 in either half, or both halves scored with MDE <= 15 bp and no pass."""
-    if any(g["did_t"] is not None and g["did_t"] <= -2.0 and g["n_in"] >= MIN_ARMS and g["n_out"] >= MIN_ARMS
-           and g["days"] >= MIN_DAYS for g in gs):
+def final_verdict(halves: list[str], mdes: list[float | None]) -> str:
+    """Prereg: PASS needs both halves PASS. FAIL if a scored half has DiD t <= -2 (half verdict FAIL), or if
+    both halves are scored with projected MDE <= 15 bp and the pass is not met. Otherwise UNDERPOWERED: one
+    half's own MDE never fails a cell (skeptic 10/21 #1)."""
+    if "FAIL" in halves:
         return "FAIL"
     if all(h == "PASS" for h in halves):
         return "PASS"
-    if all(h in ("PASS", "FAIL") for h in halves):
+    if all(h != "UNDERPOWERED" for h in halves) and all(m is not None and m <= MDE_BAR for m in mdes):
         return "FAIL"
     return "UNDERPOWERED"
 
@@ -592,8 +591,8 @@ def final_verdict(gs: list[dict], halves: list[str]) -> str:
 # ── count step (outcome-blind) ───────────────────────────────────────────────
 
 def count_step(recs: list[dict]) -> dict:
-    """Counts, and projected SE = sqrt(2) x the day-clustered SE of the CONTROL net10 of each cell's IN arms.
-    No arm outcome is read."""
+    """Counts, and (amended_3) projected SE = sqrt(2) x the day-clustered SE, over the DiD days, of each day's
+    mean CONTROL net10 of IN arms minus mean CONTROL net10 of OUT arms. No arm outcome is read."""
     out = {}
     for cell in CELLS:
         out[cell] = {}
@@ -604,13 +603,15 @@ def count_step(recs: list[dict]) -> dict:
             outs = [r for r in rs if side[id(r)] == "OUT"]
             per_in, per_out = Counter(r["day"] for r in ins), Counter(r["day"] for r in outs)
             days = sorted(d for d in per_in if per_in[d] >= MIN_SIDE and per_out[d] >= MIN_SIDE)
-            ctrl = defaultdict(list)
-            for r in ins:
-                v = net(r["sip"], r["c"])
-                if v is not None:
-                    ctrl[r["day"]].append(v)
-            means = [statistics.mean(v) for v in ctrl.values() if v]
-            se = (statistics.stdev(means) / math.sqrt(len(means))) if len(means) >= 2 else None
+            ctrl = {"IN": defaultdict(list), "OUT": defaultdict(list)}
+            for side_, group in (("IN", ins), ("OUT", outs)):
+                for r in group:
+                    v = net(r["sip"], r["c"])
+                    if v is not None:
+                        ctrl[side_][r["day"]].append(v)
+            diffs = [statistics.mean(ctrl["IN"][d]) - statistics.mean(ctrl["OUT"][d]) for d in days
+                     if ctrl["IN"][d] and ctrl["OUT"][d]]
+            se = (statistics.stdev(diffs) / math.sqrt(len(diffs))) if len(diffs) >= 2 else None
             tc = t_crit(len(days))
             proj_se = math.sqrt(2) * se if se is not None else None
             mde = (tc + 0.84) * proj_se if proj_se is not None and tc is not None else None
@@ -649,6 +650,11 @@ def load_study_days(ok_only: bool = True) -> tuple[list[dict], dict[str, list], 
         arm_lists[day] = arms
         stats[f"arms_{half_of(day)}"] += len(arms)
     return keep, arm_lists, excluded, stats
+
+
+def script_sha() -> str:
+    """count.json and null.json carry the sha256 of the script that wrote them; --score refuses a mismatch."""
+    return hashlib.sha256(open(os.path.abspath(__file__), "rb").read()).hexdigest()
 
 
 def write_json(name: str, obj) -> str:
@@ -759,11 +765,15 @@ def info_cells(recs: list[dict], fkey: str = "f") -> dict:
     return cells
 
 
-def table(recs: list[dict], cells: dict, dkey: str = "net10") -> list[str]:
+def table(recs: list[dict], cells: dict, dkey: str = "net10", scored: dict | None = None) -> list[str]:
+    """`scored` ({cell: {half: bool}}): a cell-half the count step did not score prints counts only."""
     lines = ["| cell | half | IN | OUT | days | lift vs random | t | DiD | t |", "|---|---|---|---|---|---|---|---|---|"]
     for name, fn in cells.items():
         for half in ("A", "B"):
             g = grade_half([r for r in recs if r["half"] == half], fn, dkey)
+            if scored is not None and not scored.get(name, {}).get(half, True):
+                lines.append(f"| {name} | {half} | {g['n_in']} | {g['n_out']} | {g['days']} | not scored | | | |")
+                continue
             lines.append(f"| {name} | {half} | {g['n_in']} | {g['n_out']} | {g['days']} | {_bp(g['lift'])} | "
                          f"{_t(g['lift_t'])} | {_bp(g['did'])} | {_t(g['did_t'])} |")
     return lines
@@ -788,6 +798,8 @@ def report(res: dict) -> str:
     L += ["", "| cell | verdict |", "|---|---|"]
     L += [f"| {c} | **{res['verdicts'][c]}** |" for c in CELLS]
     L += ["", "A FAIL closes the cell only for effects >= its printed MDE; UNDERPOWERED is no evidence either way.",
+          "t_crit uses df = DiD days - 1 per half (stricter than the prereg's ~3.05 / ~2.90 when a cell has fewer "
+          "DiD days than the half has sessions).",
           "", "## Information only (cannot pass)", ""]
     for title, lines in res["info"].items():
         L += [f"### {title}", ""] + lines + [""]
@@ -810,24 +822,23 @@ def score(recs: list[dict], count: dict, extra: dict) -> dict:
                 g["dropped_names"], g["dropped_days"] = [], []
                 halves[cell][half] = "UNDERPOWERED"
             else:
-                halves[cell][half] = half_verdict(g, cell, m_)
+                halves[cell][half] = half_verdict(g, cell)
             graded[cell][half], mde[cell][half] = g, m_
-        gs = [graded[cell][h] for h in ("A", "B") if count[cell][h]["scored"]]
-        hv = [halves[cell][h] for h in ("A", "B")]
-        verdicts[cell] = final_verdict(gs, hv)
+        verdicts[cell] = final_verdict([halves[cell][h] for h in ("A", "B")], [mde[cell][h] for h in ("A", "B")])
     for r in recs:
         r["adx5"] = adx5_at(r["bars"], r["m"])
     prim = {c: (lambda r, c=c: cell_side(r["f"], c, r["m"])) for c in CELLS}
+    sc = {c: {h: count[c][h]["scored"] for h in ("A", "B")} for c in CELLS}
     info = {"cells (IEX features, net10)": table(recs, info_cells(recs))}
     for dkey in D_VARIANTS:
         if dkey != "net10":
-            info[f"H1-H5, {dkey}"] = table(recs, prim, dkey)
+            info[f"H1-H5, {dkey}"] = table(recs, prim, dkey, scored=sc)
     info["H1-H5 on SIP features"] = table(recs, {c: (lambda r, c=c: cell_side(r.get("f_sip") or {}, c, r["m"]))
-                                                 for c in CELLS})
+                                                 for c in CELLS}, scored=sc)
     for label, rs in extra.items():
         for r in rs:
             r["o"] = outcomes(r)
-        info[f"H1-H5, {label}"] = table(rs, prim)
+        info[f"H1-H5, {label}"] = table(rs, prim, scored=sc)
     overlap = sum(1 for r in recs if r["c"] <= r["m"] + 10) / len(recs) if recs else 0.0
     return {"graded": graded, "half_verdicts": halves, "verdicts": verdicts, "mde": mde, "info": info,
             "overlap_share": overlap}
@@ -854,6 +865,7 @@ def main() -> None:
         print(f"null: {res['arms']} synthetic arms, {res['n_stats']} stats, max |t| {res['max_abs_t']:.2f} "
               f"(bound {res['bound']:.2f}), share |t|<=1 {res['share_abs_t_le_1']:.0%}: "
               f"{'OK' if res['ok'] else 'NOT OK - fix the method before any score'}")
+        res["script_sha256"] = script_sha()
         print(write_json("null.json", res))
         return
     datas, arm_lists, excluded, stats = load_study_days()
@@ -873,7 +885,8 @@ def main() -> None:
                       f"{'scored' if c['scored'] else 'UNDERPOWERED - not scored'}")
         vid = video_count(arm_lists)
         print(f"video setups: {vid}")
-        print(write_json("count.json", {"days": days, "excluded": excluded, "stats": dict(stats),
+        print(write_json("count.json", {"script_sha256": script_sha(), "days": days, "excluded": excluded,
+                                        "stats": dict(stats),
                                         "cells": cnt, "video": vid}))
         print("(count step only; --null next, --score after a result-skeptic READY on this script)")
         return
@@ -885,6 +898,9 @@ def main() -> None:
     if not os.path.exists(npath) or not json.load(open(npath)).get("ok"):
         raise SystemExit("null calibration missing or NOT OK (run --null; fix the method if it fails)")
     count = json.load(open(cpath))
+    for name, obj in (("count.json", count), ("null.json", json.load(open(npath)))):
+        if obj.get("script_sha256") != script_sha():
+            raise SystemExit(f"{name} was written by a different script version; rerun it with this one")
     if count["days"] != days:
         raise SystemExit("the day set changed since the count step; rerun the count step")
     all_lists = {d: arms_from_rows(ledger_rows(d), ok_only=False) for d in days}
