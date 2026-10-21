@@ -181,7 +181,10 @@ def data_client():
     return StockHistoricalDataClient(s["alpaca_data_api_key"], s["alpaca_data_secret_key"])
 
 
-def fetch_entry(cl, sym: str, t: float, sleep=time.sleep) -> tuple[list, list]:
+ROW_CAP = 10_000          # the first feature fetch's per-request limit; a file at the cap may be truncated
+
+
+def fetch_entry(cl, sym: str, t: float, sleep=time.sleep, limit: int | None = ROW_CAP) -> tuple[list, list]:
     from alpaca.data.enums import DataFeed
     from alpaca.data.requests import StockQuotesRequest, StockTradesRequest
 
@@ -190,11 +193,11 @@ def fetch_entry(cl, sym: str, t: float, sleep=time.sleep) -> tuple[list, list]:
     for attempt in range(5):
         try:
             tr = cl.get_stock_trades(StockTradesRequest(symbol_or_symbols=sym, start=utc(t - WINDOW_S), end=utc(t),
-                                                        feed=DataFeed.SIP, limit=10_000)).data.get(sym) or []
+                                                        feed=DataFeed.SIP, limit=limit)).data.get(sym) or []
             sleep(REQ_GAP_S)
             qu = cl.get_stock_quotes(StockQuotesRequest(symbol_or_symbols=sym, start=utc(t - QUOTE_BEFORE_S),
                                                         end=utc(t + QUOTE_AFTER_S), feed=DataFeed.SIP,
-                                                        limit=10_000)).data.get(sym) or []
+                                                        limit=limit)).data.get(sym) or []
             sleep(REQ_GAP_S)
             return tr, qu
         except Exception as e:  # noqa: BLE001
@@ -221,6 +224,30 @@ def compact(trades: list, quotes: list) -> dict:
                        for t in trades],
             "quotes": [(_ts(q), float(q.bid_price or 0), float(q.ask_price or 0), float(q.bid_size or 0),
                         float(q.ask_size or 0)) for q in quotes]}
+
+
+def capped(tick: dict) -> bool:
+    """skeptic r1 #2: alpaca-py stops at `limit` rows and keeps the EARLIEST, so a capped quote file lacks the rows near
+    T. Such entries are refetched paged (limit=None) before the count step."""
+    return len(tick["trades"]) >= ROW_CAP or len(tick["quotes"]) >= ROW_CAP
+
+
+def refetch_capped(entries: list[dict], cl, tick_dir: str = TICK_DIR, sleep=time.sleep, log=print) -> Counter:
+    import pickle
+    st = Counter()
+    for e in entries:
+        path = os.path.join(tick_dir, entry_key(e) + ".pkl")
+        if not os.path.exists(path) or not capped(pickle.load(open(path, "rb"))):
+            continue
+        st["capped"] += 1
+        tr, qu = fetch_entry(cl, e["sym"], decision_ts(e["day"], e["m"]), sleep=sleep, limit=None)
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            pickle.dump({**compact(tr, qu), "paged": True}, f)
+        os.replace(tmp, path)
+        st["refetched"] += 1
+        log(f"  refetched {entry_key(e)} paged: {len(tr)} trades, {len(qu)} quotes")
+    return st
 
 
 def fetch_features(entries: list[dict], cl, tick_dir: str = TICK_DIR, sleep=time.sleep, log=print) -> Counter:
@@ -264,7 +291,8 @@ MIN_SIGNED = 5
 
 def clean_quotes(quotes: list) -> list:
     """Drop locked, crossed and zero-price / zero-size quotes; sort by time."""
-    return sorted(q for q in quotes if q[1] > 0 and q[2] > 0 and q[2] > q[1] and q[3] > 0 and q[4] > 0)
+    return sorted((q for q in quotes if q[1] > 0 and q[2] > 0 and q[2] > q[1] and q[3] > 0 and q[4] > 0),
+                  key=lambda q: q[0])          # time only: stable, so delivery order survives within a timestamp
 
 
 def last_quote(qs: list, t: float, max_age: float):
@@ -280,7 +308,7 @@ def sign_trades(trades: list, qs: list, T: float) -> list[tuple[float, int]]:
     import bisect
     qts = [q[0] for q in qs]
     out, prev_px, prev_sign = [], None, None
-    for ts, px, size, codes, _tape in sorted(trades):
+    for ts, px, size, codes, _tape in sorted(trades, key=lambda t: t[0]):     # time only (stable), not by price
         if not (T - WINDOW_S <= ts < T) or not codes or not all(c in KEEP_CODES for c in codes):
             continue
         i = bisect.bisect_right(qts, ts) - 1
@@ -317,16 +345,29 @@ def features(tick: dict, T: float) -> dict:
             "entry_quote": last_quote(qs, T + 1, READ_MAX_AGE) is not None}
 
 
-def top_cut(values: list[float]) -> float | None:
-    """The 2/3 quantile (top-tercile cut point)."""
-    v = sorted(x for x in values if x is not None)
+def tie_u(r: dict) -> float:
+    """amended_4: a seeded uniform per entry that breaks ties at the tercile cut (QI has an atom at 0)."""
+    return int(hashlib.sha256(f"{r['sym']}|{r['day']}|{r['m']}|tercile-tie".encode()).hexdigest()[:16], 16) / 2 ** 64
+
+
+def top_cut(values: list) -> tuple | None:
+    """The top-tercile cut as a (value, tie_u) pair on half A: the first pair of the top third when entries are ranked
+    by (value, tie_u). Entries are IN when (value, tie_u) >= the cut, so half A's IN share is exactly a third even
+    with ties. `values` holds (value, tie_u) pairs; plain numbers are taken with tie_u = 0."""
+    v = sorted((x if isinstance(x, tuple) else (x, 0.0)) for x in values
+               if x is not None and (not isinstance(x, tuple) or x[0] is not None))
     return v[(2 * len(v)) // 3] if len(v) >= 3 else None
 
 
 def groups(f: dict, cuts: dict) -> dict:
-    """G1 / G2 / G3 sides (IN = top tercile; OUT = the rest with the feature; None = feature missing)."""
+    """G1 / G2 / G3 sides (IN = top tercile by (value, tie_u); OUT = the rest with the feature; None = missing)."""
+    u = tie_u(f) if all(k in f for k in ("sym", "day", "m")) else 0.0
+
     def side(x, c):
-        return None if x is None or c is None else ("IN" if x >= c else "OUT")
+        if x is None or c is None:
+            return None
+        c = c if isinstance(c, (tuple, list)) else (c, 0.0)
+        return "IN" if (x, u) >= tuple(c) else "OUT"
     g1, g2 = side(f["ofi60"], cuts["ofi60"]), side(f["qi"], cuts["qi"])
     g3 = None if g1 is None or g2 is None else ("IN" if g1 == "IN" and g2 == "IN" else "OUT")
     return {"G1": g1, "G2": g2, "G3": g3}
@@ -390,7 +431,9 @@ def build_rows(entries: list[dict], tick_dir: str = TICK_DIR) -> tuple[list[dict
                 st["not_fetched"] += 1
                 continue
             T = decision_ts(e["day"], e["m"])
-            f = features(pickle.load(open(path, "rb")), T)
+            tick = pickle.load(open(path, "rb"))
+            f = features(tick, T)
+            f["capped"] = capped(tick) and not tick.get("paged")
             if not f["entry_quote"]:
                 st["no_entry_quote"] += 1
                 continue
@@ -400,6 +443,14 @@ def build_rows(entries: list[dict], tick_dir: str = TICK_DIR) -> tuple[list[dict
             rows.append({**e, **f, "ctrl": ctrl})
     return rows, st
 
+
+
+def module_shas() -> dict[str, str]:
+    """sha256 of this script and the modules whose code shapes the entries and features (skeptic r1 #8)."""
+    import signals
+    mods = {"order_flow_pilot": sys.modules[__name__], "indicator_confirm_hist": H, "indicator_confirm_study": S,
+            "early_entry_honest": E, "bars_structure": BS, "signals": signals}
+    return {k: hashlib.sha256(open(os.path.abspath(m.__file__), "rb").read()).hexdigest() for k, m in mods.items()}
 
 
 def write(name: str, obj) -> str:
@@ -430,6 +481,7 @@ def main() -> None:
     g.add_argument("--prestep", action="store_true")
     g.add_argument("--fetch-features", action="store_true")
     g.add_argument("--count", action="store_true")
+    g.add_argument("--refetch-capped", action="store_true")
     ap.add_argument("--workers", type=int, default=4)
     a = ap.parse_args()
     if a.fetch_features:
@@ -440,25 +492,41 @@ def main() -> None:
         if st.get("aborted"):
             raise SystemExit(1)
         return
+    if a.refetch_capped:
+        smp = json.load(open(os.path.join(OUT_DIR, "sample.json")))["entries"]
+        print(f"refetch capped: {dict(refetch_capped(smp, data_client(), log=lambda x: print(x, flush=True)))}")
+        return
     if a.count:
         smp = json.load(open(os.path.join(OUT_DIR, "sample.json")))["entries"]
         rows, st = build_rows(smp)
-        if st["not_fetched"]:
-            raise SystemExit(f"{st['not_fetched']} entries not fetched yet; finish --fetch-features first")
+        # skeptic r1 #7: after --fetch-features has been rerun once (a retry pass), entries still missing are dropped
+        # and counted; more than 2% missing means the fetch is unfinished or failing
+        if st["not_fetched"] > FAIL_ABORT * len(smp):
+            raise SystemExit(f"{st['not_fetched']} entries not fetched (> 2%); rerun --fetch-features (retry pass) first")
+        capped_left = [r for r in rows if r.get("capped")]
+        if capped_left:
+            raise SystemExit(f"{len(capped_left)} entries hit the {ROW_CAP}-row cap; run --refetch-capped first")
         half_a = [r for r in rows if r["half"] == "A"]
-        cuts = {k: top_cut([r[k] for r in half_a]) for k in ("ofi60", "qi")}
+        cuts = {k: top_cut([(r[k], tie_u(r)) for r in half_a if r[k] is not None]) for k in ("ofi60", "qi")}
         for r in rows:
             r["groups"] = groups(r, cuts)
         cnt = count_step(rows)
-        sha = hashlib.sha256(open(os.path.abspath(__file__), "rb").read()).hexdigest()
+        share = {k: {h: (sum(1 for r in rows if r["half"] == h and r["groups"][g] == "IN") /
+                         max(1, sum(1 for r in rows if r["half"] == h and r["groups"][g])))
+                     for h in ("A", "B")} for k, g in (("ofi60", "G1"), ("qi", "G2"))}
+        print(f"IN share by half (half A is a third by construction): {share}")
         print(f"rows {len(rows)}, drops {dict(st)}, cuts (half A top tercile) {cuts}")
         for g, hs in cnt.items():
             for h, c in hs.items():
                 print(f"  {g} {h}: IN {c['n_in']} OUT {c['n_out']} days {c['days']} projected MDE "
                       f"{H._bp(c['projected_mde'])} bp "
                       f"(<= 5 bp: {c['mde_le_5bp']}), floors {c['floors_met']}")
-        print(write("count.json", {"script_sha256": sha, "rows": len(rows), "drops": dict(st), "cuts": cuts,
-                                   "groups": cnt, "note": "features and control bar returns only; no tick outcome read"}))
+        print(write("count.json", {"module_sha256": module_shas(), "rows": len(rows), "drops": dict(st), "cuts": cuts,
+                                   "in_share": share, "groups": cnt,
+                                   "note": "features and control bar returns only; no tick outcome read"}))
+        print(write("features.json", {"module_sha256": module_shas(), "cuts": cuts,     # skeptic r1 #9: no re-cut later
+                                      "entries": [{k: r[k] for k in ("day", "sym", "m", "half", "ofi60", "qi", "micro",
+                                                                     "n_signed", "groups")} for r in rows]}))
         return
     if a.sample:
         days = H.warehouse_days()

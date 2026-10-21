@@ -117,7 +117,7 @@ def test_features_ofi_qi_micro_and_entry_quote():
 
 
 def test_cuts_groups_and_g3():
-    assert O.top_cut([1, 2, 3, 4, 5, 6]) == 5 and O.top_cut([1, None]) is None
+    assert O.top_cut([1, 2, 3, 4, 5, 6]) == (5, 0.0) and O.top_cut([1, None]) is None
     cuts = {"ofi60": 0.5, "qi": 0.2}
     assert O.groups({"ofi60": 0.6, "qi": 0.3}, cuts) == {"G1": "IN", "G2": "IN", "G3": "IN"}
     assert O.groups({"ofi60": 0.6, "qi": 0.1}, cuts) == {"G1": "IN", "G2": "OUT", "G3": "OUT"}
@@ -177,3 +177,25 @@ def test_fetch_features_aborts_above_two_percent(tmp_path, monkeypatch):
     cl = _FakeClient(fail_every=1)                       # every trades call fails -> fetch_entry raises
     st = O.fetch_features(_entries(50), cl, str(tmp_path), sleep=lambda s: None, log=lambda x: None)
     assert st["aborted"] == 1 and st["attempted"] == 20
+
+
+def test_tie_break_gives_an_exact_third_with_an_atom():
+    rows = [{"sym": f"N{i}", "day": "2026-06-01", "m": 600 + i % 300, "qi": 0.0 if i % 4 else 0.5} for i in range(3000)]
+    cut = O.top_cut([(r["qi"], O.tie_u(r)) for r in rows])
+    ins = sum(1 for r in rows if O.groups({**r, "ofi60": None}, {"ofi60": None, "qi": cut})["G2"] == "IN")
+    assert ins == 1000                                  # a third exactly, although 75% of values are 0.0
+
+
+def test_sorting_is_by_time_only_and_stable():
+    qs = O.clean_quotes([(5.0, 10.02, 10.04, 1, 1), (5.0, 10.00, 10.02, 1, 1)])
+    assert [q[1] for q in qs] == [10.02, 10.00]         # same timestamp: delivery order kept
+    assert O.last_quote(qs, 5.0, 30)[1] == 10.00        # the last delivered quote, not the highest bid
+
+
+def test_capped_flags_the_row_limit():
+    assert O.capped({"trades": [0] * O.ROW_CAP, "quotes": []}) and not O.capped({"trades": [], "quotes": [0] * 9999})
+
+
+def test_module_shas_cover_the_feature_code():
+    sh = O.module_shas()
+    assert {"order_flow_pilot", "indicator_confirm_hist", "early_entry_honest", "signals"} <= set(sh)
