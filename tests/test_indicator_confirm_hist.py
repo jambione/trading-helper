@@ -233,7 +233,8 @@ def test_score_gate_refusals(monkeypatch, tmp_path):
     ms = H.module_shas()
     (tmp_path / "count.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms,
                                                      "scored_sessions": ["d1"]}))
-    (tmp_path / "null.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": True}))
+    (tmp_path / "null.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": True,
+                                                    "days": H.NULL_DAYS_REGISTERED}))
     (tmp_path / "placebo.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": False}))
     with pytest.raises(SystemExit, match="placebo.json is NOT OK"):
         H.score_gate("READY", ["d1"])
@@ -248,6 +249,11 @@ def test_score_gate_refusals(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="handcheck.md missing"):
         H.score_gate("READY", ["d1"])
     (tmp_path / "handcheck.md").write_text("x")
+    (tmp_path / "null.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": True, "days": 120}))
+    with pytest.raises(SystemExit, match="not the registered 40"):
+        H.score_gate("READY", ["d1"])
+    (tmp_path / "null.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": True,
+                                                    "days": H.NULL_DAYS_REGISTERED}))
     with pytest.raises(SystemExit, match="session set changed"):
         H.score_gate("READY", ["d1", "d2"])
     assert H.score_gate("READY", ["d1"])["scored_sessions"] == ["d1"]

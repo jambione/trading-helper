@@ -64,7 +64,11 @@ LIFT_BAR = 0.0005
 BOARD_UP = 0.02
 TIME_SPLIT = 11 * 60 + 25
 SAME_TAG, CROSS_TAG, SAMPLE_TAG = "indicator-hist-v1", "indicator-hist-cross", "indicator-hist-sample"
-NULL_DAYS, NULL_NAMES, NULL_START = 40, 2500, "2026-01-05"
+NULL_DAYS_REGISTERED = 40
+# ICH_NULL_DAYS: diagnostic runs only (worker processes re-import this module, so a constant patch would not reach
+# them); --score refuses a null.json that did not use the registered NULL_DAYS_REGISTERED sessions.
+NULL_DAYS = int(os.environ.get("ICH_NULL_DAYS", NULL_DAYS_REGISTERED))
+NULL_NAMES, NULL_START = 2500, "2026-01-05"
 NULL_VOL = (0.0005, 0.0015)          # per-name 1-minute volatility, so S3 consolidations (<= 1% over an hour) occur
 NULL_MIN_N = 300                     # amended_2: every null / placebo statistic needs >= 300 entries
 HANDCHECK_N, HANDCHECK_DAYS = 5, 3
@@ -633,7 +637,8 @@ def bound_check(checks: list[dict]) -> dict:
 
 # ── null, placebo, handcheck ─────────────────────────────────────────────────
 
-def null_days(n: int = NULL_DAYS + LOOKBACK) -> list[str]:
+def null_days(n: int | None = None) -> list[str]:
+    n = n or NULL_DAYS + LOOKBACK
     d0 = datetime.strptime(NULL_START, "%Y-%m-%d")
     return [(d0 + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n)]
 
@@ -894,6 +899,8 @@ def score_gate(skeptic_ready: str, sessions: list[str]) -> dict:
             raise SystemExit(f"{name} was written by a different script or module version; rerun it with this one")
         if name != "count.json" and not obj.get("ok"):
             raise SystemExit(f"{name} is NOT OK: fix the method before any score")
+        if name == "null.json" and obj.get("days") != NULL_DAYS_REGISTERED:
+            raise SystemExit(f"null.json used {obj.get('days')} sessions, not the registered {NULL_DAYS_REGISTERED}")
         need[name] = obj
     if not os.path.exists(os.path.join(OUT_DIR, "handcheck.md")):
         raise SystemExit("handcheck.md missing: run --handcheck and have it reviewed")
