@@ -7,7 +7,7 @@ condition list is registered):
   --sample   every PRE onset on the 400-name 'indicator-hist-sample' (warm %R, decision minute m = onset + 1,
              10:00-15:27; no IEX bar-coverage rule), then a seeded draw of 16,000 entries (8,000 per half,
              sha256('order-flow-pilot')) -> sample.json. Bars only; no tick and no outcome is read.
-  --prestep  20 seeded entries from sample.json: fetch SIP trades [T - 60 s, T) and NBBO quotes [T - 5 s, T + 1 s]
+  --prestep  20 seeded entries from sample.json: fetch SIP trades [T - 60 s, T) and NBBO quotes [T - 120 s, T + 1 s]
              (T = the start of minute m) from the data-only account and print, per tape (A/B = CTA, C = UTP), the
              trade condition codes with counts and whether size / conditions / tape / bid_size / ask_size are
              populated, plus locked / crossed / zero quotes -> prestep.json. No feature is computed.
@@ -36,7 +36,11 @@ S, E, BS = H.S, H.E, H.BS
 OUT_DIR = os.path.join(E.ROOT, "ai_reports", "order_flow_pilot")
 SAMPLE_N, SAMPLE_TAG, PRESTEP_N, PRESTEP_TAG = 16_000, "order-flow-pilot", 20, "order-flow-prestep"
 ONSET_LO, ONSET_HI = S.ARM_START - 1, 15 * 60 + 26      # decision m = onset + 1 in 10:00 .. 15:27
-WINDOW_S, QUOTE_BEFORE_S, QUOTE_AFTER_S = 60, 5, 1
+WINDOW_S, QUOTE_BEFORE_S, QUOTE_AFTER_S = 60, 120, 1     # amended_3: quotes over [T - 120 s, T + 1 s]
+KEEP_CODES = frozenset({" ", "@", "I", "F"})               # amended_3: regular (CTA / UTP), odd lot, ISO
+SIGN_MAX_AGE, READ_MAX_AGE = 60.0, 30.0                    # amended_3: quote age for signing / for QI, entry, exits
+PAGE = 10_000
+OUTCOME_HORIZONS = 4                                       # 60 / 120 / 180 / 300 s, one [t - 30 s, t] window each
 TAPES = {"A": "CTA (NYSE-listed)", "B": "CTA (other exchanges)", "C": "UTP (Nasdaq-listed)"}
 
 
@@ -123,6 +127,36 @@ def inventory(trades: list, quotes: list) -> dict:
             r["quote_codes"][c] += 1
     return {k: {kk: (dict(vv.most_common()) if isinstance(vv, Counter) else vv) for kk, vv in v.items()}
             for k, v in inv.items()}
+
+
+def keep_trade(t) -> bool:
+    """amended_3 keep-list: every condition code must be regular, odd lot or ISO."""
+    codes = _codes(t)
+    return bool(codes) and all(c in KEEP_CODES for c in codes)
+
+
+def _ts(x) -> float:
+    ts = getattr(x, "timestamp", None)
+    return ts.timestamp() if hasattr(ts, "timestamp") else float(ts)
+
+
+def coverage(trades: list, quotes: list, T: float) -> dict:
+    """Data-quality counts for one entry (no feature: no trade is signed, no imbalance computed): kept / dropped
+    trades by code, kept trades with a quote at most SIGN_MAX_AGE old at or before them, and whether a quote at most
+    READ_MAX_AGE old exists at T (QI) and at T + 1 s (entry)."""
+    import bisect
+    qts = sorted(_ts(q) for q in quotes if (getattr(q, "bid_price", 0) or 0) > 0 and (getattr(q, "ask_price", 0) or 0) > 0
+                 and float(q.ask_price) > float(q.bid_price) and getattr(q, "bid_size", 0) and getattr(q, "ask_size", 0))
+
+    def fresh(t, max_age):
+        i = bisect.bisect_right(qts, t) - 1
+        return i >= 0 and t - qts[i] <= max_age
+    kept = [t for t in trades if keep_trade(t)]
+    dropped = Counter(c for t in trades if not keep_trade(t) for c in _codes(t) if c not in KEEP_CODES)
+    return {"trades": len(trades), "kept": len(kept), "dropped_codes": dict(dropped),
+            "signable": sum(1 for t in kept if fresh(_ts(t), SIGN_MAX_AGE)),
+            "qi_quote": fresh(T, READ_MAX_AGE), "entry_quote": fresh(T + 1, READ_MAX_AGE),
+            "quotes": len(qts), "requests": max(1, math.ceil(len(trades) / PAGE)) + max(1, math.ceil(len(quotes) / PAGE))}
 
 
 def merge(invs: list[dict]) -> dict:
@@ -223,12 +257,22 @@ def main() -> None:
         tr, qu = fetch_entry(cl, e["sym"], t)
         inv = inventory(tr, qu)
         invs.append(inv)
-        rows.append({**e, "T": t, "trades": len(tr), "quotes": len(qu), "tapes": sorted(inv)})
-        print(f"  {e['day']} {e['sym']} {e['m'] // 60:02d}:{e['m'] % 60:02d}: {len(tr)} trades, {len(qu)} quotes, "
-              f"tapes {sorted(inv)}", flush=True)
+        cov = coverage(tr, qu, t)
+        rows.append({**e, "T": t, "tapes": sorted(inv), **cov})
+        print(f"  {e['day']} {e['sym']} {e['m'] // 60:02d}:{e['m'] % 60:02d}: {cov['trades']} trades ({cov['kept']} kept, "
+              f"{cov['signable']} signable), {cov['quotes']} quotes, QI quote {cov['qi_quote']}, entry quote "
+              f"{cov['entry_quote']}, requests {cov['requests']}", flush=True)
     total = merge(invs)
     print_inventory(total)
-    print(write("prestep.json", {"entries": rows, "inventory": total,
+    n = len(rows)
+    ok_g1 = sum(1 for r in rows if r["signable"] >= 5)
+    req = sum(r["requests"] for r in rows) / n + OUTCOME_HORIZONS
+    print(f"\ncoverage: kept trades {sum(r['kept'] for r in rows)}/{sum(r['trades'] for r in rows)}, signable "
+          f"{sum(r['signable'] for r in rows)}/{sum(r['kept'] for r in rows)}; entries with >= 5 signed trades {ok_g1}/{n}; "
+          f"QI quote {sum(r['qi_quote'] for r in rows)}/{n}; entry quote {sum(r['entry_quote'] for r in rows)}/{n}")
+    print(f"budget: ~{req:.1f} requests/entry (features measured + {OUTCOME_HORIZONS} outcome windows) -> "
+          f"~{req * SAMPLE_N:,.0f} for {SAMPLE_N:,} entries, ~{req * SAMPLE_N / 150 / 60:.1f} h at 150/min")
+    print(write("prestep.json", {"amendment": "amended_3", "entries": rows, "inventory": total,
                                  "note": "no feature or outcome computed; the keep/drop condition list is registered "
                                          "from this inventory as a prereg amendment before any feature fetch"}))
 

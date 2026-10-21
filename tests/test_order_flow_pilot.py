@@ -51,3 +51,26 @@ def test_inventory_counts_codes_sizes_and_bad_quotes():
     assert inv["A"]["zero_price"] == 1 and inv["A"]["codes"] == {"@": 1, "T": 1}
     m = O.merge([inv, inv])
     assert m["C"]["trades"] == 4 and m["C"]["codes"] == {"@": 2, "I": 2}
+
+
+def _q(t, b=10.0, a=10.01, bs=1, as_=1):
+    return NS(timestamp=t, bid_price=b, ask_price=a, bid_size=bs, ask_size=as_, tape="C", conditions=["R"])
+
+
+def test_keep_list_is_exact():
+    assert O.keep_trade(NS(conditions=["@", "I"])) and O.keep_trade(NS(conditions=[" ", "F"]))
+    assert not O.keep_trade(NS(conditions=["@", "4"])) and not O.keep_trade(NS(conditions=["@", "T"]))
+    assert not O.keep_trade(NS(conditions=None)) and not O.keep_trade(NS(conditions=["X"]))   # unseen -> drop
+
+
+def test_coverage_ages_and_counts():
+    T = 1000.0
+    trades = [NS(timestamp=T - 50, conditions=["@"]), NS(timestamp=T - 10, conditions=["@", "I"]),
+              NS(timestamp=T - 5, conditions=["@", "W"])]
+    quotes = [_q(T - 115), _q(T - 20), _q(T - 2, b=10.01, a=10.01)]           # the last one is locked: ignored
+    c = O.coverage(trades, quotes, T)
+    assert c["kept"] == 2 and c["dropped_codes"] == {"W": 1}
+    assert c["signable"] == 1                     # T-10 has the T-20 quote; T-50 only the T-115 one (65 s > 60 s)
+    assert c["qi_quote"] and c["entry_quote"] and c["quotes"] == 2 and c["requests"] == 2
+    c2 = O.coverage([NS(timestamp=T - 50, conditions=["@"])], [_q(T - 115)], T)
+    assert c2["signable"] == 0 and not c2["qi_quote"]                            # 65 s > 60 s; 115 s > 30 s
