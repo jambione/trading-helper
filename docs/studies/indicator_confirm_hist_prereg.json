@@ -1,0 +1,49 @@
+{
+ "study": "Confirmation indicators on history, powered: on desk-style pre-square entries across a 400-name liquid sample over 119 sessions, do ADX trend strength, OBV / A/D confirmation or the pasted article's four-way confluence pick entries that beat the same name's random later minute by more than the entries they exclude? And do the operator's 10/8 video setups S2-S7, entered on their own, beat a random later minute?",
+ "registered_at": "2026-10-21, before any script, feature or outcome on this population",
+ "registered_before_results": true,
+ "origin": "indicator_confirm_prereg.json (desk arms, 31 sessions) can only grade H2: its count step (10/21) left H1 half A and H3-H5 in both halves below 100 IN arms, and forward sessions would take ~2 months for ADX and 6-12 months for OBV / A/D / confluence. Operator 10/21: 'how can they be powered' -> chose the history route.",
+ "relation_to_desk_study": "This is not the desk's opens. It asks whether the indicator adds anything to a desk-style entry on the names the desk could screen. The desk-arm study still scores tonight and stays the on-desk read; neither result is promoted on the other's evidence.",
+ "prior": "LOW. prescreen_turn (10/17, same warehouse): %R turns on 400 unscreened names are a random minute (BOTHUP -0.2 bp, t -1.2, n 283k). Every desk entry trigger scored like a random minute (entry-setups-are-noise-equivalent). Earlier confluence scores failed out of period. The structure_pullback S2 count (10/9) found ~0.7% of name-days with an entry.",
+ "data": "The warehouse (tools/studies/warehouse_fetch.py, ai_reports/warehouse on the mini): 120 sessions 2026-04-27 .. 2026-10-15, universe = US common stock passing the prior-day RAW liquidity rule ($10, 20-day $20M ADV; ETFs/funds excluded; active + inactive). The first 10 sessions are look-back only (structure needs 10 prior sessions), so scored sessions are 2026-05-11 .. 2026-10-15 (~110). Each scored session: a seeded sample of 400 names, int(sha256(f'{day}|indicator-hist-sample').hexdigest()[:16], 16), from names with that day's IEX and SIP bars AND the previous session's IEX bars (a new seed: not prescreen_turn's 400). Split-adjusted bars. No new data is fetched.",
+ "entries": {
+  "PRE": "the desk-style entry: early_entry_honest.pre_flag onsets (both %R lines >= -35, within 15, not a full square, fast rising), on IEX 1-minute bars with the %R lines warmed on the previous session's last 220 IEX bars (as prescreen_turn amended_1), 10:00-15:30, 15-minute refractory per name. The live desk arms on the last pre-square ('last_presquare'); this is its completed-bar analog. Decision minute m = the onset bar's minute + 1.",
+  "all_minutes_information": "every 5th RTH minute 10:00-15:30 of the sampled names, as the base rate (information only)."
+ },
+ "features": "identical to indicator_confirm_prereg.json as amended (amended_3 included) and computed by the same code (indicator_confirm_study.features_at / cell_side): IEX 1-minute RTH bars completed before m, restarting at 09:30; 80% coverage; ADX(14) Wilder; OBV and A/D confirmation at a 30-minute high; C1 from 10:31 with the same seeds, VWAP and legs. SIP-bar features are information only.",
+ "hypotheses": {
+  "H1_adx_trend": "IN = PRE entries with ADX >= 25 and +DI > -DI; OUT = other PRE entries with a valid ADX.",
+  "H2_adx_chop": "IN = ADX >= 20; OUT = ADX < 20; OUT lift_vs_random must also be < 0.",
+  "H3_obv_confirm": "IN = OBV CONFIRMS; OUT = OBV DIVERGES.",
+  "H4_ad_confirm": "IN = A/D CONFIRMS; OUT = A/D DIVERGES.",
+  "H5_confluence": "IN = C1 true; OUT = C1 false (m >= 10:31).",
+  "V_video_setups": "S2-S7 exactly as defined in structure_pullback_prereg.json (swing rule, UP60, rejection / momentum bars, R bounds, 10:30-14:30, look-back over the warehouse's prior 10 sessions on SIP bars, every precision and amendment there), but scored with THIS study's outcome: decision minute = the setup's ENTRY minute t (bar end), entry at the SIP open of t+1, net10. Each setup is graded on its own as an entry (not as a filter on PRE): lift_vs_random only, no OUT group. structure_pullback's 3R bracket and 80-minute hold are not used here; that study stays the test of the video's own geometry."
+ },
+ "outcome": "net10 = SIP close of minute m+10 / SIP open of minute m+1 - 1 - 0.10% (early_entry_honest.markout), exit bar before 16:00. Gross, net5, net30 and the measured ~3 bp cost line are information only.",
+ "control": "(a) SAME-NAME LATER MINUTE: indicator_confirm_study.control_minute (decision minute c in m+1 .. m+60, entry c+1, net10) with the seed tag 'indicator-hist-v1', one per entry, shared by every cell. (b) CROSS-NAME, SAME MINUTE (required, as prescreen_turn amended_1 F3): a random OTHER sampled name with bars at m+1 and m+10, seed sha256(f'{symbol}|{day}|{m}|indicator-hist-cross'), same net10; it strips market-wide moves and time-of-day drift.",
+ "statistic": "Per entry: d = net10(entry) - net10(same-name control); x = net10(entry) - net10(cross control). H1-H5: DiD = mean d(IN) - mean d(OUT) per day (days with >= 3 entries each side), day-equal, day-clustered t (df = days - 1); the same DiD on x. V: lift = mean d per day, day-equal, day-clustered t; the same on x. Name-day-equal versions printed and required.",
+ "split": "halves at the median scored session (calendar order).",
+ "multiplicity": "Two families, each one-sided p 0.025 Bonferroni-corrected at df = days - 1: H1-H5 (5 tests, t_crit ~2.6 at ~55 days) and V S2-S7 (6 tests, ~2.7).",
+ "power": "OUTCOME-BLIND COUNT STEP first: per cell and half, IN / OUT entries, name-days, DiD days, and projected MDE = (t_crit + 0.84) x sqrt(2) x the day-clustered SE of the per-day (IN control mean - OUT control mean) net10 (for V: of the control net10 of the setup's entries). No entry outcome is read. A cell-half with < 300 IN entries or < 20 days is UNDERPOWERED and not scored (counts only).",
+ "pass": "H1-H5, per half: DiD >= +5 bp with t >= t_crit; DiD on the cross control > 0; IN lift_vs_random >= 0; IN mean net10 > 0; name-day DiD > 0; DiD >= 0 after dropping the 3 names and (separately) the 3 days with the largest share; H2 also OUT lift_vs_random < 0. V, per half: lift >= +5 bp with t >= t_crit; cross-control lift > 0; mean net10 > 0; name-day lift > 0; drop-3 names / days >= 0. A cell PASSES only if both halves pass. FAIL if a scored half has t <= -2, or if both halves are scored with projected MDE <= 5 bp and the pass is not met (the large sample makes the 5 bp bar itself testable). Otherwise UNDERPOWERED.",
+ "information_only": [
+  "every pairwise AND of H1, H3, H4, C1; ADX terciles; +DI > -DI alone; OBV / A/D NOT_AT_HIGH; C1 legs alone and leave-one-out; 5-minute ADX",
+  "H1-H5 as filters on the all-minutes base population instead of PRE",
+  "V setups as filters on PRE (PRE entries with a setup entry in the same name in m-15 .. m-1)",
+  "SIP-bar features; net5, net30, gross, 3 bp cost; entry at m+2; controls in m+11 .. m+60 only",
+  "time split before / at-or-after 11:25 (the warm-up differs from live before ~11:22)",
+  "S2 by touch depth; S7 with the indication-high exit read as a markout at the same 10 minutes"
+ ],
+ "calibration": "the indicator_confirm_study null (path-selected synthetic arms on a driftless walk) must still pass with the history script's code; plus, before scoring, a PLACEBO on real data: the same pipeline with IN / OUT assigned by a seeded coin flip per entry (seed sha256(f'{symbol}|{day}|{m}|placebo')), every H cell; |t| on DiD within the Bonferroni bound over the t values computed, else the method is fixed first.",
+ "no_retuning": "every threshold of indicator_confirm_prereg.json (as amended) and structure_pullback_prereg.json, the PRE rule, the sample size and seed, the window, refractory, hold, cost, the 300-entry / 20-day power floor, the 5 bp MDE bar and the split are fixed. Any other threshold is a new prereg.",
+ "if_pass": "provisional: the cell must also not be negative on the desk-arm study (indicator_confirm) and must repeat on >= 20 forward warehouse sessions after 2026-10-15, then a result-skeptic review of the positive, before any gate, engine change (publishing signals.adx included) or arm.",
+ "if_fail": "the cell is closed as an entry filter (H1-H5) or entry (V) on the free feed for effects >= its printed MDE.",
+ "declared_deviations": [
+  "PRE is the completed-bar analog of the live last-pre-square arm; live adds admission, spread, RVOL and tape gates that this sample does not apply",
+  "the 400-name sample is unscreened liquid names, not the movers board, which fades (the-universe-fades-at-every-horizon)",
+  "%R warm-up is the previous session's last 220 RTH IEX bars; live warms on extended hours",
+  "IEX features, SIP outcomes",
+  "V setups read SIP bars (as structure_pullback); H features read IEX"
+ ],
+ "script": "tools/studies/indicator_confirm_hist.py (to be written): reuses prescreen_turn's warehouse loader and sample, early_entry_honest.pre_flag and the warm %R series, indicator_confirm_study features / statistics / verdict code, and structure_pullback's setup detectors (via bars_structure). Default = count step; --placebo; --score only after a result-skeptic READY on the script. Mini, after 16:15 ET, nice 19; no Alpaca calls (no fetch)."
+}
