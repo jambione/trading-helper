@@ -1,0 +1,35 @@
+{
+ "study": "Exit capture: if our entries HAD a real edge, how much of it would the live exit stack keep, and how big must an entry edge be for the desk to make money?",
+ "registered_at": "2026-10-21 ~18:00 ET, before any script or replay",
+ "registered_before_results": true,
+ "origin": "Operator 10/21: 'I'd hate to throw away an excellently designed system with a real edge with our exits because our opens aren't performing or being late on profit runs.' Every entry test today is ~0 gross, and exits cannot move the mean of a zero-edge entry (exits-cannot-move-the-mean). What has never been measured is the exits' behaviour when the entry IS good: do they keep an edge, leak it (stopped or trailed out before the run arrives), or add to it (cut losers, let winners run)?",
+ "prior": "Unknown direction. For: the 15 s ratchet leash and trail_dc improved value vs other exit settings (+58 and +40.8 bp/day). Against: those were comparisons between exits on zero-edge entries; a tight leash (median hold ~2-4 min) may close before a slower run pays.",
+ "design": "Real paths, injected edge. For every desk paper fill (ai_reports/outcomes.jsonl, entry_path 'watch', 2026-09-23 .. 2026-10-20, RTH, valid entry and stop), take the real SIP prints after entry (leash_replay.fetch_seconds: one row per second, last and low; odd-lot / out-of-sequence prints dropped, as leash_replay) and multiply every price at time t after the entry by (1 + mu * g(t)), where g ramps linearly from 0 at the entry to 1 at tau and stays at 1. The exit bid at the exit second is scaled the same way. Then run the LIVE exit code exactly as leash_replay.walk does (ai_positions.initial_local_stop, note_trail_print, local_profit_stop every second, the 1R plan stop, dead_trade, 15:50, 2-hour cap) with the live config pinned at a recorded commit. mu = 0 is the real path (the fidelity check against leash_replay's baseline).",
+ "grid": {
+  "mu_bp": [0, 5, 10, 20, 40],
+  "tau_s": [180, 600],
+  "information": "mu = -10 bp (does the stack cut a bad entry fast); a STEP shape (the whole mu arrives at t = 60 s) at tau-equivalent mu = 10 and 20"
+ },
+ "measures": {
+  "capture": "capture(mu, tau) = [mean net(mu) - mean net(0)] / mu, per fill then day-equal; the share of an injected edge the exits keep (1.0 = all of it; can exceed 1 if the exits also cut losers better).",
+  "break_even": "mu* = the smallest injected mu at which the exit stack's mean net (bid at exit vs the real fill price, full spread inside) is > 0, by linear interpolation on the grid, per tau: the entry edge this desk needs to profit.",
+  "vs_hold": "the same paths exited by a plain time hold (bid at t0 + tau, scaled): net_exit(mu) - net_hold(mu), day-clustered t. Tells whether the exits beat simply holding through the run.",
+  "shape": "win rate, median hold, exit-reason mix (plan_stop, trail, dead_trade, eod, cap) per cell"
+ },
+ "decision_bars": {
+  "keeps_an_edge": "capture >= 0.70 at mu = 10 AND mu = 20 for tau = 180 s (a scalp-speed run), day-clustered 95% interval of capture above 0.5",
+  "leaky": "capture <= 0.40 at mu = 10 or mu = 20 for tau = 180 s, or <= 0.40 at tau = 600 s (the exits close before a slower run pays) - then exit work comes before any entry work",
+  "beats_hold": "net_exit - net_hold > 0 at mu = 10 with t >= 2 for that tau",
+  "otherwise": "in between: reported as is, with mu* as the headline"
+ },
+ "sample_and_power": "~1,185 paper fills over ~46 days (the three-minute study's desk-fill count). This is a measurement with a known injected answer, not a search: no multiplicity correction; day-clustered intervals printed. Fills without prints in the first 60 s after entry are dropped and counted.",
+ "data": "SIP prints and the exit-second bid from the leash_replay cache where present, the rest fetched with the data-only account (secrets_data.json), paced <= 150 requests/min, any time of day (no-waiting-for-the-close). The live config is load_config() at the recorded commit; config sha and code sha printed.",
+ "declared_limits": [
+  "the injected drift is smooth and deterministic; a real edge arrives noisily, so capture here is an upper-side estimate for a given mu",
+  "not modelled (as leash_replay): the left_overbought exit (needs the engine's %R stream) and the T1 scale-out",
+  "no price impact; fills pinned at the real fill price and time",
+  "the desk's real fills are not a random sample of minutes: they carry the desk's own selection (which is what we want to measure)"
+ ],
+ "no_retuning": "the grid, the ramp shape, the decision bars, the fill window and the pinned config are fixed; a different exit config is information only and needs its own run under this design.",
+ "script": "tools/studies/exit_capture.py (to be written; imports leash_replay.walk and fetch_seconds unchanged, adds the drift transform and the hold benchmark; tests for the transform and the capture / break-even arithmetic)."
+}
