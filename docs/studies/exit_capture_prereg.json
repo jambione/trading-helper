@@ -6,8 +6,17 @@
  "prior": "Unknown direction. For: the 15 s ratchet leash and trail_dc improved value vs other exit settings (+58 and +40.8 bp/day). Against: those were comparisons between exits on zero-edge entries; a tight leash (median hold ~2-4 min) may close before a slower run pays.",
  "design": "Real paths, injected edge. For every desk paper fill (ai_reports/outcomes.jsonl, entry_path 'watch', 2026-09-23 .. 2026-10-20, RTH, valid entry and stop), take the real SIP prints after entry (leash_replay.fetch_seconds: one row per second, last and low; odd-lot / out-of-sequence prints dropped, as leash_replay) and multiply every price at time t after the entry by (1 + mu * g(t)), where g ramps linearly from 0 at the entry to 1 at tau and stays at 1. The exit bid at the exit second is scaled the same way. Then run the LIVE exit code exactly as leash_replay.walk does (ai_positions.initial_local_stop, note_trail_print, local_profit_stop every second, the 1R plan stop, dead_trade, 15:50, 2-hour cap) with the live config pinned at a recorded commit. mu = 0 is the real path (the fidelity check against leash_replay's baseline).",
  "grid": {
-  "mu_bp": [0, 5, 10, 20, 40],
-  "tau_s": [180, 600],
+  "mu_bp": [
+   0,
+   5,
+   10,
+   20,
+   40
+  ],
+  "tau_s": [
+   180,
+   600
+  ],
   "information": "mu = -10 bp (does the stack cut a bad entry fast); a STEP shape (the whole mu arrives at t = 60 s) at tau-equivalent mu = 10 and 20"
  },
  "measures": {
@@ -22,14 +31,14 @@
   "beats_hold": "net_exit - net_hold > 0 at mu = 10 with t >= 2 for that tau",
   "otherwise": "in between: reported as is, with mu* as the headline"
  },
- "sample_and_power": "~1,185 paper fills over ~46 days (the three-minute study's desk-fill count). This is a measurement with a known injected answer, not a search: no multiplicity correction; day-clustered intervals printed. Fills without prints in the first 60 s after entry are dropped and counted.",
+ "sample_and_power": "904 paper fills (>= $10) on ~20 days (amended (3)); a measurement with a known injected answer; day-clustered intervals.",
  "data": "SIP prints and the exit-second bid from the leash_replay cache where present, the rest fetched with the data-only account (secrets_data.json), paced <= 150 requests/min, any time of day (no-waiting-for-the-close). The live config is load_config() at the recorded commit; config sha and code sha printed.",
  "declared_limits": [
-  "the injected drift is smooth and deterministic; a real edge arrives noisily, so capture here is an upper-side estimate for a given mu",
   "not modelled (as leash_replay): the left_overbought exit (needs the engine's %R stream) and the T1 scale-out",
   "no price impact; fills pinned at the real fill price and time",
   "the desk's real fills are not a random sample of minutes: they carry the desk's own selection (which is what we want to measure)"
  ],
  "no_retuning": "the grid, the ramp shape, the decision bars, the fill window and the pinned config are fixed; a different exit config is information only and needs its own run under this design.",
- "script": "tools/studies/exit_capture.py (to be written; imports leash_replay.walk and fetch_seconds unchanged, adds the drift transform and the hold benchmark; tests for the transform and the capture / break-even arithmetic)."
+ "script": "tools/studies/exit_capture.py (to be written; imports leash_replay.walk and fetch_seconds unchanged, adds the drift transform and the hold benchmark; tests for the transform and the capture / break-even arithmetic).",
+ "amended": "2026-10-21 ~18:30 ET, before any script or replay, after result-skeptic FIX FIRST (9). (1) LIVE STACK: the replay adds the live trail-exit trend hold (ai_trail_exit_trend_hold, on since 10/16): when a trail hit is at or under entry + band, ai_positions.trail_exit_trend_hold is called with the name's IEX 1-minute bars (the live store, ob_observe, is IEX) known by that second, scaled by the same drift (each bar by 1 + mu g(bar close time)); a hold defers the exit while the shelf keeps rising, as live. (2) dead_trade uses the LIVE semantics: float(cfg value or default) - a 0 means the 22-minute default, not off (live booked dead_trade exits at ~1,324 s). (3) SAMPLE: 904 paper fills (outcomes.jsonl, entry_path 'watch', 2026-09-23 .. 10-20, entry price >= $10; 924 before the $10 cut) on ~20 days, not ~1,185 / ~46. (4) CONFIG PIN + FIDELITY: the current live config is pinned (config/bot_config.json sha256 prefix cd84f7109ef61ca9, code 2229d1c1 at registration; the run asserts the loaded config's hash and prints both). The current config answers the operator's question (are TODAY's exits good). Fidelity is gated on the 130 fills traded under this config (config_fp 4b267f14f8f8, 10/16-10/20): at mu = 0 the replay's exit time is within 60 s of the live exit for >= 55% of them AND the mean replay net is within 5 bp of the mean live-booked net; if either fails the study's verdict is UNPROVEN (numbers still printed). (5) BIDS: the exit bid is the last SIP quote in [exit second - 15 s, exit second] with retries; a failed fetch is never cached; a fill without a bid in ANY cell is dropped from ALL cells (same fill set everywhere), drops printed per cell. (6) NAIVE BASELINE: a run that never changes the exit time is captured in proportion to g at the mu = 0 exit time, so naive(tau) = mean g(t_exit at mu = 0) is printed and capture is judged also as (capture - naive): the path-change part. The 'leaky' bar applies to tau = 180 s only (at 600 s the ~3-minute median hold makes it fire by construction); tau = 600 is reported as capture - naive (do holds stretch when a run is on). Precedence: the bars use tau = 180 and cannot both fire. (7) HOLD BENCHMARK: fixed horizons not tied to tau - 180 s, 600 s and min(2 h, 15:50) - with the bid at that second (scaled); compared as a difference-in-differences [exit(mu) - hold(mu)] - [exit(0) - hold(0)], day-clustered t. (8) VARIANT: leash_replay variant A (no min hold on the trail: live sells through a broker stop). (9) BREAK-EVEN mu*: linear interpolation on the grid; a day-level bootstrap 95% interval (2,000 resamples, seed 'exit-capture'); '> 40 bp' if net never crosses zero by 40 bp (no extrapolation); 0 if net(0) > 0; mu* is also printed after shifting the curve by (live-booked net - replay net) at mu = 0 on the fidelity fills. NOTES: capture by price bucket (<$20, $20-50, >$50) is printed and mu = 5 is reported but not judged (cent rounding of stops on scaled prices); the 'upper-side estimate' wording is withdrawn (direction unknown); capture is printed winsorized at 1/99% as information; triggers use SIP prints (live uses IEX prints); the stale-data flatten is not modelled; entry_time is taken as the fill time (no separate fill field exists)."
 }
