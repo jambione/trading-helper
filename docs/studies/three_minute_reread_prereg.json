@@ -1,0 +1,27 @@
+{
+ "study": "Three-minute re-read: does any entry rule or filter already built here pick entries whose next 3 minutes beat the same name's later 3 minutes and a random other name's same 3 minutes, by enough to clear the measured spread?",
+ "registered_at": "2026-10-21, before any 3-minute outcome is computed on any of these rules",
+ "registered_before_results": true,
+ "origin": "Operator 10/21: 'what gives us a profit run for three minutes, in order for us to capture that with our exit'. The desk holds 3-8 minutes (book-open standard), but the entry studies mostly measured 10-minute markouts (early_entry_honest family, indicator_confirm, indicator_confirm_hist, prescreen_turn). A 10-minute null can hide a 3-minute effect that reverses by minute 10.",
+ "prior": "LOW. At 5 minutes the history study's net5 information cells were flat; desk fills drift -9 bp at 5 minutes (holding-longer-loses-more); prescreen_turn's PRE was +0.1 bp at 10 minutes. This is a DISCOVERY pass on data already mined for these rules at other horizons; only the confirmation sample below can make a claim.",
+ "data": {
+  "discovery": "the warehouse 2026-05-11 .. 2026-10-15 (110 scored sessions, 10 look-back), exactly as indicator_confirm_hist_prereg.json: 400-name seeded sample ('indicator-hist-sample') for %R rules and H filters, every name with 10 prior SIP sessions for S3-S7; IEX features, SIP outcomes; halves A <= 2026-07-29 < B.",
+  "confirmation": "60 sessions BEFORE 2026-04-27 (plus 10 look-back), fetched after hours from the data-only account into a separate warehouse directory before any discovery outcome is read (warehouse_fetch.py gains an end-date option; the fetch is the first step). No result from the discovery pass may change anything about the confirmation run."
+ },
+ "entries": {
+  "rules": "Decision minute m = onset bar + 1, onsets with a 15-minute refractory in 10:00-15:30, warm %R lines (previous session's last 220 IEX bars) as prescreen_turn: PRE, SQ, MID, BOTHUP, OSL, IGN, RSI2T, CON (early_entry_honest definitions, unchanged); S3-S7 (structure_pullback definitions with the history adaptation; decision minute = setup bar end).",
+  "filters": "H1-H5 of indicator_confirm_hist on PRE entries, unchanged."
+ },
+ "outcome": "net3 = SIP close of minute m+3 / SIP open of minute m+1 - 1 (entry at the next minute's open, 3 one-minute bars held). Cost for the net condition: the measured ~3 bp round trip (focus-is-day-trading); 10 bp printed as information. net1, net2, net5 printed as information.",
+ "control": "as indicator_confirm_hist amended: d = vs the same name's later decision minute c in m+1 .. m+60 (entry c+1, same 3-bar hold, seed tag 'three-min-v1'); x = vs a random other name of the same pool at the same minute (seed tag 'three-min-cross'). Both required.",
+ "statistic": "Rules: lift_d and lift_x per day, day-equal, day-clustered t (df = days - 1). Filters: DiD_d and DiD_x as indicator_confirm_hist.",
+ "multiplicity": "One family of 18 (13 rules + 5 filters): one-sided p 0.025 / 18 at df = days - 1 (~3.1 at df 54).",
+ "discovery_pass": "a cell PASSES discovery if, in BOTH halves: lift (or DiD) >= +5 bp at t >= t_crit on d AND on x; mean net3 > 0 at 3 bp; name-day-equal lift > 0; drop-3-names and drop-3-days >= 0. Anything else: no lead. Floors: 300 entries and 20 days per half, else UNDERPOWERED.",
+ "confirmation_pass": "only discovery PASS cells are run on the 60 earlier sessions, unchanged: lift (or DiD) > 0 on d AND x with t >= 2 (one-sided 0.025, no further correction), mean net3 > 0 at 3 bp. A cell is a LEAD only if it passes both; a LEAD earns a forward paper test, never a config change by itself.",
+ "fail_rule": "a cell is closed at 3 minutes for effects >= 5 bp if the 97.5% upper bound is below +5 bp on d and x in both discovery halves (as indicator_confirm_hist).",
+ "calibration": "reuse the indicator_confirm_hist binding null machinery with hold = 3 and a new seed tag 'three-min-null' (120 sessions x 2,500 names), and the coin-flip placebo for the filters; same per-df Bonferroni bound, same >= 300-entry rule; binding. Run before any discovery outcome is read.",
+ "information_only": ["the desk's own paper fills at 1/2/3/5 minutes (positions-state fills, not the trade log)", "every rule's net3 at 10 bp", "max favourable / adverse excursion inside the 3 minutes (what an exit could have captured)", "time of day split at 11:25"],
+ "no_retuning": "rules, filters, the 3-bar hold, 3 bp, the 5 bp bar, the floors, the two samples and the seeds are fixed. A 2- or 4-minute version is a new prereg.",
+ "declared_deviations": ["completed-bar entries (live acts intrabar)", "IEX features, SIP outcomes", "unscreened liquid names, not the movers board", "bar-open entry has no spread inside; the 3 bp cost is the measured average, not this name-minute's spread"],
+ "script": "tools/studies/three_minute_reread.py (to be written; imports indicator_confirm_hist with a hold parameter; count step first; --score only after a result-skeptic READY)."
+}

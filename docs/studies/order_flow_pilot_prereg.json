@@ -1,0 +1,31 @@
+{
+ "study": "Order-flow pilot: when the 60 seconds before a desk-style pre-square entry show buyers lifting the ask (trade-side flow) or a bid-heavy top of book, does the next 3 minutes pay more than other pre-square entries, after crossing the spread?",
+ "registered_at": "2026-10-21, before any tick is fetched",
+ "registered_before_results": true,
+ "origin": "Operator 10/21, after the confirmation-indicator FAIL: what predicts a 3-minute run? Bar indicators have none. Order flow is the classic 1-5 minute source and is untested here on the trade side. Book imbalance was tested 10/4 (depth_book_prereg.json: Nasdaq OBI on 7,353 gapper entries, 120 s): gated minus rest -3.3 / -0.6 bp, UNDERPOWERED, no verdict.",
+ "prior": "LOW. Public order flow on 1-minute-delayed-decision retail execution is crowded; the 10/4 book-imbalance read leaned the wrong way.",
+ "data": "Alpaca historical SIP trades and NBBO quotes (free once 15 minutes old; data-only account in secrets_data.json; fetched AFTER HOURS only, paced under 150 requests/min, failures counted, abort the run if > 2% of entries fail). Entries: PRE onsets from the indicator_confirm_hist pipeline (warehouse 2026-05-11 .. 10-15, 400-name sample, warm %R, decision minute m = onset + 1, 10:00-15:27 so the 3-minute exit is before 15:30), a seeded sample of 8,000 (sha256('order-flow-pilot'), drawn before any tick is fetched, stratified 4,000 per half). No spend.",
+ "timing": "T = the start of decision minute m (ET), i.e. the moment the onset bar is complete. Features read SIP trades in [T - 60 s, T) and the NBBO at T. Entry: the ask of the last NBBO quote at or before T + 1 s. Exits: the bid of the last NBBO quote at or before T + 1 s + H. No quote within 5 s before the read time -> the entry is dropped (counted).",
+ "features": {
+  "OFI60": "trade-side flow over [T - 60 s, T): each trade signed by Lee-Ready against the NBBO mid prevailing at the trade (above mid +1, below -1, at mid by the tick test vs the previous trade price, unchanged -> previous sign); OFI60 = signed share volume / total share volume. Trades with conditions that are not regular-way (odd-lot inclusive; exclude out-of-sequence, average-price, derivatively priced, prior-reference and extended-hours conditions) are dropped before signing. Fewer than 5 trades in the window -> OFI60 missing (entry leaves G1 and G3).",
+  "QI": "top-of-book size imbalance at T: (bid_size - ask_size) / (bid_size + ask_size) of the last NBBO at or before T.",
+  "MICRO": "information only: (microprice - mid) / mid at T, microprice = (bid x ask_size + ask x bid_size) / (bid_size + ask_size)."
+ },
+ "hypotheses": {
+  "G1_trade_flow": "IN = PRE entries with OFI60 in the top tercile; OUT = the rest with OFI60.",
+  "G2_book": "IN = QI in the top tercile; OUT = the rest.",
+  "G3_both": "IN = OFI60 AND QI both in their top terciles; OUT = the rest with both."
+ },
+ "cuts": "tercile cut points computed on half A only (outcome-blind: features only) and applied to both halves; written to the count file before any outcome is fetched.",
+ "outcome": "PRIMARY H = 180 s. gross = mid(T + 1 s + H) / mid(T + 1 s) - 1; net = bid(T + 1 s + H) / ask(T + 1 s) - 1 (the whole spread inside). Information: H = 60, 120, 300 s.",
+ "statistic": "gated minus rest per day on GROSS (IN mean - OUT mean, days with >= 3 entries each side), day-equal, day-clustered t (df = days - 1). Within-sample comparison: every entry is a PRE entry at the same kind of moment, so the rest is the control (as depth_book). Information: the same split within each hour of the day.",
+ "multiplicity": "3 tests: one-sided p 0.025 / 3 at df = days - 1.",
+ "power": "OUTCOME-BLIND COUNT STEP after features are fetched and before any outcome quote is read: IN / OUT counts and days per half; projected MDE = (t_crit + 0.84) x the depth study's day-clustered SE at 120 s scaled by sqrt(3,576 / n_half) and sqrt(180 / 120) (the only prior SE on a comparable tick outcome; stated as an approximation). If the projected MDE in either half exceeds 7 bp, the sample is raised to 16,000 (8,000 per half) before any outcome is read; no other change.",
+ "pass": "per hypothesis, in BOTH halves: gated minus rest on gross >= +5 bp with t >= t_crit; gated mean NET > 0 (it pays after crossing the spread); name-day-equal difference > 0; drop-3-names and drop-3-days >= 0. FAIL: t <= -2 in a half, or the 97.5% upper bound below +5 bp in both halves. Otherwise UNDERPOWERED.",
+ "if_pass": "a pilot pass is a hypothesis, not an edge: confirm on 60 earlier sessions (same fetch rule) and then the live-feed question - IEX trades only (what live sees) must show the same sign before any live work; the desk cannot sign SIP trades in real time on the free feed.",
+ "if_fail": "trade-side flow and top-of-book imbalance before a pre-square entry are closed at 3 minutes for effects >= 5 bp on SIP; together with depth_book (10/4) order flow is not the free-feed route to a 3-minute edge.",
+ "information_only": ["MICRO terciles", "H = 60 / 120 / 300 s", "IEX-only trade signing (the live-feed version of OFI60)", "share of entries whose 3-minute max favourable excursion clears 2x the spread, by group", "hour-of-day split"],
+ "no_retuning": "60 s window, Lee-Ready signing, the trade-condition filter, terciles on half A, 180 s, the 5 bp bar, the sample size rule and the seed are fixed.",
+ "declared_deviations": ["SIP trades are consolidated and timestamped by the SIP, not by the venue; signing against the SIP NBBO is approximate (Lee-Ready error ~10-15% in the literature)", "historical SIP is not what the live desk sees (IEX); the live question is a separate step in if_pass", "the decision is at the minute boundary; live acts intrabar"],
+ "script": "tools/studies/order_flow_pilot.py (to be written; reuses indicator_confirm_hist for PRE entries and exec_report / momentum_alert_ticks helpers for SIP trades and quotes). Steps: --sample (draw entries), --fetch-features (trades + T quote), count step (cuts, MDE), --fetch-outcomes, --score after a result-skeptic READY."
+}
