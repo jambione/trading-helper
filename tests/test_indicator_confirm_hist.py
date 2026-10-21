@@ -180,19 +180,45 @@ def test_coin_is_seeded_and_fair():
     assert flips == [H.coin(r) for r in rows] and 0.45 < flips.count("IN") / len(flips) < 0.55
 
 
+def _c(cell, half, stat, tv, n=400, days=60):
+    return {"cell": cell, "half": half, "stat": stat, "t": tv, "n_in": n, "days": days}
+
+
 def test_bound_check_needs_every_stat_present_and_300_entries():
-    ok = H.bound_check([{"cell": "H1", "half": "A", "stat": "DiD_d", "t": 1.5, "n_in": 400},
-                        {"cell": "H1", "half": "B", "stat": "DiD_d", "t": -2.0, "n_in": 300}])
-    assert ok["n_stats"] == 2 and ok["ok"] and ok["bound"] == pytest.approx(S.t_ppf(1 - 0.025 / 2, 10_000))
-    assert not H.bound_check([{"cell": "H1", "half": "A", "stat": "d", "t": 3.5, "n_in": 400},
-                              {"cell": "H1", "half": "B", "stat": "d", "t": 0.1, "n_in": 400}])["ok"]
-    missing = H.bound_check([{"cell": "S3", "half": "A", "stat": "lift_d", "t": None, "n_in": 0},
-                             {"cell": "H1", "half": "A", "stat": "DiD_d", "t": 0.2, "n_in": 400}])
+    ok = H.bound_check([_c("H1", "A", "DiD_d", 1.5), _c("H1", "B", "DiD_d", -2.0, n=300)])
+    assert ok["n_stats"] == 2 and ok["ok"] and ok["bound"] == pytest.approx(S.t_ppf(1 - 0.025 / 2, 59))
+    assert not H.bound_check([_c("H1", "A", "d", 3.5), _c("H1", "B", "d", 0.1)])["ok"]
+    missing = H.bound_check([_c("S3", "A", "lift_d", None, n=0), _c("H1", "A", "DiD_d", 0.2)])
     assert not missing["ok"] and missing["missing"] == ["S3 A lift_d"]       # skeptic r2 #1: never skipped
-    thin = H.bound_check([{"cell": "S4", "half": "B", "stat": "lift_x", "t": 0.3, "n_in": 120}])
+    thin = H.bound_check([_c("S4", "B", "lift_x", 0.3, n=120)])
     assert not thin["ok"] and thin["thin"] == ["S4 B lift_x n=120"]
     c = H._check("H1", "A", "DiD_d", 0.0002, 2.0, 500, 20)
     assert c["est_bp"] == pytest.approx(2.0) and c["se_bp"] == pytest.approx(1.0)
+
+
+def test_bound_is_bonferroni_t_at_each_statistics_own_df():
+    checks = [_c(f"H{k % 5 + 1}", "AB"[k % 2], "DiD_d", 0.0, days=20) for k in range(39)] + [_c("H2", "A", "DiD_d", -3.80, days=20)]
+    r = H.bound_check(checks)
+    assert r["bound"] == pytest.approx(S.t_ppf(1 - 0.025 / 40, 19))        # 3.79 at df 19 (normal would be 3.23)
+    assert not r["ok"] and r["over"] == ["H2 A DiD_d t=-3.80 > 3.79"]
+    checks[-1].update(days=60, t=-3.30)
+    assert H.bound_check(checks)["ok"]                                       # df 59 bound is 3.39
+
+
+def test_investigate_flags_negative_h2_d_and_h3_x_only():
+    r = H.bound_check([_c("H2", "A", "DiD_d", -2.1), _c("H3", "B", "DiD_x", -2.5), _c("H3", "B", "DiD_d", -2.5),
+                       _c("H2", "B", "DiD_d", 2.4), _c("S4", "A", "lift_d", -2.6)])
+    assert r["ok"] and r["investigate"] == ["H2 A DiD_d t=-2.10", "H3 B DiD_x t=-2.50"]
+
+
+def test_null_seeds_come_from_the_confirm_tag(monkeypatch):
+    days = H.null_days()
+    assert len(days) == H.NULL_DAYS_REGISTERED + H.LOOKBACK == 130
+    a = H.null_raw("sip", days[2], n=20)
+    H._NULL_LEVEL.clear()
+    monkeypatch.setattr(H, "NULL_SEED_TAG", "other")
+    assert not np.array_equal(H.null_raw("sip", days[2], n=20)["S3"], a["S3"])
+    H._NULL_LEVEL.clear()
 
 
 def test_null_walk_is_continuous_and_in_the_volatility_band():
@@ -234,7 +260,7 @@ def test_score_gate_refusals(monkeypatch, tmp_path):
     (tmp_path / "count.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms,
                                                      "scored_sessions": ["d1"]}))
     (tmp_path / "null.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": True,
-                                                    "days": H.NULL_DAYS_REGISTERED}))
+                                                    "days": H.NULL_DAYS_REGISTERED, "seed_tag": H.NULL_SEED_TAG}))
     (tmp_path / "placebo.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": False}))
     with pytest.raises(SystemExit, match="placebo.json is NOT OK"):
         H.score_gate("READY", ["d1"])
@@ -249,11 +275,20 @@ def test_score_gate_refusals(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="handcheck.md missing"):
         H.score_gate("READY", ["d1"])
     (tmp_path / "handcheck.md").write_text("x")
-    (tmp_path / "null.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": True, "days": 120}))
-    with pytest.raises(SystemExit, match="not the registered 40"):
+    (tmp_path / "null.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": True, "days": 40,
+                                                    "seed_tag": H.NULL_SEED_TAG}))
+    with pytest.raises(SystemExit, match="not the registered 120"):
+        H.score_gate("READY", ["d1"])
+    (tmp_path / "null.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": True, "days": 120,
+                                                    "seed_tag": "old"}))
+    with pytest.raises(SystemExit, match="not the registered 120"):
+        H.score_gate("READY", ["d1"])
+    (tmp_path / "null.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": True, "days": 120,
+                                                    "seed_tag": H.NULL_SEED_TAG, "investigate": ["H2 A DiD_d t=-2.10"]}))
+    with pytest.raises(SystemExit, match="investigate the method"):
         H.score_gate("READY", ["d1"])
     (tmp_path / "null.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": True,
-                                                    "days": H.NULL_DAYS_REGISTERED}))
+                                                    "days": H.NULL_DAYS_REGISTERED, "seed_tag": H.NULL_SEED_TAG}))
     with pytest.raises(SystemExit, match="session set changed"):
         H.score_gate("READY", ["d1", "d2"])
     assert H.score_gate("READY", ["d1"])["scored_sessions"] == ["d1"]

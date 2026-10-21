@@ -14,10 +14,10 @@ and low from the prior session's SIP bars).
 
   (default)    count step: per H cell, V setup and half: entries, name-days, days, projected MDE from CONTROL
                outcomes only, the control's own IN-OUT gap, V detector funnels -> count.json
-  --null       synthetic driftless walk (amended_2: continuous across sessions, 0.05-0.15%/min per name, 2,500
-               names x 40 sessions + look-back): PRE onsets on warm %R, features, both controls, H DiD_d / DiD_x and
-               V lift_d / lift_x; every statistic present with >= 300 entries and every |t| within the Bonferroni
-               bound -> null.json
+  --null       the ONE binding confirmatory null (amended_3): driftless walk continuous across sessions,
+               0.05-0.15%/min per name, 2,500 names x 120 sessions + look-back, seeds from 'ich-null-confirm': PRE
+               onsets on warm %R, features, both controls, H DiD_d / DiD_x and V lift_d / lift_x; every statistic
+               present with >= 300 entries and every |t| within the Bonferroni t at its own df -> null.json
   --placebo    real data, IN / OUT by a seeded coin flip per entry for every H cell; same bound -> placebo.json
   --handcheck  5 seeded entries per V setup with their 1/5/15/60-minute bars -> handcheck.md (for the reviewer)
   --score      everything; refuses unless count / null / placebo were written by THIS script (sha256) and passed,
@@ -64,11 +64,12 @@ LIFT_BAR = 0.0005
 BOARD_UP = 0.02
 TIME_SPLIT = 11 * 60 + 25
 SAME_TAG, CROSS_TAG, SAMPLE_TAG = "indicator-hist-v1", "indicator-hist-cross", "indicator-hist-sample"
-NULL_DAYS_REGISTERED = 40
-# ICH_NULL_DAYS: diagnostic runs only (worker processes re-import this module, so a constant patch would not reach
-# them); --score refuses a null.json that did not use the registered NULL_DAYS_REGISTERED sessions.
-NULL_DAYS = int(os.environ.get("ICH_NULL_DAYS", NULL_DAYS_REGISTERED))
+# amended_3: ONE binding confirmatory null, 120 sessions, seed families derived from a tag never run before; --score
+# refuses a null.json with another session count or tag.
+NULL_DAYS = NULL_DAYS_REGISTERED = 120
+NULL_SEED_TAG = "ich-null-confirm"
 NULL_NAMES, NULL_START = 2500, "2026-01-05"
+INVESTIGATE = (("H2", "DiD_d"), ("H3", "DiD_x"))   # amended_3: negative with |t| > 2 here = method signal
 NULL_VOL = (0.0005, 0.0015)          # per-name 1-minute volatility, so S3 consolidations (<= 1% over an hour) occur
 NULL_MIN_N = 300                     # amended_2: every null / placebo statistic needs >= 300 entries
 HANDCHECK_N, HANDCHECK_DAYS = 5, 3
@@ -112,10 +113,18 @@ def load_raw(feed: str, day: str) -> dict[str, np.ndarray]:
 _NULL_LEVEL: dict[tuple[int, int], np.ndarray] = {}
 
 
+def _null_rng(kind: str, i: int = 0) -> np.random.Generator:
+    """Every null seed derives from NULL_SEED_TAG (amended_3: fresh seed families, never run before)."""
+    return np.random.default_rng(_seed(NULL_SEED_TAG, kind, i))
+
+
+def _null_vol(n: int) -> np.ndarray:
+    return NULL_VOL[0] + (NULL_VOL[1] - NULL_VOL[0]) * _null_rng("vol").random(n)
+
+
 def _null_day(i: int, n: int) -> np.ndarray:
-    """Log returns (n names x 390 minutes) of synthetic session i; seeded by the session index only."""
-    vol = NULL_VOL[0] + (NULL_VOL[1] - NULL_VOL[0]) * np.random.default_rng(7).random(n)
-    return np.random.default_rng(1000 + i).standard_normal((n, S.RTH_END - S.RTH_START)) * vol[:, None]
+    """Log returns (n names x 390 minutes) of synthetic session i."""
+    return _null_rng("returns", i).standard_normal((n, S.RTH_END - S.RTH_START)) * _null_vol(n)[:, None]
 
 
 def null_raw(_feed: str, day: str, n: int | None = None) -> dict[str, np.ndarray]:
@@ -125,7 +134,7 @@ def null_raw(_feed: str, day: str, n: int | None = None) -> dict[str, np.ndarray
     n = n or NULL_NAMES
     i = null_days().index(day)
     if (0, n) not in _NULL_LEVEL:
-        _NULL_LEVEL[(0, n)] = np.log(20 + 80 * np.random.default_rng(11).random(n))
+        _NULL_LEVEL[(0, n)] = np.log(20 + 80 * _null_rng("level").random(n))
     for j in range(1, i + 1):
         if (j, n) not in _NULL_LEVEL:
             _NULL_LEVEL[(j, n)] = _NULL_LEVEL[(j - 1, n)] + _null_day(j - 1, n).sum(axis=1)
@@ -133,8 +142,8 @@ def null_raw(_feed: str, day: str, n: int | None = None) -> dict[str, np.ndarray
     lc = _NULL_LEVEL[(i, n)][:, None] + np.cumsum(z, axis=1)
     c = np.exp(lc)
     o = np.exp(np.concatenate([_NULL_LEVEL[(i, n)][:, None], lc[:, :-1]], axis=1))
-    rng = np.random.default_rng(5000 + i)
-    vol = NULL_VOL[0] + (NULL_VOL[1] - NULL_VOL[0]) * np.random.default_rng(7).random(n)
+    rng = _null_rng("wick-volume", i)
+    vol = _null_vol(n)
     wick = np.abs(rng.standard_normal((2, n, z.shape[1]))) * vol[None, :, None] * 0.5
     h = np.maximum(o, c) * (1 + wick[0])
     lo = np.minimum(o, c) * (1 - wick[1])
@@ -623,16 +632,23 @@ def _check(cell, half, stat, est, t, n, days) -> dict:
 
 def bound_check(checks: list[dict]) -> dict:
     """amended_2: every statistic must exist and rest on >= NULL_MIN_N entries (a blank or thin cell makes the
-    calibration NOT OK instead of being skipped); then every |t| within the two-sided Bonferroni bound."""
-    ts = [c["t"] for c in checks if c["t"] is not None]
-    k = len(ts)
-    bound = S.t_ppf(1 - 0.025 / max(k, 1), 10_000)
+    calibration NOT OK instead of being skipped). amended_3: each |t| within the two-sided Bonferroni t over the
+    statistics computed, at that statistic's own df = days - 1; plus the investigate flags."""
+    live = [c for c in checks if c["t"] is not None]
+    k = len(live)
+    for c in live:
+        c["bound"] = S.t_ppf(1 - 0.025 / k, max(c["days"] - 1, 1))
     missing = [f"{c['cell']} {c['half']} {c['stat']}" for c in checks if c["t"] is None]
     thin = [f"{c['cell']} {c['half']} {c['stat']} n={c['n_in']}" for c in checks if (c["n_in"] or 0) < NULL_MIN_N]
-    return {"n_stats": k, "bound": bound, "max_abs_t": max((abs(t) for t in ts), default=None),
-            "share_abs_t_le_1": (sum(1 for t in ts if abs(t) <= 1) / k) if k else None,
-            "missing": missing, "thin": thin,
-            "ok": k > 0 and not missing and not thin and all(abs(t) <= bound for t in ts), "checks": checks}
+    over = [f"{c['cell']} {c['half']} {c['stat']} t={c['t']:+.2f} > {c['bound']:.2f}" for c in live
+            if abs(c["t"]) > c["bound"]]
+    investigate = [f"{c['cell']} {c['half']} {c['stat']} t={c['t']:+.2f}" for c in live
+                   if (c["cell"], c["stat"]) in INVESTIGATE and c["t"] < -2.0]
+    return {"n_stats": k, "bound": min((c["bound"] for c in live), default=None),
+            "max_abs_t": max((abs(c["t"]) for c in live), default=None),
+            "share_abs_t_le_1": (sum(1 for c in live if abs(c["t"]) <= 1) / k) if k else None,
+            "missing": missing, "thin": thin, "over": over, "investigate": investigate,
+            "ok": k > 0 and not missing and not thin and not over, "checks": checks}
 
 
 # ── null, placebo, handcheck ─────────────────────────────────────────────────
@@ -649,8 +665,8 @@ def run_null(workers: int) -> dict:
     res = run_days(days, ks, "null", "null", workers, quiet=True)
     half_end = days[LOOKBACK + NULL_DAYS // 2 - 1]
     out = bound_check(all_t(res["pre"], res["v"], half_end))
-    out.update({"days": NULL_DAYS, "names": NULL_NAMES, "pre": len(res["pre"]), "v": len(res["v"]),
-                "half_end": half_end})
+    out.update({"days": NULL_DAYS, "names": NULL_NAMES, "seed_tag": NULL_SEED_TAG, "pre": len(res["pre"]),
+                "v": len(res["v"]), "half_end": half_end})
     return out
 
 
@@ -899,8 +915,11 @@ def score_gate(skeptic_ready: str, sessions: list[str]) -> dict:
             raise SystemExit(f"{name} was written by a different script or module version; rerun it with this one")
         if name != "count.json" and not obj.get("ok"):
             raise SystemExit(f"{name} is NOT OK: fix the method before any score")
-        if name == "null.json" and obj.get("days") != NULL_DAYS_REGISTERED:
-            raise SystemExit(f"null.json used {obj.get('days')} sessions, not the registered {NULL_DAYS_REGISTERED}")
+        if name == "null.json" and (obj.get("days") != NULL_DAYS_REGISTERED or obj.get("seed_tag") != NULL_SEED_TAG):
+            raise SystemExit(f"null.json used {obj.get('days')} sessions / seed tag {obj.get('seed_tag')!r}, not the "
+                             f"registered {NULL_DAYS_REGISTERED} / {NULL_SEED_TAG!r}")
+        if name == "null.json" and obj.get("investigate"):
+            raise SystemExit(f"null.json flags {obj['investigate']}: investigate the method before any score")
         need[name] = obj
     if not os.path.exists(os.path.join(OUT_DIR, "handcheck.md")):
         raise SystemExit("handcheck.md missing: run --handcheck and have it reviewed")
@@ -923,7 +942,8 @@ def main() -> None:
         res["script_sha256"], res["module_sha256"] = script_sha(), module_shas()
         print(f"null: PRE {res['pre']}, V {res['v']}, {res['n_stats']} t values, max |t| {res['max_abs_t']:.2f} "
               f"(bound {res['bound']:.2f}), share |t|<=1 {res['share_abs_t_le_1']:.0%}, missing {res['missing']}, "
-              f"thin {res['thin']}: {'OK' if res['ok'] else 'NOT OK - fix the method before any score'}")
+              f"thin {res['thin']}, over {res['over']}, investigate {res['investigate']}: "
+              f"{'OK' if res['ok'] else 'NOT OK - the study stays BLOCKED (amended_3: binding)'}")
         print(write("null.json", res))
         return
     days = warehouse_days()
@@ -938,7 +958,7 @@ def main() -> None:
         res["script_sha256"], res["module_sha256"] = script_sha(), module_shas()
         print(f"placebo: PRE {res['pre']}, {res['n_stats']} t values, max |t| {res['max_abs_t']:.2f} "
               f"(bound {res['bound']:.2f}), share |t|<=1 {res['share_abs_t_le_1']:.0%}, missing {res['missing']}, "
-              f"thin {res['thin']}: "
+              f"thin {res['thin']}, over {res['over']}: "
               f"{'OK' if res['ok'] else 'NOT OK - fix the method before any score'}")
         print(write("placebo_smoke.json" if a.days else "placebo.json", res))
         return
