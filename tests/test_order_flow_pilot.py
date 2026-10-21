@@ -246,3 +246,34 @@ def test_fetch_outcomes_caches_and_resumes(tmp_path, monkeypatch):
     assert st["fetched"] == 4
     st2 = O.fetch_outcomes(_entries(6), object(), str(tmp_path), sleep=lambda s: None, log=lambda x: None)
     assert st2["cached"] == 4 and st2["fetched"] == 2
+
+
+def test_ub_when_the_difference_is_exactly_zero():
+    rows = []
+    for d in range(5):
+        for i in range(6):
+            side = "IN" if i < 3 else "OUT"
+            g = 0.001 * ((d % 2) * 2 - 1) if side == "IN" else 0.0
+            rows.append(_row(f"2026-06-{d + 1:02d}", f"N{i}", "A", side, g))
+    rows += [_row("2026-06-09", f"N{i}", "A", "IN" if i < 3 else "OUT", 0.0) for i in range(6)]
+    r = O.gated_minus_rest(rows, "G1", "A", "gross180")
+    assert r["ub"] is not None                                      # computed from the SE, not mu / t
+
+
+def test_tercile_cuts_and_information_runs():
+    assert O.tercile_cuts([1, 2, 3, 4, 5, 6]) == (3, 5) and O.tercile_cuts([1]) is None
+    import random as _r
+    rng = _r.Random(2)
+    rows, feats = [], {"entries": []}
+    for d in range(4):
+        for i in range(30):
+            e = {"day": f"2026-06-{d + 1:02d}", "sym": f"N{i}", "m": 600 + 30 * (i % 10), "half": "A",
+                 "ofi60": rng.random(), "qi": rng.random() - 0.5, "micro": rng.gauss(0, 1e-4),
+                 "groups": {"G1": "IN" if i % 3 == 0 else "OUT", "G2": "OUT", "G3": "OUT"}}
+            feats["entries"].append(e)
+            rows.append({**e, "gross60": 0.0, "gross120": 0.0, "gross180": rng.gauss(0, 1e-3), "gross300": 0.0,
+                         "net180": -0.0003, "mfe_bid": 0.001, "spread": 0.0003})
+    onset = {O.entry_key(r): rng.gauss(0, 1e-3) for r in rows}
+    info = O.information(rows, feats, onset)
+    assert "terciles cut within each hour" in info and "G1 within onset-bar-return terciles" in info
+    assert set(info["G1 within onset-bar-return terciles"]) >= {"cuts (half A)", "onset return low", "onset return high"}

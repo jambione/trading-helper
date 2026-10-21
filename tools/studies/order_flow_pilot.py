@@ -562,11 +562,13 @@ def gated_minus_rest(rows: list[dict], g: str, half: str, key: str, drop_names=f
     ndd = {d: statistics.mean(statistics.mean(v) for v in nd["IN"][d].values())
            - statistics.mean(statistics.mean(v) for v in nd["OUT"][d].values()) for d in days}
     mu, t, n = _day_t(diff)
+    xs = list(diff.values())
+    se = statistics.stdev(xs) / math.sqrt(len(xs)) if len(xs) >= 2 else None
     return {"diff": mu, "t": t, "days": n, "n_in": sum(len(v) for v in per["IN"].values()),
             "n_out": sum(len(v) for v in per["OUT"].values()), "nameday": _day_t(ndd)[0],
             "in_net": _day_t({d: statistics.mean(v) for d, v in net_in.items() if v})[0],
             "t_crit": t_crit3(n), "per_day": diff,
-            "ub": (mu + S.t_ppf(0.975, n - 1) * abs(mu / t)) if (mu is not None and t and n >= 2) else None}
+            "ub": (mu + S.t_ppf(0.975, n - 1) * se) if (mu is not None and se is not None) else None}
 
 
 def grade_group(rows: list[dict], g: str, half: str) -> dict:
@@ -628,33 +630,74 @@ def score_rows(features: dict, out_dir: str = OUTCOME_DIR) -> tuple[list[dict], 
     return rows, st
 
 
-def information(rows: list[dict], features: dict) -> dict:
+def tercile_cuts(values: list[float]) -> tuple[float, float] | None:
+    v = sorted(x for x in values if x is not None)
+    return (v[len(v) // 3], v[(2 * len(v)) // 3]) if len(v) >= 3 else None
+
+
+def onset_returns(rows: list[dict]) -> dict:
+    """The onset bar's own SIP return (bar m - 1, open -> close) per entry key, from the warehouse (outcome-blind)."""
+    out, by_day = {}, defaultdict(list)
+    for r in rows:
+        by_day[r["day"]].append(r)
+    for day, rs in sorted(by_day.items()):
+        sip = H.load_raw("sip", day)
+        for r in rs:
+            b = H.bars_dict(sip[r["sym"]]).get(r["m"] - 1) if r["sym"] in sip else None
+            out[entry_key(r)] = (b[3] / b[0] - 1) if b and b[0] else None
+    return out
+
+
+def information(rows: list[dict], features: dict, onset: dict | None = None) -> dict:
     info = {}
     for h in HORIZONS:
         if h == PRIMARY_H:
             continue
-        info[f"H={h}s"] = {g: {hf: _bp_t(gated_minus_rest(rows, g, hf, f"gross{h}")) for hf in ("A", "B")}
-                           for g in ("G1", "G2", "G3")}
-    half_a = [r for r in rows if r["half"] == "A" and r.get("micro") is not None]
-    cut = top_cut([(r["micro"], tie_u(r)) for r in half_a])
+        info[f"H={h}s gross"] = {g: {hf: _bp_t(gated_minus_rest(rows, g, hf, f"gross{h}")) for hf in ("A", "B")}
+                                 for g in ("G1", "G2", "G3")}
+    # MICRO: cut on features.json half A (all scored-feature entries, before outcome drops), tie rule as amended_4
+    fa = [e for e in features["entries"] if e["half"] == "A" and e.get("micro") is not None]
+    cut = top_cut([(e["micro"], tie_u(e)) for e in fa])
     micro_fn = (lambda r: None if r.get("micro") is None or cut is None
                 else ("IN" if (r["micro"], tie_u(r)) >= tuple(cut) else "OUT"))
     info["MICRO top tercile"] = {hf: _bp_t(gated_minus_rest(rows, "G1", hf, f"gross{PRIMARY_H}", side_fn=micro_fn))
                                  for hf in ("A", "B")}
-    by_hour = {}
+    info["by hour (global cuts)"] = {
+        f"{hr}:00": {g: {hf: _bp_t(gated_minus_rest([r for r in rows if r["m"] // 60 == hr], g, hf,
+                                                     f"gross{PRIMARY_H}")) for hf in ("A", "B")}
+                     for g in ("G1", "G2", "G3")} for hr in range(10, 16)}
+    # terciles cut WITHIN each hour (half A features), G1 / G2 pooled over hours: the time-of-day confound
+    hour_cuts = {}
     for hr in range(10, 16):
-        sub = [r for r in rows if r["m"] // 60 == hr]
-        by_hour[f"{hr}:00"] = {g: {hf: _bp_t(gated_minus_rest(sub, g, hf, f"gross{PRIMARY_H}")) for hf in ("A", "B")}
-                               for g in ("G1", "G2")}
-    info["by hour"] = by_hour
+        ea = [e for e in features["entries"] if e["half"] == "A" and e["m"] // 60 == hr]
+        hour_cuts[hr] = {k: top_cut([(e[k], tie_u(e)) for e in ea if e.get(k) is not None]) for k in ("ofi60", "qi")}
+
+    def within_hour(k):
+        def fn(r):
+            c = hour_cuts.get(r["m"] // 60, {}).get(k)
+            return None if r.get(k) is None or c is None else ("IN" if (r[k], tie_u(r)) >= tuple(c) else "OUT")
+        return fn
+    info["terciles cut within each hour"] = {
+        g: {hf: _bp_t(gated_minus_rest(rows, g, hf, f"gross{PRIMARY_H}", side_fn=within_hour(k))) for hf in ("A", "B")}
+        for g, k in (("G1", "ofi60"), ("G2", "qi"))}
+    # OFI60 within terciles of the onset bar's own return: is a G1 result order flow or a big onset bar?
+    if onset is not None:
+        oc = tercile_cuts([onset.get(entry_key(r)) for r in rows if r["half"] == "A"])
+        cell = {}
+        if oc:
+            for name, lo, hi in (("low", -1e9, oc[0]), ("mid", oc[0], oc[1]), ("high", oc[1], 1e9)):
+                sub = [r for r in rows if onset.get(entry_key(r)) is not None and lo <= onset[entry_key(r)] < hi]
+                cell[f"onset return {name}"] = {hf: _bp_t(gated_minus_rest(sub, "G1", hf, f"gross{PRIMARY_H}"))
+                                                for hf in ("A", "B")}
+        info["G1 within onset-bar-return terciles"] = {"cuts (half A)": oc, **cell}
     mfe = {}
     for g in ("G1", "G2", "G3"):
         for s_ in ("IN", "OUT"):
             xs = [r for r in rows if r["groups"][g] == s_ and r.get("mfe_bid") is not None and r.get("spread")]
             mfe[f"{g} {s_}"] = (sum(1 for r in xs if r["mfe_bid"] > 2 * r["spread"]) / len(xs)) if xs else None
-    info["share with 3-min max bid > 2x spread"] = mfe
-    info["not computed"] = {"IEX-only trade signing": "needs the if_pass feed=iex fetch (amended_4 (6))",
-                            "terciles within hour / onset-bar-return terciles": "reported as the by-hour split only"}
+    info["share whose 3-min max BID clears the entry ask by > 2x the spread (net excursion)"] = mfe
+    info["not computed"] = {"IEX-only trade signing": "needs the if_pass feed=iex fetch (amended_4 (6))"}
+    info["note"] = "gated net averages every day with an IN entry, not only the days graded for the difference"
     return info
 
 
@@ -749,15 +792,24 @@ def main() -> None:
         if feats.get("module_sha256") != module_shas():
             raise SystemExit("features.json was written by a different script or module version; rerun --count")
         rows, st = score_rows(feats)
-        if st["not_fetched"] > FAIL_ABORT * len(feats["entries"]):
+        n_all = len(feats["entries"])
+        if st["not_fetched"] > FAIL_ABORT * n_all:
             raise SystemExit(f"{st['not_fetched']} entries without outcomes (> 2%); rerun --fetch-outcomes")
+        if st["no_entry_quote"] + st[f"missing_h{PRIMARY_H}"] > FAIL_ABORT * n_all:
+            raise SystemExit(f"outcome-side drops {st['no_entry_quote']} + {st[f'missing_h{PRIMARY_H}']} > 2%: every "
+                             f"entry passed the entry-quote check in the feature cache, so this is a fetch fault")
+        miss = Counter(f"{g} {r['groups'][g]}" for r in rows for g in ("G1", "G2", "G3")
+                       if r["groups"][g] and r.get(f"gross{PRIMARY_H}") is None)
+        print(f"missing primary horizon by group and side: {dict(miss)}")
         graded, halves, verdicts = {}, {}, {}
         for g in ("G1", "G2", "G3"):
             graded[g] = {hf: grade_group(rows, g, hf) for hf in ("A", "B")}
             halves[g] = {hf: half_verdict(graded[g][hf], g) for hf in ("A", "B")}
             verdicts[g] = group_verdict([halves[g][h] for h in ("A", "B")], [graded[g][h]["ub"] for h in ("A", "B")])
         res = {"rows": len(rows), "drops": dict(st), "graded": graded, "halves": halves, "verdicts": verdicts,
-               "info": information(rows, feats), "skeptic_ready": a.skeptic_ready, "module_sha256": module_shas()}
+               "info": information(rows, feats, onset_returns(rows)), "missing_h180_by_side": dict(miss),
+               "count_rerun_identical": feats.get("identical_to_previous"),
+               "skeptic_ready": a.skeptic_ready, "module_sha256": module_shas()}
         md = report(res)
         print(md)
         open(os.path.join(OUT_DIR, "result.md"), "w").write(md + "\n")
@@ -795,9 +847,20 @@ def main() -> None:
         print(write("count.json", {"module_sha256": module_shas(), "rows": len(rows), "drops": dict(st), "cuts": cuts,
                                    "in_share": share, "groups": cnt,
                                    "note": "features and control bar returns only; no tick outcome read"}))
-        print(write("features.json", {"module_sha256": module_shas(), "cuts": cuts,     # skeptic r1 #9: no re-cut later
-                                      "entries": [{k: r[k] for k in ("day", "sym", "m", "half", "ofi60", "qi", "micro",
-                                                                     "n_signed", "groups")} for r in rows]}))
+        fpath = os.path.join(OUT_DIR, "features.json")
+        new_entries = [{k: r[k] for k in ("day", "sym", "m", "half", "ofi60", "qi", "micro", "n_signed", "groups")}
+                       for r in rows]
+        same = None
+        if os.path.exists(fpath):
+            old = json.load(open(fpath))
+            same = (json.loads(json.dumps(old.get("cuts"))) == json.loads(json.dumps(cuts))
+                    and [(e["day"], e["sym"], e["m"], e["groups"]) for e in old["entries"]]
+                    == [(e["day"], e["sym"], e["m"], e["groups"]) for e in new_entries])
+            tag = (old.get("module_sha256") or {}).get("order_flow_pilot", "unknown")[:12]
+            write(f"features_{tag}.json", old)
+            print(f"rerun identical to the previous features.json ({tag}): {same}")
+        print(write("features.json", {"module_sha256": module_shas(), "cuts": cuts, "identical_to_previous": same,
+                                      "entries": new_entries}))
         return
     if a.sample:
         days = H.warehouse_days()
