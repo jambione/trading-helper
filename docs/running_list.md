@@ -9,7 +9,7 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 | # | Item | Status | Where |
 |---|---|---|---|
 | 1 | Pasted 'top indicators for entry' list: was all of it tested on our opens? | done (audit) | Tested and failed: MAs/EMA pullback, HH/HL, RSI, MACD, RS vs SPY, RVOL, VWAP, Bollinger, ATR stops, S/R, regime/tide, news, confluence scores. Untested: ADX (engine never publishes it), OBV/AD, the article's confluence example, video setups on desk arms |
-| 2 | Pre-register ADX, OBV/AD, video setups on our opens (same-name random-minute control) | registered | docs/studies/indicator_confirm_prereg.json, skeptic FIX FIRST applied 10/21: arm_ok True arms only (~354/651 per half), DiD vs harness control, IEX features; H5 = article confluence; video setups count-only. Script not written |
+| 2 | Pre-register ADX, OBV/AD, video setups on our opens (same-name random-minute control) | registered | docs/studies/indicator_confirm_prereg.json, skeptic FIX FIRST applied 10/21: arm_ok True arms only (~354/651 per half), DiD vs harness control, IEX features; H5 = article confluence; video setups count-only. Script tools/studies/indicator_confirm_study.py written 10/21; null OK (max |t| 1.45, bar amended to Bonferroni ~3.0); count step on mini: only H2 scored both halves (MDE 45 / 13 bp), H1 B only, H3-H5 UNDERPOWERED; video 392 arm name-days, no fetch. NEXT: skeptic READY on the script, then --score |
 | 3 | S2 video-setup history study stalled | open | count step 10/9: MDE 22 bp > 15, pre-committed extension to 2025-11-03 never run (ai_reports/structure_pullback/count.json on the mini) |
 
 ## 2026-10-15 (Thu)
