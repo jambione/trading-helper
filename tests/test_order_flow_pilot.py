@@ -51,12 +51,3 @@ def test_inventory_counts_codes_sizes_and_bad_quotes():
     assert inv["A"]["zero_price"] == 1 and inv["A"]["codes"] == {"@": 1, "T": 1}
     m = O.merge([inv, inv])
     assert m["C"]["trades"] == 4 and m["C"]["codes"] == {"@": 2, "I": 2}
-
-
-def test_after_hours_window():
-    et = E.ET
-    assert O.after_hours(datetime(2026, 10, 21, 16, 15, tzinfo=et))
-    assert O.after_hours(datetime(2026, 10, 22, 8, 29, tzinfo=et))
-    assert not O.after_hours(datetime(2026, 10, 21, 8, 30, tzinfo=et))
-    assert not O.after_hours(datetime(2026, 10, 21, 12, 0, tzinfo=et))
-    assert O.after_hours(datetime(2026, 10, 24, 12, 0, tzinfo=et))        # Saturday

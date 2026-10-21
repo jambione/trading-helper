@@ -12,7 +12,8 @@ condition list is registered):
              trade condition codes with counts and whether size / conditions / tape / bid_size / ask_size are
              populated, plus locked / crossed / zero quotes -> prestep.json. No feature is computed.
 
-Mini, after hours only (16:15-08:30 ET); the data-only account in secrets_data.json, never the desk's key.
+Mini, any time (prereg amended_2, operator 10/21); the data-only account in secrets_data.json, never the desk's key;
+paced under 150 requests/min.
 """
 from __future__ import annotations
 
@@ -167,12 +168,6 @@ def fetch_entry(cl, sym: str, t: float) -> tuple[list, list]:
     raise RuntimeError(f"fetch failed for {sym} at {int(t)}")
 
 
-def after_hours(now: datetime | None = None) -> bool:
-    now = (now or datetime.now(E.ET)).astimezone(E.ET)
-    hm = now.hour * 60 + now.minute
-    return now.weekday() >= 5 or hm >= 16 * 60 + 15 or hm < 8 * 60 + 30
-
-
 def write(name: str, obj) -> str:
     os.makedirs(OUT_DIR, exist_ok=True)
     p = os.path.join(OUT_DIR, name)
@@ -218,8 +213,6 @@ def main() -> None:
         print(write("sample.json", {"sessions": sessions, "onsets": len(onsets), "seed_tag": SAMPLE_TAG,
                                     "entries": sample}))
         return
-    if not after_hours():
-        raise SystemExit("tick fetches run only 16:15-08:30 ET (prereg fetch plan)")
     smp = json.load(open(os.path.join(OUT_DIR, "sample.json")))["entries"]
     rng = random.Random(int(hashlib.sha256(PRESTEP_TAG.encode()).hexdigest()[:16], 16))
     picks = sorted(rng.sample(smp, PRESTEP_N), key=lambda e: (e["day"], e["sym"], e["m"]))
