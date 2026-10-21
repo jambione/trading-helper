@@ -14,8 +14,10 @@ and low from the prior session's SIP bars).
 
   (default)    count step: per H cell, V setup and half: entries, name-days, days, projected MDE from CONTROL
                outcomes only, the control's own IN-OUT gap, V detector funnels -> count.json
-  --null       synthetic driftless walk with a synthetic prior day and look-back: PRE onsets, features, both
-               controls, H DiD_d / DiD_x and V lift_d / lift_x; every |t| within the Bonferroni bound -> null.json
+  --null       synthetic driftless walk (amended_2: continuous across sessions, 0.05-0.15%/min per name, 2,500
+               names x 40 sessions + look-back): PRE onsets on warm %R, features, both controls, H DiD_d / DiD_x and
+               V lift_d / lift_x; every statistic present with >= 300 entries and every |t| within the Bonferroni
+               bound -> null.json
   --placebo    real data, IN / OUT by a seeded coin flip per entry for every H cell; same bound -> placebo.json
   --handcheck  5 seeded entries per V setup with their 1/5/15/60-minute bars -> handcheck.md (for the reviewer)
   --score      everything; refuses unless count / null / placebo were written by THIS script (sha256) and passed,
@@ -35,7 +37,6 @@ import os
 import random
 import statistics
 import sys
-import zlib
 from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta
@@ -63,7 +64,9 @@ LIFT_BAR = 0.0005
 BOARD_UP = 0.02
 TIME_SPLIT = 11 * 60 + 25
 SAME_TAG, CROSS_TAG, SAMPLE_TAG = "indicator-hist-v1", "indicator-hist-cross", "indicator-hist-sample"
-NULL_DAYS, NULL_NAMES, NULL_START = 40, 60, "2026-01-05"
+NULL_DAYS, NULL_NAMES, NULL_START = 40, 2500, "2026-01-05"
+NULL_VOL = (0.0005, 0.0015)          # per-name 1-minute volatility, so S3 consolidations (<= 1% over an hour) occur
+NULL_MIN_N = 300                     # amended_2: every null / placebo statistic needs >= 300 entries
 HANDCHECK_N, HANDCHECK_DAYS = 5, 3
 NOT_COMPUTED = {
     "S7 with the indication-high exit read as a markout at the same 10 minutes":
@@ -102,16 +105,38 @@ def load_raw(feed: str, day: str) -> dict[str, np.ndarray]:
     return out
 
 
-def null_raw(_feed: str, day: str, n: int = NULL_NAMES) -> dict[str, np.ndarray]:
-    """Driftless synthetic walk (early_entry_honest_null.frame), IEX = SIP, RTH only, `n` names."""
-    import early_entry_honest_null as N
-    out = {}
-    for i in range(n):
-        fr = N.frame(day, zlib.crc32(f"S{i}{day}".encode()))
-        mins = np.array([E._et_min(t.timestamp()) for t in fr["time"]], dtype=float)
-        r = np.column_stack([mins, fr["open"], fr["high"], fr["low"], fr["close"], fr["volume"]]).astype(float)
-        out[f"S{i}"] = r[(r[:, 0] >= S.RTH_START) & (r[:, 0] < S.RTH_END)]
-    return out
+_NULL_LEVEL: dict[tuple[int, int], np.ndarray] = {}
+
+
+def _null_day(i: int, n: int) -> np.ndarray:
+    """Log returns (n names x 390 minutes) of synthetic session i; seeded by the session index only."""
+    vol = NULL_VOL[0] + (NULL_VOL[1] - NULL_VOL[0]) * np.random.default_rng(7).random(n)
+    return np.random.default_rng(1000 + i).standard_normal((n, S.RTH_END - S.RTH_START)) * vol[:, None]
+
+
+def null_raw(_feed: str, day: str, n: int | None = None) -> dict[str, np.ndarray]:
+    """amended_2 null: a driftless log walk per name, continuous across sessions (each open = the previous close),
+    per-name 1-minute volatility in NULL_VOL, IEX = SIP, every RTH minute present, volume lognormal with 5% x3
+    spikes. Session levels are cached per process so each session's returns are drawn once."""
+    n = n or NULL_NAMES
+    i = null_days().index(day)
+    if (0, n) not in _NULL_LEVEL:
+        _NULL_LEVEL[(0, n)] = np.log(20 + 80 * np.random.default_rng(11).random(n))
+    for j in range(1, i + 1):
+        if (j, n) not in _NULL_LEVEL:
+            _NULL_LEVEL[(j, n)] = _NULL_LEVEL[(j - 1, n)] + _null_day(j - 1, n).sum(axis=1)
+    z = _null_day(i, n)
+    lc = _NULL_LEVEL[(i, n)][:, None] + np.cumsum(z, axis=1)
+    c = np.exp(lc)
+    o = np.exp(np.concatenate([_NULL_LEVEL[(i, n)][:, None], lc[:, :-1]], axis=1))
+    rng = np.random.default_rng(5000 + i)
+    vol = NULL_VOL[0] + (NULL_VOL[1] - NULL_VOL[0]) * np.random.default_rng(7).random(n)
+    wick = np.abs(rng.standard_normal((2, n, z.shape[1]))) * vol[None, :, None] * 0.5
+    h = np.maximum(o, c) * (1 + wick[0])
+    lo = np.minimum(o, c) * (1 - wick[1])
+    v = rng.lognormal(6.0, 0.8, z.shape) * np.where(rng.random(z.shape) < 0.05, 3.0, 1.0)
+    mins = np.arange(S.RTH_START, S.RTH_END, dtype=float)
+    return {f"S{k}": np.column_stack([mins, o[k], h[k], lo[k], c[k], v[k]]) for k in range(n)}
 
 
 SOURCES = {"wh": load_raw, "null": null_raw}
@@ -438,7 +463,7 @@ def count_h(rows: list[dict], half_end: str | None = None) -> dict:
             out[cell][half] = {"n_in": n_in, "n_out": n_out, "in_namedays": len(names), "days_both_sides": nd,
                                "t_crit": tc, "projected_mde": mde, "ctrl_gap_in_minus_out": g_mu,
                                "ctrl_gap_t": g_t,
-                               "scored": n_in >= MIN_ENTRIES and n_out >= MIN_ENTRIES and nd >= MIN_DAYS}
+                               "scored": n_in >= MIN_ENTRIES and nd >= MIN_DAYS}
     return out
 
 
@@ -491,12 +516,19 @@ def grade_h(recs: list[dict], cell: str, half: str, half_end: str | None = None,
 
 def h_half_verdict(g: dict, cell: str) -> str:
     gd, gx = g["d"], g["x"]
-    if gd["n_in"] < MIN_ENTRIES or gd["n_out"] < MIN_ENTRIES or gd["days"] < MIN_DAYS or gd["did_t"] is None \
-            or gx["did_t"] is None:
+    # prereg power: < 300 IN entries or < 20 days, on d AND on x, is UNDERPOWERED (no OUT floor; skeptic r2 #6)
+    if any(g_["n_in"] < MIN_ENTRIES or g_["days"] < MIN_DAYS or g_["did_t"] is None for g_ in (gd, gx)):
         return "UNDERPOWERED"
     if gd["did_t"] <= -2.0 or gx["did_t"] <= -2.0:
         return "FAIL"
-    ok_d = S.half_verdict(gd, cell) == "PASS"
+    # the history prereg's d bar (not the desk study's half_verdict, which carries the desk floor of 100 OUT arms)
+    ok_d = (gd["did"] is not None and gd["did"] >= LIFT_BAR and gd["did_t"] >= gd["t_crit"]
+            and gd["lift"] is not None and gd["lift"] >= 0
+            and gd["in_net"] is not None and gd["in_net"] > 0
+            and gd["did_nameday"] is not None and gd["did_nameday"] > 0
+            and gd["did_drop_names"] is not None and gd["did_drop_names"] >= 0
+            and gd["did_drop_days"] is not None and gd["did_drop_days"] >= 0
+            and (cell != "H2" or (gd["out_lift"] is not None and gd["out_lift"] < 0)))
     ok_x = gx["did"] is not None and gx["did"] >= LIFT_BAR and gx["did_t"] >= gx["t_crit"]
     return "PASS" if ok_d and ok_x else "NOT_PASSED"
 
@@ -538,7 +570,7 @@ def v_grade(recs: list[dict], setup: str, half: str, half_end: str | None = None
 
 def v_half_verdict(g: dict) -> str:
     gd, gx = g["d"], g["x"]
-    if gd["n"] < MIN_ENTRIES or gd["days"] < MIN_DAYS or gd["t"] is None or gx["t"] is None:
+    if any(g_["n"] < MIN_ENTRIES or g_["days"] < MIN_DAYS or g_["t"] is None for g_ in (gd, gx)):
         return "UNDERPOWERED"
     if gd["t"] <= -2.0 or gx["t"] <= -2.0:
         return "FAIL"
@@ -550,8 +582,9 @@ def v_half_verdict(g: dict) -> str:
 
 
 def cell_verdict(halves: list[str], bounds: list[tuple]) -> str:
-    """Prereg: FAIL if a scored half has t <= -2 on d or x, or if in BOTH halves the 97.5% upper bound is below
-    +5 bp on BOTH d and x; PASS if both halves pass (d and x); otherwise UNDERPOWERED (incl. d / x disagreement)."""
+    """Prereg: FAIL if a scored half has t <= -2 on d or x (amended_2: this wins over the d / x disagreement clause,
+    e.g. d at the PASS bar with x at t <= -2 is FAIL), or if in BOTH halves the 97.5% upper bound is below +5 bp on
+    BOTH d and x; PASS if both halves pass (d and x); otherwise UNDERPOWERED (incl. d / x disagreement)."""
     if "FAIL" in halves:
         return "FAIL"
     if all(h == "PASS" for h in halves):
@@ -568,27 +601,34 @@ def all_t(recs_pre: list[dict], recs_v: list[dict], half_end: str, side_fns: dic
     for cell in CELLS:
         for half in ("A", "B"):
             g = grade_h(recs_pre, cell, half, half_end, (side_fns or {}).get(cell))
-            out += [{"cell": cell, "half": half, "stat": "DiD_d", "t": g["d"]["did_t"], "n_in": g["d"]["n_in"],
-                     "days": g["d"]["days"]},
-                    {"cell": cell, "half": half, "stat": "DiD_x", "t": g["x"]["did_t"], "n_in": g["x"]["n_in"],
-                     "days": g["x"]["days"]}]
-    for setup in V_SETUPS if recs_v else ():
+            out += [_check(cell, half, "DiD_d", g["d"]["did"], g["d"]["did_t"], g["d"]["n_in"], g["d"]["days"]),
+                    _check(cell, half, "DiD_x", g["x"]["did"], g["x"]["did_t"], g["x"]["n_in"], g["x"]["days"])]
+    for setup in V_SETUPS if recs_v is not None else ():
         for half in ("A", "B"):
             g = v_grade(recs_v, setup, half, half_end)
-            out += [{"cell": setup, "half": half, "stat": "lift_d", "t": g["d"]["t"], "n_in": g["d"]["n"],
-                     "days": g["d"]["days"]},
-                    {"cell": setup, "half": half, "stat": "lift_x", "t": g["x"]["t"], "n_in": g["x"]["n"],
-                     "days": g["x"]["days"]}]
+            out += [_check(setup, half, "lift_d", g["d"]["lift"], g["d"]["t"], g["d"]["n"], g["d"]["days"]),
+                    _check(setup, half, "lift_x", g["x"]["lift"], g["x"]["t"], g["x"]["n"], g["x"]["days"])]
     return out
 
 
+def _check(cell, half, stat, est, t, n, days) -> dict:
+    se = abs(est / t) if (est is not None and t) else None
+    return {"cell": cell, "half": half, "stat": stat, "t": t, "n_in": n, "days": days,
+            "est_bp": None if est is None else est * 1e4, "se_bp": None if se is None else se * 1e4}
+
+
 def bound_check(checks: list[dict]) -> dict:
+    """amended_2: every statistic must exist and rest on >= NULL_MIN_N entries (a blank or thin cell makes the
+    calibration NOT OK instead of being skipped); then every |t| within the two-sided Bonferroni bound."""
     ts = [c["t"] for c in checks if c["t"] is not None]
     k = len(ts)
     bound = S.t_ppf(1 - 0.025 / max(k, 1), 10_000)
+    missing = [f"{c['cell']} {c['half']} {c['stat']}" for c in checks if c["t"] is None]
+    thin = [f"{c['cell']} {c['half']} {c['stat']} n={c['n_in']}" for c in checks if (c["n_in"] or 0) < NULL_MIN_N]
     return {"n_stats": k, "bound": bound, "max_abs_t": max((abs(t) for t in ts), default=None),
             "share_abs_t_le_1": (sum(1 for t in ts if abs(t) <= 1) / k) if k else None,
-            "ok": k > 0 and all(abs(t) <= bound for t in ts), "checks": checks}
+            "missing": missing, "thin": thin,
+            "ok": k > 0 and not missing and not thin and all(abs(t) <= bound for t in ts), "checks": checks}
 
 
 # ── null, placebo, handcheck ─────────────────────────────────────────────────
@@ -616,7 +656,7 @@ def coin(r: dict) -> str:
 def run_placebo(days: list[str], ks: list[int], workers: int) -> dict:
     res = run_days(days, ks, "wh", "placebo", workers, quiet=True)
     fns = {c: (lambda r, c=c: coin(r) if r["sides"][c] is not None else None) for c in CELLS}
-    out = bound_check(all_t(res["pre"], [], None, fns))
+    out = bound_check(all_t(res["pre"], None, None, fns))
     out.update({"pre": len(res["pre"])})
     return out
 
@@ -628,8 +668,8 @@ def _bars_md(title: str, bars, t: float, before: int, after: int) -> list[str]:
     for i in range(lo, hi):
         b = bars[i]
         mark = "*" if i == k else ""
-        lines.append(f"| {datetime.fromtimestamp(b.start, BS.ET):%m-%d %H:%M}{mark} | {b.o:.2f} | {b.h:.2f} | "
-                     f"{b.l:.2f} | {b.c:.2f} | {b.v:.0f} |")
+        lines.append(f"| {datetime.fromtimestamp(b.start, BS.ET):%m-%d %H:%M}{mark} | {b.o:.4f} | {b.h:.4f} | "
+                     f"{b.l:.4f} | {b.c:.4f} | {b.v:.0f} |")
     return lines + [""]
 
 
@@ -821,6 +861,15 @@ def script_sha() -> str:
     return hashlib.sha256(open(os.path.abspath(__file__), "rb").read()).hexdigest()
 
 
+def module_shas() -> dict[str, str]:
+    """sha256 of every module whose code shapes the numbers (skeptic r2 #2): a later edit to the desk study or the
+    harness invalidates count / null / placebo."""
+    import signals
+    mods = {"indicator_confirm_hist": sys.modules[__name__], "indicator_confirm_study": S, "early_entry_honest": E,
+            "structure_pullback": SP, "bars_structure": BS, "signals": signals}
+    return {k: hashlib.sha256(open(os.path.abspath(m.__file__), "rb").read()).hexdigest() for k, m in mods.items()}
+
+
 def write(name: str, obj) -> str:
     os.makedirs(OUT_DIR, exist_ok=True)
     path = os.path.join(OUT_DIR, name)
@@ -841,8 +890,8 @@ def score_gate(skeptic_ready: str, sessions: list[str]) -> dict:
         if not os.path.exists(p):
             raise SystemExit(f"{name} missing: run its step first")
         obj = json.load(open(p))
-        if obj.get("script_sha256") != script_sha():
-            raise SystemExit(f"{name} was written by a different script version; rerun it with this one")
+        if obj.get("script_sha256") != script_sha() or obj.get("module_sha256") != module_shas():
+            raise SystemExit(f"{name} was written by a different script or module version; rerun it with this one")
         if name != "count.json" and not obj.get("ok"):
             raise SystemExit(f"{name} is NOT OK: fix the method before any score")
         need[name] = obj
@@ -864,10 +913,10 @@ def main() -> None:
     a = ap.parse_args()
     if a.null:
         res = run_null(a.workers)
-        res["script_sha256"] = script_sha()
+        res["script_sha256"], res["module_sha256"] = script_sha(), module_shas()
         print(f"null: PRE {res['pre']}, V {res['v']}, {res['n_stats']} t values, max |t| {res['max_abs_t']:.2f} "
-              f"(bound {res['bound']:.2f}), share |t|<=1 {res['share_abs_t_le_1']:.0%}: "
-              f"{'OK' if res['ok'] else 'NOT OK - fix the method before any score'}")
+              f"(bound {res['bound']:.2f}), share |t|<=1 {res['share_abs_t_le_1']:.0%}, missing {res['missing']}, "
+              f"thin {res['thin']}: {'OK' if res['ok'] else 'NOT OK - fix the method before any score'}")
         print(write("null.json", res))
         return
     days = warehouse_days()
@@ -879,9 +928,10 @@ def main() -> None:
           f"{sessions[0]} .. {sessions[-1]}; half A <= {HALF_A_END}", flush=True)
     if a.placebo:
         res = run_placebo(days, ks, a.workers)
-        res["script_sha256"] = script_sha()
+        res["script_sha256"], res["module_sha256"] = script_sha(), module_shas()
         print(f"placebo: PRE {res['pre']}, {res['n_stats']} t values, max |t| {res['max_abs_t']:.2f} "
-              f"(bound {res['bound']:.2f}), share |t|<=1 {res['share_abs_t_le_1']:.0%}: "
+              f"(bound {res['bound']:.2f}), share |t|<=1 {res['share_abs_t_le_1']:.0%}, missing {res['missing']}, "
+              f"thin {res['thin']}: "
               f"{'OK' if res['ok'] else 'NOT OK - fix the method before any score'}")
         print(write("placebo_smoke.json" if a.days else "placebo.json", res))
         return
@@ -915,7 +965,7 @@ def main() -> None:
                   f"MDE {_bp(c['projected_mde'])} bp {'scored' if c['scored'] else 'UNDERPOWERED - not scored'}")
         print(f"    funnel {fn[setup]}")
     print(write("count_smoke.json" if a.days else "count.json",
-                {"script_sha256": script_sha(), "scored_sessions": sessions, "per_day": res["per_day"],
+                {"script_sha256": script_sha(), "module_sha256": module_shas(), "scored_sessions": sessions, "per_day": res["per_day"],
                  "counts": dict(res["counts"]), "h": ch, "v": cv, "funnels": fn}))
     print("(count step only; no entry outcome read)")
 

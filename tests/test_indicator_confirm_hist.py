@@ -149,6 +149,8 @@ def _gd(**kw):
 
 def test_h_half_verdict_needs_both_controls():
     assert H.h_half_verdict({"d": _gd(), "x": _gd()}, "H1") == "PASS"
+    assert H.h_half_verdict({"d": _gd(out_lift=0.0001), "x": _gd()}, "H2") == "NOT_PASSED"   # H2: OUT lift < 0
+    assert H.h_half_verdict({"d": _gd(in_net=-0.0001), "x": _gd()}, "H1") == "NOT_PASSED"
     assert H.h_half_verdict({"d": _gd(), "x": _gd(did=0.0004)}, "H1") == "NOT_PASSED"   # cross DiD < 5 bp
     assert H.h_half_verdict({"d": _gd(), "x": _gd(did_t=-2.1)}, "H1") == "FAIL"
     assert H.h_half_verdict({"d": _gd(n_in=299), "x": _gd()}, "H1") == "UNDERPOWERED"
@@ -178,10 +180,46 @@ def test_coin_is_seeded_and_fair():
     assert flips == [H.coin(r) for r in rows] and 0.45 < flips.count("IN") / len(flips) < 0.55
 
 
-def test_bound_check():
-    ok = H.bound_check([{"t": 1.5}, {"t": -2.0}, {"t": None}])
+def test_bound_check_needs_every_stat_present_and_300_entries():
+    ok = H.bound_check([{"cell": "H1", "half": "A", "stat": "DiD_d", "t": 1.5, "n_in": 400},
+                        {"cell": "H1", "half": "B", "stat": "DiD_d", "t": -2.0, "n_in": 300}])
     assert ok["n_stats"] == 2 and ok["ok"] and ok["bound"] == pytest.approx(S.t_ppf(1 - 0.025 / 2, 10_000))
-    assert not H.bound_check([{"t": 3.5}, {"t": 0.1}])["ok"] and not H.bound_check([{"t": None}])["ok"]
+    assert not H.bound_check([{"cell": "H1", "half": "A", "stat": "d", "t": 3.5, "n_in": 400},
+                              {"cell": "H1", "half": "B", "stat": "d", "t": 0.1, "n_in": 400}])["ok"]
+    missing = H.bound_check([{"cell": "S3", "half": "A", "stat": "lift_d", "t": None, "n_in": 0},
+                             {"cell": "H1", "half": "A", "stat": "DiD_d", "t": 0.2, "n_in": 400}])
+    assert not missing["ok"] and missing["missing"] == ["S3 A lift_d"]       # skeptic r2 #1: never skipped
+    thin = H.bound_check([{"cell": "S4", "half": "B", "stat": "lift_x", "t": 0.3, "n_in": 120}])
+    assert not thin["ok"] and thin["thin"] == ["S4 B lift_x n=120"]
+    c = H._check("H1", "A", "DiD_d", 0.0002, 2.0, 500, 20)
+    assert c["est_bp"] == pytest.approx(2.0) and c["se_bp"] == pytest.approx(1.0)
+
+
+def test_null_walk_is_continuous_and_in_the_volatility_band():
+    days = H.null_days()
+    a, b = H.null_raw("sip", days[3], n=50), H.null_raw("sip", days[4], n=50)
+    assert set(a) == {f"S{k}" for k in range(50)} and len(a["S0"]) == S.RTH_END - S.RTH_START
+    for k in ("S0", "S17", "S49"):
+        assert b[k][0, 1] == pytest.approx(a[k][-1, 4])                       # open = the previous session's close
+        r = np.diff(np.log(a[k][:, 4]))
+        assert H.NULL_VOL[0] * 0.8 < r.std() < H.NULL_VOL[1] * 1.2
+        assert (a[k][:, 2] >= np.maximum(a[k][:, 1], a[k][:, 4])).all()
+        assert (a[k][:, 3] <= np.minimum(a[k][:, 1], a[k][:, 4])).all()
+    assert np.array_equal(H.null_raw("sip", days[3], n=50)["S5"], a["S5"])   # seeded
+
+
+def test_module_shas_cover_the_imports():
+    sh = H.module_shas()
+    assert set(sh) == {"indicator_confirm_hist", "indicator_confirm_study", "early_entry_honest",
+                       "structure_pullback", "bars_structure", "signals"}
+    assert sh["indicator_confirm_hist"] == H.script_sha()
+
+
+def test_floors_apply_to_x_and_not_to_out():
+    assert H.h_half_verdict({"d": _gd(n_out=50), "x": _gd(n_out=50)}, "H1") == "PASS"    # no OUT floor
+    assert H.h_half_verdict({"d": _gd(), "x": _gd(n_in=250)}, "H1") == "UNDERPOWERED"   # x has its own floor
+    assert H.h_half_verdict({"d": _gd(), "x": _gd(days=19)}, "H1") == "UNDERPOWERED"
+    assert H.h_half_verdict({"d": _gd(), "x": _gd(did_t=-2.0)}, "H1") == "FAIL"         # amended_2: FAIL wins
 
 
 def test_score_gate_refusals(monkeypatch, tmp_path):
@@ -192,15 +230,21 @@ def test_score_gate_refusals(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="count.json missing"):
         H.score_gate("READY", [])
     sha = H.script_sha()
-    (tmp_path / "count.json").write_text(json.dumps({"script_sha256": sha, "scored_sessions": ["d1"]}))
-    (tmp_path / "null.json").write_text(json.dumps({"script_sha256": sha, "ok": True}))
-    (tmp_path / "placebo.json").write_text(json.dumps({"script_sha256": sha, "ok": False}))
+    ms = H.module_shas()
+    (tmp_path / "count.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms,
+                                                     "scored_sessions": ["d1"]}))
+    (tmp_path / "null.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": True}))
+    (tmp_path / "placebo.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": False}))
     with pytest.raises(SystemExit, match="placebo.json is NOT OK"):
         H.score_gate("READY", ["d1"])
-    (tmp_path / "placebo.json").write_text(json.dumps({"script_sha256": "old", "ok": True}))
-    with pytest.raises(SystemExit, match="different script version"):
+    (tmp_path / "placebo.json").write_text(json.dumps({"script_sha256": "old", "module_sha256": ms, "ok": True}))
+    with pytest.raises(SystemExit, match="different script or module version"):
         H.score_gate("READY", ["d1"])
-    (tmp_path / "placebo.json").write_text(json.dumps({"script_sha256": sha, "ok": True}))
+    (tmp_path / "placebo.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": {**ms, "signals": "x"},
+                                                       "ok": True}))
+    with pytest.raises(SystemExit, match="different script or module version"):
+        H.score_gate("READY", ["d1"])
+    (tmp_path / "placebo.json").write_text(json.dumps({"script_sha256": sha, "module_sha256": ms, "ok": True}))
     with pytest.raises(SystemExit, match="handcheck.md missing"):
         H.score_gate("READY", ["d1"])
     (tmp_path / "handcheck.md").write_text("x")
@@ -213,6 +257,7 @@ def test_pipeline_end_to_end_on_the_synthetic_walk(monkeypatch):
     """null and score modes run every code path once on a tiny walk (12 sessions = 10 look-back + 2, 8 names)."""
     monkeypatch.setattr(H, "NULL_NAMES", 8)
     monkeypatch.setitem(H.SOURCES, "null", lambda feed, day: H.null_raw(feed, day, n=8))
+    H._RAW.clear()
     days = H.null_days(LOOKBACK_PLUS := H.LOOKBACK + 2)
     ks = list(range(H.LOOKBACK, LOOKBACK_PLUS))
     res = H.run_days(days, ks, "null", "score", workers=1, quiet=True)
