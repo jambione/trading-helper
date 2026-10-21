@@ -104,16 +104,19 @@ def main() -> None:
     ap.add_argument("--sessions", type=int, default=120)
     ap.add_argument("--feeds", default="iex,sip")
     ap.add_argument("--last", help="last session (default: the newest in the liquidity table)")
+    ap.add_argument("--out", help="output directory (default ai_reports/warehouse); a held-out sample goes elsewhere so "
+                                  "studies that read the warehouse directory whole never see it")
     a = ap.parse_args()
+    out = a.out or OUT
     days, uni = sessions_and_universe(a.sessions, a.last)
     feeds = [f.strip() for f in a.feeds.split(",") if f.strip()]
     jobs = []
     for f in feeds:
-        os.makedirs(os.path.join(OUT, f), exist_ok=True)
+        os.makedirs(os.path.join(out, f), exist_ok=True)
         for d in days:
-            if not os.path.exists(os.path.join(OUT, f, f"{d}.npz")):
+            if not os.path.exists(os.path.join(out, f, f"{d}.npz")):
                 jobs.append((d, f))
-    print(f"warehouse: {len(days)} sessions {days[0]}..{days[-1]}, feeds {feeds}, {len(jobs)} day-files to fetch, "
+    print(f"warehouse -> {out}: {len(days)} sessions {days[0]}..{days[-1]}, feeds {feeds}, {len(jobs)} day-files to fetch, "
           f"~{sum(len(uni.get(d, [])) for d in days) // max(1, len(days))} names/day", flush=True)
     cl = _client()
 
@@ -121,7 +124,7 @@ def main() -> None:
         d, f = job
         pk, log = fetch_day(cl, d, uni.get(d, []), f)
         if pk is not None:
-            path = os.path.join(OUT, f, f"{d}.npz")
+            path = os.path.join(out, f, f"{d}.npz")
             np.savez_compressed(path + ".tmp.npz", **pk)
             os.replace(path + ".tmp.npz", path)
         return d, f, pk, log
