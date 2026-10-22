@@ -63,5 +63,20 @@
    "(6) TIMING: the feature fetch started 11:28 ET during market hours, against the registered 'after 16:15 ET' line. The line's reason (the desk shares the Alpaca budget) does not hold: the data-only account's key differs from all three desk keys, and the desk logged 0 rate-limit errors during the fetch. The fetch reads no outcome. The outcome fetch may also run any time on the data-only account.",
    "(7) POWER NOTE (write-up): a PASS needs ~12 point conditions at once (entry - placebo >= 5 bp alone holds about half the time at a true 5 bp edge), so the real power is below the projected MDE."
   ]
+ },
+ "stage2": {
+  "registered_at": "2026-10-22 ~14:10 ET, while the feature fetch runs: no outcome quote has been fetched and no stage-1 result exists.",
+  "origin": "Operator 10/22: sweeps and blocks are context signals; edge comes from combining them with price location, context and follow-through, not as standalone triggers.",
+  "gate": "Stage 2 runs for a hypothesis (H1 sweeps, H2 blocks) only if its stage-1 PRIMARY lift is > 0 (point estimate) in BOTH halves; a hypothesis that stopped UNDERPOWERED or is <= 0 in either half gets no stage 2. The gate is fixed now, before stage 1 is read.",
+  "label": "For a cell, COMBO = the hypothesis's IN label AND the cell's condition; the comparison is COMBO vs every other entry, using that hypothesis's stage-1 stratified statistic (OFI60 terciles for H1, notional terciles for H2), outcomes and halves.",
+  "cells": {
+   "C1_LOCATION": "Breakout: the highest kept print in [T - 60 s, T) is >= the day's high before that minute (max SIP bar high over RTH bars 09:30 .. m - 2).",
+   "C2_CONTEXT": "Above VWAP on an up day: the SIP mid at T > session VWAP (sum of bar close x volume / sum of volume over RTH bars 09:30 .. m - 1) AND > the day's first RTH bar open.",
+   "C3_FOLLOW_THROUGH": "Held inside the window (no waiting after T): buy-signed urgent prints of the hypothesis's kind (H1: ISO; H2: blocks as defined, late TRF excluded) exist in [T - 60 s, T - 30 s), and the SIP mid at T >= their volume-weighted price."
+  },
+  "multiplicity": "Its own family: one-sided t_crit at 0.025 / k, k = the number of cells actually run (3 or 6), df = days - 1.",
+  "pass": "Per cell, in BOTH halves: lift >= +5 bp with t >= t_crit; COMBO mean of (gross - max(5 bp, own spread)) > 0; lag-1 bar lift >= 0; drop-3 days / names >= 0. Floors per half: >= 300 COMBO entries and >= 20 days, else UNDERPOWERED. FAIL: t <= -2 in a half, or the 97.5% upper bound < +5 bp in both halves. A PASS is PASS_STAGE2, confirmed only on the warehouse_confirm sessions with the same code before anything else; cells cannot rescue a stage-1 FAIL's interpretation.",
+  "no_retuning": "The three conditions, the 30 s split, the gate and the bars are fixed.",
+  "declared": "The follow-through cell measures holding INSIDE the 60 s window because waiting after the signal was measured to cost 14-36 bp (10/16). These cells reuse stage 1's sample and outcomes; they are not fresh tests of the sample, only of the combinations."
  }
 }
