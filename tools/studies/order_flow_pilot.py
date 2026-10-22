@@ -620,7 +620,10 @@ def score_rows(features: dict, out_dir: str = OUTCOME_DIR) -> tuple[list[dict], 
         if not os.path.exists(path):
             st["not_fetched"] += 1
             continue
-        o = outcomes_for(pickle.load(open(path, "rb")), decision_ts(e["day"], e["m"]))
+        qs = pickle.load(open(path, "rb"))
+        if not clean_quotes(qs):
+            st["empty_file"] += 1
+        o = outcomes_for(qs, decision_ts(e["day"], e["m"]))
         if not o["entry"]:
             st["no_entry_quote"] += 1
             continue
@@ -795,12 +798,18 @@ def main() -> None:
         n_all = len(feats["entries"])
         if st["not_fetched"] > FAIL_ABORT * n_all:
             raise SystemExit(f"{st['not_fetched']} entries without outcomes (> 2%); rerun --fetch-outcomes")
-        if st["no_entry_quote"] + st[f"missing_h{PRIMARY_H}"] > FAIL_ABORT * n_all:
-            raise SystemExit(f"outcome-side drops {st['no_entry_quote']} + {st[f'missing_h{PRIMARY_H}']} > 2%: every "
-                             f"entry passed the entry-quote check in the feature cache, so this is a fetch fault")
+        # amended_5: a fetch fault is an empty file or a lost entry quote; a quiet stretch at the exit is data
+        if st["no_entry_quote"] + st["empty_file"] > FAIL_ABORT * n_all:
+            raise SystemExit(f"fetch fault: {st['no_entry_quote']} entries lost their entry quote and "
+                             f"{st['empty_file']} outcome files are empty (> 2%)")
         miss = Counter(f"{g} {r['groups'][g]}" for r in rows for g in ("G1", "G2", "G3")
                        if r["groups"][g] and r.get(f"gross{PRIMARY_H}") is None)
-        print(f"missing primary horizon by group and side: {dict(miss)}")
+        tot = Counter(f"{g} {r['groups'][g]}" for r in rows for g in ("G1", "G2", "G3") if r["groups"][g])
+        share = {k: miss[k] / tot[k] for k in tot}
+        print(f"missing primary horizon by group and side: {dict(miss)}; share {share}")
+        for g in ("G1", "G2", "G3"):
+            if abs(share.get(f"{g} IN", 0) - share.get(f"{g} OUT", 0)) > 0.02:
+                raise SystemExit(f"{g}: missing share differs between IN and OUT by > 2 pp: {share}")
         graded, halves, verdicts = {}, {}, {}
         for g in ("G1", "G2", "G3"):
             graded[g] = {hf: grade_group(rows, g, hf) for hf in ("A", "B")}
