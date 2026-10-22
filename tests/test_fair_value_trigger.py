@@ -67,14 +67,23 @@ def test_armed_sees_only_rows_strictly_before_t():
     assert FT.armed([1040.0], 1100.0, 60.0)
 
 
-def test_placebo_minute_same_hour_seeded_not_m():
+def test_placebo_minute_same_hour_seeded_away_from_m():
     sip = {k: (10.0, 10.0) for k in range(570, 960)}
-    pm = FT.placebo_minute("AAA", "2026-06-10", 700, sip)
-    assert 660 <= pm <= 719 and pm != 700 and pm == FT.placebo_minute("AAA", "2026-06-10", 700, sip)
-    pm = FT.placebo_minute("AAA", "2026-06-10", 605, sip)
-    assert 600 <= pm <= 659                          # clipped to 10:00
-    pm = FT.placebo_minute("AAA", "2026-06-10", 925, sip)
-    assert 900 <= pm <= 927                          # clipped to 15:27
+    for m in (700, 605, 925, 660, 719):
+        pm = FT.placebo_minute("AAA", "2026-06-10", m, sip)
+        assert pm // 60 == m // 60 and abs(pm - m) > 15 and 600 <= pm <= 927
+        assert pm == FT.placebo_minute("AAA", "2026-06-10", m, sip)
+    # only m's neighbourhood has bars in its hour -> previous hour
+    sip2 = {k: (10.0, 10.0) for k in list(range(690, 712)) + list(range(640, 660))}
+    pm = FT.placebo_minute("AAA", "2026-06-10", 700, sip2)
+    assert 640 <= pm <= 657
+    assert FT.placebo_minute("AAA", "2026-06-10", 700, {k: (10.0, 10.0) for k in range(690, 712)}) is None
+
+
+def test_unconditional_minute_avoids_onsets():
+    sip = {k: (10.0, 10.0) for k in range(570, 960)}
+    n, k = FT.unconditional_minute("A", "2026-06-10", 700, ["A", "B"], lambda _n: sip, {"B": [670, 700]})
+    assert n == "B" and 660 <= k <= 719 and all(abs(k - o) > 15 for o in (670, 700))
 
 
 def _prow(day, sym, arm, ctrl, cross, parm, pctrl, pcross, half="A", pop="P2"):
@@ -88,7 +97,7 @@ def test_placebo_verdict_gates_on_pseudo_x_only():
     import random as _r
     rng = _r.Random(3)
     pr = [_prow(f"2026-0{6 if h == 'A' else 9}-{(k % 22) + 1:02d}", f"N{k % 40}", 0.0, 0.0, 0.0,
-                rng.gauss(0, 5e-4) - 0.0001, rng.gauss(0, 5e-4), rng.gauss(0, 5e-4) - 0.0001, half=h)
+                rng.gauss(0, 5e-4), rng.gauss(0, 5e-4), rng.gauss(0, 5e-4), half=h)
           for h in ("A", "B") for k in range(800)]
     v = FT.placebo_verdict(pr)
     assert v["ok"] and v["days"] == {"A": 22, "B": 22} and abs(v["bound"]["A"] - FT.t_crit2(22)) < 1e-12
@@ -96,13 +105,20 @@ def test_placebo_verdict_gates_on_pseudo_x_only():
     assert FT.placebo_verdict(biased_d)["ok"]                    # a biased d is the adjustment, not a gate
     biased_x = [dict(r, po=dict(r["po"], arm=r["po"]["arm"] + 0.002, ctrl=r["po"]["ctrl"] + 0.002)) for r in pr]
     assert not FT.placebo_verdict(biased_x)["ok"]
+    assert not v["adjust"] and FT.placebo_verdict(biased_d)["adjust"]   # amended_4 (2)
+
+
+def test_adjust_false_grades_raw_d():
+    rows = [_prow(f"2026-06-{d:02d}", "A", 0.002, 0.0, 0.0, 0.001, 0.0, 0.0) for d in range(1, 6)]
+    assert abs(FT.grade(rows)["lift_d"] - 0.001) < 1e-12
+    assert abs(FT.grade(rows, adjust=False)["lift_d"] - 0.002) < 1e-12
 
 
 def test_adjusted_lift_is_paired_by_day():
     rows = [_prow("2026-06-01", "A", 0.003, 0.001, 0.0, 0.0005, 0.0015, 0.0),     # trig +20 bp, pseudo -10 bp
             _prow("2026-06-01", "B", 0.001, 0.001, 0.0, 0.001, 0.001, 0.0),       # trig 0, pseudo 0
             _prow("2026-06-02", "A", 0.002, 0.0, 0.0, 0.0, 0.0, 0.0),             # trig +20, pseudo 0
-            _prow("2026-06-03", "A", 0.002, 0.0, 0.0, None, None, None)]          # no pseudo: day dropped
+            _prow("2026-06-03", "A", 0.002, 0.0, 0.0, None, None, None)]          # no pseudo: trigger unpaired
     mu, t, n, ub, means, ntr = FT.adj_lift(rows)
     assert n == 2 and ntr == 3
     assert abs(means["2026-06-01"] - (0.001 - (-0.0005))) < 1e-12 and abs(means["2026-06-02"] - 0.002) < 1e-12

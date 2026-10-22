@@ -189,42 +189,48 @@ def lift(rows: list[dict], a: str, c: str, key: str = "o") -> tuple:
     return (*_day_stats(means), means, sum(len(v) for v in per.values()))
 
 
-def adj_lift(rows: list[dict], a: str = "arm", c: str = "ctrl", unit=lambda r: r["day"]) -> tuple:
-    """amended_3 (1): per unit (a day, or a name-day), mean trigger (a - c) minus mean paired pseudo-onset (a - c);
-    a unit needs both. Returns (mu, t, n_units, ub, means, n_triggers); t / ub are day-clustered when unit = day."""
-    tr, ps = defaultdict(list), defaultdict(list)
+def adj_lift(rows: list[dict], a: str = "arm", c: str = "ctrl", unit=lambda r: r["day"], adjust: bool = True) -> tuple:
+    """amended_3 (1) / amended_4 (3): per unit (a day, or a name-day), the mean over triggers with a paired pseudo of
+    trigger (a - c) minus pseudo (a - c); with adjust=False (amended_4 (2)) the raw trigger (a - c). Returns (mu, t, n_units, ub, means, n_triggers); t / ub are day-clustered when unit = day."""
+    per = defaultdict(list)
     for r in rows:
         v, w = _diff(r, a, c, "o"), _diff(r, a, c, "po")
-        if v is not None:
-            tr[unit(r)].append(v)
-        if w is not None:
-            ps[unit(r)].append(w)
-    means = {u: statistics.mean(tr[u]) - statistics.mean(ps[u]) for u in tr if ps.get(u)}
-    return (*_day_stats(means), means, sum(len(tr[u]) for u in means))
+        if v is not None and w is not None:            # amended_4 (3): paired per trigger
+            per[unit(r)].append(v - w)
+    if not adjust:
+        per = defaultdict(list)
+        for r in rows:
+            v = _diff(r, a, c, "o")
+            if v is not None:
+                per[unit(r)].append(v)
+    means = {u: statistics.mean(v) for u, v in per.items()}
+    return (*_day_stats(means), means, sum(len(v) for v in per.values()))
 
 
-def grade(rows: list[dict]) -> dict:
-    """lift_d / t_d / ub_d and every d-based check are placebo-adjusted (amended_3); x is unchanged."""
-    d_mu, d_t, n_days, d_ub, _d_means, n = adj_lift(rows)
+def grade(rows: list[dict], adjust: bool = True) -> dict:
+    """lift_d / t_d / ub_d and every d-based check are placebo-adjusted when `adjust` (amended_3, amended_4 (2));
+    x is unchanged."""
+    d_mu, d_t, n_days, d_ub, _d_means, n = adj_lift(rows, adjust=adjust)
     x_mu, x_t, x_days, x_ub, _, nx = lift(rows, "arm", "cross")
     raw_mu, raw_t = lift(rows, "arm", "ctrl")[:2]
     net = O._day_t({d: statistics.mean(v) for d, v in _by_day(rows, "arm").items()})[0]
-    nd = adj_lift(rows, unit=lambda r: (r["day"], r["sym"]))[4]
+    nd = adj_lift(rows, unit=lambda r: (r["day"], r["sym"]), adjust=adjust)[4]
     nameday = statistics.mean(nd.values()) if nd else None
     share, dshare = Counter(), Counter()
     for r in rows:
         v, w = _diff(r, "arm", "ctrl"), _diff(r, "arm", "ctrl", "po")
-        if v is not None and w is not None:
-            share[r["sym"]] += (v - w) / max(1, n)
-            dshare[r["day"]] += (v - w) / max(1, n)
+        if v is not None and (w is not None or not adjust):
+            share[r["sym"]] += (v - (w if adjust else 0.0)) / max(1, n)
+            dshare[r["day"]] += (v - (w if adjust else 0.0)) / max(1, n)
     top_names = {s for s, _ in share.most_common(3)}
     top_days = {d for d, _ in dshare.most_common(3)}
     return {"n": n, "days": n_days, "lift_d": d_mu, "t_d": d_t, "ub_d": d_ub, "lift_x": x_mu, "t_x": x_t, "ub_x": x_ub,
             "n_x": nx, "net": net, "nameday": nameday, "t_crit": t_crit2(n_days),
             "lift_d_raw": raw_mu, "t_d_raw": raw_t, "pseudo_lift_d": lift(rows, "arm", "ctrl", "po")[0],
-            "drop_names": adj_lift([r for r in rows if r["sym"] not in top_names])[0],
-            "drop_days": adj_lift([r for r in rows if r["day"] not in top_days])[0],
-            "lag1": adj_lift(rows, "arm_lag1", "ctrl_lag1")[0],
+            "adjusted": adjust,
+            "drop_names": adj_lift([r for r in rows if r["sym"] not in top_names], adjust=adjust)[0],
+            "drop_days": adj_lift([r for r in rows if r["day"] not in top_days], adjust=adjust)[0],
+            "lag1": adj_lift(rows, "arm_lag1", "ctrl_lag1", adjust=adjust)[0],
             "net_3bp": net + 0.0002 if net is not None else None, "net_10bp": net - 0.0005 if net is not None else None,
             "lift_d_vs_11bp": d_mu - 0.0011 if d_mu is not None else None}
 
@@ -301,11 +307,31 @@ def trigger_day(args) -> dict:
     return {"day": day, "triggers": trig, "rich": rich, "stats": dict(st)}
 
 
+def _hour_minutes(h0: int, sip: dict, ok) -> list[int]:
+    return [k for k in range(max(M_LO, h0), min(M_HI, h0 + 59) + 1) if ok(k) and T3._ok(sip, k, HOLD)]
+
+
 def placebo_minute(sym: str, day: str, m: int, sip: dict) -> int | None:
-    """A seeded pseudo-onset in the trigger's clock hour (within 10:00-15:27), not m itself, with bars (amended_2 (4))."""
-    cand = [k for k in range(max(M_LO, m // 60 * 60), min(M_HI, m // 60 * 60 + 59) + 1)
-            if k != m and T3._ok(sip, k, HOLD)]
-    return random.Random(H._seed(sym, day, m, PLACEBO_TAG)).choice(cand) if cand else None
+    """amended_4 (1): a seeded pseudo-onset in the trigger's clock hour (10:00-15:27) with |k - m| > 15 and bars; else
+    the previous, then the next hour under the same rules."""
+    h0 = m // 60 * 60
+    for h in (h0, h0 - 60, h0 + 60):
+        cand = _hour_minutes(h, sip, lambda k: abs(k - m) > REFRACT)
+        if cand:
+            return random.Random(H._seed(sym, day, m, PLACEBO_TAG)).choice(cand)
+    return None
+
+
+def unconditional_minute(sym: str, day: str, m: int, pool: list[str], sipm, onsets_of: dict) -> tuple:
+    """amended_4 (5), information: a seeded other sample name at a seeded minute of the same hour with no onset of
+    that name within 15 minutes and bars."""
+    rng = random.Random(H._seed(sym, day, m, PLACEBO_TAG + "-uncond"))
+    names = [n for n in pool if n != sym]
+    if not names:
+        return None, None
+    n = rng.choice(sorted(names))
+    cand = _hour_minutes(m // 60 * 60, sipm(n), lambda k: all(abs(k - o) > REFRACT for o in onsets_of.get(n, ())))
+    return (n, rng.choice(cand)) if cand else (n, None)
 
 
 def placebo_verdict(rows: list[dict]) -> dict:
@@ -320,9 +346,20 @@ def placebo_verdict(rows: list[dict]) -> dict:
         out["bound"][h] = t_crit2(out["days"][h])
         p1 = [r for r in rows if r["pop"] == "P1" and r["half"] == h]
         out["P1"][h] = {"lift_d": lift(p1, "arm", "ctrl", "po")[:3], "lift_x": lift(p1, "arm", "cross", "po")[:3]}
+        # information (amended_4 (5)): pseudo before / after the trigger; the unconditional placebo
+        out.setdefault("pseudo_d_before_after", {})[h] = {
+            "k<m": lift([r for r in rs if r.get("pm") and r["pm"] < r["m"]], "arm", "ctrl", "po")[:3],
+            "k>m": lift([r for r in rs if r.get("pm") and r["pm"] > r["m"]], "arm", "ctrl", "po")[:3]}
+        out.setdefault("unconditional_d", {})[h] = lift(rs, "arm", "ctrl", "uo")[:3]
+
+    def within(t, b):
+        return t is not None and b is not None and abs(t) <= b
     out["n"] = sum(1 for r in rows if r["pop"] == "P2" and r.get("po"))
-    out["ok"] = all(out["t"][h] is not None and out["bound"][h] is not None and abs(out["t"][h]) <= out["bound"][h]
-                    for h in ("A", "B"))
+    out["ok"] = all(within(out["t"][h], out["bound"][h]) for h in ("A", "B"))
+    # amended_4 (2): the adjustment applies unless the clean pseudo lift_d is within the bound in both halves
+    out["adjust"] = not all(within(out["pseudo_t_d"][h], out["bound"][h]) for h in ("A", "B"))
+    # amended_4 (4): a P1 PASS needs the P1 pseudo lift_x within the bound in both halves
+    out["P1_x_ok"] = all(within(out["P1"][h]["lift_x"][1], t_crit2(out["P1"][h]["lift_x"][2] or 0)) for h in ("A", "B"))
     return out
 
 
@@ -420,6 +457,10 @@ def main() -> None:
             return sipm[n]
         board = board_ts(day) if any(t["pop"] == "P1" for t in ts) else {}
         p2_pool = p2_sample(day, days)
+        p2_onsets = defaultdict(list)
+        for t2 in ts:
+            if t2["pop"] == "P2":
+                p2_onsets[t2["sym"]].append(t2["m"])
         for t in ts:
             if not (T3._ok(sm(t["sym"]), t["m"], HOLD)):
                 st[f"{t['pop']}_no_bars"] += 1
@@ -447,6 +488,11 @@ def main() -> None:
             row["pm"], row["pc"], row["px"] = pm, pc, px
             if a.score or a.placebo:
                 row["po"] = outcome(sm(t["sym"]), pm, pc, sm(px) if px else None) if pm else None
+            if a.placebo and t["pop"] == "P2":
+                un, uk = unconditional_minute(t["sym"], day, t["m"], p2_pool, sm, p2_onsets)
+                uc = control_minute(un, day, uk, sm(un)) if uk else None
+                row["uo"] = {"arm": T3.net(sm(un), uk, hold=HOLD, cost=COST), "ctrl": T3.net(sm(un), uc, hold=HOLD, cost=COST)} \
+                    if (uk and uc) else None
             if a.score:
                 row["o"] = outcome(sm(t["sym"]), t["m"], c, sm(x) if x else None)
             elif not a.placebo:
@@ -475,6 +521,7 @@ def main() -> None:
                 x_missing = (sum(1 for r in rs if not r["has_x"]) / len(rs)) if rs else None
                 cnt[f"{pop} {h}"] = {"triggers": len(rs), "days": len(means),
                                      "projected_mde": (tc + 0.84) * se if (se and tc) else None,
+                                     "projected_mde_adjusted_d": (tc + 0.84) * se * math.sqrt(2) if (se and tc) else None,
                                      "x_missing_share": x_missing,
                                      "floors_met": len(rs) >= FLOORS[pop][0] and len(means) >= FLOORS[pop][1]
                                      and (x_missing is not None and x_missing <= X_MISSING_MAX)}
@@ -496,14 +543,16 @@ def main() -> None:
         raise SystemExit("placebo not passed by this code; run --placebo")
     res = {"graded": {}, "halves": {}, "verdicts": {}}
     for pop in ("P1", "P2"):
-        gs = {h: grade([r for r in rows if r["pop"] == pop and r["half"] == h]) for h in ("A", "B")}
+        gs = {h: grade([r for r in rows if r["pop"] == pop and r["half"] == h], adjust=plc["adjust"]) for h in ("A", "B")}
         hv = {h: half_verdict(gs[h], pop) for h in ("A", "B")}
         hv = {h: ("UNDERPOWERED" if v != "FAIL" and not cnt["count"][f"{pop} {h}"]["floors_met"] else v)
               for h, v in hv.items()}
         res["graded"][pop], res["halves"][pop] = gs, hv
         res["verdicts"][pop] = final([hv["A"], hv["B"]], [(gs[h]["ub_d"], gs[h]["ub_x"]) for h in ("A", "B")],
                                      [gs[h]["days"] for h in ("A", "B")], [gs[h]["lag1"] for h in ("A", "B")])
-    res["placebo"] = {k: plc[k] for k in ("t", "days", "bound", "ok", "pseudo_lift_x", "pseudo_lift_d", "pseudo_t_d", "P1")}
+        if pop == "P1" and res["verdicts"][pop] in ("PASS", "PASS_BOUNCE") and not plc["P1_x_ok"]:
+            res["verdicts"][pop] = "UNPROVEN"                       # amended_4 (4)
+    res["placebo"] = {k: v for k, v in plc.items() if k != "module_sha256"}
     res["info"] = {"P1 d on on-board control minutes": {h: lift([r for r in rows if r["pop"] == "P1" and r["half"] == h
                                                                  and r.get("c_on_board")], "arm", "ctrl")[:3] for h in ("A", "B")},
                    "P1 off-board control share": {h: (lambda rs: sum(1 for r in rs if r.get("c_on_board") is False) / max(1, len(rs)))(
