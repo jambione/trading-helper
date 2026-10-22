@@ -10,11 +10,13 @@ warehouse sample over 110 sessions.
   --triggers   onsets on every minute, refractory, then eligibility -> triggers.json (no outcome)
   --fetch-p1   SIP trades [T - 60 s, T) and quotes [T - 120 s, T + 1 s] for every P1 trigger (data account)
   (default)    count step (spread cap on P1, floors, x availability, projected MDE from control returns) -> count.json
-  --score      verdicts; refuses without --skeptic-ready and matching module shas
+  --placebo    P2 pseudo-onsets in each trigger's clock hour vs their own d control -> placebo.json (amended_2 (4))
+  --score      verdicts; refuses without --skeptic-ready, a passed placebo and matching module shas
 """
 from __future__ import annotations
 
 import argparse
+import bisect
 import hashlib
 import json
 import math
@@ -42,6 +44,7 @@ HOLD, COST = 3, 0.0005
 SAME_TAG, CROSS_TAG, PLACEBO_TAG = "fv-trigger-v1", "fv-trigger-cross", "fv-trigger-placebo"
 FLOORS = {"P1": (300, 10), "P2": (1000, 20)}
 X_MISSING_MAX = 0.20
+ARM_LOOKBACK, X_LOOKBACK = 60.0, 16 * 60.0     # amended_2 (3): arm rows strictly before T only
 N_TESTS = 2
 LIFT_BAR = 0.0005
 
@@ -107,13 +110,26 @@ def onsets(zs: dict, lo: int = M_LO, hi: int = M_HI, cut: float = FV.Z_CHEAP, be
 
 # ── eligibility, controls, outcomes ──────────────────────────────────────────
 
-def board_minutes(day: str) -> dict[str, set]:
-    """sym -> ET minutes with an 'arm' row (any arm_ok) - amended (1)."""
-    out = defaultdict(set)
+def board_ts(day: str) -> dict[str, list]:
+    """sym -> sorted ts of its 'arm' rows (any arm_ok) - amended (1)."""
+    out = defaultdict(list)
     for r in S.ledger_rows(day):
         if r.get("stage") == "arm" and r.get("symbol") and r.get("ts") is not None:
-            out[str(r["symbol"]).upper()].add(E._et_min(float(r["ts"])))
-    return out
+            out[str(r["symbol"]).upper()].append(float(r["ts"]))
+    return {s: sorted(v) for s, v in out.items()}
+
+
+def armed(ts: list, t: float, back: float) -> bool:
+    """An arm row in [t - back, t): eligibility never sees a row written after the entry (amended_2 (3))."""
+    i = bisect.bisect_left(ts, t - back)
+    return i < len(ts) and ts[i] < t
+
+
+def p2_sample(day: str, days: list) -> list[str]:
+    """The 400-name sample of `day`: names with today's IEX and SIP and the previous session's IEX (amended_2 (1))."""
+    raw_today = H.load_raw("sip", day)
+    p_iex = H.load_raw("iex", days[days.index(day) - 1])
+    return H.sample_names(day, [s for s in H.load_raw("iex", day) if s in raw_today and s in p_iex])
 
 
 def control_minute(sym: str, day: str, m: int, sip: dict) -> int | None:
@@ -171,17 +187,20 @@ def grade(rows: list[dict]) -> dict:
         if r["o"]["arm"] is not None and r["o"]["ctrl"] is not None:
             nd[(r["day"], r["sym"])].append(r["o"]["arm"] - r["o"]["ctrl"])
     nameday = statistics.mean(statistics.mean(v) for v in nd.values()) if nd else None
-    share = Counter()
+    share, dshare = Counter(), Counter()
     for r in rows:
         if r["o"]["arm"] is not None and r["o"]["ctrl"] is not None:
             share[r["sym"]] += (r["o"]["arm"] - r["o"]["ctrl"]) / max(1, n)
+            dshare[r["day"]] += (r["o"]["arm"] - r["o"]["ctrl"]) / max(1, n)
     top_names = {s for s, _ in share.most_common(3)}
-    top_days = set(sorted(d_means, key=lambda d: d_means[d], reverse=True)[:3])
+    top_days = {d for d, _ in dshare.most_common(3)}
     return {"n": n, "days": n_days, "lift_d": d_mu, "t_d": d_t, "ub_d": d_ub, "lift_x": x_mu, "t_x": x_t, "ub_x": x_ub,
             "n_x": nx, "net": net, "nameday": nameday, "t_crit": t_crit2(n_days),
             "drop_names": lift([r for r in rows if r["sym"] not in top_names], "arm", "ctrl")[0],
-            "drop_days": O._day_t({d: v for d, v in d_means.items() if d not in top_days})[0],
-            "lag1": lift(rows, "arm_lag1", "ctrl_lag1")[0]}
+            "drop_days": lift([r for r in rows if r["day"] not in top_days], "arm", "ctrl")[0],
+            "lag1": lift(rows, "arm_lag1", "ctrl_lag1")[0],
+            "net_3bp": net + 0.0002 if net is not None else None, "net_10bp": net - 0.0005 if net is not None else None,
+            "lift_d_vs_11bp": d_mu - 0.0011 if d_mu is not None else None}
 
 
 def _by_day(rows, key):
@@ -235,10 +254,8 @@ def write(name: str, obj) -> str:
 def trigger_day(args) -> dict:
     """Onsets for P2 (sample names) and P1 (board names) of one day; outcome-free."""
     day, days, spy, p1 = args
-    raw_today = H.load_raw("sip", day)
-    p_iex = H.load_raw("iex", days[days.index(day) - 1])
-    sample = H.sample_names(day, [s for s in H.load_raw("iex", day) if s in raw_today and s in p_iex])
-    board = board_minutes(day) if p1 else {}
+    sample = p2_sample(day, days)
+    board = board_ts(day) if p1 else {}
     syms = sorted(set(sample) | set(board))
     _d, zs, why = z_series_day((day, days, syms, spy))
     trig, rich, st = [], [], Counter()
@@ -248,19 +265,59 @@ def trigger_day(args) -> dict:
         for m in onsets(zs.get(s, {}), cut=FV.Z_RICH, below=False):
             rich.append({"pop": "P2", "day": day, "sym": s, "m": m})
     if p1:
-        st["board_names"] += len(board)
-        st["board_excluded"] += sum(1 for s in board if why.get(s) != "ok")
-        for s, mins in board.items():
+        h = half_of("P1", day)
+        st[f"board_names {h}"] += len(board)
+        st[f"board_excluded {h}"] += sum(1 for s in board if why.get(s) != "ok")
+        for s, tss in board.items():
             for m in onsets(zs.get(s, {})):
-                if m in mins:
+                if armed(tss, O.decision_ts(day, m), ARM_LOOKBACK):
                     trig.append({"pop": "P1", "day": day, "sym": s, "m": m, "z": zs[s][m]})
     return {"day": day, "triggers": trig, "rich": rich, "stats": dict(st)}
+
+
+def placebo_minute(sym: str, day: str, m: int, sip: dict) -> int | None:
+    """A seeded pseudo-onset in the trigger's clock hour (within 10:00-15:27), not m itself, with bars (amended_2 (4))."""
+    cand = [k for k in range(max(M_LO, m // 60 * 60), min(M_HI, m // 60 * 60 + 59) + 1)
+            if k != m and T3._ok(sip, k, HOLD)]
+    return random.Random(H._seed(sym, day, m, PLACEBO_TAG)).choice(cand) if cand else None
+
+
+def placebo(by_day: dict) -> dict:
+    """One pseudo-onset per kept P2 trigger with bars, scored against its own d control; lift_d t per half within the
+    two-sided Bonferroni-2 t at df = days - 1."""
+    pr = []
+    for day, ts in sorted(by_day.items()):
+        ts = [t for t in ts if t["pop"] == "P2"]
+        if not ts:
+            continue
+        raw, cache = H.load_raw("sip", day), {}
+        for t in ts:
+            if t["sym"] not in cache:
+                cache[t["sym"]] = H.sip_oc(raw[t["sym"]]) if t["sym"] in raw else {}
+            sip = cache[t["sym"]]
+            if not T3._ok(sip, t["m"], HOLD):
+                continue
+            pm = placebo_minute(t["sym"], day, t["m"], sip)
+            c = control_minute(t["sym"], day, pm, sip) if pm else None
+            if pm and c:
+                pr.append({"day": day, "sym": t["sym"], "half": half_of("P2", day),
+                           "o": {"arm": T3.net(sip, pm, hold=HOLD, cost=COST), "ctrl": T3.net(sip, c, hold=HOLD, cost=COST)}})
+    return placebo_verdict(pr)
+
+
+def placebo_verdict(pr: list[dict]) -> dict:
+    t, days, bound = {}, {}, {}
+    for h in ("A", "B"):
+        _mu, t[h], days[h], *_ = lift([r for r in pr if r["half"] == h], "arm", "ctrl")
+        bound[h] = t_crit2(days[h])
+    ok = all(t[h] is not None and bound[h] is not None and abs(t[h]) <= bound[h] for h in ("A", "B"))
+    return {"t": t, "days": days, "bound": bound, "n": len(pr), "ok": ok}
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group()
-    for f in ("--fidelity", "--triggers", "--fetch-p1", "--score"):
+    for f in ("--fidelity", "--triggers", "--fetch-p1", "--placebo", "--score"):
         g.add_argument(f, action="store_true")
     ap.add_argument("--skeptic-ready", default="")
     ap.add_argument("--workers", type=int, default=4)
@@ -289,8 +346,8 @@ def main() -> None:
         return
     if a.triggers:
         fid = json.load(open(os.path.join(OUT_DIR, "fidelity.json")))
-        if not fid.get("ok"):
-            raise SystemExit("fidelity check not passed")
+        if not fid.get("ok") or fid.get("module_sha256") != module_shas():
+            raise SystemExit("fidelity check not passed by this code; rerun --fidelity")
         ks = list(range(FV.LOOKBACK, len(days)))
         trig, rich, st = [], [], Counter()
         with ProcessPoolExecutor(max_workers=a.workers) as ex:
@@ -302,6 +359,10 @@ def main() -> None:
         write("triggers.json", {"module_sha256": module_shas(), "triggers": trig, "rich": rich, "stats": dict(st)})
         return
     trig = json.load(open(os.path.join(OUT_DIR, "triggers.json")))
+    if not a.fetch_p1:
+        fid = json.load(open(os.path.join(OUT_DIR, "fidelity.json")))
+        if trig.get("module_sha256") != module_shas() or fid.get("module_sha256") != module_shas() or not fid.get("ok"):
+            raise SystemExit("triggers.json / fidelity.json were written by different code; rerun them")
     p1 = [t for t in trig["triggers"] if t["pop"] == "P1"]
     if a.fetch_p1:
         os.makedirs(P1_TICKS, exist_ok=True)
@@ -326,6 +387,9 @@ def main() -> None:
             if tick is None:
                 st["p1_not_fetched"] += 1
                 continue
+            if O.capped(tick):                      # amended_2 (8): a capped file may lack the quotes near T
+                st["p1_capped_no_quote"] += 1
+                continue
             if q is None or (q[2] - q[1]) / ((q[1] + q[2]) / 2) > FR.SPREAD_CAP:
                 st["p1_over_cap_or_no_quote"] += 1
                 continue
@@ -333,6 +397,13 @@ def main() -> None:
     by_day = defaultdict(list)
     for t in keep:
         by_day[t["day"]].append(t)
+    if a.placebo:
+        res = placebo(by_day)
+        print(json.dumps(res, indent=1, default=str))
+        print(write("placebo.json", {**res, "module_sha256": module_shas()}))
+        if not res["ok"]:
+            raise SystemExit(1)
+        return
     rows = []
     for day, ts in sorted(by_day.items()):
         sip = H.load_raw("sip", day)
@@ -342,23 +413,24 @@ def main() -> None:
             if n not in sipm:
                 sipm[n] = H.sip_oc(sip[n]) if n in sip else {}
             return sipm[n]
-        board = board_minutes(day) if any(t["pop"] == "P1" for t in ts) else {}
-        p2_pool = sorted({t2["sym"] for t2 in ts if t2["pop"] == "P2"}
-                         | set(H.sample_names(day, [s for s in H.load_raw("iex", day) if s in sip])))
+        board = board_ts(day) if any(t["pop"] == "P1" for t in ts) else {}
+        p2_pool = p2_sample(day, days)
         for t in ts:
             if not (T3._ok(sm(t["sym"]), t["m"], HOLD)):
                 st[f"{t['pop']}_no_bars"] += 1
                 continue
             c = control_minute(t["sym"], day, t["m"], sm(t["sym"]))
             if t["pop"] == "P1":
-                pool = sorted(s for s, mins in board.items() if any(t["m"] - 15 <= x <= t["m"] for x in mins))
+                T = O.decision_ts(day, t["m"])
+                pool = sorted(s for s, tss in board.items() if armed(tss, T, X_LOOKBACK))
             else:
                 pool = p2_pool
             x = cross_name(t["sym"], day, t["m"], pool, sm)
             if x is None:
                 st[f"{t['pop']}_no_x"] += 1
             row = {**t, "half": half_of(t["pop"], day), "c": c,
-                   "c_on_board": (c in board.get(t["sym"], set())) if (t["pop"] == "P1" and c) else None}
+                   "c_on_board": armed(board.get(t["sym"], []), O.decision_ts(day, c), ARM_LOOKBACK)
+                   if (t["pop"] == "P1" and c) else None}
             if a.score:
                 row["o"] = outcome(sm(t["sym"]), t["m"], c, sm(x) if x else None)
             else:
@@ -386,6 +458,9 @@ def main() -> None:
         for k_, v in cnt.items():
             print(f"  {k_}: {v}")
         print(f"drops {dict(st)}; board stats {trig['stats']}")
+        for h in ("A", "B"):
+            nb = trig["stats"].get(f"board_names {h}", 0)
+            print(f"  P1 {h} excluded board share: {trig['stats'].get(f'board_excluded {h}', 0) / max(1, nb):.2f} of {nb}")
         print(write("count.json", {"module_sha256": module_shas(), "count": cnt, "drops": dict(st)}))
         return
     if not a.skeptic_ready:
@@ -393,36 +468,19 @@ def main() -> None:
     cnt = json.load(open(os.path.join(OUT_DIR, "count.json")))
     if cnt.get("module_sha256") != module_shas():
         raise SystemExit("count.json was written by different code; rerun the count step")
+    plc = json.load(open(os.path.join(OUT_DIR, "placebo.json"))) if os.path.exists(os.path.join(OUT_DIR, "placebo.json")) else {}
+    if not plc.get("ok") or plc.get("module_sha256") != module_shas():
+        raise SystemExit("placebo not passed by this code; run --placebo")
     res = {"graded": {}, "halves": {}, "verdicts": {}}
     for pop in ("P1", "P2"):
         gs = {h: grade([r for r in rows if r["pop"] == pop and r["half"] == h]) for h in ("A", "B")}
-        hv = {h: (half_verdict(gs[h], pop) if cnt["count"][f"{pop} {h}"]["floors_met"] or
-                  (gs[h]["t_d"] is not None and gs[h]["t_d"] <= -2) else "UNDERPOWERED") for h in ("A", "B")}
+        hv = {h: half_verdict(gs[h], pop) for h in ("A", "B")}
+        hv = {h: ("UNDERPOWERED" if v != "FAIL" and not cnt["count"][f"{pop} {h}"]["floors_met"] else v)
+              for h, v in hv.items()}
         res["graded"][pop], res["halves"][pop] = gs, hv
         res["verdicts"][pop] = final([hv["A"], hv["B"]], [(gs[h]["ub_d"], gs[h]["ub_x"]) for h in ("A", "B")],
                                      [gs[h]["days"] for h in ("A", "B")], [gs[h]["lag1"] for h in ("A", "B")])
-    # placebo: random pseudo-onsets matched in count per name-day (P2), lift_d t per half
-    plc = {}
-    for h in ("A", "B"):
-        rs = [r for r in rows if r["pop"] == "P2" and r["half"] == h]
-        n_nd = Counter((r["day"], r["sym"]) for r in rs)
-        pr = []
-        by_d = defaultdict(list)
-        for (day, sym), n_ in n_nd.items():
-            by_d[day].append((sym, n_))
-        for day, items in sorted(by_d.items()):
-            raw = H.load_raw("sip", day)                     # one load per day
-            for sym, n_ in sorted(items):
-                sip = H.sip_oc(raw[sym]) if sym in raw else {}
-                cand = [m for m in range(M_LO, M_HI + 1) if T3._ok(sip, m, HOLD)]
-                rng = random.Random(H._seed(sym, day, PLACEBO_TAG))
-                for m in rng.sample(cand, min(n_, len(cand))):
-                    c = control_minute(sym, day, m, sip)
-                    pr.append({"day": day, "sym": sym, "o": {"arm": T3.net(sip, m, hold=HOLD, cost=COST),
-                                                              "ctrl": T3.net(sip, c, hold=HOLD, cost=COST) if c else None}})
-        plc[h] = lift(pr, "arm", "ctrl")[1]
-    res["placebo"] = {"t": plc, "bound": S.t_ppf(1 - 0.025 / 2, 50),
-                      "ok": all(t is not None and abs(t) <= S.t_ppf(1 - 0.025 / 2, 50) for t in plc.values())}
+    res["placebo"] = {k: plc[k] for k in ("t", "days", "bound", "ok")}
     res["info"] = {"P1 d on on-board control minutes": {h: lift([r for r in rows if r["pop"] == "P1" and r["half"] == h
                                                                  and r.get("c_on_board")], "arm", "ctrl")[:3] for h in ("A", "B")},
                    "P1 off-board control share": {h: (lambda rs: sum(1 for r in rs if r.get("c_on_board") is False) / max(1, len(rs)))(
