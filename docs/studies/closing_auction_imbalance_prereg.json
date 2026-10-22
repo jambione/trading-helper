@@ -1,0 +1,28 @@
+{
+ "study": "Closing-auction imbalance, stage 1 (small paid historical sample): when Nasdaq's pre-close imbalance messages show a large one-sided BUY imbalance, does buying at the ask a few seconds later and selling in the closing cross beat the same-moment names without such an imbalance, by >= +5 bp and net of cost?",
+ "registered_at": "2026-10-22, before any data is priced or downloaded",
+ "registered_before_results": true,
+ "origin": "Operator 10/22 asked for a separate idea that can reach the +5 to +11 bp bar. Forced flows are the one family with a structural reason to move prices (month-end rebalancing +20.6 bp, t 3.7 over 289 months). The closing auction concentrates index, ETF and fund flows; Nasdaq publishes the Net Order Imbalance Indicator (NOII) before the close. Untested here.",
+ "prior": "LOW-MODERATE (~10-15%). The effect is documented in market-microstructure research, but it is widely traded; the after-cost size for a retail account entering on the public message is the open question. Index adds/deletes were priced at the announcement (10/2); this is the daily, smaller cousin.",
+ "stage": "STAGE 1 only: a small historical sample to decide whether any money (live imbalance data, more history) is worth spending. A stage-1 PASS buys nothing by itself: it earns a stage-2 prereg (larger sample, NYSE names, live data cost).",
+ "data": {
+  "source": "Databento XNAS.ITCH, schema 'imbalance' (Nasdaq NOII: paired shares, imbalance shares and side, reference / near / far prices), Nasdaq-listed common stock only, against the remaining Databento new-account credit (about $118 after 10/4).",
+  "sample": "40 sessions drawn by seed sha256('closing-imbalance-stage1') from 2026-05-11 .. 2026-10-15 (the warehouse window, so SIP bars and the liquid universe are on hand), 20 per half (halves at 2026-07-29); names = warehouse liquid names (>= $10, 20-day $20M ADV) that are Nasdaq-listed (listing exchange from Alpaca assets).",
+  "budget_guard": "Price the full request list with Databento metadata.get_cost before any download; abort if > $25 (then shrink sessions, never per-name sampling, and re-price). Spend is logged per request.",
+  "quotes_and_close": "SIP NBBO quotes around the decision time and the official closing cross price from Alpaca historical (free, data-only account)."
+ },
+ "signal": {
+  "decision_time": "T = 15:50:00 ET, the first NOII publication (or the session's first imbalance message at or after 15:50:00 for that name, within 5 s; else no signal).",
+  "size": "IMB = imbalance shares x reference price / the name's 20-day mean daily dollar volume (prior sessions, from warehouse daily data).",
+  "buy_side": "BUY = imbalance side is buy AND IMB is in the top decile of all names' IMB at T in that half (cut computed on half A, applied to both halves, outcome-blind)."
+ },
+ "trade": "Entry: the SIP ask of the last clean quote at or before T + 5 s (<= 5 s old; else dropped and counted). Exit: the official closing cross price (an MOC sell in a real account; paper accounts do not run auctions, so this is the price a real account gets). Net = close / entry ask - 1 (the entry half-spread is inside; the auction exit has no spread). Gross = close / entry mid - 1.",
+ "control": "The REST: every other in-universe Nasdaq name at the same T in the same session (no buy imbalance in the top decile), scored identically. Information: a same-name control on a random other session in the same half without a top-decile buy imbalance.",
+ "statistic": "Per session: mean gross of BUY names minus mean gross of the rest (sessions with >= 3 BUY names), session-equal, session-clustered t (df = sessions - 1); halves as above.",
+ "power": "Outcome-blind count step after the imbalance data is downloaded and before any close or quote is read: BUY counts per half and sessions with >= 3 BUY names; projected MDE from the rest's session-level SD of a placebo window (15:40:05 -> 15:50:00 gross, before the signal; not the outcome). Floors: >= 300 BUY entries and >= 15 sessions per half, else UNDERPOWERED.",
+ "pass": "In BOTH halves: BUY - rest >= +5 bp gross with t >= 2.0; BUY mean NET > 0; dropping the 3 sessions and (separately) the 3 names with the largest share keeps the difference >= 0. FAIL: t <= -2 in a half, or the 97.5% upper bound < +5 bp in both halves. Otherwise UNDERPOWERED.",
+ "information_only": ["SELL-side top decile (would a short-into-the-close pay; the desk is long-only)", "IMB terciles and the imbalance's change 15:50 -> 15:55", "entry at T + 30 s (latency)", "15:55 decision time", "the near / far price vs the last trade as a fair-value read"],
+ "live_feasibility": "Declared up front: trading this live needs real-time imbalance data (not in Alpaca's feed; Databento live or a Nasdaq feed, paid) and a real account for MOC exits. Stage 2 must price that before any test that could lead to it.",
+ "no_retuning": "15:50, top decile, the 20-day ADV scale, T + 5 s, the sample seed and size, the halves and the bars are fixed.",
+ "script": "tools/studies/closing_imbalance.py (to be written): --price (get_cost only), --fetch (within the guard), count step, --score after a result-skeptic READY."
+}

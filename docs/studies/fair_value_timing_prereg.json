@@ -1,0 +1,30 @@
+{
+ "study": "Fair-value timing layer: among desk-style pre-square entries on book-like names, do the ones where the name is temporarily CHEAP relative to its own fair value (market + closest peers) beat the rest over the next 3 minutes by enough to matter (+5 bp), alone or together with buy-side order flow?",
+ "registered_at": "2026-10-22, before any script, feature or outcome for this feature",
+ "registered_before_results": true,
+ "origin": "Operator 10/22: add a timing level that does not concern itself with quality or indicators, but with whether the price is undervalued or overvalued, applied to the names the book already admits. The exit study set the bar: an entry needs about +5 to +11 bp of 3-minute edge (EXIT_CAPTURE_2026-10-21).",
+ "prior": "LOW (~5-8%). Single-anchor fair-value versions failed or were underpowered: pairs reversion (two-name twins) UNDERPOWERED 10/19; sector lead-lag (buy laggards when the sector ETF jumps) FAIL -11/-12 bp net 10/15; VWAP stretch no better than other arms 10/2; microprice +0.3/+1.2 bp 10/21. New here: a per-name fair value from the market AND a basket of its own closest peers, used as a TIMER on entries the book already takes, with order flow (+1.5-2 bp, real, 10/21) as the co-trigger.",
+ "population": "The order-flow pilot's 15,563 pre-square entries (order_flow_pilot features.json: warehouse 2026-05-11 .. 10-15, 400-name hist sample, decision minute m = onset + 1, 10:00-15:27), restricted to entries whose entry spread (from the cached outcome window, last clean quote <= T + 1 s) is <= 0.05% of the mid: the desk's live spread cap, so the net bar reflects what the desk pays. The restriction is applied before any outcome of this study is read; its count is printed. REUSE DECLARED: these entries' 3-minute outcomes were read once for the order-flow groups (G1-G3); this study's feature is new, but only the held-out confirmation below can make a claim.",
+ "fair_value_model": {
+  "inputs": "SIP 1-minute bars: the name (warehouse), SPY (fetched once for the 120 warehouse sessions from the data-only account; the warehouse excludes ETFs) and the name's peer basket.",
+  "peers": "For each name-day: the K = 10 other warehouse names with the highest correlation of 1-minute SIP log returns with the name over the PRIOR 10 sessions (RTH, minutes present in both), among names with >= 80% minute coverage over those sessions; the basket return each minute is the equal-weight mean of present peers' returns (>= 5 present, else missing).",
+  "betas": "Ordinary least squares of the name's 1-minute return on [SPY return, basket return] over the PRIOR 10 sessions (no intercept); fixed for the day.",
+  "residual": "e_t = r_name - b_spy r_spy - b_peer r_basket each minute of the day; RES30(m) = the sum of e over the 30 completed minutes m-30 .. m-1.",
+  "scale": "SD30 = the standard deviation of non-overlapping 30-minute residual sums over the prior 10 sessions (same betas); Z(m) = RES30(m) / SD30. Missing if fewer than 24 of the 30 minutes have all three returns, or SD30 is missing.",
+  "meaning": "Z <= -1: the name has lagged what its market and peers imply over the last 30 minutes (CHEAP); Z >= +1: it has run ahead (RICH)."
+ },
+ "hypotheses": {
+  "F1_cheap": "IN = entries with Z(m) <= -1; OUT = the rest with Z.",
+  "F2_cheap_and_flow": "IN = entries with Z(m) <= -1 AND the order-flow pilot's G1 = IN (OFI60 top tercile, cut and tie rule as features.json); OUT = the rest with both features."
+ },
+ "outcome": "As order_flow_pilot (amended_3/4/5): entry at the ask of the last clean quote <= T + 1 s (<= 30 s old); at H = 180 s the last clean quote <= T + 1 + H (<= 30 s old): gross = mid / entry mid - 1, net = bid / entry ask - 1. Information: H = 60, 120, 300 s. Read from the existing outcome cache; no new outcome fetch for discovery.",
+ "statistic": "Gated minus rest per day on GROSS (days with >= 3 entries a side), day-equal, day-clustered t (df = days - 1); halves A <= 2026-07-29 < B (the warehouse convention).",
+ "multiplicity": "2 tests: one-sided p 0.025 / 2 at df = days - 1.",
+ "power": "Outcome-blind count step first: IN / OUT counts and days per half after the spread cap; projected MDE from same-name control-minute 3-bar SIP bar returns split by the IN / OUT labels (as order_flow_pilot). Floors: F1 1,000 IN, F2 300 IN, 20 days per half, else UNDERPOWERED.",
+ "pass": "Discovery PASS per test, in BOTH halves: gated - rest >= +5 bp gross with t >= t_crit; gated mean NET > 0 at the 3-minute horizon (spread-capped entries); name-day-equal difference > 0; drop-3-names and drop-3-days >= 0. FAIL: t <= -2 in a half, or the 97.5% upper bound < +5 bp in both halves. Otherwise UNDERPOWERED.",
+ "confirmation": "Only a discovery PASS is confirmed, unchanged, on the reserved held-out sample (ai_reports/warehouse_confirm, 2026-01-14 .. 04-24, unread): PRE entries drawn there with the order-flow pilot's rules (seed tag 'fair-value-confirm'), ticks fetched as the pilot, same features and bars. LEAD only if: gated - rest > 0 with one-sided t >= 1.96 and gated net > 0 at the spread cap, >= 300 IN entries. A LEAD then goes through the live exit replay (exit_capture's code on its fills) before any paper arm.",
+ "information_only": ["RICH (Z >= +1) as an avoid filter: rest minus RICH", "Z <= -2", "K = 5 and K = 20 peers", "60-minute residual window", "Z alone on all spread-capped entries vs on the uncapped population", "by hour of day", "F1 within onset-bar-return terciles"],
+ "no_retuning": "K = 10, the 10-session look-backs, the 30-minute window, the -1 cut, the spread cap, the horizon, the halves and the bars are fixed.",
+ "declared_deviations": ["outcomes of this entry population were read once before (order-flow groups); the held-out confirmation is the clean test", "peers are statistical (return correlation), not a sector taxonomy", "SIP features (the live desk reads IEX); a LEAD needs an IEX-feature rerun before any live use"],
+ "script": "tools/studies/fair_value_timing.py (to be written): count step, --score after a result-skeptic READY, --confirm."
+}
