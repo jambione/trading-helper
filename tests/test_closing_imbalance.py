@@ -101,3 +101,16 @@ def test_sessions_need_three_buys():
     assert CI.session_diffs(rows) == {}
     rows.append({"day": "d1", "sym": "B3", "group": "BUY", "gross": 0.01})
     assert abs(CI.session_diffs(rows)["d1"] - 0.01) < 1e-12
+
+
+def test_inventory_and_ts_keep_utc():
+    import pandas as pd
+    t0 = CI.et_ts("2026-08-14", CI.T_HMS).timestamp()
+    ev = pd.to_datetime([t0 - 1, t0, t0 + 1, t0 + 2], unit="s", utc=True)
+    df = pd.DataFrame({"ts_event": ev, "auction_type": ["C", "C", "C", "O"], "side": ["B", "B", "A", "N"],
+                       "symbol": ["X", "X", "Y", "X"], "total_imbalance_qty": [1.0, 2.0, 3.0, 4.0],
+                       "paired_qty": [1.0] * 4, "ref_price": [10.0] * 4}, index=ev)
+    ts = CI._ts(df)
+    assert str(ts.dt.tz) == "UTC" and abs(ts.iloc[1].timestamp() - t0) < 1e-6
+    inv = CI.inventory(df)
+    assert inv["close_symbols"] == 2 and inv["first_msg_et quantiles"][0.0] == "15:49:59"

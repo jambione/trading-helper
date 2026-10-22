@@ -89,7 +89,8 @@
    "(8) The count step reports requested names, names with any closing message, names with one at T, and requested names with none (possible symbol mismatches).",
    "(9) Drops counted separately: no quote at T + 5 s, no closing cross, symbol missing from the Alpaca response.",
    "(10) Drop-3 sessions = drop the 3 largest session differences (session-equal).",
-   "(11) Information implemented: BUY lift by IMB tercile (within BUY); by the 15:50 -> 15:55 change of signed IMB (up vs down); entry at T + 30 s (ask <= 5 s old); same-name control (the name's mean gross on other sample sessions of the half where it is CTRL, minus its BUY gross). Amended out: the 15:55 decision (Nasdaq's MOC entry cutoff is 15:55, untradeable as an MOC exit) and near / far prices (fields not confirmed; any later read is post-hoc)."
+   "(11) Information implemented: BUY lift by IMB tercile (within BUY); by the 15:50 -> 15:55 change of signed IMB (up vs down); entry at T + 30 s (ask <= 5 s old); same-name control (the name's BUY gross minus its mean gross on other sample sessions of the half where it is CTRL). Amended out: the 15:55 decision (Nasdaq's MOC entry cutoff is 15:55, untradeable as an MOC exit) and near / far prices (fields not confirmed; any later read is post-hoc)."
   ]
- }
+ },
+ "amended_4": "2026-10-22, before any download, after result-skeptic round 2: the probe download is saved to a file before parsing (no second purchase on a parse error) and timestamps stay timezone-aware; --fetch also requires the confirmed probe mapping; amended_3 (11) same-name wording fixed to match the code (BUY minus CTRL). Declared: the 15:55 up/down cell is not tradeable at the 15:50:05 entry; the IMB tercile cells keep few sessions (>= 3 BUY per tercile)."
 }

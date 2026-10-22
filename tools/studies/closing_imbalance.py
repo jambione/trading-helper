@@ -173,8 +173,14 @@ def probe(cl, day: str) -> dict:
     cost = float(cl.metadata.get_cost(**req))
     if cost > PROBE_CAP_USD:
         raise SystemExit(f"probe quoted ${cost:.4f} > ${PROBE_CAP_USD}")
-    spend_log(day, cost, "probe")
-    df = cl.timeseries.get_range(**req).to_df()
+    import databento as db
+    os.makedirs(DBN_DIR, exist_ok=True)
+    path = os.path.join(DBN_DIR, "probe.dbn.zst")
+    if not os.path.exists(path):              # logged before the attempt; saved before parsing: a parse error never forces a second purchase
+        spend_log(day, cost, "probe")
+        cl.timeseries.get_range(**req, path=path + ".tmp")
+        os.replace(path + ".tmp", path)
+    df = db.DBNStore.from_file(path).to_df()
     return {"day": day, "quoted_usd": cost, "rows": len(df), "columns": list(df.columns),
             "dtypes": {c: str(t) for c, t in df.dtypes.items()}, **inventory(df)}
 
@@ -207,8 +213,8 @@ def _ts(df):
     """ts_event as a UTC Series aligned to df (to_df() indexes by ts_recv and keeps ts_event as a column)."""
     import pandas as pd
     if "ts_event" in df.columns:
-        return pd.Series(pd.to_datetime(df["ts_event"], utc=True).values, index=df.index)
-    return pd.Series(pd.to_datetime(df.index, utc=True), index=df.index)
+        return pd.Series(pd.to_datetime(df["ts_event"], utc=True).array, index=df.index)
+    return pd.Series(pd.to_datetime(df.index, utc=True).array, index=df.index)
 
 
 def extract_day(path: str, day: str) -> dict:
@@ -219,7 +225,7 @@ def extract_day(path: str, day: str) -> dict:
     if CLOSE_TYPE not in types or not sides <= {BUY_SIDE, SELL_SIDE, "N"}:
         raise SystemExit(f"{day}: auction types {sorted(types)}, sides {sorted(sides)} - mapping check failed")
     df = df[df[F_TYPE].astype(str) == CLOSE_TYPE]
-    df = df.assign(_t=_ts(df).values).sort_values("_t")
+    df = df.assign(_t=_ts(df).array).sort_values("_t")
     out = {}
     t0, t1 = et_ts(day, T_HMS).timestamp(), et_ts(day, LATE_HMS).timestamp()
     for sym, g in df.groupby("symbol"):
@@ -650,8 +656,8 @@ def main() -> None:
             write("probe.json", res)
             return
         pr = jload("price.json")
-        if not jload("probe.json") or not pr or not pr["ok"]:
-            raise SystemExit("needs a passed --price and --probe first")
+        if not (jload("probe.json") or {}).get("mapping_confirmed") or not pr or not pr["ok"]:
+            raise SystemExit("needs a passed --price, --probe and --confirm probe first")
         os.makedirs(DBN_DIR, exist_ok=True)
         spent = sum(float(r["quoted_usd"]) for r in csv.DictReader(open(os.path.join(OUT_DIR, "spend_log.csv"))))
         for day in sessions():
