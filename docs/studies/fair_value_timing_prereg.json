@@ -23,8 +23,21 @@
  "power": "Outcome-blind count step first: IN / OUT counts and days per half after the spread cap; projected MDE from same-name control-minute 3-bar SIP bar returns split by the IN / OUT labels (as order_flow_pilot). Floors: F1 1,000 IN, F2 300 IN, 20 days per half, else UNDERPOWERED.",
  "pass": "Discovery PASS per test, in BOTH halves: gated - rest >= +5 bp gross with t >= t_crit; gated mean NET > 0 at the 3-minute horizon (spread-capped entries); name-day-equal difference > 0; drop-3-names and drop-3-days >= 0. FAIL: t <= -2 in a half, or the 97.5% upper bound < +5 bp in both halves. Otherwise UNDERPOWERED.",
  "confirmation": "Only a discovery PASS is confirmed, unchanged, on the reserved held-out sample (ai_reports/warehouse_confirm, 2026-01-14 .. 04-24, unread): PRE entries drawn there with the order-flow pilot's rules (seed tag 'fair-value-confirm'), ticks fetched as the pilot, same features and bars. LEAD only if: gated - rest > 0 with one-sided t >= 1.96 and gated net > 0 at the spread cap, >= 300 IN entries. A LEAD then goes through the live exit replay (exit_capture's code on its fills) before any paper arm.",
- "information_only": ["RICH (Z >= +1) as an avoid filter: rest minus RICH", "Z <= -2", "K = 5 and K = 20 peers", "60-minute residual window", "Z alone on all spread-capped entries vs on the uncapped population", "by hour of day", "F1 within onset-bar-return terciles"],
+ "information_only": [
+  "RICH (Z >= +1) as an avoid filter: rest minus RICH",
+  "Z <= -2",
+  "K = 5 and K = 20 peers",
+  "60-minute residual window",
+  "Z alone on all spread-capped entries vs on the uncapped population",
+  "by hour of day",
+  "F1 within onset-bar-return terciles"
+ ],
  "no_retuning": "K = 10, the 10-session look-backs, the 30-minute window, the -1 cut, the spread cap, the horizon, the halves and the bars are fixed.",
- "declared_deviations": ["outcomes of this entry population were read once before (order-flow groups); the held-out confirmation is the clean test", "peers are statistical (return correlation), not a sector taxonomy", "SIP features (the live desk reads IEX); a LEAD needs an IEX-feature rerun before any live use"],
- "script": "tools/studies/fair_value_timing.py (to be written): count step, --score after a result-skeptic READY, --confirm."
+ "declared_deviations": [
+  "outcomes of this entry population were read once before (order-flow groups); the held-out confirmation is the clean test",
+  "peers are statistical (return correlation), not a sector taxonomy",
+  "SIP features (the live desk reads IEX); a LEAD needs an IEX-feature rerun before any live use"
+ ],
+ "script": "tools/studies/fair_value_timing.py (to be written): count step, --score after a result-skeptic READY, --confirm.",
+ "amended": "2026-10-22, before any script or data, after result-skeptic FIX FIRST (7). (1) Floors are PER HALF (F1 1,000 IN, F2 300 IN, 20 days); if a floor fails after the spread cap the test stops as UNDERPOWERED - no uncapped or relaxed fallback chosen later. (2) The spread cap reads the entry spread from the pilot's FEATURE tick cache (quotes up to T + 1 s); no outcome file is opened before --score. (3) Time of day: an additional pass condition - the same-hour difference (per day and clock hour, IN minus OUT, hours with >= 3 a side, averaged day-equal) > 0 in both halves (the pilot's G1 was concentrated at 10:00). (4) F2 must show the timing layer adds to flow: inside G1 = IN, Z <= -1 minus Z > -1 > 0 in both halves is a pass condition for F2. (5) Returns: a 1-minute return is close / previous close only when both minutes have bars for the name, SPY and >= 5 basket peers; the 09:30 bar's return is excluded; the entry name itself needs >= 80% minute coverage over the prior 10 sessions (else no Z). (6) SPY SIP 1-minute RTH bars are fetched for the 120 warehouse sessions AND the 70 warehouse_confirm sessions. (7) Confirmation: score the last 60 held-out sessions (first 10 look-back only); draw 8,000 PRE entries there with the pilot's rules (seed 'fair-value-confirm'), fetch their feature and outcome ticks as the pilot (~3 requests each, ~24,000); reuse the discovery G1 cut and the 0.05% spread cap; LEAD needs gated - rest >= +5 bp gross with one-sided t >= the 0.025/k critical value (k = tests sent to confirmation) and gated net > 0. NOTES: results are printed against both +5 bp and the central break-even +11 bp; the missing-Z share is printed for IN and OUT; the pilot's coin-flip placebo is run as a calibration check; expected opens per day are printed; if discovery fails, the held-out sample stays unread."
 }
