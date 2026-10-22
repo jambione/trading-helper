@@ -77,9 +77,20 @@ def test_grade_cell_and_verdicts():
     assert S2.cell_verdict(g) == "PASS"
     assert S2.cell_verdict(dict(g, n_combo=299)) == "UNDERPOWERED"
     assert S2.cell_verdict(S2.grade_cell(_rows(-0.007), "H1", "C1_LOCATION", 3)) == "FAIL"
-    # the skeptic's case: no sweep effect, the condition alone adds 12 bp -> must NOT pass
-    gc = S2.grade_cell(_rows(0.0, cond_only=0.0012), "H1", "C1_LOCATION")
-    gc["n_combo"] = 400
-    assert gc["guard_vs_condition_only"][0] < 0.0005 and S2.cell_verdict(gc) != "PASS"
+
+
+
+def _passes(lift, cond_only, seeds=60):
+    n = 0
+    for sd in range(seeds):
+        g = S2.grade_cell(_rows(lift, seed=100 + sd, cond_only=cond_only), "H1", "C1_LOCATION")
+        g["n_combo"] = 400
+        n += S2.cell_verdict(g) == "PASS"
+    return n
+
+
+def test_condition_only_and_sweep_only_rarely_pass():
+    assert _passes(0.0, 0.0012) <= 3              # no sweep effect, the condition alone +12 bp
+    assert _passes(0.0, 0.0) <= 3                 # nothing at all
     assert S2.final(["PASS", "PASS"], [0.01, 0.01], [25, 25]).startswith("PASS_STAGE2")
     assert S2.final(["NOT_PASSED", "UNDERPOWERED"], [0.0003, 0.0004], [25, 25]) == "FAIL"

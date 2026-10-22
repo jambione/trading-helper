@@ -140,8 +140,8 @@ def cell_verdict(g: dict) -> str:
     if (g["n_combo"] < FLOOR_IN or g["days"] < FLOOR_DAYS or g["t"] is None
             or g["guard_vs_in_only"][2] < FLOOR_DAYS or g["guard_vs_condition_only"][2] < FLOOR_DAYS):
         return "UNDERPOWERED"
-    ok = (g["guard_vs_in_only"][0] is not None and g["guard_vs_in_only"][0] >= 0
-          and g["guard_vs_condition_only"][0] is not None and g["guard_vs_condition_only"][0] >= 0
+    ok = (g["guard_vs_in_only"][0] is not None and g["guard_vs_in_only"][0] >= SB.LIFT_BAR
+          and g["guard_vs_condition_only"][0] is not None and g["guard_vs_condition_only"][0] >= SB.LIFT_BAR
           and g["nameday"] is not None and g["nameday"] > 0
           and g["bar_placebo_lift"] is not None and g["bar_placebo_lift"] < SB.PLACEBO_MAX
           and g["bar_entry_lift"] is not None and g["bar_entry_lift"] - g["bar_placebo_lift"] >= SB.LIFT_BAR
@@ -219,6 +219,8 @@ def main() -> None:
             res["cells"][f"{hyp} {cell}"] = {"graded": gs, "halves": hv,
                                              "verdict": final(list(hv.values()), [gs[h]["ub"] for h in ("A", "B")],
                                                               [gs[h]["days"] for h in ("A", "B")]),
+                                             "condition_none": {h: sum(1 for r in rows if r["half"] == h and
+                                                                       r["cond"][hyp][cell] is None) for h in ("A", "B")},
                                              "condition_share": {h: sum(1 for r in rows if r["half"] == h and
                                                                         r["cond"][hyp][cell]) /
                                                                  max(1, sum(1 for r in rows if r["half"] == h))
