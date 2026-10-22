@@ -1,0 +1,55 @@
+{
+ "study": "Sweeps and blocks: at a desk-style pre-square entry, does urgent buying on the tape in the last 60 s - net BUY intermarket-sweep (ISO) volume (H1) or net BUY block prints of >= $100k (H2) - predict the next 3 minutes better than entries without it, by >= +5 bp, beyond plain order flow?",
+ "registered_at": "2026-10-22, before any fetch, feature or outcome for this design",
+ "registered_before_results": true,
+ "origin": "Operator 10/22: what is more useful than Level 2? The tape shows what traded (displayed L2 size can be pulled). Sweeps (condition F: a buyer taking every venue's ask at once) are the 'walls being eaten'; blocks are institutional size. The order-flow pilot (10/21) kept ISO trades inside total signed flow (G1, +1.9 / +1.5 bp, real but a fifth of the need) but never separated them.",
+ "prior": "LOW (~10-15%). Same family as G1 (+1.5-2 bp). For: ISOs are the most urgent, most informed slice of flow in the market-microstructure literature (larger price impact than regular trades); blocks are rare and large. Against: on 600 pilot entries ISOs are 26% of trades and 88% of entries have one in 60 s, so 'sweep' is common, not rare; fast firms see the same prints; a sweep's impact may already be in the price at T.",
+ "prevalence_seen": "Checked 2026-10-22 on 600 cached pilot entries (features only, no outcome): ISO share of trades 0.26; entries with >= 1 ISO in 60 s 0.88, median 13; ISO share of volume median 0.19 (p75 0.32); entries with a >= $100k print 0.135. The cached ticks hold no per-trade exchange, so the off-exchange cells need the new fetch.",
+ "population": "A FRESH seeded draw (sha256('sweep-block')) of 16,000 PRE onsets (8,000 per half) from the 400-name warehouse sample (2026-05-11 .. 10-15, decision minute m = onset + 1 in 10:00-15:27, as order_flow_pilot.day_onsets), EXCLUDING the 16,000 pilot entries (whose outcomes were read on 10/21). Kept: SIP mid at T (last clean quote <= T, <= 30 s old) >= $20 (the desk floor). Halves A <= 2026-07-29 < B. The warehouse_confirm sample stays unread.",
+ "data": "Alpaca SIP (data-only account, free, paced): trades [T - 60 s, T) with conditions, size, price, tape AND exchange; quotes [T - 120 s, T + 1 s] for signing and the entry; one outcome quote window per horizon as the pilot (last clean quote <= T + 1 + H, <= 30 s old). T = the start of minute m. Run after 16:15 ET only (the desk shares the Alpaca budget).",
+ "features": {
+  "signing": "The pilot's rules unchanged: kept codes {' ', '@', 'I', 'F'}, Lee-Ready vs the prevailing clean mid (<= 60 s old), tick test at the mid; unsignable trades left out; >= 5 signed trades needed.",
+  "H1_SWEEP": "ISO60 = (sum of size x sign over signed trades carrying 'F') / (sum of size over all signed trades) in [T - 60 s, T). IN = top tercile of ISO60 (cut on half A by (value, tie_u) as the pilot), OUT = the rest with the feature.",
+  "H2_BLOCK": "BLK60 = sum of notional x sign over signed trades with notional (price x size) >= $100,000 in [T - 60 s, T), as a share of total signed notional. IN = BLK60 > 0 (net buy blocks), OUT = BLK60 <= 0 or no block (the rest)."
+ },
+ "outcome": "PRIMARY: gross = mid at T + 1 + 180 s / entry mid at T + 1 s - 1 (the pilot's primary horizon; the desk's 3-minute runs). Net (bid / entry ask - 1) and 60 / 120 / 300 s are information; the absolute check uses the desk cost (gated mean gross - 5 bp).",
+ "statistic": "Per hypothesis and half: per day, mean gross of IN minus mean gross of OUT (days with >= 3 IN and >= 3 OUT), day-equal, day-clustered t (df = days - 1).",
+ "multiplicity": "2 tests (H1, H2): one-sided t_crit at 0.025 / 2, df = days - 1.",
+ "power": "Outcome-blind count step before any outcome quote is fetched: IN / OUT counts and days per half; projected MDE from the 3-minute SIP-bar return at a same-name later control minute (the pilot's control_return). Floors per half: H1 >= 1,000 IN, H2 >= 300 IN, >= 20 days; a projected MDE > 5 bp in a half stops that hypothesis UNDERPOWERED before outcomes are fetched.",
+ "pass": "Per hypothesis, in BOTH halves: lift >= +5 bp with t >= t_crit; IN mean gross - 5 bp > 0 (day-equal); BEYOND PLAIN FLOW: lift >= 0 within each OFI60 tercile (G1 cuts recomputed on this sample's half A); LATENCY: the lift with entry at T + 30 s (mid at T + 30 s to mid at T + 30 s + 180 s) >= 0; name-day-equal lift > 0; dropping the 3 days and (separately) the 3 names with the largest share keeps lift >= 0. FAIL: t <= -2 in a half, or the 97.5% upper bound < +5 bp in both halves (whenever each half has >= 2 days). Otherwise UNDERPOWERED.",
+ "information_only": [
+  "off-exchange (exchange 'D') share of volume and off-exchange blocks vs on-exchange blocks",
+  "retail flow (BJZZ): off-exchange trades with sub-penny prices, fractional cent in (0.6, 1) buy / (0, 0.4) sell, net retail imbalance terciles",
+  "ISO count, buy-ISO share of buy volume, ISO60 terciles, ISO in the last 10 s",
+  "block thresholds $50k / $250k and block size vs the name's 20-day median trade",
+  "60 / 120 / 300 s horizons; net after the quoted spread; spread <= 5 bp subset",
+  "IEX-only version (exchange 'V' trades only), to see what the live feed would see"
+ ],
+ "live_feasibility": "Declared now: the desk's live feed is IEX, which carries a few percent of trades and almost none of the ISO / block prints. A PASS cannot be traded without real-time SIP (Alpaca Algo Trader Plus, ~$99/month) - an operator spend decision after the PASS, then forward confirmation on >= 20 live sessions.",
+ "confirmation": "A PASS is confirmed unchanged on 16,000 PRE onsets drawn from the reserved warehouse_confirm sessions (2026-01-14 .. 04-24) before any spend decision.",
+ "no_retuning": "60 s window, ISO tercile, $100k, 180 s, $20 floor, the halves, floors and signing rules are fixed.",
+ "declared_deviations": [
+  "PRE onsets on the 400-name book-like sample, not desk fills",
+  "SIP features and outcomes (the live feed is IEX)",
+  "the 3-minute fixed hold, not the live exits (the exit study maps it: break-even ~+11 bp)",
+  "TRF (off-exchange) prints can be reported up to 10 s late; they are signed like the rest (information cells only)"
+ ],
+ "script": "tools/studies/sweep_block.py (to be written): --sample, --fetch-features, count step, --fetch-outcomes (refuses before count.json), --score after a result-skeptic READY; reuses order_flow_pilot's signing, cuts and outcome rules.",
+ "amended": {
+  "when": "2026-10-22, before any script, fetch, feature or outcome for this design, after result-skeptic FIX FIRST (10 items).",
+  "statement": "No ISO-or-block x outcome join has been run on the pilot cache (the 10/22 prevalence check read ticks only).",
+  "changes": [
+   "(1) H1 PRIMARY = the lift BEYOND plain flow: per day, within each OFI60 tercile (cuts on this sample's half A), mean gross of ISO60-IN minus OUT (cells with >= 2 IN and >= 2 OUT), averaged over the terciles present that day; day-equal; t / upper bound / FAIL on this statistic; the count step's MDE on it. The ISO60 IN cut stays the top tercile of ISO60 on half A pooled, as registered.",
+   "(2) H2 PRIMARY = within-stratum lift: strata = terciles of total 60 s notional (outcome-blind, cut on half A); per day mean over strata of (IN - OUT). Guard: net-BUY-block entries minus net-SELL-block entries (both have blocks) >= 0 in both halves. H1 also must keep its lift >= 0 within each notional tercile.",
+   "(3) BAR PLACEBO: the same IN / OUT split applied to a same-name, same-day bar return (open of k to close of k + 2) at a seeded minute k in the same clock hour outside [m - 1, m + 4]; required: placebo lift < +2.5 bp and (entry bar lift - placebo bar lift) >= +5 bp in both halves, the entry bar lift = open of m to close of m + 2. The count-step control minute is drawn from m + 4 .. m + 60 (never inside the outcome window).",
+   "(4) ISO SIGNING: 'F' prints are signed against the last clean quote STRICTLY BEFORE the trade timestamp (the sweep itself moves the quote at its own timestamp); other prints as the pilot. An outcome-blind pre-step on 50 entries reports, for 'F' prints: price vs the strictly-earlier quote (at / through ask, at / through bid, inside), the share sharing a timestamp with a quote update, and the share tick-signed; a problem is an amendment before features.",
+   "(5) BLOCK SIGNING: the pre-step reports the share of >= $100k prints that are exchange 'D' (TRF) and the share tick-signed; if > 50% are tick-signed, H2's sign is declared mostly noise in the write-up. Off-exchange ('D') prints in [T - 10 s, T) are excluded from H2 features (they may not have been visible at T).",
+   "(6) COST: the absolute check is IN mean of (gross - max(5 bp, the entry's own quoted spread)) > 0, day-equal.",
+   "(7) The $20 floor is applied BEFORE the draw with the IEX close of minute m - 1 (known at T), so n = 16,000 drawn; a missing or < $20 SIP mid at T is a counted drop.",
+   "(8) FRESHNESS: the pool excludes any onset whose [T - 60 s, T + 301 s] overlaps a pilot entry's window on the same name-day (|m - m_pilot| <= 6). Called 'fresh entries, same sessions'. The warehouse_confirm confirmation is part of the bar: a stage-1 PASS is reported as PASS_STAGE1 and becomes PASS only if the held-out run (16,000 onsets from 2026-01-14 .. 04-24, same code) passes.",
+   "(9) Script: N_TESTS = 2, own floors (H1 >= 1,000 IN, H2 >= 300 IN, >= 20 days per half), no reuse of the pilot's in_net rule. Information cells cannot pass a hypothesis or rescue one.",
+   "(10) The IEX-only cell is moved to an if_pass step: IEX trades signed against IEX quotes (feed = iex fetch), run only after a PASS_STAGE1.",
+   "(11) LATENCY guard on bars (no extra fetch): the lift with entry at the open of m + 1 and exit at the close of m + 3 must be >= 0 in both halves (replaces the T + 30 s quote check)."
+  ]
+ }
+}
