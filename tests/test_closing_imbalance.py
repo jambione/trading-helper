@@ -29,15 +29,40 @@ def test_signed_imb_and_groups():
     assert CI.group(-0.45, "A", bc, sc) == "SELL" and CI.group(0.1, "B", bc, sc) == "CTRL"
 
 
-def test_close_print_prefers_official():
-    tr = [(10.0, 500.0, {"6"}), (10.1, 100.0, {"M"}), (9.9, 900.0, {"@"})]
-    assert CI.close_print(tr) == (10.1, "M")
-    assert CI.close_print(tr[:1] + tr[2:]) == (10.0, "6")
-    assert CI.close_print(tr[2:]) == (None, None)
+def test_close_print_is_the_nasdaq_cross():
+    tr = [(10.0, 500.0, {"6"}, "Q"), (10.1, 0.0, {"M"}, "Q"), (10.2, 9000.0, {"6"}, "N"), (10.3, 0.0, {"6"}, "Q"),
+          (9.9, 900.0, {"@"}, "Q"), (10.4, 50.0, {"M"}, "P")]
+    assert CI.close_print(tr) == (10.0, 10.1)                 # Q '6' with size; Q 'M' as the check
+    assert CI.close_print(tr[1:]) == (None, 10.1)             # Q '6' of size 0 is not a cross print
+    assert CI.close_print([tr[2], tr[5]]) == (None, None)     # other venues never count
+
+
+def test_frozen_sessions():
+    assert len(CI.SESSIONS) == 40 and CI.SESSIONS == sorted(CI.SESSIONS)
+    assert sum(CI.half_of(d) == "A" for d in CI.SESSIONS) == 20 and not set(CI.SESSIONS) & set(CI.FLAG_DAYS)
+
+
+def test_signed_imb_rejects_nonfinite():
+    assert CI.signed_imb({"side": "B", "imb": float("nan"), "ref": 10.0}, 1e6) is None
+    assert CI.signed_imb({"side": "B", "imb": 1.0, "ref": float("nan")}, 1e6) is None
+
+
+def test_same_name_control_and_info():
+    rows = []
+    for d in range(1, 5):
+        day = f"2026-06-0{d}"
+        rows += [{"day": day, "sym": f"X{k}", "group": "CTRL", "gross": 0.0, "gross30": 0.0, "imb": 0.0} for k in range(5)]
+        rows += [{"day": day, "sym": f"B{k}", "group": "BUY" if d % 2 else "CTRL", "gross": 0.002 if d % 2 else 0.0005,
+                  "imb": 0.1 * k, "late_imb": 0.2, "gross30": 0.001} for k in range(3)]
+    mu, t, n = CI.same_name_control(rows)
+    assert n == 2 and abs(mu - 0.0015) < 1e-12
+    info = CI.info_cells(rows)
+    assert info["entry_T+30s"][2] == 2 and "IMB tercile 3" in info and "15:55 IMB up" in info
 
 
 def test_returns_and_quote_age():
     r = CI.returns({"bid": 9.99, "ask": 10.01, "close": 10.10})
+    assert CI.returns({"bid30": 9.99, "ask30": 10.01, "close": 10.10}, "30")["gross30"] is not None
     assert abs(r["gross"] - (10.10 / 10.0 - 1)) < 1e-12 and abs(r["net"] - (10.10 / 10.01 - 1 - CI.EXIT_FEE)) < 1e-12
     assert CI.returns({"bid": 9.99, "ask": 10.01})["gross"] is None
     qs = [(100.0, 1, 2), (103.0, 1, 2)]
