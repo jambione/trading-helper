@@ -1,0 +1,48 @@
+{
+ "study": "$20 price floor, forward: on paper desk sessions with the $20 floor (config 874a7791, 2026-10-21 ~19:40 ET), is the realized result per trade at or above zero, and better than the October $10-floor baseline?",
+ "registered_at": "2026-10-22 ~16:40 ET, after ONE floor session (10/22: 5 buy fills, already seen: +2.7 / +12.9 bp by resistance flag, +$1.23 total) and before any later session",
+ "registered_before_results": "for every session after 2026-10-22; 10/22 is declared as SEEN and is included (excluding it would be its own choice; reported both ways)",
+ "origin": "Operator 10/22: the first green day (5 trades, 4 winners) came on the first full $20-floor session; 'if we can prove we can replicate these results we can work on more shares per position or more quality trades like these'. The exit study (10/21) said the live exits keep 80-88% of an entry edge above $20 vs 32-54% below.",
+ "prior": "LOW for every positive verdict. Baseline facts (skeptic, counts and dispersion of fills already read on 10/22): 10/05-10/21 = 13 sessions, 608 fills, mean -5.12 bp (session-clustered t -11.1, per-fill SD ~21 bp); 528 of them (87%) were already >= $20 at -4.55 bp; under the current exits (10/16-10/21) fills >= $20 = 109 at -4.67 bp. The floor removes only ~0.6 bp of baseline loss by selection; 10/22's green day (+6.8 bp, 4 of 5 fills one name, KSS) is unlikely to be the floor's doing. Prior for PROFITABLE ~5-10%.",
+ "data": "Every paper desk BUY fill with its FIFO-matched sells (realized round trip, bp of the fill price), from the desk's own Alpaca paper orders via indicator_levels_study.fills() as ob_fills_daily.py does, recorded per session in ai_reports/order_block_gate/heldout_fills.jsonl (ob_fills_daily.py run after each close). Unsold lots at the read are excluded and counted.",
+ "forward_sessions": "2026-10-22 and every desk session after it while the floor is $20 and no other entry / exit / sizing config changes. ANY change to entry, exit, spread, size or admission config ends the forward window at the last session before the change (that change is recorded; a new window needs its own prereg). The operator's 'more shares' step is such a change: it comes AFTER this read.",
+ "baseline": "Fills from 2026-10-05 .. 2026-10-21 (14 sessions, $10 floor, live exits of each day) from the same file. Information: the baseline restricted to fills >= $20 (does the floor just select names that were already fine?).",
+ "statistic": "Per-fill realized bp; the mean with a SESSION-clustered SE (sessions as clusters). FORWARD: mean and one-sample t vs 0. DIFFERENCE: forward mean - baseline mean, Welch-style with each side's session-clustered SE.",
+ "read": "SEE amended (6): once, at the first close with >= 20 forward sessions (from 10/23) and >= 150 forward fills; at 35 forward sessions read whatever the count (about 2026-12-11 at the cap; ~2026-12 at ~5 fills a day). Before the read only counts and the freeze log may be looked at.",
+ "verdicts": {
+  "PROFITABLE": "forward mean > 0 with t >= 2.0 AND difference > 0 with t >= 2.0",
+  "BETTER_NOT_PROFITABLE": "difference > 0 with t >= 2.0, forward mean not significantly > 0",
+  "NO_CHANGE": "difference t between -2 and +2 (with the 95% interval reported)",
+  "WORSE": "difference t <= -2",
+  "UNDERPOWERED": "fewer than 40 forward fills or fewer than 8 forward sessions at the read"
+ },
+ "guards_for_PROFITABLE": "the forward mean stays > 0 when (a) 10/22 is dropped, (b) the 2 best sessions are dropped, (c) the single most-traded name is dropped; win rate is reported but is not a criterion.",
+ "information_only": [
+  "trades per session vs the baseline (opens are expected to fall)",
+  "baseline >= $20 subset vs forward",
+  "dollar P&L per session",
+  "win rate, mean win / mean loss",
+  "hold time"
+ ],
+ "what_a_pass_buys": "PROFITABLE earns a pre-registered sizing step (more shares per position) as a separate forward window; it is not a size change by itself. BETTER_NOT_PROFITABLE keeps the floor and keeps the size. NO_CHANGE / WORSE: the floor is not the reason for 10/22.",
+ "declared_deviations": [
+  "paper fills (Alpaca simulation at the touch), not live",
+  "the desk config frozen during the window is an assumption checked at the read from config history",
+  "10/22 is a seen session"
+ ],
+ "script": "tools/studies/floor20_forward.py (to be written): --counts (sessions, fills only) and --read (refuses before the read condition).",
+ "amended": {
+  "when": "2026-10-22 ~17:00 ET, before any session after 10/22, after result-skeptic FIX FIRST (9 items).",
+  "changes": [
+   "(1) 2026-10-22 is EXCLUDED from every primary statistic (seen; it triggered the study); reported as information only. The forward window starts 2026-10-23.",
+   "(2) PRIMARY COMPARATOR = baseline fills >= $20 from 2026-10-16 .. 10-21 (current exits; 109 fills, -4.67 bp). The full October baseline (13 sessions, 608 fills, -5.12) is information. Counts corrected.",
+   "(3) t uses CR1 session-clustered SEs against t(G - 1) critical values (G = sessions; 0.975 two-sided / one-sided 0.975 where stated); the day-equal mean is reported and must have the same sign; the forward sessions are split into two date halves and each half's mean must be > 0 for PROFITABLE.",
+   "(4) PROFITABLE also needs forward mean >= +3 bp net, and mean minus SPY's mid return over the same entry-to-exit window (SIP 1-minute bars) > 0.",
+   "(5) Guards for PROFITABLE: mean stays > 0 after dropping the top 3 sessions, and (separately) the top 3 names; the largest name's share of fills is reported.",
+   "(6) POWER stated: per-fill SD ~21-27 bp, so the 80% MDE is ~9-10 bp at 75 fills. The read moves to >= 150 forward fills AND >= 20 forward sessions, capped at 35 sessions (read then whatever the count). A NO_CHANGE verdict means 'no effect of the size of the MDE printed at the read', not 'no effect'.",
+   "(7) FREEZE PROOF: after each close `tools/studies/floor20_forward.py --log` appends {date, sha256 of config/bot_config.json, the mini repo's git HEAD, the keys that differ from 874a7791}; at the read the config is diffed against 874a7791 and git history since 874a7791 is listed. The window ends at the last session before any change to: entry / arm / admission keys (ai_watch_*, ai_entry_*, arm_*), exit / trail / stop keys (*trail*, *stop*, *leash*, *exit*), spread caps, size keys (trade_amount, *qty*, *size*, risk_*), the three price floors, or any commit touching trading code (ai_entry_watch.py, ai_positions.py, the trader / exit modules). Display / logging-only changes do not end it (each listed at the read).",
+   "(8) Information: opens per session vs the comparator's opens per session (fewer opens = a selected sample, against the busy-book goal); lots unsold at the read marked to that day's close and counted.",
+   "(9) PROFITABLE earns only a PREREG for a sizing step (its own forward window), never a size change by itself."
+  ]
+ }
+}
