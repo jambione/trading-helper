@@ -291,6 +291,7 @@ def trigger_day(args) -> dict:
     syms = sorted(set(sample) | set(board))
     _d, zs, why = z_series_day((day, days, syms, spy))
     trig, rich, st = [], [], Counter()
+    all_on = {}
     for s in sample:
         for m in onsets(zs.get(s, {})):
             trig.append({"pop": "P2", "day": day, "sym": s, "m": m, "z": zs[s][m]})
@@ -301,22 +302,24 @@ def trigger_day(args) -> dict:
         st[f"board_names {h}"] += len(board)
         st[f"board_excluded {h}"] += sum(1 for s in board if why.get(s) != "ok")
         for s, tss in board.items():
-            for m in onsets(zs.get(s, {})):
+            all_on[s] = onsets(zs.get(s, {}))           # amended_5 (1): every onset, eligible or not
+            for m in all_on[s]:
                 if armed(tss, O.decision_ts(day, m), ARM_LOOKBACK):
                     trig.append({"pop": "P1", "day": day, "sym": s, "m": m, "z": zs[s][m]})
-    return {"day": day, "triggers": trig, "rich": rich, "stats": dict(st)}
+    return {"day": day, "triggers": trig, "rich": rich, "stats": dict(st), "p1_onsets": all_on}
 
 
 def _hour_minutes(h0: int, sip: dict, ok) -> list[int]:
     return [k for k in range(max(M_LO, h0), min(M_HI, h0 + 59) + 1) if ok(k) and T3._ok(sip, k, HOLD)]
 
 
-def placebo_minute(sym: str, day: str, m: int, sip: dict) -> int | None:
-    """amended_4 (1): a seeded pseudo-onset in the trigger's clock hour (10:00-15:27) with |k - m| > 15 and bars; else
-    the previous, then the next hour under the same rules."""
+def placebo_minute(sym: str, day: str, m: int, sip: dict, others: tuple = ()) -> int | None:
+    """amended_4 (1) / amended_5 (1): a seeded pseudo-onset in the trigger's clock hour (10:00-15:27) more than 15
+    minutes from m and from every other onset of the name that day, with bars; else the previous, then the next hour."""
     h0 = m // 60 * 60
+    away = (m, *others)
     for h in (h0, h0 - 60, h0 + 60):
-        cand = _hour_minutes(h, sip, lambda k: abs(k - m) > REFRACT)
+        cand = _hour_minutes(h, sip, lambda k: all(abs(k - o) > REFRACT for o in away))
         if cand:
             return random.Random(H._seed(sym, day, m, PLACEBO_TAG)).choice(cand)
     return None
@@ -344,6 +347,7 @@ def placebo_verdict(rows: list[dict]) -> dict:
         out["pseudo_lift_x"][h] = mu
         out["pseudo_lift_d"][h], out["pseudo_t_d"][h] = lift(rs, "arm", "ctrl", "po")[:2]
         out["bound"][h] = t_crit2(out["days"][h])
+        out.setdefault("bound_d", {})[h] = t_crit2(lift(rs, "arm", "ctrl", "po")[2] or 0)     # amended_5 (2)
         p1 = [r for r in rows if r["pop"] == "P1" and r["half"] == h]
         out["P1"][h] = {"lift_d": lift(p1, "arm", "ctrl", "po")[:3], "lift_x": lift(p1, "arm", "cross", "po")[:3]}
         # information (amended_4 (5)): pseudo before / after the trigger; the unconditional placebo
@@ -357,7 +361,7 @@ def placebo_verdict(rows: list[dict]) -> dict:
     out["n"] = sum(1 for r in rows if r["pop"] == "P2" and r.get("po"))
     out["ok"] = all(within(out["t"][h], out["bound"][h]) for h in ("A", "B"))
     # amended_4 (2): the adjustment applies unless the clean pseudo lift_d is within the bound in both halves
-    out["adjust"] = not all(within(out["pseudo_t_d"][h], out["bound"][h]) for h in ("A", "B"))
+    out["adjust"] = not all(within(out["pseudo_t_d"][h], out["bound_d"][h]) for h in ("A", "B"))
     # amended_4 (4): a P1 PASS needs the P1 pseudo lift_x within the bound in both halves
     out["P1_x_ok"] = all(within(out["P1"][h]["lift_x"][1], t_crit2(out["P1"][h]["lift_x"][2] or 0)) for h in ("A", "B"))
     return out
@@ -398,14 +402,16 @@ def main() -> None:
         if not fid.get("ok") or fid.get("module_sha256") != module_shas():
             raise SystemExit("fidelity check not passed by this code; rerun --fidelity")
         ks = list(range(FV.LOOKBACK, len(days)))
-        trig, rich, st = [], [], Counter()
+        trig, rich, st, p1_on = [], [], Counter(), {}
         with ProcessPoolExecutor(max_workers=a.workers) as ex:
             for res in ex.map(trigger_day, [(days[k], days, spy, P1_FIRST <= days[k] <= P1_LAST) for k in ks]):
                 trig += res["triggers"]
                 rich += res["rich"]
                 st.update(res["stats"])
+                p1_on[res["day"]] = res["p1_onsets"]
         print(f"triggers {Counter(t['pop'] for t in trig)}; rich onsets {len(rich)}; {dict(st)}")
-        write("triggers.json", {"module_sha256": module_shas(), "triggers": trig, "rich": rich, "stats": dict(st)})
+        write("triggers.json", {"module_sha256": module_shas(), "triggers": trig, "rich": rich, "stats": dict(st),
+                                "p1_onsets": p1_on})
         return
     trig = json.load(open(os.path.join(OUT_DIR, "triggers.json")))
     if not a.fetch_p1:
@@ -478,7 +484,8 @@ def main() -> None:
                    "c_on_board": armed(board.get(t["sym"], []), O.decision_ts(day, c), ARM_LOOKBACK)
                    if (t["pop"] == "P1" and c) else None}
             # amended_3 (1): the paired pseudo-onset, its own d control and x (same pool rule, at the pseudo minute)
-            pm = placebo_minute(t["sym"], day, t["m"], sm(t["sym"]))
+            same = (trig["p1_onsets"].get(day, {}).get(t["sym"], []) if t["pop"] == "P1" else p2_onsets.get(t["sym"], []))
+            pm = placebo_minute(t["sym"], day, t["m"], sm(t["sym"]), tuple(o for o in same if o != t["m"]))
             pc = control_minute(t["sym"], day, pm, sm(t["sym"])) if pm else None
             if pm and t["pop"] == "P1":
                 ppool = sorted(s for s, tss in board.items() if armed(tss, O.decision_ts(day, pm), X_LOOKBACK))

@@ -80,6 +80,13 @@ def test_placebo_minute_same_hour_seeded_away_from_m():
     assert FT.placebo_minute("AAA", "2026-06-10", 700, {k: (10.0, 10.0) for k in range(690, 712)}) is None
 
 
+def test_placebo_minute_avoids_other_onsets_of_the_name():
+    sip = {k: (10.0, 10.0) for k in range(570, 960)}
+    for seed_m in (660, 661, 662, 663, 664):
+        pm = FT.placebo_minute("AAA", "2026-06-10", seed_m, sip, (690,))
+        assert all(abs(pm - o) > 15 for o in (seed_m, 690)) and 660 <= pm <= 719
+
+
 def test_unconditional_minute_avoids_onsets():
     sip = {k: (10.0, 10.0) for k in range(570, 960)}
     n, k = FT.unconditional_minute("A", "2026-06-10", 700, ["A", "B"], lambda _n: sip, {"B": [670, 700]})
