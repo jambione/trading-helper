@@ -1,6 +1,7 @@
 # Strategy decision memo — 2026-10-22
 
-**For:** the operator. **Decision needed:** where the desk's effort and money go next, now that the exit side is
+**For:** the operator. *Corrected 10/22: the volume breakout's +9 bp was a stale early number (it failed held-out
+on 10/3); the month-end book is parked score-only.* **Decision needed:** where the desk's effort and money go next, now that the exit side is
 measured and the free-feed entry search is closed.
 
 ## Bottom line
@@ -37,11 +38,15 @@ minutes, equally. The runs exist; nothing on the free feed tilts them.
 
 - **What it can answer that free data cannot:** premarket (IEX is nearly blind there), sub-minute execution, the
   momentum-alert scalp at real speed, and order flow as an *add-on* to a faster signal.
-- **What we already know:** historical SIP simulations put the known leads at +0–9 bp **gross**: volume breakout +9, 1 s
-  news +4, %R+RSI +4, order flow +1.5–2. That is below or at the edge of the +5–11 bp bar, before the subscription
-  cost.
+- **What we already know:** historical SIP puts the known leads at about +0–4 bp **gross**: 1 s news +4, %R+RSI +4,
+  order flow +1.5–2. The **volume breakout** looked like +9 bp on an early 9/16–9/25 sample, but its pre-registered
+  held-out test (10/3, [SIP_BREAKOUT](studies/SIP_BREAKOUT_2026-10-03.md), 5/1–9/11) gave **+0.9 / +0.2 bp gross** and
+  −2.8 / −3.2 bp net, below a same-name random minute: closed. Everything left is below the +5–11 bp bar before the
+  subscription cost.
 - **GO only if, before paying:** a pre-registered simulation on free *historical* SIP shows one candidate entry beating
   the +5 bp bar with net > 0 after the spread, in both halves. Then the paid month is a live confirmation, not a search.
+  **As of 10/22 no candidate qualifies** (the breakout, the strongest, failed held-out), so the SIP month is a **NO-GO**
+  until a new signal family shows the edge on historical SIP first.
 - **During the month, KEEP paying only if:** that candidate holds at ≥ +5 bp net per trade on live paper over ≥ 15
   sessions, and the book clears the keep-bar of about $4.70/session (about 21 bp-trades a day at $2,250 sizing).
 - **NO-GO:** no candidate passes the historical-SIP simulation. Then a paid month only re-measures what we already know.
@@ -64,8 +69,10 @@ minutes, equally. The runs exist; nothing on the free feed tilts them.
 - **Status:** built and running **score-only** on the mini (`com.jambi.month-end-book`). First event is the **10/29 close
   → 10/30 close**. Real paper orders need a separate paper account (`config/secrets.json.monthend`), which only the operator
   can create.
-- **GO to paper orders now:** the operator creates the paper account before 10/29. The risk is one SPY or TLT position
-  for one session a month.
+- **PARKED (operator 10/22):** stays score-only; no paper account for now. The agent keeps scoring the plan every
+  month (first scored event 10/29 → 10/30), so the forward record builds at no cost.
+- **GO to paper orders (when un-parked):** the operator creates the paper account. The risk is one SPY or TLT position for
+  one session a month.
 - **GO to real money (later):** ≥ 6 paper events whose mean net is > 0 and whose fills match the score-only
   prices within 2 bp. Treat the 25-year history as the evidence and the forward events as an execution check, since 6
   events cannot prove an edge on their own.
@@ -82,9 +89,9 @@ minutes, equally. The runs exist; nothing on the free feed tilts them.
 
 1. **Now:** freeze intraday entry research on the free feed, and record the bar (+5–11 bp of 3-minute edge) as the gate
    for any future entry idea.
-2. **Before 10/29:** operator creates the month-end paper account; the agent moves from score-only to paper orders.
-3. **Next 2–3 weeks:** if SIP is still wanted, pre-register *one* historical-SIP simulation (premarket momentum alerts,
-   or volume breakout + order flow as an add-on) against the +5 bp net bar. Buy the month only if it passes.
+2. **Month-end:** parked score-only (operator 10/22); it scores itself each month.
+3. **SIP:** no purchase. The volume breakout, the only lead near the bar, already failed its held-out SIP test (10/3).
+   A new signal family must show ≥ +5 bp net on free historical SIP first.
 4. **Day-hold:** read at 40 sessions as registered.
 5. **The held-out sample** (2026-01-14..04-24, unread) stays reserved for whichever candidate passes first.
 
