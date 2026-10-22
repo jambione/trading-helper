@@ -40,7 +40,8 @@ HOLD = 180
 READ_MAX_AGE = 30.0
 FILL_CODES = frozenset({" ", "@", "F"})          # amended (2): round lots only; any 'I' disqualifies
 BAR = 0.0005
-FLOOR_FILLS, FLOOR_DAYS, FILL_RATE_MIN = 300, 20, 0.30
+FLOOR_FILLS, FLOOR_DAYS, FILL_RATE_MIN = 150, 20, 0.30      # amended_2 (b): 150 fills (half A has 411 signals)
+STRATUM_MIN = 30                                            # amended_2 (e)
 DROP_MAX, DROP_GAP_MAX = 0.02, 0.02
 
 
@@ -73,12 +74,13 @@ def fill_time(trades: list, limit: float, shares: int, start: float, window: flo
     """Back of the queue: filled at the time the cumulative size of counting prints STRICTLY below `limit` (by at
     least `min_below`) reaches `shares`, within (start, start + window]. trades: (ts, price, size, codes, exchange)."""
     cum = 0.0
-    for ts, px, size, codes, exch in sorted(trades, key=lambda t: t[0]):
+    for ts, px, size, codes, exch, *_ in sorted(trades, key=lambda t: t[0]):     # cache rows also carry the tape
         if ts <= start or ts > start + window:
             continue
         if lit_only and str(exch) == "D":
             continue
-        if px < limit - min_below - 1e-12 and counts_for_fill(codes):
+        below = (px <= limit - min_below + 1e-9) if min_below > 0 else (px < limit - 1e-12)   # amended_2 (g)
+        if below and counts_for_fill(codes):
             cum += size
             if cum >= shares:
                 return ts
@@ -160,7 +162,7 @@ def grade_half(rows: list[dict], half: str) -> dict:
         a_ = [r for r in fills_in if r["spread_ticks"] == st]
         b_ = [r for r in rout if r["filled"] and r["spread_ticks"] == st]
         strata[st] = ((statistics.mean(x["r_mid"] for x in a_) - statistics.mean(x["r_mid"] for x in b_))
-                      if a_ and b_ else None)
+                      if len(a_) >= STRATUM_MIN and len(b_) >= STRATUM_MIN else None)     # amended_2 (e)
     paired = {}
     for day in {r["day"] for r in rin}:
         rs = [r for r in rin if r["day"] == day]
@@ -168,9 +170,7 @@ def grade_half(rows: list[dict], half: str) -> dict:
     nd = defaultdict(list)
     for r in fills_in:
         nd[(r["day"], r["sym"])].append(r["r_net"])
-    nd_day = defaultdict(list)
-    for (day, _s), v in nd.items():
-        nd_day[day].append(statistics.mean(v))
+    nd_all = [statistics.mean(v) for v in nd.values()]          # amended_2 (f): every name-day weighs the same
     contrib = Counter()
     for r in rin:
         contrib[r["sym"]] += r["r_net"]
@@ -183,7 +183,8 @@ def grade_half(rows: list[dict], half: str) -> dict:
             "fill_rate": len(fills_in) / len(rin) if rin else None,
             "per_signal": sig_mu, "per_signal_t": sig_t, "per_fill": pf_mu, "per_fill_t": pf_t, "per_fill_ub": ub975(pf),
             "gap": gap_mu, "gap_t": gap_t, "gap_strata": strata, "vs_market": _t(paired)[0],
-            "nameday_per_fill": _t({d: statistics.mean(v) for d, v in nd_day.items()})[0],
+            "nameday_per_fill": statistics.mean(nd_all) if nd_all else None,
+            "fill_days": len(pf),
             "drop_names": _t(day_means([r for r in rin if r["sym"] not in top_names], "r_net"))[0],
             "drop_days": _t({d: v for d, v in sig.items() if d not in top_days})[0],
             "out_fill_rate": (sum(r["filled"] for r in rout) / len(rout)) if rout else None,
@@ -191,25 +192,29 @@ def grade_half(rows: list[dict], half: str) -> dict:
 
 
 def half_verdict(g: dict) -> str:
+    """amended_2 (a): the t <= -2 FAIL comes before the floors; floors gate PASS only."""
+    if g["per_signal_t"] is not None and g["per_signal_t"] <= -2.0:
+        return "FAIL"
     if g["fills"] < FLOOR_FILLS or g["days"] < FLOOR_DAYS or g["per_signal_t"] is None:
         return "UNDERPOWERED"
-    if g["per_signal_t"] <= -2.0:
-        return "FAIL"
+    evaluated = [v for v in g["gap_strata"].values() if v is not None]
     ok = (g["per_signal"] > 0 and g["per_signal_t"] >= 2.0 and g["per_fill"] is not None and g["per_fill"] >= BAR
           and g["gap"] is not None and g["gap"] > 0 and g["gap_t"] is not None and g["gap_t"] >= 2.0
-          and all(v is not None and v > 0 for v in g["gap_strata"].values())
+          and evaluated and all(v > 0 for v in evaluated)
           and g["vs_market"] is not None and g["vs_market"] > 0 and g["fill_rate"] >= FILL_RATE_MIN
           and g["nameday_per_fill"] is not None and g["nameday_per_fill"] > 0
           and g["drop_names"] is not None and g["drop_names"] >= 0 and g["drop_days"] is not None and g["drop_days"] >= 0)
     return "PASS" if ok else "NOT_PASSED"
 
 
-def verdict(halves: list[str], ubs: list) -> str:
+def verdict(halves: list[str], ubs: list, fill_days: list | None = None) -> str:
+    """amended_2 (a): the per-fill upper-bound FAIL applies whenever each half has >= 2 fill-days, regardless of floors."""
     if "FAIL" in halves:
         return "FAIL"
     if all(h == "PASS" for h in halves):
         return "PASS"
-    if all(h != "UNDERPOWERED" for h in halves) and all(u is not None and u < BAR for u in ubs):
+    enough = all(n is not None and n >= 2 for n in (fill_days or [2] * len(ubs)))
+    if enough and all(u is not None and u < BAR for u in ubs):
         return "FAIL"
     return "UNDERPOWERED"
 
@@ -368,13 +373,15 @@ def main() -> None:
         tick = load_pkl(os.path.join(O.TICK_DIR, key + ".pkl"))
         oq = load_pkl(os.path.join(O.OUTCOME_DIR, key + ".pkl"))
         tr = load_pkl(os.path.join(TRADE_DIR, key + ".pkl"))
-        if oq is None or tr is None:
-            drops["not_fetched"] += 1
+        if oq is None or tr is None or not tr:
+            drops["not_fetched"] += 1                                   # amended_2 (d): an empty file is a fetch fault
+            drops[f"not_fetched_{e['g1']}"] += 1
             continue
         T = O.decision_ts(e["day"], e["m"])
         q_feat, q_out = entry_quote(tick["quotes"], T), O.last_quote(O.clean_quotes(oq), T + 1, READ_MAX_AGE)
-        if q_out is not None and (round(q_feat[1], 4), round(q_feat[2], 4)) != (round(q_out[1], 4), round(q_out[2], 4)):
-            drops["entry_quote_mismatch"] += 1
+        if q_out is None or (round(q_feat[1], 4), round(q_feat[2], 4)) != (round(q_out[1], 4), round(q_out[2], 4)):
+            drops["entry_quote_mismatch"] += 1                          # amended_2 (c)
+            drops[f"entry_quote_mismatch_{e['g1']}"] += 1
         r = simulate(e, tick["quotes"], oq, tr)
         if r["status"] != "ok":
             drops[r["status"]] += 1
@@ -387,14 +394,15 @@ def main() -> None:
             if ri["status"] == "ok":
                 info_rows[name].append({**e, **ri})
     n_pop = len(pop)
-    dropped = drops["no_exit_quote"]
-    share_in = drops["no_exit_quote_IN"] / max(1, sum(1 for e in pop if e["g1"] == "IN"))
-    share_out = drops["no_exit_quote_OUT"] / max(1, sum(1 for e in pop if e["g1"] == "OUT"))
-    if drops["not_fetched"] > DROP_MAX * n_pop or dropped > DROP_MAX * n_pop or abs(share_in - share_out) > DROP_GAP_MAX:
-        raise SystemExit(f"drop gate (amended 4): {dict(drops)}; IN {share_in:.3f} vs OUT {share_out:.3f}")
+    n_g = {g_: max(1, sum(1 for e in pop if e["g1"] == g_)) for g_ in ("IN", "OUT")}
+    for what in ("no_exit_quote", "not_fetched", "entry_quote_mismatch"):     # amended (4), amended_2 (c)(d)
+        share = {g_: drops[f"{what}_{g_}"] / n_g[g_] for g_ in ("IN", "OUT")}
+        if drops[what] > DROP_MAX * n_pop or abs(share["IN"] - share["OUT"]) > DROP_GAP_MAX:
+            raise SystemExit(f"gate {what}: {drops[what]} of {n_pop}; IN {share['IN']:.3f} vs OUT {share['OUT']:.3f}")
     graded = {h: grade_half(rows, h) for h in ("A", "B")}
     halves = {h: half_verdict(graded[h]) for h in ("A", "B")}
-    final = verdict([halves["A"], halves["B"]], [graded["A"]["per_fill_ub"], graded["B"]["per_fill_ub"]])
+    final = verdict([halves["A"], halves["B"]], [graded["A"]["per_fill_ub"], graded["B"]["per_fill_ub"]],
+                    [graded["A"]["fill_days"], graded["B"]["fill_days"]])
     info = {name: {h: {k: grade_half(rs, h)[k] for k in ("fill_rate", "per_signal", "per_fill", "gap")} for h in ("A", "B")}
             for name, rs in info_rows.items()}
     res = {"verdict": final, "halves": halves, "graded": graded, "drops": dict(drops), "info": info,

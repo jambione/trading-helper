@@ -79,3 +79,16 @@ def test_grade_and_verdict():
     assert F.verdict(["PASS", "PASS"], [0.002, 0.002]) == "PASS"
     assert F.verdict(["NOT_PASSED", "NOT_PASSED"], [0.0003, 0.0004]) == "FAIL"  # upper bound < 5 bp both halves
     assert F.verdict(["PASS", "UNDERPOWERED"], [0.002, None]) == "UNDERPOWERED"
+
+
+def test_six_field_cache_rows_and_one_cent_cell():
+    tr = [(105.0, 19.99, 200, ["@"], "Q", "C")]                           # the fetch stores (ts, px, size, codes, exch, tape)
+    assert F.fill_time(tr, 20.00, 100, 100.0, 30) == 105.0
+    assert F.fill_time(tr, 20.00, 100, 100.0, 30, min_below=0.01) == 105.0   # exactly 1c below counts (amended_2 g)
+
+
+def test_fail_routes_ignore_floors():
+    g = {"per_signal_t": -2.3, "fills": 40, "days": 25}
+    assert F.half_verdict(g) == "FAIL"                                     # t <= -2 before the floors
+    assert F.verdict(["UNDERPOWERED", "NOT_PASSED"], [0.0002, 0.0003], [10, 30]) == "FAIL"
+    assert F.verdict(["UNDERPOWERED", "NOT_PASSED"], [0.0002, 0.0003], [1, 30]) == "UNDERPOWERED"
