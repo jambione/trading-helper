@@ -38,7 +38,7 @@ def bar_context(rows_np, m: int) -> dict:
         mm = int(x[0])
         if mm < RTH0:
             continue
-        if open0 is None:
+        if open0 is None and mm <= m - 1:
             open0 = float(x[1])
         if mm <= m - 2:
             hi = float(x[2]) if hi is None else max(hi, float(x[2]))
@@ -53,7 +53,8 @@ def window_extras(tick: dict, T: float) -> dict:
     (late TRF excluded) in [T - 60 s, T - 30 s)."""
     qs = OF.clean_quotes(tick["quotes"])
     sg = SB.sign_trades(tick["trades"], qs, T)
-    max_px = max((x[1] for x in sg), default=None)
+    vis = [x for x in sg if not (x[5] == SB.TRF and x[0] >= T - SB.TRF_LATE_S)]     # stage2_amended (3)
+    max_px = max((x[1] for x in vis), default=None)
     early = [x for x in sg if x[0] < T - SPLIT_S and x[3] == 1]
     iso = [x for x in early if SB.ISO in x[4]]
     blk = [x for x in early if x[1] * x[2] >= SB.BLOCK_USD and not (x[5] == SB.TRF and x[0] >= T - SB.TRF_LATE_S)]
@@ -65,9 +66,12 @@ def window_extras(tick: dict, T: float) -> dict:
 
 
 def conditions(r: dict, hyp: str) -> dict:
-    c1 = r.get("max_px") is not None and r.get("hod_before") is not None and r["max_px"] >= r["hod_before"]
-    c2 = (r.get("vwap") is not None and r.get("open0") is not None and r["mid_T"] > r["vwap"]
-          and r["mid_T"] > r["open0"])
+    """None = not computable (no SIP bars / no prints): the entry leaves that cell (stage2_amended (4))."""
+    bars = r.get("has_bars", True)
+    c1 = (None if not bars or r.get("max_px") is None or r.get("hod_before") is None
+          else r["max_px"] >= r["hod_before"])
+    c2 = (None if not bars or r.get("vwap") is None or r.get("open0") is None
+          else (r["mid_T"] > r["vwap"] and r["mid_T"] > r["open0"]))
     early = r.get("early_buy_iso_vwp" if hyp == "H1" else "early_buy_blk_vwp")
     c3 = early is not None and r["mid_T"] >= early
     return {"C1_LOCATION": c1, "C2_CONTEXT": c2, "C3_FOLLOW_THROUGH": c3}
@@ -76,7 +80,26 @@ def conditions(r: dict, hyp: str) -> dict:
 def combo_label(r: dict, hyp: str, cell: str) -> str | None:
     if r["g"][hyp] is None:
         return None
-    return "IN" if (r["g"][hyp] == "IN" and r["cond"][hyp][cell]) else "OUT"
+    c = r["cond"][hyp][cell]
+    if c is None:
+        return None
+    return "IN" if (r["g"][hyp] == "IN" and c) else "OUT"
+
+
+def guard_labels(hyp: str, cell: str) -> tuple:
+    """stage2_amended (1): (a) COMBO vs IN-without-condition; (b) COMBO vs condition-without-IN."""
+    def a(r):
+        c = r["cond"][hyp][cell]
+        if r["g"][hyp] != "IN" or c is None:
+            return None
+        return "IN" if c else "OUT"
+
+    def b(r):
+        c = r["cond"][hyp][cell]
+        if r["g"][hyp] is None or not c:
+            return None
+        return "IN" if r["g"][hyp] == "IN" else "OUT"
+    return a, b
 
 
 # ── grading (reuses stage 1's statistic) ─────────────────────────────────────
@@ -96,22 +119,33 @@ def t_crit(days: int, k: int) -> float | None:
     return S.t_ppf(1 - 0.025 / k, days - 1) if days >= 2 else None
 
 
-def grade_cell(rows: list[dict], hyp: str, cell: str, k: int) -> dict:
+def grade_cell(rows: list[dict], hyp: str, cell: str, k: int = 6) -> dict:
     rs = relabel(rows, hyp, cell)
     mu, t, days, ub = SB.primary(rs, hyp)
     dd, dn = SB.drop3(rs, hyp)
+    la, lb = guard_labels(hyp, cell)
+    ga = SB.strat_lift(rows, hyp, SB.PRIMARY_STRAT[hyp], "y", label=la)
+    gb = SB.strat_lift(rows, hyp, SB.PRIMARY_STRAT[hyp], "y", label=lb)
     return {"lift": mu, "t": t, "days": days, "ub": ub, "t_crit": t_crit(days, k),
             "n_combo": sum(1 for r in rs if r["g"][hyp] == "IN" and r.get("y") is not None),
             "cost_check": SB.cost_check(rs, hyp), "latency_lag1": SB.primary(rs, hyp, "lag1_y")[0],
-            "drop_days": dd, "drop_names": dn}
+            "drop_days": dd, "drop_names": dn, "nameday": SB.nameday_lift(rs, hyp),
+            "bar_entry_lift": SB.primary(rs, hyp, "bar_y")[0], "bar_placebo_lift": SB.primary(rs, hyp, "placebo_y")[0],
+            "guard_vs_in_only": ga[:3], "guard_vs_condition_only": gb[:3]}
 
 
 def cell_verdict(g: dict) -> str:
     if g["t"] is not None and g["t"] <= -2:
         return "FAIL"
-    if g["n_combo"] < FLOOR_IN or g["days"] < FLOOR_DAYS or g["t"] is None:
+    if (g["n_combo"] < FLOOR_IN or g["days"] < FLOOR_DAYS or g["t"] is None
+            or g["guard_vs_in_only"][2] < FLOOR_DAYS or g["guard_vs_condition_only"][2] < FLOOR_DAYS):
         return "UNDERPOWERED"
-    ok = (g["lift"] >= SB.LIFT_BAR and g["t"] >= g["t_crit"] and g["cost_check"] is not None and g["cost_check"] > 0
+    ok = (g["guard_vs_in_only"][0] is not None and g["guard_vs_in_only"][0] >= 0
+          and g["guard_vs_condition_only"][0] is not None and g["guard_vs_condition_only"][0] >= 0
+          and g["nameday"] is not None and g["nameday"] > 0
+          and g["bar_placebo_lift"] is not None and g["bar_placebo_lift"] < SB.PLACEBO_MAX
+          and g["bar_entry_lift"] is not None and g["bar_entry_lift"] - g["bar_placebo_lift"] >= SB.LIFT_BAR
+          and g["lift"] >= SB.LIFT_BAR and g["t"] >= g["t_crit"] and g["cost_check"] is not None and g["cost_check"] > 0
           and g["latency_lag1"] is not None and g["latency_lag1"] >= 0
           and g["drop_days"] is not None and g["drop_days"] >= 0 and g["drop_names"] is not None and g["drop_names"] >= 0)
     return "PASS" if ok else "NOT_PASSED"
@@ -161,18 +195,23 @@ def main() -> None:
         return
     smp = SB.jload("sample.json")["entries"]
     rows, _st = SB.build_rows(smp, with_outcomes=True)
-    SB.assign(rows)
+    cuts = SB.assign(rows)
+    cnt = SB.jload("count.json")
+    if json.loads(json.dumps(cuts)) != cnt["cuts"] or sorted(OF.entry_key(r) for r in rows) != cnt["row_keys"]:
+        raise SystemExit("rows or cuts differ from stage 1's count step")
     by_day = defaultdict(list)
     for r in rows:
         by_day[r["day"]].append(r)
     for day, rs in by_day.items():
         raw = H.load_raw("sip", day)
         for r in rs:
-            r.update(bar_context(raw[r["sym"]], r["m"]) if r["sym"] in raw else {})
+            r["has_bars"] = r["sym"] in raw
+            r.update(bar_context(raw[r["sym"]], r["m"]) if r["has_bars"] else {})
             tick = pickle.load(open(os.path.join(SB.TICK_DIR, OF.entry_key(r) + ".pkl"), "rb"))
             r.update(window_extras(tick, OF.decision_ts(day, r["m"])))
             r["cond"] = {h: conditions(r, h) for h in ("H1", "H2")}
-    k = len(hyps) * len(CELLS)
+    k = 6                                                  # stage2_amended (5): fixed
+    res["no_bars"] = sum(1 for r in rows if not r["has_bars"])
     for hyp in hyps:
         for cell in CELLS:
             gs = {h: grade_cell([r for r in rows if r["half"] == h], hyp, cell, k) for h in ("A", "B")}

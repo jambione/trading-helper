@@ -19,6 +19,7 @@ def test_bar_context_uses_only_bars_before_the_window():
             [573, 11.0, 12.0, 10.9, 11.8, 999]]          # minute m: never used
     c = S2.bar_context(bars, 573)
     assert c["hod_before"] == 10.8 and c["open0"] == 10.0
+    assert S2.bar_context(bars, 570)["open0"] is None              # no RTH bar at or before m - 1
     assert abs(c["vwap"] - (10.2 * 100 + 10.6 * 300 + 11.0 * 200) / 600) < 1e-12
 
 
@@ -36,6 +37,10 @@ def test_window_extras_and_conditions():
     assert not S2.conditions(dict(r, hod_before=10.08), "H1")["C1_LOCATION"]
     assert not S2.conditions(dict(r, mid_T=10.0), "H1")["C3_FOLLOW_THROUGH"]
     assert not S2.conditions(dict(r, open0=10.1), "H1")["C2_CONTEXT"]
+    nb = S2.conditions(dict(r, has_bars=False), "H1")
+    assert nb["C1_LOCATION"] is None and nb["C2_CONTEXT"] is None
+    late = trades + [(T - 5, 10.20, 50, ["@"], "C", "D")]            # a late TRF print is not visible at T
+    assert S2.window_extras({"trades": late, "quotes": qs}, T)["max_px"] == 10.07
 
 
 def test_combo_label_and_gate():
@@ -49,7 +54,7 @@ def test_combo_label_and_gate():
     assert S2.qualifying({"graded": {}}) == []
 
 
-def _rows(lift, seed=4):
+def _rows(lift, seed=4, cond_only=0.0):
     rng = random.Random(seed)
     rows = []
     for d in range(25):
@@ -57,9 +62,10 @@ def _rows(lift, seed=4):
         for k in range(60):
             g = "IN" if k % 3 == 0 else "OUT"
             cond = k % 2 == 0
-            y = (lift if (g == "IN" and cond) else 0.0) + rng.gauss(0, 0.002)
+            y = (lift if (g == "IN" and cond) else 0.0) + (cond_only if cond else 0.0) + rng.gauss(0, 0.002)
             rows.append({"day": day, "sym": f"S{k % 20}", "half": "A", "g": {"H1": g, "H2": g}, "ofi_t": (k // 3) % 3,
-                         "notl_t": (k // 9) % 3, "y": y, "spread": 0.0003, "lag1_y": y * 0.5,
+                         "notl_t": (k // 9) % 3, "y": y, "spread": 0.0003, "lag1_y": y * 0.5, "bar_y": y,
+                         "placebo_y": rng.gauss(0, 0.002),
                          "cond": {"H1": {c: cond for c in S2.CELLS}}})
     return rows
 
@@ -71,5 +77,9 @@ def test_grade_cell_and_verdicts():
     assert S2.cell_verdict(g) == "PASS"
     assert S2.cell_verdict(dict(g, n_combo=299)) == "UNDERPOWERED"
     assert S2.cell_verdict(S2.grade_cell(_rows(-0.007), "H1", "C1_LOCATION", 3)) == "FAIL"
+    # the skeptic's case: no sweep effect, the condition alone adds 12 bp -> must NOT pass
+    gc = S2.grade_cell(_rows(0.0, cond_only=0.0012), "H1", "C1_LOCATION")
+    gc["n_combo"] = 400
+    assert gc["guard_vs_condition_only"][0] < 0.0005 and S2.cell_verdict(gc) != "PASS"
     assert S2.final(["PASS", "PASS"], [0.01, 0.01], [25, 25]).startswith("PASS_STAGE2")
     assert S2.final(["NOT_PASSED", "UNDERPOWERED"], [0.0003, 0.0004], [25, 25]) == "FAIL"
