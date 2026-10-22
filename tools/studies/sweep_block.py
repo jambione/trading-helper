@@ -168,9 +168,10 @@ def features(tick: dict, T: float) -> dict:
     qs = OF.clean_quotes(tick["quotes"])
     sg = sign_trades(tick["trades"], qs, T)
     vol = sum(x[2] for x in sg)
-    notl = sum(x[1] * x[2] for x in sg)
+    seen = [x for x in sg if not (x[5] == TRF and x[0] >= T - TRF_LATE_S)]     # amended (5): late TRF not visible at T
+    notl = sum(x[1] * x[2] for x in seen)
     ok = len(sg) >= OF.MIN_SIGNED and vol > 0
-    blocks = [x for x in sg if x[1] * x[2] >= BLOCK_USD and not (x[5] == TRF and x[0] >= T - TRF_LATE_S)]
+    blocks = [x for x in seen if x[1] * x[2] >= BLOCK_USD]
     q = OF.last_quote(qs, T, OF.READ_MAX_AGE)
     return {"ofi60": sum(x[2] * x[3] for x in sg) / vol if ok else None,
             "iso60": sum(x[2] * x[3] for x in sg if ISO in x[4]) / vol if ok else None,
@@ -293,6 +294,7 @@ def grade(rows: list[dict], hyp: str) -> dict:
          "cost_check": cost_check(rows, hyp), "nameday": nameday_lift(rows, hyp),
          "latency_lag1": primary(rows, hyp, "lag1_y")[0], "bar_entry_lift": bar_entry, "bar_placebo_lift": bar_plc,
          "drop_days": dd, "drop_names": dn, "unstratified": strat_lift(rows, hyp, None, "y")[:3]}
+    g["within_ofi"] = [strat_lift([r for r in rows if r["ofi_t"] == k], hyp, None, "y")[0] for k in range(3)]
     if hyp == "H1":
         g["within_notional"] = [strat_lift([r for r in rows if r["notl_t"] == k], hyp, None, "y")[0] for k in range(3)]
     else:
@@ -305,7 +307,7 @@ def half_verdict(g: dict, hyp: str) -> str:
         return "FAIL"
     if g["n_in"] < FLOORS[hyp][0] or g["days"] < FLOORS[hyp][1] or g["t"] is None:
         return "UNDERPOWERED"
-    guards = (g["within_notional"] if hyp == "H1" else [g["buy_vs_sell_blocks"]])
+    guards = g["within_ofi"] + (g["within_notional"] if hyp == "H1" else [g["buy_vs_sell_blocks"]])
     ok = (g["lift"] >= LIFT_BAR and g["t"] >= g["t_crit"]
           and g["cost_check"] is not None and g["cost_check"] > 0
           and all(x is not None and x >= 0 for x in guards)
@@ -338,9 +340,10 @@ def control_minute(sym: str, day: str, m: int, sip: dict) -> int | None:
 
 
 def placebo_minute(sym: str, day: str, m: int, sip: dict) -> int | None:
-    """amended (3): same clock hour, outside [m - 1, m + 4], bars at k and k + 2."""
+    """amended (3) / amended_2 (2): same clock hour, outside [m - 3, m + 4] (no overlap with the feature bar m - 1 or
+    the entry bars), bars at k and k + 2."""
     h0 = m // 60 * 60
-    elig = [k for k in range(h0, h0 + 60) if not (m - 1 <= k <= m + 4) and k + HOLD - 1 < S.RTH_END
+    elig = [k for k in range(h0, h0 + 60) if not (m - 3 <= k <= m + 4) and k + HOLD - 1 < S.RTH_END
             and k in sip and k + HOLD - 1 in sip]
     if not elig:
         return None
@@ -429,7 +432,8 @@ def prestep_diag(tick: dict, T: float) -> dict:
             d["iso_same_ts_as_quote"] += ts in qset
             if i >= 0:
                 b, a = qs[i][1], qs[i][2]
-                d["iso_at_or_above_ask" if px >= a else "iso_at_or_below_bid" if px <= b else "iso_inside"] += 1
+                d["iso_through_ask" if px > a else "iso_at_ask" if px == a else "iso_through_bid" if px < b
+                  else "iso_at_bid" if px == b else "iso_inside"] += 1
         if px * size >= BLOCK_USD:
             d["blocks"] += 1
             d["blocks_trf"] += (len(tr) > 5 and tr[5] == TRF)
@@ -499,8 +503,11 @@ def main() -> None:
         return
     rows, st = build_rows(smp, with_outcomes=a.score)
     cuts = assign(rows)
+    if st["not_fetched"] > 0.02 * len(smp):
+        raise SystemExit(f"{st['not_fetched']} of {len(smp)} entries not fetched (> 2%); finish --fetch-features")
+    keys = sorted(OF.entry_key(r) for r in rows)
     if not a.score:
-        cnt = {"count": count_step(rows), "cuts": cuts, "drops": dict(st), "rows": len(rows),
+        cnt = {"count": count_step(rows), "cuts": cuts, "drops": dict(st), "rows": len(rows), "row_keys": keys,
                "module_sha256": module_shas()}
         print(json.dumps(cnt, indent=1, default=str))
         print(write("count.json", cnt))
@@ -510,6 +517,8 @@ def main() -> None:
     cnt = jload("count.json")
     if not cnt or cnt.get("module_sha256") != module_shas():
         raise SystemExit("count.json missing or written by different code")
+    if json.loads(json.dumps(cuts)) != cnt["cuts"] or keys != cnt["row_keys"]:
+        raise SystemExit("rows or cuts differ from the count step")
     res = {"verdicts": {}, "halves": {}, "graded": {}, "drops": dict(st)}
     for hyp in ("H1", "H2"):
         if not (cnt["count"][f"{hyp} A"]["power_ok"] and cnt["count"][f"{hyp} B"]["power_ok"]):

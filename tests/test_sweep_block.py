@@ -30,6 +30,7 @@ def test_features_iso_and_blocks_with_late_trf():
     f = SB.features({"trades": trades, "quotes": qs}, T)
     vol = 400 + 400 + 20_000 + 20_000
     assert abs(f["iso60"] - 400 / vol) < 1e-12 and f["n_blocks"] == 1
+    assert abs(f["notional60"] - (10.02 * 800 + 9.98 * 20_000)) < 1e-6        # the late TRF print is not in it
     assert f["blk60"] < 0 and abs(f["ofi60"] - (800 - 20_000 + 20_000) / vol) < 1e-12 and f["mid_T"] == 10.0
 
 
@@ -47,7 +48,10 @@ def test_control_and_placebo_minutes():
     c = SB.control_minute("A", "d", 700, sip)
     assert 704 <= c <= 760
     p = SB.placebo_minute("A", "d", 700, sip)
-    assert 660 <= p <= 719 and not (699 <= p <= 704)
+    assert 660 <= p <= 719 and not (697 <= p <= 704)
+    for m in range(663, 716):
+        q = SB.placebo_minute("A", "d", m, sip)
+        assert q is None or not (m - 3 <= q <= m + 4)
 
 
 def _rows(lift, days=25, seed=3):
@@ -58,25 +62,30 @@ def _rows(lift, days=25, seed=3):
         for k in range(60):
             g = "IN" if k % 3 == 0 else "OUT"
             y = (lift if g == "IN" else 0.0) + rng.gauss(0, 0.002)
-            rows.append({"day": day, "sym": f"S{k % 20}", "half": "A", "g": {"H1": g, "H2": g}, "ofi_t": k % 3 if k % 2 else (k + 1) % 3,
-                         "notl_t": (k // 3) % 3, "blk_side": "BUY" if g == "IN" else "SELL", "y": y, "spread": 0.0003,
+            rows.append({"day": day, "sym": f"S{k % 20}", "half": "A", "g": {"H1": g, "H2": g}, "ofi_t": (k // 3) % 3,
+                         "notl_t": (k // 9) % 3, "blk_side": "BUY" if g == "IN" else "SELL", "y": y, "spread": 0.0003,
                          "bar_y": y, "lag1_y": y * 0.5, "placebo_y": rng.gauss(0, 0.002), "ctrl": rng.gauss(0, 0.002)})
     return rows
 
 
 def test_stratified_lift_and_verdicts():
-    rows = _rows(0.004)
+    rows = _rows(0.007)
     mu, t, days, ub = SB.primary(rows, "H1")
-    assert days == 25 and abs(mu - 0.004) < 0.001 and t > 4
+    assert days == 25 and abs(mu - 0.007) < 0.001 and t > 4
     g = SB.grade(rows, "H1")
     g["n_in"] = 1500
     assert SB.half_verdict(g, "H1") == "PASS"
     assert SB.half_verdict(dict(g, bar_placebo_lift=0.0003), "H1") == "NOT_PASSED"
     assert SB.half_verdict(dict(g, latency_lag1=-0.0001), "H1") == "NOT_PASSED"
     assert SB.half_verdict(dict(g, n_in=999), "H1") == "UNDERPOWERED"
+    assert len(g["within_ofi"]) == 3
+    assert SB.half_verdict(dict(g, within_ofi=[0.001, -0.0001, 0.002]), "H1") == "NOT_PASSED"
     g2 = SB.grade(rows, "H2")
     assert g2["buy_vs_sell_blocks"] > 0.003
-    assert SB.half_verdict(SB.grade(_rows(-0.004), "H1"), "H1") == "FAIL"
+    assert SB.half_verdict(SB.grade(_rows(-0.007), "H1"), "H1") == "FAIL"
+    g4 = SB.grade(_rows(0.0004), "H1")
+    g4["n_in"] = 1500
+    assert SB.half_verdict(g4, "H1") == "NOT_PASSED"          # +4 bp cannot clear entry - placebo >= 5 bp
     assert SB.final(["PASS", "PASS"], [0.01, 0.01], [25, 25]).startswith("PASS_STAGE1")
     assert SB.final(["NOT_PASSED", "NOT_PASSED"], [0.0004, 0.0002], [25, 25]) == "FAIL"
     cnt = SB.count_step(rows)

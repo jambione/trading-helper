@@ -51,5 +51,17 @@
    "(10) The IEX-only cell is moved to an if_pass step: IEX trades signed against IEX quotes (feed = iex fetch), run only after a PASS_STAGE1.",
    "(11) LATENCY guard on bars (no extra fetch): the lift with entry at the open of m + 1 and exit at the close of m + 3 must be >= 0 in both halves (replaces the T + 30 s quote check)."
   ]
+ },
+ "amended_2": {
+  "when": "2026-10-22, before the count step and before any outcome is fetched, after result-skeptic code review FIX FIRST.",
+  "changes": [
+   "(1) The 'lift >= 0 within each OFI60 tercile' guard applies to BOTH H1 and H2 (as the PASS text says), computed and enforced in the script.",
+   "(2) The bar placebo minute excludes [m - 3, m + 4] (k = m - 3 / m - 2 bars overlapped the feature bar m - 1 and the entry bar m).",
+   "(3) notional60 and the blk60 denominator exclude off-exchange ('D') prints in [T - 10 s, T), like the blocks themselves.",
+   "(4) The count step refuses when > 2% of the sample is not fetched and stores the row keys; --score refuses unless its rows and cuts equal the count step's.",
+   "(5) PRE-STEP READING (50 entries, outcome-blind), recorded: ISO prints 2,394 - at the ask 31%, at the bid 27%, inside the strictly-earlier quote 39%, through the ask 1%, through the bid 2%; 5% share a timestamp with a quote update; 10% tick-signed. Blocks (>= $100k): 26, of which 85% off-exchange ('D'), 27% tick-signed. CALL: acceptable - inside prints are signed by their side of the mid (90% quote-signed); the 39% inside share (hidden / midpoint liquidity at the executing venue, or trade-vs-quote clock skew) is declared as noise in the ISO side and reported. H2 is in practice an OFF-EXCHANGE block test and is reported as such.",
+   "(6) TIMING: the feature fetch started 11:28 ET during market hours, against the registered 'after 16:15 ET' line. The line's reason (the desk shares the Alpaca budget) does not hold: the data-only account's key differs from all three desk keys, and the desk logged 0 rate-limit errors during the fetch. The fetch reads no outcome. The outcome fetch may also run any time on the data-only account.",
+   "(7) POWER NOTE (write-up): a PASS needs ~12 point conditions at once (entry - placebo >= 5 bp alone holds about half the time at a true 5 bp edge), so the real power is below the projected MDE."
+  ]
  }
 }
