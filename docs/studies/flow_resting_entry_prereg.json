@@ -1,0 +1,36 @@
+{
+ "study": "Flow-conditioned resting entries: when buy-side trade flow is strong (order-flow pilot G1), does a buy limit resting at the bid (cancelled if not filled) turn the desk's pre-square entry into a profit after costs, and does the flow condition cut the adverse selection that sank plain resting entries on 10/3?",
+ "registered_at": "2026-10-22, before any script, fetch or outcome for this design",
+ "registered_before_results": true,
+ "origin": "Operator 10/22 asked for an entry 'layer' with real impact. The exit study put the bar at about +5 to +11 bp of 3-minute entry edge, roughly half of it the spread. Two measured pieces: (1) RESTING_ENTRY_2026-10-03: a bid/30 s resting entry beat market entries in all 16 cells (+5 to +13 bp per signal) mostly by skipping losers, but filled trades lost -10 to -16 bp (adverse selection: a resting bid fills on dips); FAIL as an edge. (2) ORDER_FLOW_PILOT_2026-10-21: SIP trade flow (G1) predicts +1.5 to +2 bp at 3 minutes, t ~3.5 in both halves, robust. Untested: resting ONLY when buyers are lifting the ask, so a fill is less likely to be the start of a drop.",
+ "prior": "~15-20% (operator-facing estimate 10/22). The likely failure: the flow condition and the fill condition fight (strong buying means fewer trades print below the bid, so fills dry up), or fills still come on the dips.",
+ "population": "The order-flow pilot's 15,563 pre-square entries (features.json: warehouse 2026-05-11 .. 10-15, 400-name hist sample, decision minute m = onset + 1, 10:00-15:27), restricted to entries whose entry spread (last clean SIP quote <= T + 1 s) is <= 0.05% of the mid (the desk's live cap). REUSE DECLARED: their market-entry 3-minute outcomes were read for G1-G3 (order-flow pilot); the resting-fill outcome is new but not independent of them. Only the held-out confirmation can make a claim.",
+ "orders": {
+  "size": "shares = floor($2,250 / the entry mid at T + 1 s) (the desk's per-trade sizing); entries where that is < 1 share are dropped.",
+  "limit": "a buy limit at the SIP bid of the last clean quote <= T + 1 s, posted at T + 1 s.",
+  "fill_rule": "FILLED at the limit price at the first time tf in (T + 1 s, T + 1 s + W] when the cumulative size of round-lot SIP trades printed STRICTLY BELOW the limit (kept by the order-flow pilot's trade keep-list, amended_3) reaches our size (we are at the back of the queue: a print below our price means the queue at our price cleared). Not filled by T + 1 + W: cancelled (no trade).",
+  "exit": "hold 180 s from tf; sell at the bid of the last clean quote <= tf + 180 s (<= 30 s old; else the fill is dropped and counted). Net per fill = exit bid / limit - 1.",
+  "market_comparison": "the same signal entered at the ask at T + 1 s and sold at the bid at T + 1 s + 180 s (the order-flow pilot's net), per signal."
+ },
+ "arms": {
+  "PRIMARY R_G1": "resting bid, W = 30 s, on G1 = IN entries (OFI60 top tercile, features.json cut and tie rule).",
+  "R_OUT": "the same resting rule on G1 = OUT entries (the adverse-selection comparison).",
+  "M_G1": "market entry on G1 = IN entries."
+ },
+ "measures": {
+  "per_signal": "net per signal = net per fill if filled, 0 if cancelled; day-equal mean, day-clustered t (df = days - 1).",
+  "per_fill": "mean net of filled trades, day-equal.",
+  "adverse_selection_gap": "per-fill net of R_G1 minus per-fill net of R_OUT, per day (days with >= 3 fills each side), day-equal, day-clustered t.",
+  "fill_rate": "fills / signals per arm (opens matter: the book-open standard asks >= 1 open per 10 minutes)."
+ },
+ "pass": "In BOTH halves (A <= 2026-07-29 < B): R_G1 per-signal net > 0 with t >= 2.0; R_G1 per-fill net > 0; adverse_selection_gap > 0 with t >= 2.0; R_G1 per-signal net > M_G1 per-signal net (paired per day); fill rate >= 30%; >= 300 fills and >= 20 days per half; name-day-equal per-fill net > 0; dropping the 3 best names and (separately) the 3 best days keeps R_G1 per-signal net >= 0. FAIL: R_G1 per-signal net with t <= -2 in a half, or its 97.5% upper bound < 0 in both halves. Otherwise UNDERPOWERED.",
+ "multiplicity": "One primary test (R_G1 per-signal profit); the gap and the market comparison are required conditions, not separate claims.",
+ "power": "Outcome-blind count step before any trade print after T + 1 s is read: R_G1 / R_OUT signal counts and days per half after the spread cap and the size rule; projected per-signal SE from the market arm's same-name control-minute 3-bar SIP bar returns (as the order-flow pilot), scaled by an assumed 50% fill rate (stated as an approximation).",
+ "data": "SIP trades over [T + 1 s, T + 1 s + 120 s] per entry, fetched paged from the data-only account into a per-entry cache (resume, <= 150 requests/min, abort if > 2% of entries fail); quotes come from the pilot's cached outcome window [T + 1 - 30 s, T + 1 + 300 s], which covers tf + 180 s whenever tf <= T + 1 + 120 s. About 15,000 requests (~2-3 hours). No spend.",
+ "information_only": ["W = 10 s and 60 s", "limit at the mid (rounded down to the cent)", "G3 (flow AND book imbalance) and G2 alone as the condition", "the live exit replay (exit_capture's walk) on R_G1 fills instead of the fixed 180 s hold", "fill quality by how far below the limit the filling prints were", "by hour of day"],
+ "confirmation": "A PASS is confirmed unchanged on the reserved held-out sample (ai_reports/warehouse_confirm, 2026-01-14 .. 04-24): pre-square entries and features drawn there as the pilot (seed tag 'flow-resting-confirm'), ticks fetched the same way; LEAD only if R_G1 per-signal net > 0 with one-sided t >= 1.96 and the gap > 0. The held-out sample goes to whichever registered idea passes first.",
+ "live_feasibility": "Declared: live, G1 needs SIP trade signing in real time (paid SIP) and a resting order on the live account; on IEX-only data the flow read is a separate if_pass step of the order-flow pilot. A PASS here is evidence for the SIP month under the memo's rule (a candidate beating the bar on historical SIP first).",
+ "no_retuning": "the bid limit, W = 30 s, the back-of-queue fill rule, the 180 s hold, $2,250 sizing, the spread cap, the G1 cut and the bars are fixed.",
+ "declared_deviations": ["back-of-queue fills are conservative; a real order posted earlier could fill sooner", "SIP prints only (no odd-lot-only fills; odd lots are kept for the size count only if the keep-list keeps them)", "historical paper fills ignore our own order's effect on the book"],
+ "script": "tools/studies/flow_resting_entry.py (to be written): --fetch-trades, count step, --score after a result-skeptic READY, --confirm."
+}
