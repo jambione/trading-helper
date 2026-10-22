@@ -10,8 +10,9 @@ warehouse sample over 110 sessions.
   --triggers   onsets on every minute, refractory, then eligibility -> triggers.json (no outcome)
   --fetch-p1   SIP trades [T - 60 s, T) and quotes [T - 120 s, T + 1 s] for every P1 trigger (data account)
   (default)    count step (spread cap on P1, floors, x availability, projected MDE from control returns) -> count.json
-  --placebo    P2 pseudo-onsets in each trigger's clock hour vs their own d control -> placebo.json (amended_2 (4))
-  --score      verdicts; refuses without --skeptic-ready, a passed placebo and matching module shas
+  --placebo    a paired pseudo-onset per trigger in its clock hour; gate = P2 pseudo lift_x -> placebo.json (amended_3)
+  --score      verdicts on placebo-adjusted lift_d (amended_3) and x; refuses without --skeptic-ready, a passed placebo
+               and matching module shas
 """
 from __future__ import annotations
 
@@ -165,40 +166,65 @@ def t_crit2(days: int) -> float | None:
     return S.t_ppf(1 - 0.025 / N_TESTS, days - 1) if days >= 2 else None
 
 
-def lift(rows: list[dict], a: str, c: str) -> tuple:
-    per = defaultdict(list)
-    for r in rows:
-        if r["o"].get(a) is not None and r["o"].get(c) is not None:
-            per[r["day"]].append(r["o"][a] - r["o"][c])
-    means = {d: statistics.mean(v) for d, v in per.items() if v}
+def _diff(r: dict, a: str, c: str, key: str = "o") -> float | None:
+    o = r.get(key) or {}
+    return o[a] - o[c] if (o.get(a) is not None and o.get(c) is not None) else None
+
+
+def _day_stats(means: dict) -> tuple:
     mu, t, n = O._day_t(means)
     xs = list(means.values())
     se = statistics.stdev(xs) / math.sqrt(len(xs)) if len(xs) >= 2 else None
     ub = mu + S.t_ppf(0.975, n - 1) * se if (mu is not None and se) else None
-    return mu, t, n, ub, means, sum(len(v) for v in per.values())
+    return mu, t, n, ub
+
+
+def lift(rows: list[dict], a: str, c: str, key: str = "o") -> tuple:
+    per = defaultdict(list)
+    for r in rows:
+        v = _diff(r, a, c, key)
+        if v is not None:
+            per[r["day"]].append(v)
+    means = {d: statistics.mean(v) for d, v in per.items() if v}
+    return (*_day_stats(means), means, sum(len(v) for v in per.values()))
+
+
+def adj_lift(rows: list[dict], a: str = "arm", c: str = "ctrl", unit=lambda r: r["day"]) -> tuple:
+    """amended_3 (1): per unit (a day, or a name-day), mean trigger (a - c) minus mean paired pseudo-onset (a - c);
+    a unit needs both. Returns (mu, t, n_units, ub, means, n_triggers); t / ub are day-clustered when unit = day."""
+    tr, ps = defaultdict(list), defaultdict(list)
+    for r in rows:
+        v, w = _diff(r, a, c, "o"), _diff(r, a, c, "po")
+        if v is not None:
+            tr[unit(r)].append(v)
+        if w is not None:
+            ps[unit(r)].append(w)
+    means = {u: statistics.mean(tr[u]) - statistics.mean(ps[u]) for u in tr if ps.get(u)}
+    return (*_day_stats(means), means, sum(len(tr[u]) for u in means))
 
 
 def grade(rows: list[dict]) -> dict:
-    d_mu, d_t, n_days, d_ub, d_means, n = lift(rows, "arm", "ctrl")
+    """lift_d / t_d / ub_d and every d-based check are placebo-adjusted (amended_3); x is unchanged."""
+    d_mu, d_t, n_days, d_ub, _d_means, n = adj_lift(rows)
     x_mu, x_t, x_days, x_ub, _, nx = lift(rows, "arm", "cross")
+    raw_mu, raw_t = lift(rows, "arm", "ctrl")[:2]
     net = O._day_t({d: statistics.mean(v) for d, v in _by_day(rows, "arm").items()})[0]
-    nd = defaultdict(list)
-    for r in rows:
-        if r["o"]["arm"] is not None and r["o"]["ctrl"] is not None:
-            nd[(r["day"], r["sym"])].append(r["o"]["arm"] - r["o"]["ctrl"])
-    nameday = statistics.mean(statistics.mean(v) for v in nd.values()) if nd else None
+    nd = adj_lift(rows, unit=lambda r: (r["day"], r["sym"]))[4]
+    nameday = statistics.mean(nd.values()) if nd else None
     share, dshare = Counter(), Counter()
     for r in rows:
-        if r["o"]["arm"] is not None and r["o"]["ctrl"] is not None:
-            share[r["sym"]] += (r["o"]["arm"] - r["o"]["ctrl"]) / max(1, n)
-            dshare[r["day"]] += (r["o"]["arm"] - r["o"]["ctrl"]) / max(1, n)
+        v, w = _diff(r, "arm", "ctrl"), _diff(r, "arm", "ctrl", "po")
+        if v is not None and w is not None:
+            share[r["sym"]] += (v - w) / max(1, n)
+            dshare[r["day"]] += (v - w) / max(1, n)
     top_names = {s for s, _ in share.most_common(3)}
     top_days = {d for d, _ in dshare.most_common(3)}
     return {"n": n, "days": n_days, "lift_d": d_mu, "t_d": d_t, "ub_d": d_ub, "lift_x": x_mu, "t_x": x_t, "ub_x": x_ub,
             "n_x": nx, "net": net, "nameday": nameday, "t_crit": t_crit2(n_days),
-            "drop_names": lift([r for r in rows if r["sym"] not in top_names], "arm", "ctrl")[0],
-            "drop_days": lift([r for r in rows if r["day"] not in top_days], "arm", "ctrl")[0],
-            "lag1": lift(rows, "arm_lag1", "ctrl_lag1")[0],
+            "lift_d_raw": raw_mu, "t_d_raw": raw_t, "pseudo_lift_d": lift(rows, "arm", "ctrl", "po")[0],
+            "drop_names": adj_lift([r for r in rows if r["sym"] not in top_names])[0],
+            "drop_days": adj_lift([r for r in rows if r["day"] not in top_days])[0],
+            "lag1": adj_lift(rows, "arm_lag1", "ctrl_lag1")[0],
             "net_3bp": net + 0.0002 if net is not None else None, "net_10bp": net - 0.0005 if net is not None else None,
             "lift_d_vs_11bp": d_mu - 0.0011 if d_mu is not None else None}
 
@@ -282,36 +308,22 @@ def placebo_minute(sym: str, day: str, m: int, sip: dict) -> int | None:
     return random.Random(H._seed(sym, day, m, PLACEBO_TAG)).choice(cand) if cand else None
 
 
-def placebo(by_day: dict) -> dict:
-    """One pseudo-onset per kept P2 trigger with bars, scored against its own d control; lift_d t per half within the
-    two-sided Bonferroni-2 t at df = days - 1."""
-    pr = []
-    for day, ts in sorted(by_day.items()):
-        ts = [t for t in ts if t["pop"] == "P2"]
-        if not ts:
-            continue
-        raw, cache = H.load_raw("sip", day), {}
-        for t in ts:
-            if t["sym"] not in cache:
-                cache[t["sym"]] = H.sip_oc(raw[t["sym"]]) if t["sym"] in raw else {}
-            sip = cache[t["sym"]]
-            if not T3._ok(sip, t["m"], HOLD):
-                continue
-            pm = placebo_minute(t["sym"], day, t["m"], sip)
-            c = control_minute(t["sym"], day, pm, sip) if pm else None
-            if pm and c:
-                pr.append({"day": day, "sym": t["sym"], "half": half_of("P2", day),
-                           "o": {"arm": T3.net(sip, pm, hold=HOLD, cost=COST), "ctrl": T3.net(sip, c, hold=HOLD, cost=COST)}})
-    return placebo_verdict(pr)
-
-
-def placebo_verdict(pr: list[dict]) -> dict:
-    t, days, bound = {}, {}, {}
+def placebo_verdict(rows: list[dict]) -> dict:
+    """amended_3 (2): gate = P2 pseudo-onset lift_x t per half within the two-sided Bonferroni-2 t at df = days - 1;
+    pseudo lift_d (the adjustment) and P1 are printed only."""
+    out = {"t": {}, "days": {}, "bound": {}, "pseudo_lift_x": {}, "pseudo_lift_d": {}, "pseudo_t_d": {}, "P1": {}}
     for h in ("A", "B"):
-        _mu, t[h], days[h], *_ = lift([r for r in pr if r["half"] == h], "arm", "ctrl")
-        bound[h] = t_crit2(days[h])
-    ok = all(t[h] is not None and bound[h] is not None and abs(t[h]) <= bound[h] for h in ("A", "B"))
-    return {"t": t, "days": days, "bound": bound, "n": len(pr), "ok": ok}
+        rs = [r for r in rows if r["pop"] == "P2" and r["half"] == h]
+        mu, out["t"][h], out["days"][h], *_ = lift(rs, "arm", "cross", "po")
+        out["pseudo_lift_x"][h] = mu
+        out["pseudo_lift_d"][h], out["pseudo_t_d"][h] = lift(rs, "arm", "ctrl", "po")[:2]
+        out["bound"][h] = t_crit2(out["days"][h])
+        p1 = [r for r in rows if r["pop"] == "P1" and r["half"] == h]
+        out["P1"][h] = {"lift_d": lift(p1, "arm", "ctrl", "po")[:3], "lift_x": lift(p1, "arm", "cross", "po")[:3]}
+    out["n"] = sum(1 for r in rows if r["pop"] == "P2" and r.get("po"))
+    out["ok"] = all(out["t"][h] is not None and out["bound"][h] is not None and abs(out["t"][h]) <= out["bound"][h]
+                    for h in ("A", "B"))
+    return out
 
 
 def main() -> None:
@@ -397,13 +409,6 @@ def main() -> None:
     by_day = defaultdict(list)
     for t in keep:
         by_day[t["day"]].append(t)
-    if a.placebo:
-        res = placebo(by_day)
-        print(json.dumps(res, indent=1, default=str))
-        print(write("placebo.json", {**res, "module_sha256": module_shas()}))
-        if not res["ok"]:
-            raise SystemExit(1)
-        return
     rows = []
     for day, ts in sorted(by_day.items()):
         sip = H.load_raw("sip", day)
@@ -431,12 +436,30 @@ def main() -> None:
             row = {**t, "half": half_of(t["pop"], day), "c": c,
                    "c_on_board": armed(board.get(t["sym"], []), O.decision_ts(day, c), ARM_LOOKBACK)
                    if (t["pop"] == "P1" and c) else None}
+            # amended_3 (1): the paired pseudo-onset, its own d control and x (same pool rule, at the pseudo minute)
+            pm = placebo_minute(t["sym"], day, t["m"], sm(t["sym"]))
+            pc = control_minute(t["sym"], day, pm, sm(t["sym"])) if pm else None
+            if pm and t["pop"] == "P1":
+                ppool = sorted(s for s, tss in board.items() if armed(tss, O.decision_ts(day, pm), X_LOOKBACK))
+            else:
+                ppool = pool
+            px = cross_name(t["sym"], day, pm, ppool, sm) if pm else None
+            row["pm"], row["pc"], row["px"] = pm, pc, px
+            if a.score or a.placebo:
+                row["po"] = outcome(sm(t["sym"]), pm, pc, sm(px) if px else None) if pm else None
             if a.score:
                 row["o"] = outcome(sm(t["sym"]), t["m"], c, sm(x) if x else None)
-            else:
+            elif not a.placebo:
                 row["ctrl"] = T3.net(sm(t["sym"]), c, hold=HOLD, cost=COST) if c else None
                 row["has_x"] = x is not None
             rows.append(row)
+    if a.placebo:
+        res = placebo_verdict(rows)
+        print(json.dumps(res, indent=1, default=str))
+        print(write("placebo.json", {**res, "module_sha256": module_shas()}))
+        if not res["ok"]:
+            raise SystemExit(1)
+        return
     if not a.score:
         cnt = {}
         for pop in ("P1", "P2"):
@@ -480,7 +503,7 @@ def main() -> None:
         res["graded"][pop], res["halves"][pop] = gs, hv
         res["verdicts"][pop] = final([hv["A"], hv["B"]], [(gs[h]["ub_d"], gs[h]["ub_x"]) for h in ("A", "B")],
                                      [gs[h]["days"] for h in ("A", "B")], [gs[h]["lag1"] for h in ("A", "B")])
-    res["placebo"] = {k: plc[k] for k in ("t", "days", "bound", "ok")}
+    res["placebo"] = {k: plc[k] for k in ("t", "days", "bound", "ok", "pseudo_lift_x", "pseudo_lift_d", "pseudo_t_d", "P1")}
     res["info"] = {"P1 d on on-board control minutes": {h: lift([r for r in rows if r["pop"] == "P1" and r["half"] == h
                                                                  and r.get("c_on_board")], "arm", "ctrl")[:3] for h in ("A", "B")},
                    "P1 off-board control share": {h: (lambda rs: sum(1 for r in rs if r.get("c_on_board") is False) / max(1, len(rs)))(
