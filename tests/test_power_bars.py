@@ -36,3 +36,22 @@ def test_size_ref_counts_sessions_not_bars():
     for _ in range(5):
         s.add([None])
     assert s.ref(0) is None            # only 4 present in the last 10 sessions
+
+
+def test_pm_loose_combined_power_bar():
+    import numpy as np
+    import pm_power_bar as P
+    refs = {n: B.SizeRef() for n in (1, 2, 3)}
+    quiet = [(100.0, 100.1, 99.9, 100.0, 571 + 2 * k) for k in range(30)]
+    for _ in range(6):
+        for n, ref in refs.items():
+            ref.add(P.combos(quiet, n))
+    bars = list(quiet)
+    # two green bars off the low 99.0: neither alone is 1.5x, together they are
+    bars[5] = (99.05, 99.25, 99.00, 99.20, 581)       # range .25 < 1.5 x .20
+    bars[6] = (99.20, 99.45, 99.18, 99.40, 583)       # range .27 alone; .45 combined
+    r = np.array([[m, 100, 100, 100, 100, 1] for m in range(570, 581)], dtype=float)
+    sig = P.loose_candidate(r, bars, refs, 101.0, 99.0, 1)
+    assert sig is not None and sig["n"] == 2 and sig["end"] == 583 and abs(sig["low"] - 99.0) < 1e-9
+    r_broken = np.array([[575, 99, 99, 98.9, 98.95, 1]], dtype=float)   # an RTH close below PML first
+    assert P.loose_candidate(r_broken, bars, refs, 101.0, 99.0, 1) is None

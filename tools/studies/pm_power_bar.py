@@ -24,6 +24,7 @@ OUT_DIR = os.path.join(B.ROOT, "ai_reports", "pm_power_bar")
 SYMS = ("SPY", "QQQ")
 LAST_END, BAND, MIN_PM_BARS, MIN_PM_RANGE = 629, 0.0015, 30, 0.001
 COST, COSTS, FLOOR_DAYS = 0.0002, (0.0001, 0.0002, 0.0005, 0.0010), 150
+LOOSE_RANGE, LOOSE_BODY, MAX_COMBINE = 1.5, 0.5, 3          # amended_5 primary power bar
 
 
 def levels(r_all, lo_min: int, wicks: bool = False):
@@ -59,6 +60,50 @@ def candidate(r, bars2, size, pmh, pml, side):
     return None
 
 
+def combine(bars2: list, k: int, n: int):
+    """n consecutive present 2-minute bars ending at k -> (open, high, low, close, end), else None."""
+    if k - n + 1 < 0:
+        return None
+    w = bars2[k - n + 1:k + 1]
+    if any(b is None for b in w):
+        return None
+    return (w[0][0], max(b[1] for b in w), min(b[2] for b in w), w[-1][3], w[-1][4])
+
+
+def combos(bars2: list, n: int) -> list:
+    return [combine(bars2, k, n) for k in range(len(bars2))]
+
+
+def loose_candidate(r, bars2, refs, pmh, pml, side):
+    """amended_5: the first end bar k (by 10:29) where a 1-3 bar window qualifies; the smallest n at that k."""
+    level = pml if side > 0 else pmh
+    for k, b in enumerate(bars2):
+        if b is None:
+            continue
+        if b[4] > LAST_END:
+            return None
+        for n in range(1, MAX_COMBINE + 1):
+            cb = combine(bars2, k, n)
+            if cb is None:
+                continue
+            o, h, lo, c, end = cb
+            start = end - 2 * n + 1
+            before = r[r[:, 0] < start]
+            if (before[:, 4] < level).any() if side > 0 else (before[:, 4] > level).any():
+                continue                                       # level broken before this window starts
+            ref = refs[n].ref(k)
+            rng = h - lo
+            if ref is None or rng <= 0 or rng < LOOSE_RANGE * ref or abs(c - o) < LOOSE_BODY * rng:
+                continue
+            if not ((c > o) if side > 0 else (c < o)):
+                continue
+            near = abs((lo if side > 0 else h) - level) <= BAND * level
+            away = c > level if side > 0 else c < level
+            if near and away:
+                return {"k": k, "n": n, "end": end, "low": lo, "high": h}
+    return None
+
+
 def trade(r, sig, side, pmh, pml, sym, day, time_exit=None):
     e = B.first_after(r, sig["end"])
     if e is None:
@@ -81,6 +126,7 @@ def trade(r, sig, side, pmh, pml, sym, day, time_exit=None):
 def run_symbol(sym):
     rows, st = [], Counter()
     size = B.SizeRef()
+    refs = {n: B.SizeRef() for n in range(1, MAX_COMBINE + 1)}
     restarted = False
     for day, r_all in B.load(sym).items():
         if not B.in_scope(day):
@@ -88,13 +134,16 @@ def run_symbol(sym):
             continue
         if day >= B.B_RESTART and not restarted:
             size.reset()
+            for ref in refs.values():
+                ref.reset()
             restarted = True
         if not B.is_full_session(r_all, day):
             st["early_close_dropped"] += 1
             continue
         r = B.rth(r_all)
         bars2 = B.clock_bars(r, 2, 2)
-        for lab_lv, lo_min, wk in (("primary", 420, False), ("lv0400", 240, False), ("wicks", 420, True)):
+        for lab_lv, lo_min, wk in (("primary", 420, False), ("strict", 420, False), ("lv0400", 240, False),
+                                   ("wicks", 420, True)):
             lv = levels(r_all, lo_min, wk)
             if lv is None:
                 st[f"{lab_lv}_no_premarket"] += 1
@@ -103,7 +152,10 @@ def run_symbol(sym):
             if pmh - pml < MIN_PM_RANGE * pml:
                 st[f"{lab_lv}_narrow_pm_range"] += 1
                 continue
-            sigs = {sd: candidate(r, bars2, size, pmh, pml, sd) for sd in (1, -1)}
+            if lab_lv == "strict":
+                sigs = {sd: candidate(r, bars2, size, pmh, pml, sd) for sd in (1, -1)}
+            else:
+                sigs = {sd: loose_candidate(r, bars2, refs, pmh, pml, sd) for sd in (1, -1)}
             for side, lab in ((1, "long"), (-1, "short")):
                 sig = sigs[side]
                 if sig is None:
@@ -115,13 +167,16 @@ def run_symbol(sym):
                 if "skip" in t:
                     st[f"{lab_lv}_{lab}_skip_{t['skip']}"] += 1
                     continue
-                base = {"day": day, "sym": sym, "side": lab, "half": B.half_of(day), "end": sig["end"]}
+                base = {"day": day, "sym": sym, "side": lab, "half": B.half_of(day), "end": sig["end"],
+                        "n_bars": sig.get("n", 1)}
                 rows.append({**base, **t, "variant": lab_lv})
                 if lab_lv == "primary":
                     t2 = trade(r, sig, side, pmh, pml, sym, day, time_exit=629)
                     if "skip" not in t2:
                         rows.append({**base, **t2, "variant": "exit_1030"})
         size.add(bars2)                       # today's ranges enter the reference only after today is scanned
+        for n, ref in refs.items():
+            ref.add(combos(bars2, n))
     return rows, st
 
 
@@ -184,6 +239,7 @@ def main():
                      ("both_sides", lambda x: x["variant"] == "primary"),
                      ("levels_from_0400_long", lambda x: x["variant"] == "lv0400" and x["side"] == "long"),
                      ("wick_levels_long", lambda x: x["variant"] == "wicks" and x["side"] == "long"),
+                     ("strict_single_bar_long", lambda x: x["variant"] == "strict" and x["side"] == "long"),
                      ("exit_1030_long", lambda x: x["variant"] == "exit_1030" and x["side"] == "long")):
         sub = [x for x in rows if sel(x)]
         res["info"][lab] = {h: {"net": B.day_stats([x for x in sub if x["half"] == h], lambda x: x["gross"] - COST)
