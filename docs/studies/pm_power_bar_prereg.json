@@ -62,7 +62,9 @@
    "(2) FLOOR: >= 150 long-trade days per half (this supersedes the 300 in amended (5)); amended items (1)/(6a) that mention an SMA or a breakout/retest do not apply to this study (it has neither); the held-out carve-out of (1) applies.",
    "(3) LEVEL INTACT: a long candidate needs no RTH 1-minute CLOSE below PML before the candidate bar (short mirrored: no close above PMH); otherwise the level is broken and that side has no trade that day.",
    "(4) SIZE TEST REPLACED: RANGE >= 2.0 x the median range of the SAME clock 2-minute bar over the prior 10 kept sessions (needs >= 5 of them; else no candidate that bar). Dropped early-close sessions are not kept sessions.",
-   "(5) FEED (declared): live IEX premarket is nearly blind on the desk, so live PMH/PML would differ from SIP; a PASS needs real-time SIP, which is not owned - a PASS earns only a forward paper prereg on SIP data and a data-cost decision by the operator."
-  ]
+   "(5) FEED (declared): live IEX premarket is nearly blind on the desk, so live PMH/PML would differ from SIP; a PASS needs real-time SIP, which is not owned - a PASS earns only a forward paper prereg on SIP data and a data-cost decision by the operator.",
+   "(final round 2 item) Held-out sessions 2026-01-14 .. 04-24 are NOT kept sessions for the size test (they are never fetched); half B therefore has no candidates until 5 kept sessions after 2026-04-27 exist. Half A look-backs never use half-B sessions."
+  ],
+  "skeptic": "READY after round 2 with this line (a2ede11, 2026-10-23)"
  }
 }

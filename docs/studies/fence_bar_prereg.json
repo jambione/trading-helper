@@ -57,6 +57,7 @@
    "(6) SEQUENCING: (a) a missing bar between breakout and retest does not cancel; the sequence continues on the next present bar. (b) bar boundaries are America/New_York clock time. (c) dropped early-close sessions contribute no bars to the SMA (the series skips them). (d) Last eligible trigger bar ends at the window end stated in the rule; entry at the next minute's open.",
    "(7) Information: drop the best calendar month (March 2020 sits in half A). Declared: the desk runs on IEX with no ETF trade path; a PASS goes only to a forward paper prereg.",
    "(6b) fence_bar window: the last eligible retest bar is 10:55-10:59; entry at the 11:00 open."
-  ]
+  ],
+  "skeptic": "READY round 2 (a2ede11, 2026-10-23)"
  }
 }
