@@ -1,0 +1,41 @@
+{
+ "study": "Fibonacci golden-pocket pullback, as practitioners trade it: in an intraday uptrend, after an impulse from the day's swing low to a new high, wait for a pullback into the 50%-61.8% retracement AND a bullish reaction candle there, buy the next open, stop below the 78.6% level, target the swing high. Does that beat the same bracket placed at random comparable minutes, and does the 50-61.8% zone do better than the same rule at other depths?",
+ "registered_at": "2026-10-23, before any script, feature or outcome (replaces an unreviewed first draft of the same day after the operator asked for the best-practice method)",
+ "registered_before_results": true,
+ "origin": "Operator 10/23 (CCI chart): draw the Fibonacci retracement from the recent lowest low to the highest high; when price is in the zone, open for a profit run. The operator asked for research on the most suitable method.",
+ "method_research": {
+  "practitioner_consensus": [
+   "trade it only WITH a trend: anchor from a clear swing low to the swing high of an up-move (no retracement in a sideways market); a common intraday trend filter is price above VWAP",
+   "the 50%-61.8% band ('golden pocket'; some extend to 65%) is the main entry zone; 38.2% for strong trends, 78.6% is the last line",
+   "do not buy the touch: the most common failure is entering before a reaction - wait for a bullish confirmation candle in the zone (hammer / bullish bar closing back up), enter at the next open",
+   "stop below the 78.6% level (or the swing low); target the prior swing high, or the 1.272 / 1.618 extensions for strong trends"
+  ],
+  "evidence": "A controlled academic test (Expert Systems with Applications: automatic identification of Fibonacci retracements in three equity markets) found that retracement zones are associated with bounces, but Fibonacci zones did NOT differ statistically from non-Fibonacci zones; other studies report gains vs buy-and-hold without a random-level control. Practitioner sources report no backtests. Hence this test compares the Fibonacci zone with other depths under the same rule.",
+  "sources": ["https://www.jainam.in/blog/blog-fibonacci-retracement-trading/", "https://blog.traderspost.io/article/fibonacci-retracement-trading-strategies", "https://stocksharp.com/store/strategies.0076_fibonacci_retracement_reversal/", "https://www.tradingview.com/script/NP615SiK/", "https://www.datalearner.com/academic/journal-papers/0957-4174/volumes-and-issues/391/paper-detail/17703", "https://repository.cud.ac.ae/items/97adc14d-b7d1-4f35-b8f8-e69289c71552"]
+ },
+ "prior": "LOW (~5-10%): the controlled study finds no Fibonacci-specific effect; on these names buying dips after a signal lost 14-36 bp (10/14, 10/16), zone entries lost, near-support entries were least bad but negative (10/2), and the universe fades. The confirmation candle and VWAP filter are what practitioners say separates working from failing use, and they have not been tested together here.",
+ "data": "Warehouse SIP 1-minute bars, the 400-name book-like sample ('indicator-hist-sample'), 2026-05-11 .. 2026-10-15 (110 sessions); halves A <= 2026-07-29 < B. Information: the desk's board names (decision_ledger arm rows, 09-10 .. 10-15) when in the warehouse. Confirmation (only after a PASS): warehouse_confirm (2026-01-14 .. 04-24), unchanged.",
+ "swing": "Completed bars only. From 09:30: L = the lowest low so far; H = the highest high made after L (a new high moves H; a new low below L resets L and H). A swing QUALIFIES when H / L - 1 >= 2.0% and H was made at or after 09:45.",
+ "rule_primary_GP": {
+  "zone": "a bar after H whose LOW reaches into [H - 0.618 x R, H - 0.5 x R], R = H - L, with no close below H - 0.786 x R earlier in this pullback (else the swing is broken)",
+  "trend_filter": "the zone bar's close is above session VWAP (SIP bars, typical-price x volume from 09:30 through that bar)",
+  "confirmation": "a bullish reaction bar: the first bar at or after the zone touch (within 5 bars) that closes ABOVE its open and above the previous bar's high, with its low still >= H - 0.786 x R",
+  "entry": "the OPEN of the bar after the confirmation bar, if the decision bar is in 10:00 .. 15:15",
+  "bracket": "stop = a close below H - 0.786 x R (exit at the next bar's open); target = H (exit when a bar's high reaches H, filled at H, or at that bar's open if it gaps above); time stop = 30 bars (exit at the close); 5 bp round-trip cost",
+  "limits": "one trade per swing; at most 3 per name-day; no new entry while a trade in that name is open"
+ },
+ "comparisons": {
+  "SHALLOW": "the same rule with the zone [H - 0.382 x R, H - 0.236 x R]",
+  "DEEP": "the same rule with the zone [H - 0.786 x R, H - 0.70 x R] and the stop at a close below L (the swing low)",
+  "NO_CONFIRM": "GP zone, VWAP filter, but entry at the open after the zone-touch bar (no reaction candle)",
+  "NO_VWAP": "GP rule without the VWAP filter"
+ },
+ "control": "RANDOM-BRACKET control (the order_block_gate range-trade design): for each GP trade, a seeded random minute of the same name-day in the same clock hour, at least 15 minutes from the trade, with a bullish bar (close > open and > previous high) and the close above VWAP, entered at the next open with the SAME percentage stop distance, SAME percentage target distance and the same 30-bar time stop (seed 'fib-gp-ctrl'). This isolates the Fibonacci location from the bracket shape, the bullish-bar trigger and the trend filter.",
+ "statistic": "Per half: per day the mean over GP trades of (trade net - its control net); day-equal; day-clustered t (df = days - 1). The same for the comparisons (information except where named in the pass rule).",
+ "pass": "In BOTH halves: GP minus control >= +5 bp with t >= 2.0; GP mean net (after 5 bp) > 0; FIBONACCI SPECIFICITY: GP minus control >= SHALLOW minus control and >= DEEP minus control (point estimates); dropping the 3 days and (separately) the 3 names with the largest share keeps GP minus control >= 0. FAIL: t <= -2 in a half, or the 97.5% upper bound < +5 bp in both halves. Otherwise UNDERPOWERED. A PASS is confirmed unchanged on warehouse_confirm before anything else, then a forward paper prereg; never a desk change by itself.",
+ "power": "Outcome-blind count step: GP / SHALLOW / DEEP / NO_CONFIRM / NO_VWAP trade counts and days per half, controls found, and a projected MDE from the dispersion of control trades' net returns (control outcomes only). Floors per half: >= 300 GP trades and >= 20 days; else UNDERPOWERED.",
+ "information_only": ["win rate, target-hit / stop / time-stop shares, average hold", "swing size buckets (2-3%, 3-5%, > 5%)", "time of day", "the board-name subset", "a 1.272 extension target instead of H"],
+ "no_retuning": "2.0% swing, zone boundaries, 0.786 break, VWAP filter, the reaction-bar definition and its 5-bar window, the bracket, 5 bp, window, sample, halves and floors are fixed.",
+ "declared_deviations": ["SIP 1-minute bars (the live desk sees IEX)", "bar-based fills (next open; target fills at H), no spread beyond the 5 bp cost", "the book-like sample, not the desk's own entries", "the bracket is the practitioners', not the desk's live exits"],
+ "script": "tools/studies/fib_pullback.py (to be written): count step, --score after a result-skeptic READY."
+}
