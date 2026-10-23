@@ -54,5 +54,14 @@
    "(1) Fetch ranges: daily bars 2025-02-01 .. 2026-01-13 and 2026-04-27 .. 2026-10-15; opening (09:30-09:34) bars 2025-03-10 .. 2026-01-13 and 2026-04-27 .. 2026-10-15.",
    "(2) Half B starts 2026-05-26 (the first session with 20 sessions of look-back after 04-24); half B = 2026-05-26 .. 2026-10-15. Half A's look-backs end before 01-14 by construction (A ends 01-13). No held-out-window data is fetched before a PASS."
   ]
+ },
+ "amended_3": {
+  "when": "2026-10-23, before any fetch or outcome for this study.",
+  "changes": [
+   "UNIVERSE SOURCE: the gap-down study's ever-liquid list (ai_reports/gapdown/daily.pkl 'liquid': 3,640 active + inactive US common stocks that were ever >= $10 and >= $20M ADV since 2016), which contains any top-1,000-by-dollar-volume universe; daily OHLCV fetched for those names; split-adjusted prices for the $10 and ATR filters (declared).",
+   "POWER: the pass rule has no lift bar (net > 0 with t >= 2 AND lift >= 0), so the MDE gate is the cost level: MDE = (2.0 + 0.84) x SD(day mean control - control2) / sqrt(days) <= 10 bp, plus >= 300 long trades and >= 20 days per half.",
+   "SCORE GATE: --score refuses unless both halves met the floors (UNDERPOWERED with no outcome read).",
+   "Information cells kept: short side, top 10, $20+; dropped before scoring: ATR stop, top 50, 15/30-minute ranges."
+  ]
  }
 }
