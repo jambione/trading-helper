@@ -94,8 +94,8 @@ def fetch_daily() -> None:
                         else:
                             out.setdefault(s, {})[d] = (x.open, x.high, x.low, x.close, x.volume)
                 time.sleep(0.4)
-    pickle.dump(raw_close, open(os.path.join(OUT_DIR, "daily_raw_close.pkl"), "wb"))
     os.makedirs(OUT_DIR, exist_ok=True)
+    pickle.dump(raw_close, open(os.path.join(OUT_DIR, "daily_raw_close.pkl"), "wb"))
     pickle.dump(out, open(os.path.join(OUT_DIR, "daily.pkl"), "wb"))
     json.dump({"failed": failed}, open(os.path.join(OUT_DIR, "daily_fetch_log.json"), "w"))
     print("names", len(out), "failed", failed)
@@ -403,7 +403,8 @@ def main():
                       if all(x == "PASS" for x in hv) else
                       "FAIL" if all(u is not None and u <= 0 for u in ubs) else "UNDERPOWERED")
     res["declared"] = ["universe = the gap-down study's ever-liquid list (3,640 active+inactive names; a superset of "
-                       "any top-1,000 dollar-volume universe), split-adjusted prices for the $10 and ATR filters",
+                       "any top-1,000 dollar-volume universe); RAW prior close for the $10 floor, ATR in raw dollars, RAW "
+                       "full-day bars (amended_4)",
                        "information cells not built: ATR stop, top 50, 15/30-minute ranges"]
     res["skeptic_ready"], res["module_sha256"] = a.skeptic_ready, module_shas()
     write("result.json", res)
