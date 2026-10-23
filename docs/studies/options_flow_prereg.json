@@ -30,5 +30,10 @@
   "changes": [
    "READY (round 1): step 0 records which feed is served (indicative or OPRA) and its history; joins no stock outcomes."
   ]
+ },
+ "step0_result": {
+  "when": "2026-10-23 ~14:55 ET (no stock outcomes joined)",
+  "finding": "The data-only Alpaca account serves historical OPTION daily bars and trades for free: SPY Nov-2026 600C 36 daily bars (06-11..10-14), SPY Jan-2025 500C 249 bars (2024-01-18..2025-01-15), SPY Jan-2024 450C none, NVDA Nov-2026 150C 84 bars; trades present (1 in a sampled hour). History therefore starts ~2024-02 (contracts expiring earlier return nothing).",
+  "next": "Write the full options prereg (signal: e.g. call/put volume ratio vs the stock's own 20-day norm, or near-the-money dealer gamma sign from open interest if served; control; pass) and review it before any stock outcome is joined. Request load: a per-name option chain per day is hundreds of contracts - size the sample in the prereg."
  }
 }
