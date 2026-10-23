@@ -83,9 +83,42 @@ def test_control_same_hour_and_separation():
 
 
 def test_overlap_and_stats():
-    rows = [{"day": "d", "sym": "A", "entry_min": 600, "hold": 10, "net": 0.01, "ctrl": 0.0},
-            {"day": "d", "sym": "A", "entry_min": 605, "hold": 5, "net": 0.01, "ctrl": 0.0},
-            {"day": "d", "sym": "A", "entry_min": 611, "hold": 5, "net": 0.01, "ctrl": 0.0}]
+    rows = [{"day": "d", "sym": "A", "entry_min": 600, "exit_min": 610, "net": 0.01, "ctrl": 0.0},
+            {"day": "d", "sym": "A", "entry_min": 605, "exit_min": 610, "net": 0.01, "ctrl": 0.0},
+            {"day": "d", "sym": "A", "entry_min": 611, "exit_min": 616, "net": 0.01, "ctrl": 0.0}]
     assert [r["entry_min"] for r in F.no_overlap(rows)] == [600, 611]
     assert F.final(["PASS", "PASS"], [0.01, 0.01], [30, 30]) == "PASS"
     assert F.final(["NOT_PASSED", "NOT_PASSED"], [0.0002, 0.0001], [30, 30]) == "FAIL"
+
+
+
+def test_break_before_touch_kills_the_swing():
+    bars = path()
+    i = next(k for k, x in enumerate(bars) if x[0] == 613)
+    bars[i] = b(613, 101.8, 101.85, 100.55, 100.6)       # closes below the break (100.642) without being a touch first
+    for j, mm in enumerate(range(614, 618)):              # recovery back into the zone, then bullish bars
+        bars[i + 1 + j] = b(mm, 100.7, 101.8, 100.7, 101.4 + 0.1 * j)
+    assert F.detect(bars, "GP") == []
+
+
+def test_first_bullish_bar_outside_vwap_means_no_trade():
+    bars = path(confirm_close=101.9)
+    sig = F.detect(bars, "GP")
+    vw = F.vwaps(bars)
+    i = next(k for k, x in enumerate(bars) if x[0] == 614)
+    if bars[i][4] <= vw[i]:                               # if the first bullish bar is below VWAP, no later bar may confirm
+        assert sig == []
+    else:
+        assert sig and sig[0]["dec_min"] == 614
+
+
+def test_skips():
+    bars = path()
+    sig = dict(F.detect(bars, "GP")[0])
+    sig["brk"] = 105.0
+    assert F.trade(bars, sig) == {"skip": "open_at_or_below_stop"}
+    sig = dict(F.detect(bars, "GP")[0])
+    e = sig["entry_i"]
+    bars2 = list(bars)
+    bars2[e] = (bars[e][0] + 9,) + bars[e][1:]
+    assert F.trade(bars2, sig) == {"skip": "entry_gap"}

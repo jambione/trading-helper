@@ -78,6 +78,8 @@ def detect(bars: list, variant: str = "GP", depth_lo: float | None = None) -> li
         if L is not None and H is not None and H / L - 1 >= SWING_MIN and H_min >= H_FROM and L not in traded:
             R = H - L
             upper, brk = H - zlo * R, (L if variant == "DEEP" else H - 0.786 * R)
+            if phase == "seek" and h <= H and c < brk:
+                phase = "broken"                                              # amended_2 (1)
             if phase == "seek" and h <= H and lo <= upper and c >= brk:
                 phase, touch_t = "confirm", t
             if phase == "confirm":
@@ -88,12 +90,12 @@ def detect(bars: list, variant: str = "GP", depth_lo: float | None = None) -> li
                         out.append(_signal(bars, t, H, L, brk, variant))
                         traded.add(L)
                     phase = "wait_high"
-                elif t - touch_t < WINDOW:
-                    ok = bullish(bars, t) and lo >= brk and (variant == "NO_VWAP" or c > vw[t])
-                    if ok and DEC_LO <= m <= DEC_HI and t + 1 < len(bars):
+                elif t - touch_t < WINDOW and bullish(bars, t) and lo >= brk:
+                    # amended_2 (2): the FIRST bullish bar is the confirmation; it must pass VWAP and the window
+                    if (variant == "NO_VWAP" or c > vw[t]) and DEC_LO <= m <= DEC_HI and t + 1 < len(bars):
                         out.append(_signal(bars, t, H, L, brk, variant))
                         traded.add(L)
-                        phase = "wait_high"
+                    phase = "wait_high"
                 if phase == "confirm" and t - touch_t >= WINDOW - 1:
                     phase = "wait_high"
         # update the swing with bar t
@@ -103,8 +105,6 @@ def detect(bars: list, variant: str = "GP", depth_lo: float | None = None) -> li
             H, H_min = h, m
             if phase in ("broken", "wait_high", "confirm"):
                 phase = "seek"
-        if len(out) >= MAX_PER_DAY:
-            break
     return out
 
 
@@ -122,24 +122,28 @@ def simulate(bars: list, e: int, stop_close_below: float, target: float) -> dict
     while k < len(bars):
         m, o, h, lo, c = bars[k][0], bars[k][1], bars[k][2], bars[k][3], bars[k][4]
         if m > end_min:
-            return {"exit": bars[k - 1][4], "why": "time", "bars": k - e}
+            return {"exit": bars[k - 1][4], "why": "time", "bars": k - e, "exit_min": bars[k - 1][0]}
         if k > e and m - bars[k - 1][0] > GAP_MAX:
-            return {"exit": o, "why": "gap", "bars": k - e}
+            return {"exit": o, "why": "gap", "bars": k - e, "exit_min": m}
         if h >= target + TICK:
-            return {"exit": max(target, o) if k > e else target, "why": "target", "bars": k - e + 1}
+            return {"exit": max(target, o) if k > e else target, "why": "target", "bars": k - e + 1, "exit_min": m}
         if c < stop_close_below:
             if k + 1 < len(bars):
-                return {"exit": bars[k + 1][1], "why": "stop", "bars": k - e + 1}
-            return {"exit": c, "why": "stop_eod", "bars": k - e + 1}
+                return {"exit": bars[k + 1][1], "why": "stop", "bars": k - e + 1, "exit_min": bars[k + 1][0]}
+            return {"exit": c, "why": "stop_eod", "bars": k - e + 1, "exit_min": m}
         k += 1
-    return {"exit": bars[-1][4], "why": "eod", "bars": k - e}
+    return {"exit": bars[-1][4], "why": "eod", "bars": k - e, "exit_min": bars[-1][0]}
 
 
 def trade(bars: list, sig: dict) -> dict | None:
     e = sig["entry_i"]
     o = bars[e][1]
+    if bars[e][0] - sig["dec_min"] > GAP_MAX:
+        return {"skip": "entry_gap"}                                          # amended_2 (8)
     if o >= sig["H"]:
         return {"skip": "open_at_or_above_H"}
+    if o <= sig["brk"]:
+        return {"skip": "open_at_or_below_stop"}                              # amended_2 (3)
     if o < MIN_PX:
         return {"skip": "below_10"}
     if bars[e][0] + TIME_STOP - 1 > 15 * 60 + 59:
@@ -147,7 +151,8 @@ def trade(bars: list, sig: dict) -> dict | None:
     r = simulate(bars, e, sig["brk"], sig["H"])
     gross = r["exit"] / o - 1
     return {"entry_min": bars[e][0], "entry_px": o, "gross": gross, "net": gross - COST, "why": r["why"],
-            "hold": r["bars"], "stop_pct": (o - sig["brk"]) / o, "target_pct": (sig["H"] - o) / o}
+            "hold": r["bars"], "exit_min": r["exit_min"], "stop_pct": (o - sig["brk"]) / o,
+            "target_pct": (sig["H"] - o) / o}
 
 
 def control(bars: list, sig: dict, tr: dict, sym: str, day: str, tag: str) -> dict | None:
@@ -158,6 +163,7 @@ def control(bars: list, sig: dict, tr: dict, sym: str, day: str, tag: str) -> di
     cand = [t for t in range(1, len(bars) - 1)
             if bars[t][0] // 60 == hr and abs(bars[t][0] - sig["dec_min"]) >= CTRL_SEP and DEC_LO <= bars[t][0] <= DEC_HI
             and bullish(bars, t) and bars[t][4] > vw[t] and bars[t + 1][0] + TIME_STOP - 1 <= 15 * 60 + 59
+            and bars[t + 1][0] - bars[t][0] <= GAP_MAX
             and bars[t + 1][1] >= MIN_PX]
     if not cand:
         return None
@@ -186,7 +192,11 @@ def day_task(args) -> dict:
                 rng = random.Random(int(hashlib.sha256(f"{sym}|{day}|fib-depth".encode()).hexdigest()[:16], 16))
                 choices = [x / 1000 for x in range(236, 786 - 118 + 1, 2) if x / 1000 + 0.118 <= 0.5 or x / 1000 >= 0.618]
                 dl = rng.choice(choices)
+            taken = 0
             for sig in detect(bars, v, dl):
+                if taken >= MAX_PER_DAY:                                      # amended_2 (6): cap counts trades
+                    st[f"{v}_cap"] += 1
+                    break
                 tr = trade(bars, sig)
                 if tr is None or "skip" in tr:
                     st[f"{v}_skip_{(tr or {}).get('skip')}"] += 1
@@ -195,6 +205,7 @@ def day_task(args) -> dict:
                 c2 = control(bars, sig, tr, sym, day, "fib-gp-ctrl2")
                 if c1 is None:
                     st[f"{v}_no_control"] += 1
+                taken += 1
                 rows.append({"day": day, "sym": sym, "variant": v, "dec_min": sig["dec_min"], **tr,
                              "ctrl": c1["net"] if c1 else None, "ctrl2": c2["net"] if c2 else None,
                              "ctrl_gross": c1["gross"] if c1 else None, "swing": sig["H"] / sig["L"] - 1})
@@ -235,7 +246,7 @@ def no_overlap(rows: list[dict]) -> list[dict]:
         if busy.get(k, -1) >= r["entry_min"]:
             continue
         out.append(r)
-        busy[k] = r["entry_min"] + r["hold"]
+        busy[k] = r["exit_min"]
     return out
 
 
@@ -250,6 +261,11 @@ def spec_stats(gp: list[dict], other: list[dict]) -> dict:
 
 
 def drop3(rows: list[dict], by: str) -> float | None:
+    """amended_2 (7): days ranked by their day mean, names by their summed difference."""
+    if by == "day":
+        means = day_stats(rows, diff).get("means", {})
+        top = set(sorted(means, key=lambda d: means[d], reverse=True)[:3])
+        return day_stats([r for r in rows if r["day"] not in top], diff)["mean"]
     tot = Counter()
     for r in rows:
         d = diff(r)
@@ -267,7 +283,7 @@ def half_verdict(gp: list[dict]) -> tuple[str, dict]:
     if s["n"] < FLOOR_TRADES or s["days"] < FLOOR_DAYS or s["t"] is None:
         return "UNDERPOWERED", s
     ok = (s["mean"] >= LIFT_BAR and s["t"] >= T_PASS and net is not None and net > 0
-          and (drop3(gp, "day") or -1) >= 0 and (drop3(gp, "sym") or -1) >= 0)
+          and all(x is not None and x >= 0 for x in (drop3(gp, "day"), drop3(gp, "sym"))))
     return ("PASS" if ok else "NOT_PASSED"), s
 
 
@@ -298,6 +314,7 @@ def main() -> None:
     ap.add_argument("--score", action="store_true")
     ap.add_argument("--skeptic-ready", default="")
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--prereg-commit", default="")
     a = ap.parse_args()
     import indicator_confirm_hist as H_
     days = H_.warehouse_days()
@@ -318,7 +335,7 @@ def main() -> None:
         by[(r["variant"], "A" if r["day"] <= HALF_A_END else "B")].append(r)
     if not a.score:
         cnt = {"stats": dict(st), "module_sha256": module_shas(),
-               "prereg_commit": os.popen(f"git -C {ROOT} log -1 --format=%h -- docs/studies/fib_pullback_prereg.json").read().strip()}
+               "prereg_commit": a.prereg_commit}
         for (v, h), rs in sorted(by.items()):
             cd = defaultdict(list)
             for r in rs:
@@ -338,6 +355,8 @@ def main() -> None:
     cnt = json.load(open(os.path.join(OUT_DIR, "count.json")))
     if cnt.get("module_sha256") != module_shas():
         raise SystemExit("count.json from different code")
+    if not cnt.get("prereg_commit"):
+        raise SystemExit("count.json has no prereg commit (--prereg-commit)")
     res = {"halves": {}, "specificity": {}, "info": {}}
     hv, ubs, dys = [], [], []
     for h in ("A", "B"):

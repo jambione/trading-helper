@@ -73,5 +73,19 @@
    "(12) The four comparisons, the random-depth control, swing buckets, time of day, the board subset and the 1.272 target are INFORMATION ONLY and cannot promote anything; a lead from them needs a new prereg.",
    "(13) This prereg is committed (hash recorded in the script output) before the count step."
   ]
+ },
+ "amended_2": {
+  "when": "2026-10-23, before any GP return or GP-vs-control difference is read (the count step read control returns only), after result-skeptic code review FIX FIRST.",
+  "changes": [
+   "(1) The break applies in every phase: once the swing qualifies, any bar (not making a new high) that CLOSES below the break level breaks it, including before a touch; no entry until a new H.",
+   "(2) CONFIRMATION = the FIRST bar in the window that is bullish (close > open and > the previous high) with its low >= the break level; it must also close above VWAP (except NO_VWAP) and be a decision bar in 10:00-15:15, otherwise there is NO trade for that touch (wait for a new H). GP is therefore a subset of NO_VWAP's triggers.",
+   "(3) An entry open at or below the stop level is skipped ('open_at_or_below_stop', counted).",
+   "(4) The one-open-trade rule at scoring uses the EXIT MINUTE returned by the simulator (the next bar's minute for stop and gap exits), not a bar count.",
+   "(5) The prereg commit is passed to the script (--prereg-commit) and written to count.json; --score refuses without it.",
+   "(6) The 3-per-day cap counts TRADES taken (after skips), per name-day and variant.",
+   "(7) Drop-3: days are ranked by their day mean (the statistic is day-equal), names by their summed difference; a drop result of exactly 0 counts as >= 0.",
+   "(8) The entry bar must start within 5 minutes of the decision bar (both GP and the control); otherwise skipped ('entry_gap', counted).",
+   "DECLARED: a zone touch is defined by its UPPER edge only (amended (3): first reach), so the zone's lower edge (and RANDOM_DEPTH's 0.118 width) does not affect which bar touches; the depth comparison is between first-reach levels 0.236 / 0.5 / 0.70 / random."
+  ]
  }
 }
