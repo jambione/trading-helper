@@ -1,0 +1,53 @@
+{
+ "study": "Short squeeze (forced buyers): when a heavily shorted liquid stock breaks out on volume, do the shorts' forced buy-backs make it keep outperforming over the next week - more than the same kind of breakout in a normally shorted stock?",
+ "registered_at": "2026-10-23, before any FINRA file is downloaded and before any outcome",
+ "registered_before_results": true,
+ "origin": "Operator 10/23 ('sell me this pen'): buy where there is a reason for the NEXT buyer to arrive, not where the name merely looks right. Of the forced-buyer ideas, month-end is the only strong result (+20.6 bp), the closing auction is blocked (Databento 402), index changes are priced at the announcement, and post-earnings drift was tested 10/7 (2023-26 -24 / -44 bp). Short covering is the one untested forced-buyer flow.",
+ "prior": "LOW (~5-10%). The literature's main short-interest finding is the opposite: heavily shorted stocks UNDERPERFORM on average (shorts are informed). Squeezes are rare tail events. In favour: conditioning on a breakout (shorts already under pressure) is where forced covering concentrates, and the comparison against normally shorted breakouts isolates it.",
+ "data": {
+  "short_interest": "FINRA public files https://cdn.finra.org/equity/otcmarket/biweekly/shrt{YYYYMMDD}.csv, every settlement date 2020-01-15 .. 2026-09-30 (~161 files, ~350 MB; amended (11)): currentShortPositionQuantity, averageDailyVolumeQuantity, daysToCoverQuantity (DTC), marketClassCode, symbolCode, settlementDate. Stored on the mini under data/finra_short_interest/ (git-ignored).",
+  "availability": "NO LOOK-AHEAD: a report counts only from its PUBLICATION, taken as the settlement date + 9 trading days (FINRA publishes about 7 business days after settlement; 9 is conservative). Information: + 12 trading days.",
+  "prices": "Alpaca daily bars (data-only account, adjustment=all for returns, raw for the price floor), SPY for beta and market returns."
+ },
+ "universe": "Common stocks listed on NYSE / Nasdaq / NYSE American (marketClassCode in NYSE, NNM / NSC / NASDAQ codes as found, AMEX); ETFs and funds excluded (Alpaca asset name containing ETF / Fund / Trust / iShares / SPDR / ProShares / Direxion, or FINRA issueName likewise; the rule is applied identically to both groups). Each event day: raw prior close >= $20 and 20-day mean dollar volume >= $20M (the desk's floor and liquidity rule).",
+ "feature": "DTC from the latest PUBLISHED report before the trigger day. HIGH = DTC in the top decile of that report's eligible universe; NORMAL = DTC below the 70th percentile of that report. The 70-90th percentile band is excluded (a gap between groups).",
+ "trigger": "A BREAKOUT day: close / previous close - 1 >= +3% AND volume >= 2 x the 20-day median volume AND the close >= the prior 20-day high close. First trigger per name per report window (dedup: one event per name per publication window); the trigger day must be at least 1 trading day after publication.",
+ "trade": "Buy at the trigger day's close (an MOC order), sell at the close 5 trading days later (PRIMARY). 1, 10 and 20 days are information.",
+ "returns": "Beta-adjusted: name return - beta x SPY return over the same hold, beta from the 60 trading days before the trigger (OLS, daily); minus 10 bp round-trip cost (30 bp also printed).",
+ "statistic": "PRIMARY = mean of HIGH-DTC breakout events minus mean of NORMAL-DTC breakout events, with week-clustered SE (events clustered by the trigger's calendar week) and, separately, a calendar-time version (daily portfolio of open positions, Newey-West 5 lags); the SMALLER t is used.",
+ "halves": "H1 = triggers 2020-02-01 .. 2022-12-31, H2 = 2023-01-01 .. 2026-10-14.",
+ "power": "Outcome-blind count step before any return is computed: HIGH and NORMAL event counts per half, and the projected MDE from the dispersion of 5-day beta-adjusted returns of ALL eligible names on random dates (no event outcome). If the MDE > 50 bp in a half, or HIGH < 150 events in a half: UNDERPOWERED, not scored.",
+ "pass": "In BOTH halves: PRIMARY >= +50 bp net (10 bp cost) with t >= 2.0; HIGH events' own beta-adjusted mean > 0 at 30 bp cost; PRIMARY stays > 0 after dropping the top 3 weeks and (separately) the top 5 names; the HIGH-minus-NORMAL sign holds at the +12-day availability lag. FAIL: t <= -2 in a half, or the 97.5% upper bound < +50 bp in both halves. Otherwise UNDERPOWERED. A PASS earns a held-out check on 2017-2019 FINRA files and a forward paper prereg; never a desk change by itself.",
+ "control_logic": "NORMAL-DTC breakouts carry the same breakout momentum, liquidity screen and calendar, so HIGH minus NORMAL isolates the short-covering fuel; the same-week clustering absorbs market regime.",
+ "information_only": [
+  "HIGH-DTC names WITHOUT a trigger (the documented short-interest anomaly; expected negative) - same hold, random eligible days",
+  "DTC deciles of breakout events (a dose-response curve)",
+  "short interest change (changePercent) up vs down into the trigger",
+  "1 / 10 / 20-day holds; raw (not beta-adjusted) returns",
+  "the 2020-2021 meme-squeeze era vs the rest"
+ ],
+ "no_retuning": "the 3% / 2x volume / 20-day-high breakout, top decile vs < 70th percentile, the 9-day publication lag, 5-day hold, $20 / $20M screen, halves and the 50 bp bar are fixed.",
+ "declared_deviations": [
+  "a multi-day hold (MOC in, MOC out), not the desk's 3-minute scalps; it is a separate book if it ever passes",
+  "DTC uses FINRA's own ADV; float-based short interest % is not available free historically",
+  "symbol changes and delistings: events whose name has no bars over the hold are dropped and counted (survivorship declared)",
+  "ETF exclusion by name keywords is approximate and applied to both groups"
+ ],
+ "script": "tools/studies/short_squeeze.py (to be written): --fetch (FINRA files, after operator approval), --bars, count step, --score after a result-skeptic READY.",
+ "amended": {
+  "when": "2026-10-23, before any download or outcome, after result-skeptic FIX FIRST (11 items).",
+  "changes": [
+   "(1) ENTRY: the breakout is known only at D0's close, so the PRIMARY entry is the D+1 CLOSE (MOC the next day) and the 5-day hold runs from there; buying at the D0 close is information only (not tradeable as defined).",
+   "(2) PUBLICATION: a report counts from settlement + 10 trading days (FINRA publishes ~7 business days after settlement; 10 covers holidays). Information: + 12. CDN files may carry later revisions; rows with revisionFlag or stockSplitFlag set are dropped and counted per group.",
+   "(3) COVERAGE STEP before any event or return: per file, row counts by marketClassCode; the code list is frozen from it; if the count of eligible NYSE / Nasdaq / NYSE American common stocks changes by more than 25% between the half means, the halves are declared not comparable and reported separately (no pooled read).",
+   "(4) POINT-IN-TIME: the $20 / $20M screen and the DTC deciles use data ending at the PUBLICATION date (20 sessions of dollar volume ending there), frozen per report. Trigger inputs (20-day median volume, 20-day high close) and the 60-day beta end at D0 - 1 (the trigger day's own close and volume are the breakout). Bars are split-adjusted (adjustment = all) so reverse splits cannot fake a breakout; the price floor uses the raw close.",
+   "(5) MATCHED CONTROL (PRIMARY): each HIGH breakout is compared with NORMAL breakouts in the same calendar week AND the same tercile of 60-day volatility AND the same tercile of 20-day dollar volume (terciles of all eligible breakout events in H1, applied to both halves); the PRIMARY is the mean over HIGH events of (HIGH return - mean of its matched NORMAL returns); unmatched HIGH events are counted. The unmatched comparison and a difference-in-differences ((HIGH breakout - HIGH random day) - (NORMAL breakout - NORMAL random day)) are information.",
+   "(6) DTC: FINRA's daysToCoverQuantity is PRIMARY; our own short position / 20-day SIP ADV ending at settlement is computed, its Spearman correlation with FINRA's field and the HIGH cutoff per report are printed before scoring.",
+   "(7) COST is charged to the HIGH trade only (10 bp; 30 bp printed); the matched NORMAL control is gross.",
+   "(8) POWER: MDE = 2.84 x max(SE week-clustered, SE name-clustered, SE calendar-time) of the actual PRIMARY series, printed before any mean is read; MDE > 50 bp in a half -> UNDERPOWERED, not scored. Floor: >= 150 matched HIGH events per half.",
+   "(9) VERDICT: powered and not PASS = FAIL (no powered UNDERPOWERED). t = the smallest of week-clustered, name-clustered and calendar-time NW(5). No new event for a name while its previous event's hold is open.",
+   "(10) SURVIVORSHIP: bars fetched per event with the symbol as of the event date; a name delisted or halted mid-hold exits at its last available close (not dropped); drops for missing bars are counted per group; the run aborts if drops exceed 2% of events or differ between groups by more than 1 point. The 'Trust' keyword also removes REITs (declared, both groups).",
+   "(11) MULTIPLICITY: no information cell can be promoted without its own prereg. The settlement window ends at the last file PUBLISHED at least 1 day before the run (2026-09-30 settlement, published ~2026-10-09): 2020-01-15 .. 2026-09-30, ~161 files. The 2017-2019 held-out check gets the same coverage step."
+  ]
+ }
+}
