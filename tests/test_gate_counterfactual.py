@@ -64,3 +64,13 @@ def test_reading_rule():
     assert G.reading({"A": _h(0.0008, -0.0003), "B": _h(0.0006, 0.0002)}) == "NO EVIDENCE"   # refused names still lose
     assert G.reading({"A": _h(-0.0008, 0, -3.0), "B": _h(-0.0006, 0, -2.5)}) == "PROTECTIVE"
     assert G.reading({"A": _h(-0.0008, 0, -1.0), "B": _h(-0.0006, 0, -2.5)}) == "NO EVIDENCE"
+
+
+def test_day_minimum_and_missing_rates():
+    rows = [{"day": "d1", "diff": 0.001}] * 3 + [{"day": "d2", "diff": 0.5}] * 2 + [{"day": "d3", "diff": 0.003}] * 3
+    s = G.day_stats(rows, "diff")
+    assert s["days"] == 2 and abs(s["mean"] - 0.002) < 1e-12                       # d2 (2 units) is left out
+    st = G.Counter({"G1_float_refused_missing": 2, "G1_float_ctrl_missing": 30, "G1_float_ctrl_drawn": 100,
+                    "G1_float_no_board_120s": 1})
+    m = G.missing_rates({"G1_float": [{"on_board_before": False}] * 20 + [{"on_board_before": True}]}, st)
+    assert abs(m["G1_float"]["refused"] - 0.1) < 1e-12 and abs(m["G1_float"]["board"] - 0.3) < 1e-12

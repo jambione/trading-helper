@@ -70,7 +70,7 @@ def build_units(rejects: list[dict], board: dict) -> dict:
     """rejects: [{ts, symbol, reason}]; board: {day: {sym: [ts, ...] sorted}}.
     Per gate: name-day units at the FIRST refusal by that gate in [T_LO, T_HI] (whether or not admitted later),
     with all tested reasons the name-day got, and the first board ts after the refusal (admission)."""
-    first = {}
+    first, meta = {}, {}
     reasons = defaultdict(set)
     for r in rejects:
         d, m = et_min(r["ts"])
@@ -83,13 +83,15 @@ def build_units(rejects: list[dict], board: dict) -> dict:
         k = (r["reason"], d, r["symbol"])
         if r["reason"] in TESTED and (k not in first or r["ts"] < first[k]):
             first[k] = r["ts"]
+            meta[k] = {"pct": r.get("pct"), "source": r.get("source")}
     units = defaultdict(list)
     for (reason, d, sym), ts in sorted(first.items()):
         gate = next(g for g, rs in GATES.items() if reason in rs)
         later = [t for t in board[d].get(sym, []) if t > ts]
         units[gate].append({"day": d, "sym": sym, "ts": ts, "admit_ts": later[0] if later else None,
                             "other_gates": sorted(reasons[(d, sym)] - set(GATES[gate])),
-                            "on_board_before": any(t <= ts for t in board[d].get(sym, []))})
+                            "on_board_before": any(t <= ts for t in board[d].get(sym, [])),
+                            **meta.get((reason, d, sym), {})})
     return dict(units)
 
 
@@ -136,8 +138,12 @@ def ret(bars: dict, e: int, x: int) -> float | None:
     return bars[x][1] / bars[e][0] - 1
 
 
-def control_ret(day_bars: dict, syms: list[str], e: int, x: int) -> float | None:
+def control_ret(day_bars: dict, syms: list[str], e: int, x: int, st: Counter | None = None,
+                gate: str = "") -> float | None:
     rs = [ret(day_bars.get(s, {}), e, x) for s in syms]
+    if st is not None:
+        st[f"{gate}_ctrl_drawn"] += len(rs)
+        st[f"{gate}_ctrl_missing"] += sum(1 for r in rs if r is None)
     rs = [r for r in rs if r is not None]
     return statistics.mean(rs) if rs else None
 
@@ -150,12 +156,12 @@ def t_ppf(p: float, df: int) -> float:
     return S.t_ppf(p, df)
 
 
-def day_stats(rows: list[dict], key: str) -> dict:
+def day_stats(rows: list[dict], key: str, min_per_day: int = MIN_PER_GROUP) -> dict:
     per = defaultdict(list)
     for r in rows:
         if r.get(key) is not None:
             per[r["day"]].append(r[key])
-    means = {d: statistics.mean(v) for d, v in per.items() if len(v) >= 1}
+    means = {d: statistics.mean(v) for d, v in per.items() if len(v) >= min_per_day}
     xs = list(means.values())
     n = len(xs)
     if n < 2:
@@ -187,7 +193,8 @@ def load_rejects() -> list[dict]:
         except ValueError:
             continue
         if r.get("ts") and r.get("symbol") and r.get("reason"):
-            out.append({"ts": float(r["ts"]), "symbol": r["symbol"], "reason": r["reason"]})
+            out.append({"ts": float(r["ts"]), "symbol": r["symbol"], "reason": r["reason"],
+                        "pct": r.get("pct_change"), "source": r.get("source")})
     return out
 
 
@@ -253,6 +260,9 @@ def evaluate(units: dict, board: dict, bars_of) -> tuple[dict, Counter]:
     for gate, us in units.items():
         rows = []
         for u in us:
+            if u.get("on_board_before"):
+                st[f"{gate}_on_board_before"] += 1
+                continue
             db = bars_of(u["day"])
             w = window(db.get(u["sym"], {}), u["ts"], u["admit_ts"])
             if w == "admitted_before_entry":
@@ -264,7 +274,10 @@ def evaluate(units: dict, board: dict, bars_of) -> tuple[dict, Counter]:
             e, x, cut = w
             r = ret(db.get(u["sym"], {}), e, x)
             ctl_syms = board_at(board[u["day"]], u["ts"], u["sym"])
-            c = control_ret(db, ctl_syms, e, x)
+            if not ctl_syms:
+                st[f"{gate}_no_board_120s"] += 1
+                continue
+            c = control_ret(db, ctl_syms, e, x, st, gate)
             if r is None:
                 st[f"{gate}_refused_missing"] += 1
                 continue
@@ -272,27 +285,64 @@ def evaluate(units: dict, board: dict, bars_of) -> tuple[dict, Counter]:
                 st[f"{gate}_control_missing"] += 1
                 continue
             st[f"{gate}_ok"] += 1
+            x30 = min(e + 30 - 1, (et_min(u["admit_ts"])[1] - 1) if u.get("admit_ts") else 10 ** 6)
+            r30, c30 = ret(db.get(u["sym"], {}), e, x30), control_ret(db, ctl_syms, e, x30)
             rows.append({**u, "ret": r, "ctrl": c, "diff": r - c, "cut": cut, "n_ctrl": len(ctl_syms),
-                         "net": r - COST})
+                         "net": r - COST, "diff30": (r30 - c30) if (r30 is not None and c30 is not None) else None})
         out[gate] = rows
     return out, st
 
 
-def random_dispersion(units: dict, board: dict, bars_of) -> dict:
-    """amended (7): 10-minute returns at seeded random minutes, refused and board name-days (no gate outcome)."""
+def random_mde(units: dict, board: dict, bars_of, mid: str) -> dict:
+    """amended_2 (3): per gate and half, refused name minus a seeded board name at the SAME seeded random minute;
+    MDE = (t_crit + 0.84) x SD of per-day means / sqrt(days). No gate outcome is read."""
     out = {}
     for gate, us in units.items():
-        ref, brd = [], []
+        per = {"A": defaultdict(list), "B": defaultdict(list)}
         for u in us:
+            if u.get("on_board_before"):
+                continue
             db = bars_of(u["day"])
             rng = random.Random(int(hashlib.sha256(f"{SEED_TAG}|{gate}|{u['day']}|{u['sym']}".encode()).hexdigest()[:16], 16))
             m = rng.randint(T_LO, T_HI - HORIZON)
-            for sym, bucket in ((u["sym"], ref), (rng.choice(sorted(board[u["day"]])), brd)):
-                b = db.get(sym, {})
-                if m in b and (m + HORIZON - 1) in b:
-                    bucket.append(ret(b, m, m + HORIZON - 1))
-        out[gate] = {"refused_sd": statistics.stdev(ref) if len(ref) > 2 else None,
-                     "board_sd": statistics.stdev(brd) if len(brd) > 2 else None}
+            other = rng.choice(sorted(s_ for s_ in board[u["day"]] if s_ != u["sym"]) or [u["sym"]])
+            a = ret(db.get(u["sym"], {}), m, m + HORIZON - 1)
+            b = ret(db.get(other, {}), m, m + HORIZON - 1)
+            if a is not None and b is not None:
+                per["A" if u["day"] < mid else "B"][u["day"]].append(a - b)
+        out[gate] = {}
+        for h, dd in per.items():
+            xs = [statistics.mean(v) for v in dd.values() if len(v) >= MIN_PER_GROUP]
+            if len(xs) >= 2:
+                sd = statistics.stdev(xs)
+                out[gate][h] = {"days": len(xs), "mde": (t_ppf(0.975, len(xs) - 1) + 0.84) * sd / math.sqrt(len(xs))}
+            else:
+                out[gate][h] = {"days": len(xs), "mde": None}
+    return out
+
+
+def g6_delay_count(rejects: list[dict], board: dict) -> dict:
+    """amended_2 (8): not_uptrend / admit_range_pos name-days, and how many were admitted later that day."""
+    seen, later = set(), set()
+    for r in rejects:
+        if r["reason"] not in ("not_uptrend", "admit_range_pos"):
+            continue
+        d, _m = et_min(r["ts"])
+        if d not in board:
+            continue
+        seen.add((d, r["symbol"]))
+        if any(t > r["ts"] for t in board[d].get(r["symbol"], [])):
+            later.add((d, r["symbol"]))
+    return {"name_days": len(seen), "admitted_later": len(later)}
+
+
+def missing_rates(units: dict, st: Counter) -> dict:
+    out = {}
+    for gate, us in units.items():
+        n = sum(1 for u in us if not u.get("on_board_before"))
+        out[gate] = {"refused": st[f"{gate}_refused_missing"] / max(1, n),
+                     "board": st[f"{gate}_ctrl_missing"] / max(1, st[f"{gate}_ctrl_drawn"]),
+                     "no_board_120s": st[f"{gate}_no_board_120s"]}
     return out
 
 
@@ -324,37 +374,41 @@ def main() -> None:
         return
     cache = {}
 
+    missing_files = [d_ for d_ in board if not os.path.exists(os.path.join(BAR_DIR, f"{d_}.pkl"))]
+    if missing_files:
+        raise SystemExit(f"bars missing for {len(missing_files)} board days (e.g. {missing_files[:3]}); run --bars")
+
     def bars_of(day):
         if day not in cache:
-            p = os.path.join(BAR_DIR, f"{day}.pkl")
-            cache[day] = pickle.load(open(p, "rb")) if os.path.exists(p) else {}
+            cache[day] = pickle.load(open(os.path.join(BAR_DIR, f"{day}.pkl"), "rb"))
         return cache[day]
     days = sorted(board)
     mid = days[len(days) // 2]
     rows, st = evaluate(units, board, bars_of)
     if not a.score:
         cnt = {"window": [days[0], days[-1]], "half_split": mid, "stats": dict(st),
-               "dispersion": random_dispersion(units, board, bars_of), "module_sha256": module_shas()}
+               "mde": random_mde(units, board, bars_of, mid), "g6_delay": g6_delay_count(load_rejects(), board),
+               "units_sha256": hashlib.sha256(open(os.path.join(OUT_DIR, "units.json"), "rb").read()).hexdigest(),
+               "module_sha256": module_shas()}
         for gate, us in units.items():
             only = [x for x in us if not x["other_gates"]]
             cnt[gate] = {"units": len(us), "only_this_gate": len(only),
                          "admitted_later": sum(1 for x in us if x["admit_ts"]),
                          "per_half": {h: sum(1 for x in (only if gate == "G1_float" else us)
                                              if (x["day"] < mid) == (h == "A")) for h in ("A", "B")}}
-        miss = {}
-        for gate in units:
-            ok, m = st[f"{gate}_ok"], st[f"{gate}_refused_missing"] + st[f"{gate}_control_missing"]
-            miss[gate] = m / max(1, ok + m)
-        cnt["missing_rate"] = miss
+        cnt["missing_rate"] = missing_rates(units, st)
         P(json.dumps(cnt, indent=1, default=str))
         P(write("count.json", cnt))
         return
     if not a.skeptic_ready:
         raise SystemExit("--score needs --skeptic-ready")
     cnt = jload("count.json")
-    if not cnt or cnt.get("module_sha256") != module_shas():
-        raise SystemExit("count.json missing or from different code")
-    res = {"primary_gate": "G1_float", "gates": {}}
+    if not cnt or cnt.get("module_sha256") != module_shas() or cnt.get("units_sha256") != hashlib.sha256(
+            open(os.path.join(OUT_DIR, "units.json"), "rb").read()).hexdigest():
+        raise SystemExit("count.json missing or from different code / units")
+    miss = missing_rates(units, st)
+    res = {"primary_gate": "G1_float", "gates": {}, "missing_rate": miss, "g6_delay": cnt.get("g6_delay"),
+           "mde": cnt.get("mde")}
     for gate, rs in rows.items():
         use = [r for r in rs if not r["other_gates"]] if gate == "G1_float" else rs
         hv = {}
@@ -363,8 +417,15 @@ def main() -> None:
             lev = day_stats(part, "net")
             hv[h] = {"diff": day_stats(part, "diff"), "refused_level": day_stats(part, "ret"),
                      "board_level": day_stats(part, "ctrl"), "level_net": lev["mean"]}
-        res["gates"][gate] = {"halves": hv, "all": day_stats(use, "diff"),
-                              "reading": reading(hv) if gate == "G1_float" else "INFORMATION ONLY"}
+        rd = reading(hv) if gate == "G1_float" else "INFORMATION ONLY"
+        if gate == "G1_float" and abs(miss[gate]["refused"] - miss[gate]["board"]) > 0.10:
+            rd = "NOT READ (missing gap)"
+        res["gates"][gate] = {"halves": hv, "all": day_stats(use, "diff"), "reading": rd,
+                              "horizon_30min": day_stats(use, "diff30"),
+                              "up_on_day": day_stats([r for r in use if (r.get("pct") or 0) > 0], "diff"),
+                              "not_up_on_day": day_stats([r for r in use if r.get("pct") is not None and r["pct"] <= 0], "diff"),
+                              "by_source": {src: day_stats([r for r in use if r.get("source") == src], "diff", 1)
+                                            for src in sorted({r.get("source") for r in use if r.get("source")})}}
         if gate == "G2_spread":
             res["gates"][gate]["before_0_05pct_cap"] = day_stats([r for r in use if r["day"] < SPREAD_CAP_DAY], "diff")
             res["gates"][gate]["after_0_05pct_cap"] = day_stats([r for r in use if r["day"] >= SPREAD_CAP_DAY], "diff")
