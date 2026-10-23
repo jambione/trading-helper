@@ -54,16 +54,82 @@ def py() -> str:
     return str(p if p.exists() else sys.executable)
 
 
-def run(cmd: list[str], log: Path, timeout: float) -> int:
+MEM_CAP_MB = 6000          # a step's whole process group; the mini has 16 GB (10/22 exact replay reached 55 GB)
+POLL_S = 30
+RC_TIMEOUT, RC_MEMCAP = -9, -10
+
+
+def parse_mem(s: str) -> float | None:
+    """top's MEM column ('55G', '1567M', '476K', '12M+', '3B') -> MB."""
+    s = s.strip().rstrip("+-")
+    if not s:
+        return None
+    unit, num = s[-1].upper(), s[:-1]
+    mult = {"B": 1 / 2 ** 20, "K": 1 / 1024, "M": 1.0, "G": 1024.0, "T": 1024.0 ** 2}.get(unit)
+    try:
+        return float(num) * mult if mult is not None else float(s) / 2 ** 20
+    except ValueError:
+        return None
+
+
+def group_footprint_mb(pgid: int) -> float:
+    """Physical footprint (incl. compressed / swapped pages, which RSS misses) summed over the process group."""
+    pids = subprocess.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
+    tot = 0.0
+    for pid in pids:
+        out = subprocess.run(["top", "-l", "1", "-pid", pid, "-stats", "mem"], capture_output=True, text=True).stdout
+        lines = [x for x in out.strip().splitlines() if x.strip()]
+        mb = parse_mem(lines[-1]) if lines else None
+        tot += mb or 0.0
+    return tot
+
+
+def kill_group(pgid: int) -> None:
+    import signal
+    for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 0)):
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            return
+        for _ in range(wait):
+            time.sleep(1)
+            if not subprocess.run(["pgrep", "-g", str(pgid)], capture_output=True).stdout:
+                return
+
+
+def run(cmd: list[str], log: Path, timeout: float, mem_cap_mb: float | None = MEM_CAP_MB,
+        footprint=group_footprint_mb, poll_s: float = POLL_S) -> int:
+    """Run one step in its OWN process group, so a timeout or the memory cap kills everything it started
+    (replay_session.py re-executes the booted code from a temp copy as a child: killing only the direct child left
+    that replay orphaned for 10 h on 2026-10-22)."""
     with open(log, "ab") as f:
         f.write(f"\n=== {datetime.now(ET):%H:%M:%S} {' '.join(cmd)}\n".encode())
         f.flush()
-        try:
-            return subprocess.call(cmd, cwd=str(ROOT), stdout=f, stderr=subprocess.STDOUT,
-                                   timeout=timeout, env=dict(os.environ, REPLAY_REPO=str(ROOT)))
-        except subprocess.TimeoutExpired:
-            f.write(b"TIMEOUT\n")
-            return -9
+        p = subprocess.Popen(cmd, cwd=str(ROOT), stdout=f, stderr=subprocess.STDOUT, start_new_session=True,
+                             env=dict(os.environ, REPLAY_REPO=str(ROOT)))
+        t0, peak = time.time(), 0.0
+        while True:
+            try:
+                rc = p.wait(timeout=poll_s)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            if mem_cap_mb is not None:
+                mb = footprint(p.pid)
+                peak = max(peak, mb)
+                if mb > mem_cap_mb:
+                    kill_group(p.pid)
+                    p.wait()
+                    f.write(f"MEMCAP {mb:.0f} MB > {mem_cap_mb:.0f} MB after {time.time() - t0:.0f} s\n".encode())
+                    return RC_MEMCAP
+            if time.time() - t0 > timeout:
+                kill_group(p.pid)
+                p.wait()
+                f.write(b"TIMEOUT\n")
+                return RC_TIMEOUT
+        kill_group(p.pid)                     # leftovers the step started and did not reap
+        f.write(f"rc {rc}, {time.time() - t0:.0f} s, peak footprint {peak:.0f} MB\n".encode())
+        return rc
 
 
 def boot_sha(day: str) -> str | None:
@@ -155,7 +221,8 @@ def step_exact(day: str, out: Path, log: Path) -> dict:
     rc = run([py(), "-u", str(ROOT / "tools" / "replay_session.py"), "--exact", "--day", day,
               "--start", "09:30", "--end", "15:50", "--sha", sha, "--out", str(res)], log, 3 * 3600)
     if not res.exists():
-        return {"ok": False, "why": f"exact replay produced no result (rc {rc})", "sha": sha}
+        why = {RC_TIMEOUT: "timed out (3 h)", RC_MEMCAP: f"memory cap ({MEM_CAP_MB} MB) hit"}.get(rc, f"rc {rc}")
+        return {"ok": False, "why": f"exact replay produced no result ({why})", "sha": sha}
     r = json.loads(res.read_text())
     io_ = r.get("io") or {}
     return {"ok": True, "sha": sha, "verdict": r.get("verdict"),
