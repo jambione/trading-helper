@@ -1,0 +1,49 @@
+{
+ "study": "Fence-bar opening retest (operator-pasted YouTube setup, 2026-10-23): fence = high/low of the first 5-minute bar; wait for a 5-minute CLOSE outside the fence, then a RETEST bar that opens outside, wicks back to the rail and closes outside; enter at the retest close, stop ~50% into the fence, target 2R; trade only with the 20-period 5-minute SMA ('anchor line') flat or sloping in the trade's direction.",
+ "registered_at": "2026-10-23, before any script, feature or outcome",
+ "registered_before_results": true,
+ "batch": "untested-categories 2026-10-23 (operator: 'I want to test all of these'); added as #9 after the operator pasted the video",
+ "origin": "Operator pasted the transcript of a 'fence bar setup' video (presenter: former market maker); the video shows QQQ 5-minute charts with 4 wins out of 5 days. Anecdote, no backtest.",
+ "prior": "LOW (~10%): our 10/5 breakout-confirmation test (wait for a second poke) lost to the first poke (-19 / -17 bp); waiting for a dip after a signal cost 14-36 bp (10/14, 10/16); the 9/26 ORB test on top gainers flipped sign between periods. The retest-and-close-outside rule plus the SMA slope filter has not been tested.",
+ "instruments": "PRIMARY: QQQ and SPY (the video trades QQQ). INFORMATION: the warehouse universe (liquid names, 110 sessions 2026-05-11 .. 10-15), long side only.",
+ "data": "SIP 1-minute RTH bars for QQQ and SPY, 2016-01-04 .. 2026-10-15, fetched on the data-only Alpaca account (Adjustment.ALL), paced, cached under ai_reports/fence_bar/. NYSE early-close sessions dropped and counted. 5-minute bars are built from 1-minute bars on clock boundaries (09:30-09:34 is bar 1); a 5-minute bar needs >= 4 of its 1-minute bars, else that bar is missing (the day continues).",
+ "rule": {
+  "fence": "TOP = high of bar 1 (09:30-09:34), BOTTOM = low of bar 1; MID = (TOP + BOTTOM) / 2.",
+  "breakout": "LONG: a 5-minute bar (from bar 2 on) that CLOSES above TOP. SHORT: closes below BOTTOM.",
+  "cancel": "After a long breakout, any 5-minute bar that closes at or below TOP before the retest cancels it; a new breakout close re-arms (same for shorts mirrored).",
+  "retest": "LONG: the first later 5-minute bar whose OPEN > TOP, LOW <= TOP and CLOSE > TOP. SHORT mirrored (open < BOTTOM, high >= BOTTOM, close < BOTTOM).",
+  "window": "The retest bar must END by 11:00 ET; otherwise no trade that day for that side.",
+  "anchor_filter": "SMA20 = mean of the last 20 five-minute closes through the retest bar (the series continues from the prior session; needs 20 bars). LONG only if SMA20 at the retest bar >= SMA20 one bar earlier (rising or flat); SHORT only if <= (falling or flat).",
+  "entry": "The OPEN of the first 1-minute bar after the retest bar ends (the video enters 'as the bar closes'; next-open is the honest fill).",
+  "stop": "MID (50% into the fence). LONG exits at the close of the first 1-minute bar whose LOW <= MID, filled at min(MID, that bar's open); SHORT mirrored. If the entry open is already beyond MID the trade is skipped (counted).",
+  "target": "2R: LONG target = entry + 2 x (entry - MID); filled at the target when a 1-minute high >= target + $0.01 (or at the bar open if it opens above). A bar that reaches both counts as the STOP (conservative).",
+  "time_exit": "15:59 bar close if neither is hit.",
+  "limits": "At most one trade per symbol per side per day; the first side to trigger is traded, the other side is information."
+ },
+ "control": "For each trade, a seeded random entry minute in (retest end + 1) .. (retest end + 60) on the same symbol-day (seed sha256(sym|day|'fence-ctrl')), same direction, same PERCENT stop and target distances, same 15:59 exit, same fill rules. A second control (seed 'fence-ctrl2') is used for the MDE only.",
+ "cost": "ETF round trip 2 bp binding (QQQ/SPY spreads ~1 bp at 10:00); net also at 1, 5, 10 bp. Warehouse stocks: 5 bp.",
+ "halves": "A = 2016-01-04 .. 2020-12-31, B = 2021-01-04 .. 2026-10-15. No separate held-out set exists for the ETFs; the warehouse stock read is information and cannot rescue or confirm.",
+ "primary": "PRIMARY = LONG trades on QQQ + SPY (the desk is long-only). Statistic per half: per day, the mean over that day's trades (QQQ and SPY on one day are one cluster) of (a) trade net, (b) trade minus its control; day-equal; day-clustered t.",
+ "pass": "In BOTH halves: mean long net (after 2 bp) > 0 with t >= 2.0, AND long minus control >= +5 bp with t >= 2.0, AND dropping the 3 best days keeps both >= 0. Batch reading as in the common block (t >= 2.73 both halves for 'batch-robust').",
+ "fail": "t <= -2 on either primary quantity in a half, or the 97.5% upper bound of long minus control below +5 bp in both halves. Otherwise UNDERPOWERED.",
+ "power": "Outcome-blind count step: long trades and days per half, controls found, and MDE from (control - control2) per day; floors per half >= 300 trades and >= 100 days, and MDE <= 5 bp, else UNDERPOWERED with no outcome read.",
+ "information_only": [
+  "SHORT trades on QQQ + SPY (the video trades both sides)",
+  "both sides pooled",
+  "no SMA filter",
+  "stop at the retest bar's extreme instead of MID",
+  "1.5R target",
+  "'far from the anchor' split: |entry - SMA20| / ATR above vs below the median",
+  "win rate and R multiple",
+  "warehouse stocks, long, 5 bp",
+  "day-of-week",
+  "the plain 5-minute ORB (enter on the first close outside, no retest) under the same bracket"
+ ],
+ "no_retuning": "Fence, breakout, cancel, retest, 11:00 window, SMA20 slope filter, MID stop, 2R target, 15:59 exit, cost, halves and floors are fixed.",
+ "declared_deviations": [
+  "the video's stop is 'about 50%, or below nearby support' - discretionary; MID is the mechanical version",
+  "the video exits early when far from the anchor - discretionary; not modelled (information split only)",
+  "SIP bars; next-1-minute-open entry instead of the bar close"
+ ],
+ "script": "tools/studies/fence_bar.py (to be written): --fetch, count step, --score after a result-skeptic READY."
+}
