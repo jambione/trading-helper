@@ -27,8 +27,8 @@ ROOT = os.environ.get("EEH_ROOT") or os.path.dirname(os.path.dirname(os.path.dir
 OUT_DIR = os.path.join(ROOT, "ai_reports", "floor20_forward")
 CONFIG = os.path.join(ROOT, "config", "bot_config.json")
 ET = ZoneInfo("America/New_York")
-FLOOR_COMMIT = "874a7791"
-FWD_FIRST, SEEN_DAY = "2026-10-23", "2026-10-22"
+FLOOR_COMMIT = "floor20-window-2"                  # amended_3: the restarted window's config tag
+FWD_FIRST, SEEN_DAY = "2026-10-26", "2026-10-22"            # amended_3: restart; 10/22-23 information
 CMP_FIRST, CMP_LAST, BASE_FIRST = "2026-10-16", "2026-10-21", "2026-10-05"
 MIN_SESS, MIN_FILLS, CAP_SESS = 20, 150, 35
 ECON_BP = 3.0
@@ -275,6 +275,7 @@ def main() -> None:
            "verdict": verdict(F, d, halves, guards),
            "info": {"full_october_baseline": cr1(base), "seen_day_10_22": cr1([r for r in rows if r["day"] == SEEN_DAY
                                                                                 and r["bp"] is not None]),
+                    "pre_filter_10_23": cr1([r for r in rows if r["day"] == "2026-10-23" and r["bp"] is not None]),
                     "opens_per_session_forward": len(fwd) / max(1, len(sess)),
                     "opens_per_session_comparator": len(cmp_) / max(1, len({r['day'] for r in cmp_})),
                     "largest_name_share": max(collections.Counter(r["sym"] for r in fv).values()) / max(1, len(fv)),

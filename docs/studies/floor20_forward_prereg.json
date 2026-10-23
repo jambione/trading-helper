@@ -53,5 +53,12 @@
   },
   "how": "For forward fills and (as context) the comparator fills: per cell, IN vs OUT mean realized bp (session-clustered CR1), the IN - OUT difference and t, and IN counts. Fills without bars before them (first RTH minute) are unclassified and counted.",
   "status": "INFORMATION ONLY: neither cell can change the verdict, pass, or justify a config change; a promising cell needs its own prereg and forward window. Origin: sweep_block stage 2 (above VWAP on an up day +3.3 / +0.7 bp; block buying through the day's high too rare to judge)."
+ },
+ "amended_3": {
+  "when": "2026-10-23 ~12:40 ET, operator decision (no forward fill has been read; only counts exist).",
+  "change": "After the 2026-10-23 close the live config adds ai_watch_wr_trend_min_rise = 15: an empty-square (presquare) buy needs the fast %R to have risen >= 15 points over the prior 10 minutes (no sideways presquare entries); square / overbought buys are unaffected (operator: 'the only sideways position we open is a square'). Side effect declared: a presquare buy also needs 10 minutes of %R history for the name (refused 'wr_no_history' otherwise).",
+  "window": "The forward window RESTARTS on 2026-10-26 under the new config, frozen from the commit tagged floor20-window-2 on the mini (made right after the change). 2026-10-22 and 2026-10-23 ($20 floor without the filter) are information only. The read conditions (>= 20 forward sessions and >= 150 fills; cap 35 sessions) count from 2026-10-26.",
+  "what_it_measures": "the $20 floor PLUS the no-sideways presquare rule together, against the unchanged comparator ($20+ fills under the current exits, 10/16-10/21, no filter); the read cannot separate the two changes. Everything else in amended / amended_2 is unchanged.",
+  "evidence_declared": "The 10/16 sideways study (SIDEWAYS_FILTER_2026-10-16.md) found the slow-line-rising read FAIL (halves reversed; kept arms -6.8 bp net); the wr_trend15 replay test (wr_trend_entry_prereg.json) has not read yet. Expect fewer fills; the 35-session cap may decide the read date."
  }
 }
