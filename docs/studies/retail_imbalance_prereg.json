@@ -25,6 +25,23 @@
   "power": "Outcome-blind count step first: trades and days per half, and a projected MDE from the dispersion of the CONTROL leg only; floors per half >= 300 trades and >= 20 days, MDE <= the lift bar, else UNDERPOWERED with no outcome read.",
   "fail_rule": "FAIL: t <= -2 in a half, or the 97.5% upper bound of the lift below the bar in both halves. Otherwise not passed = UNDERPOWERED.",
   "data_account": "All fetches on the data-only Alpaca account (secrets_data.json), never the desk key; paced; no paid data.",
-  "multiplicity": "Eight studies registered together on 2026-10-23 (the 'untested categories' batch). Each has ONE primary; a family-wise reading is printed: a primary counts as a batch PASS only with t >= 2.73 (Bonferroni 0.05/8, two-sided, normal approx) in both halves; t >= 2 in both halves without that is reported as 'PASS (single-test), not batch-robust'."
+  "multiplicity": "Eight studies registered together on 2026-10-23 (the 'untested categories' batch). Each has ONE primary; a family-wise reading is printed: a primary counts as a batch PASS only with t >= 2.73 (Bonferroni 0.05/8, two-sided, normal approx) in both halves; t >= 2 in both halves without that is reported as 'PASS (single-test), not batch-robust'.",
+  "amended": [
+   "(C1) Cross-sectional studies (no control leg): the power MDE comes from a PLACEBO - a seeded random set of the same size as the long set each day (seed '<study>-placebo') minus the all-eligible mean; MDE = (t 2.0 + 0.84) x SD(day placebo LIFT) / sqrt(days). The placebo is outcome-free with respect to the signal.",
+   "(C2) No eligibility test may use a bar after entry. Exit price = the close of the last bar at or before the exit minute; a name lacking the exit-minute bar is NOT skipped. A name lacking its entry bar is skipped (counted) - the entry bar is known at entry.",
+   "(C3) Confirmation window for fresh-fetch studies: 2026-01-14 .. 2026-04-24 (the warehouse_confirm dates), fetched ONLY after a PASS, never before; no study's scored halves may include it.",
+   "(C4) Every fetch logs symbols dropped by rate-limit errors (429) after retries; a half with any unrecovered drop is refused (rerun the fetch).",
+   "Universe fact (declared): the warehouse is NOT book-like - it is every liquid name (prior-day raw close >= $10, 20-day mean dollar volume >= $20M, active and inactive, ~1,840-1,950 per day); bars end at 15:59 (no closing auction)."
+  ]
+ },
+ "amended": {
+  "when": "2026-10-23, after result-skeptic round 1 FIX FIRST, before any script or data read.",
+  "changes": [
+   "(1) Names: a per-day seeded draw of 150 from that day's warehouse universe (seed 'rimb-names'), not a fixed set.",
+   "(2) Sub-penny: frac = round((price * 100) % 1, 4); BUY if 0.6 < frac < 1.0, SELL if 0 < frac < 0.4; only TRF prints (exchange 'D'); exclude trades with conditions other than regular/odd-lot (Alpaca conditions ' ', '@', 'I'); declared.",
+   "(3) Before any fetch: estimate requests (pages per name-morning from a 5-name probe, no outcomes); if the full fetch exceeds 6 hours at <= 150 req/min, the sample is cut (names per day) by a rule written before fetching.",
+   "(4) Before any outcome: check the sub-penny share of TRF prints per month across the window; if it moves by > 2x, report it and split the read by period (information).",
+   "(5) Halves: A = 2026-07-01 .. 08-22, B = 2026-08-24 .. 10-15 (midpoint chosen now); confirmation per C3."
+  ]
  }
 }
