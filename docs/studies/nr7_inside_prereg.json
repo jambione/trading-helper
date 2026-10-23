@@ -42,5 +42,11 @@
    "(2) CONTROL after the trigger: a seeded random minute in trigger+1 .. trigger+60 (within 15:00), same % stop, same exit.",
    "(3) GAP-THROUGH: a day whose 09:30 open is above the t-1 high is skipped and counted (no buy without a cross from below); the trigger needs a bar whose open is <= the level and whose high > the level."
   ]
+ },
+ "amended_2": {
+  "when": "2026-10-23, after result-skeptic round 2 (final), before any script or data read. Each choice is the strict option: no look-back, warm-up or control touches the held-out window 2026-01-14 .. 04-24.",
+  "changes": [
+   "Declared (skeptic round 2): a bar that opens above the level after the prior bar closed below it never triggers (the cross rule needs open <= level); fast breakouts are under-counted."
+  ]
  }
 }

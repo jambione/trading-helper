@@ -42,5 +42,11 @@
    "(2) Report a name-clustered and a two-way (day x name) t next to the day-clustered t; the PASS needs t >= 2 under the two-way clustering.",
    "(3) C2 applied; daily bars fetched only for 2026-03-15 .. 2026-10-15 (the 20-day look-back plus window). Confirmation per C3 on warehouse_confirm."
   ]
+ },
+ "amended_2": {
+  "when": "2026-10-23, after result-skeptic round 2 (final), before any script or data read. Each choice is the strict option: no look-back, warm-up or control touches the held-out window 2026-01-14 .. 04-24.",
+  "changes": [
+   "(4) Scoring starts on the first trading day whose 20-session look-back lies wholly after 2026-04-24 (= 2026-05-26); half A = 2026-05-26 .. 2026-07-29 (fewer days, declared), half B unchanged. Daily bars are fetched from 2026-04-27 only. The warehouse-built fallback is then always available (look-back inside the warehouse). Dropped days 05-11 .. 05-22 are counted."
+  ]
  }
 }

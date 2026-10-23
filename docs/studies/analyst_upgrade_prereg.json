@@ -47,5 +47,11 @@
    "(6) HALVES REPLACED per C3: A = 2025-04-01 .. 2026-01-13, B = 2026-04-25 .. 2026-10-15; confirmation 2026-01-14 .. 04-24.",
    "(7) Declared: the 10/15 news study (NEWS_UP, all headlines) already failed; upgrades alone were never scored."
   ]
+ },
+ "amended_2": {
+  "when": "2026-10-23, after result-skeptic round 2 (final), before any script or data read. Each choice is the strict option: no look-back, warm-up or control touches the held-out window 2026-01-14 .. 04-24.",
+  "changes": [
+   "(3) Control sessions must lie inside the same half's window (and for the confirmation run, inside 01-14 .. 04-24); use the mean of up to 5 previous in-window sessions, minimum 3, else the event is skipped and counted."
+  ]
  }
 }

@@ -47,5 +47,12 @@
    "(5) COST: 10 bp round trip BINDING (in-play names at 09:35 are wide); 5 and 20 bp information.",
    "(6) WINDOW extended for power, chosen now: half A = 2025-04-01 .. 2026-01-13, half B = 2026-04-27 .. 2026-10-15; confirmation 2026-01-14 .. 04-24 per C3. Floors unchanged (300 trades, 20 days per half)."
   ]
+ },
+ "amended_2": {
+  "when": "2026-10-23, after result-skeptic round 2 (final), before any script or data read. Each choice is the strict option: no look-back, warm-up or control touches the held-out window 2026-01-14 .. 04-24.",
+  "changes": [
+   "(1) Fetch ranges: daily bars 2025-02-01 .. 2026-01-13 and 2026-04-27 .. 2026-10-15; opening (09:30-09:34) bars 2025-03-10 .. 2026-01-13 and 2026-04-27 .. 2026-10-15.",
+   "(2) Half B starts 2026-05-26 (the first session with 20 sessions of look-back after 04-24); half B = 2026-05-26 .. 2026-10-15. Half A's look-backs end before 01-14 by construction (A ends 01-13). No held-out-window data is fetched before a PASS."
+  ]
  }
 }
