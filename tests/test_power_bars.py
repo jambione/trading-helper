@@ -72,7 +72,7 @@ def test_pm_smallest_n_wins_at_same_k():
     import pm_power_bar as P
     refs, bars = _refs_quiet()
     bars = list(bars)
-    bars[5] = (99.2, 99.3, 99.1, 99.25, 581)       # quiet-ish
+    bars[5] = (99.05, 99.25, 99.00, 99.20, 581)     # small alone; with bar 6 a green 2-bar window also qualifies
     bars[6] = (99.05, 99.40, 99.00, 99.35, 583)     # alone: range .40 >= .30, body .30 = 75%, green
     r = np.array([[m, 100, 100, 100, 100, 1] for m in range(570, 581)], dtype=float)
     sig = P.loose_candidate(r, bars, refs, 101.0, 99.0, 1)
