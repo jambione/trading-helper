@@ -38,3 +38,18 @@ whether or not they were admitted later) move better than board names over the s
   those.
 - **Short window:** 30 sessions, with config changes inside it.
 - **Feed:** SIP bars, while the live desk runs on IEX.
+
+## Follow-up: the spread cap after costs (information, registered before any quote)
+
+The screen's +11 / +13 bp for spread-refused names was before costs. `tools/studies/gate_spread_net.py` (36627669)
+fetched the real SIP bid/ask at each entry minute. Each refused name paid its own full spread, and the board side paid
+the mean spread of 3 seeded board names. Sample: 649 refused name-days, 630 with quotes.
+
+| | All days | From 10/03 (the 0.05% cap) | Before 10/03 |
+|---|---|---|---|
+| Gross: refused minus board | +11.6 bp | +4.1 bp | +27.9 bp |
+| **Net, after each side's spread** | **-12.8 bp** (t -1.2, 95% -36 to +10) | **-14.1 bp** (t -0.9) | -10.1 bp (t -0.8) |
+| Median quoted spread: refused / board | 14.8 / 8.1 bp | 10.3 / 5.5 bp | 34.4 / 18.6 bp |
+
+**Reading: no net case.** The refused names' small gross advantage is more than eaten by their wider spreads. After
+costs they did about 13-14 bp worse than the board. The spread cap protects the desk; keep it.
