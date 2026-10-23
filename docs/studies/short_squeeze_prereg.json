@@ -62,7 +62,8 @@
    "(6) CALENDAR-TIME SE = Driscoll-Kraay: per calendar week on a full week grid g_w = sum over events that week of (v - mean), 0 for empty weeks; Newey-West with 5 lags over g; se = sqrt(S) / n. (Replaces the weekly-means NW, which skipped empty weeks.)",
    "(7) OWN-DTC CHECK: Spearman with average ranks over all eligible rows (per-report median also printed); the HIGH and NORMAL cutoffs per report are written to count.json.",
    "(8) FLAGGED ROWS counted by DTC rank group (top decile vs below the 70th) as in (2).",
-   "NOTES: names with < 61 sessions of history (recent IPOs) are reported as their own line ('no_features') and do NOT enter the abort rule; the random-day DiD uses the triggered names' own non-breakout days (declared)."
+   "NOTES: names with < 61 sessions of history (recent IPOs) are reported as their own line ('no_features') and do NOT enter the abort rule; the random-day DiD uses the triggered names' own non-breakout days (declared).",
+   "(2b) The survivorship count in (2) uses in-scope rows with FINRA averageDailyVolumeQuantity >= 200,000 shares (a liquidity proxy needing no bars; most FINRA rows are warrants / units / preferreds that could never pass the $20 / $20M screen). The missing-row rate per DTC group enters the abort rule next to the event drop rate (each: total <= 2%, groups within 1 point)."
   ]
  }
 }
