@@ -1,0 +1,33 @@
+{
+ "registered_at": "2026-10-23, before any script, feature or outcome",
+ "registered_before_results": true,
+ "batch": "untested-categories 2026-10-23 (operator: 'I want to test all of these')",
+ "study": "Opening-range breakout on stocks in play (Zarattini, Barbon & Aziz 2024): each day trade only the names with the most abnormal opening volume, buying a break above the first 5-minute range.",
+ "source": "Zarattini, Barbon, Aziz (SSRN 4729284): universe = 1,000 most liquid US stocks, price > $5, 14-day ATR > $0.50; in play = first-5-minute volume / its 14-day average for the same window; top 20 per day; direction of the first 5-minute candle; stop at 10% of ATR... reported Sharpe ~2.8 (2016-2023), QuantConnect recreation Sharpe 2.4. Backtest only, not peer reviewed. Our 9/26 test (top-10 GAINERS, small sample) is not this design.",
+ "prior": "LOW-MEDIUM (~15%): published backtest, unreviewed; our breakout and early-entry tests failed, but never with opening-volume selection.",
+ "data": "Fresh fetch on the data-only account: (1) daily SIP bars 2026-03-01 .. 2026-10-15 for all active US common stocks (to rank liquidity and ATR); (2) SIP 1-minute bars 09:30-09:34 for the 1,000 most liquid names each day (prior 20-day median dollar volume, price > $10, ATR(14) > $0.50), 2026-04-01 .. 2026-10-15 (the first 14 sessions of opening volume are warm-up); (3) full-day SIP 1-minute bars for each day's top-20 names only. Sessions 2026-05-11 .. 2026-10-15, halves as common.",
+ "signal": "In-play score = volume of the 09:30-09:34 bars / mean of the same window over the prior 14 sessions (needs >= 10 of them). Top 20 names per day by score. LONG candidates: those whose first 5-minute candle closed above its open (paper's direction rule).",
+ "trade": "Buy stop at the 5-minute range high + $0.01, triggered from the 09:35 bar on (fill at max(trigger, bar open)); stop loss = 5-minute range low (paper variant uses 10% of ATR; information); exit at the 15:59 close if not stopped (paper exits at the close). One trade per name-day. Long only (desk); the short side is information.",
+ "control": "For each triggered trade, the SAME name-day bought at a seeded random minute in 09:35..11:00 (seed 'orb-ctrl'), same stop distance in percent, same 15:59 exit. Isolates the breakout timing from the in-play name selection.",
+ "primary": "Per day: mean trade net; and LIFT = mean (trade - its control).",
+ "pass": "In BOTH halves: mean trade net (after 5 bp) > 0 with t >= 2.0 AND LIFT >= 0 (the breakout is not worse than a random entry in the same name). Selection-only evidence (net > 0 but LIFT < 0) is reported as 'in-play names drift, timing adds nothing'.",
+ "information_only": [
+  "the short side",
+  "ATR-based stop",
+  "top 10 / top 50",
+  "price >= $20",
+  "the 15/30-minute opening range"
+ ],
+ "no_retuning": "Universe, score, top 20, 5-minute range, stop, exit, cost, sample fixed.",
+ "common": {
+  "halves": "Warehouse studies: A = 2026-05-11 .. 2026-07-29, B = 2026-07-30 .. 2026-10-15 (110 sessions; 2026-04-27 .. 05-08 are warm-up for look-backs only).",
+  "statistic_default": "Per half: per day, the mean over that day's trades of the measured quantity; day-equal mean; day-clustered t (df = days - 1).",
+  "cost": "5 bp round trip binding (the desk's current RT cost on $20+ names is ~3 bp); net also printed at 3, 10, 20 bp.",
+  "price_floor": "entry price >= $10 primary; >= $20 (the desk's live floor) as information.",
+  "confirmation": "A PASS is re-run unchanged on warehouse_confirm (2026-01-14 .. 04-24, held out, never read) before anything else; then a forward paper prereg. Never a desk change by itself; the desk stays frozen for the floor20 window.",
+  "power": "Outcome-blind count step first: trades and days per half, and a projected MDE from the dispersion of the CONTROL leg only; floors per half >= 300 trades and >= 20 days, MDE <= the lift bar, else UNDERPOWERED with no outcome read.",
+  "fail_rule": "FAIL: t <= -2 in a half, or the 97.5% upper bound of the lift below the bar in both halves. Otherwise not passed = UNDERPOWERED.",
+  "data_account": "All fetches on the data-only Alpaca account (secrets_data.json), never the desk key; paced; no paid data.",
+  "multiplicity": "Eight studies registered together on 2026-10-23 (the 'untested categories' batch). Each has ONE primary; a family-wise reading is printed: a primary counts as a batch PASS only with t >= 2.73 (Bonferroni 0.05/8, two-sided, normal approx) in both halves; t >= 2 in both halves without that is reported as 'PASS (single-test), not batch-robust'."
+ }
+}

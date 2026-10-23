@@ -1,0 +1,34 @@
+{
+ "registered_at": "2026-10-23, before any script, feature or outcome",
+ "registered_before_results": true,
+ "batch": "untested-categories 2026-10-23 (operator: 'I want to test all of these')",
+ "study": "End-of-day reversal (Baltussen, Da & Soebhag 2025): stocks that fell most from yesterday's close to 15:00 rise in the cross-section over the last half hour. Long-only version for the desk: buy the early-day LOSERS at 15:30, sell at the close.",
+ "source": "Baltussen, Da, Soebhag, 'End-of-Day Reversal' (2025 working paper, Quantpedia Awards 2025 2nd place). Paper: ROD3 = return from the prior close to 15:00; LH = 15:30 to the close; quintile L (losers) +3.55 bp/day value-weighted, L-H +3.78 bp (t 10.7), equal-weighted L-H +6.38 bp (t 17.3), most of the EW gain in the losers; much stronger in small stocks (L-S within the smallest 20%: 14.7 bp); sample 1993-2019, NYSE 10th-percentile size and $5 filters, TAQ last-trade prices at the second.",
+ "prior": "MEDIUM-LOW (~20%): the published effect is very robust gross, but its size (3-7 bp for a quintile) is at or below our 5 bp cost; the bottom decile is stronger. Our 400-name sample is book-like (more volatile than the paper's average stock), which should help.",
+ "data": "Warehouse SIP 1-minute bars (RTH), the 400-name book-like sample per session; prior close = the previous session's 15:59 bar close in the warehouse for that name (a name without it that day is skipped and counted). Closing price = the close of the 15:59 bar (the closing auction print is NOT in the bars; declared deviation).",
+ "signal": "ROD3 = (close of the 14:59 bar) / (prior session's 15:59 close) - 1, per name-day. Names with a missing 14:59 or 15:29 bar or 15:59 bar are skipped (counted). Cross-sectionally rank all eligible names that day; LOSERS = the bottom DECILE by ROD3 (at least 20 eligible names that day, else the day is skipped).",
+ "trade": "Buy each loser at the OPEN of the 15:30 bar; sell at the close of the 15:59 bar. Equal weight. No stop.",
+ "primary": "LIFT = loser decile's 15:30->15:59 return minus the equal-weight mean 15:30->15:59 return of ALL eligible names that day (the paper's cross-sectional reading; removes the market's own last-half-hour drift). Per day one value; day-equal; day-clustered t.",
+ "pass": "In BOTH halves: LIFT >= +5 bp with t >= 2.0, AND the loser decile's own mean net (after 5 bp) > 0 with t >= 1.0, AND dropping the 3 best days keeps LIFT >= 0.",
+ "information_only": [
+  "quintile instead of decile",
+  "the winner decile (top ROD3) LH return (the short leg; desk is long-only)",
+  "the paper's skip: ROD3 to 15:00 vs to 15:29 (no skip)",
+  "price >= $20",
+  "ROD3 split into overnight (prior close->09:30 open) and intraday parts",
+  "LH to the 15:58 close (avoids the last-minute print)",
+  "days with SPY down vs up to 15:00"
+ ],
+ "no_retuning": "Decile, 15:00 signal, 15:30 entry, 15:59 exit, cost, sample, halves and floors are fixed.",
+ "common": {
+  "halves": "Warehouse studies: A = 2026-05-11 .. 2026-07-29, B = 2026-07-30 .. 2026-10-15 (110 sessions; 2026-04-27 .. 05-08 are warm-up for look-backs only).",
+  "statistic_default": "Per half: per day, the mean over that day's trades of the measured quantity; day-equal mean; day-clustered t (df = days - 1).",
+  "cost": "5 bp round trip binding (the desk's current RT cost on $20+ names is ~3 bp); net also printed at 3, 10, 20 bp.",
+  "price_floor": "entry price >= $10 primary; >= $20 (the desk's live floor) as information.",
+  "confirmation": "A PASS is re-run unchanged on warehouse_confirm (2026-01-14 .. 04-24, held out, never read) before anything else; then a forward paper prereg. Never a desk change by itself; the desk stays frozen for the floor20 window.",
+  "power": "Outcome-blind count step first: trades and days per half, and a projected MDE from the dispersion of the CONTROL leg only; floors per half >= 300 trades and >= 20 days, MDE <= the lift bar, else UNDERPOWERED with no outcome read.",
+  "fail_rule": "FAIL: t <= -2 in a half, or the 97.5% upper bound of the lift below the bar in both halves. Otherwise not passed = UNDERPOWERED.",
+  "data_account": "All fetches on the data-only Alpaca account (secrets_data.json), never the desk key; paced; no paid data.",
+  "multiplicity": "Eight studies registered together on 2026-10-23 (the 'untested categories' batch). Each has ONE primary; a family-wise reading is printed: a primary counts as a batch PASS only with t >= 2.73 (Bonferroni 0.05/8, two-sided, normal approx) in both halves; t >= 2 in both halves without that is reported as 'PASS (single-test), not batch-robust'."
+ }
+}

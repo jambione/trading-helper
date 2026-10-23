@@ -1,0 +1,32 @@
+{
+ "registered_at": "2026-10-23, before any script, feature or outcome",
+ "registered_before_results": true,
+ "batch": "untested-categories 2026-10-23 (operator: 'I want to test all of these')",
+ "study": "Analyst upgrades during regular hours: buy one minute after the headline, hold 20 minutes (Bradley, Clarke, Lee & Ornthanalai 2014, J. Finance: +1.83% over 30 minutes with newswire timestamps; Chen 2009: drift lasts ~20 minutes).",
+ "source": "Bradley et al. 2014; the move is fast and timestamp-sensitive. Our news study (10/15) pooled all headlines and found the reaction in the headline minute; upgrades alone were not scored.",
+ "prior": "LOW (~10%): the free feed's speed was the problem in the news study.",
+ "data": "Alpaca news (Benzinga) 2025-10-01 .. 2026-10-15, headlines matching (case-insensitive) 'upgrade' AND NOT 'downgrade', with exactly one symbol, created_at within 09:45..15:30 ET; SIP 1-minute bars for that name-day (data-only account).",
+ "signal": "Headline timestamp T (created_at).",
+ "trade": "Buy at the open of the first 1-minute bar starting >= T + 60 s; sell at the close of the bar 20 minutes later. Price >= $10.",
+ "control": "Same name, a seeded random minute in the same clock hour on the 5 previous sessions where it traded (mean of available), same 20-minute hold (seed 'upg-ctrl').",
+ "primary": "LIFT = event return - control; event-equal within day, day-equal across days; day-clustered t. Halves: A = 2025-10-01 .. 2026-04-15, B = 2026-04-16 .. 2026-10-15.",
+ "pass": "In BOTH halves: LIFT >= +5 bp with t >= 2.0 AND event mean net (after 5 bp) > 0. Floors: >= 150 events and >= 30 days per half (smaller than other studies: events are rare; declared).",
+ "information_only": [
+  "entry at T + 1 s (the reaction itself)",
+  "the T -> T+60 s move (what the feed delay costs)",
+  "price-target raises",
+  "downgrades (short side)"
+ ],
+ "no_retuning": "Keyword rule, 60 s delay, 20-minute hold, cost fixed.",
+ "common": {
+  "halves": "Warehouse studies: A = 2026-05-11 .. 2026-07-29, B = 2026-07-30 .. 2026-10-15 (110 sessions; 2026-04-27 .. 05-08 are warm-up for look-backs only).",
+  "statistic_default": "Per half: per day, the mean over that day's trades of the measured quantity; day-equal mean; day-clustered t (df = days - 1).",
+  "cost": "5 bp round trip binding (the desk's current RT cost on $20+ names is ~3 bp); net also printed at 3, 10, 20 bp.",
+  "price_floor": "entry price >= $10 primary; >= $20 (the desk's live floor) as information.",
+  "confirmation": "A PASS is re-run unchanged on warehouse_confirm (2026-01-14 .. 04-24, held out, never read) before anything else; then a forward paper prereg. Never a desk change by itself; the desk stays frozen for the floor20 window.",
+  "power": "Outcome-blind count step first: trades and days per half, and a projected MDE from the dispersion of the CONTROL leg only; floors per half >= 300 trades and >= 20 days, MDE <= the lift bar, else UNDERPOWERED with no outcome read.",
+  "fail_rule": "FAIL: t <= -2 in a half, or the 97.5% upper bound of the lift below the bar in both halves. Otherwise not passed = UNDERPOWERED.",
+  "data_account": "All fetches on the data-only Alpaca account (secrets_data.json), never the desk key; paced; no paid data.",
+  "multiplicity": "Eight studies registered together on 2026-10-23 (the 'untested categories' batch). Each has ONE primary; a family-wise reading is printed: a primary counts as a batch PASS only with t >= 2.73 (Bonferroni 0.05/8, two-sided, normal approx) in both halves; t >= 2 in both halves without that is reported as 'PASS (single-test), not batch-robust'."
+ }
+}

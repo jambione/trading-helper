@@ -1,0 +1,21 @@
+{
+ "registered_at": "2026-10-23, before any script, feature or outcome",
+ "registered_before_results": true,
+ "batch": "untested-categories 2026-10-23 (operator: 'I want to test all of these')",
+ "study": "Options-driven flows: (a) unusual call volume (Pan-Poteshman style option volume / stock volume) and (b) dealer gamma sign, as intraday entry filters on stocks.",
+ "source": "Barbon & Buraschi 'Gamma Fragility' (working paper): gamma imbalance x illiquidity explains intraday momentum/reversal; Jiang & Strong: publicised unusual options activity earns nothing after the day; 2025 Springer paper: deep OTM short-dated volume predicts returns.",
+ "prior": "LOW-MEDIUM; data-gated.",
+ "status": "BLOCKED ON DATA, not designed in detail. Step 0 (no outcomes read): probe whether the data-only Alpaca account serves historical option bars/trades (OPRA or indicative) for 2026 and over what history; report it. If free data covers >= 60 sessions for the book-like names, a full prereg (signal, control, pass) is written and reviewed BEFORE any stock outcome is joined. If not, it stays blocked under 'no spend until proven' and needs the operator's approval of a data purchase.",
+ "no_retuning": "n/a until designed.",
+ "common": {
+  "halves": "Warehouse studies: A = 2026-05-11 .. 2026-07-29, B = 2026-07-30 .. 2026-10-15 (110 sessions; 2026-04-27 .. 05-08 are warm-up for look-backs only).",
+  "statistic_default": "Per half: per day, the mean over that day's trades of the measured quantity; day-equal mean; day-clustered t (df = days - 1).",
+  "cost": "5 bp round trip binding (the desk's current RT cost on $20+ names is ~3 bp); net also printed at 3, 10, 20 bp.",
+  "price_floor": "entry price >= $10 primary; >= $20 (the desk's live floor) as information.",
+  "confirmation": "A PASS is re-run unchanged on warehouse_confirm (2026-01-14 .. 04-24, held out, never read) before anything else; then a forward paper prereg. Never a desk change by itself; the desk stays frozen for the floor20 window.",
+  "power": "Outcome-blind count step first: trades and days per half, and a projected MDE from the dispersion of the CONTROL leg only; floors per half >= 300 trades and >= 20 days, MDE <= the lift bar, else UNDERPOWERED with no outcome read.",
+  "fail_rule": "FAIL: t <= -2 in a half, or the 97.5% upper bound of the lift below the bar in both halves. Otherwise not passed = UNDERPOWERED.",
+  "data_account": "All fetches on the data-only Alpaca account (secrets_data.json), never the desk key; paced; no paid data.",
+  "multiplicity": "Eight studies registered together on 2026-10-23 (the 'untested categories' batch). Each has ONE primary; a family-wise reading is printed: a primary counts as a batch PASS only with t >= 2.73 (Bonferroni 0.05/8, two-sided, normal approx) in both halves; t >= 2 in both halves without that is reported as 'PASS (single-test), not batch-robust'."
+ }
+}

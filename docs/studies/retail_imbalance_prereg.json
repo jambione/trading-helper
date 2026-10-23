@@ -1,0 +1,30 @@
+{
+ "registered_at": "2026-10-23, before any script, feature or outcome",
+ "registered_before_results": true,
+ "batch": "untested-categories 2026-10-23 (operator: 'I want to test all of these')",
+ "study": "Retail order imbalance (Boehmer, Jones, Zhang & Zhang, J. Finance): marketable retail trades, identified by sub-penny price improvement on off-exchange prints, predict returns; tested here intraday: morning retail imbalance -> afternoon return.",
+ "source": "BJZZ: net retail buying predicts ~10 bp over the next WEEK; Barber/Odean et al. (JFQA): it does not pay in high-attention names. The intraday horizon is our adaptation (declared).",
+ "prior": "LOW (~10%): wrong horizon for a scalp desk; small; our book is high-attention names.",
+ "data": "SIP trades (data-only account) 09:30-12:00 for a seeded subset sized by the count step (target 150 names x 60 sessions from the warehouse sample, 2026-07-01 .. 2026-10-15); warehouse 1-minute bars for outcomes.",
+ "signal": "BJZZ rule on FINRA TRF prints (exchange code 'D'): fractional cent part of the price in (0.6, 1.0) = retail BUY, in (0, 0.4) = retail SELL. RIMB = (buy shares - sell shares) / (buy + sell) over 09:30-11:59 (needs >= 50 classified trades).",
+ "trade": "LONG = names in the top quintile of RIMB that day (>= 10 eligible): buy the 12:00 bar open, sell the 15:59 close.",
+ "primary": "LIFT = top-quintile return minus the mean of all eligible names over 12:00->15:59; day-equal; day-clustered t. Halves by date at the midpoint session.",
+ "pass": "In BOTH halves: LIFT >= +5 bp with t >= 2.0 AND top-quintile net > 0.",
+ "information_only": [
+  "bottom quintile",
+  "next-day open->close",
+  "the Barber-Odean high-attention split (price change today > 5%)"
+ ],
+ "no_retuning": "BJZZ thresholds, morning window, quintile, afternoon hold fixed.",
+ "common": {
+  "halves": "Warehouse studies: A = 2026-05-11 .. 2026-07-29, B = 2026-07-30 .. 2026-10-15 (110 sessions; 2026-04-27 .. 05-08 are warm-up for look-backs only).",
+  "statistic_default": "Per half: per day, the mean over that day's trades of the measured quantity; day-equal mean; day-clustered t (df = days - 1).",
+  "cost": "5 bp round trip binding (the desk's current RT cost on $20+ names is ~3 bp); net also printed at 3, 10, 20 bp.",
+  "price_floor": "entry price >= $10 primary; >= $20 (the desk's live floor) as information.",
+  "confirmation": "A PASS is re-run unchanged on warehouse_confirm (2026-01-14 .. 04-24, held out, never read) before anything else; then a forward paper prereg. Never a desk change by itself; the desk stays frozen for the floor20 window.",
+  "power": "Outcome-blind count step first: trades and days per half, and a projected MDE from the dispersion of the CONTROL leg only; floors per half >= 300 trades and >= 20 days, MDE <= the lift bar, else UNDERPOWERED with no outcome read.",
+  "fail_rule": "FAIL: t <= -2 in a half, or the 97.5% upper bound of the lift below the bar in both halves. Otherwise not passed = UNDERPOWERED.",
+  "data_account": "All fetches on the data-only Alpaca account (secrets_data.json), never the desk key; paced; no paid data.",
+  "multiplicity": "Eight studies registered together on 2026-10-23 (the 'untested categories' batch). Each has ONE primary; a family-wise reading is printed: a primary counts as a batch PASS only with t >= 2.73 (Bonferroni 0.05/8, two-sided, normal approx) in both halves; t >= 2 in both halves without that is reported as 'PASS (single-test), not batch-robust'."
+ }
+}

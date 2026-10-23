@@ -1,0 +1,31 @@
+{
+ "registered_at": "2026-10-23, before any script, feature or outcome",
+ "registered_before_results": true,
+ "batch": "untested-categories 2026-10-23 (operator: 'I want to test all of these')",
+ "study": "Narrow-range / inside day (Crabel's NR7): after a day with the narrowest range of the last 7 that is also inside the prior day's range, buy a break above that day's high; volatility contraction is said to precede expansion.",
+ "source": "Practitioner (Toby Crabel); no peer-reviewed US-stock test found. Tested for completeness.",
+ "prior": "LOW (~5-10%).",
+ "data": "Warehouse SIP 1-minute bars; daily OHLC per name-day built from RTH bars (09:30-15:59). Needs the 7 prior sessions in the sample for that name.",
+ "signal": "Day t-1 is NR7 (its high-low range is the smallest of days t-7..t-1) AND inside (high < day t-2 high and low > day t-2 low).",
+ "trade": "On day t, buy stop at day t-1 high + $0.01 from 09:35 to 15:00 (fill at max(trigger, bar open)); stop loss = day t-1 low (close below exits at next open); exit at the 15:59 close.",
+ "control": "Same name-day, a seeded random minute 09:35..15:00 with the same percent stop and same exit (seed 'nr7-ctrl').",
+ "primary": "LIFT = trade - control; and trade net.",
+ "pass": "In BOTH halves: LIFT >= +5 bp with t >= 2.0 AND mean trade net (after 5 bp) > 0.",
+ "information_only": [
+  "NR7 without the inside rule",
+  "NR4",
+  "the downside break (short)"
+ ],
+ "no_retuning": "NR7, inside rule, window, stop, exit, cost fixed.",
+ "common": {
+  "halves": "Warehouse studies: A = 2026-05-11 .. 2026-07-29, B = 2026-07-30 .. 2026-10-15 (110 sessions; 2026-04-27 .. 05-08 are warm-up for look-backs only).",
+  "statistic_default": "Per half: per day, the mean over that day's trades of the measured quantity; day-equal mean; day-clustered t (df = days - 1).",
+  "cost": "5 bp round trip binding (the desk's current RT cost on $20+ names is ~3 bp); net also printed at 3, 10, 20 bp.",
+  "price_floor": "entry price >= $10 primary; >= $20 (the desk's live floor) as information.",
+  "confirmation": "A PASS is re-run unchanged on warehouse_confirm (2026-01-14 .. 04-24, held out, never read) before anything else; then a forward paper prereg. Never a desk change by itself; the desk stays frozen for the floor20 window.",
+  "power": "Outcome-blind count step first: trades and days per half, and a projected MDE from the dispersion of the CONTROL leg only; floors per half >= 300 trades and >= 20 days, MDE <= the lift bar, else UNDERPOWERED with no outcome read.",
+  "fail_rule": "FAIL: t <= -2 in a half, or the 97.5% upper bound of the lift below the bar in both halves. Otherwise not passed = UNDERPOWERED.",
+  "data_account": "All fetches on the data-only Alpaca account (secrets_data.json), never the desk key; paced; no paid data.",
+  "multiplicity": "Eight studies registered together on 2026-10-23 (the 'untested categories' batch). Each has ONE primary; a family-wise reading is printed: a primary counts as a batch PASS only with t >= 2.73 (Bonferroni 0.05/8, two-sided, normal approx) in both halves; t >= 2 in both halves without that is reported as 'PASS (single-test), not batch-robust'."
+ }
+}
