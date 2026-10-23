@@ -194,3 +194,37 @@ def primary_verdict(rows: list[dict], cost: float, bar: float = 0.0005, floor_da
         v = "UNDERPOWERED"
     res["verdict"] = v
     return res
+
+
+class SizeRef:
+    """Median range of the SAME clock bar over the prior `n` kept sessions (needs >= `need`). Call ref() for today's
+    bars BEFORE add() with today's ranges. reset() at the held-out restart (held-out sessions are never kept)."""
+
+    def __init__(self, n: int = 10, need: int = 5):
+        self.n, self.need, self.hist = n, need, defaultdict(list)
+
+    def reset(self) -> None:
+        self.hist.clear()
+
+    def ref(self, k: int) -> float | None:
+        xs = self.hist.get(k, [])
+        return statistics.median(xs) if len(xs) >= self.need else None
+
+    def add(self, bars: list) -> None:
+        for k, b in enumerate(bars):
+            if b is not None:
+                lst = self.hist[k]
+                lst.append(b[1] - b[2])
+                if len(lst) > self.n:
+                    lst.pop(0)
+
+
+def power_bar(b, ref: float | None, side: int) -> bool:
+    """Range >= 2 x same-clock median, body >= 60% of range, closes in the outer 20% in the trade's direction."""
+    if b is None or ref is None or ref <= 0:
+        return False
+    o, h, lo, c = b[:4]
+    rng = h - lo
+    if rng < 2.0 * ref or rng <= 0 or abs(c - o) < 0.6 * rng:
+        return False
+    return (c > o and c >= h - 0.2 * rng) if side > 0 else (c < o and c <= lo + 0.2 * rng)
