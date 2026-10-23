@@ -74,5 +74,13 @@
    "Scorer drops held-out / post-window days (must be 0); --score refuses unless both halves met the floors.",
    "Target fill also triggers when a bar opens beyond the target."
   ]
+ },
+ "amended_4": {
+  "when": "2026-10-23 ~18:00 ET, after the count step (UNDERPOWERED, no outcome read) and after the operator's chart (QQQ 2025-07-15) showed the level mismatch; outcome-blind.",
+  "finding": "On 2025-07-15 the 07:00-09:29 low came from one 08:05 SIP wick (552.55 adjusted, ~3.3 points below that bar's open/close) that the operator's chart does not show (level ~558.85). Over 10 years the premarket low sits > 0.10% below every candle body on 21% (SPY) / 27% (QQQ) of days; the high > 0.10% above every body on 17% / 21% (levels only, no outcomes read).",
+  "changes": [
+   "PRIMARY LEVELS: PMH = the highest candle BODY top (max of open, close) and PML = the lowest candle BODY bottom (min of open, close) of 07:00-09:29 1-minute bars: the level a chart reader marks, immune to single-print wicks. Wick levels are information.",
+   "Everything else unchanged (origin band 0.15% of the level, same-clock power-bar size test, intact-level rule on RTH closes, window, stop, target, controls, floors, verdict). The count step is rerun; the study is scored only if it is now powered, after a result-skeptic check of this amendment."
+  ]
  }
 }

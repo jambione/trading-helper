@@ -15,6 +15,8 @@ import os
 import sys
 from collections import Counter
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import etf_bars as B  # noqa: E402
 
@@ -24,13 +26,16 @@ LAST_END, BAND, MIN_PM_BARS, MIN_PM_RANGE = 629, 0.0015, 30, 0.001
 COST, COSTS, FLOOR_DAYS = 0.0002, (0.0001, 0.0002, 0.0005, 0.0010), 150
 
 
-def levels(r_all, lo_min: int):
+def levels(r_all, lo_min: int, wicks: bool = False):
+    """PMH / PML from candle BODIES (amended_4: single-print wicks set ~1 in 4 levels); wicks=True is information."""
     pm = r_all[(r_all[:, 0] >= lo_min) & (r_all[:, 0] < B.RTH0)]
     if lo_min == 420 and len(pm) < MIN_PM_BARS:
         return None
     if not len(pm):
         return None
-    return float(pm[:, 2].max()), float(pm[:, 3].min())
+    if wicks:
+        return float(pm[:, 2].max()), float(pm[:, 3].min())
+    return float(np.maximum(pm[:, 1], pm[:, 4]).max()), float(np.minimum(pm[:, 1], pm[:, 4]).min())
 
 
 def candidate(r, bars2, size, pmh, pml, side):
@@ -89,8 +94,8 @@ def run_symbol(sym):
             continue
         r = B.rth(r_all)
         bars2 = B.clock_bars(r, 2, 2)
-        for lab_lv, lo_min in (("primary", 420), ("lv0400", 240)):
-            lv = levels(r_all, lo_min)
+        for lab_lv, lo_min, wk in (("primary", 420, False), ("lv0400", 240, False), ("wicks", 420, True)):
+            lv = levels(r_all, lo_min, wk)
             if lv is None:
                 st[f"{lab_lv}_no_premarket"] += 1
                 continue
@@ -178,6 +183,7 @@ def main():
     for lab, sel in (("short", lambda x: x["variant"] == "primary" and x["side"] == "short"),
                      ("both_sides", lambda x: x["variant"] == "primary"),
                      ("levels_from_0400_long", lambda x: x["variant"] == "lv0400" and x["side"] == "long"),
+                     ("wick_levels_long", lambda x: x["variant"] == "wicks" and x["side"] == "long"),
                      ("exit_1030_long", lambda x: x["variant"] == "exit_1030" and x["side"] == "long")):
         sub = [x for x in rows if sel(x)]
         res["info"][lab] = {h: {"net": B.day_stats([x for x in sub if x["half"] == h], lambda x: x["gross"] - COST)
