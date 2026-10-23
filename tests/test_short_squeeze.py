@@ -14,6 +14,10 @@ def test_etf_filter_whole_words():
     assert Q.is_etf_like("iShares Core S&P 500 ETF") and Q.is_etf_like("SPDR Gold Trust")
     assert not Q.is_etf_like("Trustmark Corporation") and not Q.is_etf_like("Fundamental Global Inc.")
     assert Q.is_etf_like("Realty Income Trust")            # REIT 'Trust' is removed too (declared)
+    assert Q.is_etf_like("Global X Funds") and Q.is_etf_like("Invesco BulletShares 2026")
+    assert Q.is_etf_like("Some Co", "VanEck Semiconductor ETF")                  # the Alpaca name counts too
+    assert not Q.is_etf_like("Consumer Portfolio Services") and not Q.is_etf_like("Index Holdings Corp")
+    assert Q.alpaca_symbol("BRKB", {"BRK.B": "x"}) == "BRK.B" and Q.alpaca_symbol("AAPL", {"AAPL": "x"}) == "AAPL"
 
 
 def test_trading_days_and_publication():
@@ -56,9 +60,12 @@ def test_series_stats_and_verdicts():
     assert Q.final(["UNDERPOWERED", "PASS"]) == "UNDERPOWERED"
 
 
-def test_nw_and_clustered_se():
-    xs = [1.0, -1.0] * 20
-    assert Q.nw_se(xs) is not None and Q.clustered_se([1.0, 2.0], ["a", "a"]) is None
+def test_driscoll_kraay_and_clustered_se():
+    vals = [1.0, -1.0] * 20
+    dates = [f"2021-0{1 + (k % 6)}-1{k % 9}" for k in range(40)]
+    assert Q.driscoll_kraay_se(vals, dates) is not None and Q.clustered_se([1.0, 2.0], ["a", "a"]) is None
+    assert Q.monday_of("2026-10-23") == "2026-10-19"
+    assert Q.spearman_avg([1, 1, 2, 3], [1, 1, 2, 3]) == 1.0 and Q.avg_ranks([5, 5, 1]) == [1.5, 1.5, 0.0]
 
 
 def _market(n_days=330, n_syms=60, seed=3):
@@ -81,6 +88,26 @@ def _market(n_days=330, n_syms=60, seed=3):
     return days, bars
 
 
+def _si():
+    return {"20200131": {f"S{k}": {"dtc": float(k + 1), "short": 1e6, "chg": 1.0, "adv": 1e6, "name": f"Company {k} Inc",
+                                   "flagged": False, "run": f"S{k}"} for k in range(60)}}
+
+
+def test_runs_split_on_name_change_and_gaps(tmp_path, monkeypatch):
+    rows = {"20200115": "Old Co", "20200131": "Old Co", "20200214": "New Co Inc"}
+    for d, nm in rows.items():
+        (tmp_path / f"shrt{d}.csv").write_text(
+            "symbolCode|issueName|marketClassCode|daysToCoverQuantity|currentShortPositionQuantity|changePercent|"
+            "averageDailyVolumeQuantity|revisionFlag|stockSplitFlag\n"
+            f"XYZ|{nm}|NYSE|2.0|100|1.0|1000||\nETFZ|Funds|ARCA|1|1|1|1||\n")
+    monkeypatch.setattr(Q, "SI_DIR", str(tmp_path))
+    si = Q.load_reports_raw()
+    assert si["20200115"]["XYZ"]["run"] == si["20200131"]["XYZ"]["run"] == "XYZ@20200115"
+    assert si["20200214"]["XYZ"]["run"] == "XYZ@20200214" and "ETFZ" not in si["20200131"]
+    r = Q.runs_of(si)
+    assert r["XYZ@20200115"]["last"] == "20200131"
+
+
 def test_build_events_and_match():
     days, bars = _market()
     t = days.index("2020-03-02")
@@ -90,7 +117,7 @@ def test_build_events_and_match():
         b["v"][t] = 3e6
         for k in range(t + 1, len(days)):                              # S59 keeps rising after the breakout
             b["c"][k] = b["c"][k - 1] * (1 + (after / 5 if k <= t + 6 else 0) + (bars["SPY"]["c"][k] / bars["SPY"]["c"][k - 1] - 1))
-    si = {"20200131": {f"S{k}": {"dtc": float(k + 1), "short": 1e6, "chg": 1.0} for k in range(60)}}
+    si = _si()
     st = Q.Counter()
     ev = Q.build_events(si, bars, bars, bars["SPY"], Q.PUB_LAG, st)
     by = {e["sym"]: e for e in ev}
@@ -108,6 +135,17 @@ def test_publication_lag_blocks_early_trigger():
     b = bars["S59"]
     b["c"][t] = max(b["c"][t - 20:t]) * 1.05
     b["v"][t] = 3e6
-    si = {"20200131": {f"S{k}": {"dtc": float(k + 1), "short": 1e6, "chg": 1.0} for k in range(60)}}
+    si = _si()
     ev = Q.build_events(si, bars, bars, bars["SPY"], Q.PUB_LAG, Q.Counter())
     assert all(e["d0"] > "2020-02-14" for e in ev)
+
+
+def test_survivorship_and_staleness_counted():
+    days, bars = _market()
+    si = _si()
+    del bars["S59"]                                                    # a HIGH-rank name with no bars at all
+    bars["S58"] = {k: v[:100] for k, v in bars["S58"].items()}          # bars that stop long before publication
+    st = Q.Counter()
+    Q.build_events(si, bars, bars, bars["SPY"], Q.PUB_LAG, st)
+    assert st["surv_missing_HIGH"] == 1 and st["surv_stale_HIGH"] == 1
+    assert Q.bar_status(bars, days, "S58", "2020-02-14") == "stale" and Q.bar_status(bars, days, "S1", days[-1]) == "ok"

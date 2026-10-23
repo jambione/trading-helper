@@ -41,8 +41,11 @@ COST, COST_HI = 0.0010, 0.0030
 LIFT_BAR, T_PASS, MIN_EVENTS = 0.0050, 2.0, 150
 H1_END = "2022-12-31"
 FIRST_TRIGGER = "2020-02-01"
-ETF_WORDS = ("ETF", "FUND", "TRUST", "ISHARES", "SPDR", "PROSHARES", "DIREXION", "ETN", "INDEX", "PORTFOLIO")
+ETF_WORDS = ("ETF", "ETFS", "FUND", "FUNDS", "TRUST", "ISHARES", "SPDR", "PROSHARES", "DIREXION", "ETN", "ETNS",
+             "VANECK", "INVESCO", "WISDOMTREE", "VANGUARD", "GRANITESHARES", "ROUNDHILL", "DEFIANCE", "YIELDMAX", "AMPLIFY")
+ETF_PHRASES = ("GLOBAL X", "FIRST TRUST", "SCHWAB ETF")      # amended_3 (3)
 DROP_MAX, DROP_DIFF = 0.02, 0.01
+END_D0, STALE_SESS, SURV_ADV, RUN_GAP = "2026-10-14", 5, 200_000, 6
 
 
 def P(*a):
@@ -79,10 +82,17 @@ def fnum(x) -> float | None:
         return None
 
 
-def is_etf_like(name: str) -> bool:
-    """Whole-word match on the issue name (so 'Trustmark' or 'Fundamental' are not caught)."""
-    words = set("".join(ch if ch.isalnum() else " " for ch in (name or "").upper()).split())
-    return any(w in words for w in ETF_WORDS)
+def _norm(name: str) -> str:
+    return " ".join("".join(ch if ch.isalnum() else " " for ch in (name or "").upper()).split())
+
+
+def is_etf_like(name: str, alpaca_name: str = "") -> bool:
+    """amended_3 (3): whole-word / phrase match on the FINRA issue name AND the Alpaca asset name."""
+    for n in (_norm(name), _norm(alpaca_name)):
+        words = set(n.split())
+        if any(w in words for w in ETF_WORDS) or any(f" {ph} " in f" {n} " for ph in ETF_PHRASES):
+            return True
+    return False
 
 
 def coverage() -> dict:
@@ -161,6 +171,34 @@ def nw_se(series: list[float], lags: int = 5) -> float | None:
     return math.sqrt(max(s, 0.0) / n)
 
 
+def driscoll_kraay_se(vals: list[float], dates: list[str], lags: int = 5) -> float | None:
+    """amended_3 (6): g_w = sum over events in calendar week w of (v - mean) on a FULL week grid (0 for empty weeks);
+    Newey-West with `lags` over g; se = sqrt(S) / n."""
+    n = len(vals)
+    if n < 2:
+        return None
+    mu = sum(vals) / n
+    wk = defaultdict(float)
+    for v, d in zip(vals, dates):
+        wk[monday_of(d)] += v - mu
+    d0, d1 = min(wk), max(wk)
+    grid, cur = [], datetime.strptime(d0, "%Y-%m-%d")
+    end = datetime.strptime(d1, "%Y-%m-%d")
+    while cur <= end:
+        grid.append(wk.get(cur.strftime("%Y-%m-%d"), 0.0))
+        cur += timedelta(days=7)
+    S = sum(g * g for g in grid)
+    for L in range(1, lags + 1):
+        w = 1 - L / (lags + 1)
+        S += 2 * w * sum(grid[t] * grid[t - L] for t in range(L, len(grid)))
+    return math.sqrt(max(S, 0.0)) / n
+
+
+def monday_of(d: str) -> str:
+    x = datetime.strptime(d, "%Y-%m-%d")
+    return (x - timedelta(days=x.weekday())).strftime("%Y-%m-%d")
+
+
 def week_of(d: str) -> str:
     y, w, _ = datetime.strptime(d, "%Y-%m-%d").isocalendar()
     return f"{y}-W{w:02d}"
@@ -173,10 +211,7 @@ def series_stats(ev: list[dict], key: str = "diff") -> dict:
         return {"n": len(vals), "mean": None, "se": None, "t": None, "ub": None}
     se_w = clustered_se(vals, [week_of(e["d0"]) for e in use])
     se_n = clustered_se(vals, [e["sym"] for e in use])
-    wk = defaultdict(list)
-    for e in use:
-        wk[week_of(e["d0"])].append(e[key])
-    se_c = nw_se([statistics.mean(wk[w]) for w in sorted(wk)])
+    se_c = driscoll_kraay_se(vals, [e["d0"] for e in use])
     ses = [x for x in (se_w, se_n, se_c) if x]
     se = max(ses) if ses else None
     mu = sum(vals) / len(vals)
@@ -222,11 +257,23 @@ def build_reports(si_rows_by_date: dict, days: list[str]) -> list[dict]:
     return reps
 
 
-def eligible_at(bars_raw: dict, day_idx: dict, sym: str, d: str) -> bool:
-    """$20 raw close and $20M mean 20-day dollar volume on the 20 sessions ending the session before d."""
-    b = bars_raw.get(sym)
-    if not b:
+def bar_status(bars_raw: dict, days: list[str], key: str, d: str) -> str:
+    """'missing' (no bars), 'stale' (the last bar before d is more than STALE_SESS sessions old) or 'ok'."""
+    b = bars_raw.get(key)
+    if not b or not b["d"]:
+        return "missing"
+    i = bisect.bisect_left(b["d"], d) - 1
+    if i < 0:
+        return "missing"
+    gap = bisect.bisect_left(days, d) - bisect.bisect_left(days, b["d"][i])
+    return "stale" if gap > STALE_SESS else "ok"
+
+
+def eligible_at(bars_raw: dict, days: list[str], key: str, d: str) -> bool:
+    """$20 raw close and $20M mean 20-day dollar volume on the 20 sessions ending the session before d; bars fresh."""
+    if bar_status(bars_raw, days, key, d) != "ok":
         return False
+    b = bars_raw[key]
     i = bisect.bisect_left(b["d"], d) - 1
     if i < LOOK - 1:
         return False
@@ -254,25 +301,56 @@ SEED_TAG = "short-squeeze-random-day"
 # ── data loading (mini) ──────────────────────────────────────────────────────
 
 def load_reports_raw() -> dict:
-    """settlement YYYYMMDD -> {sym: row} for in-scope, non-ETF, unflagged rows; plus drop counts."""
-    out, st = {}, Counter()
-    for p in sorted(glob.glob(os.path.join(SI_DIR, "shrt*.csv"))):
+    """settlement YYYYMMDD -> {sym: row} for in-scope codes; rows keep name, ADV, flags and their RUN id
+    (amended_3 (1): a new run when the issue name changes or the symbol was absent for RUN_GAP files)."""
+    files = sorted(glob.glob(os.path.join(SI_DIR, "shrt*.csv")))
+    out, last = {}, {}
+    for fi, p in enumerate(files):
         d = os.path.basename(p)[4:12]
         rows = {}
         for r in read_si(p):
             if r.get("marketClassCode") not in CODES:
                 continue
-            if is_etf_like(r.get("issueName", "")):
-                st["etf_like"] += 1
-                continue
-            if r.get("revisionFlag") or r.get("stockSplitFlag"):
-                st["flagged"] += 1
-                continue
-            rows[r["symbolCode"]] = {"dtc": fnum(r.get("daysToCoverQuantity")),
-                                     "short": fnum(r.get("currentShortPositionQuantity")),
-                                     "chg": fnum(r.get("changePercent"))}
+            sym, nm = r["symbolCode"], _norm(r.get("issueName", ""))
+            prev = last.get(sym)
+            if prev is None or prev[1] != nm or fi - prev[2] >= RUN_GAP:
+                run = f"{sym}@{d}"
+            else:
+                run = prev[0]
+            last[sym] = (run, nm, fi)
+            rows[sym] = {"dtc": fnum(r.get("daysToCoverQuantity")), "short": fnum(r.get("currentShortPositionQuantity")),
+                         "chg": fnum(r.get("changePercent")), "adv": fnum(r.get("averageDailyVolumeQuantity")),
+                         "name": r.get("issueName", ""), "flagged": bool(r.get("revisionFlag") or r.get("stockSplitFlag")),
+                         "run": run}
         out[d] = rows
-    return out, st
+    return out
+
+
+def runs_of(si: dict) -> dict:
+    """run id -> {"sym", "first", "last"} settlement dates (YYYYMMDD)."""
+    runs = {}
+    for d, rows in sorted(si.items()):
+        for sym, r in rows.items():
+            x = runs.setdefault(r["run"], {"sym": sym, "first": d, "last": d})
+            x["last"] = d
+    return runs
+
+
+def asset_map() -> dict:
+    """Alpaca's current asset list (raw endpoint; alpaca-py's enum rejects newer exchange codes): symbol -> name."""
+    from alpaca.trading.client import TradingClient
+    s_ = json.load(open(os.path.join(ROOT, "secrets_data.json")))
+    raw = TradingClient(s_["alpaca_data_api_key"], s_["alpaca_data_secret_key"], paper=True).get(
+        "/assets", {"asset_class": "us_equity"})
+    return {x["symbol"]: x.get("name") or "" for x in raw}
+
+
+def alpaca_symbol(sym: str, assets: dict) -> str:
+    """amended_3 (1): class shares - BRKB -> BRK.B when only the dotted form exists."""
+    if sym in assets or len(sym) < 3:
+        return sym
+    dotted = f"{sym[:-1]}.{sym[-1]}"
+    return dotted if dotted in assets else sym
 
 
 def data_client():
@@ -281,34 +359,47 @@ def data_client():
     return StockHistoricalDataClient(s_["alpaca_data_api_key"], s_["alpaca_data_secret_key"])
 
 
-def fetch_bars(syms: list[str], adjustment: str) -> dict:
+def fetch_bars(runs: dict, assets: dict, adjustment: str, only: set | None = None) -> dict:
+    """amended_3 (1): bars per RUN, requested with asof = the run's last settlement date (grouped by asof, 100 symbols
+    per request). Keyed by run id; 'SPY' is fetched under its own key."""
     from alpaca.data.enums import Adjustment, DataFeed
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
     import time
     cl, out = data_client(), {}
     end = datetime.now(timezone.utc) - timedelta(days=1)
+    start = datetime.strptime(BARS_START, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     adj = Adjustment.ALL if adjustment == "all" else Adjustment.RAW
-    for k in range(0, len(syms), 100):
-        ch = syms[k:k + 100]
+    by_asof = defaultdict(list)
+    for rid, r in runs.items():
+        if only is None or rid in only:
+            by_asof[r["last"]].append(rid)
+    jobs = [(None, ["SPY"], {"SPY": "SPY"})]
+    for asof, rids in sorted(by_asof.items()):
+        for k in range(0, len(rids), 100):
+            ch = rids[k:k + 100]
+            m = {alpaca_symbol(runs[x]["sym"], assets): x for x in ch}
+            jobs.append((f"{asof[:4]}-{asof[4:6]}-{asof[6:]}", list(m), m))
+    for n, (asof, syms, m) in enumerate(jobs):
+        kw = {"asof": asof} if asof else {}
         for attempt in range(5):
             try:
-                got = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=ch, timeframe=TimeFrame.Day,
-                                                         start=datetime.strptime(BARS_START, "%Y-%m-%d").replace(
-                                                             tzinfo=timezone.utc), end=end, feed=DataFeed.SIP,
-                                                         adjustment=adj)).data or {}
+                got = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=syms, timeframe=TimeFrame.Day, start=start,
+                                                         end=end, feed=DataFeed.SIP, adjustment=adj, **kw)).data or {}
                 break
             except Exception as e:  # noqa: BLE001
                 P(f"  retry {attempt + 1}: {str(e)[:100]}")
                 time.sleep(10 * (attempt + 1))
         else:
-            raise SystemExit(f"bars fetch failed at chunk {k}")
+            raise SystemExit(f"bars fetch failed at job {n}")
         for sym, bs in got.items():
-            out[sym] = {"d": [b.timestamp.strftime("%Y-%m-%d") for b in bs], "o": [float(b.open) for b in bs],
-                        "c": [float(b.close) for b in bs], "v": [float(b.volume) for b in bs]}
-        if (k // 100) % 10 == 0:
-            P(f"  {adjustment} {k + len(ch)}/{len(syms)}")
-        time.sleep(0.5)
+            key = m.get(sym)
+            if key:
+                out[key] = {"d": [b.timestamp.strftime("%Y-%m-%d") for b in bs], "o": [float(b.open) for b in bs],
+                            "c": [float(b.close) for b in bs], "v": [float(b.volume) for b in bs]}
+        if n % 20 == 0:
+            P(f"  {adjustment} job {n + 1}/{len(jobs)} ({len(out)} keys)")
+        time.sleep(0.4)
     return out
 
 
@@ -362,48 +453,84 @@ def abnormal(b: dict, spy: dict, i_entry: int, bt: float, hold: int) -> tuple:
     return (None if rm is None else r - bt * rm), short
 
 
-def build_events(si: dict, adj: dict, raw: dict, spy: dict, lag: int, st: Counter) -> list[dict]:
+def rank_groups(rows: dict) -> dict:
+    """DTC rank group among ALL in-scope rows with a DTC (for counting exclusions / missing bars per group)."""
+    vals = [r["dtc"] for r in rows.values() if r["dtc"] is not None]
+    if len(vals) < 10:
+        return {}
+    lo, hi = pctile_cuts(vals)
+    return {sym: ("HIGH" if r["dtc"] >= hi else "NORMAL" if r["dtc"] < lo else None)
+            for sym, r in rows.items() if r["dtc"] is not None}
+
+
+def build_events(si: dict, adj: dict, raw: dict, spy: dict, lag: int, st: Counter, assets: dict | None = None,
+                 cut_log: list | None = None) -> list[dict]:
     days = spy["d"]
+    assets = assets or {}
     reps = build_reports(si, days)
     if lag != PUB_LAG:
         reps = [dict(r, pub=add_trading_days(days, r["settle"], lag)) for r in reps]
         reps = [r for r in reps if r["pub"]]
     events, open_until = [], {}
     for k, rep in enumerate(reps):
-        nxt = reps[k + 1]["pub"] if k + 1 < len(reps) else days[-1]
-        elig = {s_: r for s_, r in rep["rows"].items() if r["dtc"] is not None and eligible_at(raw, {}, s_, rep["pub"])}
+        nxt = min(reps[k + 1]["pub"] if k + 1 < len(reps) else days[-1], END_D0)       # amended_3 (4)
+        rg = rank_groups(rep["rows"])
+        elig = {}
+        for sym, r in rep["rows"].items():
+            g0 = rg.get(sym)
+            if r["dtc"] is None:
+                continue
+            if is_etf_like(r["name"], assets.get(alpaca_symbol(sym, assets), "")):
+                st[f"etf_excluded_{g0}"] += 1
+                continue
+            if r["flagged"]:
+                st[f"flagged_{g0}"] += 1
+                continue
+            status = bar_status(raw, days, r["run"], rep["pub"])
+            if status != "ok":
+                if (r["adv"] or 0) >= SURV_ADV:                             # amended_3 (2b)
+                    st[f"surv_{status}_{g0}"] += 1
+                continue
+            if (r["adv"] or 0) >= SURV_ADV:
+                st[f"surv_ok_{g0}"] += 1
+            if eligible_at(raw, days, r["run"], rep["pub"]):
+                elig[sym] = r
         if len(elig) < 50:
             st["report_too_small"] += 1
             continue
         lo, hi = pctile_cuts([r["dtc"] for r in elig.values()])
+        if cut_log is not None:
+            cut_log.append({"settle": rep["settle"], "pub": rep["pub"], "eligible": len(elig), "normal_below": lo,
+                            "high_from": hi})
         st["reports_used"] += 1
         for sym, r in elig.items():
             grp = "HIGH" if r["dtc"] >= hi else "NORMAL" if r["dtc"] < lo else None
             if grp is None:
                 continue
-            b = adj.get(sym)
+            key = r["run"]
+            b = adj.get(key)
             if not b:
                 st[f"{grp}_no_adjusted_bars"] += 1
                 continue
-            i_start = bisect.bisect_right(b["d"], rep["pub"])                # at least 1 session after publication
+            i_start = bisect.bisect_right(b["d"], rep["pub"])
             i_end = bisect.bisect_right(b["d"], nxt)
             for i in range(i_start, i_end):
-                if b["d"][i] < FIRST_TRIGGER or i <= open_until.get(sym, -1):
+                if b["d"][i] < FIRST_TRIGGER or i <= open_until.get(key, -1):
                     continue
-                if not is_breakout(b["c"], b["v"], i) or not eligible_at(raw, {}, sym, b["d"][i]):
+                if not is_breakout(b["c"], b["v"], i) or not eligible_at(raw, days, key, b["d"][i]):
                     continue
                 if i + 1 >= len(b["d"]):
                     st[f"{grp}_no_entry_bar"] += 1
                     break
-                f = event_features(b, raw[sym], spy, i)
+                f = event_features(b, raw[key], spy, i)
                 if f is None:
-                    st[f"{grp}_no_features"] += 1
+                    st[f"info_no_features_{grp}"] += 1                       # recent IPOs: own line, not a drop
                     break
                 ab, short = abnormal(b, spy, i + 1, f["beta"], HOLD)
                 if ab is None:
                     st[f"{grp}_no_spy"] += 1
                     break
-                ev = {"sym": sym, "grp": grp, "d0": b["d"][i], "settle": rep["settle"], "dtc": r["dtc"],
+                ev = {"sym": sym, "run": key, "grp": grp, "d0": b["d"][i], "settle": rep["settle"], "dtc": r["dtc"],
                       "dtc_rank": sum(1 for x in elig.values() if x["dtc"] <= r["dtc"]) / len(elig),
                       "si_chg": r["chg"], "abn": ab, "short_hold": short, **f}
                 for h in (1, 10, 20):
@@ -412,14 +539,14 @@ def build_events(si: dict, adj: dict, raw: dict, spy: dict, lag: int, st: Counte
                 cands = [k2 for k2 in range(i_start, i_end) if k2 != i and k2 + 1 < len(b["d"])
                          and b["d"][k2] >= FIRST_TRIGGER and not is_breakout(b["c"], b["v"], k2)]
                 if cands:
-                    k2 = random.Random(int(hashlib.sha256(f"{SEED_TAG}|{sym}|{b['d'][i]}".encode()).hexdigest()[:16],
+                    k2 = random.Random(int(hashlib.sha256(f"{SEED_TAG}|{key}|{b['d'][i]}".encode()).hexdigest()[:16],
                                            16)).choice(cands)
-                    f2 = event_features(b, raw[sym], spy, k2)
+                    f2 = event_features(b, raw[key], spy, k2)
                     ev["abn_random_day"] = abnormal(b, spy, k2 + 1, f2["beta"], HOLD)[0] if f2 else None
                 events.append(ev)
                 st[f"{grp}_events"] += 1
-                open_until[sym] = i + 1 + HOLD
-                break                                                       # first trigger per name per window
+                open_until[key] = i + 1 + HOLD
+                break
     return events
 
 
@@ -469,39 +596,51 @@ def drop_top(ev: list[dict], key: str, k: int) -> float | None:
     return statistics.mean(rest) if rest else None
 
 
-def spearman(x: list[float], y: list[float]) -> float | None:
+def avg_ranks(v: list[float]) -> list[float]:
+    o = sorted(range(len(v)), key=lambda i: v[i])
+    r = [0.0] * len(v)
+    k = 0
+    while k < len(o):
+        j = k
+        while j + 1 < len(o) and v[o[j + 1]] == v[o[k]]:
+            j += 1
+        for t in range(k, j + 1):
+            r[o[t]] = (k + j) / 2
+        k = j + 1
+    return r
+
+
+def spearman_avg(x: list[float], y: list[float]) -> float | None:
     if len(x) < 3:
         return None
-
-    def rk(v):
-        o = sorted(range(len(v)), key=lambda i: v[i])
-        r = [0.0] * len(v)
-        for pos, i in enumerate(o):
-            r[i] = pos
-        return r
-    rx, ry = rk(x), rk(y)
+    rx, ry = avg_ranks(x), avg_ranks(y)
     mx, my = statistics.mean(rx), statistics.mean(ry)
     num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
     den = math.sqrt(sum((a - mx) ** 2 for a in rx) * sum((b - my) ** 2 for b in ry))
     return num / den if den else None
 
 
-def own_dtc_check(si: dict, raw: dict) -> dict:
-    xs, ys = [], []
+def own_dtc_check(si: dict, raw: dict, days: list[str]) -> dict:
+    """amended_3 (7): FINRA DTC vs short position / own 20-day SIP ADV ending at settlement, eligible rows only."""
+    xs, ys, per = [], [], []
     for d, rows in si.items():
         sd = f"{d[:4]}-{d[4:6]}-{d[6:]}"
+        x1, y1 = [], []
         for sym, r in rows.items():
-            b = raw.get(sym)
-            if not b or r["dtc"] is None or not r["short"]:
+            if r["dtc"] is None or not r["short"] or not eligible_at(raw, days, r["run"], sd):
                 continue
+            b = raw[r["run"]]
             j = bisect.bisect_right(b["d"], sd) - 1
-            if j < LOOK - 1:
-                continue
             adv = statistics.mean(b["v"][j - LOOK + 1:j + 1])
-            if adv > 0 and b["c"][j] >= MIN_PX:
-                xs.append(r["dtc"])
-                ys.append(r["short"] / adv)
-    return {"spearman_finra_vs_own": spearman(xs[:20000], ys[:20000]), "n": len(xs)}
+            if adv > 0:
+                x1.append(r["dtc"])
+                y1.append(r["short"] / adv)
+        if len(x1) >= 20:
+            per.append(spearman_avg(x1, y1))
+        xs += x1
+        ys += y1
+    return {"spearman_all": spearman_avg(xs, ys), "n": len(xs),
+            "per_report_median": statistics.median([p for p in per if p is not None]) if per else None}
 
 
 def module_shas() -> dict:
@@ -523,55 +662,68 @@ def main() -> None:
         P("codes over all files:", dict(sum((Counter(v["by_code"]) for v in cov.values()), Counter())))
         P(write("coverage.json", cov))
         return
-    si, st0 = load_reports_raw()
+    si = load_reports_raw()
+    runs = runs_of(si)
     if a.bars:
-        syms = sorted({x for rows in si.values() for x in rows})
-        P(f"in-scope symbols {len(syms)}")
-        raw = fetch_bars(syms + ["SPY"], "raw")
+        assets = asset_map()
+        json.dump(assets, open(os.path.join(OUT_DIR, "assets.json"), "w"))
+        P(f"runs {len(runs)} (symbols {len({r['sym'] for r in runs.values()})})")
+        raw = fetch_bars(runs, assets, "raw")
         pickle.dump(raw, open(os.path.join(OUT_DIR, "bars_raw.pkl"), "wb"))
         days = raw["SPY"]["d"]
         keep = set()
         for rep in build_reports(si, days):
-            keep |= {x for x in rep["rows"] if eligible_at(raw, {}, x, rep["pub"])}
-        P(f"symbols passing the screen at some publication: {len(keep)}; no raw bars: "
-          f"{sum(1 for x in syms if x not in raw)}")
-        adj = fetch_bars(sorted(keep) + ["SPY"], "all")
+            keep |= {r["run"] for r in rep["rows"].values() if eligible_at(raw, days, r["run"], rep["pub"])}
+        adj = fetch_bars(runs, assets, "all", only=keep)
         pickle.dump(adj, open(os.path.join(OUT_DIR, "bars_adj.pkl"), "wb"))
-        write("bars_meta.json", {"symbols": len(syms), "raw_with_bars": len(raw), "screen_pass": len(keep),
-                                 "adj_with_bars": len(adj), "no_raw_bars": sum(1 for x in syms if x not in raw)})
+        spot = {x: {"runs": [rid for rid, r in runs.items() if r["sym"] == x],
+                    "raw_bars": {rid: (len(raw[rid]["d"]), raw[rid]["d"][0], raw[rid]["d"][-1]) for rid, r in runs.items()
+                                 if r["sym"] == x and rid in raw}} for x in ("FB", "META", "BRKB", "BFB")}
+        meta = {"runs": len(runs), "raw_with_bars": len(raw), "screen_pass_runs": len(keep), "adj_with_bars": len(adj),
+                "spot_checks": spot}
+        P(json.dumps(meta, indent=1, default=str))
+        write("bars_meta.json", meta)
         return
+    assets = jload("assets.json", {})
     raw = pickle.load(open(os.path.join(OUT_DIR, "bars_raw.pkl"), "rb"))
     adj = pickle.load(open(os.path.join(OUT_DIR, "bars_adj.pkl"), "rb"))
     spy = adj["SPY"]
-    st = Counter(st0)
-    events = build_events(si, adj, raw, spy, PUB_LAG, st)
+    st, cut_log = Counter(), []
+    events = build_events(si, adj, raw, spy, PUB_LAG, st, assets, cut_log)
     paired, minfo = match(events)
     halves = {"A": [e for e in paired if e["d0"] <= H1_END], "B": [e for e in paired if e["d0"] > H1_END]}
     n_ev = Counter(e["grp"] for e in events)
     drops = {g: sum(v for k, v in st.items() if k.startswith(g + "_no")) for g in ("HIGH", "NORMAL")}
     drop_rate = {g: drops[g] / max(1, drops[g] + n_ev[g]) for g in drops}
-    abort = max(drop_rate.values()) > DROP_MAX or abs(drop_rate["HIGH"] - drop_rate["NORMAL"]) > DROP_DIFF
+    miss = {g: (st[f"surv_missing_{g}"] + st[f"surv_stale_{g}"]) /
+            max(1, st[f"surv_missing_{g}"] + st[f"surv_stale_{g}"] + st[f"surv_ok_{g}"]) for g in ("HIGH", "NORMAL")}
+
+    def trips(rate):
+        return max(rate.values()) > DROP_MAX or abs(rate["HIGH"] - rate["NORMAL"]) > DROP_DIFF
+    abort = trips(drop_rate) or trips(miss)
+    bars_sha = {k: hashlib.sha256(open(os.path.join(OUT_DIR, k), "rb").read()).hexdigest()
+                for k in ("bars_raw.pkl", "bars_adj.pkl")}
     if not a.score:
-        cnt = {"stats": dict(st), "events": dict(n_ev), "match": minfo, "drop_rate": drop_rate, "abort": abort,
-               "own_dtc": own_dtc_check(si, raw), "module_sha256": module_shas()}
+        cnt = {"stats": dict(st), "events": dict(n_ev), "match": minfo, "drop_rate": drop_rate,
+               "missing_rate": miss, "abort": abort, "own_dtc": own_dtc_check(si, raw, spy["d"]),
+               "cutoffs_per_report": cut_log, "bars_sha256": bars_sha, "module_sha256": module_shas()}
         for h, ev in halves.items():
             s_ = series_stats(ev)
             cnt[h] = {"matched_high": s_["n"], "se": s_["se"], "se_week": s_["se_week"], "se_name": s_["se_name"],
-                      "se_cal": s_["se_cal"], "mde": mde(s_), "normal_events": sum(1 for e in events if e["grp"] ==
-                                                                                 "NORMAL" and (e["d0"] <= H1_END) ==
-                                                                                 (h == "A")),
+                      "se_cal_dk": s_["se_cal"], "mde": mde(s_),
+                      "normal_events": sum(1 for e in events if e["grp"] == "NORMAL" and (e["d0"] <= H1_END) == (h == "A")),
                       "power_ok": s_["n"] >= MIN_EVENTS and mde(s_) is not None and mde(s_) <= LIFT_BAR}
-        P(json.dumps(cnt, indent=1, default=str))       # SEs and counts only; no mean is printed
-        P(write("count.json", cnt))
+        P(json.dumps({k: v for k, v in cnt.items() if k != "cutoffs_per_report"}, indent=1, default=str))
+        P(write("count.json", cnt))            # SEs and counts only; no mean is printed
         return
     if not a.skeptic_ready:
         raise SystemExit("--score needs --skeptic-ready")
     cnt = jload("count.json")
-    if not cnt or cnt.get("module_sha256") != module_shas():
-        raise SystemExit("count.json missing or from different code")
-    if abort:
-        raise SystemExit(f"drop rule tripped: {drop_rate}")
-    ev12 = build_events(si, adj, raw, spy, PUB_LAG_INFO, Counter())
+    if not cnt or cnt.get("module_sha256") != module_shas() or cnt.get("bars_sha256") != bars_sha:
+        raise SystemExit("count.json missing or from different code / bars")
+    if cnt["abort"] or not (cnt["A"]["power_ok"] and cnt["B"]["power_ok"]):
+        raise SystemExit("count step did not clear: abort or underpowered (amended_3 (5)); not scored")
+    ev12 = build_events(si, adj, raw, spy, PUB_LAG_INFO, Counter(), assets)
     p12, _ = match(ev12)
     res = {"halves": {}, "verdict": None, "info": {}}
     for h, ev in halves.items():
@@ -595,7 +747,6 @@ def main() -> None:
             return statistics.mean(v) if v else None
         res["info"][h] = {"unmatched_high_minus_normal": (mean_of(hi, "abn") or 0) - (mean_of(no, "abn") or 0),
                           "did_breakout_minus_random": (did(hi) or 0) - (did(no) or 0),
-                          "high_random_day": mean_of(hi, "abn_random_day"),
                           "holds": {k: series_stats(ev, k)["mean"] for k in ("diff1", "diff10", "diff20")},
                           "entry_at_d0_close": mean_of(hi, "abn_d0close"),
                           "si_rising": series_stats([e for e in ev if (e.get("si_chg") or 0) > 0])["mean"],
