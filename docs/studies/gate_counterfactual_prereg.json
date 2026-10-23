@@ -52,7 +52,8 @@
    "(8) READING for the float cap: COSTLY only if (refused - control) >= +5 bp AND the refused group's own 10-minute level net of 5 bp (the desk cost) >= 0 AND the same sign in both halves; PROTECTIVE if <= -5 bp with |t| >= critical in both halves; else NO EVIDENCE with the 95% interval. 'Refused beats a fading board' is not enough by itself (the board fades about -8.6 bp per 10 min).",
    "(9) MISSING BARS reported per group; the screen is not read if the missing rates differ by more than 10 points.",
    "(10) G2 (spread) is reported separately before and after 2026-10-03 (the 0.05% cap).",
-   "(11) Outcomes are SIP bars; the live desk sees IEX (declared). Bars are fetched on the data-only account (its own rate limit; the desk logged 0 rate-limit errors during earlier data-account fetches), so the fetch may run during the session."
+   "(11) Outcomes are SIP bars; the live desk sees IEX (declared). Bars are fetched on the data-only account (its own rate limit; the desk logged 0 rate-limit errors during earlier data-account fetches), so the fetch may run during the session.",
+   "(12) REFUSAL SOURCE: ai_reports/rejects.jsonl (inclusion-stage refusals, logged since 2026-08-06; same reasons as admit_ledger) so the 2026-09-10 .. 2026-09-15 sessions are covered; the admit_ledger (from 09-16) adds the seed-stage reasons for the information gates only."
   ]
  }
 }
