@@ -41,5 +41,16 @@
   "exits are discretionary in the video (2R, the 20, an 8 EMA, patterns); 2R is the registered one",
   "desk runs on IEX with no ETF trade path; a PASS goes only to a forward paper prereg"
  ],
- "script": "tools/studies/anchor_power_bar.py (to be written)."
+ "script": "tools/studies/anchor_power_bar.py (to be written).",
+ "amended": {
+  "when": "2026-10-23, after result-skeptic round 1 FIX FIRST, before any script or data.",
+  "changes": [
+   "(1) CONTROL window = (candidate end + 1) .. min(candidate end + 60, 15:30); if empty the trade is dropped and counted.",
+   "(2) AT_ANCHOR replaced: |candidate open - A_prev| <= 0.15% x A_prev AND candidate low <= A_prev x 1.001.",
+   "(3) SKIP (counted): entry open <= stop or >= target.",
+   "(4) SIZE TEST REPLACED: RANGE >= 2.0 x the median range of the SAME clock 2-minute bar over the prior 10 kept sessions (needs >= 5 of them; else no candidate that bar). Dropped early-close sessions are not kept sessions.",
+   "(5) RE-ENTRY: candidates while a trade in that symbol is open are ignored and counted; controls are drawn only for trades taken.",
+   "Batch-robust bar t >= 2.84; floors and MDE per its own 'power' text (>= 300 long-trade days per half)."
+  ]
+ }
 }

@@ -54,5 +54,15 @@
    "(7) Information: drop the best calendar month (March 2020 sits in half A). Declared: the desk runs on IEX with no ETF trade path; a PASS goes only to a forward paper prereg.",
    "(6b) pm_power_bar window: the last eligible power bar is 10:28-10:29; entry at the 10:30 open. Day floor: >= 150 long-trade days per half (rarer setup, declared)."
   ]
+ },
+ "amended_2": {
+  "when": "2026-10-23, after result-skeptic round 1 FIX FIRST, before any script or data.",
+  "changes": [
+   "(1) LEVELS: primary window 07:00-09:29 (04:00-09:29 is information); the 'fewer than 30 premarket bars' drop counts 1-minute bars in 07:00-09:29.",
+   "(2) FLOOR: >= 150 long-trade days per half (this supersedes the 300 in amended (5)); amended items (1)/(6a) that mention an SMA or a breakout/retest do not apply to this study (it has neither); the held-out carve-out of (1) applies.",
+   "(3) LEVEL INTACT: a long candidate needs no RTH 1-minute CLOSE below PML before the candidate bar (short mirrored: no close above PMH); otherwise the level is broken and that side has no trade that day.",
+   "(4) SIZE TEST REPLACED: RANGE >= 2.0 x the median range of the SAME clock 2-minute bar over the prior 10 kept sessions (needs >= 5 of them; else no candidate that bar). Dropped early-close sessions are not kept sessions.",
+   "(5) FEED (declared): live IEX premarket is nearly blind on the desk, so live PMH/PML would differ from SIP; a PASS needs real-time SIP, which is not owned - a PASS earns only a forward paper prereg on SIP data and a data-cost decision by the operator."
+  ]
  }
 }
