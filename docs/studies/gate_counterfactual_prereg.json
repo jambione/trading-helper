@@ -77,6 +77,6 @@
   "units": "The G2 (spread_wide) primary rows of the scored screen (not on the board before the refusal), same entry (open of the minute after the refusal) and 10-minute exit, same days.",
   "spreads": "SIP NBBO from the data-only account: the last clean quote (bid > 0, ask > bid, both sizes > 0) at or before the START of the entry minute, at most 30 s old, as a fraction of the mid. Refused name: its own spread. Board: up to 3 seeded board names from that unit's control set (seed 'gate-spread-board'), mean spread.",
   "net": "refused net = refused 10-min return - its full quoted spread (a round trip at the touch); board net = board control return - the mean board spread; NET DIFF = refused net - board net, per day mean (>= 3 per day), day-equal, day-clustered t; reported for all days, and separately from 2026-10-03 (the 0.05% cap) on.",
-  "reading": "'Net edge' only if NET DIFF >= +5 bp with t >= 2 both before and after 10/03 is NOT required; it is reported, and anything positive is a lead for a registered test, never a config change. Missing quotes are counted per side."
+  "reading": "NET DIFF, its t and 95% interval are reported (all days, and from 10/03 on). A 'net lead' = NET DIFF >= +5 bp with t >= 2 in the from-10/03 sample; anything else reads 'no net case'. Either way it is information: a lead only earns a registered test of a wider cap after the floor20 read. Missing quotes are counted per side."
  }
 }
