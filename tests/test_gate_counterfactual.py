@@ -55,8 +55,8 @@ def test_board_at_and_control():
     assert abs(G.control_ret(db, ["A", "Z"], 606, 615) - 0.01) < 1e-12 and G.control_ret(db, ["Z"], 606, 615) is None
 
 
-def _h(diff, level, t=None):
-    return {"diff": {"mean": diff, "t": t, "t_crit": 2.3}, "level_net": level}
+def _h(diff, level, t=None, days=12):
+    return {"diff": {"mean": diff, "t": t, "t_crit": 2.3, "days": days}, "level_net": level}
 
 
 def test_reading_rule():
@@ -71,6 +71,30 @@ def test_day_minimum_and_missing_rates():
     s = G.day_stats(rows, "diff")
     assert s["days"] == 2 and abs(s["mean"] - 0.002) < 1e-12                       # d2 (2 units) is left out
     st = G.Counter({"G1_float_refused_missing": 2, "G1_float_ctrl_missing": 30, "G1_float_ctrl_drawn": 100,
-                    "G1_float_no_board_120s": 1})
+                    "G1_float_no_board_120s": 1, "G1_float_denominator": 20})
     m = G.missing_rates({"G1_float": [{"on_board_before": False}] * 20 + [{"on_board_before": True}]}, st)
     assert abs(m["G1_float"]["refused"] - 0.1) < 1e-12 and abs(m["G1_float"]["board"] - 0.3) < 1e-12
+
+
+
+def test_reading_needs_eight_days():
+    assert G.reading({"A": _h(0.0008, 0.0001, days=1), "B": _h(0.0006, 0.0002)}) == "NO EVIDENCE (underpowered)"
+
+
+def test_primary_sample_and_missing_denominator():
+    us = [{"other_gates": [], "on_board_before": False}, {"other_gates": ["spread_wide"], "on_board_before": False},
+          {"other_gates": [], "on_board_before": True}]
+    assert len(G.primary_sample("G1_float", us)) == 1 and len(G.primary_sample("G2_spread", us)) == 2
+    st = G.Counter({"G1_float_refused_missing": 1, "G1_float_denominator": 4, "G1_float_ctrl_drawn": 10,
+                    "G1_float_ctrl_missing": 1})
+    assert G.missing_rates({"G1_float": us}, st)["G1_float"]["refused"] == 0.25
+
+
+def test_strict_bars_stop(tmp_path, monkeypatch):
+    import json, pytest
+    monkeypatch.setattr(G, "OUT_DIR", str(tmp_path))
+    monkeypatch.setattr(G, "BAR_DIR", str(tmp_path / "bars"))
+    (tmp_path / "units.json").write_text(json.dumps({"units": {}, "board": {"2026-10-01": {}}}))
+    monkeypatch.setattr(G.sys, "argv", ["x"])
+    with pytest.raises(SystemExit, match="bars missing"):
+        G.main()

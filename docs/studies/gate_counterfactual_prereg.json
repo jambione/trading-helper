@@ -69,5 +69,6 @@
    "(8) Information outputs implemented: 30-minute horizon, per-source split, the G6 delay count (not_uptrend / admit_range_pos refusals later admitted). Dropped: float buckets (rejects.jsonl has no float field) and the G4 floor split (the whole window ran at the $10 floor).",
    "(9) Declared: rejects.jsonl is throttled to one row per symbol per 60 s, so a first refusal can be up to 60 s late; 'no other tested gate that day' selects on refusals later in the day (as registered)."
   ]
- }
+ },
+ "amended_3": "2026-10-23, before the count step, after result-skeptic round 2: (1) the float-cap missing rates are computed on the PRIMARY sample only (clean name-days), with denominator = units that had a board control and were not admitted before entry; the board rate counts control names drawn for those same units. (2) The float-cap MDE uses the primary sample only. (3) A half with fewer than 8 qualifying days reads 'NO EVIDENCE (underpowered)' (the original power clause). Declared: the MDE pairs one board name per draw while the control is a mean of several, so the MDE is conservative; no minimum number of control names per observation; bar files are not hashed (--bars never rewrites a day file); the 30-minute return has no earlier-bar fallback (information only)."
 }

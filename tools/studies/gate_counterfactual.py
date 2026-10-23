@@ -34,7 +34,7 @@ ET = ZoneInfo("America/New_York")
 FIRST, LAST = "2026-09-10", "2026-10-21"
 T_LO, T_HI = 9 * 60 + 45, 15 * 60                     # refusal / admission minutes considered (ET)
 HORIZON, ENTRY_MAX_LAG, BOARD_LOOKBACK_S = 10, 2, 120
-COST, BAR, MIN_PER_GROUP = 0.0005, 0.0005, 3
+COST, BAR, MIN_PER_GROUP, MIN_DAYS = 0.0005, 0.0005, 3, 8
 SPREAD_CAP_DAY = "2026-10-03"
 GATES = {"G1_float": ("float_too_big",), "G2_spread": ("spread_wide",), "G3_gapdown": ("gapped_down",),
          "G4_price": ("below_min_price",), "G5_rvol": ("thin_rvol",)}
@@ -175,8 +175,8 @@ def day_stats(rows: list[dict], key: str, min_per_day: int = MIN_PER_GROUP) -> d
 def reading(halves: dict) -> str:
     """amended (8) for the float cap."""
     a, b = halves["A"], halves["B"]
-    if any(h["diff"]["mean"] is None for h in (a, b)):
-        return "NO EVIDENCE (insufficient data)"
+    if any(h["diff"]["mean"] is None or h["diff"]["days"] < MIN_DAYS for h in (a, b)):
+        return "NO EVIDENCE (underpowered)"
     costly = all(h["diff"]["mean"] >= BAR and h["level_net"] is not None and h["level_net"] >= 0 for h in (a, b))
     prot = all(h["diff"]["mean"] <= -BAR and h["diff"]["t"] is not None and h["diff"]["t"] <= -h["diff"]["t_crit"]
                for h in (a, b))
@@ -254,37 +254,46 @@ def module_shas() -> dict:
     return {"gate_counterfactual": hashlib.sha256(open(os.path.abspath(__file__), "rb").read()).hexdigest()}
 
 
+def primary_sample(gate: str, us: list[dict]) -> list[dict]:
+    """The units a gate is judged on: never on the board before; for the float cap, no other tested gate that day."""
+    return [u for u in us if not u.get("on_board_before") and (gate != "G1_float" or not u.get("other_gates"))]
+
+
 def evaluate(units: dict, board: dict, bars_of) -> tuple[dict, Counter]:
-    """Per gate: rows with the refused return, the same-minute board control and their difference; missing counted."""
+    """Per gate: rows with the refused return, the same-minute board control and their difference. Missing data is
+    counted per gate on its PRIMARY sample (amended_3 (1)): status 'no_board' and 'admitted_before_entry' are outside
+    the denominator."""
     st, out = Counter(), {}
     for gate, us in units.items():
         rows = []
-        for u in us:
-            if u.get("on_board_before"):
-                st[f"{gate}_on_board_before"] += 1
-                continue
+        st[f"{gate}_on_board_before"] += sum(1 for u in us if u.get("on_board_before"))
+        for u in primary_sample(gate, us):
             db = bars_of(u["day"])
+            ctl_syms = board_at(board[u["day"]], u["ts"], u["sym"])
+            if not ctl_syms:
+                st[f"{gate}_no_board_120s"] += 1
+                continue
             w = window(db.get(u["sym"], {}), u["ts"], u["admit_ts"])
             if w == "admitted_before_entry":
                 st[f"{gate}_admitted_before_entry"] += 1
                 continue
             if w is None:
                 st[f"{gate}_refused_missing"] += 1
+                st[f"{gate}_denominator"] += 1
                 continue
             e, x, cut = w
             r = ret(db.get(u["sym"], {}), e, x)
-            ctl_syms = board_at(board[u["day"]], u["ts"], u["sym"])
-            if not ctl_syms:
-                st[f"{gate}_no_board_120s"] += 1
-                continue
             c = control_ret(db, ctl_syms, e, x, st, gate)
             if r is None:
                 st[f"{gate}_refused_missing"] += 1
+                st[f"{gate}_denominator"] += 1
                 continue
             if c is None:
+                st[f"{gate}_denominator"] += 1
                 st[f"{gate}_control_missing"] += 1
                 continue
             st[f"{gate}_ok"] += 1
+            st[f"{gate}_denominator"] += 1
             x30 = min(e + 30 - 1, (et_min(u["admit_ts"])[1] - 1) if u.get("admit_ts") else 10 ** 6)
             r30, c30 = ret(db.get(u["sym"], {}), e, x30), control_ret(db, ctl_syms, e, x30)
             rows.append({**u, "ret": r, "ctrl": c, "diff": r - c, "cut": cut, "n_ctrl": len(ctl_syms),
@@ -299,9 +308,7 @@ def random_mde(units: dict, board: dict, bars_of, mid: str) -> dict:
     out = {}
     for gate, us in units.items():
         per = {"A": defaultdict(list), "B": defaultdict(list)}
-        for u in us:
-            if u.get("on_board_before"):
-                continue
+        for u in primary_sample(gate, us):
             db = bars_of(u["day"])
             rng = random.Random(int(hashlib.sha256(f"{SEED_TAG}|{gate}|{u['day']}|{u['sym']}".encode()).hexdigest()[:16], 16))
             m = rng.randint(T_LO, T_HI - HORIZON)
@@ -339,8 +346,7 @@ def g6_delay_count(rejects: list[dict], board: dict) -> dict:
 def missing_rates(units: dict, st: Counter) -> dict:
     out = {}
     for gate, us in units.items():
-        n = sum(1 for u in us if not u.get("on_board_before"))
-        out[gate] = {"refused": st[f"{gate}_refused_missing"] / max(1, n),
+        out[gate] = {"refused": st[f"{gate}_refused_missing"] / max(1, st[f"{gate}_denominator"]),
                      "board": st[f"{gate}_ctrl_missing"] / max(1, st[f"{gate}_ctrl_drawn"]),
                      "no_board_120s": st[f"{gate}_no_board_120s"]}
     return out
@@ -410,7 +416,7 @@ def main() -> None:
     res = {"primary_gate": "G1_float", "gates": {}, "missing_rate": miss, "g6_delay": cnt.get("g6_delay"),
            "mde": cnt.get("mde")}
     for gate, rs in rows.items():
-        use = [r for r in rs if not r["other_gates"]] if gate == "G1_float" else rs
+        use = rs                                            # evaluate() already applied primary_sample()
         hv = {}
         for h, sel in (("A", lambda r: r["day"] < mid), ("B", lambda r: r["day"] >= mid)):
             part = [r for r in use if sel(r)]
