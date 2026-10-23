@@ -82,5 +82,22 @@
    "PRIMARY LEVELS: PMH = the highest candle BODY top (max of open, close) and PML = the lowest candle BODY bottom (min of open, close) of 07:00-09:29 1-minute bars: the level a chart reader marks, immune to single-print wicks. Wick levels are information.",
    "Everything else unchanged (origin band 0.15% of the level, same-clock power-bar size test, intact-level rule on RTH closes, window, stop, target, controls, floors, verdict). The count step is rerun; the study is scored only if it is now powered, after a result-skeptic check of this amendment."
   ]
+ },
+ "amended_5": {
+  "when": "2026-10-23 ~18:15 ET, operator-approved ('register one looser, outcome-blind power-bar definition'), after two count steps (UNDERPOWERED) and a funnel of signal conditions; NO outcome of this study has been read.",
+  "why": "The strict mechanical power bar (2x same-clock range, 60% body, green, close in top 20%, single bar) qualified on 4% of symbol-days; the video claims setups on ~75% of days (9 of 12) and combines 2-3 candles. One looser definition, fixed here, replaces it as PRIMARY; the strict one becomes information. No further loosening is allowed.",
+  "primary_power_bar": {
+   "window": "n = 1, 2 or 3 consecutive present 2-minute bars ending at bar k; combined open = the first bar's open, high = max, low = min, close = the last bar's close.",
+   "size": "combined range >= 1.5 x the median range of the SAME n-bar window ending at the same clock bar k over the prior 10 kept sessions (>= 5 present; held-out sessions are not kept; separate reference per n).",
+   "body": "|close - open| >= 50% of the combined range, and close > open (green). No close-location rule.",
+   "origin": "the combined LOW is within 0.15% of PML (body-level PML, amended_4); the combined close > PML.",
+   "intact": "no RTH 1-minute close below PML before the window's first bar starts.",
+   "choice": "the first end bar k (ending by 10:29) at which any n qualifies; at that k the smallest qualifying n.",
+   "trade": "unchanged: entry at the next 1-minute open, stop = combined low - $0.01, target = PMH (body level), else 15:59; skips, controls (seeded in (end, end + 60]), cost 2 bp, floors (>= 150 long days per half), MDE, verdict and batch bar (t >= 2.84) unchanged."
+  },
+  "information": [
+   "the strict single-bar definition (amended_4 levels)",
+   "short side mirrored (power bar red off PMH, target PML)"
+  ]
  }
 }
