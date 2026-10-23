@@ -1,0 +1,58 @@
+{
+ "study": "Admission gates, counterfactual: did the names each gate REFUSED move better or worse over the next 10 minutes than the names the desk ADMITTED the same day? A gate that refuses names that do better than admitted ones is costing the desk opportunities; one that refuses names that do worse is protecting it.",
+ "registered_at": "2026-10-23, before any refused-name outcome is computed",
+ "registered_before_results": true,
+ "origin": "Operator 10/23: 'is it optimal to keep the book this thin?' The float cap ($800M, added 8/28) has no evidence behind it (the 10/14 gates_sweep prereg arm 'nofloat' was never run); the other gates have some evidence. The desk stays FROZEN; this is offline and informs what to change after the floor20 read.",
+ "prior": "Mixed. 10/14 (board_names study): refused names faded 5.4 bp less per 10 minutes than board names, i.e. on average the gates refused names that did slightly BETTER. The float cap refuses large, liquid names, which earlier work found roughly flat while screened names fade - so a 'costly' read for the float cap is plausible (~30%); the spread, gap-down and $20 gates have prior evidence of protecting.",
+ "data": {
+  "refusals": "ai_reports/admit_ledger/YYYY-MM-DD.jsonl on the mini (stage, reason, kept=false, symbol, ts, price, float_m, source), sessions 2026-09-16 .. 2026-10-22 (completed sessions; today excluded).",
+  "admitted": "names with at least one 'arm' row in that day's ai_reports/sessions/DAY/decisions.jsonl.gz (the desk's board, as in fair_value_trigger P1); admission time = the first arm row's ts.",
+  "outcomes": "Alpaca SIP 1-minute bars (data-only account, after the close only) for every studied name-day."
+ },
+ "units": "Name-days. For a gate G: the name-day's FIRST refusal by G within 09:45-15:00 ET, for names that were NEVER on the board that day (refused-only; a name refused and later admitted belongs to the admitted group). Admitted: board name-days, at the first arm row within 09:45-15:00. One observation per name-day per group.",
+ "gates_tested": {
+  "G1_float": "float_too_big (inclusion) - PRIMARY of interest (no prior evidence)",
+  "G2_spread": "spread_wide (inclusion)",
+  "G3_gapdown": "gapped_down (inclusion)",
+  "G4_price": "below_min_price (inclusion and seed; the floor was $10 until 2026-10-21, $20 after)",
+  "G5_rvol": "thin_rvol (seed and inclusion)",
+  "G6_trend": "not_uptrend and admit_range_pos (inclusion), pooled"
+ },
+ "outcome": "PRIMARY: gross return from the close of the decision minute (the minute containing the refusal / admission ts) to the close 10 minutes later (SIP 1-minute bars; the last bar at or before each time, <= 2 minutes old, else missing and counted). 30-minute return is information. No spread is charged (refused names never traded; see caveats).",
+ "statistic": "Per gate and half: per day, mean of G-refused name-days minus mean of admitted name-days (days with >= 3 in each group); day-equal mean, day-clustered t (df = days - 1).",
+ "halves": "A = 2026-09-16 .. 2026-10-02, B = 2026-10-05 .. 2026-10-22.",
+ "multiplicity": "6 gates: two-sided Bonferroni critical t at 0.05 / 6, df = days - 1.",
+ "power": "Outcome-blind count step: name-days per gate, group and half; days with >= 3 per group; projected MDE from the dispersion of admitted name-days' 10-minute returns at a seeded random minute of the same day (no gate outcome). A gate with fewer than 8 qualifying days or an MDE > 10 bp in a half is UNDERPOWERED for it.",
+ "reading": "Per gate: COSTLY if refused minus admitted >= +5 bp with t >= the critical t in BOTH halves (the gate keeps out names that moved better); PROTECTIVE if <= -5 bp with t <= -critical in both halves; otherwise NO EVIDENCE (with the 95% interval reported). A COSTLY read is a reason to TEST relaxing that gate after the floor20 read, under its own prereg - never a direct config change.",
+ "caveats_declared": [
+  "a 10-minute move is not a desk trade: the desk's exits, spread and fill timing are absent; this measures the opportunity the gate turns away",
+  "spread_wide names would pay more to trade: the G2 comparison is gross and therefore an UPPER bound on what the spread gate costs",
+  "gates and config changed during the window (the $20 floor on 10/21, spread caps, tape knobs); results are per gate as configured each day",
+  "the admitted group is the desk's board (arm rows), which already passed every gate",
+  "refusals logged once per poll are collapsed to the first per name-day"
+ ],
+ "information_only": [
+  "30-minute horizon",
+  "float-refused name-days by float bucket ($0.8-2B, $2-10B, > $10B)",
+  "gate G4 split by floor ($10 vs $20 days)",
+  "per source (movers / trending / agy / xai)"
+ ],
+ "script": "tools/studies/gate_counterfactual.py (to be written): --units (ledgers only), --bars (after 16:15 ET), count step, --score after a result-skeptic READY.",
+ "amended": {
+  "when": "2026-10-23, before any script or outcome, after result-skeptic FIX FIRST (11 items).",
+  "status": "A SCREEN, not a test: the window is short (about 17-30 sessions), so NO EVIDENCE is the likely reading and is said up front. Its job is to say which gate deserves a real test after the floor20 read.",
+  "changes": [
+   "(1) PRIMARY = the FLOAT CAP only (G1), the one gate without prior evidence (and the operator's question); G2-G5 are information only; G6 (not_uptrend / admit_range_pos) is dropped from scoring and reported as a delay count (those gates delay names rather than refuse them). One primary test: two-sided critical t at 0.05, df = days - 1.",
+   "(2) ADMITTED / BOARD source = ai_reports/decision_ledger/DAY.jsonl stage = arm (as fair_value_trigger and board_names), which covers 2026-09-10 onward; the window is 2026-09-10 .. 2026-10-21 (10/22 dropped: a 9-13-name board after the $20 floor). Halves by date at the midpoint session.",
+   "(3) NO HINDSIGHT: the refused group is every name-day refused by G (first refusal 09:45-15:00), whether or not it was admitted later; its outcome window is cut at the admission minute if admission comes inside it (the return to that minute is used and flagged).",
+   "(4) ENTRY without look-ahead: the open of the minute after the refusal timestamp (the first SIP 1-minute bar starting after ts, at most 2 minutes later); exit at the close of the bar 10 minutes after entry.",
+   "(5) SAME-MINUTE CONTROL: each refused observation minus the mean return of the board names (arm rows in the 2 minutes before the refusal ts) over the SAME entry-to-exit window; per day the mean of these differences; day-equal; day-clustered t.",
+   "(6) OVERLAP: the primary sample is name-days refused by the float cap and by NO other tested gate that day; the overlap count is reported.",
+   "(7) POWER: MDE from BOTH groups' 10-minute return dispersion at seeded random minutes of the same name-days (no gate outcome); reported, not a gate (it is a screen).",
+   "(8) READING for the float cap: COSTLY only if (refused - control) >= +5 bp AND the refused group's own 10-minute level net of 5 bp (the desk cost) >= 0 AND the same sign in both halves; PROTECTIVE if <= -5 bp with |t| >= critical in both halves; else NO EVIDENCE with the 95% interval. 'Refused beats a fading board' is not enough by itself (the board fades about -8.6 bp per 10 min).",
+   "(9) MISSING BARS reported per group; the screen is not read if the missing rates differ by more than 10 points.",
+   "(10) G2 (spread) is reported separately before and after 2026-10-03 (the 0.05% cap).",
+   "(11) Outcomes are SIP bars; the live desk sees IEX (declared). Bars are fetched on the data-only account (its own rate limit; the desk logged 0 rate-limit errors during earlier data-account fetches), so the fetch may run during the session."
+  ]
+ }
+}
