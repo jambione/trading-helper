@@ -82,7 +82,7 @@ def run_symbol(sym):
         if day >= B.B_RESTART and not restarted:
             size.reset()
             restarted = True
-        if not B.is_full_session(r_all):
+        if not B.is_full_session(r_all, day):
             st["early_close_dropped"] += 1
             continue
         r = B.rth(r_all)

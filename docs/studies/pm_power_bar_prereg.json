@@ -70,7 +70,7 @@
  "amended_3": {
   "when": "2026-10-23, from the fence_bar code review (shared helpers), before any count step.",
   "changes": [
-   "Early closes detected from volume (13:00-15:59 < 15% of 09:30-12:59), dropped and counted.",
+   "Early closes: the 21 NYSE 13:00 sessions (calendar list etf_bars.EARLY_CLOSES) are dropped and counted.",
    "Scorer drops held-out / post-window days (must be 0); --score refuses unless both halves met the floors.",
    "Target fill also triggers when a bar opens beyond the target."
   ]

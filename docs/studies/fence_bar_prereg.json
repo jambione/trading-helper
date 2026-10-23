@@ -64,7 +64,7 @@
   "when": "2026-10-23, after the result-skeptic CODE review (FIX FIRST), before the count step and before any outcome.",
   "changes": [
    "(1) READING: the FIRST retest bar decides that side for the day; if it fails the SMA20 filter there is no trade on that side that day (no later retest is used).",
-   "(2) EARLY CLOSES are detected from volume: a session is dropped (counted) when 13:00-15:59 volume < 15% of 09:30-12:59 volume (the cache holds extended hours, so bar presence cannot detect a 13:00 close).",
+   "(2) EARLY CLOSES: the 21 NYSE 13:00 early-close sessions in 2016-01 .. 2026-10-15 (hard-coded calendar list in etf_bars.EARLY_CLOSES) are dropped and counted (21 per symbol); replaces a volume rule that the code review showed cannot separate half days on SPY. Registered before the count step.",
    "(3) The scorer drops (and must count 0) days inside 2026-01-14 .. 04-24 or after 2026-10-15; --score refuses unless both halves met the count-step floors (UNDERPOWERED with no outcome read).",
    "(4) Target fill also triggers when a bar OPENS beyond the target (filled at the open).",
    "(5) INFORMATION changes: the warehouse-stock read is dropped; 'far from the anchor' = |entry - SMA20| / SMA20 (not ATR); R multiple and weekday cells added; the short information set keeps only shorts that triggered first; the stop_at_retest variant uses the retest bar's extreme +/- $0.01."

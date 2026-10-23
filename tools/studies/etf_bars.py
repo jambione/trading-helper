@@ -30,19 +30,20 @@ def load(sym: str) -> dict[str, np.ndarray]:
 
 
 HELD_LO, HELD_HI, LAST_DAY = "2026-01-14", "2026-04-24", "2026-10-15"
-EARLY_CLOSE_VOL_RATIO = 0.15
+# NYSE 13:00 early closes in the window (2016-01 .. 2026-10-15); none in 2026 before 10-15. Volume cannot separate
+# half days on SPY (skeptic code review r2), so the calendar decides.
+EARLY_CLOSES = frozenset({
+    "2016-11-25", "2017-07-03", "2017-11-24", "2018-07-03", "2018-11-23", "2018-12-24", "2019-07-03", "2019-11-29",
+    "2019-12-24", "2020-11-27", "2020-12-24", "2021-11-26", "2022-11-25", "2023-07-03", "2023-11-24", "2024-07-03",
+    "2024-11-29", "2024-12-24", "2025-07-03", "2025-11-28", "2025-12-24"})
 
 
-def is_full_session(r: np.ndarray) -> bool:
-    """A 13:00 early close leaves only thin extended-hours prints after 13:00 (the cache keeps 04:00-15:59). Full
-    session = an opening bar exists AND volume 13:00-15:59 >= 15% of volume 09:30-12:59 (normal afternoons trade
-    roughly as much as mornings; half-day after-hours prints are a few percent)."""
-    m, v = r[:, 0], r[:, 5]
-    if not ((m >= RTH0) & (m < RTH0 + 5)).any():
+def is_full_session(r: np.ndarray, day: str | None = None) -> bool:
+    """Not a calendar early close, and an opening bar exists."""
+    if day is not None and day in EARLY_CLOSES:
         return False
-    am = v[(m >= RTH0) & (m < 780)].sum()
-    pm = v[(m >= 780) & (m < RTH_END)].sum()
-    return am > 0 and pm >= EARLY_CLOSE_VOL_RATIO * am
+    m = r[:, 0]
+    return bool(((m >= RTH0) & (m < RTH0 + 5)).any())
 
 
 def in_scope(day: str) -> bool:

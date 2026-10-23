@@ -56,11 +56,11 @@ def test_simulate_stop_target_and_both():
     assert s["why"] == "stop" and abs(s["gross"] - (98.0 / 100 - 1)) < 1e-12
 
 
-def test_early_close_detected_by_volume():
+def test_early_closes_dropped_by_calendar():
     full = np.array([[m, 100, 100, 100, 100, 1000] for m in range(570, 960)], dtype=float)
-    assert B.is_full_session(full)
-    half = np.array([[m, 100, 100, 100, 100, 1000 if m < 780 else 5] for m in range(570, 960)], dtype=float)
-    assert not B.is_full_session(half)
+    assert B.is_full_session(full, "2019-11-27")
+    assert len(B.EARLY_CLOSES) == 21
+    assert all(not B.is_full_session(full, d) for d in B.EARLY_CLOSES)
 
 
 def test_target_fills_on_open_beyond_and_scope():
