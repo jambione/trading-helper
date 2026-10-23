@@ -45,3 +45,19 @@ def test_freeze_keys():
     cur = dict(ref, ui_theme="light", ai_trail_give_r=0.3)
     assert F.freeze_keys(cur, ref) == ["ai_trail_give_r"]
     assert F.freeze_keys(dict(ref, trade_amount=2000), ref) == ["trade_amount"]
+
+
+def test_bar_context_cells():
+    bars = [(570, 10.0, 10.5, 9.9, 10.2, 100), (571, 10.2, 10.8, 10.1, 10.6, 300), (572, 10.6, 11.0, 10.5, 10.9, 200),
+            (573, 10.9, 12.0, 10.8, 11.5, 999)]                 # the entry minute 573 is never used
+    vwap = (10.2 * 100 + 10.6 * 300 + 10.9 * 200) / 600
+    c = F.bar_context(bars, 573, 11.0)
+    assert c == {"VWAP_UP": True, "HOD_BREAK": True} and 11.0 > vwap
+    assert F.bar_context(bars, 573, 10.95)["HOD_BREAK"] is False
+    assert F.bar_context(bars, 573, 10.5)["VWAP_UP"] is False      # below VWAP
+    assert F.bar_context(bars, 573, 9.95)["VWAP_UP"] is False      # below the open too
+    assert F.bar_context(bars, 570, 10.1) == {"VWAP_UP": None, "HOD_BREAK": None}
+    rows = [{"day": f"d{k % 5}", "sym": "X", "bp": (5.0 if k % 2 else -5.0), "VWAP_UP": bool(k % 2), "HOD_BREAK": None}
+            for k in range(40)]
+    out = F.cells(rows)
+    assert abs(out["VWAP_UP"]["in_minus_out"]["diff"] - 10.0) < 1e-9 and out["HOD_BREAK"]["unclassified"] == 40

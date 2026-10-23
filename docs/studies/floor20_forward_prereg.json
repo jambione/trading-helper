@@ -44,5 +44,14 @@
    "(8) Information: opens per session vs the comparator's opens per session (fewer opens = a selected sample, against the busy-book goal); lots unsold at the read marked to that day's close and counted.",
    "(9) PROFITABLE earns only a PREREG for a sizing step (its own forward window), never a size change by itself."
   ]
+ },
+ "amended_2": {
+  "when": "2026-10-23, before any forward-session fill or outcome is read (the window opens 10/23), operator request after the sweep/block stage 2.",
+  "information_cells": {
+   "VWAP_UP": "fill price > session VWAP (sum of SIP 1-minute bar close x volume / sum of volume over RTH bars 09:30 .. the minute before the fill's minute) AND fill price > the day's first RTH bar open.",
+   "HOD_BREAK": "fill price >= the day's high before the fill (max SIP 1-minute bar high over RTH bars 09:30 .. the minute before the fill's minute)."
+  },
+  "how": "For forward fills and (as context) the comparator fills: per cell, IN vs OUT mean realized bp (session-clustered CR1), the IN - OUT difference and t, and IN counts. Fills without bars before them (first RTH minute) are unclassified and counted.",
+  "status": "INFORMATION ONLY: neither cell can change the verdict, pass, or justify a config change; a promising cell needs its own prereg and forward window. Origin: sweep_block stage 2 (above VWAP on an up day +3.3 / +0.7 bp; block buying through the day's high too rare to judge)."
  }
 }

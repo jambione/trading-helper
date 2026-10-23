@@ -93,6 +93,57 @@ def verdict(fwd: dict, d: dict, halves: list[dict], guards: dict) -> str:
     return "BETTER_NOT_PROFITABLE" if better else "NO_CHANGE"
 
 
+def bar_context(bars: list, entry_min: int, fill: float) -> dict:
+    """amended_2 information cells from RTH 1-minute bars [(minute, o, h, l, c, v)] (minute = ET minute of day):
+    VWAP_UP = fill > VWAP of bars before the entry minute AND > the first RTH bar open; HOD_BREAK = fill >= the highest
+    high of bars before the entry minute. None when no RTH bar precedes the entry."""
+    prior = [b for b in bars if 570 <= b[0] < entry_min]
+    if not prior:
+        return {"VWAP_UP": None, "HOD_BREAK": None}
+    v = sum(b[5] for b in prior)
+    vwap = sum(b[4] * b[5] for b in prior) / v if v > 0 else None
+    open0 = min(prior, key=lambda b: b[0])[1]
+    return {"VWAP_UP": None if vwap is None else (fill > vwap and fill > open0),
+            "HOD_BREAK": fill >= max(b[2] for b in prior)}
+
+
+def cells(rows: list[dict]) -> dict:
+    out = {}
+    for c in ("VWAP_UP", "HOD_BREAK"):
+        a = cr1([r for r in rows if r.get(c) is True])
+        b = cr1([r for r in rows if r.get(c) is False])
+        out[c] = {"in": a, "out": b, "in_minus_out": diff(a, b),
+                  "unclassified": sum(1 for r in rows if r.get(c) is None)}
+    return out
+
+
+def add_context(rows: list[dict]) -> None:
+    """SIP 1-minute bars per (symbol, day) through the bars helper; sets VWAP_UP / HOD_BREAK on each row."""
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import bars as B
+    from alpaca.data.enums import DataFeed
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    cl, cache = B.client(), {}
+    for r in rows:
+        key = (r["sym"], r["day"])
+        if key not in cache:
+            d = datetime.strptime(r["day"], "%Y-%m-%d").replace(tzinfo=ET)
+            try:
+                df = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=r["sym"],
+                                                        timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+                                                        start=d.replace(hour=9, minute=30).astimezone(timezone.utc),
+                                                        end=d.replace(hour=16).astimezone(timezone.utc),
+                                                        feed=DataFeed.SIP)).df
+                x = df.xs(r["sym"], level="symbol")
+                cache[key] = [(t.astimezone(ET).hour * 60 + t.astimezone(ET).minute, float(b.open), float(b.high),
+                               float(b.low), float(b.close), float(b.volume)) for t, b in x.iterrows()]
+            except Exception:                                        # noqa: BLE001 - no bars = unclassified
+                cache[key] = []
+        tm = datetime.fromtimestamp(r["t"], ET)
+        r.update(bar_context(cache[key], tm.hour * 60 + tm.minute, r["fill"]))
+
+
 def freeze_keys(cur: dict, ref: dict) -> list[str]:
     keys = set(cur) | set(ref)
     changed = [k for k in sorted(keys) if cur.get(k) != ref.get(k)]
@@ -229,6 +280,9 @@ def main() -> None:
                     "largest_name_share": max(collections.Counter(r["sym"] for r in fv).values()) / max(1, len(fv)),
                     "win_rate": sum(1 for r in fv if r["bp"] > 0) / max(1, len(fv)),
                     "unsold": sum(1 for r in fwd if r["bp"] is None)}}
+    add_context(fv)
+    add_context(cmp_)
+    res["info"]["cells_information_only"] = {"forward": cells(fv), "comparator": cells(cmp_)}
     json.dump(res, open(os.path.join(OUT_DIR, "read.json"), "w"), indent=1, default=str)
     print(json.dumps(res, indent=1, default=str))
 
