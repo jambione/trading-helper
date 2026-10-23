@@ -59,3 +59,55 @@ def test_series_stats_and_verdicts():
 def test_nw_and_clustered_se():
     xs = [1.0, -1.0] * 20
     assert Q.nw_se(xs) is not None and Q.clustered_se([1.0, 2.0], ["a", "a"]) is None
+
+
+def _market(n_days=330, n_syms=60, seed=3):
+    from datetime import date, timedelta
+    rng = random.Random(seed)
+    days, d = [], date(2019, 9, 2)
+    while len(days) < n_days:
+        if d.weekday() < 5:
+            days.append(d.isoformat())
+        d += timedelta(days=1)
+    spy_c = [300.0]
+    for _ in days[1:]:
+        spy_c.append(spy_c[-1] * (1 + rng.gauss(0, 0.008)))
+    bars = {"SPY": {"d": days, "o": spy_c, "c": spy_c, "v": [1e8] * n_days}}
+    for k in range(n_syms):
+        c = [50.0]
+        for t in range(1, n_days):
+            c.append(c[-1] * (1 + 1.0 * (spy_c[t] / spy_c[t - 1] - 1) + rng.gauss(0, 0.004)))
+        bars[f"S{k}"] = {"d": list(days), "o": list(c), "c": c, "v": [1e6] * n_days}
+    return days, bars
+
+
+def test_build_events_and_match():
+    days, bars = _market()
+    t = days.index("2020-03-02")
+    for sym, after in (("S59", 0.03), ("S0", 0.0), ("S1", 0.0)):     # S59 is HIGH-DTC, S0 / S1 NORMAL
+        b = bars[sym]
+        b["c"][t] = max(b["c"][t - 20:t]) * 1.05
+        b["v"][t] = 3e6
+        for k in range(t + 1, len(days)):                              # S59 keeps rising after the breakout
+            b["c"][k] = b["c"][k - 1] * (1 + (after / 5 if k <= t + 6 else 0) + (bars["SPY"]["c"][k] / bars["SPY"]["c"][k - 1] - 1))
+    si = {"20200131": {f"S{k}": {"dtc": float(k + 1), "short": 1e6, "chg": 1.0} for k in range(60)}}
+    st = Q.Counter()
+    ev = Q.build_events(si, bars, bars, bars["SPY"], Q.PUB_LAG, st)
+    by = {e["sym"]: e for e in ev}
+    assert by["S59"]["grp"] == "HIGH" and by["S0"]["grp"] == "NORMAL" and by["S59"]["d0"] == "2020-03-02"
+    assert by["S59"]["abn"] > 0.02 and abs(by["S0"]["abn"]) < 0.02 and "S50" not in by   # 70-90th pct excluded
+    paired, info = Q.match(ev)
+    assert (len(paired) == 1 and paired[0]["n_matched"] >= 1) or info["unmatched_high"] == 1
+    if paired:
+        assert paired[0]["diff"] > 0.01
+
+
+def test_publication_lag_blocks_early_trigger():
+    days, bars = _market()
+    t = days.index("2020-02-07")                                       # before settlement 1/31 + 10 trading days
+    b = bars["S59"]
+    b["c"][t] = max(b["c"][t - 20:t]) * 1.05
+    b["v"][t] = 3e6
+    si = {"20200131": {f"S{k}": {"dtc": float(k + 1), "short": 1e6, "chg": 1.0} for k in range(60)}}
+    ev = Q.build_events(si, bars, bars, bars["SPY"], Q.PUB_LAG, Q.Counter())
+    assert all(e["d0"] > "2020-02-14" for e in ev)
