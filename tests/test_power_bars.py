@@ -19,6 +19,6 @@ def test_size_ref_needs_five_and_resets():
         s.add([(0, 1.0 + i, 0.0, 0.5, 571)])
     assert s.ref(0) is None
     s.add([(0, 3.0, 0.0, 0.5, 571)])
-    assert s.ref(0) == 2.0
+    assert s.ref(0) == 3.0                                      # median of 1, 2, 3, 4, 3
     s.reset()
     assert s.ref(0) is None
