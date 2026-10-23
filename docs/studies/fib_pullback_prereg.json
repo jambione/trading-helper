@@ -11,7 +11,14 @@
    "stop below the 78.6% level (or the swing low); target the prior swing high, or the 1.272 / 1.618 extensions for strong trends"
   ],
   "evidence": "A controlled academic test (Expert Systems with Applications: automatic identification of Fibonacci retracements in three equity markets) found that retracement zones are associated with bounces, but Fibonacci zones did NOT differ statistically from non-Fibonacci zones; other studies report gains vs buy-and-hold without a random-level control. Practitioner sources report no backtests. Hence this test compares the Fibonacci zone with other depths under the same rule.",
-  "sources": ["https://www.jainam.in/blog/blog-fibonacci-retracement-trading/", "https://blog.traderspost.io/article/fibonacci-retracement-trading-strategies", "https://stocksharp.com/store/strategies.0076_fibonacci_retracement_reversal/", "https://www.tradingview.com/script/NP615SiK/", "https://www.datalearner.com/academic/journal-papers/0957-4174/volumes-and-issues/391/paper-detail/17703", "https://repository.cud.ac.ae/items/97adc14d-b7d1-4f35-b8f8-e69289c71552"]
+  "sources": [
+   "https://www.jainam.in/blog/blog-fibonacci-retracement-trading/",
+   "https://blog.traderspost.io/article/fibonacci-retracement-trading-strategies",
+   "https://stocksharp.com/store/strategies.0076_fibonacci_retracement_reversal/",
+   "https://www.tradingview.com/script/NP615SiK/",
+   "https://www.datalearner.com/academic/journal-papers/0957-4174/volumes-and-issues/391/paper-detail/17703",
+   "https://repository.cud.ac.ae/items/97adc14d-b7d1-4f35-b8f8-e69289c71552"
+  ]
  },
  "prior": "LOW (~5-10%): the controlled study finds no Fibonacci-specific effect; on these names buying dips after a signal lost 14-36 bp (10/14, 10/16), zone entries lost, near-support entries were least bad but negative (10/2), and the universe fades. The confirmation candle and VWAP filter are what practitioners say separates working from failing use, and they have not been tested together here.",
  "data": "Warehouse SIP 1-minute bars, the 400-name book-like sample ('indicator-hist-sample'), 2026-05-11 .. 2026-10-15 (110 sessions); halves A <= 2026-07-29 < B. Information: the desk's board names (decision_ledger arm rows, 09-10 .. 10-15) when in the warehouse. Confirmation (only after a PASS): warehouse_confirm (2026-01-14 .. 04-24), unchanged.",
@@ -34,8 +41,37 @@
  "statistic": "Per half: per day the mean over GP trades of (trade net - its control net); day-equal; day-clustered t (df = days - 1). The same for the comparisons (information except where named in the pass rule).",
  "pass": "In BOTH halves: GP minus control >= +5 bp with t >= 2.0; GP mean net (after 5 bp) > 0; FIBONACCI SPECIFICITY: GP minus control >= SHALLOW minus control and >= DEEP minus control (point estimates); dropping the 3 days and (separately) the 3 names with the largest share keeps GP minus control >= 0. FAIL: t <= -2 in a half, or the 97.5% upper bound < +5 bp in both halves. Otherwise UNDERPOWERED. A PASS is confirmed unchanged on warehouse_confirm before anything else, then a forward paper prereg; never a desk change by itself.",
  "power": "Outcome-blind count step: GP / SHALLOW / DEEP / NO_CONFIRM / NO_VWAP trade counts and days per half, controls found, and a projected MDE from the dispersion of control trades' net returns (control outcomes only). Floors per half: >= 300 GP trades and >= 20 days; else UNDERPOWERED.",
- "information_only": ["win rate, target-hit / stop / time-stop shares, average hold", "swing size buckets (2-3%, 3-5%, > 5%)", "time of day", "the board-name subset", "a 1.272 extension target instead of H"],
+ "information_only": [
+  "win rate, target-hit / stop / time-stop shares, average hold",
+  "swing size buckets (2-3%, 3-5%, > 5%)",
+  "time of day",
+  "the board-name subset",
+  "a 1.272 extension target instead of H"
+ ],
  "no_retuning": "2.0% swing, zone boundaries, 0.786 break, VWAP filter, the reaction-bar definition and its 5-bar window, the bracket, 5 bp, window, sample, halves and floors are fixed.",
- "declared_deviations": ["SIP 1-minute bars (the live desk sees IEX)", "bar-based fills (next open; target fills at H), no spread beyond the 5 bp cost", "the book-like sample, not the desk's own entries", "the bracket is the practitioners', not the desk's live exits"],
- "script": "tools/studies/fib_pullback.py (to be written): count step, --score after a result-skeptic READY."
+ "declared_deviations": [
+  "SIP 1-minute bars (the live desk sees IEX)",
+  "bar-based fills (next open; target fills at H), no spread beyond the 5 bp cost",
+  "the book-like sample, not the desk's own entries",
+  "the bracket is the practitioners', not the desk's live exits"
+ ],
+ "script": "tools/studies/fib_pullback.py (to be written): count step, --score after a result-skeptic READY.",
+ "amended": {
+  "when": "2026-10-23, before any script or data, after result-skeptic FIX FIRST (13 items).",
+  "changes": [
+   "(1) SWING IDENTITY = its low L: a new high above H with the same L extends the same swing (H moves); ONE GP trade per swing (per L). A pullback whose CLOSE goes below H - 0.786 x R breaks the swing: no entry until a new high above H re-arms it (same L, new H).",
+   "(2) BAR ORDER: the zone test on bar t uses H, L and R built from bars BEFORE t; a bar whose high makes a new H is never a zone bar.",
+   "(3) TOUCH = the first bar after H whose low <= H - 0.5 x R (the zone's upper edge) and whose close >= H - 0.786 x R (a low that pierces 0.618 but stays above 0.786 counts as touching the zone). If no confirmation follows within the window, the swing re-arms only after a new H.",
+   "(4) REACTION WINDOW = the touch bar plus the next 4 bars (5 bars). The 0.786 close-break check runs on every bar from the touch through the confirmation bar. If the entry open is >= H the trade is skipped (counted). DEEP: its zone is [H - 0.786 x R, H - 0.70 x R], the break is a close below L, and its stop is a close below L.",
+   "(5) VWAP filter on the CONFIRMATION bar (its close > session VWAP through that bar), for GP and the control alike.",
+   "(6) TARGET FILL requires a bar high >= target + $0.01 (not equal highs), for GP and the control alike; filled at the target (or at the bar's open if it opens above the target).",
+   "(7) BRACKET: checks start with the entry bar (its high / low / close count); the time stop is 30 CLOCK minutes from the entry bar (exit at the close of the last bar at or before entry + 29 min); if a bar both reaches the target and closes below the stop, the TARGET wins; a missing-bar gap > 5 minutes inside a hold exits at the next available bar's open (counted).",
+   "(8) PRICE FLOOR: the entry bar's open >= $10 (the warehouse screen already needs a prior close >= $10); $20 as information. Net printed at 3, 5, 10 and 20 bp; 5 bp binding.",
+   "(9) CONTROL: the same 10:00-15:15 decision window and 30-minute room; seed sha256(sym|day|minute|'fib-gp-ctrl') per trade; no fallback (the share of trades with no control is reported); information control: the same pullback rule at a random depth band of width 0.118 between 0.236 and 0.786 outside 0.5-0.618 (seeded), the academic paper's design.",
+   "(10) SPECIFICITY: day-clustered (GP - control) minus (SHALLOW - control) and minus (DEEP - control), each >= 0 with t >= 1.0 in both halves, is required for a PASS to be called Fibonacci-specific; without it a PASS is reported as 'pullback edge, not Fibonacci-specific'.",
+   "(11) POWER: the MDE uses the SD of (control - a second independent control, seed tag 'fib-gp-ctrl2') per day; the count step counts trades WITHOUT the one-open-trade rule (it needs exit times); that rule applies at scoring and the trade count after it is reported.",
+   "(12) The four comparisons, the random-depth control, swing buckets, time of day, the board subset and the 1.272 target are INFORMATION ONLY and cannot promote anything; a lead from them needs a new prereg.",
+   "(13) This prereg is committed (hash recorded in the script output) before the count step."
+  ]
+ }
 }
