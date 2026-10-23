@@ -63,7 +63,9 @@ def trade(r, sig, side, pmh, pml, sym, day, time_exit=None):
     tgt = pmh if side > 0 else pml
     if (o - stop) * side <= 0 or (tgt - o) * side <= 0:
         return {"skip": "open_beyond_stop_or_target"}
-    rr = r if time_exit is None else r[r[:, 0] <= time_exit]
+    rr = r if time_exit is None else r[r[:, 0] <= time_exit]       # a prefix: indices align with r
+    if e >= len(rr):
+        return {"skip": "no_room_before_time_exit"}
     res = B.simulate(rr, e, side, stop, tgt)
     sp, tp = abs(o - stop) / o, abs(tgt - o) / o
     c1 = B.control(r, sym, day, sig["end"], sig["end"] + 60, side, sp, tp, "pmpb-ctrl")
@@ -96,9 +98,13 @@ def run_symbol(sym):
             if pmh - pml < MIN_PM_RANGE * pml:
                 st[f"{lab_lv}_narrow_pm_range"] += 1
                 continue
+            sigs = {sd: candidate(r, bars2, size, pmh, pml, sd) for sd in (1, -1)}
             for side, lab in ((1, "long"), (-1, "short")):
-                sig = candidate(r, bars2, size, pmh, pml, side)
+                sig = sigs[side]
                 if sig is None:
+                    continue
+                if side < 0 and sigs[1] is not None and sigs[1]["end"] <= sig["end"]:
+                    st[f"{lab_lv}_short_not_first"] += 1      # information short set: first side only (amended (2))
                     continue
                 t = trade(r, sig, side, pmh, pml, sym, day)
                 if "skip" in t:
@@ -184,7 +190,8 @@ def main():
         res["info"][f"net_by_cost_{h}"] = {f"{round(c * 1e4)}bp": B.day_stats(hr, lambda x, c=c: x["gross"] - c)
                                            ["mean"] for c in COSTS}
     res["verdict"] = res["primary_long"]["verdict"]
-    res["declared"] = ["combined 2-3-bar power bars not built (information, dropped before scoring)",
+    res["declared"] = ["combined 2-3-bar power bars and the R-multiple cell not built (information, dropped before "
+                       "scoring)",
                        "the long set is every long trigger regardless of the short side"]
     res["skeptic_ready"], res["module_sha256"] = a.skeptic_ready, module_shas()
     write("result.json", res)

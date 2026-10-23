@@ -163,7 +163,8 @@ def main():
                                            ["mean"] for c in COSTS}
     res["verdict"] = res["primary_long"]["verdict"]
     res["declared"] = ["information cells not built and dropped before scoring: 2-bar combined power bars, W pattern, "
-                       "SMA-close exit, warehouse stocks"]
+                       "SMA-close exit, warehouse stocks, R multiple",
+                       "control seeds are 'apb-ctrl|<bar index>' (unique per trade on multi-trade days)"]
     res["skeptic_ready"], res["module_sha256"] = a.skeptic_ready, module_shas()
     write("result.json", res)
     print(json.dumps(res, indent=1, default=str))

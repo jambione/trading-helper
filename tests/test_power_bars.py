@@ -22,3 +22,17 @@ def test_size_ref_needs_five_and_resets():
     assert s.ref(0) == 3.0                                      # median of 1, 2, 3, 4, 3
     s.reset()
     assert s.ref(0) is None
+
+
+def test_size_ref_counts_sessions_not_bars():
+    s = B.SizeRef()
+    for _ in range(5):
+        s.add([None])
+    for _ in range(5):
+        s.add([(0, 2.0, 0.0, 1, 571)])
+    assert s.ref(0) == 2.0
+    s.add([None])                      # 11th session: oldest drops; 5 present still
+    assert s.ref(0) == 2.0
+    for _ in range(5):
+        s.add([None])
+    assert s.ref(0) is None            # only 4 present in the last 10 sessions

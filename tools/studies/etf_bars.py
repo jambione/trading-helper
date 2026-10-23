@@ -223,16 +223,15 @@ class SizeRef:
         self.hist.clear()
 
     def ref(self, k: int) -> float | None:
-        xs = self.hist.get(k, [])
+        xs = [x for x in self.hist.get(k, []) if x is not None]       # last n SESSIONS, >= need present
         return statistics.median(xs) if len(xs) >= self.need else None
 
     def add(self, bars: list) -> None:
         for k, b in enumerate(bars):
-            if b is not None:
-                lst = self.hist[k]
-                lst.append(b[1] - b[2])
-                if len(lst) > self.n:
-                    lst.pop(0)
+            lst = self.hist[k]
+            lst.append(b[1] - b[2] if b is not None else None)
+            if len(lst) > self.n:
+                lst.pop(0)
 
 
 def power_bar(b, ref: float | None, side: int) -> bool:
