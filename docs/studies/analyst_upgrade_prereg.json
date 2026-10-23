@@ -53,5 +53,19 @@
   "changes": [
    "(3) Control sessions must lie inside the same half's window (and for the confirmation run, inside 01-14 .. 04-24); use the mean of up to 5 previous in-window sessions, minimum 3, else the event is skipped and counted."
   ]
+ },
+ "amended_3": {
+  "when": "2026-10-23, after result-skeptic CODE review round 1, before any bars are fetched and before any outcome (the partial 09:30-start news cache was deleted).",
+  "changes": [
+   "(1) News is fetched from 00:00 ET; the FIRST matching single-symbol headline of the whole day defines the name-day; it is an event only if created in [09:45:00, 15:30:00) (an earlier first upgrade means no event).",
+   "(2) Control minutes start at 09:46 (no pre-market), same clock hour, ending by 15:59; control days exclude the name's own upgrade days and stay inside the half.",
+   "(3) POWER: MDE = (2.0 + 0.84) x SD(day mean of (one seeded control draw - the ctrl2 mean)) / sqrt(days).",
+   "(4) Prices are RAW (unadjusted) for the $10 floor and the returns.",
+   "(5) Liquidity look-back stays inside the half: an event needs 20 in-half daily bars before its day (B events start ~2026-05-26); no held-out data is fetched.",
+   "(6) C4: a missing news day, a 400-page cap hit, a missing bars file or a partial SPY file stops the run.",
+   "(7) HANDCHECK: --handcheck writes handcheck.json (30 seeded ids, the reviewer's count of non stock-rating upgrades, the matching-rule hash); the count step and --score refuse without it or if more than 3 of 30 are not stock upgrades.",
+   "(8) FAIL is on the lift only (t <= -2, or both upper bounds < 5 bp); batch-robust bar t >= 2.84 (11 studies); net is SPY-adjusted, and the unhedged net is printed as information.",
+   "(9) Entry bar must start by 15:40; microsecond-safe rounding; created strictly before 15:30:00."
+  ]
  }
 }
