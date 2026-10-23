@@ -83,7 +83,9 @@ def two_way_t(trades: list[tuple[str, str, float]]) -> float | None:
         for t in trades:
             g[t[idx] if idx is not None else (t[0], t[1])] += t[2] - mu
         return sum(v * v for v in g.values())
-    var = (clus(0) + clus(1) - clus(None)) / n ** 2
+    v_day, v_name = clus(0) / n ** 2, clus(1) / n ** 2
+    var = v_day + v_name - clus(None) / n ** 2
+    var = max(var, v_day, v_name)          # CGM can go negative; fall back to the larger one-way variance
     return mu / math.sqrt(var) if var > 0 else None
 
 
