@@ -49,5 +49,6 @@
    "(10) SURVIVORSHIP: bars fetched per event with the symbol as of the event date; a name delisted or halted mid-hold exits at its last available close (not dropped); drops for missing bars are counted per group; the run aborts if drops exceed 2% of events or differ between groups by more than 1 point. The 'Trust' keyword also removes REITs (declared, both groups).",
    "(11) MULTIPLICITY: no information cell can be promoted without its own prereg. The settlement window ends at the last file PUBLISHED at least 1 day before the run (2026-09-30 settlement, published ~2026-10-09): 2020-01-15 .. 2026-09-30, ~161 files. The 2017-2019 held-out check gets the same coverage step."
   ]
- }
+ },
+ "amended_2": "2026-10-23, after the coverage step (format only; no bars, no outcome). 162 files 2020-01-15 .. 2026-09-30 (301 MB). marketClassCode values: NYSE, NNM (Nasdaq Global), SC (Nasdaq Capital Market), AMEX (NYSE American), ARCA, BZX, OTC, TXSE. FROZEN in scope: NYSE, NNM, SC, AMEX. Excluded: ARCA and BZX (mostly ETFs), OTC, TXSE (5 rows, new). Listed rows per file 6,789 (2020-01) .. 9,210 (2022-01) .. 8,754 (2026-09); half means ~8,300 vs ~8,500, inside the 25% comparability rule, so the halves are pooled-comparable. Revision / split-flag rows: 0-74 per file, dropped and counted. Bars: raw daily bars for every in-scope non-ETF symbol (the $20 / $20M screen needs them), adjusted bars only for symbols that pass the screen at some publication date, plus SPY."
 }
