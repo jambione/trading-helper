@@ -65,5 +65,14 @@
    "NOTES: names with < 61 sessions of history (recent IPOs) are reported as their own line ('no_features') and do NOT enter the abort rule; the random-day DiD uses the triggered names' own non-breakout days (declared).",
    "(2b) The survivorship count in (2) uses in-scope rows with FINRA averageDailyVolumeQuantity >= 200,000 shares (a liquidity proxy needing no bars; most FINRA rows are warrants / units / preferreds that could never pass the $20 / $20M screen). The missing-row rate per DTC group enters the abort rule next to the event drop rate (each: total <= 2%, groups within 1 point)."
   ]
+ },
+ "amended_4": {
+  "when": "2026-10-23, before the count step (no event return computed), after result-skeptic round 2.",
+  "changes": [
+   "(A) NON-COMMON INSTRUMENTS excluded before survivorship counting and eligibility, by whole-word name match: PFD, PREFERRED, DEPOSITARY, WT, WTS, WARRANT, WARRANTS, UNIT, UNITS, RIGHT, RIGHTS (counted per group). Missing rows are printed split into 'never had bars' and 'stale', with the top 20 missing names. CONSEQUENCE fixed now: if the abort rule still trips, the study is ABORTED and not scored; the thresholds are not changed after the count is seen.",
+   "(B) ETF FILTER words: ETF, ETFS, FUND, FUNDS, ISHARES, SPDR, PROSHARES, DIREXION, ETN, ETNS, VANECK, GRANITESHARES, ROUNDHILL, DEFIANCE, YIELDMAX; phrases GLOBAL X, FIRST TRUST, SCHWAB ETF, QQQ TRUST, BITCOIN, TIDAL TRUST. REMOVED: TRUST, INVESCO, WISDOMTREE, AMPLIFY, VANGUARD (they removed operating companies: IVZ, IVR, WT, NTRS, Amplify Energy); this supersedes the 'Trust' note in amended (10), so REITs named 'Trust' are now included.",
+   "(C) RUN RULE stated exactly: a new run starts when the issue name changes OR the symbol was absent from 5 or more consecutive files (file-index gap >= 6).",
+   "(D) The Alpaca asset name (current owner of a ticker) is used for the ETF filter only for runs whose last file is the latest file; older runs use the FINRA name alone."
+  ]
  }
 }

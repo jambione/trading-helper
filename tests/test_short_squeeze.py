@@ -13,8 +13,15 @@ import short_squeeze as Q  # noqa: E402
 def test_etf_filter_whole_words():
     assert Q.is_etf_like("iShares Core S&P 500 ETF") and Q.is_etf_like("SPDR Gold Trust")
     assert not Q.is_etf_like("Trustmark Corporation") and not Q.is_etf_like("Fundamental Global Inc.")
-    assert Q.is_etf_like("Realty Income Trust")            # REIT 'Trust' is removed too (declared)
-    assert Q.is_etf_like("Global X Funds") and Q.is_etf_like("Invesco BulletShares 2026")
+    assert not Q.is_etf_like("Realty Income Trust")        # amended_4 (B): REITs named 'Trust' stay in
+    assert Q.is_etf_like("Global X Funds") and not Q.is_etf_like("Invesco Ltd.")
+    for op in ("Invesco Ltd.", "WisdomTree, Inc.", "Northern Trust Corporation", "Amplify Energy Corp."):
+        assert not Q.is_etf_like(op), op
+    for etf in ("Invesco QQQ Trust, Series 1", "Vanguard Short-Term Corporate Bond ETF",
+                "Invesco Optimum Yield Diversified Commodity Strategy No K-1 ETF", "Grayscale Bitcoin Trust"):
+        assert Q.is_etf_like(etf), etf
+    assert Q.is_non_common("Acme Corp 7% Pfd Series A") and Q.is_non_common("Blank Check Acq Corp Units")
+    assert Q.is_non_common("Foo Inc WT exp 2027") and not Q.is_non_common("Unity Software Inc.")
     assert Q.is_etf_like("Some Co", "VanEck Semiconductor ETF")                  # the Alpaca name counts too
     assert not Q.is_etf_like("Consumer Portfolio Services") and not Q.is_etf_like("Index Holdings Corp")
     assert Q.alpaca_symbol("BRKB", {"BRK.B": "x"}) == "BRK.B" and Q.alpaca_symbol("AAPL", {"AAPL": "x"}) == "AAPL"

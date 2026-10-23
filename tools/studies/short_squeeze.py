@@ -41,9 +41,11 @@ COST, COST_HI = 0.0010, 0.0030
 LIFT_BAR, T_PASS, MIN_EVENTS = 0.0050, 2.0, 150
 H1_END = "2022-12-31"
 FIRST_TRIGGER = "2020-02-01"
-ETF_WORDS = ("ETF", "ETFS", "FUND", "FUNDS", "TRUST", "ISHARES", "SPDR", "PROSHARES", "DIREXION", "ETN", "ETNS",
-             "VANECK", "INVESCO", "WISDOMTREE", "VANGUARD", "GRANITESHARES", "ROUNDHILL", "DEFIANCE", "YIELDMAX", "AMPLIFY")
-ETF_PHRASES = ("GLOBAL X", "FIRST TRUST", "SCHWAB ETF")      # amended_3 (3)
+ETF_WORDS = ("ETF", "ETFS", "FUND", "FUNDS", "ISHARES", "SPDR", "PROSHARES", "DIREXION", "ETN", "ETNS",
+             "VANECK", "GRANITESHARES", "ROUNDHILL", "DEFIANCE", "YIELDMAX")              # amended_4 (B)
+ETF_PHRASES = ("GLOBAL X", "FIRST TRUST", "SCHWAB ETF", "QQQ TRUST", "BITCOIN", "TIDAL TRUST")
+NON_COMMON_WORDS = ("PFD", "PREFERRED", "DEPOSITARY", "WT", "WTS", "WARRANT", "WARRANTS", "UNIT", "UNITS", "RIGHT",
+                    "RIGHTS")                                                              # amended_4 (A)
 DROP_MAX, DROP_DIFF = 0.02, 0.01
 END_D0, STALE_SESS, SURV_ADV, RUN_GAP = "2026-10-14", 5, 200_000, 6
 
@@ -93,6 +95,10 @@ def is_etf_like(name: str, alpaca_name: str = "") -> bool:
         if any(w in words for w in ETF_WORDS) or any(f" {ph} " in f" {n} " for ph in ETF_PHRASES):
             return True
     return False
+
+
+def is_non_common(name: str) -> bool:
+    return any(w in set(_norm(name).split()) for w in NON_COMMON_WORDS)
 
 
 def coverage() -> dict:
@@ -464,9 +470,11 @@ def rank_groups(rows: dict) -> dict:
 
 
 def build_events(si: dict, adj: dict, raw: dict, spy: dict, lag: int, st: Counter, assets: dict | None = None,
-                 cut_log: list | None = None) -> list[dict]:
+                 cut_log: list | None = None, missing_log: Counter | None = None) -> list[dict]:
     days = spy["d"]
     assets = assets or {}
+    runs = runs_of(si)
+    latest = max(si) if si else None
     reps = build_reports(si, days)
     if lag != PUB_LAG:
         reps = [dict(r, pub=add_trading_days(days, r["settle"], lag)) for r in reps]
@@ -480,7 +488,11 @@ def build_events(si: dict, adj: dict, raw: dict, spy: dict, lag: int, st: Counte
             g0 = rg.get(sym)
             if r["dtc"] is None:
                 continue
-            if is_etf_like(r["name"], assets.get(alpaca_symbol(sym, assets), "")):
+            if is_non_common(r["name"]):
+                st[f"non_common_{g0}"] += 1
+                continue
+            cur = runs.get(r["run"], {}).get("last") == latest                 # amended_4 (D)
+            if is_etf_like(r["name"], assets.get(alpaca_symbol(sym, assets), "") if cur else ""):
                 st[f"etf_excluded_{g0}"] += 1
                 continue
             if r["flagged"]:
@@ -490,6 +502,8 @@ def build_events(si: dict, adj: dict, raw: dict, spy: dict, lag: int, st: Counte
             if status != "ok":
                 if (r["adv"] or 0) >= SURV_ADV:                             # amended_3 (2b)
                     st[f"surv_{status}_{g0}"] += 1
+                    if missing_log is not None and g0:
+                        missing_log[f"{status} {g0} {sym} {r['name'][:30]}"] += 1
                 continue
             if (r["adv"] or 0) >= SURV_ADV:
                 st[f"surv_ok_{g0}"] += 1
@@ -688,8 +702,8 @@ def main() -> None:
     raw = pickle.load(open(os.path.join(OUT_DIR, "bars_raw.pkl"), "rb"))
     adj = pickle.load(open(os.path.join(OUT_DIR, "bars_adj.pkl"), "rb"))
     spy = adj["SPY"]
-    st, cut_log = Counter(), []
-    events = build_events(si, adj, raw, spy, PUB_LAG, st, assets, cut_log)
+    st, cut_log, mlog = Counter(), [], Counter()
+    events = build_events(si, adj, raw, spy, PUB_LAG, st, assets, cut_log, mlog)
     paired, minfo = match(events)
     halves = {"A": [e for e in paired if e["d0"] <= H1_END], "B": [e for e in paired if e["d0"] > H1_END]}
     n_ev = Counter(e["grp"] for e in events)
@@ -705,7 +719,8 @@ def main() -> None:
                 for k in ("bars_raw.pkl", "bars_adj.pkl")}
     if not a.score:
         cnt = {"stats": dict(st), "events": dict(n_ev), "match": minfo, "drop_rate": drop_rate,
-               "missing_rate": miss, "abort": abort, "own_dtc": own_dtc_check(si, raw, spy["d"]),
+               "missing_rate": miss, "abort": abort, "verdict_if_abort": "ABORTED (amended_4 (A)): not scored",
+               "missing_top20": mlog.most_common(20), "own_dtc": own_dtc_check(si, raw, spy["d"]),
                "cutoffs_per_report": cut_log, "bars_sha256": bars_sha, "module_sha256": module_shas()}
         for h, ev in halves.items():
             s_ = series_stats(ev)
