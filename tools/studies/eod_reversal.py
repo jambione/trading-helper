@@ -71,6 +71,7 @@ def name_row(sym: str, today, prev) -> tuple[dict | None, str | None]:
     out = {"s": sym, "rod3": float(sig[4]) / prior_close - 1, "px": px,
            "rod29": (last_close_at_or_before(today, M_SIG29) or float(sig[4])) / prior_close - 1,
            "ovn": float(opn[1]) / prior_close - 1 if opn is not None else None,
+           "intra": float(sig[4]) / float(opn[1]) - 1 if opn is not None else None,
            "lh": last_close_at_or_before(today, M_OUT) / px - 1,
            "lh58": last_close_at_or_before(today, M_OUT58) / px - 1}
     return out, None
@@ -116,8 +117,10 @@ def day_task(args) -> dict:
         spy, _ = name_row("SPY", today["SPY"], prev["SPY"])
     if len(names) < MIN_ELIGIBLE:
         st["day_skipped_few_names"] += 1
-        return {"day": day, "names": [], "stats": dict(st), "spy_lh": spy["lh"] if spy else None}
-    return {"day": day, "names": names, "stats": dict(st), "spy_lh": spy["lh"] if spy else None}
+        return {"day": day, "names": [], "stats": dict(st), "spy_lh": spy["lh"] if spy else None,
+                "spy_rod3": spy["rod3"] if spy else None}
+    return {"day": day, "names": names, "stats": dict(st), "spy_lh": spy["lh"] if spy else None,
+            "spy_rod3": spy["rod3"] if spy else None}
 
 
 def day_summary(d: dict) -> dict | None:
@@ -136,7 +139,10 @@ def day_summary(d: dict) -> dict | None:
             "lift29": mean_lh(bottom(names, DECILE, "rod29")) - allm,
             "lift58": mean_lh(los, "lh58") - mean_lh(names, "lh58"),
             "lift_ovn_rank": (mean_lh(bottom([r for r in names if r["ovn"] is not None], DECILE, "ovn"))
-                              - allm) if any(r["ovn"] is not None for r in names) else None}
+                              - allm) if any(r["ovn"] is not None for r in names) else None,
+            "lift_intra_rank": (mean_lh(bottom([r for r in names if r["intra"] is not None], DECILE, "intra"))
+                                - allm) if any(r["intra"] is not None for r in names) else None,
+            "spy_rod3": d["spy_rod3"]}
 
 
 # ── statistics ───────────────────────────────────────────────────────────────
@@ -269,16 +275,20 @@ def main() -> None:
                                                   for c in COSTS},
                             "batch_t_met": (s.get("t") or 0) >= T_BATCH}
         res["info"][h] = {k: stats([d[k] for d in ds])["mean"] for k in
-                          ("q_lift", "win_lift", "lift29", "lift58", "lift_ovn_rank", "placebo_lift")}
+                          ("q_lift", "win_lift", "lift29", "lift58", "lift_ovn_rank", "lift_intra_rank",
+                           "placebo_lift")}
         res["info"][h]["price_ge_20_lift"] = stats([d["los20"] - d["all20"] for d in ds
                                                     if d["los20"] is not None and d["all20"] is not None])["mean"]
         res["info"][h]["beta_vs_spy_lh"] = beta(ds)
-        for lab, sub in (("spy_up_day", [d for d in ds if (d["spy_lh"] or 0) > 0]),
-                         ("spy_down_day", [d for d in ds if (d["spy_lh"] or 0) <= 0])):
+        for lab, sub in (("spy_up_to_1500", [d for d in ds if d["spy_rod3"] is not None and d["spy_rod3"] > 0]),
+                         ("spy_down_to_1500", [d for d in ds if d["spy_rod3"] is not None and d["spy_rod3"] <= 0])):
             res["info"][h][lab] = stats([d["lift"] for d in sub])
     res["verdict"] = final(hv, ss)
     res["skeptic_ready"], res["module_sha256"] = a.skeptic_ready, module_shas()
-    res["declared"] = "SPY up/down split uses SPY's 15:30-15:59 move (information only, not knowable at entry)."
+    res["declared"] = ["Names without an exact 14:59 bar are skipped before ranking (~13% of name-days, the thinnest: "
+                       "pre-15:00 volume ~1/5 of the rest), where the paper's effect is strongest - biases against a PASS.",
+                       "Warehouse bars are split-adjusted only: ex-dividend days can create false losers (not counted).",
+                       "Bars end at 15:59: the exit is the 15:59 bar close, not the closing auction."]
     write("result.json", res)
     print(json.dumps(res, indent=1, default=str))
 
