@@ -52,6 +52,9 @@ def run_symbol(sym):
     rows, st = [], Counter()
     size, closes, restarted = B.SizeRef(), deque(maxlen=20), False
     for day, r_all in B.load(sym).items():
+        if not B.in_scope(day):
+            st["out_of_scope_day"] += 1
+            continue
         if day >= B.B_RESTART and not restarted:
             size.reset()
             closes.clear()
@@ -131,6 +134,8 @@ def main():
             rows += rs
             st.update({f"{sym}_{k}": v for k, v in s.items()})
         write("rows.json", {"rows": rows, "stats": dict(st), "module_sha256": module_shas()})
+    if any(k.endswith("out_of_scope_day") and v for k, v in st.items()):
+        raise SystemExit("held-out or post-window days present in the cache")
     if not a.score:
         cnt = {"stats": dict(st), "module_sha256": module_shas(), "prereg_commit": a.prereg_commit}
         for h in ("A", "B"):
@@ -147,6 +152,8 @@ def main():
     cnt = json.load(open(os.path.join(OUT_DIR, "count.json")))
     if cnt.get("module_sha256") != module_shas() or not cnt.get("prereg_commit"):
         raise SystemExit("count.json from different code or without --prereg-commit")
+    if not all(cnt[h]["floors_met"] for h in ("A", "B")):
+        raise SystemExit("UNDERPOWERED at the count step: no outcome is read")
     res = {"primary_long": B.primary_verdict(rows, COST, floor_days=FLOOR_DAYS), "info": {}}
     for h in ("A", "B"):
         hr = [x for x in rows if x["half"] == h]

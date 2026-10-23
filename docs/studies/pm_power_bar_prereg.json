@@ -66,5 +66,13 @@
    "(final round 2 item) Held-out sessions 2026-01-14 .. 04-24 are NOT kept sessions for the size test (they are never fetched); half B therefore has no candidates until 5 kept sessions after 2026-04-27 exist. Half A look-backs never use half-B sessions."
   ],
   "skeptic": "READY after round 2 with this line (a2ede11, 2026-10-23)"
+ },
+ "amended_3": {
+  "when": "2026-10-23, from the fence_bar code review (shared helpers), before any count step.",
+  "changes": [
+   "Early closes detected from volume (13:00-15:59 < 15% of 09:30-12:59), dropped and counted.",
+   "Scorer drops held-out / post-window days (must be 0); --score refuses unless both halves met the floors.",
+   "Target fill also triggers when a bar opens beyond the target."
+  ]
  }
 }

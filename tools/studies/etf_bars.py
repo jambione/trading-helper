@@ -29,10 +29,25 @@ def load(sym: str) -> dict[str, np.ndarray]:
     return {d: np.array(sorted(rs, key=lambda x: x[0])) for d, rs in sorted(per.items())}
 
 
+HELD_LO, HELD_HI, LAST_DAY = "2026-01-14", "2026-04-24", "2026-10-15"
+EARLY_CLOSE_VOL_RATIO = 0.15
+
+
 def is_full_session(r: np.ndarray) -> bool:
-    """Early closes (13:00) have no RTH bars after 14:00."""
-    m = r[:, 0]
-    return bool(((m >= 840) & (m < RTH_END)).any()) and bool(((m >= RTH0) & (m < RTH0 + 5)).any())
+    """A 13:00 early close leaves only thin extended-hours prints after 13:00 (the cache keeps 04:00-15:59). Full
+    session = an opening bar exists AND volume 13:00-15:59 >= 15% of volume 09:30-12:59 (normal afternoons trade
+    roughly as much as mornings; half-day after-hours prints are a few percent)."""
+    m, v = r[:, 0], r[:, 5]
+    if not ((m >= RTH0) & (m < RTH0 + 5)).any():
+        return False
+    am = v[(m >= RTH0) & (m < 780)].sum()
+    pm = v[(m >= 780) & (m < RTH_END)].sum()
+    return am > 0 and pm >= EARLY_CLOSE_VOL_RATIO * am
+
+
+def in_scope(day: str) -> bool:
+    """Scored days only: never the held-out window, never after the registered last day."""
+    return not (HELD_LO <= day <= HELD_HI) and day <= LAST_DAY
 
 
 def rth(r: np.ndarray) -> np.ndarray:
@@ -71,13 +86,13 @@ def simulate(r: np.ndarray, e: int, side: int, stop: float, target: float) -> di
         if m > LAST_MIN:
             break
         if side > 0:
-            hit_s, hit_t = lo <= stop, h >= target + TICK
+            hit_s, hit_t = lo <= stop, (h >= target + TICK or o > target)
             if hit_s:
-                return _ret(entry, min(stop, o) if k > e else min(stop, o), side, "stop", m)
+                return _ret(entry, min(stop, o), side, "stop", m)
             if hit_t:
                 return _ret(entry, max(target, o), side, "target", m)
         else:
-            hit_s, hit_t = h >= stop, lo <= target - TICK
+            hit_s, hit_t = h >= stop, (lo <= target - TICK or o < target)
             if hit_s:
                 return _ret(entry, max(stop, o), side, "stop", m)
             if hit_t:

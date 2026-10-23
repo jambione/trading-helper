@@ -59,5 +59,15 @@
    "(6b) fence_bar window: the last eligible retest bar is 10:55-10:59; entry at the 11:00 open."
   ],
   "skeptic": "READY round 2 (a2ede11, 2026-10-23)"
+ },
+ "amended_2": {
+  "when": "2026-10-23, after the result-skeptic CODE review (FIX FIRST), before the count step and before any outcome.",
+  "changes": [
+   "(1) READING: the FIRST retest bar decides that side for the day; if it fails the SMA20 filter there is no trade on that side that day (no later retest is used).",
+   "(2) EARLY CLOSES are detected from volume: a session is dropped (counted) when 13:00-15:59 volume < 15% of 09:30-12:59 volume (the cache holds extended hours, so bar presence cannot detect a 13:00 close).",
+   "(3) The scorer drops (and must count 0) days inside 2026-01-14 .. 04-24 or after 2026-10-15; --score refuses unless both halves met the count-step floors (UNDERPOWERED with no outcome read).",
+   "(4) Target fill also triggers when a bar OPENS beyond the target (filled at the open).",
+   "(5) INFORMATION changes: the warehouse-stock read is dropped; 'far from the anchor' = |entry - SMA20| / SMA20 (not ATR); R multiple and weekday cells added; the short information set keeps only shorts that triggered first; the stop_at_retest variant uses the retest bar's extreme +/- $0.01."
+  ]
  }
 }

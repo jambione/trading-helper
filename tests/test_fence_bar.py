@@ -54,3 +54,18 @@ def test_simulate_stop_target_and_both():
                     [959, 98, 98, 98, 98, 1]], dtype=float)
     s = B.simulate(gap, 0, 1, 99.0, 102.0)
     assert s["why"] == "stop" and abs(s["gross"] - (98.0 / 100 - 1)) < 1e-12
+
+
+def test_early_close_detected_by_volume():
+    full = np.array([[m, 100, 100, 100, 100, 1000] for m in range(570, 960)], dtype=float)
+    assert B.is_full_session(full)
+    half = np.array([[m, 100, 100, 100, 100, 1000 if m < 780 else 5] for m in range(570, 960)], dtype=float)
+    assert not B.is_full_session(half)
+
+
+def test_target_fills_on_open_beyond_and_scope():
+    r = np.array([[600, 100, 100.1, 99.9, 100, 1], [601, 102.004, 102.008, 102.0, 102.0, 1],
+                  [959, 102, 102, 102, 102, 1]], dtype=float)
+    s = B.simulate(r, 0, 1, 99.0, 102.0)
+    assert s["why"] == "target" and abs(s["gross"] - (102.004 / 100 - 1)) < 1e-12
+    assert not B.in_scope("2026-02-02") and not B.in_scope("2026-10-16") and B.in_scope("2026-05-01")

@@ -75,7 +75,8 @@ def trade(r, sig: dict, side: int, sym: str, day: str, r_mult: float = R_MULT, s
     sp, tp = risk / o, r_mult * risk / o
     c1 = B.control(r, sym, day, sig["end"], sig["end"] + 60, side, sp, tp, "fence-ctrl")
     c2 = B.control(r, sym, day, sig["end"], sig["end"] + 60, side, sp, tp, "fence-ctrl2")
-    return {**res, "entry_min": int(r[e, 0]), "stop_pct": sp, "ctrl": c1["gross"] if c1 else None,
+    return {**res, "entry_min": int(r[e, 0]), "stop_pct": sp, "r_mult": res["gross"] / sp,
+            "ctrl": c1["gross"] if c1 else None,
             "ctrl2": c2["gross"] if c2 else None}
 
 
@@ -85,6 +86,9 @@ def run_symbol(sym: str) -> tuple[list[dict], Counter]:
     closes: deque = deque(maxlen=20)
     restarted = False
     for day, r_all in days.items():
+        if not B.in_scope(day):
+            st["out_of_scope_day"] += 1                    # must be 0: asserted in main()
+            continue
         if day >= B.B_RESTART and not restarted:          # SMA restarts after the held-out gap (amended (1))
             closes.clear()
             restarted = True
@@ -98,13 +102,16 @@ def run_symbol(sym: str) -> tuple[list[dict], Counter]:
             if b is not None:
                 closes.append(b[3])
             sma_at.append(statistics.mean(closes) if len(closes) == 20 else None)
+        sigs = {side: find_trade(bars5, sma_at, side) for side in (1, -1)}
         for side, lab in ((1, "long"), (-1, "short")):
-            sig = find_trade(bars5, sma_at, side)
+            sig = sigs[side]
             if sig is None:
                 continue
+            other = sigs[-side]
+            first_side = other is None or sig["end"] <= other["end"]
             st[f"{lab}_retest"] += 1
-            info = {"day": day, "sym": sym, "side": lab, "half": B.half_of(day),
-                    "far": abs(sig["close"] - sig["sma"]) / sig["sma"] if sig["sma"] else None}
+            info = {"day": day, "sym": sym, "side": lab, "half": B.half_of(day), "first_side": first_side,
+                    "sma": sig["sma"]}
             if not sig["sma_ok"]:
                 st[f"{lab}_sma_filtered"] += 1
                 t0 = trade(r, sig, side, sym, day)
@@ -174,6 +181,8 @@ def main() -> None:
             rows += rs
             st.update({f"{sym}_{k}": v for k, v in s.items()})
         write("rows.json", {"rows": rows, "stats": dict(st), "module_sha256": module_shas()})
+    if any(k.endswith("out_of_scope_day") and v for k, v in st.items()):
+        raise SystemExit("held-out or post-window days present in the cache")
     prim = [x for x in rows if x["variant"] == "primary" and x["side"] == "long"]
     if not a.score:
         cnt = {"stats": dict(st), "module_sha256": module_shas(), "prereg_commit": a.prereg_commit}
@@ -192,8 +201,10 @@ def main() -> None:
     cnt = json.load(open(os.path.join(OUT_DIR, "count.json")))
     if cnt.get("module_sha256") != module_shas() or not cnt.get("prereg_commit"):
         raise SystemExit("count.json from different code or without --prereg-commit")
+    if not all(cnt[h]["floors_met"] for h in ("A", "B")):
+        raise SystemExit("UNDERPOWERED at the count step: no outcome is read")
     res = {"primary_long": B.primary_verdict(prim, COST), "info": {}}
-    for lab, sel in (("short", lambda x: x["variant"] == "primary" and x["side"] == "short"),
+    for lab, sel in (("short", lambda x: x["variant"] == "primary" and x["side"] == "short" and x["first_side"]),
                      ("both_sides", lambda x: x["variant"] == "primary"),
                      ("no_sma_filter_long", lambda x: x["variant"] in ("primary", "nofilter_only")
                       and x["side"] == "long"),
@@ -207,10 +218,17 @@ def main() -> None:
                                                     lambda x: x["gross"] - x["ctrl"] if x["ctrl"] is not None
                                                     else None)["mean"], "n": sum(1 for x in sub if x["half"] == h)}
                             for h in ("A", "B")}
+    for x in prim:
+        x["far"] = abs(x["entry"] - x["sma"]) / x["sma"] if x.get("sma") else None
     far = sorted(x["far"] for x in prim if x["far"] is not None)
     med = far[len(far) // 2] if far else None
+    import datetime as _dt
     for h in ("A", "B"):
         hr = [x for x in prim if x["half"] == h]
+        res["info"][f"mean_r_multiple_{h}"] = statistics.mean(x["r_mult"] for x in hr) if hr else None
+        res["info"][f"net_by_weekday_{h}"] = {
+            wd: B.day_stats([x for x in hr if _dt.date.fromisoformat(x["day"]).strftime("%a") == wd],
+                            lambda x: x["gross"] - COST)["mean"] for wd in ("Mon", "Tue", "Wed", "Thu", "Fri")}
         res["info"][f"win_rate_{h}"] = sum(1 for x in hr if x["gross"] > 0) / max(1, len(hr))
         res["info"][f"exit_mix_{h}"] = dict(Counter(x["why"] for x in hr))
         res["info"][f"near_anchor_net_{h}"] = B.day_stats([x for x in hr if med and x["far"] <= med],
