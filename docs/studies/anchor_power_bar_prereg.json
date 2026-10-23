@@ -1,0 +1,45 @@
+{
+ "study": "Power bar off the anchor line (operator-pasted YouTube setup #3, same presenter, 2026-10-23): on 2-minute bars, a large mostly-body candle that BEGINS at or near the 20-period SMA ('anchor line'), CLEARS resistance to the left, with the SMA flat or rising; enter as it closes, stop beyond the bar; target 2R.",
+ "registered_at": "2026-10-23, before any script, feature or outcome",
+ "registered_before_results": true,
+ "batch": "untested-categories 2026-10-23; #11",
+ "origin": "Operator pasted the transcript: QQQ and NVDA examples on one day; the presenter 'stacks' a W pattern (information only here) and notes 'open lower and bounce' streaks (discretionary, not tested).",
+ "prior": "LOW (~10%): MA pullbacks (EMA pullback, Grok recipe) and breakouts each failed here; this is their combination with a large-body trigger.",
+ "instruments": "PRIMARY: SPY and QQQ, long. INFORMATION: warehouse stocks (liquid names, 110 sessions), long, 5 bp.",
+ "data": "SIP 1-minute RTH bars for SPY and QQQ 2016-01-04 .. 2026-10-15 (shared with fence_bar), data-only account; warehouse for stocks.",
+ "rule": {
+  "bars": "2-minute bars on America/New_York clock boundaries from 09:30, from 1-minute bars (both present).",
+  "anchor": "SMA20 = mean of the last 20 two-minute closes (continuing across sessions; dropped sessions skipped); A_prev = SMA20 through the bar BEFORE the candidate.",
+  "power_bar": "RANGE >= 2.0 x the median 2-minute range of the previous session's RTH bars; BODY >= 60% of the range; close > open; close in the top 20% of the range.",
+  "at_anchor": "the candidate's LOW <= A_prev x 1.001 and its OPEN <= A_prev x 1.0015 (it begins at or near the anchor line).",
+  "clears_left": "close > the highest high of the previous 15 two-minute bars of the same session (needs 15 bars: first candidate 10:00).",
+  "slope": "SMA20 through the candidate >= A_prev (flat or rising).",
+  "window": "candidate bars ending 10:00 .. 15:29; one open trade per symbol; at most 3 trades per symbol-day.",
+  "entry": "the open of the first 1-minute bar after the candidate ends.",
+  "stop": "candidate low - $0.01; fill min(stop, bar open); the entry minute's high/low is checked; both-touch = stop.",
+  "target": "2R: entry + 2 x (entry - stop), needs high >= target + $0.01; fill at target (or bar open if above).",
+  "time_exit": "15:59 bar close."
+ },
+ "control": "For each trade, a seeded random entry minute in (candidate end + 1) .. (candidate end + 60) on the same symbol-day (seed 'apb-ctrl'), same percent stop and target, same exits; 'apb-ctrl2' for the MDE.",
+ "cost": "2 bp binding for SPY/QQQ; 1, 5, 10 printed; stocks 5 bp.",
+ "halves": "A = 2016-01-04 .. 2020-12-31, B = 2021-01-04 .. 2026-01-13 and 2026-04-27 .. 2026-10-15 (held-out 01-14 .. 04-24 removed; SMA restarts 04-27); confirmation on 01-14 .. 04-24 after a PASS.",
+ "primary": "Long trades on SPY + QQQ. Per half: per day mean of (a) trade net, (b) trade minus control; day-equal; day-clustered t.",
+ "pass": "In BOTH halves: long net (after 2 bp) > 0 with t >= 2.0 (vs 0), AND long minus control >= +5 bp point estimate with t >= 2.0 (vs 0), AND dropping the 3 best days keeps both >= 0. Batch-robust: t >= 2.84 both halves.",
+ "fail": "t <= -2 on either primary quantity in a half, or the 97.5% upper bound of long minus control below +5 bp in both halves; otherwise UNDERPOWERED.",
+ "power": "Outcome-blind count step: >= 300 long-trade days per half; MDE = (2.0 + 0.84) x SD(day mean control - control2) / sqrt(days) <= 5 bp; else UNDERPOWERED.",
+ "information_only": [
+  "2-bar combined power bars",
+  "a W pattern before the bar",
+  "exit at a close below SMA20 instead of 2R",
+  "warehouse stocks (NVDA-like names), long",
+  "drop the best calendar month",
+  "win rate and R multiple"
+ ],
+ "no_retuning": "All thresholds above, halves, cost and floors are fixed.",
+ "declared_deviations": [
+  "'mostly body, larger than the candles around it', 'at or near', 'resistance to the left' are discretionary; the numbers above are the mechanical reading fixed before data",
+  "exits are discretionary in the video (2R, the 20, an 8 EMA, patterns); 2R is the registered one",
+  "desk runs on IEX with no ETF trade path; a PASS goes only to a forward paper prereg"
+ ],
+ "script": "tools/studies/anchor_power_bar.py (to be written)."
+}

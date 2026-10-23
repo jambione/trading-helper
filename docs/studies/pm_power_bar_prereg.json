@@ -41,5 +41,18 @@
   "the video sometimes moves the stop to break-even (discretionary, not modelled)",
   "next-1-minute-open entry"
  ],
- "script": "tools/studies/pm_power_bar.py (to be written)."
+ "script": "tools/studies/pm_power_bar.py (to be written).",
+ "amended": {
+  "when": "2026-10-23, after result-skeptic round 1 FIX FIRST (fence_bar), before any script or data. Applied to pm_power_bar by analogy before its own review.",
+  "changes": [
+   "(1) HELD-OUT: 2026-01-14 .. 2026-04-24 is removed from half B (and SMA warm-up bars from that window are not used: the SMA restarts on 2026-04-27 and needs 20 bars before the first trade). Half B = 2021-01-04 .. 2026-01-13 and 2026-04-27 .. 2026-10-15. That window is the ETF CONFIRMATION read after a PASS.",
+   "(2) PRIMARY LONG SET = every long trigger regardless of the short side (the 'first side' clause applies only to the information short set).",
+   "(3) FILLS: the stop fills at min(stop, bar open) for longs and max(stop, bar open) for shorts; the target fills at the target (or the bar open if it opens beyond); long target needs high >= target + $0.01, short target low <= target - $0.01. The ENTRY minute's own high/low is checked for stop and target. A bar that touches both counts as the STOP.",
+   "(4) BATCH: the batch now has 11 studies (8 + fence_bar + pm_power_bar + anchor_power_bar); batch-robust needs t >= 2.84 in both halves (Bonferroni 0.05/11, two-sided normal). 'Long minus control >= +5 bp with t >= 2.0': t is against 0; the point estimate must be >= +5 bp.",
+   "(5) POWER: floors are on DAYS - >= 300 days with a long trade per half (QQQ and SPY on one day are one cluster); MDE = (2.0 + 0.84) x SD(day mean of control - control2) / sqrt(days); MDE <= 5 bp.",
+   "(6) SEQUENCING: (a) a missing bar between breakout and retest does not cancel; the sequence continues on the next present bar. (b) bar boundaries are America/New_York clock time. (c) dropped early-close sessions contribute no bars to the SMA (the series skips them). (d) Last eligible trigger bar ends at the window end stated in the rule; entry at the next minute's open.",
+   "(7) Information: drop the best calendar month (March 2020 sits in half A). Declared: the desk runs on IEX with no ETF trade path; a PASS goes only to a forward paper prereg.",
+   "(6b) pm_power_bar window: the last eligible power bar is 10:28-10:29; entry at the 10:30 open. Day floor: >= 150 long-trade days per half (rarer setup, declared)."
+  ]
+ }
 }
