@@ -1,0 +1,45 @@
+{
+ "study": "Premarket-level power bar (operator-pasted YouTube setup, 2026-10-23): mark the premarket high (PMH) and low (PML); after the open, on 2-minute bars, a large-bodied candle that ORIGINATES at or near one level and pushes AWAY from it (green off PML = long, red off PMH = short); enter as it closes, stop beyond the bar, target the opposite premarket level.",
+ "registered_at": "2026-10-23, before any script, feature or outcome",
+ "registered_before_results": true,
+ "batch": "untested-categories 2026-10-23; #10, added after the operator pasted the video",
+ "origin": "Operator pasted a transcript (same presenter as the fence-bar video): 'over the past 12 trading days this setup appeared 9 times and worked 8'; SPY-priced chart (~$577), 2-minute bars; breakouts THROUGH a level are skipped; a 'wild' 04:00 candle is ignored (discretionary).",
+ "prior": "LOW (~10%): 8/9 over 12 days is an anecdote (one losing streak can hide in 12 days); PMH/level entries tested 10/2 did not beat random minutes; but a reversal-away-from-the-level rule with a large-body trigger on index ETFs has not been tested.",
+ "instruments": "PRIMARY: SPY and QQQ. INFORMATION: the warehouse universe cannot be used (RTH-only bars, no premarket).",
+ "data": "SIP 1-minute bars 04:00-15:59 ET for SPY and QQQ, 2016-01-04 .. 2026-10-15, data-only Alpaca account (Adjustment.ALL), paced, cached under ai_reports/pm_power_bar/ (shares the fence_bar RTH fetch where possible). Early-close sessions dropped and counted. A day with fewer than 30 premarket 1-minute bars is dropped and counted.",
+ "rule": {
+  "levels": "PMH / PML = the highest high / lowest low of 1-minute bars 04:00-09:29. Declared mechanical version of 'ignore a wild 04:00 candle': levels use 07:00-09:29 (information: 04:00-09:29). If PMH - PML < 0.1% of PML the day is skipped (counted).",
+  "bars": "2-minute bars on clock boundaries from 09:30 (09:30-09:31 is bar 1), built from 1-minute bars (both present, else missing).",
+  "power_bar": "A 2-minute bar with RANGE >= 2.0 x the median 2-minute range of the PREVIOUS session's RTH 2-minute bars, BODY >= 60% of its range; LONG: close > open and close in the top 20% of the range; SHORT: close < open and close in the bottom 20%.",
+  "origin": "LONG: the bar's LOW is within 0.15% of PML (|low - PML| <= 0.0015 x PML) - it originates at or near the low. SHORT: the bar's HIGH within 0.15% of PMH.",
+  "not_a_breakout": "LONG requires the bar's close > PML (pushing away, not breaking down); SHORT requires close < PMH. A close beyond the level on the far side is a breakout: no trade (as the video skips breakouts).",
+  "window": "The power bar must end by 10:30 ET. First qualifying bar of the day per side; one trade per symbol per day (the first side to trigger; the other side is information).",
+  "entry": "The open of the first 1-minute bar after the power bar ends.",
+  "stop": "LONG: the power bar's low - $0.01; exit at min(stop, bar open) on the first 1-minute bar whose low <= stop. SHORT mirrored.",
+  "target": "LONG: PMH; filled when a 1-minute high >= PMH + $0.01 (or at the bar open if it opens above). If the entry open is already >= PMH (or <= the stop) the trade is skipped (counted). A bar that reaches both counts as the STOP.",
+  "time_exit": "15:59 bar close if neither is hit (the video is usually done by 10:00; a 10:30 exit is information)."
+ },
+ "control": "For each trade, a seeded random entry minute in (power-bar end + 1) .. (power-bar end + 60) on the same symbol-day (seed sha256(sym|day|'pmpb-ctrl')), same direction, same PERCENT stop and target distances, same 15:59 exit and fill rules; a second control ('pmpb-ctrl2') for the MDE.",
+ "cost": "2 bp round trip binding (SPY/QQQ); 1, 5, 10 bp printed.",
+ "halves": "A = 2016-01-04 .. 2020-12-31, B = 2021-01-04 .. 2026-10-15; no held-out set (declared).",
+ "primary": "LONG trades on SPY + QQQ (desk is long-only). Per half: per day, the mean of (a) trade net and (b) trade minus control (SPY and QQQ on one day = one cluster); day-equal; day-clustered t.",
+ "pass": "In BOTH halves: mean long net (after 2 bp) > 0 with t >= 2.0, AND long minus control >= +5 bp with t >= 2.0, AND dropping the 3 best days keeps both >= 0. Batch reading t >= 2.73 both halves.",
+ "fail": "t <= -2 on either primary quantity in a half, or the 97.5% upper bound of long minus control below +5 bp in both halves; otherwise UNDERPOWERED.",
+ "power": "Outcome-blind count step: long trades and days per half, MDE from (control - control2); floors per half >= 150 trades and >= 100 days (the setup is rare: ~1 per 2 days per symbol claimed; declared lower floor) and MDE <= 5 bp, else UNDERPOWERED.",
+ "information_only": [
+  "SHORT trades (the video trades both)",
+  "both sides pooled",
+  "levels from 04:00",
+  "combined 2-3-bar power bars",
+  "10:30 time exit",
+  "win rate and R multiple",
+  "the video's claimed rate: share of setup days that hit the target before the stop"
+ ],
+ "no_retuning": "Level window, 2.0x range, 60% body, 20% close zone, 0.15% origin band, 10:30 window, stop, target, cost, halves and floors are fixed.",
+ "declared_deviations": [
+  "'large-bodied / stands out' and 'near the level' are discretionary; the numeric thresholds above are the mechanical reading, fixed before data",
+  "the video sometimes moves the stop to break-even (discretionary, not modelled)",
+  "next-1-minute-open entry"
+ ],
+ "script": "tools/studies/pm_power_bar.py (to be written)."
+}
