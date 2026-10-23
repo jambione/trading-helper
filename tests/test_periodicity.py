@@ -1,6 +1,6 @@
 import os
 import sys
-from collections import Counter, defaultdict, deque
+from collections import Counter, defaultdict
 
 import numpy as np
 
@@ -32,18 +32,19 @@ def test_missing_slot_start_bar_skips_entry_not_exit():
 
 
 def test_signal_needs_ten_sessions_and_top_decile():
-    hist = defaultdict(lambda: [deque(maxlen=20) for _ in range(13)])
+    hist = defaultdict(lambda: defaultdict(list))
     for i in range(9):
-        hist["A"][1].append(0.01)
-    assert P.signals(hist, "A", 1) is None
-    hist["A"][1].append(0.01)
-    assert P.signals(hist, "A", 1) == 0.01
+        hist["A"][1].append((i, 0.01))
+    assert P.signals(hist, "A", 1, 20) is None
+    hist["A"][1].append((19, 0.01))
+    assert P.signals(hist, "A", 1, 20) == 0.01
+    assert P.signals(hist, "A", 1, 31) is None                     # session window, not last appearances
     f, st = {}, Counter()
     for j in range(30):
         s = f"S{j:02d}"
-        for _ in range(10):
-            hist[s][1].append(j / 1000)
+        for i in range(10):
+            hist[s][1].append((i, j / 1000))
         f[s] = {"ent": [None] + [50.0] * 12, "ret": [None] + [0.0] * 12, "hist": [None] * 13}
     f["S29"]["ret"][1] = 0.003                                  # the top-SIG name earns 30 bp in slot 2
-    d = P.day_summary("2026-06-01", f, hist, st)
+    d = P.day_summary("2026-06-01", f, hist, st, 15)
     assert d is not None and d["k"] >= 3
