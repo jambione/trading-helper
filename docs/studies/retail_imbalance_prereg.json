@@ -43,5 +43,14 @@
    "(4) Before any outcome: check the sub-penny share of TRF prints per month across the window; if it moves by > 2x, report it and split the read by period (information).",
    "(5) Halves: A = 2026-07-01 .. 08-22, B = 2026-08-24 .. 10-15 (midpoint chosen now); confirmation per C3."
   ]
+ },
+ "amended_2": {
+  "when": "2026-10-23, after result-skeptic CODE review round 1, before the count step.",
+  "changes": [
+   "C4: the count step refuses unless every day file holds exactly that day's 150 drawn names; the fetch never writes a day with a failed name and treats a 200-page cap as a failure (days fetched before this guard had no cap check; the probe's maximum was 2 pages).",
+   "The high-attention prior close is the last close at or before 15:59; the $10 floor reads the split-adjusted warehouse open (declared).",
+   "Information: lift by month (amended (4) split if the sub-penny share moves > 2x).",
+   "Batch-robust bar t >= 2.84 (11 studies)."
+  ]
  }
 }

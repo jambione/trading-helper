@@ -112,10 +112,14 @@ def fetch() -> None:
                 time.sleep(0.4)
                 if not tok:
                     break
+            if tok:
+                ok = False                                  # 200-page cap: the morning would be truncated
             if not ok:
                 failed.append(f"{day} {sym}")
                 continue
             agg[sym] = dict(c)
+        if any(f.startswith(f"{day} ") for f in failed):
+            continue                                        # never write a day with a failed name (C4)
         json.dump(agg, open(p + ".tmp", "w"))
         os.replace(p + ".tmp", p)
         print(day, len(agg), flush=True)
@@ -143,9 +147,9 @@ def day_rows(day: str, prev_day: str | None) -> dict:
             continue
         tot = c.get("buy_sh", 0) + c.get("sell_sh", 0)
         rimb = (c.get("buy_sh", 0) - c.get("sell_sh", 0)) / tot if tot else 0.0
-        pc = E.bar_at(prev[sym], 959) if sym in prev else None
+        pc = E.last_close_at_or_before(prev[sym], 959) if sym in prev else None
         mc = E.last_close_at_or_before(r, 719)
-        chg = (mc / float(pc[4]) - 1) if pc is not None and mc else None
+        chg = (mc / pc - 1) if pc and mc else None
         elig.append({"s": sym, "rimb": rimb, "lh": E.last_close_at_or_before(r, M_EXIT) / float(ent[1]) - 1,
                      "chg": chg})
     sub = sum(c.get("subpenny", 0) for c in agg.values())
@@ -203,6 +207,9 @@ def main() -> None:
     for i, d in enumerate(days):
         if not (FIRST <= d <= LAST):
             continue
+        p_ = os.path.join(OUT_DIR, "agg", f"{d}.json")
+        if not os.path.exists(p_) or set(json.load(open(p_))) != set(sample(d, list(H.load_raw("sip", d)))):
+            raise SystemExit(f"{d}: day file missing or incomplete (C4, skeptic r1 #1)")
         dr = day_rows(d, days[i - 1] if i else None)
         st.update(dr["stats"])
         shares[d] = dr["subpenny_share"]
@@ -251,11 +258,16 @@ def main() -> None:
                             "net_by_cost": {f"{round(c * 1e4)}bp": E.stats([d["los"] - c for d in ds])["mean"]
                                             for c in COSTS}}
         res["info"][h] = {k: E.stats([d[k] for d in ds])["mean"] for k in ("bottom_lift", "hot_lift", "placebo_lift")}
+        res["info"][h]["lift_by_month"] = {m: E.stats([d["lift"] for d in ds if d["day"][:7] == m])["mean"]
+                                           for m in sorted({d["day"][:7] for d in ds})}
     res["verdict"] = ("FAIL" if "FAIL" in hv else
                       ("PASS (batch-robust)" if all((x["t"] or 0) >= T_BATCH for x in ss)
                        else "PASS (single-test), not batch-robust") if all(x == "PASS" for x in hv) else
                       "FAIL" if all(x["ub"] is not None and x["ub"] < LIFT_BAR for x in ss) else "UNDERPOWERED")
     res["declared"] = ["next-day open->close cell not built (information, dropped before scoring)",
+                       "the $10 floor reads the split-adjusted warehouse 12:00 open",
+                       "days fetched before the page-cap guard (2026-10-23 first days) had no cap check; the probe's "
+                       "maximum was 2 of 200 pages",
                        "high-attention = |prior close -> 11:59 close| > 5% within the top quintile"]
     res["skeptic_ready"], res["module_sha256"] = a.skeptic_ready, module_shas()
     write("result.json", res)

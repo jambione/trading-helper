@@ -40,6 +40,7 @@ TOP_UNIV, TOP_PLAY, OPEN_LB, OPEN_NEED = 1000, 20, 14, 10
 MIN_PX, MIN_ATR = 10.0, 0.50
 COST, COSTS = 0.0010, (0.0005, 0.0010, 0.0020)
 T_PASS, T_BATCH, MDE_BAR = 2.0, 2.84, 0.0010
+FETCH_DAILY_END = {"2026-01-13": "2026-01-13T16:00", "2026-10-15": "2026-10-15T16:00"}
 FLOOR_TRADES, FLOOR_DAYS = 300, 20
 TICK, M_FROM, M_CTRL_END, M_LAST = 0.01, 575, 900, 959
 
@@ -50,13 +51,14 @@ def _client():
     return StockHistoricalDataClient(s["alpaca_data_api_key"], s["alpaca_data_secret_key"])
 
 
-def _get(cl, syms, tf, a, b, failed, tag):
+def _get(cl, syms, tf, a, b, failed, tag, raw: bool = False):
     from alpaca.data.enums import Adjustment, DataFeed
     from alpaca.data.requests import StockBarsRequest
     for attempt in range(6):
         try:
             return cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=syms, timeframe=tf, start=a, end=b,
-                                                      feed=DataFeed.SIP, adjustment=Adjustment.SPLIT)).data
+                                                      feed=DataFeed.SIP,
+                                                      adjustment=Adjustment.RAW if raw else Adjustment.SPLIT)).data
         except Exception as e:  # noqa: BLE001
             print(f"  retry {tag} {attempt + 1}: {str(e)[:80]}", flush=True)
             time.sleep(15 * (attempt + 1))
@@ -71,31 +73,39 @@ def ever_liquid() -> list[str]:
 
 def fetch_daily() -> None:
     from alpaca.data.timeframe import TimeFrame
-    cl, failed, out = _client(), [], {}
+    cl, failed, out, raw_close = _client(), [], {}, {}
     syms = ever_liquid()
     for a0, b0 in FETCH:
         a = datetime.fromisoformat(a0).replace(tzinfo=ET)
-        b = datetime.fromisoformat(b0).replace(tzinfo=ET) + timedelta(days=1)
+        b = datetime.fromisoformat(FETCH_DAILY_END[b0]).replace(tzinfo=ET)       # never the held-out 01-14 bar
         for i in range(0, len(syms), 100):
             ch = syms[i:i + 100]
-            got = _get(cl, ch, TimeFrame.Day, a, b, failed, f"daily {a0} {i}")
-            if got is None:
-                continue
-            for s, bars in got.items():
-                for x in bars:
-                    d = x.timestamp.astimezone(ET).strftime("%Y-%m-%d")
-                    if not (HELD[0] <= d <= HELD[1]):
-                        out.setdefault(s, {})[d] = (x.open, x.high, x.low, x.close, x.volume)
-            time.sleep(0.4)
+            for raw in (False, True):
+                got = _get(cl, ch, TimeFrame.Day, a, b, failed, f"daily {a0} {i} raw={raw}", raw=raw)
+                if got is None:
+                    continue
+                for s, bars in got.items():
+                    for x in bars:
+                        d = x.timestamp.astimezone(ET).strftime("%Y-%m-%d")
+                        if HELD[0] <= d <= HELD[1]:
+                            continue
+                        if raw:
+                            raw_close.setdefault(s, {})[d] = x.close
+                        else:
+                            out.setdefault(s, {})[d] = (x.open, x.high, x.low, x.close, x.volume)
+                time.sleep(0.4)
+    pickle.dump(raw_close, open(os.path.join(OUT_DIR, "daily_raw_close.pkl"), "wb"))
     os.makedirs(OUT_DIR, exist_ok=True)
     pickle.dump(out, open(os.path.join(OUT_DIR, "daily.pkl"), "wb"))
     json.dump({"failed": failed}, open(os.path.join(OUT_DIR, "daily_fetch_log.json"), "w"))
     print("names", len(out), "failed", failed)
 
 
-def universe(daily: dict) -> dict[str, list[str]]:
-    """day -> top 1,000 names by prior 20-day median dollar volume among price > $10 and ATR(14) > $0.50 (prior days
-    only)."""
+def universe(daily: dict, raw_close: dict | None = None) -> dict[str, list[str]]:
+    """day -> top 1,000 names by prior 20-day median dollar volume (split-invariant) among RAW prior close > $10 and
+    ATR(14) > $0.50 in raw dollars (adjusted ATR x raw/adjusted close on the prior day). Prior days only."""
+    if raw_close is None:
+        raw_close = pickle.load(open(os.path.join(OUT_DIR, "daily_raw_close.pkl"), "rb"))
     days = sorted({d for v in daily.values() for d in v})
     idx = {d: i for i, d in enumerate(days)}
     per = defaultdict(list)
@@ -107,18 +117,28 @@ def universe(daily: dict) -> dict[str, list[str]]:
             if idx[prior[-1]] != idx[t] - 1:
                 continue                                  # needs yesterday's bar
             o, h, lo, c, vol = v[prior[-1]]
-            if c <= MIN_PX:
+            rc = raw_close.get(s, {}).get(prior[-1])
+            if rc is None or rc <= MIN_PX:
                 continue
+            scale = rc / c if c else 1.0
             trs = []
             for k in range(j - 14, j):
                 pc = v[ds[k - 1]][3]
                 hh, ll = v[ds[k]][1], v[ds[k]][2]
                 trs.append(max(hh - ll, abs(hh - pc), abs(ll - pc)))
-            if statistics.mean(trs) <= MIN_ATR:
+            if statistics.mean(trs) * scale <= MIN_ATR:
                 continue
             dv = statistics.median(v[p][3] * v[p][4] for p in prior)
             per[t].append((dv, s))
-    return {t: [s for _, s in sorted(x, reverse=True)[:TOP_UNIV]] for t, x in per.items()}
+    out = {}
+    for t, x in per.items():
+        top = sorted(x, reverse=True)[:TOP_UNIV]
+        out[t] = [s for _, s in top]
+        universe.cutoff_dv[t] = top[-1][0] if top else None           # superset check (skeptic r1 #6)
+    return out
+
+
+universe.cutoff_dv = {}
 
 
 def fetch_open() -> None:
@@ -137,12 +157,15 @@ def fetch_open() -> None:
         rec = {}
         ok = True
         for i in range(0, len(union), 100):
-            got = _get(cl, union[i:i + 100], TimeFrame.Minute, a, a + timedelta(minutes=5), failed, f"open {d} {i}")
+            # end is inclusive at Alpaca: 09:34:59 keeps the 09:35 bar out (skeptic r1 #1)
+            got = _get(cl, union[i:i + 100], TimeFrame.Minute, a, a + timedelta(minutes=4, seconds=59), failed,
+                       f"open {d} {i}")
             if got is None:
                 ok = False
                 break
             for s, bars in got.items():
-                rec[s] = [(x.timestamp.astimezone(ET).minute, x.open, x.high, x.low, x.close, x.volume) for x in bars]
+                rec[s] = [(x.timestamp.astimezone(ET).minute, x.open, x.high, x.low, x.close, x.volume) for x in bars
+                          if x.timestamp.astimezone(ET).hour == 9 and 30 <= x.timestamp.astimezone(ET).minute <= 34]
             time.sleep(0.4)
         if ok:
             out[d] = rec
@@ -167,8 +190,8 @@ def in_play(daily: dict, opens: dict) -> dict[str, list[tuple]]:
         rows = []
         for s in univ[d]:
             today = opens[d].get(s)
-            if not today or len(today) < 5:
-                continue                                   # needs all five opening minutes (the fence is complete)
+            if not today or len(today) != 5:
+                continue                                   # exactly the five 09:30-09:34 minutes
             hist = [sum(x[5] for x in opens[p][s]) for p in days[max(0, i - OPEN_LB):i] if opens[p].get(s)]
             if len(hist) < OPEN_NEED or statistics.mean(hist) <= 0:
                 continue
@@ -194,7 +217,8 @@ def fetch_day() -> None:
         if not syms:
             continue
         a = datetime.fromisoformat(d).replace(hour=9, minute=30, tzinfo=ET)
-        got = _get(cl, syms, TimeFrame.Minute, a, a.replace(hour=16), failed, f"day {d}")
+        got = _get(cl, syms, TimeFrame.Minute, a, a.replace(hour=15, minute=59, second=59), failed, f"day {d}",
+                   raw=True)                               # RAW full-day bars: range, trigger and exits (r1 #3)
         if got is None:
             continue
         out[d] = {s: [(x.timestamp.astimezone(ET).hour * 60 + x.timestamp.astimezone(ET).minute, x.open, x.high,
@@ -259,11 +283,17 @@ def build_rows() -> tuple[list[dict], Counter]:
         h = next((k for k, (a, b) in HALVES.items() if a <= d <= b), None)
         if h is None:
             continue
-        for rank, (sc, s, cand) in enumerate(top):
+        for rank, (sc, s, _cand_adj) in enumerate(top):
             bars = full.get(d, {}).get(s)
             if not bars:
                 st["no_fullday_bars"] += 1
                 continue
+            first5 = [b for b in bars if 570 <= b[0] <= 574]
+            if len(first5) != 5:
+                st["fullday_missing_opening_minutes"] += 1
+                continue
+            # the 5-minute candle from the RAW full-day bars (the opens file is adjusted: volume score only)
+            cand = (first5[0][1], max(b[2] for b in first5), min(b[3] for b in first5), first5[-1][4])
             side = 1 if cand[3] > cand[0] else (-1 if cand[3] < cand[0] else 0)
             if side == 0:
                 st["doji_first_candle"] += 1
@@ -319,10 +349,12 @@ def main():
     longs = [x for x in rows if x["side"] == "long"]
     if not a.score:
         cnt = {"stats": dict(st), "module_sha256": module_shas(), "prereg_commit": a.prereg_commit}
+        cut = [v for v in universe.cutoff_dv.values() if v is not None]
+        cnt["top1000_cutoff_dollar_volume"] = {"min": min(cut), "median": statistics.median(cut)} if cut else None
         for h in HALVES:
             hr = [x for x in longs if x["half"] == h]
-            _, per = dstats([x for x in hr if x["ctrl"] is not None and x["ctrl2"] is not None],
-                            lambda x: x["ctrl"] - x["ctrl2"])
+            _, per = dstats([x for x in hr if x["ctrl"] is not None],
+                            lambda x: x["ctrl"] - COST)     # control leg only (amended_4)
             xs = [statistics.mean(v) for v in per.values()]
             mde = (2.0 + 0.84) * statistics.stdev(xs) / math.sqrt(len(xs)) if len(xs) >= 2 else None
             days = len({x["day"] for x in hr})
@@ -339,7 +371,7 @@ def main():
         raise SystemExit("count.json from different code or without --prereg-commit")
     if not all(cnt[h]["floors_met"] for h in HALVES):
         raise SystemExit("UNDERPOWERED at the count step: no outcome is read")
-    res, hv, ts = {"halves": {}, "info": {}}, [], []
+    res, hv, ts, ubs = {"halves": {}, "info": {}}, [], [], []
     for h in HALVES:
         hr = [x for x in longs if x["half"] == h]
         net, _ = dstats(hr, lambda x: x["gross"] - COST)
@@ -354,6 +386,7 @@ def main():
             v = "NOT_PASSED"
         hv.append(v)
         ts.append(net["t"] or 0)
+        ubs.append(net["ub"])
         res["halves"][h] = {"verdict": v, "net": net, "lift": lift,
                             "net_by_cost": {f"{round(c * 1e4)}bp": dstats(hr, lambda x, c=c: x["gross"] - c)[0]
                                             ["mean"] for c in COSTS},
@@ -367,7 +400,8 @@ def main():
                           ["mean"]}
     res["verdict"] = ("FAIL" if "FAIL" in hv else
                       ("PASS (batch-robust)" if min(ts) >= T_BATCH else "PASS (single-test), not batch-robust")
-                      if all(x == "PASS" for x in hv) else "NOT PASSED")
+                      if all(x == "PASS" for x in hv) else
+                      "FAIL" if all(u is not None and u <= 0 for u in ubs) else "UNDERPOWERED")
     res["declared"] = ["universe = the gap-down study's ever-liquid list (3,640 active+inactive names; a superset of "
                        "any top-1,000 dollar-volume universe), split-adjusted prices for the $10 and ATR filters",
                        "information cells not built: ATR stop, top 50, 15/30-minute ranges"]

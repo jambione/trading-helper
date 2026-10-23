@@ -63,5 +63,16 @@
    "SCORE GATE: --score refuses unless both halves met the floors (UNDERPOWERED with no outcome read).",
    "Information cells kept: short side, top 10, $20+; dropped before scoring: ATR stop, top 50, 15/30-minute ranges."
   ]
+ },
+ "amended_4": {
+  "when": "2026-10-23, after result-skeptic CODE review round 1, before any ORB fetch or outcome.",
+  "changes": [
+   "(1) Opening bars are fetched 09:30:00-09:34:59 (Alpaca's end is inclusive) and only minutes 30-34 kept; exactly five required.",
+   "(2) POWER: MDE = (2.0 + 0.84) x SD(day mean of the CONTROL leg's net) / sqrt(days) <= 10 bp (the binding test is net > 0, so its noise is the trade-level dispersion; ctrl - ctrl2 cancels the name-day move).",
+   "(3) PRICES: the $10 floor uses the RAW prior close; ATR in raw dollars (adjusted ATR x raw/adjusted prior close); dollar volume is split-invariant; full-day minute bars are RAW and the 5-minute candle (range, direction) is rebuilt from them; the split-adjusted opens file is used for the volume score only.",
+   "(4) The daily fetch ends at the 2026-01-13 close (the held-out 01-14 bar is never requested).",
+   "(5) VERDICT: FAIL when t <= -2 in a half, or both halves' 97.5% upper bound of net <= 0; otherwise not passed = UNDERPOWERED.",
+   "(6) The count step prints each day's 1,000th-name dollar volume (min, median) to confirm the ever-liquid list ($20M cut) is a superset."
+  ]
  }
 }
