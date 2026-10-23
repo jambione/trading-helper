@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Premarket-level power bar on SPY + QQQ. Spec: docs/studies/pm_power_bar_prereg.json (amended, amended_2; skeptic
-READY r2). PMH / PML from 07:00-09:29 1-minute bars (>= 30 bars). LONG: the first 2-minute power bar ending by 10:29
-whose low is within 0.15% of PML, closes above PML, with no RTH 1-minute close below PML before it. Entry next
-1-minute open; stop = bar low - $0.01; target = PMH; else 15:59. SHORT mirrored (information).
+"""Premarket-level power bar on SPY + QQQ. Spec: docs/studies/pm_power_bar_prereg.json (through amended_5).
+PMH / PML = the highest / lowest candle BODY of 07:00-09:29 1-minute bars (>= 30 bars). LONG (primary): the first
+1-3 bar window of 2-minute bars ending by 10:29 that is >= 1.5x the same-clock n-bar median range of the prior 10 kept
+sessions, >= 50% body and green, whose low is within 0.15% of PML and close above PML, with no RTH 1-minute close
+below PML before the window starts. Entry next 1-minute open; stop = window low - $0.01; target = PMH; else 15:59.
+SHORT mirrored and the strict single-bar rule are information.
 
   (default) count step (outcome-blind); --score after a result-skeptic READY
 """
@@ -93,7 +95,7 @@ def loose_candidate(r, bars2, refs, pmh, pml, side):
                 continue                                       # level broken before this window starts
             ref = refs[n].ref(k)
             rng = h - lo
-            if ref is None or rng <= 0 or rng < LOOSE_RANGE * ref or abs(c - o) < LOOSE_BODY * rng:
+            if ref is None or ref <= 0 or rng <= 0 or rng < LOOSE_RANGE * ref or abs(c - o) < LOOSE_BODY * rng:
                 continue
             if not ((c > o) if side > 0 else (c < o)):
                 continue
@@ -252,8 +254,10 @@ def main():
         res["info"][f"net_by_cost_{h}"] = {f"{round(c * 1e4)}bp": B.day_stats(hr, lambda x, c=c: x["gross"] - c)
                                            ["mean"] for c in COSTS}
     res["verdict"] = res["primary_long"]["verdict"]
-    res["declared"] = ["combined 2-3-bar power bars and the R-multiple cell not built (information, dropped before "
-                       "scoring)",
+    res["declared"] = ["PRIMARY power bar (amended_5): 1-3 combined 2-minute bars, >= 1.5x the same-clock n-bar median "
+                       "range, >= 50% body, green; the strict single-bar rule is information ('strict')",
+                       "levels from candle bodies 07:00-09:29 (amended_4); wick and 04:00 levels are information",
+                       "the R-multiple cell is not built (information, dropped before scoring)",
                        "the long set is every long trigger regardless of the short side"]
     res["skeptic_ready"], res["module_sha256"] = a.skeptic_ready, module_shas()
     write("result.json", res)

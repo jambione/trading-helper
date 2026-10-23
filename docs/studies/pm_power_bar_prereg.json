@@ -98,6 +98,16 @@
   "information": [
    "the strict single-bar definition (amended_4 levels)",
    "short side mirrored (power bar red off PMH, target PML)"
-  ]
+  ],
+  "variants": "lv0400 (levels from 04:00), wicks (wick levels) and exit_1030 (10:30 time exit) use this loose rule; 'strict' is the old single-bar rule on body levels. The top-level information item 'combined 2-3-bar power bars' is superseded (it is now the primary rule).",
+  "funnel_signal_only": {
+   "note": "computed 2026-10-23 ~18:05 ET from signal conditions only (no returns), SPY+QQQ 5,241 symbol-days, body levels, 07:00-10:29",
+   "touch_within_0.15pct_of_PML": 4045,
+   "close_above_PML": 3504,
+   "range_2x_same_clock": 841,
+   "body_60pct": 627,
+   "strict_signal": 225,
+   "info_1.5x_50pct_green_single_bar": 757
+  }
  }
 }

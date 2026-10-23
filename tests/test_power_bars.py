@@ -55,3 +55,38 @@ def test_pm_loose_combined_power_bar():
     assert sig is not None and sig["n"] == 2 and sig["end"] == 583 and abs(sig["low"] - 99.0) < 1e-9
     r_broken = np.array([[575, 99, 99, 98.9, 98.95, 1]], dtype=float)   # an RTH close below PML first
     assert P.loose_candidate(r_broken, bars, refs, 101.0, 99.0, 1) is None
+
+
+def _refs_quiet():
+    import pm_power_bar as P
+    refs = {n: B.SizeRef() for n in (1, 2, 3)}
+    quiet = [(100.0, 100.1, 99.9, 100.0, 571 + 2 * k) for k in range(30)]
+    for _ in range(6):
+        for n, ref in refs.items():
+            ref.add(P.combos(quiet, n))
+    return refs, quiet
+
+
+def test_pm_smallest_n_wins_at_same_k():
+    import numpy as np
+    import pm_power_bar as P
+    refs, bars = _refs_quiet()
+    bars = list(bars)
+    bars[5] = (99.2, 99.3, 99.1, 99.25, 581)       # quiet-ish
+    bars[6] = (99.05, 99.40, 99.00, 99.35, 583)     # alone: range .40 >= .30, body .30 = 75%, green
+    r = np.array([[m, 100, 100, 100, 100, 1] for m in range(570, 581)], dtype=float)
+    sig = P.loose_candidate(r, bars, refs, 101.0, 99.0, 1)
+    assert sig["n"] == 1 and sig["end"] == 583
+
+
+def test_pm_break_inside_window_blocks_smaller_n_only():
+    import numpy as np
+    import pm_power_bar as P
+    refs, bars = _refs_quiet()
+    bars = list(bars)
+    bars[5] = (99.05, 99.25, 99.00, 99.20, 581)      # 09:40-09:41, too small alone
+    bars[6] = (99.10, 99.50, 99.05, 99.45, 583)      # 09:42-09:43, a power bar alone
+    # one 1-minute close below PML at 09:41: inside the n=2 window (starts 09:40), before the n=1 window (09:42)
+    r = np.array([[m, 99.5, 99.5, 98.9, 98.95 if m == 581 else 99.5, 1] for m in range(570, 583)], dtype=float)
+    sig = P.loose_candidate(r, bars, refs, 101.0, 99.0, 1)
+    assert sig is not None and sig["n"] == 2 and sig["end"] == 583
