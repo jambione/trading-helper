@@ -156,7 +156,9 @@ def run_symbol(sym: str, canary: bool = False):
                 rp = r.copy()
                 m = rp[:, 0] >= rp[e, 0] + 1
                 rp[m, 1:5] *= 1 + STEP
-                row["gross_planted"] = B.simulate(rp, e, 1, stop, tgt)["gross"]
+                sp_ = B.simulate(rp, e, 1, stop, tgt)
+                if sp_["why"] == "time":                     # time exit in BOTH runs (as the 10/23 ETF canary)
+                    row["gross_planted"] = sp_["gross"]
             rows.append(row)
             busy_until, taken = res["exit_min"], taken + 1
         for n, ref in refs.items():
@@ -197,7 +199,8 @@ def main():
     if a.canary:
         g = [x["gross_planted"] - x["gross"] for x in rows if x.get("gross_planted") is not None]
         out = {"n_time_exit": len(g), "delta_bp": round(1e4 * statistics.mean(g), 3) if g else None,
-               "pass": bool(bool(g) and abs(statistics.mean(g) - STEP) <= 0.0002), "module_sha256": module_shas()}
+               "pass": bool(bool(g) and abs(statistics.mean(g) - STEP) <= 0.0001), "module_sha256": module_shas(),
+               "note": "trades that end on the time stop in both the real and the planted run"}
         print(json.dumps(out, indent=1))
         write("canary.json", out)
         return
