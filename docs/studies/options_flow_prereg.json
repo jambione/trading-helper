@@ -5,7 +5,7 @@
  "study": "Options-driven flows: (a) unusual call volume (Pan-Poteshman style option volume / stock volume) and (b) dealer gamma sign, as intraday entry filters on stocks.",
  "source": "Barbon & Buraschi 'Gamma Fragility' (working paper): gamma imbalance x illiquidity explains intraday momentum/reversal; Jiang & Strong: publicised unusual options activity earns nothing after the day; 2025 Springer paper: deep OTM short-dated volume predicts returns.",
  "prior": "LOW-MEDIUM; data-gated.",
- "status": "BLOCKED ON DATA, not designed in detail. Step 0 (no outcomes read): probe whether the data-only Alpaca account serves historical option bars/trades (OPRA or indicative) for 2026 and over what history; report it. If free data covers >= 60 sessions for the book-like names, a full prereg (signal, control, pass) is written and reviewed BEFORE any stock outcome is joined. If not, it stays blocked under 'no spend until proven' and needs the operator's approval of a data purchase.",
+ "status": "REGISTERED 2026-10-24 (full design); awaiting result-skeptic review before any fetch.",
  "no_retuning": "n/a until designed.",
  "common": {
   "halves": "Warehouse studies: A = 2026-05-11 .. 2026-07-29, B = 2026-07-30 .. 2026-10-15 (110 sessions; 2026-04-27 .. 05-08 are warm-up for look-backs only).",
@@ -35,5 +35,38 @@
   "when": "2026-10-23 ~14:55 ET (no stock outcomes joined)",
   "finding": "The data-only Alpaca account serves historical OPTION daily bars and trades for free: SPY Nov-2026 600C 36 daily bars (06-11..10-14), SPY Jan-2025 500C 249 bars (2024-01-18..2025-01-15), SPY Jan-2024 450C none, NVDA Nov-2026 150C 84 bars; trades present (1 in a sampled hour). History therefore starts ~2024-02 (contracts expiring earlier return nothing).",
   "next": "Write the full options prereg (signal: e.g. call/put volume ratio vs the stock's own 20-day norm, or near-the-money dealer gamma sign from open interest if served; control; pass) and review it before any stock outcome is joined. Request load: a per-name option chain per day is hundreds of contracts - size the sample in the prereg."
+ },
+ "step0b_probe": {
+  "when": "2026-10-24 ~04:40 ET (no stock outcomes)",
+  "finding": "Contract lists including EXPIRED contracts are served on paper-api.alpaca.markets/v2/options/contracts with the data-only keys (AAPL, March 2024 expiries: 546 contracts in one page). Daily option bars carry volume, trade_count and vwap; multi-symbol requests work. Open interest is only the latest value (at expiry), so historical open interest and dealer-gamma signals are NOT feasible; the design uses option VOLUME."
+ },
+ "design": {
+  "registered_at": "2026-10-24, before any option or stock outcome is fetched or read",
+  "question": "Does unusually call-heavy option volume in a stock on day t predict its next-day intraday return (09:45 -> close) in the cross-section? Literature: Pan & Poteshman (2006, RFS) - option volume put/call ratios predict next-day/next-week stock returns (strongest with buyer-initiated opening trades, which free data cannot sign); Johnson & So (2012, JFE) - a HIGH option-to-stock volume ratio predicts LOWER returns. Long-only desk: the primary buys call-heavy names.",
+  "prior": "LOW-MEDIUM (~15%): the published PCR effect uses signed opening volume (not available); unsigned volume carries a weaker version; option-heavy names may instead underperform (Johnson & So), which the information cell reports.",
+  "universe": "Each month: the 100 US common stocks with the highest prior-month median dollar volume among the gap-down study's ever-liquid list (active + inactive, raw close >= $10 on the prior day) that have listed options (a non-empty contract list). Stock daily bars fetched on the data-only account (RAW) 2024-01-01 .. 2026-10-15 except 2026-01-14 .. 04-24.",
+  "option_data": "For each universe name and day t: contracts with expiration in (t, t + 45 calendar days] and strike within +/-15% of the stock's day-t RAW close (contract lists via the contracts endpoint, active and inactive); their daily option bars (data-only account). CV = summed call volume, PV = summed put volume, TV = CV + PV. A name-day with TV < 100 contracts is ineligible (counted).",
+  "signal": "CS = CV / TV (call share). Z = (CS_t - mean of CS over the name's previous 20 trading days) / their SD (needs >= 15 days with TV >= 100; SD > 0). Known after the day-t close (daily option bars complete).",
+  "trade": "Day t+1: buy the 09:45 SIP 1-minute bar open (RAW, >= $10), sell at the last close at or before 15:59 (C2). LONG = the top DECILE of Z among that day's eligible names (>= 30 eligible, else the day is skipped). Cost 5 bp round trip binding (3, 10, 20 printed).",
+  "primary": "LIFT = top-decile mean return minus the equal-weight mean of all eligible names over the same window (day t+1); per day; day-equal; day-clustered t, plus a two-way (day x name) clustered t of the trade-level excess.",
+  "halves": "A = signal days 2024-03-01 .. 2025-06-30; B = 2025-07-01 .. 2026-01-12 and 2026-05-26 .. 2026-10-14 (every look-back and the next-day trade stay outside the held-out window 2026-01-14 .. 04-24). Confirmation: the held-out window, fetched only after a PASS.",
+  "pass": "In BOTH halves: LIFT >= +5 bp with day-clustered t >= 2.0 AND two-way t >= 2.0, AND top-decile mean net (after 5 bp) > 0. Batch-robust label: t >= 2.84 in both halves (11-study batch).",
+  "fail": "t <= -2 in a half, or both halves' 97.5% upper bound of LIFT < +5 bp. Otherwise UNDERPOWERED.",
+  "power": "Outcome-blind count step: eligible name-days, long trades and days per half; MDE = (2.0 + 0.84) x SD(day placebo LIFT) / sqrt(days), placebo = a seeded random decile of the same size (seed 'options-flow-placebo'); floors >= 300 long trades and >= 20 days per half and MDE <= 5 bp, else UNDERPOWERED with no outcome read; --score refuses unless both halves meet the floors.",
+  "information_only": [
+   "bottom decile of Z (put-heavy) LIFT",
+   "Johnson-So: top decile of option-to-stock volume ratio (TV x 100 / stock share volume) LIFT (expected negative)",
+   "volume surge: TV >= 2x its 20-day mean, top-decile Z among those",
+   "next-day close -> close (t close to t+1 close) LIFT",
+   "$20+ names"
+  ],
+  "c4": "Every fetch logs failures and 429-dropped symbols; a half with any unrecovered gap or a truncated page is refused; per-name-month contract lists and bar files are written only when complete.",
+  "budget": "Probe estimate before the full fetch: pages per name-month for contracts and bars on 5 seeded name-months; the fetch runs only if the estimate is <= 8 hours at <= 150 requests/min, else the universe is cut to the top 50 names by the same rank (rule fixed here).",
+  "declared": [
+   "volume is unsigned (no buyer/seller or opening/closing classification on free data)",
+   "Alpaca option data feed as served (OPRA-derived historical bars); its fidelity vs OPRA is not independently verified",
+   "the strike/expiry filter (+/-15%, 45 days) is fixed, not tuned"
+  ],
+  "no_retuning": "Universe size, 45-day / 15% filters, 100-contract floor, 20-day Z, top decile, 09:45 entry, cost, halves and floors are fixed."
  }
 }
