@@ -1,0 +1,41 @@
+{
+ "study": "The operator's %R trend trade, as one complete rule (operator 2026-10-24): buy when the fast and slow %R lines are both rising out of the bottom (oversold) zone; no opens while %R is sideways; sell when the lines turn down.",
+ "registered_at": "2026-10-24, before any script, feature or outcome",
+ "registered_before_results": true,
+ "origin": "Operator 10/24: 'Sideways is the zone between the top and bottom levels. We want to buy when %R is trending from the bottom level (oversold) to the top level (overbought); the fast and slow lines support a profit trend as they move up. When not trending upward, no open, unless at the very top with open squares (risky). When trending down, we should be looking to sell.' Prompted by the CCI 10/23 review: the live pre-square arm bought at the TOPS of relief bounces.",
+ "prior": "LOW (~10%): entries alone were tested and matched random minutes - leaving oversold (10/15, lift -4 / +1 bp), both lines turning up (10/17, 283k onsets ~0), slow-line rising filter (10/16, halves reversed). New here: the complete trade with a %R EXIT, which no earlier test used.",
+ "lines": "The desk's exact definitions (signals.py, live config): FAST = Williams %R(21) smoothed by EMA(span 7); SLOW = %R(112) smoothed by EMA(span 3); both on the 1-minute grid. BOTTOM ZONE = both lines <= -80 (rte_threshold 20); TOP ZONE = both >= -20; SQUARE = top zone with |fast - slow| <= 15 (rte_confluence_max).",
+ "data": "Warehouse SIP 1-minute RTH bars, the full universe each day (~1,640-1,950 liquid names, >= $10, >= $20M ADV, active + inactive), sessions 2026-05-11 .. 10-15 (halves A <= 07-29 < B). The lines are computed on the name's RTH minutes with its previous warehouse session prepended for warm-up (>= 112 bars before 09:45 needed; a name without its previous session that day is skipped and counted). Declared: the live desk computes %R on IEX bars; SIP here.",
+ "rule": {
+  "oversold_event": "a minute at which BOTH lines are <= -80.",
+  "entry_signal": "at the close of minute t (09:45 .. 15:00): an oversold event occurred within t-20 .. t, AND fast(t) > -80 (it has left the bottom zone), AND both lines are RISING: fast(t) - fast(t-5) >= 5 points and slow(t) - slow(t-5) > 0.",
+  "no_sideways": "implied: a minute where either line is not rising is not an entry; there is no other entry path in the primary (the 'very top with open squares' case is information only).",
+  "entry": "the open of minute t+1 (>= $10 RAW... warehouse prices are split-adjusted; the warehouse universe already requires a prior raw close >= $10).",
+  "exit_signal": "at the close of minute u > entry minute: the fast line is falling: fast(u) < fast(u-3) ('turns down').",
+  "exit": "the open of minute u+1; or the close of the last bar at or before 15:59 if no exit signal by then.",
+  "reentry": "one open trade per name; after an exit a new entry needs a NEW oversold event after the exit minute.",
+  "cost": "5 bp round trip binding; 3, 10, 20 printed."
+ },
+ "controls": {
+  "d_same_name": "a seeded random entry minute in (entry minute, entry minute + 60] on the same name-day (seed sha256(sym|day|entry|'wrtrend-d')), held for the SAME number of minutes as the trade (or to 15:59). Declared bias: later-minute controls run about +1 bp in the trade's favour on this universe (10/22 placebo finding).",
+  "x_cross_name": "a seeded random OTHER warehouse name the same day with bars at the trade's entry and exit minutes (seed 'wrtrend-x'), same entry and exit minutes.",
+  "power_controls": "second draws (seeds 'wrtrend-d2', 'wrtrend-x2') for the MDE only."
+ },
+ "statistic": "Per half, per day: mean over that day's trades of (trade - d control) and (trade - x control); day-equal; day-clustered t.",
+ "pass": "In BOTH halves: (trade - d) >= +5 bp with t >= 2.0 AND (trade - x) >= +5 bp with t >= 2.0 AND mean trade net (after 5 bp) > 0 AND dropping the 3 best days keeps both lifts >= 0.",
+ "fail": "t <= -2 on either lift in a half, or both halves' 97.5% upper bounds of BOTH lifts < +5 bp. Otherwise UNDERPOWERED.",
+ "power": "Outcome-blind count step: trades and days per half; MDE = (2.0 + 0.84) x SD(day mean of control - control2) / sqrt(days) for d and x; floors >= 300 trades and >= 20 days per half and MDE <= 5 bp, else UNDERPOWERED with no outcome read; --score refuses unless both halves meet them.",
+ "information_only": [
+  "exit when BOTH lines turn down (fast(u) < fast(u-3) and slow(u) < slow(u-3))",
+  "the 'very top with open squares' entries the operator called risky: a square with both lines rising, same exit",
+  "fast-line-only rising (slow not required)",
+  "entries whose oversold event was a square-free bottom vs not",
+  "hold-time distribution and win rate",
+  "time of day",
+  "$20+ names (the desk's floor)",
+  "the desk's own exits (trail) instead of the %R exit, via a 15-minute time stop proxy"
+ ],
+ "confirmation": "A PASS is re-run unchanged on warehouse_confirm (2026-01-14 .. 04-24, never read), then a forward paper prereg; never a desk change by itself.",
+ "no_retuning": "Lines, levels, the 20-minute oversold window, the 5-minute / 5-point rising rule, the 3-minute turn-down exit, entry window, cost, halves and floors are fixed.",
+ "script": "tools/studies/wr_trend_trade.py (to be written)."
+}
