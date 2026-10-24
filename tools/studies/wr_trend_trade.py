@@ -77,16 +77,27 @@ def grid(rows_prev: np.ndarray, rows_today: np.ndarray) -> tuple[list, np.ndarra
     return keys, np.array(H), np.array(L), np.array(C)
 
 
-def lines(rows_prev: np.ndarray, rows_today: np.ndarray) -> tuple[dict, dict]:
-    """{today minute: fast}, {today minute: slow} on the grid."""
+REAL: dict = {}        # id(fast dict) -> set of today's minutes with a REAL line-feed bar (decision minutes)
+
+
+def lines(rows_prev: np.ndarray, rows_today: np.ndarray, fast_span: int = FAST_SPAN) -> tuple[dict, dict]:
+    """{today minute: fast}, {today minute: slow} on the grid; the desk reads the lines only at its own (real) bar
+    minutes (signals._minute_grid_pr reads back at `orig`), so decisions are allowed only at real(fast) minutes,
+    while lags (t-5, u-3) read the grid."""
     keys, H, L, C = grid(rows_prev, rows_today)
-    f = ema(pct_r(H, L, C, FAST_LEN), FAST_SPAN)
+    f = ema(pct_r(H, L, C, FAST_LEN), fast_span)
     s = ema(pct_r(H, L, C, SLOW_LEN), SLOW_SPAN)
     fast, slow = {}, {}
     for k, a, b in zip(keys, f, s):
         if k >= 10000 and not np.isnan(a) and not np.isnan(b):
             fast[k - 10000], slow[k - 10000] = float(a), float(b)
+    REAL[id(fast)] = {int(r[0]) for r in rows_today}
     return fast, slow
+
+
+def real(fast: dict, m: int) -> bool:
+    rs = REAL.get(id(fast))
+    return m in fast and (rs is None or m in rs)
 
 
 # ── the rule ─────────────────────────────────────────────────────────────────
@@ -99,11 +110,11 @@ def rising(fast: dict, slow: dict, t: int, fast_only: bool = False) -> bool:
 
 
 def is_oversold(fast: dict, slow: dict, m: int) -> bool:
-    return m in fast and fast[m] <= OS and slow[m] <= OS
+    return real(fast, m) and fast[m] <= OS and slow[m] <= OS
 
 
 def is_square(fast: dict, slow: dict, m: int) -> bool:
-    return m in fast and fast[m] >= OB and slow[m] >= OB and abs(fast[m] - slow[m]) <= CONF
+    return real(fast, m) and fast[m] >= OB and slow[m] >= OB and abs(fast[m] - slow[m]) <= CONF
 
 
 def exit_minute(fast: dict, slow: dict, start: int, mode: str = "any") -> int | None:
@@ -111,10 +122,13 @@ def exit_minute(fast: dict, slow: dict, start: int, mode: str = "any") -> int | 
     bottom | 'min5' any downturn from start + 4 on)."""
     lo = start + 4 if mode == "min5" else start
     for u in range(lo, M_LAST + 1):
-        if u not in fast or u - TURN_LAG not in fast:
+        if not real(fast, u) or u - TURN_LAG not in fast:
             continue
         down = fast[u] < fast[u - TURN_LAG]
-        if mode == "top":
+        if mode == "both":
+            if down and u - TURN_LAG in slow and slow[u] < slow[u - TURN_LAG]:
+                return u
+        elif mode == "top":
             if (down and fast[u] >= OB) or fast[u] <= OS:
                 return u
         elif down:
@@ -131,10 +145,12 @@ def entries(fast: dict, slow: dict, variant: str = "primary") -> list[int]:
             last_os = t
         if t < DEC_LO or t < free_from:
             continue
+        if not real(fast, t):
+            continue
         if variant == "square":
-            ok = is_square(fast, slow, t) and t - RISE_LAG in fast and fast[t] >= fast[t - RISE_LAG]
+            ok = is_square(fast, slow, t) and rising(fast, slow, t)
         else:
-            ok = (last_os is not None and t - OS_WINDOW <= last_os <= t and t in fast and fast[t] > OS
+            ok = (last_os is not None and t - OS_WINDOW <= last_os <= t and fast[t] > OS
                   and rising(fast, slow, t, fast_only=(variant == "fast_only")))
         if not ok:
             continue
@@ -173,7 +189,7 @@ def trade(sip: dict, t: int, u: int | None) -> dict | None:
     if o is None:
         return None
     if u is None or u + 1 > M_LAST:
-        x_min, x = M_LAST, px_close_at_or_before(sip, M_LAST, e)
+        x_min, x = M_LAST + 1, px_close_at_or_before(sip, M_LAST, e)
     else:
         x_min = u + 1
         x = exit_px(sip, x_min, e)
@@ -193,7 +209,7 @@ def seeded(*parts) -> random.Random:
     return random.Random(int(hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest()[:16], 16))
 
 
-def d_control(sip: dict, sym: str, day: str, e: int, hold: int, tag: str) -> float | None:
+def d_draw(sip: dict, sym: str, day: str, e: int, tag: str) -> int | None:
     cand = [c for c in range(e + 1, min(e + CTRL_SPAN, M_LAST) + 1)]
     rng = seeded(sym, day, e, tag)
     for _ in range(10):
@@ -201,8 +217,13 @@ def d_control(sip: dict, sym: str, day: str, e: int, hold: int, tag: str) -> flo
             return None
         c = rng.choice(cand)
         if c in sip:
-            return ret_over(sip, c, c + hold)
+            return c
     return None
+
+
+def d_control(sip: dict, sym: str, day: str, e: int, hold: int, tag: str) -> float | None:
+    c = d_draw(sip, sym, day, e, tag)
+    return ret_over(sip, c, c + hold) if c is not None else None
 
 
 def x_control(sips: dict, pool: list, sym: str, day: str, e: int, x_min: int, tag: str) -> float | None:
@@ -226,9 +247,15 @@ def day_task(args) -> dict:
     sips = {s: {int(r[0]): (float(r[1]), float(r[4])) for r in rows} for s, rows in sip_raw.items()}
     pool = sorted(sips)
     st, rows = Counter(), []
+    st["names_sip"] += len(sip_raw)
+    st["names_line_feed"] += len(lf_today)
+    st[f"day_names|{day}"] = len(sip_raw)
     for sym in pool:
-        if sym not in lf_today or sym not in lf_prev:
-            st["no_line_bars_or_prev"] += 1
+        if sym not in lf_today:
+            st["no_line_feed_today"] += 1
+            continue
+        if sym not in lf_prev:
+            st["no_previous_session"] += 1
             continue
         if sym in sip_prev and len(sip_prev[sym]) and len(sip_raw[sym]):
             pc, op = float(sip_prev[sym][-1][4]), float(sip_raw[sym][0][1])
@@ -241,7 +268,9 @@ def day_task(args) -> dict:
             continue
         st["names_with_lines"] += 1
         sip = sips[sym]
+        prev_exit = 0
         for variant in ("primary", "fast_only", "square"):
+            prev_exit = 0
             for t in entries(fast, slow, variant):
                 u = exit_minute(fast, slow, t + 1)
                 tr = trade(sip, t, u)
@@ -256,21 +285,20 @@ def day_task(args) -> dict:
                        "x2": x_control(sips, pool, sym, day, e, tr["exit_min"], "wrtrend-x2"),
                        "os_tri": None}
                 if variant == "primary":
-                    for mode in ("top", "min5"):
+                    for mode in ("top", "min5", "both"):
                         tv = trade(sip, t, exit_minute(fast, slow, t + 1, mode))
                         row[f"gross_{mode}"] = tv["gross"] if tv else None
-                    row["gross_t15"] = ret_over(sip, e, e + 14)
-                    rng = seeded(sym, day, e, "wrtrend-d")
-                    cand = [c for c in range(e + 1, min(e + CTRL_SPAN, M_LAST) + 1) if c in sip]
-                    if cand:
-                        c = rng.choice(cand)
-                        uc = exit_minute(fast, slow, c)
-                        tc = trade(sip, c - 1, uc)
+                        row[f"hold_{mode}"] = tv["hold"] if tv else None
+                    row["gross_t15"] = ret_over(sip, e, e + 15)
+                    c = d_draw(sip, sym, day, e, "wrtrend-d")          # the SAME minute as the d control
+                    if c is not None:
+                        tc = trade(sip, c - 1, exit_minute(fast, slow, c))
                         row["d_rule_exit"] = tc["gross"] if tc else None
-                    lo_os = [m for m in range(t - OS_WINDOW, t + 1) if is_oversold(fast, slow, m)]
+                    lo_os = [m for m in range(max(t - OS_WINDOW, prev_exit), t + 1) if is_oversold(fast, slow, m)]
                     row["os_tri"] = any(abs(fast[m] - slow[m]) <= CONF for m in lo_os)
                     row["px"] = px_open(sip, e)
                 rows.append(row)
+                prev_exit = tr["exit_min"]
     return {"rows": rows, "stats": dict(st)}
 
 
@@ -322,7 +350,7 @@ def mde(rows, a, b) -> float | None:
 def module_shas() -> dict:
     d = os.path.dirname(os.path.abspath(__file__))
     return {m: hashlib.sha256(open(os.path.join(d, f"{m}.py"), "rb").read()).hexdigest()
-            for m in ("wr_trend_trade", "eod_reversal")}
+            for m in ("wr_trend_trade", "eod_reversal", "indicator_confirm_hist")}
 
 
 def write(out_dir, name, obj):
@@ -402,7 +430,9 @@ def main() -> None:
                             "win_rate": sum(1 for r in hr if r["gross"] > COST) / max(1, len(hr)),
                             "hold_median": sorted(r["hold"] for r in hr)[len(hr) // 2] if hr else None}
         info = {}
-        for lab, key in (("exit_top_zone", "gross_top"), ("min_hold_5", "gross_min5"), ("time_stop_15", "gross_t15")):
+        # NOTE: these information lifts subtract the PRIMARY-hold d control (not a hold-matched control)
+        for lab, key in (("exit_top_zone", "gross_top"), ("min_hold_5", "gross_min5"), ("exit_both_lines_down", "gross_both"),
+                         ("time_stop_15", "gross_t15")):
             info[lab] = {"net": dstat(hr, lambda r, k=key: r[k] - COST if r.get(k) is not None else None)["mean"],
                          "lift_d": dstat(hr, lambda r, k=key: (r[k] - r["d"]) if r.get(k) is not None
                                          and r.get("d") is not None else None)["mean"]}
@@ -428,6 +458,9 @@ def main() -> None:
         verdict = "UNDERPOWERED"
     res["verdict"] = verdict
     res["skeptic_ready"], res["module_sha256"], res["lines"] = a.skeptic_ready, module_shas(), a.lines
+    res["declared"] = ["decisions (oversold events, entries, exits) only at minutes with a real line-feed bar; lags read "
+                       "the gap-filled grid (as the desk)", "warm-up uses RTH-only warehouse bars of the previous session; "
+                       "the live desk's bars may include premarket", "information lifts use the primary-hold d control"]
     write(out_dir, "result.json", res)
     print(json.dumps(res, indent=1, default=str))
 

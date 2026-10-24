@@ -57,3 +57,18 @@ def test_pct_r_matches_signals():
     h, lo = c + 0.3, c - 0.3
     ref = sig.williams_pr(pd.Series(h), pd.Series(lo), pd.Series(c), 21).to_numpy()
     assert np.allclose(W.pct_r(h, lo, c, 21), ref, equal_nan=True)
+
+
+def test_eod_exit_matches_controls():
+    sip = {601: (100.0, 100.5), 959: (101.0, 102.0)}
+    tr = W.trade(sip, 600, None)                      # no exit signal: close at or before 15:59
+    assert tr["exit_min"] == 960 and abs(tr["gross"] - (102.0 / 100.0 - 1)) < 1e-12
+    assert abs(W.ret_over(sip, 601, 960) - tr["gross"]) < 1e-12      # a control with the same span agrees
+    assert W.exit_px(sip, 959, 601) == 101.0           # an exit fill AT 15:59 is that bar's open
+
+
+def test_decisions_only_at_real_line_minutes():
+    prev = np.array([[m, 10, 10.2, 9.8, 10.0, 1] for m in range(840, 960)], dtype=float)
+    today = np.array([[m, 10, 10.2, 9.8, 10.0, 1] for m in range(570, 960, 3)], dtype=float)   # a bar every 3 min
+    fast, slow = W.lines(prev, today)
+    assert W.real(fast, 573) and not W.real(fast, 574) and 574 in fast   # 574 is a grid fill, not a decision minute
