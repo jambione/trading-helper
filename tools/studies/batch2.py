@@ -29,6 +29,7 @@ import wr_trend_trade as W  # noqa: E402
 ROOT = W.ROOT
 OUT = os.path.join(ROOT, "ai_reports", "batch2")
 TESTS = ("T2", "T3", "T4", "T5", "T6", "T7")
+SESSION_START = 570                  # episodes are maximal runs within the session (skeptic code r1 B2)
 STEP = 0.001
 T_BATCH = 2.69                       # 0.05/7 scored tests (T9/T10 deferred)
 SPY_JUMP, CORR_MIN, CORR_LB, CORR_NEED, T7_HOLD = 0.001, 0.5, 20, 10, 5
@@ -79,7 +80,7 @@ def sig_T3(fast, slow, iexf, t, state):
         return None
     if any(fast[m] <= W.OS for m in real_minutes(fast, t - 4, t)):
         return None                                      # an oversold run is in progress
-    eps = [e for e in runs(fast, slow, t - 60, t - 5, both=False) if t - 30 <= e[1] <= t - 5]
+    eps = [e for e in runs(fast, slow, SESSION_START, t - 5, both=False) if t - 30 <= e[1] <= t - 5]
     if not eps or eps[-1][0] < state.get("free_from", 0):
         return None
     _a, _b, ms = eps[-1]
@@ -104,7 +105,7 @@ def sig_T6(fast, slow, iexf, t, state):
         return None
     if any(m not in iexf for m in range(t - 12, t + 1)):
         return None                                      # all 13 minutes must be real IEX bars
-    eps = [e for e in runs(fast, slow, t - 60, t, both=True) if t - 20 <= e[1] <= t]
+    eps = [e for e in runs(fast, slow, SESSION_START, t, both=True) if t - 20 <= e[1] <= t]
     if not eps or eps[-1][0] < state.get("free_from", 0):
         return None
     _a, b, ms = eps[-1]
@@ -118,9 +119,11 @@ def sig_T6(fast, slow, iexf, t, state):
 
 # ── per name-day driver ──────────────────────────────────────────────────────
 
-def run_rule(test, fast, slow, sipf, iexf=None):
-    """Trades for one name-day: [(entry_min, entry_px, exit_min)] (exit_min = M_LAST + 1 means the close)."""
+def run_rule(test, fast, slow, sipf, iexf=None, st=None):
+    """Trades for one name-day: [(entry_min, entry_px, exit_min)] (exit_min = M_LAST + 1 means the close). The exit
+    scan starts at the entry minute (u >= t+1, as wr_trend_trade amended (1a)); T2 starts after its fill minute."""
     iexf = iexf if iexf is not None else sipf
+    st = st if st is not None else Counter()
     sip_oc = {m: (v[0], v[3]) for m, v in sipf.items()}
     out, state = [], {"free_from": 0}
     if test == "T5":
@@ -139,8 +142,9 @@ def run_rule(test, fast, slow, sipf, iexf=None):
             e = {"T3": sig_T3, "T4": sig_T4, "T6": sig_T6}[test](fast, slow, iexf, t, state) \
                 if t >= W.DEC_LO else None
             if e is not None and e not in sipf:
+                st[f"{test}_skip_no_entry_bar"] += 1
                 e = None
-            px, start = (sipf[e][0], e + 1) if e is not None else (None, None)
+            px, start = (sipf[e][0], e) if e is not None else (None, None)
         if e is None:
             t += 1
             continue
@@ -186,6 +190,7 @@ def spy_corr_table(days: list[str]) -> dict:
 
 def day_task(args) -> dict:
     day, prev_day, corr_prior, mode = args
+    W.REAL.clear()
     import indicator_confirm_hist as H
     sip_raw, sip_prev = H.load_raw("sip", day), H.load_raw("sip", prev_day)
     iex, iex_prev = H.load_raw("iex", day), H.load_raw("iex", prev_day)
@@ -203,6 +208,10 @@ def day_task(args) -> dict:
                 continue
         sipf = sipfs[sym]
         have_lines = sym in iex and sym in iex_prev
+        if sym not in iex:
+            st["no_iex_today"] += 1
+        elif sym not in iex_prev:
+            st["no_iex_previous_session"] += 1
         iexf = {int(r[0]): (float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])) for r in iex[sym]} \
             if sym in iex else {}
         lines7 = W.lines(iex_prev[sym], iex[sym]) if have_lines else ({}, {})
@@ -211,12 +220,14 @@ def day_task(args) -> dict:
             have_lines = False
         for test in TESTS:
             if test == "T7":
+                if sym != "SPY" and sym not in corr_prior:
+                    st["T7_warmup_excluded"] += 1
                 trades = t7_trades(sym, sipf, spy, corr_prior)
             elif not have_lines:
                 continue
             else:
                 fast, slow = W.lines(iex_prev[sym], iex[sym], fast_span=3) if test == "T5" else lines7
-                trades = run_rule(test, fast, slow, sipf, iexf)
+                trades = run_rule(test, fast, slow, sipf, iexf, st)
             for e, px, x_min in trades:
                 g = gross(sips[sym], e, px, x_min)
                 if g is None:
@@ -263,7 +274,7 @@ def t7_trades(sym: str, sipf: dict, spy: dict, corr_prior: dict) -> list:
 def module_shas() -> dict:
     d = os.path.dirname(os.path.abspath(__file__))
     return {m: hashlib.sha256(open(os.path.join(d, f"{m}.py"), "rb").read()).hexdigest()
-            for m in ("batch2", "wr_trend_trade", "eod_reversal")}
+            for m in ("batch2", "wr_trend_trade", "eod_reversal", "indicator_confirm_hist")}
 
 
 def write(name, obj):
@@ -288,11 +299,12 @@ def main() -> None:
     if a.canary:
         run_days = run_days[::11][:10]
     corr_path = os.path.join(OUT, "spy_corr.json")
-    if os.path.exists(corr_path):
-        corr = json.load(open(corr_path))
+    c0 = json.load(open(corr_path)) if os.path.exists(corr_path) else {}
+    if c0.get("module_sha256") == module_shas():
+        corr = c0["corr"]
     else:
         corr = spy_corr_table([d for d in days if d <= W.LAST])
-        write("spy_corr.json", corr)
+        write("spy_corr.json", {"corr": corr, "module_sha256": module_shas()})
 
     def prior_corr(d):
         i = days.index(d)
@@ -325,7 +337,8 @@ def main() -> None:
             out[t] = {"n": len(g), "trade_delta_bp": round(1e4 * statistics.mean(g), 2) if g else None,
                       "min_bp": round(1e4 * min(g), 2) if g else None, "max_bp": round(1e4 * max(g), 2) if g else None,
                       "d_control_delta_bp": round(1e4 * statistics.mean(dd), 2) if dd else None,
-                      "pass": bool(g) and abs(statistics.mean(g) - STEP) <= 0.0001}
+                      "pass": bool(g) and abs(statistics.mean(g) - STEP) <= 0.0001
+                      and (not dd or abs(statistics.mean(dd)) < 0.00001)}
         print(json.dumps(out, indent=1))
         write("canary.json", {"canary": out, "module_sha256": module_shas()})
         return
@@ -376,6 +389,8 @@ def main() -> None:
             hv.append(v)
             ubs.append((ld["ub"], lx["ub"], net["ub"]))
             halves[h] = {"verdict": v, "lift_d": ld, "lift_x": lx, "net": net,
+                         "net_by_cost": {f"{round(c * 1e4)}bp": W.dstat(hr, lambda r, c=c: r["gross"] - c)["mean"]
+                                         for c in W.COSTS},
                          "batch_robust": min(ld["t"] or 0, lx["t"] or 0) >= T_BATCH,
                          "win_rate": sum(1 for r in hr if r["gross"] > W.COST) / max(1, len(hr)),
                          "hold_median": sorted(r["hold"] for r in hr)[len(hr) // 2] if hr else None}
@@ -390,6 +405,11 @@ def main() -> None:
         else:
             verdict = "UNDERPOWERED"
         res[t] = {"verdict": verdict, "halves": halves}
+    res["declared"] = ["T6 episode = both lines <= -80; T3 episode = fast <= -80 only",
+                       "T6 'last 5 minutes' = clock minutes b-4 .. b of the episode end b; ties go to the earliest minute",
+                       "T4's 30-minute low uses the real IEX bars present in t-29 .. t",
+                       "T2's stop level is set on IEX, triggered by SIP prints; T7 runs on SIP bars (an IEX rerun is "
+                       "needed before any live relevance)", "episodes are maximal runs within the session"]
     res["skeptic_ready"], res["module_sha256"] = a.skeptic_ready, module_shas()
     write("result.json", res)
     print(json.dumps(res, indent=1, default=str))

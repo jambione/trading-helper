@@ -66,3 +66,14 @@ def test_planted_scales_only_after_entry():
     sipf = {600: (10.0, 10.1, 9.9, 10.0, 5.0), 601: (10.0, 10.1, 9.9, 10.0, 5.0)}
     p = B.planted(sipf, 601)
     assert p[600] == sipf[600] and abs(p[601][3] - 10.01) < 1e-9 and p[601][4] == 5.0
+
+
+def test_exit_scan_starts_at_the_entry_minute():
+    fast, slow = lines_all_real({m: -85.0 for m in range(500, 960)}, {m: -85.0 for m in range(500, 960)})
+    fast.update({594: -82.0, 597: -92.0, 600: -93.0, 598: -80.0, 601: -95.0})   # fast(601) < fast(598): exit at 601
+    iexf = flat()
+    for m in range(571, 600):
+        iexf[m] = (50.2, 50.3, 50.1, 50.2, 1000.0)
+    iexf[600] = (50.0, 50.05, 49.95, 50.0, 1000.0)
+    tr = B.run_rule("T4", fast, slow, flat(), iexf)
+    assert tr and tr[0][0] == 601 and tr[0][2] == 602

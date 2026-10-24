@@ -54,7 +54,25 @@ def fills() -> list[dict]:
         if len(got) < 500:
             break
         until = min(o.submitted_at for o in got)
-    return [{"sym": o.symbol, "t": o.filled_at.timestamp(), "px": float(o.filled_avg_price)} for o in out]
+    seen, res = set(), []
+    for o in out:                                       # dedupe: the pagination boundary can repeat orders
+        if o.id in seen:
+            continue
+        seen.add(o.id)
+        res.append({"sym": o.symbol, "t": o.filled_at.timestamp(), "px": float(o.filled_avg_price)})
+    return res
+
+
+def arm_kind(arm: dict | None) -> str:
+    """ai_entry_watch arm labels: 'overbought*' = a (full) square arm; '*presquare' = the empty-square arm."""
+    if arm is None:
+        return "unmatched"
+    why = str(arm.get("arm_why") or "") + "|" + str(arm.get("arm_bucket") or "")
+    if "presquare" in why or "pre_square" in why:
+        return "presquare"
+    if "overbought" in why:
+        return "square"
+    return why.strip("|") or "unknown"
 
 
 def arm_rows(day: str) -> dict[str, list]:
@@ -89,7 +107,7 @@ def bars_for(sym: str, day: str, prev: str, wh_days: set, cl) -> dict:
                     got = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=sym, timeframe=TimeFrame.Minute,
                                                              start=a, end=a.replace(hour=15, minute=59, second=59),
                                                              feed=DataFeed.SIP if feed == "sip" else DataFeed.IEX,
-                                                             adjustment=Adjustment.SPLIT)).data.get(sym, [])
+                                                             adjustment=Adjustment.RAW)).data.get(sym, [])
                     break
                 except Exception:  # noqa: BLE001
                     time.sleep(10 * (attempt + 1))
@@ -136,9 +154,13 @@ def audit_one(f: dict, arm: dict | None, bars: dict) -> dict:
         ta = datetime.fromtimestamp(arm["ts"], ET)
         am = ta.hour * 60 + ta.minute
         prior = max((m for m in sip_today if m < am), default=None)
-        out.update({"arm_min": am, "arm_s_before_fill": f["t"] - arm["ts"],
-                    "arm_px": sip_today[prior][4] if prior else None,
-                    "arm_kind": arm.get("arm_why") or arm.get("arm_bucket") or "unknown"})
+        out.update({"arm_min": am, "arm_ts": arm["ts"], "arm_s_before_fill": f["t"] - arm["ts"],
+                    "arm_px": sip_today[prior][4] if prior else None})
+    out["arm_kind"] = arm_kind(arm)
+    day0 = datetime.fromtimestamp(f["t"], ET).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    if tn is not None:
+        out["turn_close_ts"] = day0 + (tn + 1) * 60          # the turn minute's close (epoch seconds)
+    out["low_close_ts"] = day0 + (a_min + 1) * 60
     return out
 
 
@@ -185,16 +207,21 @@ def main() -> None:
         if r.get("iex_turn") is None:
             st["no_turn_before_fill"] += 1
         rows.append(r)
-    res = {"stats": dict(st), "label": "DIAGNOSTIC; forward returns from the turn are NOT TRADABLE (hindsight window)"}
-    for lab, sel in (("all", lambda r: True), ("presquare", lambda r: "presquare" in str(r.get("arm_kind"))),
-                     ("square", lambda r: "square" in str(r.get("arm_kind")) and "presquare" not in
-                      str(r.get("arm_kind")))):
+    res = {"stats": dict(st), "label": "DIAGNOSTIC; forward returns from the turn are NOT TRADABLE (hindsight window)",
+           "declared": ["medians use arm-matched fills only (buy-to-cover and non-desk buys fall in 'unmatched_info')",
+                        "event times: the low and the turn at their minute's close; arm and fill at their real seconds",
+                        "warehouse bars are split-adjusted, fetched bars RAW; fills are raw (differs only if a split "
+                        "followed the fill)"]}
+    for lab, sel in (("matched", lambda r: r["arm_kind"] != "unmatched"),
+                     ("presquare", lambda r: r["arm_kind"] == "presquare"),
+                     ("square", lambda r: r["arm_kind"] == "square"),
+                     ("unmatched_info", lambda r: r["arm_kind"] == "unmatched")):
         rs = [r for r in rows if sel(r)]
         res[lab] = {
             "n": len(rs),
-            "sec_low_to_turn_iex": q([(r["iex_turn"] - r["a_min"]) * 60 for r in rs if r.get("iex_turn") is not None]),
-            "sec_turn_to_arm": q([(r["arm_min"] - r["iex_turn"]) * 60 for r in rs
-                                  if r.get("iex_turn") is not None and r.get("arm_min") is not None]),
+            "sec_low_to_turn_iex": q([r["turn_close_ts"] - r["low_close_ts"] for r in rs if r.get("turn_close_ts")]),
+            "sec_turn_to_arm": q([r["arm_ts"] - r["turn_close_ts"] for r in rs
+                                  if r.get("turn_close_ts") and r.get("arm_ts")]),
             "sec_arm_to_fill": q([r.get("arm_s_before_fill") for r in rs]),
             "feed_component_sec_iex_minus_sip_turn": q([(r["iex_turn"] - r["sip_turn"]) * 60 for r in rs
                                                         if r.get("iex_turn") is not None
