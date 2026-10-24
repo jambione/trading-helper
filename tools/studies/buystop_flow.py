@@ -35,7 +35,11 @@ import wr_trend_trade as W  # noqa: E402
 ROOT = W.ROOT
 OUT = os.path.join(ROOT, "ai_reports", "buystop_flow")
 MIN_PX, N_MAX, BUDGET_H, REQ_PER_MIN = 20.0, 8000, 6.0, 140
-READ_AGE, T_ARM = 30.0, 2.24
+READ_AGE, T_ARM, ENTRY_AGE = 30.0, 2.24, 3.0
+TRIGGER_CODES = frozenset({" ", "@", "F"})          # round lots (amended_2 (1)); odd lots 'I' never trigger a stop
+R_RATIO = 0.05009                                    # amended_2 (4): median desk R/entry, fills >= $20
+CONFIG_SHA_PREFIX = "837dfd79268ebf16"               # amended_2 (3)
+CHUNKS_MIN = (15, 60, 120)                           # amended_2 (5): arm-B print fetch horizons after T
 MDE_BAR, FLOOR_TRADES, FLOOR_DAYS = 0.0003, 300, 20
 
 
@@ -119,7 +123,8 @@ def build_sample(n_half: int) -> dict:
                 e, px, x_min, stop = match[0]
                 out.append({"day": d, "sym": s, "half": h, "k": e, "px_bar": px, "stop": stop, "exit_min": x_min,
                             "bar_gross": r["gross"], "ctrl_d": r.get("d")})
-    return {"trades": out, "stats": dict(st), "n_half": n_half}
+    b2 = json.load(open(os.path.join(ROOT, "ai_reports", "batch2", "rows.json"))).get("module_sha256")
+    return {"trades": out, "stats": dict(st), "n_half": n_half, "batch2_rows_module_sha256": b2}
 
 
 # ── fetch ────────────────────────────────────────────────────────────────────
@@ -159,12 +164,19 @@ def quotes_between(cl, sym, a, b):
              float(x.ask_size or 0)) for x in got]
 
 
-def trigger_time(trades: list, k_start: float, stop: float):
-    import order_flow_pilot as OF
+def trigger(trades: list, k_start: float, stop: float):
+    """(T, price) of the first ROUND-LOT print in minute k at >= stop + 1c, else None."""
     for ts, px, size, codes, _tape in sorted(trades, key=lambda x: x[0]):
-        if k_start <= ts < k_start + 60 and codes and all(c in OF.KEEP_CODES for c in codes) and px >= stop + 0.01:
-            return ts
+        cs = codes or [" "]
+        if k_start <= ts < k_start + 60 and all(c in TRIGGER_CODES for c in cs) and px >= stop + 0.01:
+            return ts, px
     return None
+
+
+def ask_at(qs: list, t: float, max_age: float):
+    import order_flow_pilot as OF
+    q = OF.last_quote(OF.clean_quotes(qs), t, max_age)
+    return q
 
 
 def fetch_one(cl, t: dict) -> dict:
@@ -172,45 +184,80 @@ def fetch_one(cl, t: dict) -> dict:
     k0 = et_epoch(t["day"], t["k"])
     tr = trades_between(cl, t["sym"], k0 - 60, k0 + 60)
     time.sleep(60 / REQ_PER_MIN)
-    T = trigger_time(tr, k0, t["stop"])
-    if T is None:
+    trg = trigger(tr, k0, t["stop"])
+    if trg is None:
         return {"status": "no_trigger_in_tape"}
-    qs = quotes_between(cl, t["sym"], T - 120, T + 1)
+    T, trig_px = trg
+    qs = quotes_between(cl, t["sym"], T - 120, T + 12)
     time.sleep(60 / REQ_PER_MIN)
     x_ts = et_epoch(t["day"], 15 * 60 + 59, 59) if t["exit_min"] > W.M_LAST else et_epoch(t["day"], t["exit_min"])
     xq = quotes_between(cl, t["sym"], x_ts - 30, x_ts + 1)
     time.sleep(60 / REQ_PER_MIN)
     tick = {"trades": tr, "quotes": qs}
     f = OF.features(tick, T)
-    q_in = OF.last_quote(OF.clean_quotes(qs), T + 1, READ_AGE)
+    q_in = ask_at(qs, T + 1, ENTRY_AGE + 1)            # a quote in [T - 3 s, T + 1 s]
+    q3, q11 = ask_at(qs, T + 3, ENTRY_AGE), ask_at(qs, T + 11, ENTRY_AGE)
     q_out = OF.last_quote(OF.clean_quotes(xq), x_ts + 1, READ_AGE)
-    return {"status": "ok", "T": T, "x_ts": x_ts, "ofi60": f["ofi60"], "qi": f["qi"], "n_signed": f["n_signed"],
-            "ask_in": q_in[2] if q_in else None, "bid_in": q_in[1] if q_in else None,
+    ask = q_in[2] if q_in else None
+    return {"status": "ok", "T": T, "trig_px": trig_px, "x_ts": x_ts, "ofi60": f["ofi60"], "qi": f["qi"],
+            "n_signed": f["n_signed"], "ask_raw": ask, "ask_in": max(ask, trig_px) if ask else None,
+            "ask_below_trigger": (ask < trig_px) if ask else None, "bid_in": q_in[1] if q_in else None,
+            "ask_T3": max(q3[2], trig_px) if q3 else None, "ask_T11": max(q11[2], trig_px) if q11 else None,
             "bid_out": q_out[1] if q_out else None, "ask_out": q_out[2] if q_out else None}
 
 
 # ── arm B (desk exits) ───────────────────────────────────────────────────────
 
-def desk_r_ratio() -> float:
+def arm_b_walk(r: dict, secs: list, b1m: list, cfg: dict, ring: int):
     import exit_capture as XC
-    fills, _ = XC.load_fills()
-    return statistics.median(f["risk"] / f["entry"] for f in fills)
+    entry = r["ask_in"]
+    risk = entry * R_RATIO
+    spread_r = ((r["ask_raw"] - r["bid_in"]) / risk) if r.get("ask_raw") and r.get("bid_in") else None
+    pos = {"sym": r["sym"], "day": r["day"], "t0": r["T"], "entry": entry, "risk": risk, "spread_r": spread_r}
+    return XC.walk(pos, secs, cfg, ring, b1m)
 
 
-def arm_b(t: dict, f: dict, secs: list, b1m: list, cfg: dict, ring: int, r_ratio: float, bid_fn) -> dict | None:
+def fetch_arm_b(cl, r: dict, cfg: dict, ring: int) -> dict:
+    """Chunked prints (amended_2 (5)): extend only while the walk's exit falls at or after the fetched end."""
     import exit_capture as XC
-    entry = f["ask_in"]
-    pos = {"sym": t["sym"], "day": t["day"], "t0": f["T"], "entry": entry, "risk": entry * r_ratio}
-    xs, trig, why, held = XC.walk(pos, secs, cfg, ring, b1m)
-    b = bid_fn(xs)
-    px = XC.exit_price(trig, b, why)
-    return None if px is None else {"net": px / entry - 1, "why": why, "exit_s": xs}
+    import leash_replay as L
+    b1m = XC.fetch_bars(cl, r["sym"], r["day"])
+    eod = et_epoch(r["day"], L.EOD_MIN if hasattr(L, "EOD_MIN") else 15 * 60 + 50)
+    secs, got_to = [], r["T"] - 5
+    for mins in CHUNKS_MIN:
+        end = min(r["T"] + mins * 60, eod)
+        if end > got_to:
+            secs += _req(L.fetch_seconds, cl, r["sym"], got_to, end)
+            got_to = end
+        xs, trig, why, _held = arm_b_walk(r, secs, b1m, cfg, ring)
+        if xs < got_to - 1 or got_to >= eod:
+            return {"secs": secs, "b1m": b1m, "fetched_to": got_to}
+    return {"secs": secs, "b1m": b1m, "fetched_to": got_to}
 
 
 # ── statistics ───────────────────────────────────────────────────────────────
 
 def dstat(rows, key):
     return W.dstat(rows, key)
+
+
+def desk_cfg():
+    import leash_replay as L
+    sha = hashlib.sha256(open(os.path.join(ROOT, "config", "bot_config.json"), "rb").read()).hexdigest()
+    if not sha.startswith(CONFIG_SHA_PREFIX):
+        raise SystemExit(f"config sha {sha[:16]} != pinned {CONFIG_SHA_PREFIX} (amended_2 (3))")
+    cfg = copy.deepcopy(L.load_config())
+    cfg.pop("_min_hold", None)
+    return cfg, max(2, int(cfg.get("ai_local_trail_print_ring", 3) or 3))
+
+
+def ub_at(rows, key, p):
+    s = W.dstat(rows, key)
+    means = list(W.per_day(rows, key).values())
+    if s["mean"] is None or len(means) < 2:
+        return None
+    se = statistics.stdev(means) / math.sqrt(len(means))
+    return s["mean"] + W.E.t_ppf(p, len(means) - 1) * se
 
 
 def module_shas():
@@ -292,9 +339,8 @@ def main() -> None:
         ok = r["ask_in"] and r["bid_out"]
         r["net_A"] = (r["bid_out"] / r["ask_in"] - 1) if ok else None
     if a.cuts:
-        import exit_capture as XC
-        import leash_replay as L
-        cl, cache = client(), jload("armB_cache.pkl.json", {})
+        cfg, ring = desk_cfg()
+        cl = client()
         store = os.path.join(OUT, "armB.pkl")
         data = pickle.load(open(store, "rb")) if os.path.exists(store) else {}
         for r in rows:
@@ -303,9 +349,7 @@ def main() -> None:
             key = f"{r['day']}|{r['sym']}|{r['k']}"
             if key in data:
                 continue
-            secs = L.fetch_seconds(cl, r["sym"], r["T"] - 5, r["T"] + L.MAX_HOLD + 60)
-            b1m = XC.fetch_bars(cl, r["sym"], r["day"])
-            data[key] = {"secs": secs, "b1m": b1m}
+            data[key] = fetch_arm_b(cl, r, cfg, ring)
             if len(data) % 50 == 0:
                 pickle.dump(data, open(store, "wb"))
         pickle.dump(data, open(store, "wb"))
@@ -322,9 +366,16 @@ def main() -> None:
             for r in ctrl:
                 per[r["day"]].append(r["ctrl_d"])
             xs = [statistics.mean(v) for v in per.values()]
-            mde = (2.0 + 0.84) * statistics.stdev(xs) / math.sqrt(len(xs)) if len(xs) >= 2 else None
+            mde = (T_ARM + 0.84) * statistics.stdev(xs) / math.sqrt(len(xs)) if len(xs) >= 2 else None
             nd = len({r["day"] for r in inn})
             cnt[h] = {"in_trades": len(inn), "out_trades": len(half_rows(h, "OUT")),
+                      "drops_by_reason": dict(Counter(
+                          (fetched.get(f"{t['day']}|{t['sym']}|{t['k']}") or {}).get("status", "not_fetched")
+                          for t in smp["trades"] if t["half"] == h)),
+                      "missing_quote_by_side": dict(Counter(r["g1"] for r in rows if r["half"] == h
+                                                            and r["net_A"] is None)),
+                      "ask_below_trigger_share": (sum(1 for r in inn if r.get("ask_below_trigger")) / len(inn))
+                      if inn else None,
                       "missing_flow": sum(1 for r in rows if r["half"] == h and r["g1"] is None), "days": nd,
                       "mde": mde, "floors_met": len(inn) >= FLOOR_TRADES and nd >= FLOOR_DAYS
                       and mde is not None and mde <= MDE_BAR}
@@ -339,19 +390,19 @@ def main() -> None:
     if not all(cnt[h]["floors_met"] for h in ("A", "B")):
         raise SystemExit("UNDERPOWERED at the count step: no outcome is read")
     import exit_capture as XC
-    import leash_replay as L
-    cfg = copy.deepcopy(L.load_config())
-    cfg.pop("_min_hold", None)
-    ring = max(2, int(cfg.get("ai_local_trail_print_ring", 3) or 3))
-    r_ratio = desk_r_ratio()
+    cfg, ring = desk_cfg()
     data = pickle.load(open(os.path.join(OUT, "armB.pkl"), "rb"))
     cl = client()
     for r in rows:
         key = f"{r['day']}|{r['sym']}|{r['k']}"
-        if r["g1"] == "IN" and r["net_A"] is not None and key in data:
-            res = arm_b(r, r, data[key]["secs"], data[key]["b1m"], cfg, ring, r_ratio,
-                        lambda xs, s=r["sym"]: XC.fetch_bid(cl, s, int(xs)))
-            r["net_B"] = res["net"] if res else None
+        if r["g1"] == "IN" and r["net_A"] is not None:
+            if key not in data:
+                raise SystemExit(f"arm-B path missing for {key} (C4): rerun --cuts")
+            xs, trig, why, _held = arm_b_walk(r, data[key]["secs"], data[key]["b1m"], cfg, ring)
+            if xs >= data[key]["fetched_to"] - 1 and data[key]["fetched_to"] < et_epoch(r["day"], 15 * 60 + 50):
+                raise SystemExit(f"arm-B exit beyond the fetched prints for {key}")
+            px = XC.exit_price(trig, XC.fetch_bid(cl, r["sym"], int(xs)), why)
+            r["net_B"] = (px / r["ask_in"] - 1) if px else None
     out = {"arms": {}, "info": {}}
     for arm in ("A", "B"):
         key = f"net_{arm}"
@@ -367,6 +418,7 @@ def main() -> None:
                 diff = 0.0
             dd = W.drop_days(inn, lambda r, k=key: r[k])
             dn = W.drop_names(inn, lambda r, k=key: r[k])
+            ub98 = ub_at(inn, lambda r, k=key: r[k], 0.99375)
             if (s["t"] or 0) <= -2:
                 v = "FAIL"
             elif s["mean"] > 0 and (s["t"] or 0) >= T_ARM and diff is not None and diff >= 0 and dd >= 0 and dn >= 0:
@@ -374,9 +426,14 @@ def main() -> None:
             else:
                 v = "NOT_PASSED"
             hv.append(v)
-            ubs.append(s["ub"])
-            halves[h] = {"verdict": v, "net": s, "in_minus_out": diff, "drop3_days": dd, "drop5_names": dn,
-                         "n": len(inn)}
+            ubs.append(ub98)
+            io_t = None
+            if arm == "A":
+                both = W.per_day(half_rows(h, "IN"), lambda r: r["net_A"])
+                other = W.per_day(half_rows(h, "OUT"), lambda r: r["net_A"])
+                io_t = W.E.stats([both[d_] - other[d_] for d_ in both if d_ in other])["t"]
+            halves[h] = {"verdict": v, "net": s, "ub_98_75": ub98, "in_minus_out": diff, "in_minus_out_t": io_t,
+                         "drop3_days": dd, "drop5_names": dn, "n": len(inn)}
         verdict = ("FAIL" if "FAIL" in hv else "PASS" if all(x == "PASS" for x in hv) else
                    "FAIL" if all(u is not None and u < 0 for u in ubs) else "UNDERPOWERED")
         out["arms"][arm] = {"verdict": verdict, "halves": halves}
@@ -387,12 +444,18 @@ def main() -> None:
         out["info"][h] = {"all_sample_net_A": dstat(allr, lambda r: r["net_A"])["mean"],
                           "out_net_A": dstat(half_rows(h, "OUT"), lambda r: r["net_A"])["mean"],
                           "in_bar_gross": dstat(half_rows(h, "IN"), lambda r: r["bar_gross"])["mean"],
+                          "in_net_entry_T3": dstat([r for r in half_rows(h, "IN") if r.get("ask_T3")],
+                                                   lambda r: r["bid_out"] / r["ask_T3"] - 1)["mean"],
+                          "in_net_entry_T11": dstat([r for r in half_rows(h, "IN") if r.get("ask_T11")],
+                                                    lambda r: r["bid_out"] / r["ask_T11"] - 1)["mean"],
                           "out_bar_gross": dstat(half_rows(h, "OUT"), lambda r: r["bar_gross"])["mean"],
                           "entry_spread_bp_median": statistics.median(
                               (r["ask_in"] - r["bid_in"]) / ((r["ask_in"] + r["bid_in"]) / 2) * 1e4
                               for r in allr if r["ask_in"] and r["bid_in"]) if allr else None}
-    out["declared"] = ["arm B runs the desk exit stack under the CURRENT config file (as exit_capture), not each "
-                       "day's historical config", "R = entry x the desk's median R/entry (exit_capture fills)"]
+    out["declared"] = ["arm B: one pinned config (sha 837dfd79268ebf16), R = entry x 0.05009, spread_r = quoted "
+                       "spread / R", "T = first round-lot print >= stop + 1c; entry = max(ask in [T-3s, T+1s], "
+                       "trigger price)", "the T2 and G1 ingredients were chosen on these sessions: a PASS is a "
+                       "re-read until warehouse_confirm"]
     out["skeptic_ready"], out["module_sha256"] = a.skeptic_ready, module_shas()
     jwrite("result.json", out)
     print(json.dumps(out, indent=1, default=str))
