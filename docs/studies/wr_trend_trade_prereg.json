@@ -10,7 +10,7 @@
   "oversold_event": "a minute at which BOTH lines are <= -80.",
   "entry_signal": "at the close of minute t (09:45 .. 15:00): an oversold event occurred within t-20 .. t, AND fast(t) > -80 (it has left the bottom zone), AND both lines are RISING: fast(t) - fast(t-5) >= 5 points and slow(t) - slow(t-5) > 0.",
   "no_sideways": "implied: a minute where either line is not rising is not an entry; there is no other entry path in the primary (the 'very top with open squares' case is information only).",
-  "entry": "the open of minute t+1 (>= $10 RAW... warehouse prices are split-adjusted; the warehouse universe already requires a prior raw close >= $10).",
+  "entry": "the open of minute t+1 for the FIRST qualifying minute t; no price filter at entry (the only floor is universe membership: prior-day RAW close >= $10).",
   "exit_signal": "at the close of minute u > entry minute: the fast line is falling: fast(u) < fast(u-3) ('turns down').",
   "exit": "the open of minute u+1; or the close of the last bar at or before 15:59 if no exit signal by then.",
   "reentry": "one open trade per name; after an exit a new entry needs a NEW oversold event after the exit minute.",
@@ -37,5 +37,26 @@
  ],
  "confirmation": "A PASS is re-run unchanged on warehouse_confirm (2026-01-14 .. 04-24, never read), then a forward paper prereg; never a desk change by itself.",
  "no_retuning": "Lines, levels, the 20-minute oversold window, the 5-minute / 5-point rising rule, the 3-minute turn-down exit, entry window, cost, halves and floors are fixed.",
- "script": "tools/studies/wr_trend_trade.py (to be written)."
+ "script": "tools/studies/wr_trend_trade.py (to be written).",
+ "amended": {
+  "when": "2026-10-24, after result-skeptic round 1 FIX FIRST and the operator's answers, before any script or data.",
+  "operator_answers": {
+   "sideways": "'not rising': any minute where either line is not climbing is sideways - no buy, wherever the lines sit (as registered).",
+   "open_squares": "the FULL square: both lines >= -20 AND within 15 points (rte_tight); the risky top buy (information) uses it.",
+   "exit": "any downturn (as registered): the first u >= t+1 with fast(u) < fast(u-3)."
+  },
+  "changes": [
+   "(1a) Entry at the FIRST qualifying minute t; the exit scan starts at u = t+1 (a 1-minute minimum hold is possible).",
+   "(1b) Re-entry needs a new oversold event at a minute >= u+1 (after the exit fill).",
+   "(1d) Information exit: hold until the fast line turns down while in the top zone (>= -20) or falls back to <= -80.",
+   "(2) LINES: computed on a minute grid with grid fill (gaps <= 15 minutes filled flat at the previous close, as signals._minute_grid_pr); the overnight gap is not filled; warm-up from the previous warehouse session. A missing t+1 bar skips the trade (counted); a missing u+1 bar exits at the last close at or before u+1 (C2). Previous-close vs open jumps > 30% are counted and the name-day skipped (split mismatch).",
+   "(3) FEED: PRIMARY lines are computed on the warehouse IEX bars (what the live desk sees); all prices (entries, exits, controls) are SIP. The SIP-line run is information.",
+   "(4) CONTROLS: the x control needs only its entry bar; its exit uses C2. A control whose entry minute has no bar is redrawn with the next seed (counted, max 10). Information control d_rule_exit: the same random later minute, exited by the same %R rule.",
+   "(5) The count step also prints the hold-length distribution (median, share <= 3 minutes).",
+   "(6) Information: a 5-minute minimum hold before the exit rule applies. Declared risk: 1-3 minute holds are dominated by bar noise and the 5 bp cost.",
+   "(7) FAIL if EITHER lift's 97.5% upper bound < +5 bp in both halves, or the net's upper bound < 0 in both halves, or t <= -2 on either lift in a half; PASS also needs drop-top-5-names keeping both lifts >= 0; C4: missing warehouse names are counted against each day's manifest.",
+   "(8) The 'square-free bottom' cell uses os_tri (both <= -80 within 15 points); the '15-minute time stop' cell is renamed (not the desk trail).",
+   "(9) Family: the fourth %R entry-family test on this warehouse; a Bonferroni (t >= 2.73) reading is printed as information."
+  ]
+ }
 }
