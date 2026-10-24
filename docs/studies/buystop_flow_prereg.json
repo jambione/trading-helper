@@ -53,7 +53,12 @@
    "(8) POPULATION pinned: batch2 rows.json as scored 2026-10-24 (module_sha256 recorded in the sample file); the $20 floor applies to the batch fill price px = max(stop, SIP open of k).",
    "(9) CONFIRMATION reuses half A's numeric OFI60 cut and R = 0.05009 (no re-cut on the confirmation window). Declared: 15+ preregs name the same 70-session window as their confirmation; each use erodes it.",
    "(minor) (IN - OUT) is reported with its t; SPY-hedged NET (minus SPY's SIP return over the same entry-exit minutes) and drop rates for missing T / quotes by side are information."
-  ]
+  ],
+  "review_conditions_checked": {
+   "when": "2026-10-24 (skeptic round 2 conditions, before any fetch)",
+   "a_config": "pinned file saved on the mini as ai_reports/buystop_flow/pinned_bot_config_837dfd79.json (git 891d9b5b). Keys changed vs exit_capture's validated config cd84f710 (git 3e0169be): ai_movers_max_rows, ai_movers_min_price, ai_movers_scan_top, ai_watch_min_price, ai_watch_momentum_min_price, ai_watch_movers_min_price, ai_watch_seed_movers_n, ai_watch_wr_trend_min_rise - all ENTRY/SUPPLY knobs; no exit knob changed, so arm B is the exit stack exit_capture validated.",
+   "b_filters": "T uses round-lot prints {' ', '@', 'F'}; OFI60 keeps the pilot KEEP_CODES (odd lots included); arm B's prints come from leash_replay.fetch_seconds (drops I/Z/U/T) - both exclude odd lots; the T filter is the narrower set (declared)."
+  }
  },
- "status": "amended after skeptic round 1; round 2 next"
+ "status": "READY after skeptic round 2 (conditions checked); code review next"
 }
