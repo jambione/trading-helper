@@ -1,0 +1,71 @@
+{
+ "study": "Batch 2: every untested idea from the 2026-10-23/24 sessions (operator: 'build an exhaustive research test set of everything we've discovered that we've not tested and run it on the mini').",
+ "registered_at": "2026-10-24, before any script, feature or outcome",
+ "registered_before_results": true,
+ "prior": "LOW for each (~5-15%): every earlier %R entry matched random minutes; the new angle is timing (buy-stop, divergence, deceleration, faster line) and other information (volume, SPY, flow).",
+ "skipped_with_reason": {
+  "resting_bid_plus_flow": "tested 10/22 (flow_resting_entry): resting beats market ~+3 bp, flow does not cut adverse selection",
+  "small_cap_eod_reversal": "below the desk's $20 floor",
+  "underpowered_six": "need history free data lacks; only the reserved confirmation window would add sessions"
+ },
+ "common": {
+  "data": "Warehouse SIP + IEX 1-minute RTH bars, full liquid universe (~1,640-1,950 names/day), sessions 2026-05-11 .. 10-15; halves A <= 07-29 < B. %R lines exactly as wr_trend_trade (desk definitions: fast %R(21) EMA7, slow %R(112) EMA3, minute grid with <= 15-min fill, previous-session warm-up), computed on IEX bars (live feed); all prices SIP. warehouse_confirm (2026-01-14 .. 04-24) stays unread until a PASS.",
+  "entry": "the SIP open of minute t+1 after a signal at the close of minute t (09:45 .. 15:00), unless a test defines its own fill; a missing t+1 bar skips (counted). One open trade per name; first qualifying signal; re-entry only after a new qualifying setup after the exit fill.",
+  "exit": "PRIMARY for every %R-based test: the operator's exit - first u >= entry with fast(u) < fast(u-3), filled at the u+1 SIP open (C2 otherwise), else the last close <= 15:59. T7 uses a fixed 5-minute hold.",
+  "controls": "d = same name, seeded minute in (entry, entry + 60], same hold length; x = seeded other name, same entry/exit minutes (entry bar required, C2 exit); second draws d2/x2 for the MDE. Seeds sha256(sym|day|entry|'b2-<test>-d|x|d2|x2').",
+  "pass": "In BOTH halves: (trade - d) >= +5 bp and (trade - x) >= +5 bp, each t >= 2.0, mean net (5 bp) > 0, and dropping the 3 best days and the top 5 names keeps both lifts >= 0. Batch-robust label: t >= 2.74 in both halves (Bonferroni 0.05/8 scored tests).",
+  "fail": "t <= -2 on either lift in a half; or either lift's 97.5% upper bound < +5 bp in both halves; or the net upper bound < 0 in both halves. Otherwise UNDERPOWERED.",
+  "power": "Outcome-blind count step per test: trades/days per half, MDE = 2.84 x SD(day mean control - control2)/sqrt(days) for d and x, hold distribution; floors >= 300 trades, >= 20 days, MDE <= 5 bp per half; --score refuses otherwise.",
+  "canary": "Before any count step, each test's harness must pass a planted-edge canary (+10 bp stepped after entry, recovered within 1 bp on time-exit trades) on real bars.",
+  "c4": "Fetch failures and missing warehouse names counted; a test with any unrecovered gap is refused.",
+  "cost": "5 bp round trip binding (3, 10, 20 printed); ETF test 2 bp.",
+  "confirmation": "Any PASS is re-run unchanged on warehouse_confirm (ETF T8: the never-fetched 2026-01-14 .. 04-24 SPY/QQQ window) before anything else; never a desk change by itself."
+ },
+ "tests": {
+  "T1_lag_audit": {
+   "kind": "DIAGNOSTIC (no pass/fail)",
+   "units": "every paper BUY fill 2026-09-16 .. 10-23 (FIFO-matched as floor20_forward.fills), with the decision-ledger arm row that preceded it",
+   "measures": "for each fill: (a) the minute of the lowest SIP low in the 30 minutes before the fill; (b) the minute of the lowest SIP-computed fast %R in that window; (c) the minute fast %R first rose >= 5 points off that low (the 'turn'); (d) the arm timestamp; (e) the fill timestamp. bp lost at each step = price at the later event / price at the earlier event - 1 (SIP minute closes). Plus the forward 5/15/30-minute SIP return from (c) vs from (e), i.e. what entering at the turn instead of the fill would have changed (information; no verdict).",
+   "output": "medians and quartiles of each delay (seconds) and each bp step, by arm kind (square / pre-square)."
+  },
+  "T2_buy_stop": {
+   "signal": "an oversold minute m (both lines <= -80) in 09:45 .. 15:00; a buy-stop rests at high(m) + $0.01 for the next 10 minutes (cancelled if a new oversold minute makes a lower high - the stop then moves to the newer minute's high + $0.01, restarting the 10 minutes).",
+   "fill": "the first minute k in (m, m+10] whose SIP high >= the stop: filled at max(stop, open(k)) within minute k; the exit rule is evaluated from k+1.",
+   "note": "enters exactly as price turns up through the oversold minute's high, with no polling lag."
+  },
+  "T3_divergence": {
+   "signal": "at minute t: price makes a LOWER LOW than the lowest low of the previous oversold episode in t-30 .. t-5 (an episode = consecutive minutes with fast <= -80), while fast %R at t is HIGHER than that episode's minimum fast, and fast(t) > fast(t-1) (turning up). Entry t+1 open."
+  },
+  "T4_deceleration": {
+   "signal": "at minute t: fast <= -80 (still in the bottom zone), slope s1 = fast(t) - fast(t-3) <= 0 but s1 > s0 + 5 where s0 = fast(t-3) - fast(t-6) (falling less steeply by >= 5 points), and the SIP close(t) is within 0.2% of the 30-minute low. Entry t+1 open."
+  },
+  "T5_fast_ema3": {
+   "signal": "exactly the wr_trend_trade primary rule, but the fast line smoothed with EMA(3) instead of EMA(7) for entry AND exit (slow unchanged)."
+  },
+  "T6_volume_dryup": {
+   "signal": "an oversold episode in t-20 .. t with the SIP low of the episode in its last 5 minutes; mean SIP volume of minutes t-2 .. t < 0.5 x mean volume of t-12 .. t-3 (selling dries up); and fast(t) > fast(t-1). Entry t+1 open."
+  },
+  "T7_spy_lead": {
+   "signal": "SPY's SIP return over minutes t-1 .. t (close to close) >= +0.10% while the stock's return over the same minutes is <= 0 and the stock's 60-day beta proxy (its 20-session correlation of 1-minute returns with SPY on prior sessions) >= 0.5. Entry t+1 open; fixed 5-minute hold (close of t+5). Controls as common with the same hold.",
+   "note": "tests a minute-scale lead of the index over lagging high-correlation names."
+  },
+  "T8_w_neckline_power_bar": {
+   "instruments": "SPY and QQQ, 2016-01 .. 2026-10-15 ETF cache (held-out window never fetched), long only, 2 bp.",
+   "signal": "on 2-minute RTH bars: SWING HIGH = a bar whose high exceeds the 3 bars on each side (confirmed 3 bars later); NECKLINE = the most recent confirmed swing high; a POWER BAR = 1-3 combined bars (the amended_5 rule of pm_power_bar: >= 1.5x same-clock n-bar median range, >= 50% body, green) whose OPEN or first bar's low is at or below SMA20 and whose close is above BOTH the SMA20 and the neckline, with SMA20 rising or flat; window 10:00 .. 15:29.",
+   "trade": "entry next 1-minute open; stop = the power bar's low - $0.01; target 2R; else 15:59 close. Controls: seeded minute in (end, min(end+60, 15:30)], same % stop/target.",
+   "post_hoc": "designed after anchor_power_bar FAILED and after the operator's chart; a 2016-2026 PASS is only a candidate - it must repeat on the never-fetched 2026-01-14 .. 04-24 window to count."
+  },
+  "T9_partial_bar_wr": {
+   "kind": "SAMPLE-LIMITED (count first)",
+   "signal": "T5's rule with the fast line recomputed every 15 seconds on SIP trades (the forming minute included); entry at the next 15-second bucket's first trade.",
+   "data": "SIP trades for a seeded sample of 100 name-days per week (data-only account), sized by a request-budget probe; scored only if the count step is powered."
+  },
+  "T10_flow_preturn": {
+   "kind": "SAMPLE-LIMITED (count first)",
+   "signal": "in an oversold episode, the first minute whose Lee-Ready signed SIP trade flow over the last 60 s turns net buying (> +20% of volume) while fast %R is still <= -80; entry next minute open.",
+   "data": "SIP trades + quotes for oversold episodes in a seeded sample (same budget rule as T9)."
+  }
+ },
+ "multiplicity": "8 scored tests (T2-T8 + the running wr_trend_trade counted separately); batch-robust t >= 2.74; T1 is diagnostic; T9/T10 scored only if powered (then included in the count).",
+ "script": "tools/studies/batch2.py (to be written), sharing wr_trend_trade's lines/controls; run on the mini by tools/studies/batch2_runner.sh."
+}
