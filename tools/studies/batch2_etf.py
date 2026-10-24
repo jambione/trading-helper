@@ -197,7 +197,7 @@ def main():
     if a.canary:
         g = [x["gross_planted"] - x["gross"] for x in rows if x.get("gross_planted") is not None]
         out = {"n_time_exit": len(g), "delta_bp": round(1e4 * statistics.mean(g), 3) if g else None,
-               "pass": bool(g) and abs(statistics.mean(g) - STEP) <= 0.0002, "module_sha256": module_shas()}
+               "pass": bool(bool(g) and abs(statistics.mean(g) - STEP) <= 0.0002), "module_sha256": module_shas()}
         print(json.dumps(out, indent=1))
         write("canary.json", out)
         return
