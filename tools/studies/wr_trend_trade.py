@@ -159,6 +159,14 @@ def px_close_at_or_before(sip: dict, m: int, lo: int):
     return None
 
 
+def exit_px(sip: dict, x_min: int, e: int):
+    """The trade's exit convention, shared by trades and controls: the open of x_min when it has a bar (the u+1
+    fill), else the last close at or before it (C2); at 15:59 or later, the last close <= 15:59."""
+    if x_min > M_LAST:
+        return px_close_at_or_before(sip, M_LAST, e)
+    return px_open(sip, x_min) or px_close_at_or_before(sip, x_min, e)
+
+
 def trade(sip: dict, t: int, u: int | None) -> dict | None:
     e = t + 1
     o = px_open(sip, e)
@@ -168,15 +176,16 @@ def trade(sip: dict, t: int, u: int | None) -> dict | None:
         x_min, x = M_LAST, px_close_at_or_before(sip, M_LAST, e)
     else:
         x_min = u + 1
-        x = px_open(sip, x_min) or px_close_at_or_before(sip, x_min, e)
+        x = exit_px(sip, x_min, e)
     return {"entry_min": e, "exit_min": x_min, "gross": x / o - 1, "hold": x_min - e}
 
 
 def ret_over(sip: dict, e: int, x_min: int) -> float | None:
+    """Open of e to the trade's exit convention at x_min (controls exit exactly as trades do)."""
     o = px_open(sip, e)
     if o is None:
         return None
-    x = px_close_at_or_before(sip, min(x_min, M_LAST), e)
+    x = exit_px(sip, x_min, e)
     return x / o - 1 if x else None
 
 
