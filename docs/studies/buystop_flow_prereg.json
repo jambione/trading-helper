@@ -38,5 +38,22 @@
    "PASS (study) if EITHER arm meets its pass conditions with t >= 2.24 in both halves (Bonferroni over 2 arms) instead of 2.0; the (IN - OUT) and drop conditions apply to arm A only (arm B has no OUT side); arm B adds drop-3-days and drop-5-names >= 0. Both arms are always reported. FAIL per arm as registered; the study FAILS if both arms fail.",
    "Declared prior for arm B: the 10/21 exit study found the live exits keep ~70-78% of a fast 3-minute edge and need ~+11 bp of entry edge to break even on the desk's fills; with a ~2-4 bp entry edge arm B is expected to lose, unless the buy-stop's edge arrives fast and the leash keeps it."
   ]
- }
+ },
+ "amended_2": {
+  "when": "2026-10-24, after result-skeptic round 1 FIX FIRST, before any tick fetch or outcome.",
+  "changes": [
+   "(0) DECLARED: both ingredients were chosen as winners on these same 110 sessions (T2 best of 7 batch-2 tests; G1 best of 3 pilot groups). Only the flow-on-T2 interaction and the quoted cost are new; any PASS is a re-read of known effects until it repeats on warehouse_confirm.",
+   "(1) T = the first ROUND-LOT print (conditions subset of {' ', '@', 'F'}; odd lots 'I' and Z/U/T excluded, as leash_replay.fetch_seconds) in fill minute k with price >= stop + $0.01. The OFI60 flow feature keeps the pilot's definition (odd lots included).",
+   "(2) ENTRY = max(the ask of the last clean quote in [T - 3 s, T + 1 s], the trigger print's price); a missing quote in that window drops the trade (counted by side); the share with ask < trigger is reported. Information: entry at the ask at T + 3 s and T + 11 s (the desk's median arm-to-fill is 11 s).",
+   "(3) ARM B CONFIG: one config, the current config/bot_config.json, sha256 prefix 837dfd79268ebf16 (the live config after the operator's 10/23 16:10 change); the run refuses another sha. There is no per-day historical exit config.",
+   "(4) ARM B R = entry x 0.05009 (the median risk/entry of 1,177 desk 'watch' fills >= $20 in ai_reports/outcomes.jsonl; p25 0.04981, p75 0.05041); spread_r = the SIP quoted spread at the entry quote / R.",
+   "(5) ARM B PATHS: SIP prints fetched in chunks (T .. T + 15 min, then + 45 min, then to min(T + 120 min, 15:50)) and the walk re-run on each extension; an exit counts only if it falls before the fetched end (else extend). Budget: time-based (seconds per trade measured by the probe, the SDK pages internally), the joint A + B fetch must fit 6 hours; 429s retried.",
+   "(6) POWER: MDE = (2.24 + 0.84) x SD(day means of G1-IN trades' same-name control returns) / sqrt(days) <= 3 bp. PROJECTED before the fetch from the batch2 control rows (outcome-blind): N = 8,000 per half (G1-IN ~48/day) gives 2.63 / 2.23 bp; N = 4,000 gives 3.70 / 3.05 bp. So N = 8,000 per half (if the budget allows; otherwise UNDERPOWERED is declared before fetching). Realistic best case declared: T2 gross ~2-3 bp + flow ~1.5 bp - quoted cost ~3+ bp = ~0-1 bp net.",
+   "(7) FAIL per arm: t <= -2 in a half, or the 98.75% upper bound (Bonferroni over 2 arms) of the arm's NET < 0 in both halves.",
+   "(8) POPULATION pinned: batch2 rows.json as scored 2026-10-24 (module_sha256 recorded in the sample file); the $20 floor applies to the batch fill price px = max(stop, SIP open of k).",
+   "(9) CONFIRMATION reuses half A's numeric OFI60 cut and R = 0.05009 (no re-cut on the confirmation window). Declared: 15+ preregs name the same 70-session window as their confirmation; each use erodes it.",
+   "(minor) (IN - OUT) is reported with its t; SPY-hedged NET (minus SPY's SIP return over the same entry-exit minutes) and drop rates for missing T / quotes by side are information."
+  ]
+ },
+ "status": "amended after skeptic round 1; round 2 next"
 }
