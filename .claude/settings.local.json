@@ -125,9 +125,17 @@
       "Bash(.venv/Scripts/python.exe -m ruff check webull-l2/l2_signal.py)",
       "Bash(.venv/Scripts/python.exe -m ruff check webull-l2/l2_signal.py tests/test_l2_wall_cells.py)",
       "Bash(python -m pytest tests/test_l2_wall_cells.py -q)",
-      "Bash(python -m pytest tests/ -q -k \"l2\")"
+      "Bash(python -m pytest tests/ -q -k \"l2\")",
+      "Bash(ssh -o ConnectTimeout=8 mac-mini 'cd ~/repo/trading-helper; .venv/bin/python -c \"import scipy,numpy,pandas;print\\(scipy.__version__\\)\"; git log --oneline -1; head -c 600 ai_reports/decision_ledger/2026-10-20.jsonl; echo; grep -m1 \"\\\\\"arm_ok\\\\\": true\" ai_reports/decision_ledger/2026-10-20.jsonl | head -c 700')",
+      "Read(//opt/homebrew/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/bin/**)",
+      "Bash(.venv/bin/python -c \"import scipy;print\\('local scipy',scipy.__version__\\)\")"
     ]
   },
+  "enabledMcpjsonServers": [
+    "AgentsRoom-MCP",
+    "AgentsRoom-Test-Runner",
+    "AgentsRoom-QA-Tester"
+  ],
   "hooks": {
     "PostToolUse": [
       {
@@ -146,8 +154,7 @@
           {
             "type": "command",
             "command": "python3 \"/Users/jonathanbrasfield/.agentsroom/hooks/notify-agentsroom.py\"",
-            "async": true,
-            "_agentsroomHook": true
+            "async": true
           }
         ]
       }
@@ -167,8 +174,7 @@
           {
             "type": "command",
             "command": "python3 \"/Users/jonathanbrasfield/.agentsroom/hooks/notify-agentsroom.py\"",
-            "async": true,
-            "_agentsroomHook": true
+            "async": true
           }
         ]
       }
@@ -188,8 +194,7 @@
           {
             "type": "command",
             "command": "python3 \"/Users/jonathanbrasfield/.agentsroom/hooks/notify-agentsroom.py\"",
-            "async": true,
-            "_agentsroomHook": true
+            "async": true
           }
         ]
       }
@@ -209,8 +214,7 @@
           {
             "type": "command",
             "command": "python3 \"/Users/jonathanbrasfield/.agentsroom/hooks/notify-agentsroom.py\"",
-            "async": true,
-            "_agentsroomHook": true
+            "async": true
           }
         ]
       }
@@ -230,8 +234,7 @@
           {
             "type": "command",
             "command": "python3 \"/Users/jonathanbrasfield/.agentsroom/hooks/notify-agentsroom.py\"",
-            "async": true,
-            "_agentsroomHook": true
+            "async": true
           }
         ]
       }
@@ -251,8 +254,7 @@
           {
             "type": "command",
             "command": "python3 \"/Users/jonathanbrasfield/.agentsroom/hooks/notify-agentsroom.py\"",
-            "async": true,
-            "_agentsroomHook": true
+            "async": true
           }
         ]
       }
@@ -272,8 +274,7 @@
           {
             "type": "command",
             "command": "python3 \"/Users/jonathanbrasfield/.agentsroom/hooks/notify-agentsroom.py\"",
-            "async": true,
-            "_agentsroomHook": true
+            "async": true
           }
         ]
       }
@@ -295,16 +296,10 @@
           {
             "type": "command",
             "command": "python3 \"/Users/jonathanbrasfield/.agentsroom/hooks/notify-agentsroom.py\"",
-            "timeout": 720,
-            "_agentsroomHook": true
+            "timeout": 720
           }
         ]
       }
     ]
-  },
-  "enabledMcpjsonServers": [
-    "AgentsRoom-MCP",
-    "AgentsRoom-Test-Runner",
-    "AgentsRoom-QA-Tester"
-  ]
+  }
 }

@@ -9,7 +9,7 @@ Claude is out of usage. This brief is what you need to pick up safely. Read `doc
   market hours (default to after 16:00 ET).
 - **Data fetches for studies use the data-only Alpaca account** (`secrets_data.json`), never the desk key. Reading the
   desk's own paper orders read-only with its key is fine (as `floor20_forward.fills()`), after hours only.
-- **No spend** (no paid data) unless the operator approves; he will only pay if a free historical test on the same
+- **No spend** (no paid data) unless the operator approves; they will only pay if a free historical test on the same
   data shows it matters.
 - **Never enter or paste credentials.** **Do not push** to GitHub unless asked. The mini cannot git push (commit on the
   mini, fetch from the MacBook).
