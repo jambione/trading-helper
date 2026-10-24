@@ -186,7 +186,10 @@ class StudyMarket(BRO.AlpacaMarket):
             def fn(chunk=chunk):
                 got, token = collections.defaultdict(dict), None
                 while True:
-                    p = {"symbols": ",".join(chunk), "timeframe": "1Day", "start": lo, "end": f"{hi}T23:59:00Z",
+                    import datetime as _dt
+                    cap = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=16)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    end = min(f"{hi}T23:59:00Z", cap)      # the plan refuses SIP newer than ~15 min (403 'recent SIP')
+                    p = {"symbols": ",".join(chunk), "timeframe": "1Day", "start": lo, "end": end,
                          "feed": "sip", "adjustment": adjustment, "limit": 10000}
                     if token:
                         p["page_token"] = token
