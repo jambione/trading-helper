@@ -67,5 +67,13 @@
    "(8) FAIL is on the lift only (t <= -2, or both upper bounds < 5 bp); batch-robust bar t >= 2.84 (11 studies); net is SPY-adjusted, and the unhedged net is printed as information.",
    "(9) Entry bar must start by 15:40; microsecond-safe rounding; created strictly before 15:30:00."
   ]
+ },
+ "amended_4": {
+  "when": "2026-10-24 ~03:55 ET, during the bar fetch, before any outcome; data handling only.",
+  "changes": [
+   "Events need a US-listed ticker symbol (1-5 capitals, optional .X class suffix); foreign listings such as 'TSX:ENB' are dropped (the US SIP feed cannot trade them).",
+   "An event on its half's first trading day has no in-half daily look-back; no daily request is made (it fails the 20-bar liquidity rule, as amended_3 (5) already implies).",
+   "Hand-check record (amended (2)): 30 seeded matches, 1 not a stock-rating upgrade (CTSH 'Selected ... To Upgrade Integration'); <= 3, the keyword rule stands. Re-drawn after the ticker filter and recorded in handcheck.json."
+  ]
  }
 }

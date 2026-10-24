@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import json
 import math
 import os
@@ -36,6 +37,7 @@ HALVES = {"A": (date(2025, 4, 1), date(2026, 1, 13)), "B": (date(2026, 4, 25), d
 T_LO, T_HI = 9 * 60 + 45, 15 * 60 + 30         # created in [09:45:00, 15:30:00)
 CTRL_FROM, ENTRY_LAST = 9 * 60 + 46, 15 * 60 + 40
 HOLD, DELAY_S = 20, 60
+US_TICKER = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")      # amended_4: a symbol our US SIP feed can trade
 MIN_PX, MIN_DV = 10.0, 20e6
 COST, COSTS = 0.0005, (0.0003, 0.0005, 0.0010, 0.0020)
 LIFT_BAR, T_PASS, T_BATCH = 0.0005, 2.0, 2.84
@@ -152,6 +154,8 @@ def events() -> list[dict]:
                 continue
             first.setdefault(n["symbols"][0], n)
         for sym, n in sorted(first.items()):
+            if not US_TICKER.match(sym):
+                continue                                   # e.g. TSX:ENB: not on the US feed (amended_4)
             t = datetime.fromtimestamp(n["ts"], ET)
             m = t.hour * 60 + t.minute
             if T_LO <= m < T_HI:
@@ -218,7 +222,9 @@ def fetch_bars() -> None:
         b = datetime(d.year, d.month, d.day, 16, 0, tzinfo=ET).astimezone(timezone.utc)
         mins = get(e["sym"], TimeFrame.Minute, a, b)
         h0 = HALVES[h][0]                                       # daily look-back stays inside the half (amended_3 (5))
-        daily = get(e["sym"], TimeFrame.Day, datetime(h0.year, h0.month, h0.day, tzinfo=ET), b - timedelta(days=1))
+        d_start, d_end = datetime(h0.year, h0.month, h0.day, tzinfo=ET), b - timedelta(days=1)
+        # an event on the half's first day has no in-half look-back: empty, not a request (it fails liquidity)
+        daily = get(e["sym"], TimeFrame.Day, d_start, d_end) if d_end > d_start else []
         if mins is None or daily is None:
             failed.append(p)
             continue
