@@ -5,7 +5,7 @@
  "study": "Options-driven flows: (a) unusual call volume (Pan-Poteshman style option volume / stock volume) and (b) dealer gamma sign, as intraday entry filters on stocks.",
  "source": "Barbon & Buraschi 'Gamma Fragility' (working paper): gamma imbalance x illiquidity explains intraday momentum/reversal; Jiang & Strong: publicised unusual options activity earns nothing after the day; 2025 Springer paper: deep OTM short-dated volume predicts returns.",
  "prior": "LOW-MEDIUM; data-gated.",
- "status": "REGISTERED 2026-10-24 (full design); awaiting result-skeptic review before any fetch.",
+ "status": "STOPPED UNDERPOWERED 2026-10-24 at the stock-only power check (no option data fetched); untested, not failed.",
  "no_retuning": "n/a until designed.",
  "common": {
   "halves": "Warehouse studies: A = 2026-05-11 .. 2026-07-29, B = 2026-07-30 .. 2026-10-15 (110 sessions; 2026-04-27 .. 05-08 are warm-up for look-backs only).",
@@ -68,5 +68,42 @@
    "the strike/expiry filter (+/-15%, 45 days) is fixed, not tuned"
   ],
   "no_retuning": "Universe size, 45-day / 15% filters, 100-contract floor, 20-day Z, top decile, 09:45 entry, cost, halves and floors are fixed."
+ },
+ "power_check_stock_only": {
+  "when": "2026-10-24 ~05:30 ET, before any option data (skeptic round 1 item 4); stock returns only, seeded random long sets (C1 placebo), next-day open->close (conservative vs 09:45->close).",
+  "date_halves_mde_bp": {
+   "top100_decile": [
+    9.34,
+    12.29
+   ],
+   "top100_quintile": [
+    5.57,
+    9.17
+   ],
+   "top200_decile": [
+    6.55,
+    9.09
+   ],
+   "top200_quintile": [
+    3.83,
+    6.41
+   ]
+  },
+  "equal_day_split_mde_bp": {
+   "top200_quintile": [
+    4.07,
+    5.62
+   ],
+   "top200_decile": [
+    7.3,
+    7.89
+   ],
+   "top100_quintile": [
+    6.15,
+    7.88
+   ]
+  },
+  "reading": "No configuration reaches MDE <= 5 bp in both halves (best: top-200 quintile, equal-day split, 4.1 / 5.6 bp). Per the review's rule (abort rather than fetch a study that is guaranteed UNDERPOWERED), the options-flow study STOPS UNDERPOWERED at the stock-only power check; no option data is fetched. Free option history starts ~2024-02, so about 2.6 years is all there is.",
+  "skeptic_round1_fixes": "not applied (moot unless the study is reopened with more history or a lower bar, which would need the operator)"
  }
 }
