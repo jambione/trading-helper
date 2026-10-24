@@ -29,5 +29,14 @@
   "buy-stop fills modelled at the quoted ask at the trigger, not at the stop price"
  ],
  "no_retuning": "$20 floor, 60 s flow window, top-tercile cut from half A, quote ages, exit rule, halves, floors and the bar are fixed.",
- "script": "tools/studies/buystop_flow.py (to be written)."
+ "script": "tools/studies/buystop_flow.py (to be written).",
+ "amended": {
+  "when": "2026-10-24, operator ('can we leverage this knowing our exits will help'), before the skeptic review and before any fetch.",
+  "changes": [
+   "TWO ARMS, co-primary. ARM A = the registered rule (T2 %R turn-down exit, quoted NET). ARM B = the SAME G1-IN entries exited by the desk's LIVE exit stack: tools/studies/exit_capture.walk at zero drift (leash_replay walk, plan stop, ratchet/leash, trail-exit trend hold on IEX 1-minute bars, dead_trade, 15:50 end), under the live config of each trade's day as exit_capture uses it; entry = the quoted ask at T + 1 s; exit = exit_capture.exit_price (min(trigger, bid) for stop exits, the bid otherwise); risk / plan stop = the T2 stop level (the oversold minute's IEX high basis: entry - (stop - $0.01)... specifically risk = entry ask - (the T2 stop level - $0.01 - the oversold minute's IEX low) is NOT used; risk = entry ask - the oversold minute's IEX low, floored at 0.1% of entry).",
+   "ARM B data: SIP trades from T to min(T + walk MAX_HOLD, 15:50) for G1-IN sampled trades only (exit_capture's second rows), bids as exit_capture.fetch_bid; the joint fetch (A + B) obeys the 6-hour budget rule (N reduced until it fits).",
+   "PASS (study) if EITHER arm meets its pass conditions with t >= 2.24 in both halves (Bonferroni over 2 arms) instead of 2.0; the (IN - OUT) and drop conditions apply to arm A only (arm B has no OUT side); arm B adds drop-3-days and drop-5-names >= 0. Both arms are always reported. FAIL per arm as registered; the study FAILS if both arms fail.",
+   "Declared prior for arm B: the 10/21 exit study found the live exits keep ~70-78% of a fast 3-minute edge and need ~+11 bp of entry edge to break even on the desk's fills; with a ~2-4 bp entry edge arm B is expected to lose, unless the buy-stop's edge arrives fast and the leash keeps it."
+  ]
+ }
 }
