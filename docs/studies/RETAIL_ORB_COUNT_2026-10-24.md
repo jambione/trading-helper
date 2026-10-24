@@ -23,3 +23,15 @@ Both scripts passed two rounds of code review. Their fetches finished overnight 
   - The paper reports Sharpe ratios of 2.4-2.8 over 8 years.
   - Our one year of data cannot confirm or deny that.
 - **Not read.** Untested, not failed.
+
+## Analyst upgrades (regular hours, entry 60 s after the headline, 20-minute hold): UNDERPOWERED
+- **Hand-check:** 1 of 30 seeded headlines was not a stock-rating upgrade (AAPL "upgrade cycle"), within the limit of 3.
+- **Data fixes during the fetch (amended_4, before any outcome):**
+  - US tickers only (a TSX listing was dropped);
+  - no empty-range daily request for events on a half's first day.
+- **Count:**
+  - 1,091 events, of which 359 failed liquidity, which needs 20 in-half daily bars, >= $10 and >= $20M ADV;
+  - 428 / 304 usable events over 140 / 90 days;
+  - MDE **8.3 / 10.6 bp**, above the 5 bp limit.
+- **Not read.** Untested, not failed.
+- The 10/15 news study (all headlines) found that the move happens in the headline's own minute, which a 60 s entry misses. It remains the closest evidence.
