@@ -71,6 +71,14 @@ Claude is out of usage. This brief is what you need to pick up safely. Read `doc
 - Expectation: ~1-4%/yr over cash with a crash-like left tail; it is a risk premium, not riskless arbitrage. Primary
   arm caps holds at 40 trading days, so many deals exit at market before closing.
 
+### D. Discord callouts with the desk's real exits (NEW 10/24, operator request)
+- Draft prereg `docs/studies/callout_exits_prereg.json` — **DRAFT, not reviewed.** Next: prereg review (max 2
+  rounds), build on the buystop_flow arm-B desk-exit replay (same pinned config 837dfd79268ebf16), canary, count,
+  score. Data: `ai_reports/bb_live.jsonl` on the mini, 52 sessions 8/10-10/23; half B = the 18 sessions after 9/25
+  (1,003 raw rows, never analyzed).
+- The 9/27 study only used fixed holds; this tests the operator's idea that exits can handle the losses on the
+  callers' high-movement names. Prior: ~0 drift, so expect FAIL from slippage and spread; report it either way.
+
 ## 4. Calendar
 | When | What |
 |---|---|
