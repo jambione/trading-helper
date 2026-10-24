@@ -91,7 +91,8 @@
   ],
   "T3": [
    "(1) Previous episode = the most recent maximal run of real IEX minutes with fast <= -80 that ENDED in t-30 .. t-5; if another oversold run is in progress at t-4 .. t, no signal at t.",
-   "(2) Lower low on IEX lows: IEX low(t) < the episode's minimum IEX low; fast(t) > the episode's minimum fast; fast(t) > fast(t-1) (t and t-1 real)."
+   "(2) Lower low on IEX lows: IEX low(t) < the episode's minimum IEX low; fast(t) > the episode's minimum fast; fast(t) > fast(t-1) (t and t-1 real).",
+   "(3, skeptic round 2) 'Another oversold run in progress at t-4 .. t' = any real IEX minute with fast <= -80 in t-4 .. t blocks the signal."
   ],
   "T4": [
    "(1) Real IEX bars at t, t-3, t-6.",
@@ -113,9 +114,10 @@
    "(4) The neckline must be crossed: the power bar's first open or combined low <= neckline < its close.",
    "(5) W required: between the neckline's swing-high bar and the power bar there are two swing lows (bars whose low is below the 2 bars on each side) both below the neckline, the second no lower than 0.3% below the first (a double bottom); renamed 'W-neckline power bar'.",
    "(6) SMA20 = mean of the last 20 two-minute closes through the bar BEFORE the power bar (A_prev); slope = SMA through the power bar >= A_prev; one open trade per symbol, at most 3 per day; skip (counted) if entry <= stop or >= target; 2R target from the entry and stop.",
-   "(7) Post-hoc: anchor_power_bar's 'W pattern before the bar' information cell was declared dropped before scoring and never computed (nothing read). Batch-robust bar t >= 2.87. CONFIRMATION (only after a 2016-2026 PASS): the never-fetched 2026-01-14 .. 04-24 SPY/QQQ window, pass = long net > 0 and lift >= 0 (same signs) with >= 20 trades; fewer than 20 trades = 'not confirmable' (no promotion)."
+   "(7) Post-hoc: anchor_power_bar's 'W pattern before the bar' information cell was declared dropped before scoring and never computed (nothing read). Batch-robust bar t >= 2.87. CONFIRMATION (only after a 2016-2026 PASS): the never-fetched 2026-01-14 .. 04-24 SPY/QQQ window, pass = long net > 0 and lift >= 0 (same signs) with >= 20 trades; fewer than 20 trades = 'not confirmable' (no promotion).",
+   "(8, skeptic round 2) Swing highs and swing lows are searched within the same session only; the two swing lows are the two most recent confirmed before the power bar's first bar; 'between' excludes the neckline bar itself."
   ],
   "T9_T10": "DEFERRED to a later batch: SIP trade/quote fetches with budget rules, sampling frames, controls and Lee-Ready alignment are not built; not counted in the multiplicity."
  },
- "status": "amended after skeptic round 1; awaiting round 2"
+ "status": "READY after skeptic round 2 (T8 line added as instructed); code review next."
 }
