@@ -47,37 +47,17 @@ FLOOR_TRADES, FLOOR_DAYS, SPLIT_JUMP = 300, 20, 0.30
 # ── lines ────────────────────────────────────────────────────────────────────
 
 def ema(x: np.ndarray, span: int) -> np.ndarray:
-    """Exactly pandas Series.ewm(span, adjust=False).mean() (ignore_na=False): across a NaN the old weight still
-    decays, so the next observation weighs more (pandas' ewma recursion)."""
-    a = 2.0 / (span + 1)
-    out = np.full(len(x), np.nan)
-    if not len(x):
-        return out
-    w = float(x[0])
-    old_wt = 1.0
-    out[0] = w
-    for i in range(1, len(x)):
-        cur = float(x[i])
-        obs = cur == cur
-        if w == w:
-            old_wt *= 1 - a
-            if obs:
-                if w != cur:
-                    w = (old_wt * w + a * cur) / (old_wt + a)
-                old_wt = 1.0
-        elif obs:
-            w = cur
-        out[i] = w
-    return out
+    """The desk's smoothing, literally: pandas ewm(span, adjust=False).mean() (signals._minute_grid_pr)."""
+    import pandas as pd
+    return pd.Series(x).ewm(span=max(1, int(span)), adjust=False).mean().to_numpy()
 
 
 def pct_r(h: np.ndarray, lo: np.ndarray, c: np.ndarray, n: int) -> np.ndarray:
-    out = np.full(len(c), np.nan)
-    for i in range(n - 1, len(c)):
-        hh, ll = h[i - n + 1:i + 1].max(), lo[i - n + 1:i + 1].min()
-        if hh > ll:
-            out[i] = -100.0 * (hh - c[i]) / (hh - ll)
-    return out
+    """signals.williams_pr: -100 x (HH - C) / (HH - LL), NaN where the range is zero."""
+    import pandas as pd
+    hh = pd.Series(h).rolling(n).max()
+    ll = pd.Series(lo).rolling(n).min()
+    return (-100 * (hh - pd.Series(c)) / (hh - ll).replace(0, np.nan)).to_numpy()
 
 
 def grid(rows_prev: np.ndarray, rows_today: np.ndarray) -> tuple[list, np.ndarray, np.ndarray, np.ndarray]:

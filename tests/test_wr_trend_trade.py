@@ -46,3 +46,14 @@ def test_trade_uses_next_open_and_c2_exit():
     sip = {601: (100.0, 100.5), 602: (100.5, 101.0), 610: (101.0, 101.2)}
     tr = W.trade(sip, 600, 605)                       # exit fill at 606: no bar -> last close at or before
     assert tr["entry_min"] == 601 and abs(tr["gross"] - (101.0 / 100.0 - 1)) < 1e-12
+
+
+def test_pct_r_matches_signals():
+    import importlib
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    sig = importlib.import_module("signals")
+    rng = np.random.default_rng(1)
+    c = 100 + rng.standard_normal(200).cumsum()
+    h, lo = c + 0.3, c - 0.3
+    ref = sig.williams_pr(pd.Series(h), pd.Series(lo), pd.Series(c), 21).to_numpy()
+    assert np.allclose(W.pct_r(h, lo, c, 21), ref, equal_nan=True)
