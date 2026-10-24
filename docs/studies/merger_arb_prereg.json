@@ -1,0 +1,34 @@
+{
+ "registered_at": "2026-10-24, DRAFT before any deal list, script or outcome. NOT READY: needs the adversarial prereg review (max 2 rounds) before any build.",
+ "registered_before_results": true,
+ "batch": "standalone (operator 10/24: 'I dont mind holding for 6 to 8 weeks if its proven to be profitable')",
+ "study": "Cash merger arbitrage: buy the target of an announced all-cash acquisition the day after announcement and hold up to 8 weeks or until the deal closes or breaks. It is a risk premium, not riskless arbitrage: profit is the spread to the offer price, loss is the drop when a deal breaks.",
+ "source": "Mitchell & Pulvino (2001, J. Finance) ~4%/yr excess 1963-98 with crash-like left tail; Baker & Savasoglu (2002); later work reports smaller premia. Prior expectation: ~1-4%/yr excess over cash, negatively skewed, beta rises in down markets.",
+ "prior": "Feasibility checked 10/24 (prices only): Alpaca daily SIP bars exist for delisted targets through the last trading day (ATVI, TWTR, CTXS, SGEN, HZNP closed at ~offer; IRBT broken deal 46.39 -> 13.60). No deal list, return or spread was computed.",
+ "data": {
+  "prices": "Alpaca daily SIP bars, data-only account (secrets_data.json); cash proxy BIL, market SPY, same source.",
+  "deal_list": "SEC EDGAR (free): every target with an 8-K Item 1.01 merger agreement followed by DEFM14A or SC TO-T, announced 2016-01-01 .. 2024-12-31. Built from filings at announcement, NOT from completed-deal lists, so broken deals are included. Offer price per share and consideration type read from the announcement press release (EX-99.1).",
+  "deal_list_checks": "Outcome-blind: (1) offer price within -5% .. +40% of the pre-announcement close, else hand-checked or dropped and counted; (2) a 50-deal random audit against the filing text, error rate reported, > 5% errors stops the study; (3) the list is frozen and sha256-hashed before any return is computed.",
+  "held_out": "Deals announced 2025-01-01 .. 2026-09-30: never fetched for returns until a PASS on 2016-2024, then used once to confirm."
+ },
+ "signal": {
+  "include": "All-cash fixed price per share; US-listed target; pre-announcement close >= $5; 20-day median dollar volume >= $5M.",
+  "exclude": "Stock or mixed consideration, collars, CVRs, tender offers by a controlling holder, SPAC deals, deals where the target trades at or above the offer on entry day (declared count). Exclusions decided from announcement facts only."
+ },
+ "trade": {
+  "entry": "Close of announcement day + 1 trading day (the announcement jump itself is not tradable).",
+  "arm_W_primary": "Exit at the earlier of: the last close before delisting (deal closed), the close 2 days after a termination 8-K (break), or the close 40 trading days (~8 weeks) after entry.",
+  "arm_H_info": "Same, without the 40-day cap (hold to outcome).",
+  "bumps": "A raised offer or competing bid is just a higher exit price; the position is unchanged.",
+  "cost": "20 bp round trip primary (targets trade tight; daily bars carry no quotes); 50 bp sensitivity reported.",
+  "portfolio": "Equal weight across open deals, rebalanced daily; days with no open deal earn BIL."
+ },
+ "primary": "Monthly portfolio return of arm W net of cost minus BIL, regressed on SPY minus BIL: the intercept (alpha) annualized, Newey-West t (3 lags).",
+ "pass": "ALL of: (1) alpha >= 3%/yr annualized; (2) Newey-West t >= 2.0 over 2016-2024; (3) alpha > 0 in both halves A 2016-2020 and B 2021-2024; (4) then repeats with alpha > 0 on the held-out 2025-26 deals. Anything else is FAIL or UNDERPOWERED.",
+ "count_step": "Outcome-blind before scoring: deals per half (floor 150), months with >= 3 open deals (floor 80% of months), break rate is NOT read at this step.",
+ "canary": "Plant +1% per deal at exit; the harness must recover +1% in the per-deal mean and the matching alpha change.",
+ "information_only": ["arm H", "break rate and average loss on a break", "worst month and worst 12 months", "alpha in months SPY fell > 5%", "per-deal annualized spread at entry by deal size"],
+ "no_retuning": "No change to entry day, cap, cost, filters or pass bar after any return is seen. A failed study is written up as failed.",
+ "common": "Halves A <= 2020-12-31 < B. Paper only; no live capital and no spend. Operator's hold tolerance: 6-8 weeks, which is why the 40-day cap is primary; many deals take 3-6 months, so arm W often exits at market before the deal closes.",
+ "amended": []
+}

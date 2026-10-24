@@ -62,6 +62,15 @@ Claude is out of usage. This brief is what you need to pick up safely. Read `doc
   Verify `ai_reports/day_hold/forward.json` now includes 10/22 and 10/23 (last read: 9 days, picks −32 bp/day, t −2.2;
   read at 40 sessions ~11/13).
 
+### C. Merger arbitrage (NEW 10/24 — operator will hold 6-8 weeks if proven)
+- Draft prereg `docs/studies/merger_arb_prereg.json` — **DRAFT, not reviewed.** Next: adversarial prereg review
+  (max 2 rounds), then build the deal list from SEC EDGAR (8-K 1.01 + DEFM14A / SC TO-T, 2016-2024, all-cash only),
+  audit 50 deals, freeze + hash the list, count step, canary, score. 2025-26 deals are held out.
+- Feasibility (prices only): Alpaca daily SIP bars cover delisted targets to their last day (ATVI/TWTR/CTXS/SGEN/HZNP,
+  and broken IRBT). The hard part is the deal list (offer price parsing), not prices.
+- Expectation: ~1-4%/yr over cash with a crash-like left tail; it is a risk premium, not riskless arbitrage. Primary
+  arm caps holds at 40 trading days, so many deals exit at market before closing.
+
 ## 4. Calendar
 | When | What |
 |---|---|
