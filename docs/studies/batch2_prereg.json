@@ -67,5 +67,55 @@
   }
  },
  "multiplicity": "8 scored tests (T2-T8 + the running wr_trend_trade counted separately); batch-robust t >= 2.74; T1 is diagnostic; T9/T10 scored only if powered (then included in the count).",
- "script": "tools/studies/batch2.py (to be written), sharing wr_trend_trade's lines/controls; run on the mini by tools/studies/batch2_runner.sh."
+ "script": "tools/studies/batch2.py (to be written), sharing wr_trend_trade's lines/controls; run on the mini by tools/studies/batch2_runner.sh.",
+ "amended": {
+  "when": "2026-10-24, after result-skeptic round 1 FIX FIRST, before any script run on data or any outcome.",
+  "common": [
+   "(C1) STATISTIC: per half, per day, the mean over that day's trades of (trade - d) and (trade - x); day-equal; day-clustered t.",
+   "(C2) FEEDS: every price/volume CONDITION compared with the lines uses the line feed (IEX bars): T3 lower low, T4 30-minute low, T6 episode low and volumes, T2 oversold-minute high for the stop LEVEL. SIP is used only for fills, exits and controls; T2's stop is TRIGGERED by SIP prints (a broker stop sees the full tape) - declared.",
+   "(C3) REAL BARS: decisions only at minutes with a real IEX bar (wr_trend_trade amended code fix); every minute a signal references (lags, windows, volume minutes) must have a real IEX bar, else no signal (rejects counted).",
+   "(C4) MULTIPLICITY: T9 and T10 are DEFERRED (they need SIP trade/quote infrastructure and budget rules not built; a later batch), so 7 scored tests (T2-T8): batch-robust t >= 2.69 (0.05/7). T8 additionally carries the ETF family bar t >= 2.87 (12 ETF-cache studies).",
+   "(C5) SPY is in the warehouse (checked: sip/iex npz contain SPY); warehouse_confirm holds iex and sip.",
+   "(C6) wr_trend_trade status at registration: its count step had run (outcome-blind); no outcome had been read. If wr_trend_trade is scored before batch 2, T5 stays a pre-registered variant (registered before that read) - recorded here."
+  ],
+  "T1": [
+   "(1) Lines on IEX (primary) and SIP (second row); the IEX-vs-SIP turn difference reported as the feed component.",
+   "(2) Prices: (d) arm = the close of the minute BEFORE the arm timestamp (or the ledger price when present); (e) fill = filled_avg_price.",
+   "(3) (c)-vs-(e) forward returns are labelled 'not tradable (hindsight window)'; no rule may come from them without a new prereg; fills with no turn before the fill are counted.",
+   "(4) Coverage: fills 2026-09-16 .. 10-23 via a parameterised fills() (not floor20's BASE_FIRST); minute bars fetched for fill name-days after 10-15 (IEX + SIP, data-only account); fills on names never in the warehouse fetched the same way; an arm row matches a fill when it is the last arm_ok row for that symbol within 120 s before the fill (unmatched counted; arm kinds tabulated)."
+  ],
+  "T2": [
+   "(1) Lifecycle: an oversold IEX minute m in 09:45 .. 15:00 arms a stop at IEX high(m) + $0.01 for m+1 .. m+10; a later oversold minute with a LOWER high moves the stop down and restarts the 10 minutes; one with a HIGHER high is ignored; after expiry the next oversold minute may arm a new stop; fills may occur to 15:10.",
+   "(2) Trigger: a SIP high >= stop + $0.01 in minute k; fill at max(stop, SIP open(k)).",
+   "(3) The rest of minute k after the fill belongs to the trade; d/x controls enter at a minute open; the canary steps prices after the fill (minute k+1 on)."
+  ],
+  "T3": [
+   "(1) Previous episode = the most recent maximal run of real IEX minutes with fast <= -80 that ENDED in t-30 .. t-5; if another oversold run is in progress at t-4 .. t, no signal at t.",
+   "(2) Lower low on IEX lows: IEX low(t) < the episode's minimum IEX low; fast(t) > the episode's minimum fast; fast(t) > fast(t-1) (t and t-1 real)."
+  ],
+  "T4": [
+   "(1) Real IEX bars at t, t-3, t-6.",
+   "(2) 30-minute low = min IEX low over t-29 .. t inclusive; IEX close(t) <= 1.002 x that low."
+  ],
+  "T6": [
+   "(1) The episode = the most recent maximal oversold run ending in t-20 .. t (it may be ongoing at t); its lowest IEX low must fall in the episode's own last 5 minutes.",
+   "(2) Volume on IEX bars; all 13 minutes t-12 .. t must be real IEX bars (missing minutes never count as zero)."
+  ],
+  "T7": [
+   "(1) Correlation filter: mean of the stock's daily 1-minute-return correlation with SPY (SIP closes) over the previous 20 sessions (today excluded), >= 10 sessions present, >= 0.5. The words '60-day beta' are struck.",
+   "(2) Warm-up: names lacking 10 prior sessions are excluded and counted (the first ~10 sessions of half A have no candidates).",
+   "(3) Real SIP bars at t-1 and t for both SPY and the stock; entry t+1 open; exit = the trade convention at t+6 (the open of t+6, i.e. a 5-minute hold), controls the same."
+  ],
+  "T8": [
+   "(1) Halves: A = 2016-01-04 .. 2020-12-31, B = 2021-01-04 .. 2026-01-13 and 2026-04-27 .. 2026-10-15 (held-out never fetched; SMA20 and size references restart 04-27).",
+   "(2) Pass = the anchor_power_bar ETF pass: long net (2 bp) > 0 with t >= 2 AND lift vs a seeded later-minute control >= +5 bp with t >= 2 AND drop-3-best-days >= 0, >= 300 long-trade days per half; no cross-name control.",
+   "(3) Swing high: a 2-minute bar j whose high exceeds the 3 bars on each side, usable only once bar j+3 has CLOSED before the power bar's first bar starts.",
+   "(4) The neckline must be crossed: the power bar's first open or combined low <= neckline < its close.",
+   "(5) W required: between the neckline's swing-high bar and the power bar there are two swing lows (bars whose low is below the 2 bars on each side) both below the neckline, the second no lower than 0.3% below the first (a double bottom); renamed 'W-neckline power bar'.",
+   "(6) SMA20 = mean of the last 20 two-minute closes through the bar BEFORE the power bar (A_prev); slope = SMA through the power bar >= A_prev; one open trade per symbol, at most 3 per day; skip (counted) if entry <= stop or >= target; 2R target from the entry and stop.",
+   "(7) Post-hoc: anchor_power_bar's 'W pattern before the bar' information cell was declared dropped before scoring and never computed (nothing read). Batch-robust bar t >= 2.87. CONFIRMATION (only after a 2016-2026 PASS): the never-fetched 2026-01-14 .. 04-24 SPY/QQQ window, pass = long net > 0 and lift >= 0 (same signs) with >= 20 trades; fewer than 20 trades = 'not confirmable' (no promotion)."
+  ],
+  "T9_T10": "DEFERRED to a later batch: SIP trade/quote fetches with budget rules, sampling frames, controls and Lee-Ready alignment are not built; not counted in the multiplicity."
+ },
+ "status": "amended after skeptic round 1; awaiting round 2"
 }
