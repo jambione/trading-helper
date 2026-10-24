@@ -1,0 +1,33 @@
+{
+ "study": "Buy-stop entries filtered by buyer-initiated order flow, at the desk's actual cost (operator 2026-10-24): the two real-but-small effects found so far combined - (1) a buy-stop through the oversold minute's high (batch 2 T2: +2.0 / +2.4 bp vs random, t 5-10, gross +1.9 / +2.8 bp) and (2) Lee-Ready buyer-initiated SIP trade flow in the 60 s before the decision (order_flow_pilot G1: +1.5-2 bp, t ~3.5). Does a buy-stop whose trigger arrives on strong buy flow make money after paying the quoted spread?",
+ "registered_at": "2026-10-24, before any tick fetch or outcome for this study",
+ "registered_before_results": true,
+ "prior": "LOW-MEDIUM (~15%): two independent ~2 bp effects; if additive and the flow filter does not merely select names that already moved, a G1-IN buy-stop could reach ~+3-4 bp gross, close to the desk's ~3 bp round trip on $20+ names. Risks: the effects overlap (both measure buying pressure at the turn), and quoted spreads at a stop trigger are wider than average.",
+ "population": "Batch 2 T2 trades (tools/studies/batch2.py, sha as scored 2026-10-24) on the warehouse, sessions 2026-05-11 .. 10-15, ENTRY PRICE >= $20 (the desk's floor). Halves A <= 07-29 < B. The T2 rule, stop level, fill minute k and exit minute are unchanged (IEX lines, SIP trigger).",
+ "sample": "A seeded random sample of the population (seed 'bsf-sample'), stratified by day (equal share per day), size set by the budget probe: the largest N (<= 8,000 per half) whose estimated fetch time is <= 6 hours at <= 150 requests/min on the data-only account. Selection never reads outcomes.",
+ "trigger_time": "T = the timestamp of the first SIP trade (pilot KEEP_CODES) inside fill minute k with price >= stop + $0.01; a trade whose trigger cannot be found in the trade tape is dropped (counted).",
+ "flow": "OFI60 exactly as order_flow_pilot.features: Lee-Ready signed SIP volume share over [T - 60 s, T) (quotes <= 60 s old for signing, tick test at the mid, >= 5 signed trades, else missing). G1 side: IN = top tercile by (OFI60, tie_u) with the cut set on HALF A only (order_flow_pilot.top_cut / groups, tie_u seeded on sym|day|minute); OUT = the rest with the feature; missing = excluded (counted, reported by side).",
+ "actual_cost": "QUOTED round trip (the desk fills at the touch): entry = the ASK of the last clean SIP quote at or before T + 1 s (<= 30 s old); exit = the BID of the last clean quote at or before the exit time + 1 s (<= 30 s old), where the exit time is the start of the T2 exit fill minute (u+1) or 15:59:59 for an end-of-day exit. NET = exit bid / entry ask - 1. No other cost (paper has no commission). A trade lacking either quote is dropped (counted by side).",
+ "primary": "G1-IN trades: per half, per day the mean NET; day-equal; day-clustered t.",
+ "pass": "In BOTH halves: G1-IN mean NET > 0 with t >= 2.0, AND (G1-IN minus G1-OUT day-mean NET) >= 0 (point estimate; the flow filter must add), AND dropping the 3 best days and (separately) the top 5 names keeps G1-IN NET >= 0.",
+ "fail": "G1-IN NET t <= -2 in a half, or the 97.5% upper bound of G1-IN NET < 0 in both halves. Otherwise UNDERPOWERED.",
+ "power": "Outcome-blind count step after the tick fetch: G1-IN / OUT / missing trades and days per half; MDE = (2.0 + 0.84) x SD(day mean of the sampled trades' same-name random-entry control returns from the batch2 rows - control returns only, never the trades') / sqrt(days of G1-IN) <= 3 bp; floors >= 300 G1-IN trades and >= 20 days per half; --score refuses otherwise.",
+ "fetch": "Data-only Alpaca account (secrets_data.json), after hours, paced <= 150 requests/min: per sampled trade (a) SIP trades over [k_start - 60 s, k_end] (finds T and the flow window), (b) SIP quotes over [T - 120 s, T + 1 s], (c) SIP quotes over [exit - 30 s, exit + 1 s]. C4: 429s retried; any unrecovered failure, truncated page or missing file refuses scoring; failures and drops counted.",
+ "information_only": [
+  "G1-OUT NET and the whole sample's NET (the unfiltered buy-stop at quoted cost)",
+  "IN minus OUT on bar-based gross (separates the flow effect from spread differences)",
+  "the quoted spread at entry and exit by side (is the spread at a stop trigger wider than average?)",
+  "G2 (quote imbalance at T) and G3 (G1 and G2) sides",
+  "$10-$20 names (excluded from the primary)",
+  "the batch2 bar-based gross of the same sampled trades vs the quoted NET (the cost decomposition)"
+ ],
+ "confirmation": "A PASS is re-run unchanged on warehouse_confirm (2026-01-14 .. 04-24, never read; its T2 trades computed with the same code, ticks fetched only then), then a forward paper prereg; never a desk change by itself.",
+ "multiplicity": "One primary. Declared family context: this combines two effects found in earlier tests (batch 2, order_flow_pilot); a single-test t >= 2 is the bar, and a PASS is labelled 'combination of earlier findings' until confirmed.",
+ "declared_deviations": [
+  "SIP ticks and quotes (the live desk sees IEX quotes/trades; a live version would need the desk to compute flow on its own feed or buy SIP)",
+  "the stop LEVEL is set from IEX bars and TRIGGERED by SIP prints (as batch 2 T2)",
+  "buy-stop fills modelled at the quoted ask at the trigger, not at the stop price"
+ ],
+ "no_retuning": "$20 floor, 60 s flow window, top-tercile cut from half A, quote ages, exit rule, halves, floors and the bar are fixed.",
+ "script": "tools/studies/buystop_flow.py (to be written)."
+}
