@@ -376,6 +376,12 @@ _BLOCKER_LABELS: dict[str, str] = {
     "in_square": "in square",
     "last_macd_gap": "MACD gap",
     "wr_slow_5m_falling": "5m slow %R↓",
+    "leg1_after_1100": "after 11:00 (Leg 1)",
+    "leg1_extended": "day chg > 5% (Leg 1)",
+    "leg1_chg_low": "day chg < 0.5% (Leg 1)",
+    "leg1_repeat_square": "2nd+ square (Leg 1)",
+    "leg1_thin_volume": "thin vol (Leg 1)",
+    "leg1_spread_wide": "spread > 8bp (Leg 1)",
 }
 
 
@@ -16725,6 +16731,159 @@ def wr_slow_5m_refusal(sym: str, record: dict, now: float | None, cfg: dict) -> 
     return None
 
 
+def wr_leg1_refusal(
+    sym: str,
+    record: dict,
+    now: float | None,
+    cfg: dict,
+    *,
+    ask: float | None = None,
+) -> str | None:
+    """Leg-1 RTH gate (operator 2026-10-27; default OFF via ai_watch_leg1_rth_gate).
+
+    Enforces that $20+ stocks enter on their FIRST move of the day (Leg 1):
+      1) Price >= ai_watch_leg1_min_price (default $20.0).
+      2) Time <= ai_watch_leg1_max_time (default 11:00 ET).
+      3) Session Day Change in [ai_watch_leg1_min_day_chg, ai_watch_leg1_max_day_chg]
+         (default +0.5% .. +5.0%).
+      4) Consolidated SIP spread <= ai_watch_leg1_max_spread_pct (default 0.08% / 8 bp).
+      5) Volume ratio >= ai_watch_leg1_min_vol_mult (default 1.5x).
+      6) Zero prior Empty/Full Squares today in RTH (prior to the current onset window).
+    """
+    if not bool((cfg or {}).get("ai_watch_leg1_rth_gate", False)):
+        return None
+    try:
+        min_px = float((cfg or {}).get("ai_watch_leg1_min_price", 20.0) or 20.0)
+    except (TypeError, ValueError):
+        min_px = 20.0
+    px = _f_or_none(ask)
+    if px is None and isinstance(record, dict):
+        px = _f_or_none(record.get("last_ask") or record.get("price"))
+    if px is not None and px < min_px:
+        return None
+
+    t = float(now if now is not None else time.time())
+    from zoneinfo import ZoneInfo
+    from datetime import datetime
+    et = ZoneInfo("America/New_York")
+    dt = datetime.fromtimestamp(t, et)
+    m = dt.hour * 60 + dt.minute
+
+    # 1. Time-of-day check (default <= 11:00 ET / minute 660)
+    try:
+        max_time_s = str((cfg or {}).get("ai_watch_leg1_max_time", "11:00") or "11:00").strip()
+        th, tm = [int(x) for x in max_time_s.split(":")[:2]]
+        max_m = th * 60 + tm
+    except Exception:
+        max_m = 11 * 60
+    if m > max_m:
+        return "leg1_after_1100"
+
+    # 2. Day change check (default +0.5% .. +5.0%)
+    try:
+        min_chg = float((cfg or {}).get("ai_watch_leg1_min_day_chg", 0.5) or 0.5)
+        max_chg = float((cfg or {}).get("ai_watch_leg1_max_day_chg", 5.0) or 5.0)
+    except (TypeError, ValueError):
+        min_chg, max_chg = 0.5, 5.0
+    dchg = _arm_day_change(record)
+    if dchg is None and isinstance(record, dict):
+        dchg = _f_or_none(record.get("pct_change"))
+    if dchg is not None:
+        if dchg > max_chg + 1e-9:
+            return "leg1_extended"
+        if dchg < min_chg - 1e-9:
+            return "leg1_chg_low"
+
+    # 3. Spread gate (default <= 0.08% / 8 bp)
+    try:
+        max_sp = float((cfg or {}).get("ai_watch_leg1_max_spread_pct", 0.08) or 0.08)
+    except (TypeError, ValueError):
+        max_sp = 0.08
+    if max_sp > 0 and sym:
+        sp = sip_spread_pct(sym, now=t)
+        if sp is not None and sp > max_sp + 1e-12:
+            return "leg1_spread_wide"
+
+    # 4. Volume expansion check (default >= 1.5x)
+    try:
+        min_vol_mult = float((cfg or {}).get("ai_watch_leg1_min_vol_mult", 1.5) or 1.5)
+    except (TypeError, ValueError):
+        min_vol_mult = 1.5
+    if min_vol_mult > 0:
+        vr = _f_or_none(record.get("vol_now_ratio")) if isinstance(record, dict) else None
+        if vr is None and isinstance(record, dict):
+            vr = _arm_rvol(record)
+        if vr is not None and vr < min_vol_mult - 1e-9:
+            return "leg1_thin_volume"
+
+    # 5. Prior RTH Square Check (no square earlier today between 09:30 and now - 180s)
+    try:
+        t_open = dt.replace(hour=9, minute=30, second=0, microsecond=0).timestamp()
+        last_done_min = int(t // 60) * 60 - 60
+        bars_rth = []
+        try:
+            import ob_observe
+            all_bars = ob_observe.bars(sym)
+            if all_bars:
+                bars_rth = [b for b in all_bars if t_open <= float(b[0]) <= last_done_min + 1e-6]
+        except Exception:
+            bars_rth = []
+        if not bars_rth:
+            rows = symbol_ohlc(sym, cfg, t)
+            stamps = _cached_ohlc_stamps(sym, cfg, t)
+            if rows and stamps and len(rows) == len(stamps):
+                bars_rth = [
+                    (float(ts), 0.0, float(r[0]), float(r[1]), float(r[2]))
+                    for r, ts in zip(rows, stamps)
+                    if ts is not None and t_open <= float(ts) <= last_done_min + 1e-6
+                ]
+        if len(bars_rth) >= 14:
+            by_m = {int(b[0]): b for b in bars_rth}
+            m_curr = int(t_open)
+            filled = []
+            prev_c = float(bars_rth[0][4])
+            while m_curr <= last_done_min:
+                b = by_m.get(m_curr)
+                if b is not None:
+                    filled.append((m_curr, float(b[2]), float(b[3]), float(b[4])))
+                    prev_c = float(b[4])
+                else:
+                    filled.append((m_curr, prev_c, prev_c, prev_c))
+                m_curr += 60
+            if len(filled) >= 14:
+                alpha_f = 2.0 / 8.0  # span 7
+                alpha_s = 2.0 / 4.0  # span 3
+                sm_f, sm_s = None, None
+                cutoff_m = last_done_min - 180
+                for i, r in enumerate(filled):
+                    ts_m = r[0]
+                    if ts_m > cutoff_m:
+                        break
+                    win_f = filled[max(0, i - 20) : i + 1]
+                    win_s = filled[max(0, i - 111) : i + 1]
+                    if len(win_f) >= 14:
+                        hh_f = max(b[1] for b in win_f)
+                        ll_f = min(b[2] for b in win_f)
+                        c_i = r[3]
+                        raw_f = _raw_percent_r(hh_f, ll_f, c_i)
+                        if raw_f is None:
+                            raw_f = -50.0
+                        hh_s = max(b[1] for b in win_s)
+                        ll_s = min(b[2] for b in win_s)
+                        raw_s = _raw_percent_r(hh_s, ll_s, c_i)
+                        if raw_s is None:
+                            raw_s = -50.0
+
+                        sm_f = raw_f if sm_f is None else alpha_f * raw_f + (1.0 - alpha_f) * sm_f
+                        sm_s = raw_s if sm_s is None else alpha_s * raw_s + (1.0 - alpha_s) * sm_s
+                        if sm_f >= -35.0 and sm_s >= -35.0 and abs(sm_f - sm_s) <= 15.0:
+                            return "leg1_repeat_square"
+    except Exception:
+        pass
+
+    return None
+
+
 def _wilder_rsi(closes: list, n: int = 14) -> list:
     """Wilder RSI, the arithmetic of tools/studies/rsi_history_fills.py (None until n+1 closes)."""
     out: list = [None] * len(closes)
@@ -17155,6 +17314,10 @@ def should_arm_buy(
         _s5_why = wr_slow_5m_refusal(_gate_sym, record, now, cfg)
         if _s5_why:
             return False, _s5_why
+        # Leg-1 RTH gate (off by default; enabled via ai_watch_leg1_rth_gate).
+        _leg1_why = wr_leg1_refusal(_gate_sym, record, now, cfg, ask=ask)
+        if _leg1_why:
+            return False, _leg1_why
 
     # MACD direction veto: refuse a crossed-down gap. Fail-open on missing
     # MACD so it cannot starve opens the way macd_src_unknown once did.

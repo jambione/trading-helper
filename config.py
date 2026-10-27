@@ -598,6 +598,14 @@ DEFAULT_CONFIG = {
     # 5-minute Slow %R pitch veto (operator 10/26): refuse buys when 5m slow %R pitch < min_pitch (default 0.0).
     "ai_watch_wr_slow_5m_veto":         False,
     "ai_watch_wr_slow_5m_min_pitch":    0.0,
+    # Leg-1 RTH gate (operator 10/27): capture 1st Empty Square of day on $20+ stocks (+0.5%..+5.0%, <=11:00 ET).
+    "ai_watch_leg1_rth_gate":           False,
+    "ai_watch_leg1_min_price":          20.0,
+    "ai_watch_leg1_min_day_chg":        0.5,
+    "ai_watch_leg1_max_day_chg":        5.0,
+    "ai_watch_leg1_max_time":           "11:00",
+    "ai_watch_leg1_min_vol_mult":       1.5,
+    "ai_watch_leg1_max_spread_pct":     0.08,
     # Its matched 'trade less' control: refuse this share of presquare arm episodes at random (seeded). 0 = off.
     "ai_watch_wr_rand_refuse_share":    0.0,
     "ai_watch_wr_rsi_min_rise":         0.0,   # RSI(14) 10-bar rise gate on presquare arms (10/10 counterfactual; off)
@@ -2168,6 +2176,13 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_wr_trend_min_rise",
     "ai_watch_wr_slow_5m_veto",
     "ai_watch_wr_slow_5m_min_pitch",
+    "ai_watch_leg1_rth_gate",
+    "ai_watch_leg1_min_price",
+    "ai_watch_leg1_min_day_chg",
+    "ai_watch_leg1_max_day_chg",
+    "ai_watch_leg1_max_time",
+    "ai_watch_leg1_min_vol_mult",
+    "ai_watch_leg1_max_spread_pct",
     "ai_watch_wr_rand_refuse_share",
     "ai_watch_wr_rsi_min_rise",
     "ai_watch_range_arm",
