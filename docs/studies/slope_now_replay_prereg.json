@@ -49,5 +49,6 @@
     "6_pins": "Every variant also pins the 10/27 values of the knobs that decide whether a pitch exists: ai_watch_poll_sec 10.0, ai_watch_engine_exh_max_age_sec 8.0, ai_watch_exhaustion_engine_only true, ai_watch_stream_bars_live true. Per session the replay REF pitch presence share is printed; a session more than 15 points off 10/27's replay presence share is excluded (counted). Forward sessions' recorded config_fp differences from 10/27 are listed.",
     "7_power": "Unchanged; declared likely UNDERPOWERED (live 10/27 had ~44 checks that passed every gate).",
     "pass_update": "In 'pass', lift_rand means the CRAND (per-check, delay-matched) leg."
-  }
+  },
+  "amended_2": "amended_2 (skeptic r2): (1) CRAND share is calibrated per session by count, not by check rate: starting at SLOPE's per-check rate, bisect the share (at most 4 passes per seed set) until the seed-averaged CRAND trade count is within ±15% of SLOPE's. CRAND and SLOPE are evaluated at the same position in should_arm_buy, after every other gate. If more than a third of scored sessions cannot be matched, the verdict is CONTROL UNMATCHED (UNPROVEN), not FAIL; the lift_ref result is still reported. (2) Fidelity matching uses the row's last_poll_ts (the time of the indicator reading), not the snapshot ts: nearest live row for the same symbol with |last_poll_ts − replay check ts| ≤ 5 s. (3) In fidelity check (d), the live-side rule ignores staleness (live snapshots carry no pctr_pitch_ts); the replay side counts both slope_not_rising and slope_unknown."
 }
