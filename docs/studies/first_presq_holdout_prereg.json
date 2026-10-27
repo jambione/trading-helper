@@ -175,5 +175,69 @@
     ],
     "accepted_by": "operator 2026-10-27 in chat: 'Accept READY on first_presq_holdout as amended through amended_4; write the script, run the port fidelity check, the in-sample count comparison, the 96-config grid and the MDE projection.'",
     "script": "tools/studies/first_presq_holdout.py (stage 1: --fidelity, --extract, --counts, --grid). Stage-2 held-out modes are added before any held-out fetch and may not change anything above."
+  },
+  "stage_1_result": {
+    "when": "2026-10-27 evening ET, before any held-out fetch",
+    "fidelity": "Argon's own eval_day_idx on the pinned 120 days: N 448 and median +2.88 exact; halves +7.46/+7.17 exact at a +-150 clip; mean +7.38 and drop-3 +5.32 not reproducible from the recovered script (+8.17/+6.72 at its +-200 clip, +7.33/+6.10 at +-150); setup 1 N 160 = report. Operator ruling (2026-10-27): 'the port reproduces Argon's 448 trades, median and halves; the report's mean and drop-3 don't come from the recovered script. Run the 96-config grid and MDE projection.'",
+    "counts": "verbatim 448, causal 426, differ 22 (4.9%): 19 with no SIP bar at the entry or exit minute (skipped by design), 3 other. An earlier run differed 8% because of a dvol15 clock-window bug (fixed 3289f900); that run's grid output was set aside unread.",
+    "eligible_configs": 9,
+    "WINNER_iex": {
+      "cfg": "fr10-sr2-v2-w1130-c0.5-5-p25",
+      "n": 414,
+      "days": 110,
+      "net_5bp": -2.92,
+      "net_t": -0.53,
+      "lift_d": 1.88,
+      "lift_d_t": 0.31,
+      "lift_x": 0.32,
+      "lift_x_t": 0.04
+    },
+    "runner_up_iex": {
+      "cfg": "fr10-sr2-v2-w1300-c0.5-5-p25",
+      "n": 421,
+      "days": 110,
+      "net_5bp": -3.01,
+      "net_t": -0.54,
+      "lift_d": 1.71,
+      "lift_d_t": 0.28,
+      "lift_x": 0.1,
+      "lift_x_t": 0.01
+    },
+    "ARGON_sip_causal": {
+      "cfg": "fr15-sr2-v1.5-w1130-c0.5-5-p20",
+      "n": 426,
+      "days": 113,
+      "net_5bp": 5.71,
+      "net_t": 0.99,
+      "lift_d": 13.38,
+      "lift_d_t": 1.79,
+      "lift_x": 3.86,
+      "lift_x_t": 0.59
+    },
+    "ARGON_iex": {
+      "cfg": "fr15-sr2-v1.5-w1130-c0.5-5-p20",
+      "n": 458,
+      "days": 114,
+      "net_5bp": -4.73,
+      "net_t": -0.85,
+      "lift_d": -2.18,
+      "lift_d_t": -0.34,
+      "lift_x": 1.62,
+      "lift_x_t": 0.23
+    },
+    "projection": {
+      "ARGON_sip": {
+        "sd_in": 60.5,
+        "r": 0.95,
+        "mde_proj_600": 11.0
+      },
+      "WINNER_iex": {
+        "sd_in": 131.7,
+        "r": 0.924,
+        "mde_proj_600": 24.4
+      }
+    },
+    "stop_rule": "Both MDE projections exceed 8 bp at 600 sessions (ARGON 11.0, WINNER 24.4), so per amended_3 r2_8 the held-out fetch does NOT run; the operator is told and decides.",
+    "reading": "Information only (in-sample). On IEX lines, the feed the desk trades on, no configuration of Argon's trigger is profitable after 5 bp: the best eligible is -2.9 bp with both lifts ~0, and ARGON's own configuration is -4.7 bp. On SIP lines ARGON nets +5.7 bp (t 0.99); its lift over a later minute of the same name is +13.4 (t 1.79) but over a same-minute other name only +3.9 (t 0.59), so most of the raw return is what other names did in the same minutes."
   }
 }
