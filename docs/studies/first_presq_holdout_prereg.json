@@ -62,5 +62,73 @@
   "if_pass": "result-skeptic Mode 3 review, then (IEX pass only) a live-desk prereg for the arm itself; a SIP-only pass is recorded as 'real on SIP, not tradable on the live feed' (sip-is-delayed-only).",
   "if_fail": "Leg-1 'first square' is closed as an entry edge; the live Leg-1 gate's knobs lose their claimed basis.",
   "script": "tools/studies/first_presq_holdout.py, written after this file is committed and after a result-skeptic READY; it may not change anything above. It copies pitch_open's line code and controls; pitch_open.py is not edited.",
-  "multiplicity": "2 primary tests (IEX, SIP), Bonferroni t >= 2.24. Information cells have no pass."
+  "multiplicity": "2 primary tests (IEX, SIP), Bonferroni t >= 2.24. Information cells have no pass.",
+  "amended": {
+    "when": "2026-10-27 ~18:15 ET, after result-skeptic round 1 FIX FIRST (findings A-H) and the operator's instruction, before any held-out fetch, any script, or any in-sample FIRST_PRESQ return.",
+    "operator": "2026-10-27: 'Proceed without it [Argon's script] - I'm looking for the best configure that gives the most profit.' The study becomes two stages: an in-sample configuration search on Argon's sessions, then a held-out test of the chosen configuration only.",
+    "design": {
+      "stage_1_search": {
+        "sample": "Argon's sample: the warehouse 2026-04-27..2026-10-15 (iex+sip intersection; each day needs its previous day). Already Argon's in-sample, so searching it costs no held-out data. Every number from stage 1 is information only.",
+        "lines_for_selection": "IEX lines and IEX volume (a rule the desk could implement on its live feed). Fills and marks on SIP.",
+        "grid": {
+          "first_rule": [
+            "F1: the name's first EMPTY-square onset since 09:30 (pitch_open.empty_square)",
+            "F2: no earlier minute since 09:30 with ANY square (fast >= -35 and slow >= -35 and |fast-slow| <= 15), the live wr_leg1_refusal check, today's bars only; signal = an empty-square onset with no such earlier minute"
+          ],
+          "volume_rule": [
+            "V1: v(t) / mean(v[t-15..t-1])",
+            "V2: pace = (sum v[t-4..t] / 5) / (sum v[09:30..t] / minutes elapsed), the shape of the desk's vol_now_ratio (last 5 minutes vs today's pace); needs t >= 09:35"
+          ],
+          "volume_mult": [
+            1.5,
+            2.0
+          ],
+          "window_end": [
+            "11:00",
+            "11:30",
+            "13:00"
+          ],
+          "day_change_band": [
+            [
+              0.5,
+              5.0
+            ],
+            [
+              1.0,
+              4.0
+            ]
+          ],
+          "slow5m_pitch_min_2": [
+            "off",
+            "on: completed 5m-bar slow %R(28, EMA 3) bar-to-bar change >= +2.0 at t (5m bars built from completed 1m bars, the live wr_slow_5m_refusal rule 2 shape)"
+          ],
+          "price_floor": [
+            20,
+            25
+          ],
+          "fixed": "window start 09:45; price cap $150; entry SIP open t+1; exit SIP close entry+14; controls as below.",
+          "size": "2 x 2 x 2 x 3 x 2 x 2 x 2 = 192 configurations."
+        },
+        "selection": "WINNER = the configuration with the highest day-equal net after 5 bp (IEX lines), among configurations with >= 300 trades and trades on >= 60 days. Ties: more trades, then the configuration string ascending. Selection uses net only; lifts are printed for the top 10 as information.",
+        "argon_as_stated": "ARGON = F1, V1, 1.5x, 11:30, [0.5, 5.0], 5m off, $20. If ARGON is the WINNER, the second primary is the runner-up."
+      },
+      "stage_2_holdout": {
+        "primaries": "Two tests on IEX lines: WINNER and ARGON (Bonferroni over 2, t >= 2.24). SIP-line versions of both are information only.",
+        "sample": "Held-out sessions from 2026-01-13 going backward (finding C: 2026-01-14..04-24 is the desk's reserved warehouse_confirm set, already read by other studies, and Argon's exposure to it cannot be checked; it is copied, not refetched, and scored as its own information cell). Blocks of 60 sessions to at most 600 (about 2023-10).",
+        "after_10_15": "Information only (the liquidity table ends 10/15). Operator said 'proceed' on 10/27 after being told this; not separately confirmed."
+      }
+    },
+    "fixes": {
+      "A_power": "Before any held-out fetch: run stage 1's controls-only MDE on the in-sample warehouse for WINNER and ARGON (control minus control2 day means only, no trade means), project MDE at 300 days per half, and record it here. Floors per half: >= 150 trades, >= 40 days, MDE <= 8 bp (was 6). If the projection exceeds 8 bp at 600 sessions, the held-out stage still runs to 600 and the verdict is UNDERPOWERED (no means), as the operator was told.",
+      "B_constant": "MDE = (2.24 + 0.84) * stdev / sqrt(n_days) = 3.08 x se. Each half needs a lift of about 2.24 x se to pass; power is low by design and this is stated.",
+      "C_confirm_set": "See stage_2_holdout.sample.",
+      "D_definitions": "The volume and first-square variants are now grid dimensions (F1/F2, V1/V2) and the winner is fixed before the fetch. 'IEX PASS' reads 'a rule the desk could implement', not 'what the live gate computes'.",
+      "E_missing_minutes": "Volume: a minute absent from the feed's file, and a 2-15 minute flat-filled minute, counts as zero volume. Lines use the flat fill as before.",
+      "F_iex_history": "One probe request for an IEX session in 2024-01 before any held-out fetch; if IEX is not available that far back, the held-out stage stops where IEX stops (recorded).",
+      "G_after_10_15": "See stage_2_holdout.after_10_15.",
+      "H_scored_sessions": "Scored sessions = every fetched held-out session except the extra warm-up session at the oldest end, whether or not it has a trade. Halves by count over those.",
+      "feed_details": "Previous close for day change is the SIP last RTH close for both line feeds. The price filter uses the line feed's own close(t) (IEX close for IEX lines), so the IEX rule uses nothing the desk cannot see."
+    },
+    "supersedes_in_original": "The original single-rule primary, the SIP co-primary, the 6 bp floor and the 2.84 constant are replaced by the above. Pass ladder, controls, statistic, cost (5 bp), canary and score gate are unchanged and apply to each stage-2 primary."
+  }
 }
