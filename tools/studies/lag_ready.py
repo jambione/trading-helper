@@ -45,8 +45,8 @@ def day_data(day: str, syms: set):
                 if isinstance(p, dict):
                     pos.append((float(d["ts"]), len(p.get("positions") or {}), len(p.get("open_orders") or [])))
     for v in ew.values():
-        v.sort()
-    pos.sort()
+        v.sort(key=lambda x: x[0])
+    pos.sort(key=lambda x: x[0])
     arms = defaultdict(list)
     for line in open(os.path.join(SNAP, day, "decision_ledger.jsonl")):
         r = json.loads(line)
