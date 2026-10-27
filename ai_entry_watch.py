@@ -16731,6 +16731,34 @@ def wr_slow_5m_refusal(sym: str, record: dict, now: float | None, cfg: dict) -> 
     return None
 
 
+def _leg1_min_vol_mult(cfg: dict, minute: int) -> float:
+    """Resolve Leg-1 volume threshold, supporting static float or time-schedule dict."""
+    raw = (cfg or {}).get("ai_watch_leg1_min_vol_mult", 1.5)
+    if isinstance(raw, str) and "{" in raw:
+        try:
+            import json as _json
+            raw = _json.loads(raw)
+        except Exception:
+            pass
+    if isinstance(raw, dict):
+        items = []
+        for k, v in raw.items():
+            try:
+                th, tm = [int(x) for x in str(k).strip().split(":")[:2]]
+                items.append((th * 60 + tm, float(v)))
+            except Exception:
+                continue
+        items.sort(key=lambda x: x[0])
+        for cut_m, req in items:
+            if minute <= cut_m:
+                return req
+        return items[-1][1] if items else 1.5
+    try:
+        return float(raw or 1.5)
+    except (TypeError, ValueError):
+        return 1.5
+
+
 def wr_leg1_refusal(
     sym: str,
     record: dict,
@@ -16804,11 +16832,8 @@ def wr_leg1_refusal(
         if sp is not None and sp > max_sp + 1e-12:
             return "leg1_spread_wide"
 
-    # 4. Volume expansion check (default >= 1.5x)
-    try:
-        min_vol_mult = float((cfg or {}).get("ai_watch_leg1_min_vol_mult", 1.5) or 1.5)
-    except (TypeError, ValueError):
-        min_vol_mult = 1.5
+    # 4. Volume expansion check (default >= 1.5x, supports time-schedule dict)
+    min_vol_mult = _leg1_min_vol_mult(cfg, m)
     if min_vol_mult > 0:
         vr = _f_or_none(record.get("vol_now_ratio")) if isinstance(record, dict) else None
         if vr is None and isinstance(record, dict):

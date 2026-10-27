@@ -137,3 +137,43 @@ def test_first_leg_allowed(monkeypatch):
 
     # Allowed!
     assert ew.wr_leg1_refusal(sym, rec, t_eval, cfg_on, ask=50.0) is None
+
+
+def test_volume_schedule_decay(monkeypatch):
+    sym = "DECAY"
+    schedule = {
+        "10:30": 1.5,
+        "11:30": 1.2,
+        "13:00": 1.0,
+    }
+    cfg_sched = {
+        "ai_watch_leg1_rth_gate": True,
+        "ai_watch_leg1_min_vol_mult": schedule,
+        "ai_watch_leg1_max_time": "13:00",
+        "ai_watch_leg1_max_day_chg": 6.0,
+    }
+    monkeypatch.setattr(ew, "sip_spread_pct", lambda s, now=None: 0.03)
+
+    # 1. At 10:15 ET (before 10:30), vol ratio 1.3 is < 1.5 -> Refused thin vol
+    t_early = datetime(2026, 10, 27, 10, 15, tzinfo=ET).timestamp()
+    rec_13 = _make_record(symbol=sym, price=50.0, pct_change=2.5, vol_ratio=1.3)
+    assert ew.wr_leg1_refusal(sym, rec_13, t_early, cfg_sched, ask=50.0) == "leg1_thin_volume"
+
+    # 2. At 11:00 ET (between 10:30 and 11:30), threshold dropped to 1.2.
+    #    vol ratio 1.3 is now >= 1.2 -> Allowed!
+    t_mid = datetime(2026, 10, 27, 11, 0, tzinfo=ET).timestamp()
+    assert ew.wr_leg1_refusal(sym, rec_13, t_mid, cfg_sched, ask=50.0) is None
+
+    # 3. At 12:00 ET (between 11:30 and 13:00), threshold dropped to 1.0.
+    #    vol ratio 1.05 is >= 1.0 -> Allowed!
+    t_noon = datetime(2026, 10, 27, 12, 0, tzinfo=ET).timestamp()
+    rec_105 = _make_record(symbol=sym, price=50.0, pct_change=2.5, vol_ratio=1.05)
+    assert ew.wr_leg1_refusal(sym, rec_105, t_noon, cfg_sched, ask=50.0) is None
+
+    #    vol ratio 0.95 is < 1.0 -> Refused thin vol
+    rec_095 = _make_record(symbol=sym, price=50.0, pct_change=2.5, vol_ratio=0.95)
+    assert ew.wr_leg1_refusal(sym, rec_095, t_noon, cfg_sched, ask=50.0) == "leg1_thin_volume"
+
+    # 4. At 13:05 ET (after 13:00) -> Refused after cutoff
+    t_late = datetime(2026, 10, 27, 13, 5, tzinfo=ET).timestamp()
+    assert ew.wr_leg1_refusal(sym, rec_13, t_late, cfg_sched, ask=50.0) == "leg1_after_1100"
