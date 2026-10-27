@@ -377,7 +377,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="ai-call-bar" data-call-bar title="Log that you would buy this name now. Log only: it never places an order. Scored after costs against random later minutes.">
+                <div class="ai-call-bar" data-call-bar hidden style="display: none;" title="Log that you would buy this name now. Log only: it never places an order. Scored after costs against random later minutes.">
                     <label class="ai-call-label" for="call-ticker">Your call</label>
                     <input id="call-ticker" class="ai-call-input" data-call-ticker placeholder="Ticker" maxlength="6" autocomplete="off" spellcheck="false">
                     <div class="ai-call-setups" role="group" aria-label="Setup">
@@ -399,7 +399,7 @@
                         <div class="th th-entry" data-book-sort-col="entry" title="Average fill price. Open positions only.">Entry</div>
                         <div class="th th-stop" data-book-sort-col="stop" title="Open longs only. Raise-only shelf; flatten if last prints through. While min-hold runs this cell shows the countdown instead — the shelf still raises, only the SALE is muzzled — and the stop price returns at 0:00.">Stop</div>
                         <div class="th th-exh" data-book-sort-col="exh" title="%R Trend Exhaustion: how far the move is toward overbought (100 + fast %R), with its direction. OB marks the overbought band — the square arm's live reading.">EXH</div>
-                        <div class="th th-gates" data-book-sort-col="gates" title="The arm's live gates, shown while they pass: RVOL vs its floor, SIP spread vs the cap, last-print age vs the tape ceiling, plus a gap-down block or the after-square wait when they apply. Green = every gate passes, red = one is refusing, grey = a reading is missing. Hover a row for each value and its limit. EXH is its own column.">Gates</div>
+                        <div class="th th-gates" data-book-sort-col="gates" title="The arm's live gates, shown while they pass: SIP spread vs the cap, last-print age vs the tape ceiling, plus a gap-down block or the after-square wait when they apply. RVOL is listed here only while its floor is above zero. Green = every gate passes, red = one is refusing, grey = a reading is missing. Hover a row for each value and its limit. EXH is its own column.">Gates</div>
                         <div class="th th-qty desk-col-extra">Qty</div>
                         <div class="th th-pl" data-book-sort-col="pl">P&amp;L</div>
                     </div>
@@ -412,7 +412,7 @@
                 <div class="ai-book-slot" data-ai-book-slot data-view="positions">
                 <div class="ai-book-slot__tabs" role="tablist" aria-label="Positions or weekly book">
                     <button type="button" class="ai-book-slot__tab" role="tab" data-slot-tab="positions">Positions</button>
-                    <button type="button" class="ai-book-slot__tab" role="tab" data-slot-tab="overnight" hidden>Weekly</button>
+                    <button type="button" class="ai-book-slot__tab" role="tab" data-slot-tab="overnight" hidden style="display: none;">Weekly</button>
                     <button type="button" class="ai-book-slot__collapse" data-slot-collapse
                             aria-expanded="true" aria-label="Collapse positions and weekly">▾</button>
                 </div>
@@ -423,7 +423,7 @@
                         <div class="dh-empty">No positions today</div>
                     </div>
                 </div>
-                <div class="ai-book-overnight" data-ai-overnight hidden
+                <div class="ai-book-overnight" data-ai-overnight hidden style="display: none;"
                      title="Weekly book, on its own paper account: up to 20 liquid, cheap-on-earnings (P/E 0-12), uptrending names that AGY and Grok both rank, held from one week's close to the next. Paper only; no backtest.">
                     <div class="ai-book-overnight__head">
                         <span class="ai-book-overnight__label" data-ai-overnight-label>Weekly book</span>

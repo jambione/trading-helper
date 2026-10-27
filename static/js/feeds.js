@@ -1102,9 +1102,9 @@ function _bindBookSlot(sectionEl, haveOvernight) {
   const slot = sectionEl && sectionEl.querySelector('[data-ai-book-slot]');
   if (!slot) return;
   const onTab = slot.querySelector('[data-slot-tab="overnight"]');
-  if (onTab) onTab.hidden = !haveOvernight;
+  if (onTab) onTab.hidden = true;
   const apply = (view) => {
-    const v = view === 'overnight' && haveOvernight ? 'overnight' : 'positions';
+    const v = 'positions';
     slot.dataset.view = v;
     slot.querySelectorAll('[data-slot-tab]').forEach((b) => {
       const on = b.dataset.slotTab === v;
@@ -2936,7 +2936,7 @@ let _callBarBound = false;
 function _bindCallBar() {
   if (_callBarBound) return;
   const bar = document.querySelector('[data-call-bar]');
-  if (!bar) return;
+  if (!bar || bar.hidden || bar.style.display === 'none') return;
   _callBarBound = true;
   const inp = bar.querySelector('[data-call-ticker]');
   const msg = bar.querySelector('[data-call-msg]');

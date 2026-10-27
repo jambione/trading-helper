@@ -2699,6 +2699,8 @@ body.mobile [data-tv-toggle-btn] {
   color: #e0f2fe;
   border-bottom-color: #38bdf8;
 }
+.panel-ai-watch .ai-book-slot__tab[data-slot-tab="overnight"],
+.panel-ai-watch .ai-book-overnight { display: none !important; }
 .panel-ai-watch .ai-book-slot[data-view="positions"] .ai-book-overnight,
 .panel-ai-watch .ai-book-slot[data-view="overnight"] .ai-book-day-hist { display: none; }
 .panel-ai-watch .ai-book-slot .ai-book-day-hist,
@@ -4852,9 +4854,8 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-entry,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-trail { font-size: 15px; }
 
 
-/* Call bar (operator 10/16, desktop only): log a would-buy call for any ticker. */
-.panel-ai-watch .ai-call-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 12px;
-  border-bottom: 1px solid rgba(139, 92, 246, 0.18); font-size: 12px; }
+/* Call bar (operator 10/16, desktop only): log a would-buy call for any ticker. Hidden per operator request. */
+.panel-ai-watch .ai-call-bar { display: none !important; }
 .panel-ai-watch .ai-call-label { font-weight: 700; letter-spacing: .04em; text-transform: uppercase; font-size: 11px; color: #c4b5fd; }
 .panel-ai-watch .ai-call-input { width: 6.5rem; padding: 5px 8px; border-radius: 6px; border: 1px solid rgba(167, 139, 250, 0.4);
   background: rgba(20, 14, 36, 0.6); color: #ede9fe; font: inherit; text-transform: uppercase; }
