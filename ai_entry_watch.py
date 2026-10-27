@@ -16660,15 +16660,20 @@ def wr_slow_5m_refusal(sym: str, record: dict, now: float | None, cfg: dict) -> 
         slow_span = float((cfg or {}).get("rte_slow_ewm_span", 3) or 3)
         rows = symbol_ohlc(sym, cfg, t)
         stamps = _cached_ohlc_stamps(sym, cfg, t)
-        if len(rows) >= slow_len + 5:
-            sm_1m = _smoothed_pctr_series(rows, slow_len, slow_span)
+        last_done_min = int(t // 60) * 60 - 60
+        rows_1m = (
+            [r for r, ts in zip(rows, stamps) if ts is not None and float(ts) <= last_done_min + 1e-6]
+            if (stamps and len(stamps) == len(rows))
+            else rows
+        )
+        if len(rows_1m) >= slow_len + 5:
+            sm_1m = _smoothed_pctr_series(rows_1m, slow_len, slow_span)
             if len(sm_1m) >= 6:
                 sp_5m_chg = round(sm_1m[-1], 1) - round(sm_1m[-6], 1)
                 if sp_5m_chg < min_pitch - 1e-9:
                     return "wr_slow_5m_falling"
         if stamps and len(stamps) == len(rows) and rows:
             # Aggregate completed 5m buckets (exclude currently-forming 5m bucket if incomplete)
-            last_done_min = int(t // 60) * 60 - 60
             b5_map: dict[int, list[float]] = {}
             b5_order: list[int] = []
             for r, ts in zip(rows, stamps):
