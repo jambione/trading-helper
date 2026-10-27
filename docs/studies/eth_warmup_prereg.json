@@ -1,0 +1,47 @@
+{
+  "study": "eth_warmup",
+  "question": "Before ~11:22 ET, does building the %R lines with today's premarket bars as warm-up (the operator's TradingView, ETH on) give better morning empty-square entries than the desk's current warm-up on the previous session's last RTH bars?",
+  "operator_sentence": "Operator 2026-10-27: 'Preregister a historical test: morning square entries with the slow line warmed up on premarket (chart-style) vs the previous afternoon (current desk), same controls as the pitch studies.'",
+  "registered_at": "2026-10-27 evening ET, before any premarket data is fetched or any script is written.",
+  "registered_before_results": true,
+  "origin": "Operator chart check 10/27: same indicator settings as the desk (fast 21/EMA 7, slow 112/EMA 3, close), but ETH on. IONQ 10:07 SIP slow line: chart -35.7, premarket warm-up rebuild -36.2, desk-style rebuild -28.3; under the chart's line IONQ was not in the square and the desk's buy there lost -$2.42. HOOD 12:59 and ENPH 14:03 were identical under both warm-ups. One example, chosen because it lost; it motivates the test and is not evidence.",
+  "prior": "Most %R timing variants have been ~random against controls (pitch studies 10/27, %R trend trade). A different warm-up mostly moves the slow line by a few points before 11:22, so the expected difference is small: 0 +- 3 bp per trade.",
+  "definitions": {
+    "lines": "Desk lines copied from tools/studies/pitch_open.py: fast Williams %R(21) then EMA span 7, slow %R(112) then EMA span 3, pandas ewm(adjust=False); 2-15 minute in-session gaps flat-filled (live grid); a zero range carries the EMA (as live).",
+    "warmup_RTH": "CURRENT DESK: the previous session's RTH bars, then today's RTH bars from 09:30.",
+    "warmup_ETH": "CHART: today's premarket bars 04:00-09:29 ET (as they exist; 2-15 minute gaps flat-filled, longer gaps not filled, the same grid rule), then today's RTH bars. If today has fewer than 112 premarket+RTH bars at minute t, the previous session's RTH bars are prepended until 112 are available (TradingView would read the previous session's after-hours bars there; the warehouse has none, declared).",
+    "empty_square_onset": "pitch_open.empty_square exactly (fast >= -35 and slow >= -35 and |fast-slow| <= 15, not both >= -20, fast(t) > fast(t-1) + 0.05), onset = true at t and false at t-1, 15-minute refractory per name per warm-up (pitch_open onset rules).",
+    "window": "Signal minute t in 09:45..11:22 ET (585..682), the span where the 112-bar slow window still reaches before 09:30. Minutes after 11:22 are identical under both warm-ups and are not scored.",
+    "universe": "Warehouse names (prior-day liquidity rule) with today's first RTH SIP open in [$20, $150] (the live price floor era), that have both IEX and SIP premarket bar files for the day.",
+    "populations": "ETH = onsets under warmup_ETH; RTH = onsets under warmup_RTH. A name-minute may be in both. Classes for information: BOTH (same name, onsets within +-2 minutes), RTH_ONLY (the desk would buy, the chart would not), ETH_ONLY (the chart would buy, the desk would not)."
+  },
+  "feeds": {
+    "primary": "IEX lines (what the desk computes live; a switch would use IEX premarket bars).",
+    "information": "SIP lines (the operator's chart replication). No pass of its own."
+  },
+  "entry_exit_cost": "pitch_open exactly: entry SIP open of t+1 (> 0, else skipped and counted), exit SIP close of entry+9 (HOLD 10), gross = close/open - 1. Grade cost 10 bp round trip for net (pitch-study grade); 3 and 5 bp printed as information. The primary is a difference of two populations, where a flat cost cancels.",
+  "controls": "pitch_open exactly (wr_trend_trade.seeded, tags ew-d, ew-d2, ew-x, ew-x2, entry_min = t+1): d = same name, a minute c in entry+1..entry+60 with SIP open(c) > 0, close(c+9) > 0, c+9 < 960; x = another SIP symbol that day (the day's sorted SIP file) with open(entry) > 0 and close(entry+9) > 0.",
+  "statistic": {
+    "primary": "DELTA = per day, mean gross of the ETH population minus mean gross of the RTH population (days where both populations have >= 1 scored trade); day-equal mean, t = mean / (stdev / sqrt(n_days)) (eod_reversal.stats).",
+    "secondary_required": "For the ETH population: day-equal lift_d and lift_x (gross minus control gross), each > 0 in both halves. A warm-up that only looks better than the desk's but still loses to a random minute is not a reason to switch.",
+    "information": "Class counts and day-equal gross / lifts for BOTH, RTH_ONLY, ETH_ONLY; net at 3/5/10 bp; the RTH population's own lifts; SIP-line versions of everything."
+  },
+  "data": {
+    "sessions": "The 120 warehouse sessions 2026-04-27..2026-10-15 plus the 70 warehouse_confirm sessions 2026-01-14..2026-04-24 (RTH bars already on the mini). No study has ever scored a premarket warm-up on these days.",
+    "fetch": "New: premarket 1-minute bars 04:00-09:29 ET, IEX and SIP, split-adjusted, for the universe names on each session, via the data-only key (as tools/studies/warehouse_fetch.py), written only when every chunk succeeds, to ai_reports/warehouse_pm/{iex,sip}/<day>.npz. Run after hours and never while replays or the nightly run on the mini (Alpaca budget).",
+    "halves": "By count over scored sessions in date order: half A the older ceil(N/2), half B the newer."
+  },
+  "power": {
+    "count_step": "Before any mean: sessions, onsets per population and class, skips by reason, and MDE = 3.08 x stdev(day means of [ETH-population control_d - RTH-population control_d]) / sqrt(n_days) per half (controls only, outcome-blind). No gross, lift or net is printed.",
+    "floors": "Per half: >= 40 days with both populations, >= 300 trades in each population, MDE <= 5 bp. If a floor fails, UNDERPOWERED and no means are printed."
+  },
+  "pass": "BOTH halves: DELTA >= +3 bp with t >= 2.0; ETH lift_d > 0 and lift_x > 0; and for DELTA, dropping its 3 best days leaves it >= 0 and dropping the 5 symbols with the largest DELTA contribution leaves it >= 0.",
+  "fail": "DELTA <= 0 in either half is FAIL regardless of t. Anything else short of PASS is FAIL (or UNDERPOWERED under the floors).",
+  "if_pass": "result-skeptic Mode 3 review, then a separate live prereg for switching the desk's warm-up to premarket IEX bars (the desk would fetch them at the open).",
+  "if_fail": "Keep the desk's warm-up. Record that the morning chart/desk disagreement is real but does not change entry quality, so the operator's chart and the desk will keep disagreeing before ~11:22.",
+  "canary": "Synthetic tests first: both warm-ups produce identical lines once 112 RTH bars exist; a premarket gap of > 15 minutes is not filled; the onset/refractory rules; next-open entry; a +10 bp lift copy moves DELTA by +10 when added to the ETH population only. On the rows: --canary adds 10 bp to every ETH-population gross in a copy and prints only the change in DELTA per half (each within 1e-9 of +10 bp). --score refuses without canary_ok on the same module and prereg sha.",
+  "score_gate": "--score refuses unless --skeptic-ready equals the 'ready' review id recorded in this file.",
+  "no_retuning": "No other window, warm-up length, square threshold or hold is scored as primary.",
+  "script": "tools/studies/eth_warmup.py and the premarket fetcher, written after this file is committed and after a result-skeptic READY; they may not change anything above.",
+  "multiplicity": "One primary (IEX). SIP and every class cell are information."
+}
