@@ -69,5 +69,18 @@
       "9_in_sample": "The operator built the S5 rule on 10/26 with no documented example days. 2026-10-23 and 2026-10-26 are excluded from S5 scoring as possible motivating sessions (information only), unless the operator names other days before the first variant run, which are then excluded instead and recorded here.",
       "10_information": "Information only, no pass: drop-top-3-days and drop-top-5-names lift_ref; one-notch sensitivity WR min_rise 10 and 20, S5 min_pitch -2 and +2. No-NBBO trades take the session's pooled median spread only if they are < 10% of that session's trades; otherwise the session is excluded and listed."
     }
+  },
+  "amended_2": {
+    "when": "2026-10-27 ~20:30 ET, after result-skeptic round 2 FIX FIRST (6 text-only findings), before any runner, scorer or variant run. Applied verbatim.",
+    "review_id": "late_gates round 2 (subagent, 2026-10-27)",
+    "changes": {
+      "11_fidelity_wr_set": "WR refusals for the fidelity gate are {wr_not_trending, wr_no_history, wr_src_mismatch} (live 10/27: 166 rows). Live rows are restricted to the replay window. The fidelity replay runs with REPLAY_KEEP_WORK=1 and is compared against the replay's own ai_reports/decision_ledger/2026-10-27.jsonl. Overlap = share of live refused symbols that the replay also refused.",
+      "12_no_per_rule_counts": "All three S5 rules return the same reason (wr_slow_5m_falling), so the per-rule hit counts in amendment 7 are dropped. Only total S5 refusals and symbol overlap are gated.",
+      "13_flags": "Amendment 8 is changed: pin --start 09:00 with paint ON (no --no-paint), as the nightly fidelity runs that reached recall 0.93-1.0 on 10/20-10/27 (tools/nightly.py). All other pins stand (--end 15:50 --step 2.0 --engine recorded --exits live --live-staleness, no --live-book/--warm-book/--exact). Step 7 also reports buy recall and precision of the pinned REF-on-recorded-config run on 10/27 vs live buys and requires recall >= 0.85, else the study stops before any variant run.",
+      "14_rand_drop": "The rand leg is UNINFORMATIVE only when BOTH the net share 1 - n(G)/n(REF) < 0.05 AND the removed share (removed / n(REF), from the same/delayed/removed/new split) < 0.05. The +-15% count match is checked on the seed-averaged G_RAND count.",
+      "15_mde": "The MDE proxy is the larger of the amendment-2 proxy and the same proxy computed from a fixed 0.25-share random control (salt 'MDE-1', one seed), per half.",
+      "16_pricing_gaps": "Repricing (amendment 4) uses the replay's ret, not exit_px: exit = entry_px*(1+ret); repriced ret = exit / SIP 1m close of the entry minute - 1. A trade with no SIP bar for its entry minute is counted; a session where such trades are >= 10% is excluded and listed. open_at_end trades are marked at the SIP 1-minute close of 15:49.",
+      "read_note": "The 'possible at registration' note for S5 is withdrawn: with 10/23 and 10/26 excluded, 22 sessions are eligible, and the read waits for the count-step power check."
+    }
   }
 }
