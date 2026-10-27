@@ -1575,6 +1575,15 @@ const _MACD_BLOCKER_LABELS = {
   'no_macd_data': 'no MACD',
   'macd_no_recent_cross': 'wait cross',
   'macd_bullish_gap': 'ready',
+  'wr_slow_5m_falling': '5m slow %R↓',
+  'leg1_below_min_price': 'px < $25 (L1)',
+  'leg1_after_1300': 'after 13:00 (L1)',
+  'leg1_after_1100': 'after 11:00 (L1)',
+  'leg1_extended': 'day chg > 4% (L1)',
+  'leg1_chg_low': 'day chg < 1% (L1)',
+  'leg1_thin_volume': 'thin vol (L1)',
+  'leg1_spread_wide': 'spread > 8bp (L1)',
+  'leg1_repeat_square': '2nd+ sq (L1)',
 };
 
 /** Gap-narrowing / size arm reasons — zombie when those levers are off. */
@@ -1591,6 +1600,15 @@ const _MACD_BLOCKER_DESCRIPTIONS = {
   'macd_gap_dir_unknown': 'MACD gap direction unknown (needs bars)',
   'no_macd_data': 'No MACD: Real-time 1-minute bar MACD calculation not available yet',
   'macd_no_recent_cross': 'Wait Cross: Bullish crossover has not occurred within the confirm window',
+  'wr_slow_5m_falling': '5m Slow %R Pitch Veto: 5-minute Slow %R slope is falling / negative (downward momentum)',
+  'leg1_below_min_price': 'Leg-1 Gate: Stock price is below the minimum threshold ($25.0)',
+  'leg1_after_1300': 'Leg-1 Gate: Current time is past the afternoon cutoff (13:00 ET)',
+  'leg1_after_1100': 'Leg-1 Gate: Current time is past the cutoff',
+  'leg1_extended': 'Leg-1 Gate: Day change is extended above maximum threshold (+4.0%)',
+  'leg1_chg_low': 'Leg-1 Gate: Day change is below minimum momentum floor (+1.0%)',
+  'leg1_thin_volume': 'Leg-1 Gate: Volume ratio is below required time schedule threshold',
+  'leg1_spread_wide': 'Leg-1 Gate: Consolidated SIP spread exceeds 0.08% (8 bp)',
+  'leg1_repeat_square': 'Leg-1 Gate: Stock already formed a square earlier today (1st empty square only)',
 };
 
 /** Dual-OB+tight square (■) / pre-square (▢) / leave-OB triangle (▼). */
@@ -1975,6 +1993,25 @@ function _bookGateChecks(r) {
   if (wait != null && wait > 0) {
     out.push({ key: 'square', text: `sq ${_fmtHoldClock(wait)}`, ok: false,
       title: `Full square in the last 10 min: pre-square arms wait ${_fmtHoldClock(wait)} more` });
+  }
+  if (r.g_s5_veto) {
+    const ok = r.g_s5_ok === true;
+    out.push({
+      key: 's5',
+      text: ok ? '5m%R↑' : '5m%R↓',
+      ok: ok,
+      title: ok ? '5m Slow %R: Pitch is rising / positive (clears veto)' : '5m Slow %R: Pitch is falling / negative (vetoed)',
+    });
+  }
+  if (r.g_leg1_active) {
+    const ok = r.g_leg1_ok === true;
+    const txt = ok ? 'L1 ✓' : (r.g_leg1_label || 'L1 fail');
+    out.push({
+      key: 'leg1',
+      text: txt,
+      ok: ok,
+      title: ok ? 'Leg-1 Gate: PASS (Price >= $25, Time <= 13:00, Day Chg 1-4%, Spread <= 8bp, Vol >= Req, 1st Square)' : `Leg-1 Gate: FAIL (${r.g_leg1_label || 'Refused'})`,
+    });
   }
   return out;
 }

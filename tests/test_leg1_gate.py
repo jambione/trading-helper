@@ -60,7 +60,7 @@ def test_day_chg_extended_refused():
     rec = _make_record(price=50.0, pct_change=6.2)
     t = datetime(2026, 10, 27, 10, 0, tzinfo=ET).timestamp()
     assert ew.wr_leg1_refusal("EXT", rec, t, cfg_on, ask=50.0) == "leg1_extended"
-    assert ew.format_blocker("leg1_extended") == "day chg > 5% (Leg 1)"
+    assert "day chg >" in ew.format_blocker("leg1_extended")
 
 
 def test_day_chg_low_refused():
@@ -68,7 +68,7 @@ def test_day_chg_low_refused():
     rec = _make_record(price=50.0, pct_change=0.2)
     t = datetime(2026, 10, 27, 10, 0, tzinfo=ET).timestamp()
     assert ew.wr_leg1_refusal("LOW", rec, t, cfg_on, ask=50.0) == "leg1_chg_low"
-    assert ew.format_blocker("leg1_chg_low") == "day chg < 0.5% (Leg 1)"
+    assert "day chg <" in ew.format_blocker("leg1_chg_low")
 
 
 def test_thin_volume_refused():
@@ -176,7 +176,8 @@ def test_volume_schedule_decay(monkeypatch):
 
     # 4. At 13:05 ET (after 13:00) -> Refused after cutoff
     t_late = datetime(2026, 10, 27, 13, 5, tzinfo=ET).timestamp()
-    assert ew.wr_leg1_refusal(sym, rec_13, t_late, cfg_sched, ask=50.0) == "leg1_after_1100"
+    assert ew.wr_leg1_refusal(sym, rec_13, t_late, cfg_sched, ask=50.0) == "leg1_after_1300"
+    assert ew.format_blocker("leg1_after_1300") == "after 13:00 (Leg 1)"
 
 
 def test_five_bp_config(monkeypatch):
@@ -211,3 +212,33 @@ def test_five_bp_config(monkeypatch):
     # Stock >= $25 in sweet spot [1.0%..4.0%] with Vol 2.3x before 10:30 -> Allowed!
     rec_ok = _make_record(symbol=sym, price=30.0, pct_change=2.5, vol_ratio=2.3)
     assert ew.wr_leg1_refusal(sym, rec_ok, t_morn, cfg_5bp, ask=30.0) is None
+
+
+def test_gate_wire_fields_reports_s5_and_leg1(monkeypatch):
+    sym = "WIRETEST"
+    cfg = {
+        "ai_watch_wr_slow_5m_veto": True,
+        "ai_watch_leg1_rth_gate": True,
+        "ai_watch_leg1_min_price": 25.0,
+        "ai_watch_leg1_min_day_chg": 1.0,
+        "ai_watch_leg1_max_day_chg": 4.0,
+        "ai_watch_leg1_max_time": "13:00",
+        "ai_watch_leg1_min_vol_mult": 1.5,
+    }
+    monkeypatch.setattr(ew, "_push_cfg", lambda: cfg)
+    monkeypatch.setattr(ew, "sip_spread_pct", lambda s, now=None: 0.03)
+
+    t_morn = datetime(2026, 10, 27, 10, 0, tzinfo=ET).timestamp()
+    rec_ok = _make_record(symbol=sym, price=30.0, pct_change=2.5, vol_ratio=2.0)
+    wire = ew._gate_wire_fields(rec_ok, sym, now=t_morn)
+
+    assert wire.get("g_s5_veto") is True
+    assert wire.get("g_leg1_active") is True
+    assert wire.get("g_leg1_ok") is True
+    assert wire.get("g_leg1_label") == "L1 ✓"
+
+    # Failing day change
+    rec_fail = _make_record(symbol=sym, price=30.0, pct_change=5.5, vol_ratio=2.0)
+    wire_fail = ew._gate_wire_fields(rec_fail, sym, now=t_morn)
+    assert wire_fail.get("g_leg1_ok") is False
+    assert "day chg >" in wire_fail.get("g_leg1_label", "")

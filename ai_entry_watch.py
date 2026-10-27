@@ -376,9 +376,11 @@ _BLOCKER_LABELS: dict[str, str] = {
     "in_square": "in square",
     "last_macd_gap": "MACD gap",
     "wr_slow_5m_falling": "5m slow %R↓",
+    "leg1_below_min_price": "px < $25 (Leg 1)",
+    "leg1_after_1300": "after 13:00 (Leg 1)",
     "leg1_after_1100": "after 11:00 (Leg 1)",
-    "leg1_extended": "day chg > 5% (Leg 1)",
-    "leg1_chg_low": "day chg < 0.5% (Leg 1)",
+    "leg1_extended": "day chg > 4% (Leg 1)",
+    "leg1_chg_low": "day chg < 1% (Leg 1)",
     "leg1_repeat_square": "2nd+ square (Leg 1)",
     "leg1_thin_volume": "thin vol (Leg 1)",
     "leg1_spread_wide": "spread > 8bp (Leg 1)",
@@ -402,6 +404,11 @@ def format_blocker(code: str | None, *, detail: str | None = None) -> str | None
         base = "broker gate"
     elif low.startswith("tranche") or "rolled_back" in low:
         base = "order failed"
+    elif low.startswith("leg1_after_"):
+        t_part = low[11:]
+        if len(t_part) == 4 and t_part.isdigit():
+            t_part = f"{t_part[:2]}:{t_part[2:]}"
+        base = f"after {t_part} (Leg 1)"
     elif low in _BLOCKER_LABELS:
         base = _BLOCKER_LABELS[low]
     elif raw:
@@ -14481,7 +14488,7 @@ def _ob_narrow_refusal(ob_fields: dict, cfg: dict | None, rec: dict | None) -> b
 
 
 _GATE_WIRE_KEYS = ("g_rvol", "g_rvol_min", "g_spread", "g_spread_max", "g_tape_age", "g_tape_max",
-                   "g_gap", "g_gap_block", "g_sq_wait")
+                   "g_gap", "g_gap_block", "g_sq_wait", "g_s5_veto", "g_s5_ok", "g_leg1_active", "g_leg1_ok", "g_leg1_label")
 
 
 def _gate_wire_fields(rec: Any, sym: str, now: float | None = None) -> dict:
@@ -14508,6 +14515,23 @@ def _gate_wire_fields(rec: Any, sym: str, now: float | None = None) -> dict:
         sq = _LAST_SQUARE.get(sym)
         left = (mins * 60.0 - (t - sq[0])) if (mins > 0 and sq and sq[0] is not None) else 0.0
         out["g_sq_wait"] = round(left) if left > 0 else None
+
+        # 5m Slow %R Pitch Veto live gate wire
+        if bool((cfg or {}).get("ai_watch_wr_slow_5m_veto", False)):
+            out["g_s5_veto"] = True
+            s5_why = wr_slow_5m_refusal(sym, rec, t, cfg)
+            out["g_s5_ok"] = bool(s5_why is None)
+
+        # Leg-1 RTH Gate live gate wire
+        if bool((cfg or {}).get("ai_watch_leg1_rth_gate", False)):
+            out["g_leg1_active"] = True
+            l1_why = wr_leg1_refusal(sym, rec, t, cfg)
+            out["g_leg1_ok"] = bool(l1_why is None)
+            if l1_why:
+                lbl = format_blocker(l1_why) or l1_why
+                out["g_leg1_label"] = lbl.replace(" (Leg 1)", "").strip()
+            else:
+                out["g_leg1_label"] = "L1 ✓"
     except Exception:  # noqa: BLE001
         pass
     return out
@@ -16805,7 +16829,7 @@ def wr_leg1_refusal(
     except Exception:
         max_m = 11 * 60
     if m > max_m:
-        return "leg1_after_1100"
+        return f"leg1_after_{max_time_s.replace(':', '')}"
 
     # 2. Day change check (default +0.5% .. +5.0%)
     try:
