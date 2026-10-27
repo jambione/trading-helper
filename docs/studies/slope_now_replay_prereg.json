@@ -1,0 +1,42 @@
+{
+  "study": "slope_now_replay",
+  "question": "Does refusing a buy unless the desk's own live %R lines are still rising right now (fast pitch > 0, slow pitch > 0, and the slow pitch not lower than a minute earlier) make the desk's trades more profitable per trade than the current desk, and more than refusing the same share of arms at random?",
+  "operator_sentence": "Operator 2026-10-27: 'Preregister a replay test of a slope-now gate on the desk's own live pitch: refuse a buy unless fast pitch > 0 and slow pitch > 0 and the slow pitch is not falling vs one minute earlier; in the late-gates harness, against the current desk and a matched random refusal.'",
+  "registered_at": "2026-10-27 evening ET, before any variant of this study is run or read.",
+  "registered_before_results": true,
+  "origin": "10/27 losses reviewed with the desk's logged api/state values: HOOD 13:00 (fast pitch +23.2 -> +7.9, slow +7.3 -> +2.0 in the minute before the buy, -35 bp) and ENPH 14:04 (slow pitch +0.1 a minute earlier, -19 bp) were bought as the climb ended; both live gates (wr_trend_min_rise 15 over ~10 min; 5m slow veto over 5 min) look back 5-10 minutes and pass a line that rose earlier and is flattening now. The pitch fields (pitch_record, ai_entry_watch.py ~16498, live since e99a2662 on 10/26) are display-only; should_arm_buy does not read them.",
+  "prior": "Mixed. On 10/27's 22 buys with logged pitch, slow pitch >= +2 at the buy: 11 trades -12.5 bp; flattening 0..+2: 7 trades +8.3 bp; turning down: 4 trades +7.8 bp; the worst loser (IONQ 10:08, -63 bp) had fast +15.9 and slow +3.8, i.e. would have PASSED this gate. %R timing variants have been ~random so far (pitch studies 10/27). Prior lift 0 +- 3 bp.",
+  "gate": {
+    "knob": "NEW ai_watch_slope_now_gate (default false = off, live unchanged), checked in should_arm_buy next to the 5m veto and the Leg-1 gate, on every arm check.",
+    "rule": "Refuse with reason 'slope_not_rising' unless ALL of: indicator pctr_fast_pitch > 0, pctr_slow_pitch > 0, and pctr_slow_pitch >= pctr_slow_pitch_prev. Values as stamped by pitch_record at that moment (points per minute, rounded to 0.1).",
+    "missing": "PRIMARY is the rule as stated: a missing pctr_fast_pitch, pctr_slow_pitch or pctr_slow_pitch_prev REFUSES (reason 'slope_unknown'). Declared: on 10/27 live, fast pitch was present on 62% of live %R readings and the previous slow pitch on 59%, so this gate also refuses names without a pitch history (recently seated, or source just switched). Information variant SLOPE_OPEN: missing values do not refuse (only present values are tested).",
+    "also": "A new decision-ledger field set on arm rows: pctr_fast_pitch, pctr_slow_pitch, pctr_slow_pitch_prev (values as read), so live and replay can be compared. Default behavior unchanged."
+  },
+  "variants": {
+    "REF": "The current desk: the day's recorded config with the 10/27 regime pinned (late_gates_run.PIN values: presquare_only true, Leg-1 OFF, ai_max_positions 5, ai_max_position_pct 20, ai_risk_pct 1.0, ai_watch_min_price 20, ai_position_slot_equity 60), the two live gates at their 10/27 values (wr_trend_min_rise 15, wr_slow_5m_veto true, min_pitch 0), ai_watch_slope_now_gate false.",
+    "SLOPE": "REF + ai_watch_slope_now_gate true (missing refuses).",
+    "SLOPE_OPEN": "Information: REF + the gate with missing values not refusing.",
+    "RAND_k (k=1,2,3)": "REF + ai_watch_wr_rand_refuse_share = s, salt 'SN-k' (the salted wr_rand knob, 21e6f763), s = that session's max(0, 1 - n(SLOPE)/n(REF)) (two-pass).",
+    "MDE1": "REF + rand share 0.25, salt 'SN-MDE'.",
+    "REF_DUP": "REF run twice on the first, middle and last session (determinism)."
+  },
+  "fidelity_gate": "Before any variant: replay 2026-10-27 as REF with REPLAY_KEEP_WORK=1. For each live buy that day with a logged pitch in api/state within 10 s before the fill (22 buys), match the replay's arm row for the same symbol within 90 s and compare the three gate inputs: the gate's pass/refuse decision must agree on >= 80% of matched buys, and >= 15 buys must match; also print the share of replay arm rows with each pitch field present vs live (62% / 59%). If it fails, SLOPE is NOT TESTABLE IN REPLAY and nothing is scored.",
+  "harness": "late_gates exactly: tools/replay_session.py, --start 09:00 --end 15:50 --step 2.0 --engine recorded --exits live --live-staleness, paint on, one pinned --sha (the commit that adds the knob and the ledger fields); outputs ~/replay_runs/slope_now/DAY-VAR.json; costing = full SIP spread at entry; repriced check at the SIP 1m close of the entry minute; open_at_end marked at the SIP 15:49 close; classes same / delayed / removed / new vs REF; a session needs >= 5 REF trades; an identical session is scored with its computed lift (0).",
+  "sessions": "Every recorded session with a wire recording, 2026-09-28 onward (20 at registration, through 10/27), plus forward sessions to a cap of 40. Halves by count in date order. Runs only after the late_gates primary and info phases have finished on the mini (Alpaca budget, one batch at a time).",
+  "statistic": "Per session: lift_ref = mean net(SLOPE) - mean net(REF); lift_rand = mean net(SLOPE) - mean over k of mean net(RAND_k), valid when the seed-averaged RAND count is within +-15% of SLOPE's; bp per trade, sessions equal-weighted, t = std_scorer.day_stat.",
+  "power": "MDE per half = 3.08 x max(sd_session(RAND avg - REF), sd_session(MDE1 - REF)) / sqrt(sessions in the half). Floors per half: >= 10 scored sessions, MDE <= 6 bp; else UNDERPOWERED (no means); at the 40-session cap UNDERPOWERED = FAIL. The REF_DUP difference, if > 1 bp/trade on any duplicated session, raises the pass bar by that amount.",
+  "pass": "lift_ref >= +3 bp/trade (plus any REF_DUP penalty) with t >= 2.0 over all scored sessions; lift_ref > 0 in BOTH halves; lift_rand > 0 with t >= 2.0 (dropped only if both the net refused share and the removed share are < 0.05, as late_gates amended_2 #14); the repriced lift_ref >= +3 with t >= 2.0 and > 0 in both halves; >= 300 REF trades and >= 150 SLOPE trades. The verdict also states whether SLOPE's own mean net is > 0 (profitable) or only less negative.",
+  "fail": "lift_ref <= 0 in either half is FAIL regardless of t; anything else short of PASS is FAIL (or UNDERPOWERED / NOT TESTABLE).",
+  "information_only": [
+    "SLOPE_OPEN vs REF (the gate without the missing-pitch refusal).",
+    "Refusal counts by reason: slope_not_rising vs slope_unknown; share of arm checks refused.",
+    "Class split (same / delayed / removed / new) with mean net per class; median delay of delayed entries.",
+    "Trades per session and opens per 10 minutes, REF vs SLOPE.",
+    "Drop top 3 sessions and top 5 names from lift_ref; entries before 11:00 vs after."
+  ],
+  "if_pass": "result-skeptic Mode 3, then the operator decides on a live switch (after the close).",
+  "if_fail": "Keep the gate off. Record that a 'still rising now' rule does not separate winners from losers on the desk's own lines, so the topping entries need a different explanation (name selection or exits).",
+  "no_retuning": "No threshold (e.g. slow pitch >= +1, fast-only) is scored as primary.",
+  "script": "Knob, ledger fields, runner tools/studies/slope_now_run.py and scorer tools/studies/slope_now_read.py (reusing late_gates_run / late_gates_read) are written after this file is committed and after a result-skeptic READY; they may not change anything above.",
+  "multiplicity": "One primary. Every information line has no pass."
+}
