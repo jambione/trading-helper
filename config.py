@@ -595,6 +595,9 @@ DEFAULT_CONFIG = {
     # %R trend entry filter (docs/studies/wr_trend_entry_prereg.json; REPLAY/TEST until it passes): an empty-square
     # arm needs the fast %R to have risen at least this many points over the prior 10 minutes. 0 = off.
     "ai_watch_wr_trend_min_rise":       0.0,
+    # 5-minute Slow %R pitch veto (operator 10/26): refuse buys when 5m slow %R pitch < min_pitch (default 0.0).
+    "ai_watch_wr_slow_5m_veto":         False,
+    "ai_watch_wr_slow_5m_min_pitch":    0.0,
     # Its matched 'trade less' control: refuse this share of presquare arm episodes at random (seeded). 0 = off.
     "ai_watch_wr_rand_refuse_share":    0.0,
     "ai_watch_wr_rsi_min_rise":         0.0,   # RSI(14) 10-bar rise gate on presquare arms (10/10 counterfactual; off)
@@ -2163,6 +2166,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_breakout_arm_hi",
     "ai_watch_presquare_only",
     "ai_watch_wr_trend_min_rise",
+    "ai_watch_wr_slow_5m_veto",
+    "ai_watch_wr_slow_5m_min_pitch",
     "ai_watch_wr_rand_refuse_share",
     "ai_watch_wr_rsi_min_rise",
     "ai_watch_range_arm",

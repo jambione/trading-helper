@@ -957,6 +957,9 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         "price_age_sec", "pctr_rising", "pctr_falling",
         "pctr", "pctr_slow", "pctr_raw", "pctr_src", "pctr_ob", "pctr_tight",
         "pctr_gap", "cm_rsi", "cm_rsi_green", "cm_rsi_low",
+        # Pitch of each line, points per minute. Display only.
+        "pctr_fast_pitch", "pctr_slow_pitch",
+        "pctr_fast_pitch_prev", "pctr_slow_pitch_prev", "pctr_pitch",
         # Direction and provenance ride with the RSI level: the entry rule is
         # a band AND a turn, and the book has to be able to say which feed
         # drew the reading it is showing.

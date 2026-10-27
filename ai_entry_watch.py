@@ -9044,6 +9044,7 @@ def refresh_engine_exh(rec: dict, sig: dict | None, cfg: dict | None,
     ind["pctr_src"] = "live"
     ind["pctr_px_src"] = "engine"
     ind["pctr_ts"] = float(now)
+    pitch_record(rec, now)
     return True
 
 
@@ -11585,6 +11586,15 @@ def live_exhaustion(
     return pctr, ex, bool(got["fast_rising"]), bool(got["fast_falling"])
 
 
+# Hover-only. should_arm_buy does not read these. Defined here so a cleared
+# reading drops them in the same pass as the lines they describe.
+_PITCH_WIRE_KEYS = (
+    "pctr_fast_pitch", "pctr_slow_pitch",
+    "pctr_fast_pitch_prev", "pctr_slow_pitch_prev",
+    "pctr_pitch",
+)
+
+
 def _clear_stale_pctr(rec: dict, *, reason: str, now: float) -> None:
     """Drop a published %R that we can no longer stand behind.
 
@@ -11607,7 +11617,7 @@ def _clear_stale_pctr(rec: dict, *, reason: str, now: float) -> None:
     ind["pctr_src"] = reason
     ind["pctr_ts"] = float(now)
     for k in ("pctr_raw", "pctr_hh", "pctr_ll", "pctr_bars", "pctr_window_sec",
-              "pctr_gap", "pctr_px_src"):
+              "pctr_gap", "pctr_px_src", *_PITCH_WIRE_KEYS):
         ind.pop(k, None)
 
 
@@ -11886,6 +11896,8 @@ def ensure_live_exhaustion(
     ind = rec.get("indicator")
     if isinstance(ind, dict):
         ind["pctr_px_src"] = px_src
+        # After pctr_px_src, so a local reading is not stored as the engine's.
+        pitch_record(rec, now)
     return True
 
 
@@ -12029,6 +12041,9 @@ def _exhaustion_wire_fields(rec: dict) -> dict:
             "rsi2_red_px": None, "rsi2_green_px": None,
             "exh_bars": None, "exh_window_min": None,
             "exh_hh": None, "exh_ll": None,
+            "pctr_fast_pitch": None, "pctr_slow_pitch": None,
+            "pctr_fast_pitch_prev": None, "pctr_slow_pitch_prev": None,
+            "pctr_pitch": None,
         }
     span = _f_or_none(ind.get("pctr_window_sec"))
     return {
@@ -12060,6 +12075,12 @@ def _exhaustion_wire_fields(rec: dict) -> dict:
         "exh_window_min": None if span is None else round(span / 60.0, 1),
         "exh_hh": _f_or_none(ind.get("pctr_hh")),
         "exh_ll": _f_or_none(ind.get("pctr_ll")),
+        # Points per minute. The hover reads these; the buy does not.
+        "pctr_fast_pitch": _f_or_none(ind.get("pctr_fast_pitch")),
+        "pctr_slow_pitch": _f_or_none(ind.get("pctr_slow_pitch")),
+        "pctr_fast_pitch_prev": _f_or_none(ind.get("pctr_fast_pitch_prev")),
+        "pctr_slow_pitch_prev": _f_or_none(ind.get("pctr_slow_pitch_prev")),
+        "pctr_pitch": (str(ind.get("pctr_pitch") or "").strip() or None),
         "macd_fast": _f_or_none(ind.get("macd_fast") if ind.get("macd_fast") is not None else ind.get("macd_line")),
         "macd_slow": _f_or_none(ind.get("macd_slow") if ind.get("macd_slow") is not None else ind.get("macd_signal")),
         "macd_gap": _f_or_none(ind.get("macd_gap") if ind.get("macd_gap") is not None else ind.get("macd_hist")),
@@ -16369,6 +16390,130 @@ def arm_source_allows_buy(record: dict | None, cfg: dict | None) -> tuple[bool, 
 
 
 
+# ── Line pitch (display only) ─────────────────────────────────────────────────────────────────────────────────────
+# The buy only knows that a line is up, flat, or down. Pitch is the change in
+# smoothed %R per minute, so the hover can say whether the two lines are
+# rising together and which one is steeper. Positive means the line is rising
+# toward 0 (the top of the chart).
+#
+# The book polls about every 10s. Two polls are 20s, and that calls noise a
+# pitch, so history keeps one live reading of each line per minute. A gap
+# longer than 180s means the name was not being polled, and the history
+# restarts. Engine %R and the local window are different formulas; a change
+# from one to the other restarts too. clock_range / sparse_window are not stored.
+_PITCH_HIST: dict[str, list] = {}   # sym -> [(ts, fast, slow, origin)]
+PITCH_SAMPLE_MIN_SEC = 55.0         # minimum space between stored readings
+PITCH_LOOK_MIN_SEC = 45.0           # a younger pair is not a one-minute pitch
+PITCH_LOOK_MAX_SEC = 130.0          # still covers one missed poll
+PITCH_TARGET_SEC = 60.0
+PITCH_GAP_SEC = 180.0
+PITCH_KEEP_SEC = 300.0
+PITCH_SAME_BAND = 0.5               # %R points per minute; inside this, "same"
+
+
+def _pitch_origin(ind: dict) -> str:
+    """'' when this reading must not enter the pitch history."""
+    src = str(ind.get("pctr_src") or "").strip().lower()
+    if src != "live":
+        return ""
+    px = str(ind.get("pctr_px_src") or "").strip().lower()
+    return "engine" if px == "engine" else "live"
+
+
+def _pitch_pick(samples: list, anchor: float):
+    """Stored reading nearest one minute before *anchor*, inside the look window."""
+    best = None
+    best_dist = None
+    for row in samples:
+        age = float(anchor) - float(row[0])
+        if age < PITCH_LOOK_MIN_SEC or age > PITCH_LOOK_MAX_SEC:
+            continue
+        dist = abs(age - PITCH_TARGET_SEC)
+        if (
+            best is None
+            or dist < best_dist - 1e-6
+            or (abs(dist - best_dist) <= 1e-6 and row[0] > best[0])
+        ):
+            best = row
+            best_dist = dist
+    return best
+
+
+def _pitch_per_min(now_v: float, then_v: float, now_ts: float, then_ts: float) -> float | None:
+    minutes = (float(now_ts) - float(then_ts)) / 60.0
+    if minutes <= 0:
+        return None
+    return round((float(now_v) - float(then_v)) / minutes, 1)
+
+
+def _pitch_word(fast: float, slow: float, fast_pitch: float | None, slow_pitch: float | None) -> str | None:
+    """meeting: both rising, fast still under slow, fast steeper than the same-band.
+
+    same: both rising and within half a point per minute.
+    opening: both rising and the gap is not closing that way.
+    not both up: either line is flat or falling.
+    """
+    if fast_pitch is None or slow_pitch is None:
+        return None
+    if fast_pitch <= 0 or slow_pitch <= 0:
+        return "not both up"
+    if abs(fast_pitch - slow_pitch) <= PITCH_SAME_BAND:
+        return "same"
+    if fast < slow and fast_pitch > slow_pitch:
+        return "meeting"
+    return "opening"
+
+
+def pitch_record(rec: dict, now: float) -> None:
+    """Stamp both pitches onto the indicator. Does not decide a buy.
+
+    Latest pitch is the live reading against the stored reading about a minute
+    back. Prior pitch is that stored reading against the one a minute before it.
+    """
+    ind = rec.get("indicator") if isinstance(rec, dict) else None
+    if not isinstance(ind, dict):
+        return
+    for k in _PITCH_WIRE_KEYS:
+        ind.pop(k, None)
+    origin = _pitch_origin(ind)
+    fast = _f_or_none(ind.get("pctr"))
+    slow = _f_or_none(ind.get("pctr_slow"))
+    sym = str(rec.get("symbol") or "").upper().strip()
+    if (
+        not origin or not sym or fast is None or slow is None
+        or not (-100.5 <= fast <= 0.5) or not (-100.5 <= slow <= 0.5)
+    ):
+        return
+    now_f = float(now)
+    h = _PITCH_HIST.setdefault(sym, [])
+    if h and now_f - float(h[-1][0]) > PITCH_GAP_SEC:
+        h.clear()
+    if h and h[-1][3] != origin:
+        h.clear()
+    if (not h or now_f - float(h[-1][0]) >= PITCH_SAMPLE_MIN_SEC) and (not h or now_f > float(h[-1][0])):
+        h.append((now_f, float(fast), float(slow), origin))
+    cut = now_f - PITCH_KEEP_SEC
+    while h and float(h[0][0]) < cut:
+        h.pop(0)
+    ref = _pitch_pick(h, now_f)
+    if ref is None:
+        return
+    fast_pitch = _pitch_per_min(fast, ref[1], now_f, ref[0])
+    slow_pitch = _pitch_per_min(slow, ref[2], now_f, ref[0])
+    prev = _pitch_pick(h, ref[0])
+    fast_prev = slow_prev = None
+    if prev is not None and float(prev[0]) < float(ref[0]):
+        fast_prev = _pitch_per_min(ref[1], prev[1], ref[0], prev[0])
+        slow_prev = _pitch_per_min(ref[2], prev[2], ref[0], prev[0])
+    ind["pctr_fast_pitch"] = fast_pitch
+    ind["pctr_slow_pitch"] = slow_pitch
+    ind["pctr_fast_pitch_prev"] = fast_prev
+    ind["pctr_slow_pitch_prev"] = slow_prev
+    word = _pitch_word(fast, slow, fast_pitch, slow_pitch)
+    if word:
+        ind["pctr_pitch"] = word
+
+
 # ── %R trend entry filter (docs/studies/wr_trend_entry_prereg.json; REPLAY/TEST knobs, default off) ────────────────
 # History of the arm gate's own fast %R per symbol, recorded once per poll tick (poll_once, just before the arm decision),
 # with its pctr_src. A gap of more than 180 s since the last record means the name was not being polled (dropped from the
@@ -16412,6 +16557,9 @@ def after_square_refusal(sym: str, now: float, cfg: dict) -> str | None:
     return None
 
 
+_WR_SLOW_HIST: dict[str, list] = {}
+
+
 def wr_trend_record(sym: str, rec: dict, now: float, cfg: dict) -> None:
     if float(cfg.get("ai_watch_wr_trend_min_rise", 0) or 0) <= 0:
         return
@@ -16447,6 +16595,122 @@ def wr_trend_refusal(sym: str, record: dict, now: float | None, cfg: dict) -> st
     if past[-1][2] != src_now:
         return "wr_src_mismatch"
     return None if float(cur) - past[-1][1] >= need else "wr_not_trending"
+
+
+def wr_slow_5m_record(sym: str, rec: dict, now: float, cfg: dict) -> None:
+    if not bool(cfg.get("ai_watch_wr_slow_5m_veto", False)):
+        return
+    ind = rec.get("indicator") if isinstance(rec, dict) else None
+    v = _f_or_none(ind.get("pctr_slow")) if isinstance(ind, dict) else None
+    if v is None:
+        return
+    h = _WR_SLOW_HIST.setdefault(sym, [])
+    if h and now - h[-1][0] > WR_HIST_GAP_SEC:
+        h.clear()
+    h.append((float(now), float(v), str(ind.get("pctr_src") or "")))
+    cut = now - 600.0
+    while h and h[0][0] < cut:
+        h.pop(0)
+
+
+def _smoothed_pctr_series(
+    rows: list[tuple[float, float, float]],
+    length: int,
+    ewm_span: float,
+) -> list[float]:
+    if len(rows) < length:
+        return []
+    raw_s: list[float] = []
+    for i in range(length - 1, len(rows)):
+        win = rows[i - length + 1:i + 1]
+        hh = max(r[0] for r in win)
+        ll = min(r[1] for r in win)
+        v = _raw_percent_r(hh, ll, win[-1][2])
+        if v is not None:
+            raw_s.append(v)
+    if not raw_s:
+        return []
+    alpha = 2.0 / (max(1.0, float(ewm_span)) + 1.0)
+    sm = raw_s[0]
+    out = [sm]
+    for v in raw_s[1:]:
+        sm = alpha * v + (1.0 - alpha) * sm
+        out.append(sm)
+    return out
+
+
+def wr_slow_5m_refusal(sym: str, record: dict, now: float | None, cfg: dict) -> str | None:
+    """5-minute Slow %R pitch veto (operator 2026-10-26).
+
+    Refuses buys with ``wr_slow_5m_falling`` when ``ai_watch_wr_slow_5m_veto``
+    is enabled and either:
+      1) the completed 1m Slow %R(112, EMA 3) 5-minute change (< min_pitch),
+      2) the completed 5m-bar Slow %R(28, EMA 3) bar-to-bar pitch (< min_pitch), or
+      3) the live polled Slow %R change over the last 5 minutes (< min_pitch).
+    """
+    if not bool((cfg or {}).get("ai_watch_wr_slow_5m_veto", False)):
+        return None
+    try:
+        min_pitch = float((cfg or {}).get("ai_watch_wr_slow_5m_min_pitch", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        min_pitch = 0.0
+    t = float(now if now is not None else time.time())
+    try:
+        slow_len = _rte_slow_length(cfg)
+        slow_span = float((cfg or {}).get("rte_slow_ewm_span", 3) or 3)
+        rows = symbol_ohlc(sym, cfg, t)
+        stamps = _cached_ohlc_stamps(sym, cfg, t)
+        if len(rows) >= slow_len + 5:
+            sm_1m = _smoothed_pctr_series(rows, slow_len, slow_span)
+            if len(sm_1m) >= 6:
+                sp_5m_chg = round(sm_1m[-1], 1) - round(sm_1m[-6], 1)
+                if sp_5m_chg < min_pitch - 1e-9:
+                    return "wr_slow_5m_falling"
+        if stamps and len(stamps) == len(rows) and rows:
+            # Aggregate completed 5m buckets (exclude currently-forming 5m bucket if incomplete)
+            last_done_min = int(t // 60) * 60 - 60
+            b5_map: dict[int, list[float]] = {}
+            b5_order: list[int] = []
+            for r, ts in zip(rows, stamps):
+                if ts is None or float(ts) > last_done_min + 1e-6:
+                    continue
+                b5 = (int(float(ts)) // 300) * 300
+                if b5 not in b5_map:
+                    b5_map[b5] = [float(r[0]), float(r[1]), float(r[2])]
+                    b5_order.append(b5)
+                else:
+                    if float(r[0]) > b5_map[b5][0]:
+                        b5_map[b5][0] = float(r[0])
+                    if float(r[1]) < b5_map[b5][1]:
+                        b5_map[b5][1] = float(r[1])
+                    b5_map[b5][2] = float(r[2])
+            if b5_order and last_done_min < b5_order[-1] + 240:
+                b5_order.pop()
+            rows_5m = [(b5_map[b][0], b5_map[b][1], b5_map[b][2]) for b in b5_order]
+            if len(rows_5m) >= 29:
+                sm_5m = _smoothed_pctr_series(rows_5m, 28, slow_span)
+                if len(sm_5m) >= 2:
+                    sp_5m_bar = round(sm_5m[-1], 1) - round(sm_5m[-2], 1)
+                    if sp_5m_bar < min_pitch - 1e-9:
+                        return "wr_slow_5m_falling"
+    except Exception:  # noqa: BLE001
+        pass
+
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    cur_slow = _f_or_none(ind.get("pctr_slow")) if isinstance(ind, dict) else None
+    if cur_slow is not None:
+        src_now = str(ind.get("pctr_src") or "")
+        target = t - 300.0
+        past = [x for x in _WR_SLOW_HIST.get(sym, []) if x[0] <= target]
+        if past and (target - past[-1][0] <= 90.0) and past[-1][2] == src_now:
+            if round(float(cur_slow), 1) - round(float(past[-1][1]), 1) < min_pitch - 1e-9:
+                return "wr_slow_5m_falling"
+        ph = [x for x in _PITCH_HIST.get(sym, []) if 240.0 <= (t - float(x[0])) <= 390.0]
+        if ph:
+            ref5 = min(ph, key=lambda x: abs((t - float(x[0])) - 300.0))
+            if round(float(cur_slow), 1) - round(float(ref5[2]), 1) < min_pitch - 1e-9:
+                return "wr_slow_5m_falling"
+    return None
 
 
 def _wilder_rsi(closes: list, n: int = 14) -> list:
@@ -16875,6 +17139,10 @@ def should_arm_buy(
         _vol_why = thin_volume_refusal(record, _gate_sym, cfg, now=now)
         if _vol_why:
             return False, _vol_why
+        # 5-minute Slow %R pitch veto (off by default; enabled via ai_watch_wr_slow_5m_veto).
+        _s5_why = wr_slow_5m_refusal(_gate_sym, record, now, cfg)
+        if _s5_why:
+            return False, _s5_why
 
     # MACD direction veto: refuse a crossed-down gap. Fail-open on missing
     # MACD so it cannot starve opens the way macd_src_unknown once did.
@@ -18797,6 +19065,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 pass
 
         wr_trend_record(sym, rec, t0, cfg)
+        wr_slow_5m_record(sym, rec, t0, cfg)
         after_square_record(sym, rec, t0, cfg)
         if range_arm_enabled(cfg):
             ok_arm, why = range_arm_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="check")

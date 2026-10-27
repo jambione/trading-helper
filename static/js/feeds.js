@@ -308,6 +308,13 @@ function _bookRows(book) {
       exhaustion_state: w.exhaustion_state || null,
       pctr: w.pctr != null ? w.pctr : null,
       pctr_slow: w.pctr_slow != null ? w.pctr_slow : null,
+      // Points per minute of each %R line, and the minute before that.
+      // The row builder drops any field not listed here.
+      pctr_fast_pitch: w.pctr_fast_pitch != null ? w.pctr_fast_pitch : null,
+      pctr_slow_pitch: w.pctr_slow_pitch != null ? w.pctr_slow_pitch : null,
+      pctr_fast_pitch_prev: w.pctr_fast_pitch_prev != null ? w.pctr_fast_pitch_prev : null,
+      pctr_slow_pitch_prev: w.pctr_slow_pitch_prev != null ? w.pctr_slow_pitch_prev : null,
+      pctr_pitch: w.pctr_pitch || null,
       pctr_ob: !!w.pctr_ob,
       pctr_tight: !!w.pctr_tight,
       pctr_gap: w.pctr_gap != null ? w.pctr_gap : null,
@@ -2270,6 +2277,28 @@ function _bookExhClass(r) {
   return '';
 }
 
+function _fmtPitchNum(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '';
+  return `${n > 0 ? '+' : ''}${n.toFixed(1)}/m`;
+}
+
+/** Latest one-minute pitch of each %R line. Empty until a minute of history exists. */
+function _fmtPitchLine(r) {
+  const fast = _fmtPitchNum(r && r.pctr_fast_pitch);
+  const slow = _fmtPitchNum(r && r.pctr_slow_pitch);
+  if (!fast || !slow) return '';
+  const word = r.pctr_pitch ? ` ${r.pctr_pitch}` : '';
+  return `pitch 1m fast ${fast} slow ${slow}${word}`;
+}
+
+function _fmtPitchPriorLine(r) {
+  const fast = _fmtPitchNum(r && r.pctr_fast_pitch_prev);
+  const slow = _fmtPitchNum(r && r.pctr_slow_pitch_prev);
+  if (!fast || !slow) return '';
+  return `prior 1m fast ${fast} slow ${slow}`;
+}
+
 /** Hover: raw %R lines behind the cell's 0-100 reading, plus the window. */
 function _fmtExhTitle(r) {
   if (!r) return '';
@@ -2302,6 +2331,10 @@ function _fmtExhTitle(r) {
   if (r.pctr_gap != null && Number.isFinite(Number(r.pctr_gap))) {
     bits.push(`gap ${Number(r.pctr_gap).toFixed(1)}`);
   }
+  const pitchLine = _fmtPitchLine(r);
+  if (pitchLine) bits.push(pitchLine);
+  const priorLine = _fmtPitchPriorLine(r);
+  if (priorLine) bits.push(priorLine);
   if (r.exh_window_min != null && Number.isFinite(Number(r.exh_window_min))) {
     bits.push(`window ${Number(r.exh_window_min).toFixed(1)}m`);
   }
@@ -2833,7 +2866,8 @@ function _median(nums) {
  * random later minute as the control, premarket included). */
 let _lastBookRowBySym = Object.create(null);
 const _CALL_SNAP_KEYS = ['price', 'pct_change', 'phase', 'source', 'exhaustion', 'exhaustion_state', 'pctr', 'pctr_slow',
-  'pctr_rising', 'g_rvol', 'g_spread', 'g_tape_age', 'g_tape_max', 'g_sq_wait', 'g_gap', 'square_streak'];
+  'pctr_rising', 'pctr_fast_pitch', 'pctr_slow_pitch', 'pctr_fast_pitch_prev', 'pctr_slow_pitch_prev', 'pctr_pitch',
+  'g_rvol', 'g_spread', 'g_tape_age', 'g_tape_max', 'g_sq_wait', 'g_gap', 'square_streak'];
 
 function _callPrefill(sym) {
   const inp = document.querySelector('[data-call-ticker]');
