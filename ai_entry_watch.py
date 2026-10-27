@@ -17001,7 +17001,10 @@ def wr_rand_refusal(sym: str, now: float | None, cfg: dict) -> str | None:
     from datetime import datetime
     from zoneinfo import ZoneInfo
     day = datetime.fromtimestamp(t, ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
-    u = int(hashlib.sha256(f"{sym}|{day}|{n_ep}".encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
+    # late_gates_replay_prereg: a salt gives independent seeds; '' keeps the original hash.
+    salt = str(cfg.get("ai_watch_wr_rand_salt", "") or "")
+    key = f"{salt}|{sym}|{day}|{n_ep}" if salt else f"{sym}|{day}|{n_ep}"
+    u = int(hashlib.sha256(key.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
     return "wr_rand" if u < share else None
 
 def should_arm_buy(

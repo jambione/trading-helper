@@ -54,3 +54,22 @@ def test_rand_refuses_whole_episodes_at_roughly_the_share():
         assert first == again
         refused += first is not None
     assert 150 < refused < 250
+
+
+def _refused_set(cfg):
+    out = set()
+    for i in range(400):
+        sym = f"S{i}"
+        ew._WR_EPISODE.pop(sym, None)
+        if ew.wr_rand_refusal(sym, 1_791_500_000.0, cfg):
+            out.add(sym)
+    return out
+
+
+def test_rand_salt_empty_keeps_the_original_draw_and_salts_differ():
+    base = _refused_set({"ai_watch_wr_rand_refuse_share": 0.5})
+    assert _refused_set({"ai_watch_wr_rand_refuse_share": 0.5, "ai_watch_wr_rand_salt": ""}) == base
+    s1 = _refused_set({"ai_watch_wr_rand_refuse_share": 0.5, "ai_watch_wr_rand_salt": "S5-1"})
+    s2 = _refused_set({"ai_watch_wr_rand_refuse_share": 0.5, "ai_watch_wr_rand_salt": "S5-2"})
+    assert s1 != base and s1 != s2
+    assert 150 < len(s1) < 250 and 150 < len(s2) < 250
