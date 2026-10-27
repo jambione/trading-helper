@@ -1,0 +1,66 @@
+{
+  "study": "first_presq_holdout",
+  "question": "Does Argon's FIRST_PRESQ entry (the first empty square of a name's day, 09:45-11:30 ET, day change +0.5..+5.0%, volume >= 1.5x, $20-$150) beat a later minute of the same name and a same-minute other name over the next 15 minutes, on sessions Argon never saw, in both halves, after cost?",
+  "operator_sentence": "Operator 2026-10-27: 'Preregister Argon's FIRST_PRESQ (the vol 1.5x spec as stated) on held-out sessions: SIP days before 4/27 and after 10/15, with the pitch-study controls.'",
+  "registered_at": "2026-10-27 ~22:00 ET, before any held-out data is fetched or any script is written.",
+  "registered_before_results": true,
+  "origin": {
+    "claim": "Gemini 4 Argon (report pasted by the operator 10/27), 119-120 warehouse sessions 2026-04-27..10-15, $20-$150: FIRST_PRESQ_morning_vol1.5x n 448, 15m gross +7.38 bp (median +2.88), halves +7.46 / +7.17, drop top 3 days +5.32; morning cohort lifts vs cross-name +11.80 and vs later minute +8.64; equal-weighted day mean +7.06 bp t +1.79. Argon reports SIP-gridded lines +10.10 bp and raw ungridded IEX -1.21 bp; gridded IEX was not reported.",
+    "argon_code": "Not found on the MacBook or the mini (searched 10/27). Every definition below is fixed here from the report's wording and, where the report is silent, from the desk's own definitions. If the operator supplies Argon's script before any held-out fetch, a declared amendment may align a definition to it; after the fetch, no definition changes.",
+    "in_sample": "2026-04-27..2026-10-15 (the warehouse) is Argon's sample and is never scored here."
+  },
+  "prior": "Argon's in-sample lifts (+8.6 / +11.8 bp) are the best of 6 setups and several parameter bands, with day t 1.79, so expect shrinkage toward 0. Every %R-timing entry tested on the desk's data is ~0 (pitch studies 10/27, %R trend trade); a name/time-of-day selection is the kind of effect that has survived before (daily-context-picks-names). Honest prior for each lift: +2 +- 4 bp.",
+  "definitions": {
+    "lines": "The desk's lines, copied from tools/studies/pitch_open.py (not imported from live code): fast = Williams %R(21) then EMA span 7, slow = Williams %R(112) then EMA span 3, pandas ewm(adjust=False); in-session gaps of 2-15 minutes filled flat at the previous close (the live _minute_grid_pr fill); the previous session's RTH bars prepended as warm-up; a zero-range minute carries the EMA (as live and as pitch_open actually do).",
+    "empty_square": "pitch_open.empty_square exactly: fast(t) >= -35 and slow(t) >= -35 and |fast - slow| <= 15, not (fast >= -20 and slow >= -20), and fast(t) > fast(t-1) + 0.05.",
+    "onset": "An empty-square onset at minute t: empty_square(t) true and empty_square(t-1) false (t-1 missing = false). Minutes are read from 09:30.",
+    "first": "FIRST = the name's first empty-square onset of the session counting from 09:30. If that first onset is before 09:45 or after 11:30, the name has no FIRST_PRESQ that day (counted). Argon's alternative 'or after a >= 45-60 min rest' is NOT part of the primary.",
+    "window": "Signal minute t in 09:45..11:30 ET inclusive (minute-of-day 585..690).",
+    "day_change": "close(t) / previous session's last RTH close - 1, on the same feed's split-adjusted warehouse bars, in [+0.5%, +5.0%] inclusive.",
+    "volume": "vol_mult = v(t) / mean(v over t-15..t-1), same feed as the lines; requires all 15 prior minutes inside today's RTH (else no signal, counted); vol_mult >= 1.5. A zero mean = no signal.",
+    "price": "SIP close(t) in [$20, $150].",
+    "universe": "Every name in that held-out day's warehouse file (warehouse liquidity rule at fetch: prior RAW close >= $10, 20-day mean dollar volume >= $20M, ETFs/funds excluded).",
+    "one_per_name_day": "At most one FIRST_PRESQ per name per day by construction."
+  },
+  "feeds": {
+    "IEX": "Lines and volume on IEX bars (what the live desk sees). Co-primary.",
+    "SIP": "Lines and volume on SIP bars (Argon's gridded-SIP claim). Co-primary.",
+    "fills": "Both feeds fill and mark out on SIP bars.",
+    "reading": "SIP PASS = Argon's claim replicates out of sample. IEX PASS = the desk can act on it today. Each feed is its own test."
+  },
+  "entry_exit": {
+    "entry": "SIP open of t+1, > 0, else skipped and counted.",
+    "exit": "SIP close of entry+14 (a 15-minute hold, Argon's 15m), > 0 and minute < 960, else skipped and counted. No exit rule, no stop.",
+    "gross": "exit_close / entry_open - 1."
+  },
+  "controls": "The pitch_open controls with HOLD 15: same seeded helper (wr_trend_trade.seeded with tags fp-d, fp-d2, fp-x, fp-x2 and entry_min = t+1). d = same name, one minute c drawn from entry+1..entry+60 with SIP open(c) > 0, close(c+14) > 0 and c+14 < 960; x = another SIP symbol that day (sorted list, the day's whole SIP file) with open(entry) > 0 and close(entry+14) > 0. d2 / x2 are the MDE draws.",
+  "data": {
+    "held_out": "SIP + IEX warehouse days fetched with tools/studies/warehouse_fetch.py --last 2026-04-24 --out ai_reports/warehouse_holdout, going BACKWARD from 2026-04-24 in blocks of 60 sessions. Each name-day needs its previous session (warm-up, previous close), so one extra session is fetched at the oldest end.",
+    "growth_rule": "Outcome-blind: after each block, run the count step only (trades, days, MDE from control-minus-control2, no trade means). Stop adding blocks at the first block where both halves meet the floors for BOTH feeds, or at 600 sessions (back to about 2024-02), whichever comes first. The block count at which the floors were met is recorded before --score.",
+    "after_10_15": "Sessions after 2026-10-15 need the liquidity table extended (ai_reports/gapdown/daily.pkl ends 10/15). They are NOT in the primary. Once the table is extended, they form a forward confirmation cell (information only, no pass).",
+    "halves": "By count over scored held-out sessions in date order: half A = the older ceil(N/2), half B = the newer."
+  },
+  "statistic": "pitch_open's: per half, per day, mean over that day's trades of (trade gross - control gross); day-equal mean, t = mean / (stdev / sqrt(n_days)), ub = mean + t_ppf(0.975, n-1) * se. Net = day-equal mean of (gross - cost).",
+  "cost": "5 bp round trip is the grade (between the measured ~3 bp on $10+ names and the pitch studies' 10 bp; this is an entry test on $20+ names). 3 bp and 10 bp are information only.",
+  "power": {
+    "floors": "Per half, per feed: >= 150 trades, >= 40 days, MDE <= 6 bp for both control pairs, MDE = 2.84 * stdev(day means of control - control2) / sqrt(n_days).",
+    "underpowered": "If floors are not met at 600 sessions, the verdict is UNDERPOWERED and no means are printed."
+  },
+  "pass": "Per feed, Bonferroni over 2 feeds (t >= 2.24). BOTH halves: lift_d >= +3 bp with t >= 2.24; lift_x >= +3 bp with t >= 2.24; day-equal net after 5 bp > 0; for each lift separately, dropping its 3 best days leaves its mean >= 0 and dropping its 5 largest-sum symbols leaves its mean >= 0.",
+  "fail": "Any half with lift_d <= 0 or lift_x <= 0 is FAIL regardless of t. Anything else short of PASS is FAIL (or UNDERPOWERED under the power rule).",
+  "canary": "Synthetic tests first (local): the onset, the first-of-day rule with a pre-window onset, the volume ratio, the day-change band, next-open entry, the 15-minute exit, and a +10 bp lift copy. On the rows: --canary adds 10 bp to every trade gross in a copy and prints only the change in net, lift_d, lift_x per half per feed; each within 1e-9 of +10 bp. --score refuses without canary_ok on the same module and prereg sha.",
+  "score_gate": "--score refuses unless --skeptic-ready equals the 'ready' review_id recorded in this file AND the module sha and prereg sha match those recorded in count.json. No score before the growth rule has stopped.",
+  "information_only": [
+    "Argon's best cell: 09:45-11:00, day change +1.0..+4.5%, vol >= 2.0x.",
+    "The live 9d83ca73 Leg-1 knobs: $25+, +1..+4%, <= 13:00, vol schedule 2.2x to 10:30, 1.8x to 11:30, 1.5x to 13:00.",
+    "FIRST_PRESQ AND the completed 5m-bar slow %R(28) pitch >= +2.0 (Argon's L1D wording).",
+    "Repeat (2nd+) empty-square onsets with the same filters (Argon's Leg 2+ comparison).",
+    "Net at 3 bp and 10 bp; 15m gross and median; by hour.",
+    "Forward cell after 10/15 once the liquidity table is extended."
+  ],
+  "no_retuning": "No band, window, volume multiple or hold is scored as primary other than the one above. A PASS on an information cell earns nothing without its own prereg on forward data.",
+  "if_pass": "result-skeptic Mode 3 review, then (IEX pass only) a live-desk prereg for the arm itself; a SIP-only pass is recorded as 'real on SIP, not tradable on the live feed' (sip-is-delayed-only).",
+  "if_fail": "Leg-1 'first square' is closed as an entry edge; the live Leg-1 gate's knobs lose their claimed basis.",
+  "script": "tools/studies/first_presq_holdout.py, written after this file is committed and after a result-skeptic READY; it may not change anything above. It copies pitch_open's line code and controls; pitch_open.py is not edited.",
+  "multiplicity": "2 primary tests (IEX, SIP), Bonferroni t >= 2.24. Information cells have no pass."
+}
