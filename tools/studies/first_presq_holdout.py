@@ -49,7 +49,8 @@ CTRL_SPAN = 60
 RTH_END = 960
 COST = 5.0                       # bp, the grade
 MDE_K = 3.08                     # (2.24 + 0.84)
-ARGON_PRINTED = {"N": 448, "mean": 7.38, "median": 2.88, "H1": 7.46, "H2": 7.17, "drop3": 5.32, "setup1_N": 89}
+# setup1_N: Argon's report table gives 160 for FIRST_PRESQ_morning_vol2x; "N=89" is a stale label inside the script.
+ARGON_PRINTED = {"N": 448, "mean": 7.38, "median": 2.88, "H1": 7.46, "H2": 7.17, "drop3": 5.32, "setup1_N": 160}
 K4 = "4_FIRST_PRESQ_morning_vol1.5x (09:45-11:30, chg 0.5..5%, vol>=1.5x)"
 K1 = "1_FIRST_PRESQ_morning_vol2x (N=89 exact)"
 
@@ -183,7 +184,8 @@ def candidate(prev_rows, cur_rows, sip_prev_close: float, sip_cur: np.ndarray, *
     out["vol_ratio"] = float(v[i]) / avg if avg > 0 else None
     out["close"] = float(c[i])
     out["day_chg"] = (float(c[i]) / sip_prev_close - 1.0) * 100.0 if sip_prev_close > 0 else None
-    sm = sip_cur[(sip_cur[:, 0] >= m - 15) & (sip_cur[:, 0] <= m)]          # SIP dvol15, minutes m-15..m
+    # SIP dvol15 as Argon's l.109: the 16 SIP bars ending at minute m by INDEX (i-15..i), not a clock window.
+    sm = sip_cur[sip_cur[:, 0] <= m][-16:]
     out["dvol15"] = float(np.mean(sm[:, 4] * sm[:, 5])) if len(sm) else 0.0
     return out
 
@@ -393,6 +395,10 @@ def run_counts() -> dict:
 
 
 def run_grid() -> dict:
+    fid = json.load(open(os.path.join(OUT, "fidelity.json")))
+    ruling = os.path.join(OUT, "operator_fidelity_ruling.json")
+    if not fid.get("pass") and not os.path.exists(ruling):
+        raise SystemExit("refusing: fidelity did not pass and no operator ruling is recorded (prereg amended_2 / 4)")
     dr = load_cands()
     rows = [score_cfg(dr, "iex", c) | {"_cfg": c} for c in all_cfgs()]
 
