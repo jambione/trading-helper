@@ -59,36 +59,51 @@ def test_call_bar_fields_and_todays_list(client, monkeypatch):
     assert out["ok"] and out["calls"][0]["symbol"] == "TGL" and out["calls"][0]["move_bp"] == 200.0
 
 
-def test_paper_pnl_totals_use_locked_results(client, monkeypatch):
+def test_paper_pnl_totals_use_the_exit_scored_results(client, monkeypatch):
     import dashboard as dash
     c, path = client
-    monkeypatch.setattr(dash, "MY_CALLS_RESULTS_PATH", path.parent / "my_calls_results.json")
+    monkeypatch.setattr(dash, "MY_CALLS_EXITS_PATH", path.parent / "my_calls_exits.json")
     monkeypatch.setattr(dash, "_ensure_call_worker", lambda: None)
     monkeypatch.setattr(dash, "snapshot", lambda: {"tickers": []})
     c.post("/api/ai/my-call", json={"ticker": "AAA"})
     c.post("/api/ai/my-call", json={"ticker": "BBB"})
     rows = [json.loads(x) for x in path.read_text().splitlines()]
-    (path.parent / "my_calls_results.json").write_text(json.dumps({
-        f"AAA|{rows[0]['ts']}": {"status": "final", "net_bp": 25.0, "pnl_usd": 2.5},
+    (path.parent / "my_calls_exits.json").write_text(json.dumps({
+        f"AAA|{rows[0]['ts']}": {"status": "final", "spread_bp": 20.0,
+                                 "asis": {"status": "final", "reason": "local_trail", "net_bp": -14.0, "pnl_usd": -1.4},
+                                 "scaled": {"status": "final", "reason": "local_trail", "net_bp": 160.0, "pnl_usd": 16.0}},
     }))
     out = c.get("/api/ai/my-calls").json()
-    assert out["total"]["n"] == 1 and out["total"]["pnl_usd"] == 2.5 and out["total"]["wins"] == 1
+    assert out["total"]["asis"] == {"n": 1, "pnl_usd": -1.4, "wins": 0}
+    assert out["total"]["scaled"] == {"n": 1, "pnl_usd": 16.0, "wins": 1}
     assert out["total"]["pending"] == 1
-    assert {x["symbol"]: x["status"] for x in out["calls"]} == {"AAA": "final", "BBB": "live"}
+    by = {x["symbol"]: x for x in out["calls"]}
+    assert by["AAA"]["status"] == "final" and by["AAA"]["scaled"]["reason"] == "local_trail"
+    assert by["BBB"]["status"] == "waiting"
 
 
-def test_score_call_charges_the_spread(monkeypatch):
-    import types
-    import pandas as pd
+def test_the_worker_runs_call_exits_in_its_own_process(monkeypatch, tmp_path):
     import dashboard as dash
-    import sys
-    t0 = 1792087200   # a whole minute
-    idx = pd.to_datetime([t0 + 60 * k for k in range(1, 17)], unit="s", utc=True)
-    df = pd.DataFrame({"open": [10.0] * 16, "close": [10.0] * 15 + [10.2]}, index=idx)
-    fake_bars = types.SimpleNamespace(client=lambda: types.SimpleNamespace(get_stock_bars=lambda req: types.SimpleNamespace(df=df)))
-    fake_rc = types.SimpleNamespace(load_cache=lambda: {}, save_cache=lambda c: None, entry_spread_bp=lambda *a: 10.0)
-    monkeypatch.setitem(sys.modules, "bars", fake_bars)
-    monkeypatch.setitem(sys.modules, "replay_costing", fake_rc)
-    res = dash._score_call({"symbol": "AAA", "ts": t0 + 5})
-    assert res["status"] == "final" and res["entry"] == 10.0
-    assert res["exit"] == 10.0 and res["net_bp"] == -10.0 and res["pnl_usd"] == -1.0   # 15 bars held, spread charged
+    seen = {}
+
+    class Done(Exception):
+        pass
+
+    def fake_run(cmd, **kw):
+        seen["cmd"], seen["env"] = cmd, kw.get("env") or {}
+        raise Done
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(dash, "MY_CALLS_PATH", tmp_path / "my_calls.jsonl")
+    (tmp_path / "my_calls.jsonl").write_text("{}\n")
+    real_exists = dash.Path.exists
+    monkeypatch.setattr(dash.Path, "exists", lambda self: True if self.name == "secrets_data.json" else real_exists(self))
+
+    def stop(_s):
+        raise Done
+    monkeypatch.setattr(dash.time, "sleep", stop)
+    try:
+        dash._call_worker()
+    except Done:
+        pass
+    assert seen["cmd"][-1].endswith("tools/call_exits.py") and seen["env"]["TH_DATA_SECRETS"].endswith("secrets_data.json")

@@ -2898,24 +2898,37 @@ async function _refreshCalls() {
   const calls = (out && out.calls) || [];
   if (!calls.length) { list.innerHTML = '<div class="ai-call-empty">No calls yet today.</div>'; return; }
   const tot = (out && out.total) || {};
-  const tp = Number(tot.pnl_usd);
-  const totCls = !tot.n ? '' : (tp > 0 ? ' is-up' : (tp < 0 ? ' is-down' : ''));
-  const totHtml = `<div class="ai-call-total" title="Paper only: $${Number(tot.notional || 1000).toFixed(0)} per call, bought at the next minute's open after the click, sold ${tot.hold_min || 15} min later, minus the SIP spread at the click. A call locks in ~30 min after you make it (SIP is 15 min delayed).">`
-    + `<span>Paper P&amp;L today</span><b class="ai-call-mv${totCls}">${tot.n ? `${tp >= 0 ? '+' : '-'}$${Math.abs(tp).toFixed(2)}` : '—'}</b>`
-    + `<span>${tot.n || 0} locked · ${tot.n ? Math.round(100 * (tot.wins || 0) / tot.n) : 0}% wins · ${tot.pending || 0} pending</span></div>`;
+  const _usd = v => `${Number(v) >= 0 ? '+' : '-'}$${Math.abs(Number(v)).toFixed(2)}`;
+  const _cls = v => (Number(v) > 0 ? ' is-up' : (Number(v) < 0 ? ' is-down' : ''));
+  const sc = tot.scaled || {}, dk = tot.asis || {};
+  const totHtml = `<div class="ai-call-total" title="Paper only, no orders: $${Number(tot.notional || 1000).toFixed(0)} per call, bought at the first real trade after your click (premarket included) and run through the replay's mirror of the desk's stop, trail and ratchet until they sell, minus the SIP spread at the click. Desk = the live exit settings exactly; scaled = the same exits with breakeven set to 0.1% of the price instead of $0.01 (on a $2 name $0.01 is 0.5% and sells at once). Results lock ~16 min after the exit (SIP is delayed).">`
+    + `<span>Paper P&amp;L today</span>`
+    + `<b class="ai-call-mv${_cls(sc.pnl_usd)}">${sc.n ? _usd(sc.pnl_usd) : '—'}</b><span>scaled</span>`
+    + `<b class="ai-call-mv${_cls(dk.pnl_usd)}">${dk.n ? _usd(dk.pnl_usd) : '—'}</b><span>desk</span>`
+    + `<span>${sc.n || 0} locked · ${sc.n ? Math.round(100 * (sc.wins || 0) / sc.n) : 0}% wins · ${tot.pending || 0} pending${tot.no_fill ? ` · ${tot.no_fill} no fill` : ''}</span></div>`;
   list.innerHTML = totHtml + calls.slice(0, 12).map(c => {
     const t = c.ts ? new Date(c.ts * 1000).toLocaleTimeString('en-US', { hour12: false, timeZone: 'America/New_York' }) : '';
     const mv = Number(c.move_bp);
     const cls = !Number.isFinite(mv) ? '' : (mv > 0 ? ' is-up' : (mv < 0 ? ' is-down' : ''));
     const px = c.price != null ? `$${Number(c.price).toFixed(Number(c.price) < 2 ? 4 : 2)}` : '—';
+    const s2 = c.scaled || {}, a2 = c.asis || {};
+    let res;
+    if (c.status === 'final' && s2.pnl_usd != null) {
+      const tip = `Scaled: ${s2.reason || ''} at ${s2.exit ?? '—'}, move ${s2.gross_bp ?? '—'} bp, net ${s2.net_bp} bp. `
+        + `Desk as live: ${a2.reason || ''} at ${a2.exit ?? '—'}, net ${a2.net_bp ?? '—'} bp ($${a2.pnl_usd ?? '—'}). Spread ${c.spread_bp ?? '—'} bp${c.spread_known === false ? ' (no quote at the click: 20 bp charged)' : ''}.`;
+      res = `<span class="ai-call-mv${_cls(s2.pnl_usd)}" title="${_esc(tip)}">${_usd(s2.pnl_usd)}</span>`
+        + `<span class="ai-call-setup" title="${_esc(tip)}">${_esc(s2.reason || '')} · desk ${a2.pnl_usd != null ? _usd(a2.pnl_usd) : '—'}</span>`;
+    } else if (c.status === 'after_hours') {
+      res = '<span class="ai-call-setup" title="Clicked after 16:00 ET or on a weekend: no session left to trade">after hours</span>';
+    } else if (c.status === 'no_fill') {
+      res = '<span class="ai-call-setup" title="No round-lot trade printed within 2 minutes of the click">no fill</span>';
+    } else {
+      res = `<span class="ai-call-mv${cls}" title="Open: the desk's exits are still holding it, or SIP is not out yet (15 min delay). Move since the call, desk price, before the spread.">${_esc(_fmtCallMove(c.move_bp))}</span>`
+        + `<span class="ai-call-setup">${c.status === 'open' ? 'held' : 'waiting'}</span>`;
+    }
     return `<div class="ai-call-row"><span class="ai-call-t">${_esc(t)}</span><b>${_esc(c.symbol || '')}</b>`
       + `<span class="ai-call-setup">${_esc(c.setup || '')}</span><span class="ai-call-px">${_esc(px)}</span>`
-      + (c.status === 'final'
-        ? `<span class="ai-call-mv${Number(c.pnl_usd) > 0 ? ' is-up' : (Number(c.pnl_usd) < 0 ? ' is-down' : '')}" title="Locked: ${_esc(String(c.net_bp))} bp after the spread">${Number(c.pnl_usd) >= 0 ? '+' : '-'}$${Math.abs(Number(c.pnl_usd)).toFixed(2)}</span>`
-        : c.status === 'no_bars'
-          ? '<span class="ai-call-setup" title="No SIP bars for that window">no data</span>'
-          : `<span class="ai-call-mv${cls}" title="Live: move since the call (desk price, before the spread); locks ~30 min after the call">${_esc(_fmtCallMove(c.move_bp))}</span>`)
-      + '</div>';
+      + res + '</div>';
   }).join('');
 }
 
