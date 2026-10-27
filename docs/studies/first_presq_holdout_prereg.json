@@ -35,7 +35,7 @@
   },
   "controls": "The pitch_open controls with HOLD 15: same seeded helper (wr_trend_trade.seeded with tags fp-d, fp-d2, fp-x, fp-x2 and entry_min = t+1). d = same name, one minute c drawn from entry+1..entry+60 with SIP open(c) > 0, close(c+14) > 0 and c+14 < 960; x = another SIP symbol that day (sorted list, the day's whole SIP file) with open(entry) > 0 and close(entry+14) > 0. d2 / x2 are the MDE draws.",
   "data": {
-    "held_out": "SIP + IEX warehouse days fetched with tools/studies/warehouse_fetch.py --last 2026-04-24 --out ai_reports/warehouse_holdout, going BACKWARD from 2026-04-24 in blocks of 60 sessions. Each name-day needs its previous session (warm-up, previous close), so one extra session is fetched at the oldest end.",
+    "held_out": "SIP + IEX warehouse days fetched with tools/studies/warehouse_fetch.py --last 2026-01-13 --out ai_reports/warehouse_holdout, going BACKWARD from 2026-01-13 in blocks of 60 sessions; one extra warm-up session at the oldest end. 2026-01-14..04-24 is copied from ai_reports/warehouse_confirm and scored as its own information cell.",
     "growth_rule": "Outcome-blind: after each block, run the count step only (trades, days, MDE from control-minus-control2, no trade means). Stop adding blocks at the first block where both halves meet the floors for BOTH feeds, or at 600 sessions (back to about 2024-02), whichever comes first. The block count at which the floors were met is recorded before --score.",
     "after_10_15": "Sessions after 2026-10-15 need the liquidity table extended (ai_reports/gapdown/daily.pkl ends 10/15). They are NOT in the primary. Once the table is extended, they form a forward confirmation cell (information only, no pass).",
     "halves": "By count over scored held-out sessions in date order: half A = the older ceil(N/2), half B = the newer."
@@ -143,5 +143,17 @@
     "port_fidelity": "Before any held-out fetch: our port of setup 4 run on the in-sample warehouse must reproduce Argon's printed N = 448 exactly and its winsorized 15m mean +7.38 bp within 0.05 bp; else the port is wrong and nothing proceeds. This prints only those two numbers already in Argon's report.",
     "statistics": "The pass uses the house statistic (day-equal, unwinsorized, pitch_open controls with HOLD 15). Argon's own figures (winsorized +-150/200 bp, trade-weighted, Lift_X pool restricted to names also up 0.5..5%) are reproduced as information for comparability, not as the grade.",
     "unchanged": "Held-out sample (2026-01-13 backward, warehouse_confirm as its own cell, blocks of 60 to 600), power (3.08 x se, floors 150 trades / 40 days / 8 bp), cost 5 bp, pass ladder, canary, score gate."
+  },
+  "amended_3": {
+    "when": "2026-10-27 ~18:45 ET, after result-skeptic round 2 FIX FIRST (reviewed f6ef7fac, before amended_2), before any stage-1 run or held-out fetch.",
+    "applied": {
+      "r2_1_selection": "A configuration is ELIGIBLE only if, in-sample on IEX lines, day-equal lift_d > 0 and lift_x > 0, with >= 300 trades and trades on >= 60 days. Among eligible configurations, WINNER = highest day-equal net after 5 bp.",
+      "r2_2_fallback": "If no configuration is eligible, ARGON (SIP lines) is the sole primary at t >= 2.0, recorded here before any fetch.",
+      "r2_3_and_4": "Moot: amended_2 replaced the F1/F2, V1/V2 and 5m-bar dimensions with Argon's exact trigger (fast 3-bar rise, 1m slow 5-bar rise, v vs 15-bar mean, first square-band minute of the day).",
+      "r2_5_growth_and_projection": "growth_rule floors apply to the two stage-2 primaries (ARGON on SIP lines, WINNER on IEX lines), not 'both feeds'. MDE_proj = 3.08 x sd_in x sqrt(1 / (300 x r)), sd_in = in-sample stdev of day means of (control - control2) for that primary, r = in-sample share of sessions with >= 1 trade.",
+      "r2_6_stale_text": "data.held_out now reads --last 2026-01-13. supersedes_in_original also covers data.held_out and feeds (feeds now: ARGON on SIP lines, WINNER on IEX lines, fills SIP).",
+      "r2_7_verdict": "PASS for a primary is that primary's ladder. Study outcome: if ARGON passes, Argon's claim replicates out of sample; if WINNER passes, that configuration is a candidate for a live prereg (IEX). if_fail applies only when BOTH fail: Leg-1 'first square' is closed as an entry edge and the live Leg-1 knobs have no basis. If WINNER passes and ARGON fails, the live 9d83ca73 knobs still have no basis (they are neither); only WINNER's knobs do.",
+      "r2_8_minor": "Day change numerator is the line feed's close(t) (Argon's c[i]); denominator the SIP previous close per amended. Config string for ties: 'fr{fast_rise}-sr{slow_rise}-v{vol_mult}-w{HHMM}-c{lo}-{hi}-p{floor}' compared as text. WINNER, runner-up, and both MDE projections are committed to this file before any held-out fetch. If either primary's MDE_proj at 600 sessions exceeds 8 bp, the held-out fetch does NOT run; the operator is told and decides."
+    }
   }
 }
