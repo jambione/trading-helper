@@ -1,0 +1,36 @@
+{
+  "study": "engine_push_45",
+  "question": "Does raising ai_watch_engine_push_max from 30 to 45 (more board names on the Finnhub stream) cut the minutes bought names spend tape-blocked and off the board, and the %R-turn-to-fill lag, without slowing the engine loop or exits?",
+  "operator_sentence": "Operator 2026-10-27: 'Preregister a forward paper test: raise ai_watch_engine_push_max 30 -> 45 after the close; primary measures are tape-blocked and off-board minutes per buy and turn-to-fill lag vs the 9/28-10/15 baseline; guardrails on engine loop timing and exit delay with automatic rollback; profit reported as info.'",
+  "registered_at": "2026-10-27 evening ET, before any change.",
+  "registered_before_results": true,
+  "origin": "Lag diagnostics 10/27 (tools/studies/lag_breakdown.py, lag_blockers.py, lag_ready.py, lag_tape.py) on 555 buys 9/28-10/15: mean 15.6 min from the %R turn to the fill; off board 3.3 min/buy, tape-blocked 1.1 min/buy. In those minutes bought names got only 3-4% of their prints from Finnhub (desk/REST prices, median 26 s old) while the stream was healthy and only ~33 of 50 subscriptions were used. push_candidates_to_engine (ai_entry_watch.py ~8320) caps the engine's TOTAL known names (room = cap - len(known), momentum names included) at ai_watch_engine_push_max = 30.",
+  "change": {
+    "knob": "ai_watch_engine_push_max 30 -> 45 in config/bot_config.json (hot-reloaded; read on every push call). No other knob changes. The dashboard ticker ceiling (realtime_symbol_budget 45, read at import) and the Finnhub cap (50) are unchanged; 45 known engine names plus open positions fit under 50.",
+    "declared": "config.py's warning 'realtime_symbol_budget (45) is under momentum_max_tickers (10) + ai_watch_engine_push_max (45)' will appear. It assumes the push cap counts board names only; the code counts all known engine names, so the overflow it warns about does not occur. Recorded, not acted on.",
+    "timing": "Switches happen only after the close (operator rule), by a committed config change pulled on the mini; the stack is not restarted."
+  },
+  "schedule": "10 sessions, alternating, fixed now: ON (45) on 2026-10-28, 10-30, 11-03, 11-05, 11-09; OFF (30) on 10-29, 11-02, 11-04, 11-06, 11-10. A session lost to a rollback, outage or holiday is not replaced; the schedule shifts by one session pair. Addition to the operator's design (declared): the gates went live 10/26 and the High Octane revert takes effect 10/28, so the 9/28-10/15 baseline is a different regime; the OFF days are the same-regime comparison.",
+  "measures": {
+    "per_buy": "For every paper BUY fill: turn-to-fill lag (lag_audit turn on IEX lines, forward days' bars fetched after the close for bought names only), and off-board and tape-blocked minutes between the turn and the fill, labelled exactly as tools/studies/lag_blockers.py (tape-blocked = GROUPS['plumbing']).",
+    "per_session": "Mean per buy of each measure; Finnhub share of the bought names' prints in those minutes (lag_tape.py); stream subscriptions (realtime_tape.subscribed) median and max.",
+    "baseline": "The same measures on 9/28-10/15 (555 buys): turn-to-fill mean 15.6 min, off board 3.3 min/buy, tape-blocked 1.1 min/buy, re-computed with the same scripts at the pinned commit."
+  },
+  "pass": "All of: (1) tape-blocked min/buy on ON sessions <= 70% of OFF sessions AND <= 70% of the baseline; (2) off-board min/buy on ON <= 85% of OFF AND of the baseline; (3) turn-to-fill lag median on ON at least 1.0 min below OFF and below the baseline; (4) for (1)-(3), the ON day beats the mean of the OFF days on >= 4 of the 5 ON days; (5) no guardrail rollback fired on any ON day. A PASS keeps 45 live; it is a plumbing result, not a profit claim.",
+  "fail": "Anything else keeps 30. A guardrail rollback on two ON days ends the study early as FAIL (unsafe).",
+  "guardrails": {
+    "watchdog": "tools/push_watchdog.py runs on the mini during each ON session (09:30-16:00 ET), every 5 minutes, reading only local files the desk already writes. On a breach it sets ai_watch_engine_push_max back to 30 in config/bot_config.json (hot reload), writes the reason to ~/replay_runs/engine_push_45/rollbacks.jsonl, and raises a desktop banner. It never restarts processes and never touches orders.",
+    "engine_loop": "Gaps between successive signal_state.json 'updated' stamps (engine writes every ~5 s) over the last 15 minutes: breach if p95 > max(15 s, 3 x the baseline p95).",
+    "watch_poll": "Per-symbol gaps between entry_watch_state last_poll_ts over the last 15 minutes: breach if the median > 2 x the baseline median.",
+    "exit_delay": "For each SELL submit in fills.jsonl, seconds since the symbol's preceding decision-ledger 'trail' row (<= 60 s before): breach if, over the session so far with >= 5 exits, the median exceeds the baseline median + 2 s or the p90 exceeds 2 x the baseline p90.",
+    "rate_limits": "Alpaca 429 responses in the session's recorder_wire so far: breach if more than 2 x the baseline per-session mean at the same clock time.",
+    "baselines": "Computed from the 9/28-10/15 recordings before 10/28 and written to ~/replay_runs/engine_push_45/guard_baseline.json; the watchdog refuses to start without it."
+  },
+  "information_only": [
+    "Net bp/trade and $ per session ON vs OFF (profit is information, per the operator).",
+    "Trades per session, opens per 10 minutes.",
+    "Stream subscriptions used, Finnhub print share for bought names.",
+    "Refusal mix (stale_quote, tape_only, pctr_not_live_alpaca, vol_now_unknown) per session."
+  ],
+  "script": "tools/push_watchdog.py (watchdog + baseline), and a scorer reusing lag_breakdown / lag_blockers / lag_tape with a forward-day bar fetch, written after this file is committed and after a result-skeptic READY; they may not change anything above."
+}
