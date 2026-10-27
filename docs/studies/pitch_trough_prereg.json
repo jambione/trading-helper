@@ -1,0 +1,93 @@
+{
+  "study": "The marked %R turn. Both lines leave a one-minute trough together, the fast line is still underneath, the pitches are the same or the fast pitch is steeper, and the five-minute pitches do not say no.",
+  "question": "Does that turn, exited by the already frozen minute trail, beat a later minute of the same name and a same-minute other name, in both halves, after a 10 bp round trip?",
+  "operator_sentence": "then score the turn I marked",
+  "marked_turn": "The turn named to the operator on 2026-10-26 before this file: the lines leaving a trough together, same pitch or fast steeper while the fast line is still underneath, and a 5-minute pitch that does not say no. The boxed DAL and VRT sessions of 2026-10-26 are not in the warehouse. This file does not replay those two charts and does not tune a lag to them.",
+  "registered_at": "2026-10-26 18:08 ET, before any script of this rule and before any return of it was computed.",
+  "registered_before_results": true,
+  "schema": "pitch_trough_v1",
+  "origin": "pitch_open_v2 and pitch_trail_v2 scored a wider 1-minute state: both pitches at least +0.1 and the fast pitch at least the slow pitch within 5 tenths, including minutes where the fast line was already above the slow line, with no trough and no five-minute check. That state fired about 8 times a name a day. Both of those studies are closed FAILs. Their preregs, scripts, and result files are not edited. This is a new entry. The exit is the pitch_trail_v2 minute trail, called and not rewritten.",
+  "prior": "LOW. The closed pitch union and the closed pitch trail are in this family, and every earlier scored %R entry on this book was about 0 bp before the spread. A pass here does not erase those nulls. The pass bar is not loosened.",
+  "what_is_graded": "One predicate, turn(t). It is true only when the trough, the marked shape, and the five-minute permission are all true. Otherwise false. A missing input is false. There is no second grade and there are no information cells.",
+  "lines": {
+    "fast": "Williams %R(21) then EMA span 7, pandas ewm(adjust=False). Use pitch_open.lines. Do not import signals.py or ai_entry_watch.py. Do not edit pitch_open.py.",
+    "slow": "Williams %R(112) then EMA span 3, the same function.",
+    "feed": "PRIMARY lines are warehouse IEX. Every price is warehouse SIP. --lines sip recomputes the lines on SIP and is information. It has no pass of its own and runs only after the IEX verdict is PASS or FAIL."
+  },
+  "pitch_1m": {
+    "pair": "pitch_open.pair. At a real minute t, a pitch exists only when t-1 is also a real line-feed minute and both lines are finite at t and at t-1.",
+    "formula": "round(line(t) - line(t-1), 1), Python round, half even, then f = int(round(fast_pitch * 10)) and s = int(round(slow_pitch * 10)). The divisor is 1. A 2-minute gap is not divided by 2. round(0.15, 1) is 0.1 and round(2.05, 1) is 2.0. A raw +0.04 is 0.0 and is not up. A raw +0.05 is +0.1 and is up.",
+    "up": "A tenth > 0 is up. 0 and negative are not up."
+  },
+  "trough": "pair(t-1) exists and both tenths are <= 0. Both lines were flat or falling over that one real minute. One line still rising is not a trough. A missing pair(t-1) is not a trough. The trough is one minute. A longer trough is a different prereg.",
+  "shape": {
+    "rule": "pair(t) exists, f > 0, s > 0, fast(t) < slow(t), and f + 5 >= s. fast(t) < slow(t) is strict and is on the %R scale, so the fast line is still under the slow line. Equal line values are not under. f + 5 >= s is the same integer union as pitch_open: same is abs(f - s) <= 5, and fast-steeper is f > s + 5. Same-pitch with the fast line already above the slow line is not this turn.",
+    "frozen": "Not from the market. Lines are fast value, slow value, f, s. (-40, -20, 5, 5) is in. (-40, -20, 9, 3) is in. (-40, -20, 8, 3) is in, because abs(8 - 3) = 5. (-40, -20, 3, 8) is in, because abs = 5. (-40, -20, 2, 8) is out. (-20, -40, 9, 3) is out. (-20, -40, 5, 5) is out. (any, any, 0, 5) is out. Prior tenths (0, 0), (-1, 0), and (0, -3) are a trough. Prior (1, 0) and (0, 1) are not."
+  },
+  "pitch_5m": {
+    "pair": "Minute t-5 must be a real line-feed minute exactly five clock minutes before t, with both lines finite at t and at t-5. A missing t-5 is not a five-minute pitch. The study does not use the fifth earlier real bar when that bar is not t-5, and it does not divide a 4-minute or 6-minute gap by 5.",
+    "formula": "rate = (line(t) - line(t-5)) / 5, then round(rate, 1), then tenths by int(round(that * 10)). The same Python round as the one-minute pitch. Interior minutes t-4, t-3, and t-2 may be missing. t-1 is already required by the trough.",
+    "does_not_say_no": "Both five-minute tenths are > 0. Either tenth <= 0 says no, and turn(t) is false. The five-minute pitches do not have to be the same and do not have to be meeting. Permission is only that neither line is flat or falling over those five minutes.",
+    "frozen": "A change of +0.25 over those five minutes is a rate of +0.05, which rounds to +0.1, tenth 1, and is up. A change of +0.20 is a rate of +0.04, which rounds to 0.0, and says no. A change of -0.25 rounds to -0.1 and says no."
+  },
+  "onset": {
+    "fire": "pitch_trail.onset_minutes on turn(t). Fire when turn(t) is true and turn(t-1) is false. turn(t) requires both tenths at t-1 to be <= 0, and turn(t-1) requires both tenths at t-1 to be > 0, so a true turn(t) already has turn(t-1) false. The onset walker still runs.",
+    "before_the_window": "The predicate is read on earlier RTH minutes so the first in-window minute can be a continuation. A pre-window minute does not set the clock.",
+    "clock": "One run_clock per symbol. A SIP open of t+1 above 0 and a trail_exit price is a fill: lock until that exit minute even when a control gross is missing and the row is not scored. A missing open or a walk with no price is a miss: lock = signal + 14, and no position is opened. Each control gross is that walk's own exit price over that walk's own entry open, minus 1.",
+    "window": "Signal minute t from 09:45 (585) through 15:20 (920) inclusive."
+  },
+  "data": "The pitch_open_v2 warehouse rules, unchanged. Intersection days FIRST 2026-05-11 through LAST 2026-10-15. Half A is day <= 2026-07-29. Half B is after. A session needs a previous intersection day. Universe is every name in that day's SIP file. Skip and count: no line feed, no previous line-feed session, split jump abs(today first SIP open / previous last SIP close - 1) > 0.30, no warmup, bad_line_series. Do not fetch sessions after 2026-10-15. Do not read warehouse_confirm.",
+  "entry": "SIP open of t+1. The open must be > 0. Otherwise the onset is a miss, it is counted, and the 15-minute clock is set.",
+  "exit": "Pass trail_exit, same_name_minutes, and other_names a SIP bar (open, high, low, close), never pitch_open's (open, close) pair, and do not re-code the walk. A minute with no positive open adds 60 idle seconds and does not trade, except 949 still flattens. Idle clears when the close is <= the fill. The leash can sell when the close is > the fill. A blocked leash sets the stop to max(stop, round(close, 2)).",
+  "gross": "exit_price / entry_open - 1. Cost 10 bp (0.0010) is the grade. Lift is gross minus control gross, so the flat cost cancels in the lift and binds in the net.",
+  "controls": {
+    "seed": "pitch_open.seeded(sym, day, entry_min, tag) with entry_min = t+1. One choice. No redraw.",
+    "same_name": "pitch_trail.same_name_minutes. Ascending minutes from entry+1 through min(entry+60, 949) that can fill and can exit. Tags ptrough-d and ptrough-d2. ptrough-d2 is the MDE draw. The control runs the same trail.",
+    "other_name": "pitch_trail.other_names. The day's SIP symbols sorted ascending, excluding the traded name, with a positive open at the trade's entry minute and a trail exit. Tags ptrough-x and ptrough-x2.",
+    "scored_row": "A scored row, and only a scored row, has pop \"primary\" and numeric fields gross, d, d2, x, and x2, the grosses from tags ptrough-d, ptrough-d2, ptrough-x, and ptrough-x2. Pass every scored row from both halves to canary_deltas. Pass each half's scored rows to ladder, and pass those two ladder dicts to overall unchanged. The floor calls are mde(half, \"d\", \"d2\") and mde(half, \"x\", \"x2\").",
+    "declared_bias": "Later-minute controls on this universe run about +1 bp in the trade's favour. The bar is not loosened by 1 bp. The minute trail sells a green minute that is not a new high, which is harsher than the live 15-second leash. That bias stays. It is not switched after the count."
+  },
+  "statistic": "pitch_open.ladder and pitch_open.overall. Inside a half, the day-equal mean of (trade gross - control gross), then eod_reversal.stats. The net is the day-equal mean of (gross - 0.0010).",
+  "pass": "BOTH halves, on scored rows. lift_d mean >= +5 bp and t >= 2. lift_x mean >= +5 bp and t >= 2. Day-equal net after 10 bp > 0. For each lift separately: drop the 3 days with the highest day-mean of that lift, tie broken by the day string ascending, and the remaining mean is >= 0. For each lift separately: drop the 5 symbols with the largest sum of that lift, tie broken by the symbol string ascending, and the remaining mean is >= 0. A null mean on a drop fails. Floors must already have passed or --score does not print means.",
+  "fail": "FAIL if t <= -2 on either lift in either half, or either lift's 97.5% upper bound is < +5 bp in both halves, or the net upper bound is < 0 in both halves. A null upper bound does not satisfy a both-halves clause. Any other powered result is UNDERPOWERED. One passing half is not a pass.",
+  "power": "Per half, on scored rows: >= 300 trades, >= 20 days, and MDE <= 5 bp for both control pairs. MDE is pitch_open.mde. A null MDE fails the floor. If either half misses a floor, --score prints UNDERPOWERED and no means.",
+  "count_step": "Per half: scored trades, days, mde_d, mde_x, floors_met, and skip counts. No gross, no net, no lift, no t, no upper bound. rows.json may be written for a later --score. Do not open it before --score. The cache is reused only when the sha256 of this prereg and of pitch_trough.py, pitch_trail.py, pitch_open.py, eod_reversal.py, and indicator_confirm_hist.py all match.",
+  "canary": "After the count and before --score, add 0.0010 to a copy of the scored grosses with pitch_open.canary_deltas. Print only the change in the day-equal net, lift_d, and lift_x, per half. Each change must be within 1e-9 of +0.0010. Do not write the lifted rows back. --score refuses without canary_ok on the same module shas and the same prereg sha.",
+  "confirmation": "A PASS is not a desk change. Next is result-skeptic Mode 2, then a new forward paper prereg. should_arm_buy stays as it is. The hover stays display-only. No bot_config key is added.",
+  "no_retuning": "The one-minute trough, the underneath cut, the 5-tenth band, the exact t-5 divisor of 5, the trail walk, the 15-minute miss clock, the window, the 10 bp grade, the two controls, the halves, and the floors are fixed. Another lag, a resampled five-minute %R, or a longer trough is a new prereg.",
+  "if_pass": "Stop. Do not change the arm. Do not write a finding markdown until Mode 2 returns.",
+  "if_fail": "This turn is closed as an entry on this warehouse. Do not promote a slice. Do not retune the trough, the five-minute rule, or the trail. Log the verdict from result.json.",
+  "if_underpowered": "Stop. Do not add sessions, do not fetch, do not widen the rule, and do not open rows.json.",
+  "declared_deviations": [
+    "The signal uses the close of minute t. The fill is the SIP open of t+1.",
+    "Warm-up is the previous warehouse RTH session, not premarket.",
+    "Lines are IEX. Prices are SIP.",
+    "The five-minute pitch is the change in the same one-minute lines from t-5 to t, divided by 5. It is not a Williams %R recomputed on five-minute bars.",
+    "The exit is the one-minute stand-in for the live trail. One minute without a new high adds 60 idle seconds.",
+    "This does not replay the 12-seat book, the spread cap, or the other gates."
+  ],
+  "multiplicity": "One new entry in the %R family. One grade. The closed pitch studies are not reopened.",
+  "script": "tools/studies/pitch_trough.py is written only after result-skeptic Mode 1 on this file. tests/test_pitch_trough.py with it. Neither file is run against the warehouse before that review. The script must not contain the strings import signals, import ai_entry_watch, import ai_positions, or should_arm_buy. Round 1 id 01a17a42-ed78-7ec1-9e3b-a25ec81ad47a was FIX FIRST and is not the ready id. Round 2 id 01a17a4d-d270-7b11-90de-7414ce3b2597 is READY. The score flag is --skeptic-ready with that id.",
+  "command": "On the mini, after the Mode 1 review and a local pass of tests/test_pitch_trough.py: nice -n 19 .venv/bin/python tools/studies/pitch_trough.py --prereg-commit <mini HEAD> --workers 2. Then --canary. Then --score only if both halves have floors_met and canary_ok. The score flag is --skeptic-ready when the review id is a READY, and --skeptic-review when the two-round rule stops on a FIX FIRST. Do not pytest on the mini. Do not restart the desk. Do not commit.",
+  "not_in_this_study": [
+    "No change to should_arm_buy or any live gate.",
+    "No edit to pitch_open_prereg.json, pitch_trail_prereg.json, floor20, or range-arm.",
+    "No edit to pitch_open.py or pitch_trail.py.",
+    "No commit and no deploy."
+  ],
+  "ready": {
+    "when": "2026-10-26, result-skeptic round 2 READY, before any script or return.",
+    "review_id": "01a17a4d-d270-7b11-90de-7414ce3b2597",
+    "round_1_review_id": "01a17a42-ed78-7ec1-9e3b-a25ec81ad47a",
+    "note": "Round 2 is READY. The score flag is --skeptic-ready with this review id. Round 1 stays FIX FIRST."
+  },
+  "amended": {
+    "when": "2026-10-26, after result-skeptic round 1 FIX FIRST, before any script or return.",
+    "review_id": "01a17a42-ed78-7ec1-9e3b-a25ec81ad47a",
+    "changes": [
+      "A scored row, and only a scored row, has pop \"primary\" and numeric fields gross, d, d2, x, and x2, the grosses from tags ptrough-d, ptrough-d2, ptrough-x, and ptrough-x2. Pass every scored row from both halves to canary_deltas. Pass each half's scored rows to ladder, and pass those two ladder dicts to overall unchanged. The floor calls are mde(half, \"d\", \"d2\") and mde(half, \"x\", \"x2\").",
+      "One run_clock per symbol. A SIP open of t+1 above 0 and a trail_exit price is a fill: lock until that exit minute even when a control gross is missing and the row is not scored. A missing open or a walk with no price is a miss: lock = signal + 14, and no position is opened. Each control gross is that walk's own exit price over that walk's own entry open, minus 1.",
+      "Pass trail_exit, same_name_minutes, and other_names a SIP bar (open, high, low, close), never pitch_open's (open, close) pair, and do not re-code the walk. A minute with no positive open adds 60 idle seconds and does not trade, except 949 still flattens. Idle clears when the close is <= the fill. The leash can sell when the close is > the fill. A blocked leash sets the stop to max(stop, round(close, 2))."
+    ]
+  }
+}

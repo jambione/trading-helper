@@ -1,0 +1,57 @@
+{
+  "study": "late_gates_replay",
+  "question": "Do the two live confirmation gates (fast %R 10-minute rise >= 15, and the 5-minute slow %R pitch veto) make the desk's empty-square buys more profitable per trade than the same desk without them, and more than refusing the same share of arms at random?",
+  "operator_sentence": "Operator 2026-10-27: 'I want studies on 1 and 2 to see if they are profitable before we enable them' (1 = the two gates that push entries later).",
+  "registered_at": "2026-10-27 ~17:30 ET, before any replay of these variants is run or read.",
+  "registered_before_results": true,
+  "supersedes": "docs/studies/wr_trend_entry_prereg.json for the wr_trend15 arm. That forward read is void for two reasons: (1) the mini rebooted ~10/23 and /tmp/tt_run lost every session before 10/23; (2) since 10/23 the live config has ai_watch_wr_trend_min_rise=15, so its 'base' (the day's live config) equals wr_trend15 (10/26: 34 vs 34 trades, identical). Seen before this file: trade COUNTS only for 10/23 (base 11, wr15 9, rand 9) and 10/26 (34/34/34); no returns.",
+  "origin": "Both gates are live on the mini from the 10/28 open (9d83ca73) without a passed test. wr_trend15: wr_trend_entry_prereg (10/9), never read. 5m slow veto: operator rule 10/26 (e99a2662, 0f046cfc), no prereg. The T1 lag audit (BATCH2_2026-10-24.md) says the arm already fires ~14 min and ~24 bp after the %R turn; both gates add more waiting.",
+  "prior": "Neither is expected to help. Every %R-based confirmation tested so far is ~random (wr-triggers-see-no-runway, %R trend trade lift -0.5 bp). Dips-after-signal FAILED: waiting costs -14 to -36 bp. The honest prior for each lift is 0 +- 3 bp per trade.",
+  "gates": {
+    "WR": "ai_watch_wr_trend_min_rise=15 (presquare arms refused unless fast %R rose >= 15 points over ~600 s).",
+    "S5": "ai_watch_wr_slow_5m_veto=true, ai_watch_wr_slow_5m_min_pitch=0.0 (refused if any of: completed 1m slow %R 5-minute change < 0, completed 5m-bar slow %R(28) bar-to-bar change < 0, live polled slow %R 5-minute change < 0). Code as of the replayed sha."
+  },
+  "replay": {
+    "tool": "tools/replay_session.py, live code, recorded inputs, --engine recorded, --exits live, ONE pinned sha for every session and variant (the commit that adds the runner; recorded in every output's 'sha').",
+    "reference": "REF = the day's recorded config with BOTH gates explicitly off and the Leg-1 RTH gate explicitly off: --set ai_watch_wr_trend_min_rise=0 --set ai_watch_wr_slow_5m_veto=false --set ai_watch_leg1_rth_gate=false --set ai_watch_wr_rand_refuse_share=0. Every other knob is the day's own config (replay-gap-was-old-config).",
+    "variants": {
+      "REF": "reference above",
+      "WR": "REF + ai_watch_wr_trend_min_rise=15",
+      "S5": "REF + ai_watch_wr_slow_5m_veto=true + ai_watch_wr_slow_5m_min_pitch=0",
+      "WR_RAND": "REF + ai_watch_wr_rand_refuse_share = max(0, round(1 - n(WR)/n(REF), 4)) for that session (two-pass, after REF and WR)",
+      "S5_RAND": "REF + ai_watch_wr_rand_refuse_share = max(0, round(1 - n(S5)/n(REF), 4)) for that session (two-pass, after REF and S5)",
+      "BOTH": "REF + both gates (information only; the live combination)"
+    },
+    "outputs": "~/replay_runs/late_gates/DAY-VARIANT.json on the mini (NOT /tmp; a reboot wiped /tmp/tt_run). Copied to the MacBook after each batch.",
+    "scope_note": "ai_watch_presquare_only=true on every session in the window, so all buys are empty-square arms and the random-refusal knob covers the same population as both gates. A session where the recorded config has presquare_only false is excluded and counted."
+  },
+  "sessions": {
+    "S5": "Every recorded session in ~/session_snapshots from 2026-09-24 through the last forward session (24 exist at registration: 2026-09-24 .. 2026-10-27). Half A = 2026-09-24 .. 2026-10-09 (12 sessions), half B = 2026-10-12 onward. None of these has been replayed with S5.",
+    "WR": "Sessions 2026-10-12 onward only (2026-09-26 .. 10-09 were seen with wr_trend15 in the 10/9 counterfactual and stay excluded, as in the superseded prereg). 12 exist at registration. Half A = 10-12 .. 10-27, half B = forward sessions from 10-28.",
+    "forward": "The nightly appends every new session (REF/WR/S5/WR_RAND/S5_RAND/BOTH) until the read."
+  },
+  "net": "Per trade: replay ret in bp minus the full SIP spread at entry from tools/studies/replay_costing.entry_spread_bp; a trade with no NBBO gets that session's pooled median spread across the variants (counted). Same costing as wr_trend_read.py.",
+  "statistic": "For gate G in {WR, S5}, per session: lift_ref = mean net(G) - mean net(REF) and lift_rand = mean net(G) - mean net(G_RAND), bp per trade, sessions weighted equally, t = std_scorer.day_stat across sessions. A session needs >= 5 trades in G (else excluded, counted). A G_RAND leg is invalid when its trade count is not within +-15% of G's (counted, lift_rand missing that session). A session is vacuous when any file is missing or G's (symbol, entry_ts) list equals REF's (counted, excluded).",
+  "count_step": "Before any mean: run all variants, print per gate the sessions, trades per variant, exclusions, the share of REF buys each gate removes, and the MDE of lift_ref per half = 2.8 x sd(REF session mean net, all sessions) x sqrt(2) / sqrt(sessions in that half) (paired-difference proxy). If MDE > 6 bp in either half at the read, the verdict is UNDERPOWERED, not scored. No returns are printed in the count step.",
+  "canary": "Before scoring: add +10 bp to every WR (and separately S5) trade's ret in a copy; the scorer must report lift_ref within 10 +- 1 bp. canary_ok is required by --score.",
+  "read": "S5: one read once the count step passes and both halves have >= 12 scored sessions (possible at registration if the power check passes). WR: one read at >= 24 scored sessions (12 per half); max 40 sessions, then UNDERPOWERED = FAIL.",
+  "pass": "Per gate, Bonferroni over 2 gates (t >= 2.24): lift_ref >= +3 bp/trade with t >= 2.24 over all scored sessions, AND lift_ref > 0 in BOTH halves, AND lift_rand > 0 with t >= 2.24, AND >= 300 REF trades and >= 150 G trades. A pass means 'the gate removes losers better than chance'. It is reported separately whether G's own mean net is > 0 (profitable) or only less negative (loss reducer).",
+  "fail": "Anything else at the read is FAIL. lift_ref <= 0 in either half is FAIL regardless of t.",
+  "if_pass": "result-skeptic Mode 3 review, then the operator decides whether the gate stays on.",
+  "if_fail": "Recommend the gate off. A FAIL with lift_ref < 0 (t <= -2) means the gate costs money.",
+  "information_only": [
+    "BOTH vs REF (the live combination).",
+    "Absolute mean net of REF, WR, S5, BOTH, per half.",
+    "Median minutes from the first REF arm attempt to the gated buy for the same symbol-episode (how much later the gate enters).",
+    "Trades per session per variant (opens cost of each gate)."
+  ],
+  "caveats": [
+    "Replay fills are modelled at the recorded price; exits run on recorded prices; fidelity vs live recall 0.54-1.0 (replay-session-runs-live-code). The comparison is variant vs variant inside the same replay, so fidelity error is shared.",
+    "Replaying 9/24-10/9 with today's code changes everything that changed since, equally for all variants.",
+    "The live polled slow %R history (S5 rule 3) is rebuilt by the replay's own poll loop; it is only as good as the recorded indicator stream.",
+    "24 sessions is likely underpowered for a 3 bp lift; the count step says so before any mean is seen."
+  ],
+  "no_retuning": "No other threshold (e.g. min_rise 10/20, min_pitch -2) is scored. If both gates FAIL, a new threshold needs a new prereg on forward sessions only.",
+  "script": "Runner scripts/late_gates_replay.sh and scorer tools/studies/late_gates_read.py are written after this file is committed and after a result-skeptic READY; they may not change anything above.",
+  "multiplicity": "2 primary tests (WR, S5), Bonferroni t >= 2.24. BOTH and every information line have no pass."
+}

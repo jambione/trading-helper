@@ -1,0 +1,74 @@
+{
+  "study": "Pitch entry, live trail exit. Same 1-minute pitch turn as pitch_open_v2. The exit is the desk trail on 1-minute SIP bars.",
+  "question": "Does buying that pitch turn, and then selling with the live trail, beat the same trail started a later minute of the same name and the same trail started on another name at the same minute, in both halves, after a 10 bp round trip?",
+  "operator_sentence": "Score the pitch with the trail exit",
+  "registered_at": "2026-10-26, before any script of this exit and before any return of it was computed.",
+  "registered_before_results": true,
+  "schema": "pitch_trail_v2",
+  "amended": {
+    "when": "2026-10-26, after result-skeptic round 2 FIX FIRST, before any script or return. Two-round rule: no third Mode 1 review.",
+    "review_id": "01a1796a-336d-7c71-8e25-7ab83afa0463",
+    "round_1_review_id": "01a1795e-31c0-7900-952c-5f69cbb8034d",
+    "two_round_rule": "No third Mode 1 review. The round-2 id is not a READY. Mode 2 is still required before a PASS ships or the buy changes.",
+    "changes": [
+      "Universe is that day's SIP file and the slow line is warmed with the previous RTH session.",
+      "Seed entry_min is t+1. A control minute must be <= 949 and the walk must return a price. A scored row needs d, d2, x, and x2.",
+      "The symbol drop is the 5 symbols with the largest sum of that lift.",
+      "One minute order: test the prior stop, then raise, breakeven armed or not, a red close clears idle, leash, a held leash parks the stop, dead trade at the close, flatten inside entry..949.",
+      "The hold uses decide() on bars before this minute and the exit price. A missing lookback sells. A fill ignores the 15-minute clock.",
+      "Step 8 runs only when m is 949 and the trade is still open, including when 949 has no positive open: exit at that close if it is > 0, otherwise at the latest SIP close > 0 in [entry minute, 949]; if none, there is no exit price and no position.",
+      "A held leash sets the stop to max(stop, round(close, 2)).",
+      "Same-name eligible minutes are ascending before the one choice."
+    ]
+  },
+  "origin": "Operator 2026-10-26, after pitch_open_v2 FAIL. They said the clocks are the wrong sale and the trail is what stays with the run. The live knob ai_profit_capture_pct is 0. The trail scored here is the live shelf: 1R is 5% of the fill, the working stop starts 0.12R under the fill, it arms at 0.06R, the peak stop is 0.35% under the high, the green leash steps 0.05R after 15 seconds without a new high, and a trade that never ran 0.10R is a dead trade at 22 minutes. Config ai_dead_trade_min is 0.0 and the live reader treats 0 as 22. The 15-second leash cannot see prints inside a minute. The minute order below is the stand-in.",
+  "prior": "LOW. pitch_open_v2 FAIL on 2026-10-26: the same entry, sold on a 10-minute clock, was about -0.4 bp versus a later minute in the first half and about flat in the second, and about -10 bp after 10 bp. The 3-minute clock beside that fail was also about flat before the spread. A pass here does not erase the clock fail and does not by itself change the buy.",
+  "what_is_graded": "One population. The entry is the pitch_open_v2 grade: both 1-minute pitches up, and the fast pitch at least the slow pitch within 5 tenths. The exit is the trail walk below. Same and fast-steeper are not separate grades. A 5-minute pitch is not in this test.",
+  "data": {
+    "warehouse": "Intersection of iex and sip dates from indicator_confirm_hist.warehouse_days. FIRST 2026-05-11, LAST 2026-10-15, half A is day <= 2026-07-29, half B is the rest. Same window and split as pitch_open_v2.",
+    "universe": "Every name in that day's SIP file. Liquidity was already applied at fetch. A name without today's line feed, or without the previous session's line feed, is skipped and counted.",
+    "warmup": "The previous intersection day's RTH bars are prepended for the lines. Regular hours, not premarket. A name whose lines are still missing across the whole decision window is skipped and counted.",
+    "split_jump": "If the previous session's last SIP close is positive and abs(today's first SIP open / that close - 1) > 0.30, the name-day is skipped and counted.",
+    "bad_line_series": "Skip and count the name-day when either session's minutes are empty, not strictly increasing, or contain a duplicate.",
+    "do_not_fetch": "Sessions after 2026-10-15 are out. Do not read warehouse_confirm. Do not open pitch_open rows.json."
+  },
+  "entry": {
+    "same_as": "pitch_open_v2 lines, pitch pair, integer tenths, state, onset, and window 585 through 920. Copy those rules. Frozen pairs: (3, 8) and (8, 3) are in the grade and are same. (9, 3) is fast-steeper and in the grade. (2, 8) is not in the grade. (0, 5) is not up. (5, 5) is in the grade.",
+    "fill": "SIP open of t+1, and that open must be > 0. entry_min for every seed is t+1.",
+    "one_position": "After a fill, ignore later onsets until the signal minute is strictly after the exit minute. The 15-minute clock is not used on a fill. A fire with no fill sets a 15-minute clock at the signal minute and does not open a position. The next onset must be at least 15 minutes after that signal."
+  },
+  "exit": {
+    "prices": "SIP bars. R = 0.05 * entry. cent_ceil(x) = math.ceil(round(x * 100.0, 4)) / 100.0. cent_floor(x) = math.floor(round(x * 100.0, 4)) / 100.0.",
+    "initial_stop": "give = min(0.12 * R, entry * 0.01). stop = cent_ceil(entry - give). If stop >= entry, stop = entry - 0.01.",
+    "state": "peak starts at entry. idle seconds start at 0. mfe_r = (peak - entry) / R.",
+    "minute_order": "For each minute m from the entry minute through 949, in this order and no other. A minute with no positive open adds 60 idle seconds and does not trade, except that minute 949 still runs step 8 while the trade is open. A strict new high is high > peak.",
+    "step_1_test": "Test the stop from before this minute. If the open is <= the stop, the exit price is the open. Else if the low is <= the stop, the exit price is the stop. Then the hold rule. A sale stops the walk. A hold does not sell and does not undo the stop.",
+    "step_2_peak": "If the high is a strict new high, peak becomes the high and idle seconds become 0. Otherwise add 60 idle seconds. mfe_r uses this peak, so it includes this high.",
+    "step_3_breakeven": "If mfe_r >= 0.15, or (peak - entry) / entry >= 0.0015, the stop becomes max(stop, entry + 0.01). This runs whether or not the trail is armed.",
+    "step_4_raise": "Armed means mfe_r >= 0.06. If armed, the stop becomes the max of itself, cent_floor(peak * (1 - 0.35 / 100.0)), and cent_ceil(high - min(0.12 * R, high * 0.01)) pulled back so it is at least 0.01 under the high. The stop is never lowered.",
+    "step_5_idle_clear": "If the close is <= entry, idle seconds become 0. The leash does not run on that minute.",
+    "step_6_leash": "If the close is > entry, steps = idle_seconds // 15 and idle_seconds keeps the remainder. The candidate is cent_ceil(stop + steps * 0.05 * R). If steps is 0, skip. If the candidate is >= close - 0.01, this is a leash sale at the close, then the hold rule. If the hold sells, the walk stops. If the hold blocks the sale, the stop becomes max(stop, round(close, 2)) and the trade stays open. If the candidate is below close - 0.01, the stop becomes max(stop, candidate) and at least 0.01 under the close. A new high already cleared idle, so the peak minute does not leash.",
+    "step_7_dead": "If the trade is still open and (m - entry_minute) >= 22 and mfe_r < 0.10 and the stop is <= entry, exit at this minute's close. The hold rule does not apply. This is the first such minute only.",
+    "step_8_flatten": "Step 8 runs only when m is 949 and the trade is still open, including when 949 has no positive open: exit at that close if it is > 0, otherwise at the latest SIP close > 0 in [entry minute, 949]; if none, there is no exit price and no position. The hold rule does not apply. Minutes after 949 are not used.",
+    "hold_rule": "Used only by step 1 and step 6. An exit price <= entry * 0.95 always sells. An exit price > entry * (1 + 0.0005) always sells. Otherwise copy line_window, live_value, smoothed_at_closes, line_trend, and decide from tools/sell_double_check.py, and copy _live_percent_r_line and _raw_percent_r from ai_entry_watch.py, verbatim. Do not import ai_entry_watch or ai_positions. Closed bars are the SIP (high, low, close) of real minutes strictly before m, in order. The exit minute is not a closed bar. fast = line_window(rows, exit_price, 21, 7, 10). slow = line_window(rows, exit_price, 112, 3, 10). Hold only when decide(fast, slow, lookback=10, eps=0.05)['sell'] == 'no'. Any other result sells, including a missing lookback. Down means the live reading is more than 0.05 under the high of the other 9 points.",
+    "no_price": "No entry open, or no exit price from the walk, skips the fire and counts it. The 15-minute clock is set. A position is not opened.",
+    "not_in_the_walk": "Print-ring median, quotes, the spread floor (live k is 0), no-progress flatten (live false), profit_capture (live 0), and the entry catch-up (live 0 seconds)."
+  },
+  "gross_cost_controls": {
+    "gross": "exit_price / entry_open - 1.",
+    "cost": "10 bp (0.0010) is the grade, charged once. The lift cancels a flat cost. The net uses it. An extra 7 bp on stop exits is not the grade.",
+    "seed": "seeded(sym, day, entry_min, tag) with entry_min = t+1. seeded is random.Random(int(hashlib.sha256('|'.join(the four strings).encode()).hexdigest()[:16], 16)). One choice. No redraw. Tags ptrail-d, ptrail-d2, ptrail-x, ptrail-x2.",
+    "eligible": "A same-name minute c is eligible when entry+1 <= c <= min(entry+60, 949), the SIP open at c is > 0, and the trail walk from c returns an exit price. Same-name eligible minutes are ascending before the one choice. Another name is eligible when its SIP open at the trade's entry minute is > 0 and the trail walk from that minute returns an exit price. The name list is the day's SIP symbols, sorted ascending, excluding the traded symbol.",
+    "scored_row": "A fire is scored only when d, d2, x, and x2 all exist. d2 and x2 are second draws with their own tags, used in the MDE. An empty eligible list makes that draw missing and the row is not scored. The position lock from a filled trade still stands.",
+    "bias": "Later-minute controls on this universe have run about +1 bp in the trade's favour. The bar is not loosened."
+  },
+  "pass_bar": "Both halves, on scored rows. Day-equal lift versus d and versus x each mean >= +5 bp (0.0005) and t >= 2. Net > 0. For each lift separately, drop the 3 days with the highest day-mean of that lift, tie broken by the day string ascending, and the remaining day-equal mean is >= 0. For each lift separately, drop the 5 symbols with the largest sum of that lift, tie broken by the symbol string ascending, and the remaining day-equal mean is >= 0. A null on a drop fails. t <= -2 on either lift in either half is a fail. Either lift's 97.5% upper bound < +5 bp in both halves is a fail. Net upper bound < 0 in both halves is a fail. A null upper bound does not satisfy those both-halves clauses. Otherwise, if the floors pass and the pass fails: UNDERPOWERED. One half is not a pass. Day-equal means and t follow eod_reversal.stats, the same reading as pitch_open_v2. A null t is 0 in the t <= -2 check and fails t >= 2.",
+  "floors": "Per half, on scored rows: >= 300 trades, >= 20 days, and MDE <= 5 bp for d minus d2 and for x minus x2. MDE = (2.0 + 0.84) * statistics.stdev(day means of control - control2) / sqrt(n_days). stdev 0 makes MDE 0. Fewer than 2 days makes MDE null and fails the floor. A floor miss prints the single word UNDERPOWERED and no means. The count step prints trades, days, MDE, floors, skip counts, and exit-reason counts. No gross, net, lift, t, or upper bound.",
+  "canary": "Before --score, add 0.0010 to a copy of each scored trade gross. Do not write the shifted gross back. Print only the change in day-equal net, lift_d, and lift_x per half. Each change must be within 1e-9 of +0.0010.",
+  "information": "Printed only when the verdict is PASS or FAIL. Each cell is n, the two day-equal lifts, and the net, labeled not-a-grade. Cells: same only, fast-steeper only, fast still under slow, confirmed two-minute state, the complement, and the empty-square shape. Do not promote one. --lines sip is a second process only after the IEX verdict is PASS or FAIL. It has no pass of its own.",
+  "implementation": {
+    "script": "tools/studies/pitch_trail.py is written under the two-round rule. Round 2 review id 01a1796a-336d-7c71-8e25-7ab83afa0463 was FIX FIRST. The three sentences are in this file. There is no third Mode 1 review and that id is not a READY. Mode 2 is still required before a PASS ships or the buy changes.",
+    "out": "ai_reports/pitch_trail/ and, if run, ai_reports/pitch_trail_sip_lines/.",
+    "run": "On the mini, nice -n 19, workers 2. Do not pytest on the mini. Do not fetch sessions after 2026-10-15. Do not edit pitch_open_prereg.json, the floor20 prereg, or the range-arm prereg. Do not change bot_config. Do not restart the desk. A PASS is not a desk change until a result-skeptic Mode 2 review of result.json."
+  }
+}

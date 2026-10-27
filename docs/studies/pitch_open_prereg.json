@@ -1,0 +1,131 @@
+{
+  "study": "Pitch open. Both %R lines rising over the last completed minute, and the fast line's pitch the same as the slow line's or steeper.",
+  "question": "Does that state mark a better next 10 minutes than a later minute of the same name and a same-minute other name, in both halves, after a 10 bp round trip?",
+  "operator_sentence": "lets run some tests - thourough research on how our opens can benefit from the pitch trending the same or the pitch of the fast line being greater than of the ptich on the slow line but both trending up",
+  "registered_at": "2026-10-26 12:44 ET, before any script of this rule and before any return of it was computed.",
+  "registered_before_results": true,
+  "schema": "pitch_open_v2",
+  "origin": "Operator 2026-10-26, the boxed DAL trough: both lines had turned up together while still far apart, fast steeper than slow, and that was the buy they wanted. The live empty-square buy does not read pitch. It waits until both lines are already at or above -35 and within 15 points. Pitch on the book is a hover (ai_entry_watch.py PITCH_SAME_BAND 0.5, round to 1 decimal). The DAL session 2026-10-26 is not in the warehouse. The graded state is the sentence above: both pitches up, and the fast pitch at least the slow pitch within half a point. It does not also require the fast line to still be below the slow line. That was true on the chart; it is an information slice. The empty-square population is information for the same reason: it is the live open, and it is not the boxed turn.",
+  "prior": "LOW. Every scored %R entry on this book was about 0 bp before the spread (docs/studies/pr_path_prereg.json: leave-oversold, both-lines-up, the 243-cell together grid, steep turn, pre-square, square). The complete oversold-to-turn-down trade failed on 2026-10-24 (docs/studies/WR_TREND_TRADE_2026-10-24.md): about -0.5 bp versus a later minute, net about -5 bp after 5 bp. Steep-turn (fast +15 over 3 minutes, slow rising, a dip behind it) failed its own bar. Pitch is a new entry rule on the same family. A pass here does not erase those nulls.",
+  "what_is_graded": "One state, the union, on integer tenths. After round(diff, 1), f = int(round(fast_pitch * 10)) and s = int(round(slow_pitch * 10)). Both up means f > 0 and s > 0. Same means both up and abs(f - s) <= 5. Fast-steeper means both up and f > s + 5. The one grade is both up and f + 5 >= s. Do not compare with abs(fast_pitch - slow_pitch) <= 0.5 or fast_pitch >= slow_pitch - 0.5. Those float compares are not the grade. Same and fast-steeper partition the grade: every graded minute is exactly one of the two. The complement is both up and s > f + 5. Frozen checks, not from the market: (f, s) = (3, 8) is same and in the grade; (8, 3) is same and in the grade, because abs(8 - 3) = 5 and 8 > 3 + 5 is false; (9, 3) is fast-steeper and in the grade; (2, 8) is the complement and not in the grade; (0, 5) is not up; (5, 5) is same and in the grade.",
+  "lines": {
+    "fast": "Williams %R(21) then EMA span 7, pandas ewm(adjust=False). The formula is copied into pitch_open.py. The study does not import signals.py or ai_entry_watch.py.",
+    "slow": "Williams %R(112) then EMA span 3, same smoother, copied the same way.",
+    "williams": "-100 * (highest high - close) / (highest high - lowest low) over the length. A zero range is NaN, and that minute has no line.",
+    "grid": "Each session's minutes must be strictly increasing with no duplicates, or the name-day is skipped and counted as bad_line_series. In-session gaps of 2 to 15 minutes are filled flat at the previous close, the same fill as signals._minute_grid_pr. The overnight gap is not filled. At a real bar t the line uses bars at or before t only. Warehouse columns are minute, open, high, low, close, volume. The grid uses high, low, and close.",
+    "where_read": "The line is stored at today's real line-feed minutes only. A filled minute is not a decision and is not a pitch endpoint.",
+    "feed": "PRIMARY lines are warehouse IEX. Every price (entry, exit, controls, the split-jump check) is warehouse SIP. --lines sip recomputes the lines on SIP and is information. It has no pass of its own."
+  },
+  "pitch": {
+    "pair": "At a real minute t, a pitch exists only when t-1 is also a real line-feed minute and both lines are finite at t and at t-1.",
+    "formula": "fast_pitch = round(fast(t) - fast(t-1), 1) and slow_pitch = round(slow(t) - slow(t-1), 1), Python round, half even. Then f and s as in what_is_graded. The divisor is 1 minute. round(0.15, 1) is 0.1 and round(2.05, 1) is 2.0 on this interpreter; do not switch to decimal half-up.",
+    "missing": "No pitch when t-1 is absent. The study does not divide a 2-minute change by 2. Those minutes are counted and dropped. Live would still quote a per-minute pitch across a gap of 45 to 130 seconds; that wider window is not used here.",
+    "up": "f > 0 means the fast line rose toward 0, which is up on the %R chart. 0 and negative are not up. A raw change of +0.04 rounds to 0.0 and is not up. A raw change of +0.05 rounds to +0.1, which is f = 1, and is up.",
+    "band": "5 tenths, which is the live hover's half a point per minute (PITCH_SAME_BAND 0.5) after the integer conversion. The integer step is what makes same and the union the same function. It was locked after round 1, before any script or any return."
+  },
+  "state": "state(t) is true when the pitch exists and f > 0 and s > 0 and f + 5 >= s. Otherwise false. A missing pitch is false.",
+  "onset": {
+    "populations": "Four populations, four clocks, one name at a time. Grade uses state. Confirmed uses state(t) and state(t-1). Complement uses both up and s > f + 5. Empty square uses the empty-square shape. A population's predicate is false when its inputs do not exist.",
+    "fire": "For clock minute t, fire when the predicate is true and the predicate at t-1 is false, and t is inside the window, and the refractory allows it. t-1 missing makes the predicate at t-1 false.",
+    "before_the_window": "The predicate is read on earlier RTH minutes so the first in-window minute can be a continuation. A pre-window minute does not set the refractory clock.",
+    "refractory": "15 clock minutes. After a fire at L, a later candidate with t - L < 15 is not a fire and does not move the clock. A fire that then misses its fill, or misses a control, still sets the clock at the signal minute t.",
+    "window": "Signal minute t from 09:45 (585) through 15:20 (920) inclusive. 09:30 is 570 and 16:00 is 960.",
+    "order": "Walk t upward. last starts unset. If t is before 585, do not update last. If t is after 920, stop. If the onset condition fails, continue. If last is set and t - last < 15, continue. Otherwise set last = t, then try the fill.",
+    "why_onset": "The operator's buy is the turn, the minute the pitch state starts. Scoring every minute inside a run would repeat one move. The 15-minute gap is longer than the 10-minute hold, so two scored fires of the same name do not have overlapping 10-minute holds."
+  },
+  "data": {
+    "warehouse": "Intersection of iex and sip npz dates from indicator_confirm_hist.warehouse_days. Sessions with FIRST <= day <= LAST and a previous intersection day. FIRST 2026-05-11, LAST 2026-10-15, half A is day <= 2026-07-29, half B is the rest. The same window and split as wr_trend_trade, the full-universe harness. The 400-name pr_path split (2026-07-23) is a different sample and is not used.",
+    "universe": "Every name in that day's SIP file. The warehouse liquidity rule already applied at fetch (>= $10 prior close, >= $20M 20-day dollar volume, ETFs and funds excluded). No second sample. A name without today's line feed, or without the previous session's line feed, is skipped and counted.",
+    "warmup": "The previous intersection day's RTH bars are prepended. That is regular hours, not premarket. A name whose lines are still missing across the whole decision window is skipped and counted.",
+    "split_jump": "If the previous session's last SIP close is positive and abs(today's first SIP open / that close - 1) > 0.30, the name-day is skipped and counted.",
+    "bad_line_series": "Skip and count the name-day when either session's minutes are empty, not strictly increasing, or contain a duplicate. That is the series signals._minute_grid_pr would reject. The check is copied; signals.py is not imported.",
+    "do_not_fetch": "Sessions after 2026-10-15 are out. Do not fetch them for this prereg. Do not read warehouse_confirm.",
+    "dal": "2026-10-26 DAL is outside the files. This study cannot replay the chart that prompted it."
+  },
+  "entry_exit_cost": {
+    "entry": "SIP open of t+1. The open must be > 0. Otherwise the fire is skipped, counted, and the clock stays set.",
+    "exit": "SIP close of entry+9. early_entry_honest.markout with HOLD 10 is the open of the entry minute to the close nine minutes later. The close must be > 0 and the exit minute must be < 960. Otherwise the fire is skipped, counted, and the clock stays set. A missing exit is not replaced with an earlier close.",
+    "gross": "exit_close / entry_open - 1.",
+    "cost": "10 bp round trip (0.0010) is the grade. 3 bp and 5 bp are printed only when information cells are allowed, and they are not the grade. Lift uses gross minus gross, so the flat cost cancels in the lift and is binding in the net clause.",
+    "why_10bp": "This is an entry test. steep_turn and pr_path grade 10 bp. wr_trend_trade graded 5 bp because that study included an exit rule. 3 bp is the measured round trip on $10+ names and stays information.",
+    "scored_row": "A fire is scored only when gross, d, d2, x, and x2 all exist. Anything else is counted and dropped. Floors, lifts, and the net use this same set. The row stores f, s, and its population. --score does not recompute the predicate."
+  },
+  "controls": {
+    "seed": "seeded(sym, day, entry_min, tag) with entry_min = t+1. seeded is random.Random(int(hashlib.sha256('|'.join(the four strings).encode()).hexdigest()[:16], 16)), the wr_trend_trade helper. One choice on the list below. No redraw loop.",
+    "d_same_name": "The list is the ascending minutes c from entry+1 through entry+60 inclusive with a SIP open at c > 0, a SIP close at c+9 > 0, and c+9 < 960. Tags pitch-d and pitch-d2. pitch-d2 is the MDE draw. The control gross is open(c) to close(c+9).",
+    "x_cross_name": "The list is the other SIP symbols that day, sorted ascending, with an open at the trade's entry minute > 0 and a close at entry+9 > 0. Tags pitch-x and pitch-x2. pitch-x2 is the MDE draw. The pool is the day's SIP names, not only names that fired.",
+    "later_only": "The same-name control is after the entry. An earlier window contains the run-up. The 2026-10-13 null calibration scored momentum triggers about 20 bp below a random minute for that reason.",
+    "declared_bias": "Later-minute controls on this universe run about +1 bp in the trade's favour (10/22 placebo). The bar is not loosened by 1 bp.",
+    "empty_eligible": "An empty list makes that control missing. The fire is then not a scored row, and the clock stays set.",
+    "other_populations": "Confirmed tags pitch-k-d, pitch-k-d2, pitch-k-x, pitch-k-x2. Complement tags pitch-c-d, pitch-c-d2, pitch-c-x, pitch-c-x2. Empty square tags pitch-e-d, pitch-e-d2, pitch-e-x, pitch-e-x2. Same lists, same entry_min = t+1, their own fires."
+  },
+  "statistic": "Inside a half, for each day, the mean of (trade gross - control gross) over that day's scored rows. Then eod_reversal.stats on those day means: mean, t = mean / (sample stdev / sqrt(n_days)), ub = mean + t_ppf(0.975, n_days-1) * se. The sample stdev is statistics.stdev, the n-1 divisor eod_reversal.stats uses. n_days < 2 yields t and ub null. A null t is treated as 0 in the t <= -2 check and fails the t >= 2 check. Day-equal, not trade-weighted: names pile into the same minutes, and a heavy day must not outvote the calendar. The net is the same day-equal mean of (gross - 0.0010).",
+  "pass": "BOTH halves must do all of the following on scored primary rows. lift_d mean >= +5 bp (0.0005) and t >= 2.0. lift_x mean >= +5 bp and t >= 2.0. Day-equal net after 10 bp > 0. For lift_d and for lift_x separately: drop the 3 days with the highest day-mean of that lift, tie broken by the day string ascending, and that lift's remaining day-equal mean is >= 0. For lift_d and for lift_x separately: drop the 5 symbols with the largest sum of that lift, tie broken by the symbol string ascending, and that lift's remaining day-equal mean is >= 0. A null mean on a drop clause fails the pass. The two lifts may drop different days and different symbols. Floors must already have passed or --score does not run.",
+  "fail": "The verdict is only this primary ladder. FAIL if t <= -2 on either lift in either half. FAIL if for either lift the 97.5% upper bound is < +5 bp in both halves. FAIL if the net upper bound is < 0 in both halves. A null upper bound does not satisfy those both-halves clauses. Any other powered half that is not a pass leaves the study UNDERPOWERED when neither half has tripped the t <= -2 rule and the both-halves upper-bound rules have not fired. One passing half is not a pass.",
+  "power": {
+    "floors": "Per half, on scored primary rows: >= 300 trades, >= 20 days, and MDE <= 5 bp for both control pairs.",
+    "mde": "MDE = (2.0 + 0.84) * statistics.stdev(day means of control - control2) / sqrt(n_days), for d-d2 and for x-x2. That is the sample deviation. stdev 0 makes MDE 0. Fewer than 2 days makes MDE null, and a null MDE fails the floor.",
+    "underpowered_floor": "If either half misses a floor, --score prints the single word UNDERPOWERED and no means.",
+    "underpowered_powered": "If both floors pass and the ladder is UNDERPOWERED, --score prints the primary ladder only. No information cell."
+  },
+  "count_step": {
+    "prints": "Per half: scored primary trades, days, mde_d, mde_x, floors_met, and hold_bars 10. Skip counts: no line feed, no previous session, split jump, no warmup, bad line series, missing entry, missing exit, missing control. Cell counts with no means: primary, same, fast_steeper, fast_under, confirmed, complement, empty-square, empty-square pitch_ok, pitch_not, pitch_unknown. Nothing else.",
+    "does_not_print": "No gross, no net, no lift, no t, no upper bound, no by-hour return. rows.json holds the returns for a later --score. The count stdout and count.json do not. Do not open rows.json before --score.",
+    "cache": "rows.json is reused only when the sha256 of pitch_open.py, eod_reversal.py, and indicator_confirm_hist.py matches and the sha256 of this prereg file matches. Any other cache is recomputed.",
+    "binds_the_prereg": "count.json stores prereg_sha256 of this file and the --prereg-commit string it was given. --score refuses if the file's sha256 changed or the commit string is empty."
+  },
+  "canary": {
+    "synthetic": "tests/test_pitch_open.py, local, no warehouse. Checks the five frozen (f, s) pairs, the onset, the 15-minute refractory, a missing fill still setting the clock, a pre-window minute not setting the clock, the next-open entry, and a fake book whose exits were lifted +10 bp. The scorer's day-equal net and both lifts must rise by 10 bp on a copy. This test must pass before the mini count.",
+    "on_the_rows": "After the count, and before --score, --canary copies the scored primary grosses in memory, adds 0.0010 to the copy, and prints only the change in the day-equal net, lift_d, and lift_x, per half. It does not print the level. It does not write rows.json. Each change must be within 1e-9 of +0.0010. The result is canary.json with the deltas and canary_ok only. --score refuses without canary_ok on the same module sha and the same prereg sha."
+  },
+  "information_only": {
+    "banner": "Printed only when the primary verdict is PASS or FAIL. Each cell prints n, the day-equal lift_d mean, the day-equal lift_x mean, the day-equal net mean, and the label not-a-grade. No t, no upper bound, and no pass word. A larger cell is not promoted. Choosing one is a new prereg. A floor miss prints none of this. A powered UNDERPOWERED prints none of this.",
+    "same_only": "Scored primary rows with abs(f - s) <= 5.",
+    "fast_steeper_only": "Scored primary rows with f > s + 5.",
+    "fast_under": "Scored primary rows with fast(t) < slow(t) at the signal minute. fast_not_under is the rest. This is the chart's 'still underneath' slice. The hover word meeting also needs the fast pitch beyond the same band; that extra cut is not its own cell.",
+    "confirmed": "Its own fires, not a subset of primary. confirmed(t) is state(t) and state(t-1). Fire when confirmed(t) is true and confirmed(t-1) is false. A primary fire has state(t-1) false, so it cannot be a confirmed fire. Own controls. Same 10-minute hold and 10 bp net. This is the two-minute version, where the minute before already agreed. Intersecting it with primary fires would be empty, and that empty intersection is not a cell.",
+    "complement": "Its own fires. Predicate: pitch exists, f > 0, s > 0, and s > f + 5. Fire when that is true and the previous clock minute is false. Own controls. Same hold and cost. This is both lines up while the slow line is the steeper one.",
+    "empty_square_filter": "Its own fires, the live shape, not the grade. At a real minute t with t-1 real: both lines >= -35, abs(fast - slow) <= 15, not both >= -20, and fast(t) > fast(t-1) + 0.05. The 0.05 is rte_direction_eps on the raw line, not the rounded pitch. Fire when that shape is true and the previous clock minute is false. Own controls. Split the scored rows into pitch_ok (state true at t), pitch_not (pitch exists and state false), and pitch_unknown (no pitch). Print each with the not-a-grade label. The difference between them is not a grade.",
+    "primary_and_empty_square": "The subset of scored primary rows that also meet the empty-square shape at the signal minute.",
+    "holds_3_and_5": "The same primary signal minutes, printed only on a primary PASS or FAIL. Gross from the entry open to the close of entry+2 (3-minute) and entry+4 (5-minute). The same-name list uses a positive close at c+2 or c+4, with that exit minute < 960, still inside entry+1 .. entry+60. The cross-name list requires a positive close at entry+2 or entry+4. Tags pitch-d-h3, pitch-d2-h3, pitch-x-h3, pitch-x2-h3, and the h5 set. The 10-minute control is not reused. A missing intermediate bar drops that hold for that row. Not a grade. A short hold that looks better does not replace the 10-minute grade.",
+    "open_at_least_20": "Scored primary rows whose entry SIP open is >= 20. This is not the desk's prior-close floor. A gap can put a cheaper name above 20 or a 20-dollar name below it. Declared as a crude cut.",
+    "by_hour": "Day-equal net after 10 bp by the hour of the entry minute, hours 9 through 15. Same print rule. The label is not-a-grade.",
+    "other_costs": "Day-equal mean of gross, and of gross minus 3 bp, and of gross minus 5 bp. Same print rule.",
+    "bonferroni": "On the primary ladder only, print whether both lifts have t >= 2.73 in the half. The same information line wr_trend_trade used. It is not recomputed for the whole family and it is not the grade. This one line may print with the primary ladder, including when the verdict is UNDERPOWERED, because it is a reading of the ladder and not a cell.",
+    "sip_lines": "A second process, --lines sip, only after the IEX verdict is PASS or FAIL. Not after a floor miss and not after UNDERPOWERED. Output under ai_reports/pitch_open_sip_lines/. Marked information. It cannot change the IEX verdict."
+  },
+  "confirmation": "A PASS is not a desk change. Next is result-skeptic Mode 2 on ai_reports/pitch_open/result.json, then a new forward paper prereg. should_arm_buy stays as it is. The hover stays display-only. No bot_config key is added by this study.",
+  "no_retuning": "The integer union, the 5-tenth band, the 1-decimal round, the exact previous real minute, the 15-minute refractory, the 09:45-15:20 window, the 10-minute hold, the 10 bp grade, the two controls, the halves through 2026-07-29, the session window 2026-05-11..2026-10-15, and the floors are fixed. Another band, lag, hold, or location filter is a new prereg.",
+  "if_pass": "Stop. Do not change the arm. Do not write a finding markdown until Mode 2 returns. Tell the operator the pre-registered numbers and that the live buy is unchanged.",
+  "if_fail": "The pitch union is closed as a 1-minute entry on this warehouse. Do not promote same, fast_steeper, fast_under, confirmed, complement, a shorter hold, or the empty-square split. Log the verdict from result.json. The information cells may be printed beside it and stay not-a-grade.",
+  "if_underpowered": "Stop. Do not add sessions, do not fetch, do not widen the band, do not read an information cell, do not open rows.json. A floor miss prints no means. A powered underpowered print is the primary ladder only.",
+  "declared_deviations": [
+    "Completed bars. The signal is the close of minute t. The fill is the SIP open of t+1. Live and the operator act inside the bar.",
+    "Warm-up is the previous warehouse RTH session. The live slow line also sees premarket, so a 09:30 reading here is not the TradingView reading.",
+    "Lines are IEX. Prices are SIP. Live exhaustion can be the engine print or the local IEX window; those are not mixed in one pitch.",
+    "The pitch is exactly one real minute, rounded to 1 decimal, then converted to integer tenths. Live looks back 45 to 130 seconds and divides by the actual gap, and the hover compares the rounded floats.",
+    "The empty-square information shape uses the previous minute's line for the +0.05 rise. Live compares the last two polls, about 10 seconds apart, and also waits one confirming poll and 10 minutes after a full square. Those waits are not in the information shape.",
+    "10 bp is a flat charge. It is not added on top of a spread already inside the SIP print. 3 bp is information only.",
+    "This is a signal study. It does not replay the 12-seat book, the spread cap, or the other gates. A pass would still have to survive a forward paper test inside those gates.",
+    "The $20 information cut uses today's entry open, not the prior close."
+  ],
+  "multiplicity": "One more entry rule in the %R family listed under prior. One grade. The information cells are not tries. A Bonferroni t >= 2.73 line is printed and is not the bar.",
+  "script": "tools/studies/pitch_open.py, to be written only after a result-skeptic Mode 1 READY on this file. tests/test_pitch_open.py with it. Neither file is run against the warehouse before that READY. Round 1 id 01a1791a-d915-7762-9e3b-6d3c885c4880 was FIX FIRST and is not the ready id.",
+  "command": "On the mini, after Mode 1 READY and a local pass of tests/test_pitch_open.py: cd repo && nice -n 19 .venv/bin/python tools/studies/pitch_open.py --prereg-commit <HEAD> --workers 2. Then --canary. Then --score --skeptic-ready <the READY review id> only if both halves have floors_met and canary_ok. Worker count does not change the draws. Do not pytest on the mini. Do not restart the desk.",
+  "not_in_this_study": [
+    "No change to should_arm_buy, the empty-square rule, rte_confluence_max, or any live gate.",
+    "No edit to floor20 or range-arm preregs.",
+    "No commit and no deploy.",
+    "The uncommitted pitch hover and the rvol-floor edits stay as they are."
+  ],
+  "amended": {
+    "when": "2026-10-26, after result-skeptic round 1 FIX FIRST, before any script or data.",
+    "review_id": "01a1791a-d915-7762-9e3b-6d3c885c4880",
+    "changes": [
+      "Pitch compare is integer tenths after round(diff, 1): both up is f > 0 and s > 0, the grade is f + 5 >= s, same is abs(f - s) <= 5, fast-steeper is f > s + 5, complement is s > f + 5. The float compares are not the grade.",
+      "Each lift drops its own 3 days and its own 5 symbols. Ties break by the day string or the symbol string, ascending. A null remaining mean fails. MDE uses statistics.stdev.",
+      "Draws are one choice of seeded(sym, day, entry_min, tag) with entry_min = t+1. The minute list is ascending. The symbol list is sorted. A missing fill still sets that population's clock. A pre-window minute does not. Grade, confirmed, complement, and empty square each have that onset.",
+      "The verdict is only the primary ladder. Information cells print only after PASS or FAIL, with n, day-equal means, and not-a-grade. A floor miss prints no means. A powered UNDERPOWERED prints the primary ladder only. The canary edits a copy and does not write rows.json. A line series the minute grid would reject is skipped and counted. The line math is copied into the study and is not imported from signals.py."
+    ]
+  }
+}
