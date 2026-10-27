@@ -164,5 +164,16 @@
     "4_iex": "WINNER's IEX lines are gridded as live (signals._minute_grid_pr flat fill of 2-15 minute gaps; a missing or filled minute has volume 0), and all look-backs (21/112 line windows, 3-bar and 5-bar rises, 15-minute volume mean) are in MINUTES on that grid, so WINNER is 'a rule the desk could implement'. Universe and liquidity filters (first RTH bar open in [$20,$150], previous-day >= 120 bars and $vol/min >= $100k, dvol15 >= $150k) are computed on SIP for both feeds (declared: SIP dvol15 is a liquidity screen the desk would approximate with its own dollar-volume read). The $20-$150 band at t uses the line feed's close(t). Day change: line feed close(t) over the SIP previous close (a declared departure from 'same code' for IEX). Fills map by minute: signal at minute m on the line feed, SIP open at m+1, SIP close at m+15.",
     "5_fidelity": "The day list for the fidelity run is pinned to the 120 warehouse files 2026-04-27..2026-10-15 (iex and sip, written 2026-10-16), not warehouse_days()'s live directory listing. The verbatim port must reproduce every setup-4 figure Argon printed: N 448, mean +7.38, median +2.88, H1 +7.46, H2 +7.17, drop-3 +5.32 (each within 0.05 bp), and setup 1 N = 89. Synthetic tests: causal equals verbatim on full-minute data with no future-bar effect; a series with a missing minute shows the bar-index vs minute difference.",
     "6_selection": "WINNER (IEX) may equal ARGON's configuration (15, 2, 1.5x, 11:30, [0.5,5.0], $20); no runner-up substitution (supersedes amended's argon_as_stated substitution). Eligibility lifts use the causal minute-based hold, matching the controls."
+  },
+  "ready": {
+    "when": "2026-10-27 ~19:30 ET",
+    "verdict": "READY",
+    "review_ids": [
+      "round 1 (A-H)",
+      "round 2 (1-8)",
+      "focused amended_2 check (1-6)"
+    ],
+    "accepted_by": "operator 2026-10-27 in chat: 'Accept READY on first_presq_holdout as amended through amended_4; write the script, run the port fidelity check, the in-sample count comparison, the 96-config grid and the MDE projection.'",
+    "script": "tools/studies/first_presq_holdout.py (stage 1: --fidelity, --extract, --counts, --grid). Stage-2 held-out modes are added before any held-out fetch and may not change anything above."
   }
 }
