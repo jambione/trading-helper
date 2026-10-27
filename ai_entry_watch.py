@@ -375,6 +375,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "macd_rsi_hot": "RSI too high",
     "in_square": "in square",
     "last_macd_gap": "MACD gap",
+    "wr_slow_5m_falling": "5m slow %R↓",
 }
 
 
@@ -16607,7 +16608,8 @@ def wr_slow_5m_record(sym: str, rec: dict, now: float, cfg: dict) -> None:
     h = _WR_SLOW_HIST.setdefault(sym, [])
     if h and now - h[-1][0] > WR_HIST_GAP_SEC:
         h.clear()
-    h.append((float(now), float(v), str(ind.get("pctr_src") or "")))
+    prov = f"{ind.get('pctr_src') or ''}:{ind.get('pctr_px_src') or ''}"
+    h.append((float(now), float(v), prov))
     cut = now - 600.0
     while h and h[0][0] < cut:
         h.pop(0)
@@ -16666,6 +16668,16 @@ def wr_slow_5m_refusal(sym: str, record: dict, now: float | None, cfg: dict) -> 
             if (stamps and len(stamps) == len(rows))
             else rows
         )
+        if len(rows_1m) < max(slow_len + 5, 145):
+            try:
+                import ob_observe
+                ob_rows = [b for b in ob_observe.bars(sym) if float(b[0]) <= last_done_min + 1e-6]
+                if len(ob_rows) > len(rows_1m):
+                    rows = [(float(b[2]), float(b[3]), float(b[4])) for b in ob_rows]
+                    stamps = [float(b[0]) for b in ob_rows]
+                    rows_1m = rows
+            except Exception:  # noqa: BLE001
+                pass
         if len(rows_1m) >= slow_len + 5:
             sm_1m = _smoothed_pctr_series(rows_1m, slow_len, slow_span)
             if len(sm_1m) >= 6:
@@ -16704,16 +16716,11 @@ def wr_slow_5m_refusal(sym: str, record: dict, now: float | None, cfg: dict) -> 
     ind = record.get("indicator") if isinstance(record, dict) else None
     cur_slow = _f_or_none(ind.get("pctr_slow")) if isinstance(ind, dict) else None
     if cur_slow is not None:
-        src_now = str(ind.get("pctr_src") or "")
+        prov_now = f"{ind.get('pctr_src') or ''}:{ind.get('pctr_px_src') or ''}"
         target = t - 300.0
         past = [x for x in _WR_SLOW_HIST.get(sym, []) if x[0] <= target]
-        if past and (target - past[-1][0] <= 90.0) and past[-1][2] == src_now:
+        if past and (target - past[-1][0] <= 90.0) and past[-1][2] == prov_now:
             if round(float(cur_slow), 1) - round(float(past[-1][1]), 1) < min_pitch - 1e-9:
-                return "wr_slow_5m_falling"
-        ph = [x for x in _PITCH_HIST.get(sym, []) if 240.0 <= (t - float(x[0])) <= 390.0]
-        if ph:
-            ref5 = min(ph, key=lambda x: abs((t - float(x[0])) - 300.0))
-            if round(float(cur_slow), 1) - round(float(ref5[2]), 1) < min_pitch - 1e-9:
                 return "wr_slow_5m_falling"
     return None
 

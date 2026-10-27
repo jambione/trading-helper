@@ -201,5 +201,26 @@ def test_wr_slow_5m_refusal_blocks_falling_5m_slow_and_allows_rising():
     # 5 minutes later, slow %R rose from -24.0 to -20.5 -> allowed (None)
     r_rise = _rec(sym, -25.0, -20.5)
     assert ew.wr_slow_5m_refusal(sym, r_rise, t0 + 300.0, cfg_on) is None
+    assert ew.format_blocker("wr_slow_5m_falling") == "5m slow %R↓"
     ew._WR_SLOW_HIST.pop(sym, None)
+
+
+def test_wr_slow_5m_refusal_uses_ob_observe_bars_when_ohlc_cache_short(monkeypatch):
+    import ob_observe
+    sym = "OB5MVETO"
+    ew._WR_SLOW_HIST.pop(sym, None)
+    cfg_on = {"ai_watch_wr_slow_5m_veto": True, "ai_watch_wr_slow_5m_min_pitch": 0.0}
+    t0 = 1_760_000_100.0  # aligned 5m bucket
+    last_done = int(t0 // 60) * 60 - 60
+    # Build 180 1m bars in ob_observe format: (ts, o, h, l, c, v) where price rises then rolls over in last 5m
+    bars = []
+    for i in range(180):
+        ts = last_done - (179 - i) * 60
+        px = 100.0 + i * 0.10 if i < 174 else 117.3 - (i - 173) * 0.80
+        bars.append((float(ts), px, px + 0.05, px - 0.05, px, 1000.0))
+    monkeypatch.setattr(ob_observe, "bars", lambda s: bars if s == sym else [])
+    monkeypatch.setattr(ew, "symbol_ohlc", lambda s, c, nw=None: [])
+    monkeypatch.setattr(ew, "_cached_ohlc_stamps", lambda s, c, nw=None: None)
+    assert ew.wr_slow_5m_refusal(sym, {}, t0, cfg_on) == "wr_slow_5m_falling"
+
 
