@@ -127,5 +127,13 @@
       "Draws are one choice of seeded(sym, day, entry_min, tag) with entry_min = t+1. The minute list is ascending. The symbol list is sorted. A missing fill still sets that population's clock. A pre-window minute does not. Grade, confirmed, complement, and empty square each have that onset.",
       "The verdict is only the primary ladder. Information cells print only after PASS or FAIL, with n, day-equal means, and not-a-grade. A floor miss prints no means. A powered UNDERPOWERED prints the primary ladder only. The canary edits a copy and does not write rows.json. A line series the minute grid would reject is skipped and counted. The line math is copied into the study and is not imported from signals.py."
     ]
+  },
+  "executed": {
+    "recorded": "2026-10-27 ~18:00 ET, after the fact (result-skeptic round 2 found the run). This block is a record, not a READY.",
+    "ran": "Mac mini 2026-10-26: count 13:24:44, canary 13:26:00, result 13:26:52 (ai_reports/pitch_open/); SIP-lines information run finished 13:44.",
+    "shas": "prereg_sha256 64b69f46... and pitch_open.py 82285e38..., both equal to commit bd3aaa97 (no edits after the run).",
+    "scoring_id": "01a17927-389e-7c80-98c5-bc7f2039a9d9, passed to --skeptic-ready; it is not recorded in any prereg or doc and is not the round-1 id. The script accepted any non-empty id (pitch_open.py:662), unlike pitch_trough/pitch_trail.",
+    "verdict": "FAIL. Half A FAIL: lift_d -0.37 bp (t -2.11), lift_x -0.37 bp (t -3.87). Half B NOT_PASSED: -0.13 (t -0.96) / -0.03 (t -0.57). Net after 10 bp -10.6 / -10.0 bp. Floors met (890,905 / 837,780 trades, 55 days each). Not rerun.",
+    "round_2_notes": "Prereg lines.williams is wrong on zero-range minutes: the EMA carries the last value through a NaN %R (as live signals.py:265 does); --prereg-commit binding was vacuous (479367e9 lacks the file); the SIP-lines run is not gated in code. None can flip the FAIL."
   }
 }
