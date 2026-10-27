@@ -177,3 +177,37 @@ def test_volume_schedule_decay(monkeypatch):
     # 4. At 13:05 ET (after 13:00) -> Refused after cutoff
     t_late = datetime(2026, 10, 27, 13, 5, tzinfo=ET).timestamp()
     assert ew.wr_leg1_refusal(sym, rec_13, t_late, cfg_sched, ask=50.0) == "leg1_after_1100"
+
+
+def test_five_bp_config(monkeypatch):
+    sym = "FIVEBP"
+    cfg_5bp = {
+        "ai_watch_leg1_rth_gate": True,
+        "ai_watch_leg1_min_price": 25.0,
+        "ai_watch_leg1_min_day_chg": 1.0,
+        "ai_watch_leg1_max_day_chg": 4.0,
+        "ai_watch_leg1_max_time": "13:00",
+        "ai_watch_leg1_min_vol_mult": {
+            "10:30": 2.2,
+            "11:30": 1.8,
+            "13:00": 1.5,
+        },
+    }
+    monkeypatch.setattr(ew, "sip_spread_pct", lambda s, now=None: 0.03)
+
+    # Stock < $25 is exempt
+    t_morn = datetime(2026, 10, 27, 10, 0, tzinfo=ET).timestamp()
+    rec_cheap = _make_record(symbol=sym, price=22.0, pct_change=2.0, vol_ratio=1.0)
+    assert ew.wr_leg1_refusal(sym, rec_cheap, t_morn, cfg_5bp, ask=22.0) is None
+
+    # Stock >= $25 with Day Change < 1.0% -> Refused chg low
+    rec_low = _make_record(symbol=sym, price=30.0, pct_change=0.7, vol_ratio=2.5)
+    assert ew.wr_leg1_refusal(sym, rec_low, t_morn, cfg_5bp, ask=30.0) == "leg1_chg_low"
+
+    # Stock >= $25 with Day Change > 4.0% -> Refused extended
+    rec_ext = _make_record(symbol=sym, price=30.0, pct_change=4.5, vol_ratio=2.5)
+    assert ew.wr_leg1_refusal(sym, rec_ext, t_morn, cfg_5bp, ask=30.0) == "leg1_extended"
+
+    # Stock >= $25 in sweet spot [1.0%..4.0%] with Vol 2.3x before 10:30 -> Allowed!
+    rec_ok = _make_record(symbol=sym, price=30.0, pct_change=2.5, vol_ratio=2.3)
+    assert ew.wr_leg1_refusal(sym, rec_ok, t_morn, cfg_5bp, ask=30.0) is None
