@@ -130,5 +130,18 @@
       "feed_details": "Previous close for day change is the SIP last RTH close for both line feeds. The price filter uses the line feed's own close(t) (IEX close for IEX lines), so the IEX rule uses nothing the desk cannot see."
     },
     "supersedes_in_original": "The original single-rule primary, the SIP co-primary, the 6 bp floor and the 2.84 constant are replaced by the above. Pass ladder, controls, statistic, cost (5 bp), canary and score gate are unchanged and apply to each stage-2 primary."
+  },
+  "amended_2": {
+    "when": "2026-10-27 ~18:30 ET, before any held-out fetch, any study script, or any in-sample FIRST_PRESQ return computed by us. Under the original clause 'If the operator supplies Argon's script before any held-out fetch, a declared amendment may align a definition to it.'",
+    "source": "Operator supplied Argon's code (recovered from the Gemini session logs): tools/studies/first_presq_argon.py (setups, returns) and tools/studies/first_presq_adversarial_argon.py (adverse fill, Lift_X, Lift_D). Committed unchanged with this amendment.",
+    "argon_rule_exact": "first_presq_argon.py setup 4 (FIRST_PRESQ_morning_vol1.5x), read on SIP bars: universe = warehouse names with SIP open at 09:30 in [$20,$150], previous day >= 120 SIP bars with mean $vol/min >= $100k; lines = pctr_series(h,l,c,21,7) and (112,3) over the previous day's last 120 bars + today's bars (no grid fill, raw -50 on a zero range, rounded to 0.1); at bar i with minute 585..690, close in [$20,$150], 15-bar mean $vol >= $150k: no earlier minute today (from 09:30) with fast >= -35 and slow >= -35 and |fast-slow| <= 15; now fast >= -35, slow >= -35, not both >= -20, |fast-slow| <= 15; day change vs previous SIP close in [0.5, 5.0]; fast[i]-fast[i-3] >= 15; slow[i]-slow[i-5] >= 2; v[i] >= 1.5 x mean(v[i-15..i-1]); one fire per name-day. Entry SIP open i+1; exit SIP close of bar i+15 (bar index, as Argon).",
+    "replaces": {
+      "ARGON": "ARGON is now Argon's setup 4 exactly as above, run through Argon's own function ported verbatim (not the amended F1/V1 reconstruction).",
+      "grid": "The stage-1 grid is rebuilt around Argon's trigger (the F1/F2, V1/V2 and 5m-bar dimensions are dropped): fast_rise_3bar {10, 15}, slow_rise_5bar {0, 2}, vol_mult {1.5, 2.0}, window_end {11:00, 11:30, 13:00}, day_change_band {[0.5,5.0],[1.0,4.5]}, price_floor {20, 25}: 2x2x2x3x2x2 = 96 configurations, everything else as ARGON. Selection unchanged (highest in-sample day-equal net after 5 bp, >= 300 trades, >= 60 days) and is made on IEX lines and IEX volume (same code, IEX bars), fills on SIP.",
+      "primaries": "Stage 2: ARGON on SIP lines (does Argon's claim replicate out of sample) and WINNER on IEX lines (a rule the desk could implement). Bonferroni over 2, t >= 2.24. ARGON on IEX lines and WINNER on SIP lines are information."
+    },
+    "port_fidelity": "Before any held-out fetch: our port of setup 4 run on the in-sample warehouse must reproduce Argon's printed N = 448 exactly and its winsorized 15m mean +7.38 bp within 0.05 bp; else the port is wrong and nothing proceeds. This prints only those two numbers already in Argon's report.",
+    "statistics": "The pass uses the house statistic (day-equal, unwinsorized, pitch_open controls with HOLD 15). Argon's own figures (winsorized +-150/200 bp, trade-weighted, Lift_X pool restricted to names also up 0.5..5%) are reproduced as information for comparability, not as the grade.",
+    "unchanged": "Held-out sample (2026-01-13 backward, warehouse_confirm as its own cell, blocks of 60 to 600), power (3.08 x se, floors 150 trades / 40 days / 8 bp), cost 5 bp, pass ladder, canary, score gate."
   }
 }
