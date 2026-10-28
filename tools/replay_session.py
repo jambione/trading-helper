@@ -2470,6 +2470,7 @@ def report(args, slots, broker, blocked, wall0) -> None:
            "work_counts": work_counts(os.environ.get("AI_REPORT_DIR")),
            "closed": broker.closed, "open_at_end": list(broker.open.values()),
            "arm_age_counts": dict(getattr(__import__("ai_entry_watch"), "_ARM_AGE_COUNTS", {}) or {}),
+           "sq_counts": dict(getattr(__import__("ai_entry_watch"), "_SQ_COUNTS", {}) or {}),
            "slots": {str(k): {kk: (avg(v) if isinstance(v, list) else v)
                               for kk, v in s.items()} for k, s in slots.items()},
            "blocked": blocked, "poll_sec": getattr(args, "poll_sec", None)}
