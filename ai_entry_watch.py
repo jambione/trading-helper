@@ -8284,6 +8284,33 @@ def _slot_unseatable(sym: str, cfg: dict) -> bool:
     return False
 
 
+def _push_cap_used(known: set) -> int:
+    """Names counted against ai_watch_engine_push_max.
+
+    'all' (default, the live behaviour): every name the engine knows, momentum / Discord / positions included,
+    which sits at 31+ most of the day, so newly admitted names often get no room. 'book': only engine-known names
+    whose dashboard row is src=book, plus names pushed within the missing-hold window that have not joined yet (so the
+    cap cannot overshoot on in-flight pushes). Off by default: 'book' pushes more names toward the engine's own
+    MAX_ACTIVE_TICKERS limit and needs a forward test before it runs live.
+    """
+    mode = str(_push_cfg().get("ai_watch_engine_push_count", "all") or "all").strip().lower()
+    if mode != "book":
+        return len(known)
+    book = set()
+    for r in _dashboard_tickers():
+        if isinstance(r, dict) and str(r.get("src") or "").strip().lower() == "book":
+            sym = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+            if sym:
+                book.add(sym)
+    try:
+        hold = float(_push_cfg().get("scan_interval_sec", 60) or 60) * 2.0
+    except (TypeError, ValueError):
+        hold = 120.0
+    now = time.monotonic()
+    inflight = {s for s, t in _pushed_at.items() if s not in known and now - t <= hold}
+    return len((known & book) | inflight)
+
+
 def push_candidates_to_engine(symbols: list[str]) -> dict:
     """Ask the signal engine to start computing indicators for *symbols*.
 
@@ -8324,7 +8351,7 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
         cap = 32
     capped = False
     if cap > 0 and missing:
-        room = max(0, cap - len(known))
+        room = max(0, cap - _push_cap_used(known))
         if room <= 0:
             missing = []
             capped = True

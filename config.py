@@ -848,6 +848,9 @@ DEFAULT_CONFIG = {
     # Finnhub's free tier allows ~50 concurrent WS subscriptions desk-wide;
     # request_subscribe enforces the ceiling, but keep push ≤ engine capacity.
     "ai_watch_engine_push_max":          32,
+    # What counts against ai_watch_engine_push_max: 'all' (every engine name, the live behaviour) or 'book'
+    # (src=book engine names + in-flight pushes). 'book' needs a forward test first (engine MAX_ACTIVE_TICKERS 44).
+    "ai_watch_engine_push_count":        "all",
     "ai_watch_stream_enabled":         True,
     "ai_watch_stream_max_age_sec":     10.0,  # older than this → fall back to REST
     "ai_watch_stream_skip_margin_pct":  1.0,  # only skip when this far outside
@@ -2509,6 +2512,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_pin_protect_steals",
     "ai_watch_stream_subscribe_grace_sec",
     "ai_watch_engine_push_max",
+    "ai_watch_engine_push_count",
     "ai_watch_stream_enabled",
     "ai_watch_stream_max_age_sec",
     "ai_watch_stream_skip_margin_pct",
