@@ -2217,9 +2217,11 @@ def run_inside(args) -> int:
     ew.sip_spread_pct, ew.rvol_pace_sip, ew.open_gap_pct = sip_spread, pace, gap
     # open_spread_replay: actual-spread reads (quotes <= the check second) are never recorded inputs; cache them on
     # disk under day|symbol|second so seeds and reruns reuse exactly the same value, never a later bucket's.
-    rt_cache, _rt = JsonCache("sip_spread_rt"), ew.sip_spread_at
-    ew.sip_spread_at = lambda sym, t, **kw: rt_cache.get(
-        f"{args.day}|{str(sym).upper()}|{int(t)}", lambda: _rt(sym, t, **kw))
+    # The harness replays older pinned shas too, whose ai_entry_watch has no sip_spread_at: wrap only when present.
+    if hasattr(ew, "sip_spread_at"):
+        rt_cache, _rt = JsonCache("sip_spread_rt"), ew.sip_spread_at
+        ew.sip_spread_at = lambda sym, t, **kw: rt_cache.get(
+            f"{args.day}|{str(sym).upper()}|{int(t)}", lambda: _rt(sym, t, **kw))
     # The binding limit is the engine's push cap when it is below Finnhub's 50.
     push_max = int(cfg.get("ai_watch_engine_push_max", 0) or 0)
     synth = SynthEngine(bars, args.day, args.synth_warmup,
