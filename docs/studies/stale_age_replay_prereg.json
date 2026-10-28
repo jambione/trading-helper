@@ -74,5 +74,12 @@
     "stage_1_screen": "The 22 recorded sessions 2026-09-28..2026-10-27 are split by count in date order into an EARLY half (first 11) and a LATE half (last 11). The study's own pass rule is applied with EARLY and LATE as the two halves (same statistics, controls, margins, Bonferroni, power floors). Declared weakness: these days fed the lag diagnostics that motivated the study, so this is a screen, not a confirmation.",
     "screen_outcomes": "SCREEN FAIL (or UNDERPOWERED, or CONTROL UNMATCHED) on the recorded days: the study stops there; no forward sessions are spent and nothing is switched on. SCREEN PASS: the original half-B confirmation on >= 10 forward sessions (as amended) is run; the operator decides at that point whether the change also runs live on paper during the confirmation, under a switch-off rule written into this file before any switch.",
     "supersedes": "The original half A / half B roles: half A becomes the stage-1 screen (split EARLY / LATE); half B (forward) becomes stage-2 confirmation, run only after a screen pass."
+  },
+  "stage2_monitoring": {
+    "when": "2026-10-28 ~07:40 ET, before any run, at the operator's request: 'Instead of 10 new sessions, can we measure our progress after one and see if it makes sense to continue.'",
+    "scope": "Stage 2 (forward confirmation) only, after a stage-1 screen pass. Early stopping is ONE-SIDED: toward stop/off only. A PASS is never declared before the full stage-2 sample (>= 10 scored sessions, as amended).",
+    "harm_check_every_session": "After each forward session the scorer runs v vs REF on that session alone (and, if the change is live on paper, live vs the same day replayed without it). STOP (and switch off if live) if any of: no timing gain (median signed timing over moved pairs >= 0 min); v trades < 70% of REF trades that session; that session's per-trade lift_ref < -10 bp.",
+    "futility_check_from_session_3": "From the 3rd forward session, STOP if the cumulative stage-2 lift_ref's UPPER one-sided bound (same alpha as the pass rule) is < 0, i.e. the change cannot plausibly finish 'no worse'.",
+    "reporting": "Every session's check is written to OUT/stage2_checks.jsonl with the numbers before the next session starts; a STOP is final for this study."
   }
 }
