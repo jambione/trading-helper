@@ -39,7 +39,7 @@ PIN = {
     "ai_watch_wr_trend_min_rise": 15,
     "ai_watch_wr_slow_5m_veto": True,
     "ai_watch_wr_slow_5m_min_pitch": 0.0,
-    "ai_watch_slope_now_gate": True,
+    "ai_watch_slope_now_gate": False,              # amended_slope_off (operator 10/28): the live desk has it off
     "ai_watch_slope_now_missing_refuses": False,
     "ai_watch_tape_gap_mult": 1.5,
     "ai_watch_tape_gap_max_sec": 60.0,
