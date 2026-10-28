@@ -35,5 +35,16 @@
   "freeze": "From the deploy to the last pair: no other change to the watch, dashboard or engine code or config; no pytest on the mini (the suite rewrites bot_config.json). Live gates stay as on 10/28. git_version and config_fp logged per session; any other change voids its pair.",
   "if_pass": "Keep both knobs on; then test each knob alone only if the operator wants to know which did it.",
   "if_fail": "Both off. If primary_1 fell but primary_2 did not, picks seated sooner were not the names bought, and the off-board time of bought names needs another explanation.",
-  "script": "The seat knob in ai_entry_watch.py (default off) with tests (off = identical seat decisions; on = admitted would-seat rows seated without arm_ready, every other rule kept), the watchdog tools/seat_picks_watchdog.py, and a scorer reusing lag_blockers, written after this file is committed and after a result-skeptic READY; they may not change anything above."
+  "script": "The seat knob in ai_entry_watch.py (default off) with tests (off = identical seat decisions; on = admitted would-seat rows seated without arm_ready, every other rule kept), the watchdog tools/seat_picks_watchdog.py, and a scorer reusing lag_blockers, written after this file is committed and after a result-skeptic READY; they may not change anything above.",
+  "review_r1": {
+    "when": "2026-10-28 ~07:10 ET",
+    "verdict": "FIX FIRST (9 findings)",
+    "key": [
+      "In live book-server mode the soft-seed passes (~2510, ~2550) do not decide seating: soft_rows are replaced by the book server's would-seat rows (~10575-10581) and their arm_ready check is _arm_ready_inclusion_refuse (~10191-10229) in apply_inclusion_gate; the admit ledger shows 0 arm_ready_* refusals on 10/01, 10/08, 10/15, 10/20, 10/26, 10/27, so the seat knob would be inert.",
+      "The binding inclusion refusals on 10/27 (all names): below_min_price 70.8k, float_too_big 60.7k, gapped_down 51.7k, stale_tape_admit 48.7k, spread_wide 46.0k, admit_range_pos 40.8k, no_tape 29.5k - mostly deliberate filters.",
+      "ensure_watch_stream and push_candidates_to_engine already run on all candidates before inclusion; push_count='book' adds only ~1.5 slots on average and the engine would reach its 44 limit on 10/15.",
+      "primary_1 was reachable by construction; the value guard could pass by default on low-trade days; guardrails untested in the ON regime; a 2.5-week freeze would block the stale_age / slope_now queue."
+    ]
+  },
+  "status": "PARKED (not built, not run): the premise (arm_ready gating seats) does not hold in live book-server mode. ai_watch_engine_push_count stays built and off (3a4f3b2a)."
 }
