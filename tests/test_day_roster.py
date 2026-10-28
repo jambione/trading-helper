@@ -87,8 +87,9 @@ def test_band_filter_frees_slots_only_with_the_roster_on(monkeypatch):
 def test_slot_priority_drops_known_unseatable_names_only(monkeypatch):
     monkeypatch.setattr(ew, "_live_quote_map", lambda: ({}, {}))
     monkeypatch.setattr(ew, "load_watch", lambda: {"SEAT": {"status": "watching"}})
-    monkeypatch.setattr(ew, "_GAP_CACHE", {"GAPD": (-2.4, 0.0), "SEAT": (-5.0, 0.0), "OKGAP": (-0.5, 0.0)})
-    monkeypatch.setattr(ew, "_SIP_SPREAD_CACHE", {"WIDE": (0.47, 0.0), "TIGHT": (0.05, 0.0)})
+    now = __import__("time").time()      # readings must be current: a stale one is unknown and never drops
+    monkeypatch.setattr(ew, "_GAP_CACHE", {"GAPD": (-2.4, now), "SEAT": (-5.0, now), "OKGAP": (-0.5, now)})
+    monkeypatch.setattr(ew, "_SIP_SPREAD_CACHE", {"WIDE": (0.47, now), "TIGHT": (0.05, now)})
     cfg = {"ai_watch_slot_priority": True, "ai_watch_gap_down_block_pct": 1.0,
            "ai_watch_max_sip_spread_pct": 0.2}
     monkeypatch.setattr(ew, "_push_cfg", lambda: cfg)

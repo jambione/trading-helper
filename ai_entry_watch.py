@@ -8266,20 +8266,29 @@ def _push_band_filter(symbols: list[str]) -> list[str]:
 _SLOT_RANK: dict[str, float] = {}
 
 
-def _slot_unseatable(sym: str, cfg: dict) -> bool:
+def _slot_unseatable(sym: str, cfg: dict, *, now: float | None = None) -> bool:
     """ai_watch_slot_priority: a KNOWN reason the door would refuse this name.
 
     Cached values only (no requests on the push path); unknown never drops.
     Gap below -ai_watch_gap_down_block_pct, or 16-min-old SIP spread above
     ai_watch_max_sip_spread_pct — the same numbers admit_arm_gates uses.
+
+    A reading counts only while the gate itself would still use it (spread: SIP_SPREAD_TTL_SEC; gap: the day's SIP
+    value, or an IEX stand-in under GAP_IEX_TTL_SEC). An older one is unknown. A skipped name is never re-measured, so
+    a wide premarket spread used to keep it off the engine all day (CRWV 2026-10-28: 0.33% at 04:51, no tape to 09:39).
     """
+    t = float(now if now is not None else time.time())
     block = _f_or_none(cfg.get("ai_watch_gap_down_block_pct")) or 0.0
     hit = _GAP_CACHE.get(sym)
     if block > 0 and hit and hit[0] is not None and float(hit[0]) < -block:
-        return True
+        src = hit[2] if len(hit) > 2 else "sip"
+        same_day = time.strftime("%Y-%m-%d", time.localtime(hit[1])) == time.strftime("%Y-%m-%d", time.localtime(t))
+        if same_day and (src == "sip" or t - float(hit[1]) < GAP_IEX_TTL_SEC):
+            return True
     max_sp = _spread_gate_max("momentum" if sym in _MOMENTUM_SYMS else "", cfg)
     hit = _SIP_SPREAD_CACHE.get(sym)
-    if max_sp > 0 and hit and hit[0] is not None and float(hit[0]) > max_sp:
+    if (max_sp > 0 and hit and hit[0] is not None and float(hit[0]) > max_sp
+            and t - float(hit[1]) < SIP_SPREAD_TTL_SEC):
         return True
     return False
 
@@ -9157,6 +9166,8 @@ ENGINE_HEARTBEAT = ROOT / "signal_state.json"
 # TTL. Both fail CLOSED at the gate: a name we cannot price is not traded.
 _SIP_SPREAD_CACHE: dict[str, tuple[float | None, float]] = {}
 _GAP_CACHE: dict[str, tuple[float | None, float]] = {}
+SIP_SPREAD_TTL_SEC = 180.0      # sip_spread_pct's default ttl: how long the gate itself trusts a reading
+GAP_IEX_TTL_SEC = 60.0          # open_gap_pct re-asks an IEX stand-in after 60 s
 _DATA_CLIENT = None
 
 
@@ -9171,7 +9182,7 @@ def _data_client():
     return _DATA_CLIENT
 
 
-def sip_spread_pct(sym: str, *, now: float | None = None, ttl: float = 180.0,
+def sip_spread_pct(sym: str, *, now: float | None = None, ttl: float = SIP_SPREAD_TTL_SEC,
                    delay_min: float | None = None, fetch=None,
                    record: bool = True) -> float | None:
     """Median SIP (ask-bid)/mid, %, over the minute ending delay_min ago.
@@ -9361,7 +9372,7 @@ def open_gap_pct(sym: str, *, now: float | None = None, fetch=None) -> float | N
     if hit is not None and hit[0] is not None:
         val, ts, src = hit if len(hit) == 3 else (hit[0], hit[1], "sip")
         if time.strftime("%Y-%m-%d", time.localtime(ts)) == day and (
-                src == "sip" or t - ts < 60):
+                src == "sip" or t - ts < GAP_IEX_TTL_SEC):
             return val
     val, src = None, "sip"
     try:
