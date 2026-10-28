@@ -50,3 +50,15 @@ def test_shortlist_needs_the_same_sign_in_both_halves():
     bands = {(s["feature"], s["band"]): s["sign"] for s in short}
     assert bands.get(("slow_pitch", "[+2,+5)")) == "-"
     assert ("slow_pitch", "[+0,+2)") not in bands
+
+
+def test_range_pct_uses_the_fast_window_of_completed_minutes():
+    rows = [(m, 46.8, 46.80 + (0.14 if m == 680 else 0.0), 46.77, 46.8, 100) for m in range(660, 700)]
+    assert Hh.range_pct(rows, 685) == round((46.94 / 46.77 - 1) * 100, 3)
+    assert Hh.range_pct(rows, 670) == round((46.80 / 46.77 - 1) * 100, 3)      # 680's spike not yet in the window
+    assert Hh.range_pct([], 685) is None and Hh.range_pct(None, 685) is None
+
+
+def test_sideways_features_bands():
+    f = Hh.features({"fp": 1.6, "sp": 0.5, "spp": -2.8, "fast": -33.2, "rng": 0.32})       # FE 10/28 11:25
+    assert f["range_pct"] == "[+0.25,+0.5)" and f["min_pitch"] == "[+0,+1)" and f["gate_rule"] == "pass"

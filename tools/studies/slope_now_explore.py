@@ -8,7 +8,8 @@ full SIP spread) is joined to its arm row in DAY-REF-arms.jsonl.gz: the last ARM
 the entry, within 90 s. The pitch fields come from that row (stale pitch > 12 s = missing, as the gate).
 
 Tables (n, mean net bp, win %, day-clustered t): by slow pitch band, fast pitch band, slow pitch change (slow - prev),
-%R level band, the gate's three conditions, and pitch missing. Every cell is information; nothing here passes.
+%R level band, the gate's three conditions, pitch missing, the % price range of the 21 completed IEX minutes before
+the arm (warehouse bars) and the smaller of the two pitches (the sideways-entry features, operator 10/28 on FE). Every cell is information; nothing here passes.
 USAGE (mini): .venv/bin/python tools/studies/slope_now_explore.py [--out explore.json]
 """
 from __future__ import annotations
@@ -46,7 +47,16 @@ def arms(path: Path) -> dict[str, list[dict]]:
     return out
 
 
-def join(trades: list[dict], arm_ok: dict[str, list[dict]]) -> list[dict]:
+def minute_of_day(ts: float) -> int:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    d = datetime.fromtimestamp(float(ts), ZoneInfo("America/New_York"))
+    return d.hour * 60 + d.minute
+
+
+def join(trades: list[dict], arm_ok: dict[str, list[dict]], bars: dict | None = None) -> list[dict]:
+    """bars: {symbol: IEX minute rows (minute-of-day, o, h, l, c, v)} for the day, for the range feature."""
+    import slope_now_hist as Hh
     out = []
     for t in trades:
         rows = arm_ok.get(str(t["symbol"]).upper()) or []
@@ -60,6 +70,8 @@ def join(trades: list[dict], arm_ok: dict[str, list[dict]]) -> list[dict]:
             for k in ("pctr_fast_pitch", "pctr_slow_pitch", "pctr_slow_pitch_prev"):
                 x[k] = r.get(k) if fresh else None
             x["pctr"] = r.get("pctr")
+            # completed minutes before the arm's minute: what the live fast %R spanned
+            x["rng"] = Hh.range_pct((bars or {}).get(str(t["symbol"]).upper()), minute_of_day(r["ts"]) - 1)
         out.append(x)
     return out
 
@@ -78,9 +90,11 @@ def features(x: dict) -> dict[str, str]:
     dsp = None if sp is None or spp is None else sp - spp
     gate = ("missing" if None in (fp, sp, spp) else
             "pass" if fp > 0 and sp > 0 and sp >= spp else "refuse")
+    lo_pitch = None if fp is None or sp is None else min(fp, sp)
     return {"slow_pitch": band(sp, [-2, 0, 2, 5]), "fast_pitch": band(fp, [-5, 0, 5, 15]),
             "slow_change": band(dsp, [-3, -1, 0, 1]), "pctr_level": band(x.get("pctr"), [-50, -35, -20, -10], "{:g}"),
-            "gate_rule": gate}
+            "gate_rule": gate, "range_pct": band(x.get("rng"), [0.25, 0.5, 1.0, 2.0], "{:g}"),
+            "min_pitch": band(lo_pitch, [0, 1, 2, 4], "{:g}")}
 
 
 def cell(rows: list[dict]) -> dict:
@@ -117,7 +131,12 @@ def collect(out_dir: Path, pr, sip) -> tuple[list[dict], list]:
             skipped.append((d, "missing REF or SIP fetch failed"))
             continue
         tr, _ = SR.price_trades(res, d, pr, sip)
-        for x in join(tr, arms(out_dir / f"{d}-REF-arms.jsonl.gz")):
+        try:
+            import indicator_confirm_hist as H
+            day_bars = H.load_raw("iex", d)
+        except Exception:  # noqa: BLE001 — no warehouse day: the range feature is 'missing'
+            day_bars = {}
+        for x in join(tr, arms(out_dir / f"{d}-REF-arms.jsonl.gz"), day_bars):
             rows.append({**x, "day": d})
     return rows, skipped
 

@@ -9,7 +9,8 @@ minute's SIP open and held 10 minutes (SIP close). Pitch = line(t) - line(t-1) i
 a minute earlier = slow(t-1) - slow(t-2). Controls as pitch_open: d = the same name at a random later minute (within
 60), x = another name at the same minute. Lifts are gross minus control, so spread cost cancels.
 
-Tables per feature band (slow pitch, fast pitch, slow change, %R level, the gate's rule), each for half A
+Tables per feature band (slow pitch, fast pitch, slow change, %R level, the gate's rule, the % price range of the
+fast %R's 21-minute window, and the smaller of the two pitches: the sideways-entry features, operator 10/28 on FE), each for half A
 (05-11..07-29), half B (07-30..10-13) and both: n, days, mean gross, lift_d, lift_x (bp), day-clustered t.
 A pattern worth pre-registering must show the same sign in both halves against both controls.
 USAGE (mini, after the close; reads the local bar warehouse, no Alpaca calls):
@@ -40,7 +41,18 @@ def pitches(fast: dict, slow: dict, t: int):
     return d(fast, t), d(slow, t), d(slow, t - 1)
 
 
-def events(day: str, sym: str, fast: dict, slow: dict, sip: dict, sips: dict, pool: list, cache: dict) -> list[dict]:
+def range_pct(rows, end_min: int, n: int = P.FAST_LEN) -> float | None:
+    """% price range (high / low - 1) of the n completed minutes ending at end_min: the window the fast %R spans.
+    A tight range makes %R swing on noise (FE 2026-10-28: 14 cents, 0.32%, lines 'rising' on a one-cent tick)."""
+    w = [r for r in (rows if rows is not None else []) if end_min - n < int(r[0]) <= end_min]
+    if not w:
+        return None
+    hi, lo = max(float(r[2]) for r in w), min(float(r[3]) for r in w)
+    return round((hi / lo - 1) * 100, 3) if lo > 0 else None
+
+
+def events(day: str, sym: str, fast: dict, slow: dict, sip: dict, sips: dict, pool: list, cache: dict,
+           lf_rows=None) -> list[dict]:
     rows = []
     for t in P.fires(lambda m: P.empty_square(fast, slow, m)):
         e = t + 1
@@ -53,7 +65,7 @@ def events(day: str, sym: str, fast: dict, slow: dict, sip: dict, sips: dict, po
             continue
         fp, sp, spp = pitches(fast, slow, t)
         rows.append({"day": day, "sym": sym, "t": t, "fp": fp, "sp": sp, "spp": spp,
-                     "fast": round(fast[t], 1), "slow": round(slow[t], 1),
+                     "fast": round(fast[t], 1), "slow": round(slow[t], 1), "rng": range_pct(lf_rows, t),
                      "gross": g * 1e4, "lift_d": (g - dd) * 1e4, "lift_x": (g - xx) * 1e4})
     return rows
 
@@ -78,7 +90,7 @@ def day_task(args) -> dict:
                 st["split_jump"] += 1
                 continue
         fast, slow = P.lines(lf_prev[sym], lf_today[sym])
-        out.extend(events(day, sym, fast, slow, sips[sym], sips, pool, cache))
+        out.extend(events(day, sym, fast, slow, sips[sym], sips, pool, cache, lf_today[sym]))
     return {"rows": out, "stats": dict(st)}
 
 
@@ -98,9 +110,11 @@ def features(r: dict) -> dict[str, str]:
     dsp = None if sp is None or spp is None else sp - spp
     rule = ("missing" if None in (fp, sp, spp) else
             "pass" if fp > 0 and sp > 0 and sp >= spp else "refuse")
+    lo_pitch = None if fp is None or sp is None else min(fp, sp)
     return {"slow_pitch": band(sp, [-2, 0, 2, 5]), "fast_pitch": band(fp, [-5, 0, 5, 15]),
             "slow_change": band(dsp, [-3, -1, 0, 1]), "fast_level": band(r["fast"], [-35, -25, -20]),
-            "gate_rule": rule}
+            "gate_rule": rule, "range_pct": band(r.get("rng"), [0.25, 0.5, 1.0, 2.0]),
+            "min_pitch": band(lo_pitch, [0, 1, 2, 4])}
 
 
 def cell(rows: list[dict]) -> dict:
@@ -120,7 +134,7 @@ def tables(rows: list[dict]) -> dict:
     out: dict = {h: {"all": cell(rs)} for h, rs in halves.items()}
     for h, rs in halves.items():
         feats = [features(r) for r in rs]
-        for f in ("slow_pitch", "fast_pitch", "slow_change", "fast_level", "gate_rule"):
+        for f in ("slow_pitch", "fast_pitch", "slow_change", "fast_level", "gate_rule", "range_pct", "min_pitch"):
             groups: dict[str, list[dict]] = {}
             for r, ft in zip(rs, feats):
                 groups.setdefault(ft[f], []).append(r)

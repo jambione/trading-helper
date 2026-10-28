@@ -63,3 +63,19 @@ def test_tables_group_by_band():
             for i in range(12)]
     t = X.tables(rows)
     assert t["all"]["n"] == 12 and set(t["slow_pitch"]) == {"[-2,+0)", "[+2,+5)"}
+
+
+def test_explore_join_adds_the_range_feature(tmp_path):
+    import datetime
+    import zoneinfo
+    et = zoneinfo.ZoneInfo("America/New_York")
+    t = datetime.datetime(2026, 10, 1, 11, 26, 10, tzinfo=et).timestamp()
+    p = tmp_path / "arms.jsonl.gz"
+    with gzip.open(p, "wt") as fh:
+        fh.write(json.dumps({"ts": t - 5, "symbol": "FE", "arm_ok": True, "pctr_pitch_ts": t - 6, "pctr": -33.2,
+                             **_p(1.6, 0.5, -2.8)}) + "\n")
+    bars = {"FE": [(m, 46.8, 46.91 if m == 680 else 46.85, 46.77, 46.8, 100) for m in range(660, 690)]}
+    rows = X.join([{"symbol": "FE", "entry_ts": t, "net": -30.0}], X.arms(p), bars)
+    f = X.features(rows[0])
+    assert rows[0]["rng"] == round((46.91 / 46.77 - 1) * 100, 3)
+    assert f["range_pct"] == "[0.25,0.5)" and f["min_pitch"] == "[0,1)"
