@@ -26,7 +26,11 @@ fi
 .venv/bin/python tools/studies/early_entry_honest.py --fetch --days $d > /tmp/nightly/eeh_fetch-$d.log 2>&1   # bar cache for wait_held_prereg.json (forward from 10/15)
 .venv/bin/python tools/studies/wait_held_study.py --score >> /tmp/nightly/eeh_fetch-$d.log 2>&1   # prints NOT DUE until 10 forward sessions
 .venv/bin/python tools/studies/day_hold.py forward > /tmp/nightly/day_hold-$d.log 2>&1   # day_hold_prereg.json forward run (read at 40 sessions)
-scripts/tight_trail_replay.sh $d > /tmp/nightly/tt_replay-$d.log 2>&1
-.venv/bin/python tools/studies/replay_costing.py /tmp/tt_run/$d-*.json > /tmp/nightly/tt_costing-$d.txt 2>&1
+# RETIRED 2026-10-29 (operator 10/28 'Yes, retire them'): the tight-trail replay block (~24 variants, ~6 h + ~1 h costing a
+# night) produced no decision. tight_trail_replay_prereg was frozen 10/9; the wr_trend forward read is void (superseded by
+# late_gates); the SuperTrend / leash forward reads lost every session before 10/23 to a /tmp wipe and test the np180 + lob
+# exits that are no longer live. Restart an exit test, if wanted, against the live exits with outputs outside /tmp.
+# scripts/tight_trail_replay.sh $d > /tmp/nightly/tt_replay-$d.log 2>&1
+# .venv/bin/python tools/studies/replay_costing.py /tmp/tt_run/$d-*.json > /tmp/nightly/tt_costing-$d.txt 2>&1
 .venv/bin/python tools/studies/day_review.py $d > /tmp/nightly/day_review-$d.log 2>&1
 echo DONE > /tmp/nightly/done-$d
