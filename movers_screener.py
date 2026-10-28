@@ -224,25 +224,35 @@ def _load_scan_universe(api: str, sec: str) -> list[str]:
     from alpaca.trading.client import TradingClient
     from alpaca.trading.enums import AssetClass, AssetStatus
     from alpaca.trading.requests import GetAssetsRequest
-    assets = None
+    # raw_data: alpaca-py's Asset model rejects any exchange code it does not list, and one new code fails the whole
+    # list. That emptied the universe silently from 2026-10-20 (the last scan nominee was 10-19 15:59).
+    assets, errors = None, []
     for paper in (True, False):
         try:
-            assets = TradingClient(api, sec, paper=paper).get_all_assets(
+            assets = TradingClient(api, sec, paper=paper, raw_data=True).get_all_assets(
                 GetAssetsRequest(asset_class=AssetClass.US_EQUITY,
                                  status=AssetStatus.ACTIVE))
             break
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{'paper' if paper else 'live'}: {type(e).__name__} {str(e)[:120]}")
             continue
     if not assets:
+        print(f"[movers] scan universe FAILED, scan is off until it loads: {errors}", flush=True)
         return _scan_universe
-    ok_ex = {"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS"}
-    _scan_universe = sorted(
-        a.symbol for a in assets
-        if a.tradable and str(a.exchange).split(".")[-1] in ok_ex
-        and is_common(a.symbol) and not is_levered_etp(a.symbol, a.name or ""))
+    _scan_universe = universe_symbols(assets)
     _scan_universe_day = day
     print(f"[movers] scan universe: {len(_scan_universe)} symbols", flush=True)
     return _scan_universe
+
+
+def universe_symbols(assets: list[dict]) -> list[str]:
+    """Tradable common stocks on the listed exchanges, from raw /v2/assets rows."""
+    ok_ex = {"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS"}
+    return sorted(
+        str(a.get("symbol") or "") for a in assets
+        if a.get("tradable") and str(a.get("exchange") or "").split(".")[-1] in ok_ex
+        and is_common(str(a.get("symbol") or ""))
+        and not is_levered_etp(str(a.get("symbol") or ""), str(a.get("name") or "")))
 
 
 def universe_scan(cfg: dict, api: str, sec: str, lo: float, hi: float,
