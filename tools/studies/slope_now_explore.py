@@ -9,7 +9,8 @@ the entry, within 90 s. The pitch fields come from that row (stale pitch > 12 s 
 
 Tables (n, mean net bp, win %, day-clustered t): by slow pitch band, fast pitch band, slow pitch change (slow - prev),
 %R level band, the gate's three conditions, pitch missing, the % price range of the 21 completed IEX minutes before
-the arm (warehouse bars) and the smaller of the two pitches (the sideways-entry features, operator 10/28 on FE). Every cell is information; nothing here passes.
+the arm (warehouse bars), the smaller of the two pitches (the sideways-entry features, operator 10/28 on FE), and
+that range divided by the full SIP spread paid at entry (range_per_spread: did the name move enough to cover its cost). Every cell is information; nothing here passes.
 USAGE (mini): .venv/bin/python tools/studies/slope_now_explore.py [--out explore.json]
 """
 from __future__ import annotations
@@ -94,7 +95,17 @@ def features(x: dict) -> dict[str, str]:
     return {"slow_pitch": band(sp, [-2, 0, 2, 5]), "fast_pitch": band(fp, [-5, 0, 5, 15]),
             "slow_change": band(dsp, [-3, -1, 0, 1]), "pctr_level": band(x.get("pctr"), [-50, -35, -20, -10], "{:g}"),
             "gate_rule": gate, "range_pct": band(x.get("rng"), [0.25, 0.5, 1.0, 2.0], "{:g}"),
-            "min_pitch": band(lo_pitch, [0, 1, 2, 4], "{:g}")}
+            "min_pitch": band(lo_pitch, [0, 1, 2, 4], "{:g}"),
+            "range_per_spread": band(move_to_cost(x), [2, 4, 8, 16], "{:g}")}
+
+
+def move_to_cost(x: dict) -> float | None:
+    """The 21-minute price range in bp divided by the full SIP spread paid at entry (bp): how many spreads the name
+    moved before the buy (operator 10/28: losers like FE could not move enough to cover their cost)."""
+    rng, sp = x.get("rng"), x.get("spread")
+    if rng is None or sp is None or sp <= 0:
+        return None
+    return rng * 100.0 / sp
 
 
 def cell(rows: list[dict]) -> dict:

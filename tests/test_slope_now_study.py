@@ -79,3 +79,10 @@ def test_explore_join_adds_the_range_feature(tmp_path):
     f = X.features(rows[0])
     assert rows[0]["rng"] == round((46.91 / 46.77 - 1) * 100, 3)
     assert f["range_pct"] == "[0.25,0.5)" and f["min_pitch"] == "[0,1)"
+
+
+def test_range_per_spread_feature():
+    fe = {"rng": 0.32, "spread": 4.3, **_p(1.6, 0.5, -2.8), "pctr": -33.2}          # 32 bp of range on a 4.3 bp spread
+    assert abs(X.move_to_cost(fe) - 32 / 4.3) < 1e-9 and X.features(fe)["range_per_spread"] == "[4,8)"
+    assert X.move_to_cost({"rng": 0.32, "spread": None}) is None
+    assert X.features({"rng": None, "spread": 3.0, **_p(1.0, 1.0, 1.0)})["range_per_spread"] == "missing"
