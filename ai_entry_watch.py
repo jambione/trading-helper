@@ -6058,6 +6058,22 @@ def past_eod_liquidate_time(cfg: dict | None, now: float | None = None) -> bool:
     return (dt.hour, dt.minute) >= (bell_h, bell_m)
 
 
+def past_entry_cutoff(cfg: dict | None, now: float | None = None) -> bool:
+    """True on weekdays at/after ``ai_entry_cutoff_time`` ET: no NEW paper entries from then on.
+
+    Empty (default) keeps the old coupling: entries stop at ``ai_eod_liquidate_time``. Set separately so the flatten
+    can run later than the last entry (operator 2026-10-28: flatten 15:58, last entry 15:50).
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    raw = str(cfg.get("ai_entry_cutoff_time") or "").strip()
+    if not raw:
+        return past_eod_liquidate_time(cfg, now)
+    dt = _et_now(now)
+    if dt.weekday() >= 5:
+        return False
+    return (dt.hour, dt.minute) >= _parse_hhmm(raw, (15, 50))
+
+
 def watch_session_active(cfg: dict | None, now: float | None = None) -> bool:
     """True on weekdays from ``ai_watch_start_time`` (default 04:00 ET) until EOD.
 
@@ -6139,7 +6155,7 @@ def trading_hours_active(
     if market_open is None:
         # Unknown — do not invent open; require explicit True for buys.
         return False
-    if past_eod_liquidate_time(cfg, now):
+    if past_entry_cutoff(cfg, now):
         return False
     # Still respect watch start so we never trade before the book is live.
     if not watch_session_active(cfg, now):

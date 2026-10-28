@@ -905,6 +905,43 @@ def test_past_eod_liquidate_time():
         {"ai_eod_liquidate_enabled": False}, after) is False
 
 
+def test_entry_cutoff_splits_from_the_eod_flatten():
+    """Operator 10/28: flatten at 15:58, last new entry 15:50; empty cutoff keeps the old coupling."""
+    import ai_entry_watch as ew
+    import config
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    at = lambda h, m: datetime(2026, 10, 28, h, m, tzinfo=et).timestamp()  # noqa: E731
+    split = {"ai_eod_liquidate_enabled": True, "ai_eod_liquidate_time": "15:58", "ai_entry_cutoff_time": "15:50"}
+    assert ew.past_entry_cutoff(split, at(15, 49)) is False
+    assert ew.past_entry_cutoff(split, at(15, 50)) is True
+    assert ew.past_eod_liquidate_time(split, at(15, 55)) is False      # positions still held
+    assert ew.past_eod_liquidate_time(split, at(15, 58)) is True
+    old = {"ai_eod_liquidate_enabled": True, "ai_eod_liquidate_time": "15:50"}
+    assert ew.past_entry_cutoff(old, at(15, 49)) is False and ew.past_entry_cutoff(old, at(15, 50)) is True
+    assert "ai_entry_cutoff_time" in config.SAFE_CONFIG_KEYS
+    bad = {**config.DEFAULT_CONFIG, "ai_eod_liquidate_time": "15:50", "ai_entry_cutoff_time": "15:58"}
+    assert any("entry cutoff out of order" in w for w in config.validate_ai_config(bad))
+    good = {**config.DEFAULT_CONFIG, **split}
+    assert not any("entry cutoff" in w for w in config.validate_ai_config(good))
+
+
+def test_trading_hours_close_at_the_entry_cutoff_not_the_flatten(monkeypatch):
+    import ai_entry_watch as ew
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    monkeypatch.setattr(ew, "sod_liquidate_done", lambda cfg, now: True)
+    cfg = {"ai_watch_start_time": "04:00", "ai_eod_liquidate_enabled": True,
+           "ai_eod_liquidate_time": "15:58", "ai_entry_cutoff_time": "15:50"}
+    t = datetime(2026, 10, 28, 15, 52, tzinfo=et).timestamp()
+    assert ew.watch_session_active(cfg, t) is True
+    assert ew.trading_hours_active(cfg, t, market_open=True) is False
+
+
 def test_watch_session_and_trading_hours(tmp_path, monkeypatch):
     """Watch from 09:00 ET; paper entries only when market_open and before EOD."""
     import ai_entry_watch as ew

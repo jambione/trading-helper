@@ -364,6 +364,8 @@ DEFAULT_CONFIG = {
     # Cancel all open orders + close all positions once per day at this ET time.
     "ai_eod_liquidate_enabled":    True,
     "ai_eod_liquidate_time":    "15:50",    # ET — flatten before the 16:00 close
+    # ET — no new entries from this time. Empty = ai_eod_liquidate_time (the old coupling).
+    "ai_entry_cutoff_time":     "",
     # At RTH open: flatten everything once before any new paper entries.
     "ai_sod_liquidate_enabled":    True,
     # Daily A vs X duel: dual trial → R score → winner-only chance 3.
@@ -1800,6 +1802,12 @@ def validate_ai_config(cfg: dict) -> list[str]:
             "session clock out of order: expected ai_watch_start_time <= "
             "ai_open_bell_time < ai_eod_liquidate_time"
         )
+    cut = _hhmm("ai_entry_cutoff_time", "") if str(cfg.get("ai_entry_cutoff_time") or "").strip() else None
+    if cut is not None and None not in (bell, eod) and not (bell < cut <= eod):
+        out.append(
+            "entry cutoff out of order: expected ai_open_bell_time < ai_entry_cutoff_time "
+            "<= ai_eod_liquidate_time"
+        )
 
     prox = _f("ai_watch_min_proximity", 67)
     if cfg.get("ai_watch_require_indicators", True) and prox > 100:
@@ -2115,6 +2123,7 @@ SAFE_CONFIG_KEYS = [
     "ai_open_bell_time",
     "ai_eod_liquidate_enabled",
     "ai_eod_liquidate_time",
+    "ai_entry_cutoff_time",
     "ai_sod_liquidate_enabled",
     "ai_duel_enabled",
     "ai_duel_close_before_research_min",
