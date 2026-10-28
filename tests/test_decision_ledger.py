@@ -188,3 +188,12 @@ def test_log_event_hook_does_not_double_kind(tmp_path, monkeypatch):
     assert got["stage"] == "entry"
     assert got["arm_bucket"] == "spread"
     assert got["event_kind"] == "entry_fail"
+
+
+def test_arm_rows_carry_the_pitch_and_watch_rows_do_not():
+    pitch = {"pctr": -30.0, "pctr_fast_pitch": 4.2, "pctr_slow_pitch": 1.1, "pctr_fast_pitch_prev": 6.0,
+             "pctr_slow_pitch_prev": 1.5, "pctr_pitch_ts": 1_793_000_000.0}
+    row = dl.row_from_shadow({"symbol": "aaa", "ts": 1_793_000_001.0, "arm_ok": False, "arm_why": "exh_falling", **pitch})
+    assert {k: row[k] for k in pitch} == pitch
+    watch = dl.row_from_shadow({"symbol": "aaa", "ts": 1_793_000_001.0, **pitch})
+    assert watch["stage"] == "watch" and "pctr_fast_pitch" not in watch

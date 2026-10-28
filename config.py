@@ -602,6 +602,10 @@ DEFAULT_CONFIG = {
     # rising now and the slow pitch is not slowing. missing_refuses: a missing/stale pitch refuses too.
     "ai_watch_slope_now_gate":           False,
     "ai_watch_slope_now_missing_refuses": True,
+    # slope_now study variants (default off): exists_only refuses only a missing/stale pitch; rand_* is CRAND.
+    "ai_watch_slope_exists_only":        False,
+    "ai_watch_slope_rand_share":         0.0,
+    "ai_watch_slope_rand_salt":          "",
     # Arm-only tape age (docs/studies/stale_age_replay_prereg.json; all default off). arm_max_age_sec: the arm accepts
     # a stale-labelled print up to max(this, the name's gap ceiling); decision_price keeps decision_max_age_sec.
     # arm_age_mode 'age' judges every arm check by print age (replay). rand_release_*: the study's matched control.
@@ -2199,6 +2203,9 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_wr_slow_5m_min_pitch",
     "ai_watch_slope_now_gate",
     "ai_watch_slope_now_missing_refuses",
+    "ai_watch_slope_exists_only",
+    "ai_watch_slope_rand_share",
+    "ai_watch_slope_rand_salt",
     "ai_watch_arm_max_age_sec",
     "ai_watch_arm_age_mode",
     "ai_watch_stale_rand_release_share",

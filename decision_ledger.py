@@ -160,6 +160,11 @@ def row_from_shadow(sample: dict[str, Any]) -> dict[str, Any]:
         "arm_why": why_s,
         "arm_bucket": bucket,
     }
+    if stage == "arm":
+        # Every arm row carries the pitch the slope-now gate reads (slope_now_replay_prereg amended 1).
+        for k in ("pctr", "pctr_fast_pitch", "pctr_slow_pitch", "pctr_fast_pitch_prev", "pctr_slow_pitch_prev",
+                  "pctr_pitch_ts"):
+            out[k] = _f(s.get(k))
     out.update(_regime_fields())
     return out
 

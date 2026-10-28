@@ -11695,6 +11695,7 @@ _PITCH_WIRE_KEYS = (
     "pctr_fast_pitch_prev", "pctr_slow_pitch_prev",
     "pctr_pitch",
 )
+_PITCH_LEDGER_KEYS = ("pctr_fast_pitch", "pctr_slow_pitch", "pctr_fast_pitch_prev", "pctr_slow_pitch_prev")
 
 
 def _clear_stale_pctr(rec: dict, *, reason: str, now: float) -> None:
@@ -12145,7 +12146,7 @@ def _exhaustion_wire_fields(rec: dict) -> dict:
             "exh_hh": None, "exh_ll": None,
             "pctr_fast_pitch": None, "pctr_slow_pitch": None,
             "pctr_fast_pitch_prev": None, "pctr_slow_pitch_prev": None,
-            "pctr_pitch": None,
+            "pctr_pitch_ts": None, "pctr_pitch": None,
         }
     span = _f_or_none(ind.get("pctr_window_sec"))
     return {
@@ -12182,6 +12183,7 @@ def _exhaustion_wire_fields(rec: dict) -> dict:
         "pctr_slow_pitch": _f_or_none(ind.get("pctr_slow_pitch")),
         "pctr_fast_pitch_prev": _f_or_none(ind.get("pctr_fast_pitch_prev")),
         "pctr_slow_pitch_prev": _f_or_none(ind.get("pctr_slow_pitch_prev")),
+        "pctr_pitch_ts": _f_or_none(ind.get("pctr_pitch_ts")),
         "pctr_pitch": (str(ind.get("pctr_pitch") or "").strip() or None),
         "macd_fast": _f_or_none(ind.get("macd_fast") if ind.get("macd_fast") is not None else ind.get("macd_line")),
         "macd_slow": _f_or_none(ind.get("macd_slow") if ind.get("macd_slow") is not None else ind.get("macd_signal")),
@@ -16291,6 +16293,8 @@ def _shadow_row(
         # "live" = recomputed against the live price; "engine" = the 60-120s
         # copy. A row scored without knowing which is scoring two rules at once.
         "pctr_src": (sig.get("pctr_src") or "engine") if sig else None,
+        # The pitch the slope-now gate reads, and when it was computed (slope_now_replay_prereg amended 1).
+        **{k: (_f_or_none(sig.get(k)) if sig else None) for k in (*_PITCH_LEDGER_KEYS, "pctr_pitch_ts")},
         "macd_src": (str(sig.get("macd_src") or "").strip().lower() or None) if sig else None,
         "macd_age_sec": _f_or_none(sig.get("macd_age_sec")) if sig else None,
         "last_ask_src": rec.get("last_ask_src"),
@@ -16692,7 +16696,8 @@ def slope_now_refusal(record: dict, now: float | None, cfg: dict) -> str | None:
     A pitch older than SLOPE_NOW_MAX_AGE_SEC counts as missing. With ai_watch_slope_now_missing_refuses on, any
     missing value refuses ('slope_unknown'); with it off, only the values present are tested.
     """
-    if not bool((cfg or {}).get("ai_watch_slope_now_gate", False)):
+    exists_only = bool((cfg or {}).get("ai_watch_slope_exists_only", False))
+    if not (bool((cfg or {}).get("ai_watch_slope_now_gate", False)) or exists_only):
         return None
     ind = record.get("indicator") if isinstance(record, dict) else None
     ind = ind if isinstance(ind, dict) else {}
@@ -16703,8 +16708,10 @@ def slope_now_refusal(record: dict, now: float | None, cfg: dict) -> str | None:
     sp = _f_or_none(ind.get("pctr_slow_pitch")) if fresh else None
     spp = _f_or_none(ind.get("pctr_slow_pitch_prev")) if fresh else None
     if fp is None or sp is None or spp is None:
-        if bool((cfg or {}).get("ai_watch_slope_now_missing_refuses", True)):
+        if exists_only or bool((cfg or {}).get("ai_watch_slope_now_missing_refuses", True)):
             return "slope_unknown"
+    if exists_only:                      # study variant EXISTS: the pitch-history requirement alone, no slope test
+        return None
     if fp is not None and fp <= 0:
         return "slope_not_rising"
     if sp is not None and sp <= 0:
@@ -16712,6 +16719,22 @@ def slope_now_refusal(record: dict, now: float | None, cfg: dict) -> str | None:
     if sp is not None and spp is not None and sp < spp:
         return "slope_not_rising"
     return None
+
+
+def slope_rand_refusal(sym: str, now: float | None, cfg: dict) -> str | None:
+    """Study control CRAND (slope_now_replay_prereg amended 4; default off): refuse an arm check at random,
+    sha256(salt|symbol|day|floor(ts/30)) < ai_watch_slope_rand_share, at the slope-now gate's position."""
+    share = _f_or_none(cfg.get("ai_watch_slope_rand_share")) or 0.0
+    if share <= 0:
+        return None
+    import hashlib
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    t = float(now if now is not None else time.time())
+    day = datetime.fromtimestamp(t, ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    salt = str(cfg.get("ai_watch_slope_rand_salt", "") or "")
+    key = f"{salt}|{sym}|{day}|{int(t // 30)}"
+    return "slope_rand" if int(hashlib.sha256(key.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF < share else None
 
 
 # ── %R trend entry filter (docs/studies/wr_trend_entry_prereg.json; REPLAY/TEST knobs, default off) ────────────────
@@ -17541,7 +17564,7 @@ def should_arm_buy(
         if _leg1_why:
             return False, _leg1_why
         # Slope-now gate (off by default; enabled via ai_watch_slope_now_gate).
-        _slope_why = slope_now_refusal(record, now, cfg)
+        _slope_why = slope_now_refusal(record, now, cfg) or slope_rand_refusal(_gate_sym, now, cfg)
         if _slope_why:
             return False, _slope_why
 

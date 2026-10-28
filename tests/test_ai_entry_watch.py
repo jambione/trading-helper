@@ -960,6 +960,8 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         # Pitch of each line, points per minute. Display only.
         "pctr_fast_pitch", "pctr_slow_pitch",
         "pctr_fast_pitch_prev", "pctr_slow_pitch_prev", "pctr_pitch",
+        # When the pitch was computed (the slope-now gate's staleness and the study ledger).
+        "pctr_pitch_ts",
         # Direction and provenance ride with the RSI level: the entry rule is
         # a band AND a turn, and the book has to be able to say which feed
         # drew the reading it is showing.

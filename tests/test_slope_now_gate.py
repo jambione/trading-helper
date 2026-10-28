@@ -68,3 +68,26 @@ def test_pitch_record_stamps_the_timestamp_and_clears_it():
 def test_blocker_labels_exist():
     assert ew.format_blocker("slope_not_rising") == "%R not rising now"
     assert ew.format_blocker("slope_unknown") == "no %R pitch"
+
+
+def test_exists_only_refuses_missing_pitch_but_never_tests_the_slope():
+    ex = {"ai_watch_slope_exists_only": True}
+    assert ew.slope_now_refusal(rec(-5.0, -2.0, 1.0), T, ex) is None
+    assert ew.slope_now_refusal(rec(6.0, None, 2.0), T, ex) == "slope_unknown"
+    assert ew.slope_now_refusal(rec(6.0, 2.0, 2.0, age=60.0), T, ex) == "slope_unknown"
+
+
+def test_slope_rand_is_off_by_default_deterministic_and_hits_its_share():
+    assert ew.slope_rand_refusal("AAA", T, {}) is None
+    cfg = {"ai_watch_slope_rand_share": 0.3, "ai_watch_slope_rand_salt": "SC-1"}
+    assert ew.slope_rand_refusal("AAA", T, cfg) == ew.slope_rand_refusal("AAA", T + 5, cfg)   # same 30 s bucket
+    hits = sum(ew.slope_rand_refusal(f"S{i}", T + 30 * i, cfg) == "slope_rand" for i in range(4000))
+    assert 0.27 < hits / 4000 < 0.33
+    other = {**cfg, "ai_watch_slope_rand_salt": "SC-2"}
+    assert any(ew.slope_rand_refusal(f"S{i}", T, cfg) != ew.slope_rand_refusal(f"S{i}", T, other) for i in range(50))
+
+
+def test_new_knobs_are_hot_reloadable():
+    import config
+    for k in ("ai_watch_slope_exists_only", "ai_watch_slope_rand_share", "ai_watch_slope_rand_salt"):
+        assert k in config.DEFAULT_CONFIG and k in config.SAFE_CONFIG_KEYS, k
