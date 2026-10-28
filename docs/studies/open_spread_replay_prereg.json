@@ -48,5 +48,15 @@
   "8_rand_persistence": "Reported per arm: added trades. RAND's seed-averaged added trades must be within +-25% of OPEN16's over the stage-1 sessions, else CONTROL UNMATCHED (UNPROVEN).",
   "9_small": "(a) entry_spread_bp None drops are counted per arm inside the window; > 10% of window trades in any arm = that session excluded (counted). (b) Declared: the push-filter fix 1fc09d5d ships after the 10/28 close, so stage-2 (forward) REF differs from stage-1 REF; stage 2 is scored against its own REF only. (c) The knob covers the ARM spread gate in should_arm_buy only; the Leg-1 gate (off in this REF) and admission (already skips the window) are unchanged.",
   "pass_update": "In 'pass', conditions (1), (2), (5) are replaced by 6_primary; (3), (4), (6 as amended) remain. 'statistic' gains added-trade net and the two-sided control."
+ },
+ "amended_2": {
+  "when": "2026-10-28 ~10:45 ET, result-skeptic round 2 (FIX FIRST, text only), fix text applied verbatim, before any code or replay.",
+  "2_no_leak": "Delay-0 reads do not call sip_spread_pct directly. They use a separate pure function (same median over the minute ending at ts, quotes <= ts) or a wrapper that saves and restores _SIP_SPREAD_CACHE[sym]. Test: after a delay-0 read, _SIP_SPREAD_CACHE is unchanged.",
+  "4_fidelity": "If 4_fidelity fails, the study is NOT TESTABLE on this harness. Switching to bind_gate_values would be a new amendment reviewed before any run, not a rerun.",
+  "5_two_sided_control": "The release share and the block share are bisected independently in the same passes. Each must land within +-10% of OPEN16's count, otherwise CONTROL UNMATCHED. No other target may be calibrated after a miss.",
+  "6_primary": "Sessions where OPEN16 or RAND (seed-averaged) has 0 added trades are left out of the primary and counted. The primary needs >= 6 sessions with added trades in EACH half, else UNDERPOWERED. t uses n-1 df on those sessions.",
+  "7_power": "sd_session = sd across sessions of (RAND_1 added net - mean(RAND_2, RAND_3) added net) x sqrt(3/2). Count-only runs also produce RAND's matched added counts. If the projected RAND or OPEN16 added count is < 30, stop.",
+  "9_small": "A session is excluded for every arm when >= 2 window trades in any arm lack an entry spread.",
+  "verdict_wording": "Report FAIL (point < 0) separately from FAIL (bound only); the second is recorded as 'not shown', not 'refuted'."
  }
 }
