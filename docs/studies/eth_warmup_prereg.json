@@ -43,5 +43,11 @@
   "score_gate": "--score refuses unless --skeptic-ready equals the 'ready' review id recorded in this file.",
   "no_retuning": "No other window, warm-up length, square threshold or hold is scored as primary.",
   "script": "tools/studies/eth_warmup.py and the premarket fetcher, written after this file is committed and after a result-skeptic READY; they may not change anything above.",
-  "multiplicity": "One primary (IEX). SIP and every class cell are information."
+  "multiplicity": "One primary (IEX). SIP and every class cell are information.",
+  "closed": {
+    "when": "2026-10-28 ~05:45 ET",
+    "by": "operator 'Yes, simplify' (2026-10-28)",
+    "status": "CLOSED, not run",
+    "why": "Moot: the live desk already builds its %R lines from a 112-minute clock window that includes premarket (skeptic r1 finding 1; ai_entry_watch.live_exhaustion_pair). Never run."
+  }
 }

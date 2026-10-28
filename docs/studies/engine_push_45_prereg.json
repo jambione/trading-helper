@@ -52,5 +52,11 @@
     },
     "6_freeze": "Code freeze on the mini for the study: no git pull, deploy or restart that changes the engine, watch or dashboard between the first and last pair. git_version and config_fp are logged per session; any other change to those processes voids the pair it falls in.",
     "supersedes": "change.knob value 45 -> 42; schedule; pass; fail; guardrails.exit_delay and rate_limits; the baseline's role."
+  },
+  "closed": {
+    "when": "2026-10-28 ~05:45 ET",
+    "by": "operator 'Yes, simplify' (2026-10-28)",
+    "status": "CLOSED, not run",
+    "why": "Blocked and superseded: the engine already holds 31-41 names at push cap 30 against MAX_ACTIVE_TICKERS 44 (skeptic r2), and bought names were already on the stream (lag_engine_join.py), so more slots would not speed them. The delay is print staleness, tested in stale_age_replay_prereg.json. Never run."
   }
 }

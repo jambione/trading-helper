@@ -30,5 +30,11 @@
   "if_fail": "Keep the band. If NO EFFECT, record that earlier admission is not reachable through this knob and that the source lists themselves (movers/trending/research arrival times) are the next place to look.",
   "no_retuning": "No other band (e.g. 0.5-5, 1-8) is scored as primary.",
   "script": "Knob + counter in ai_entry_watch.py (defaults off / unchanged), runner tools/studies/admit_band_run.py (reusing late_gates_run), scorer tools/studies/admit_band_read.py (reusing late_gates_read), written after this file is committed and after a result-skeptic READY; they may not change anything above. Runs only after the late_gates primary and info phases have finished on the mini (Alpaca budget, one batch at a time).",
-  "multiplicity": "One primary. Every information line has no pass."
+  "multiplicity": "One primary. Every information line has no pass.",
+  "closed": {
+    "when": "2026-10-28 ~05:45 ET",
+    "by": "operator 'Yes, simplify' (2026-10-28)",
+    "status": "CLOSED, not run",
+    "why": "Admission ranking is not the bottleneck: lag_engine_join.py (10/28) found 541 of 555 bought names already in the engine when they passed admission, and lag_admission.py put only ~0.9 min/buy in 'kept, not seated'. Never reviewed or run."
+  }
 }
