@@ -122,14 +122,10 @@ def calibrate(day: str, sha: str, stop_at: str) -> str:
     lo, hi, s = 0.0, 1.0, min(1.0, target / pool)
     for k in range(4):
         names = [f"RREL_{j}" for j in SEEDS]
-        for j, name in zip(SEEDS, names):
-            p = L.out_path(day, name)
-            if p.exists():
-                p.unlink()
-            if L.past_stop(stop_at):
-                return f"{day} RREL: stopped at {stop_at}"
-            print(L.run_one(day, name, {"ai_watch_stale_rand_release_share": round(s, 6),
-                                        "ai_watch_stale_rand_release_salt": f"SA-{j}"}, sha), flush=True)
+        if not L.run_seed_pass(day, [(n, {"ai_watch_stale_rand_release_share": round(s, 6),
+                                          "ai_watch_stale_rand_release_salt": f"SA-{j}"})
+                                     for j, n in zip(SEEDS, names)], sha, stop_at):
+            return f"{day} RREL: stopped at {stop_at}"
         got = sum(released(day, n, "released_rand") for n in names) / len(names)
         if abs(got - target) <= 0.10 * target:
             (OUT / f"{day}-RREL_share.json").write_text(json.dumps({"share": s, "target": target, "got": got,

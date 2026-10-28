@@ -154,6 +154,21 @@ def batch(jobs: list[tuple], sha: str, n: int, stop_at: str) -> None:
             print(f.result(), flush=True)
 
 
+def run_seed_pass(day: str, runs: list[tuple[str, dict]], sha: str, stop_at: str) -> bool:
+    """One calibration pass: rerun every seed of a control at its new share, all seeds in parallel. False (nothing
+    launched) once past stop_at."""
+    if past_stop(stop_at):
+        return False
+    for name, _ in runs:
+        p = out_path(day, name)
+        if p.exists():
+            p.unlink()
+    with cf.ThreadPoolExecutor(max_workers=max(1, len(runs))) as ex:
+        for msg in ex.map(lambda r: run_one(day, r[0], r[1], sha), runs):
+            print(msg, flush=True)
+    return True
+
+
 def rand_share(day: str, gate: str) -> float | None:
     """1 - n(G)/n(REF) for that session (prereg replay.variants)."""
     ref, g = n_trades(day, "REF"), n_trades(day, gate)

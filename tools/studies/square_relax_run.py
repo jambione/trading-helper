@@ -113,14 +113,10 @@ def calibrate(day: str, v: str, sha: str, stop_at: str) -> str:
     lo, hi, s = 0.0, 1.0, 0.5
     names = [f"RAND_{v}_{k}" for k in SEEDS]
     for n_pass in range(4):
-        for k, name in zip(SEEDS, names):
-            p = L.out_path(day, name)
-            if p.exists():
-                p.unlink()
-            if L.past_stop(stop_at):
-                return f"{day} RAND_{v}: stopped at {stop_at}"
-            print(L.run_one(day, name, {"ai_watch_presquare_rand_release_share": round(s, 6),
-                                        "ai_watch_presquare_rand_release_salt": f"SQ-{v}-{k}"}, sha), flush=True)
+        if not L.run_seed_pass(day, [(n, {"ai_watch_presquare_rand_release_share": round(s, 6),
+                                          "ai_watch_presquare_rand_release_salt": f"SQ-{v}-{k}"})
+                                     for k, n in zip(SEEDS, names)], sha, stop_at):
+            return f"{day} RAND_{v}: stopped at {stop_at}"
         got = statistics.fmean(int(sq(day, n).get("released_rand", 0) or 0) for n in names)
         if abs(got - target) <= 0.10 * target:
             (OUT / f"{day}-RAND_{v}_share.json").write_text(json.dumps({"share": s, "target": target, "got": got,

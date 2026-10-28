@@ -207,14 +207,10 @@ def calibrate_crand(day: str, sha: str, stop_at: str) -> str:
     lo, hi = 0.0, 1.0
     s = max(0.0, min(1.0, 1 - target / ref)) if ref else 0.0
     for n_pass in range(4):
-        for k, name in zip(SEEDS, names):
-            p = L.out_path(day, name)
-            if p.exists():
-                p.unlink()
-            if L.past_stop(stop_at):
-                return f"{day} CRAND: stopped at {stop_at}"
-            print(L.run_one(day, name, {"ai_watch_slope_rand_share": round(s, 6),
-                                        "ai_watch_slope_rand_salt": f"SC-{k}"}, sha), flush=True)
+        if not L.run_seed_pass(day, [(n, {"ai_watch_slope_rand_share": round(s, 6),
+                                          "ai_watch_slope_rand_salt": f"SC-{k}"})
+                                     for k, n in zip(SEEDS, names)], sha, stop_at):
+            return f"{day} CRAND: stopped at {stop_at}"
         got = statistics.fmean(L.n_trades(day, n) or 0 for n in names)
         if abs(got - target) <= 0.15 * max(target, 1):
             (OUT / f"{day}-CRAND_share.json").write_text(json.dumps({"share": s, "target": target, "got": got,
