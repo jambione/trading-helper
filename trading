@@ -163,8 +163,10 @@ cmd_start() {
     fi
 
     # Fully up — nothing to do (except ensure tunnel and watchdog).
+    # movers_up belongs here too: without it a dead movers scanner alone never counts as "down", so neither this
+    # nor the watchdog revived it (2026-10-28, after a manual stop).
     if [ "$dash_up" = 1 ] && [ "$eng_up" = 1 ] && [ "$disc_up" = 1 ] \
-       && [ "$trend_up" = 1 ] && [ "$tight_up" = 1 ] && [ "$claude_up" = 1 ]; then
+       && [ "$trend_up" = 1 ] && [ "$movers_up" = 1 ] && [ "$tight_up" = 1 ] && [ "$claude_up" = 1 ]; then
         echo "Already running. Use './trading restart' to reload code, or './trading status'."
         [ "$want_tunnel" = 1 ] && _start_tunnel
         # The watchdog is not in the "fully up" test above, so this branch

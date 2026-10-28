@@ -12,6 +12,7 @@ arm rows (with the pitch the gate would read) to DAY-REF-arms.jsonl.gz; that fil
                     slow > 0, slow >= slow_prev; (c) median |replay - live| <= 1.0 pt/min for fast and slow;
                     (d) replay gate refusals (rule applied to the replay row, staleness included) 50-200% of the rule
                     applied to the matched live rows (no staleness). Writes fidelity.json.
+  --phase ref       REF only (with its arm rows saved): the exploration data set.
   --phase primary   REF, SLOPE, SLOPE_OPEN, EXISTS, MDE1 on every session; REF_DUP on the first, middle and last.
   --phase controls  CRAND_1..3 calibrated by trade count to SLOPE (+-15%, bisection, <= 4 passes) and RAND_1..3
                     (wr_rand episodes, share = 1 - n(SLOPE)/n(REF)).
@@ -227,7 +228,7 @@ def calibrate_crand(day: str, sha: str, stop_at: str) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("phase", choices=("fidelity", "primary", "controls"))
+    ap.add_argument("phase", choices=("fidelity", "ref", "primary", "controls"))
     ap.add_argument("--jobs", type=int, default=3)
     ap.add_argument("--stop-at", default="08:45")
     ap.add_argument("--sha", default="HEAD")
@@ -248,13 +249,17 @@ def main() -> int:
         print("refusing: fidelity.json missing or not passed (SLOPE NOT TESTABLE IN REPLAY)", file=sys.stderr)
         return 2
     days = L.eligible_days()
-    if a.phase == "primary":
+    if a.phase in ("ref", "primary"):
+        # REF first, alone: its saved arm rows are the exploration data set (operator 10/28: bring the exploration
+        # forward); 'primary' then adds the gate variants (REF outputs already present are skipped).
         import concurrent.futures as cf
         with cf.ThreadPoolExecutor(max_workers=a.jobs) as ex:
             futs = [ex.submit(lambda d=d: f"{d} REF: skipped, past {a.stop_at} ET" if L.past_stop(a.stop_at)
                               else ref_with_arms(d, "REF", sha)) for d in days]
             for f in cf.as_completed(futs):
                 print(f.result(), flush=True)
+        if a.phase == "ref":
+            return 0
         L.batch([(d, v, o) for d in days for v, o in PRIMARY.items() if v != "REF"], sha, a.jobs, a.stop_at)
         dup = sorted({days[0], days[len(days) // 2], days[-1]}) if days else []
         L.batch([(d, "REF_DUP", {}) for d in dup], sha, a.jobs, a.stop_at)
