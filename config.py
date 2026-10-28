@@ -602,6 +602,13 @@ DEFAULT_CONFIG = {
     # rising now and the slow pitch is not slowing. missing_refuses: a missing/stale pitch refuses too.
     "ai_watch_slope_now_gate":           False,
     "ai_watch_slope_now_missing_refuses": True,
+    # Arm-only tape age (docs/studies/stale_age_replay_prereg.json; all default off). arm_max_age_sec: the arm accepts
+    # a stale-labelled print up to max(this, the name's gap ceiling); decision_price keeps decision_max_age_sec.
+    # arm_age_mode 'age' judges every arm check by print age (replay). rand_release_*: the study's matched control.
+    "ai_watch_arm_max_age_sec":          0.0,
+    "ai_watch_arm_age_mode":             "src",
+    "ai_watch_stale_rand_release_share": 0.0,
+    "ai_watch_stale_rand_release_salt":  "",
     # Leg-1 RTH gate (operator 10/27): capture 1st Empty Square of day on $20+ stocks (+0.5%..+5.0%, <=11:00 ET).
     "ai_watch_leg1_rth_gate":           False,
     "ai_watch_leg1_min_price":          20.0,
@@ -2183,6 +2190,10 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_wr_slow_5m_min_pitch",
     "ai_watch_slope_now_gate",
     "ai_watch_slope_now_missing_refuses",
+    "ai_watch_arm_max_age_sec",
+    "ai_watch_arm_age_mode",
+    "ai_watch_stale_rand_release_share",
+    "ai_watch_stale_rand_release_salt",
     "ai_watch_leg1_rth_gate",
     "ai_watch_leg1_min_price",
     "ai_watch_leg1_min_day_chg",

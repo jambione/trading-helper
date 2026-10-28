@@ -8671,6 +8671,43 @@ def name_tape_ceiling(symbol: str, cfg: dict | None) -> float:
     return min(float(cap), float(mult) * med)
 
 
+# Arm-only tape age (docs/studies/stale_age_replay_prereg.json; all default off). decision_price stays on
+# decision_max_age_sec, so the last_ask_src that admission and seat eviction read is untouched; these knobs only
+# change whether the ARM treats this check's print as stale. 'age' mode judges every check by print age (the replay
+# patches _arm_tape_age to the recorded prints); the random release is the study's matched control.
+def _arm_tape_age(rec: dict, symbol: str, now: float) -> float | None:
+    age = row_quote_age_sec(rec, now=now) if isinstance(rec, dict) else None
+    if age is None and isinstance(rec, dict):
+        age = _f_or_none(rec.get("price_age_sec"))
+    return age
+
+
+def arm_tape_stale(rec: dict, symbol: str, now: float | None, cfg: dict | None, src_stale: bool) -> bool:
+    """True when the arm must treat this check's print as stale. With every knob off: src_stale, unchanged."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    mode = str(cfg.get("ai_watch_arm_age_mode") or "src").strip().lower()
+    arm_max = _f_or_none(cfg.get("ai_watch_arm_max_age_sec")) or 0.0
+    share = _f_or_none(cfg.get("ai_watch_stale_rand_release_share")) or 0.0
+    if mode != "age" and arm_max <= 0 and share <= 0:
+        return bool(src_stale)
+    if mode != "age" and not src_stale:
+        return False
+    t = float(now if now is not None else time.time())
+    age = _arm_tape_age(rec, symbol, t)
+    ceiling = max(arm_max if arm_max > 0 else decision_max_age_sec(cfg), name_tape_ceiling(symbol, cfg))
+    stale = age is None or float(age) > ceiling
+    if stale and share > 0 and age is not None and float(age) > 15.0:
+        import hashlib
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        day = datetime.fromtimestamp(t, ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        salt = str(cfg.get("ai_watch_stale_rand_release_salt", "") or "")
+        key = f"{salt}|{str(symbol).upper()}|{day}|{int(t)}"
+        if int(hashlib.sha256(key.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF < share:
+            stale = False
+    return stale
+
+
 def decision_price(
     symbol: str,
     cfg: dict | None,
@@ -17078,7 +17115,8 @@ def should_arm_buy(
     _src_arm = str(
         record.get("last_ask_src") or record.get("price_src") or ""
     ).strip().lower()
-    if _src_arm in ("stale_tape", "none"):
+    if arm_tape_stale(record, str(record.get("symbol") or "").upper(), now, cfg,
+                      _src_arm in ("stale_tape", "none")):
         return False, "stale_quote"
     # Engine heartbeat. The indicators every arm reads come from the signal
     # engine; if it stops writing, they freeze. 2026-09-23 13:51-14:15 the
@@ -19099,7 +19137,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
 
         # Stale tape (unknown or old age, no REST). Show the print, do not arm.
-        if tape_only or px_src == "stale_tape":
+        # _src_stale drives the stale streak and the feed drops (eviction state, unchanged by the arm-only
+        # tape-age knobs); _arm_stale decides whether this check may arm. With the knobs off they are equal.
+        _src_stale = bool(tape_only or px_src == "stale_tape")
+        _arm_stale = arm_tape_stale(rec, sym, t0, cfg, _src_stale)
+        if _arm_stale:
             # Prefer a live zone blocker when we already have structure so the
             # column still says above/below rather than a blank "no quote".
             b_code, _b_label = derive_blocker(rec, pad_pct=0.0)
@@ -19120,6 +19162,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                         arm_ok=None, arm_why="tape_only", now=t0))
                 except Exception:
                     pass
+        if _src_stale:
             # A name IEX cannot quote at all can never arm, but it still costs
             # a book slot, a poll and REST budget every cycle, and it reads to
             # the operator as a setup that might fire. Four of eleven rows were
@@ -19155,12 +19198,14 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 events=events, cp=cp, gt=gt,
             ):
                 continue
+        if _arm_stale:
             touched[sym] = rec
             continue
 
         # Any usable quote clears the stale streak — the drop above is for
         # names the feed cannot price at all, not for a quiet minute.
-        rec.pop("stale_tape_streak", None)
+        if not _src_stale:     # a check released by the arm-only knobs keeps its streak (eviction state)
+            rec.pop("stale_tape_streak", None)
         # Tape recovered: drop the data-condition refuse so State and ready
         # can recompute. Without this, derive_blocker kept returning the
         # stored stale_quote after a fresh stream print landed.
