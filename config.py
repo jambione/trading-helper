@@ -619,6 +619,14 @@ DEFAULT_CONFIG = {
     "ai_watch_presquare_pre_thr":        0.0,
     "ai_watch_presquare_rand_release_share": 0.0,
     "ai_watch_presquare_rand_release_salt":  "",
+    # open_spread_replay study (REPLAY-ONLY, all off): the arm spread gate on the actual SIP spread in the first N
+    # minutes (mode both/release/block/skip), and its two-sided random control over window_min.
+    "ai_watch_open_spread_realtime_min":       0.0,
+    "ai_watch_open_spread_mode":               "both",
+    "ai_watch_open_spread_window_min":         0.0,
+    "ai_watch_open_spread_rand_release_share": 0.0,
+    "ai_watch_open_spread_rand_block_share":   0.0,
+    "ai_watch_open_spread_rand_salt":          "",
     # Leg-1 RTH gate (operator 10/27): capture 1st Empty Square of day on $20+ stocks (+0.5%..+5.0%, <=11:00 ET).
     "ai_watch_leg1_rth_gate":           False,
     "ai_watch_leg1_min_price":          20.0,
@@ -2214,6 +2222,12 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_presquare_pre_thr",
     "ai_watch_presquare_rand_release_share",
     "ai_watch_presquare_rand_release_salt",
+    "ai_watch_open_spread_realtime_min",
+    "ai_watch_open_spread_mode",
+    "ai_watch_open_spread_window_min",
+    "ai_watch_open_spread_rand_release_share",
+    "ai_watch_open_spread_rand_block_share",
+    "ai_watch_open_spread_rand_salt",
     "ai_watch_leg1_rth_gate",
     "ai_watch_leg1_min_price",
     "ai_watch_leg1_min_day_chg",

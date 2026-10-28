@@ -2215,6 +2215,11 @@ def run_inside(args) -> int:
         return _gap(sym, now=t, **kw) if v is recorded.MISSING else v
 
     ew.sip_spread_pct, ew.rvol_pace_sip, ew.open_gap_pct = sip_spread, pace, gap
+    # open_spread_replay: actual-spread reads (quotes <= the check second) are never recorded inputs; cache them on
+    # disk under day|symbol|second so seeds and reruns reuse exactly the same value, never a later bucket's.
+    rt_cache, _rt = JsonCache("sip_spread_rt"), ew.sip_spread_at
+    ew.sip_spread_at = lambda sym, t, **kw: rt_cache.get(
+        f"{args.day}|{str(sym).upper()}|{int(t)}", lambda: _rt(sym, t, **kw))
     # The binding limit is the engine's push cap when it is below Finnhub's 50.
     push_max = int(cfg.get("ai_watch_engine_push_max", 0) or 0)
     synth = SynthEngine(bars, args.day, args.synth_warmup,
@@ -2471,6 +2476,7 @@ def report(args, slots, broker, blocked, wall0) -> None:
            "closed": broker.closed, "open_at_end": list(broker.open.values()),
            "arm_age_counts": dict(getattr(__import__("ai_entry_watch"), "_ARM_AGE_COUNTS", {}) or {}),
            "sq_counts": dict(getattr(__import__("ai_entry_watch"), "_SQ_COUNTS", {}) or {}),
+           "os_counts": dict(getattr(__import__("ai_entry_watch"), "_OS_COUNTS", {}) or {}),
            "slots": {str(k): {kk: (avg(v) if isinstance(v, list) else v)
                               for kk, v in s.items()} for k, s in slots.items()},
            "blocked": blocked, "poll_sec": getattr(args, "poll_sec", None)}

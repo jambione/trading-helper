@@ -8266,6 +8266,97 @@ def _push_band_filter(symbols: list[str]) -> list[str]:
 _SLOT_RANK: dict[str, float] = {}
 
 
+# open_spread_replay study (docs/studies/open_spread_replay_prereg.json; all knobs default off). In the first
+# ai_watch_open_spread_realtime_min minutes after 09:30 the arm's spread gate reads the delayed SIP spread, i.e.
+# premarket quotes. The study variant judges those checks on the actual spread at the check (REPLAY-ONLY: live SIP is
+# not on the plan, so a live read returns None and the gate falls back to the delayed verdict). Counters are written
+# outside the paint and never read by a decision.
+_OS_COUNTS: dict[str, int] = {}
+_OS_RT_CACHE: dict[str, float | None] = {}
+
+
+def sip_spread_at(sym: str, t: float, *, fetch=None) -> float | None:
+    """Median SIP (ask-bid)/mid, %, over the minute ending at t, quotes stamped <= t only. Pure: never writes
+    _SIP_SPREAD_CACHE or the recorded inputs; caches under symbol|second in its own dict."""
+    sym = str(sym or "").upper()
+    key = f"{sym}|{int(t)}"
+    if key in _OS_RT_CACHE:
+        return _OS_RT_CACHE[key]
+    val = None
+    try:
+        if fetch is not None:
+            quotes = fetch(sym, t)
+        else:
+            from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+            from alpaca.data.enums import DataFeed
+            from alpaca.data.requests import StockQuotesRequest
+            end = _dt.fromtimestamp(t, tz=_tz.utc)
+            q = _data_client().get_stock_quotes(StockQuotesRequest(
+                symbol_or_symbols=sym, start=end - _td(seconds=60), end=end, feed=DataFeed.SIP, limit=5000))
+            quotes = [(float(r.bid_price), float(r.ask_price)) for r in (q.data.get(sym) or [])
+                      if r.timestamp.timestamp() <= t]
+        spreads = sorted((a - b) / ((a + b) / 2) * 100 for b, a in quotes if b and a and a >= b)
+        if spreads:
+            val = spreads[len(spreads) // 2]
+    except Exception:
+        val = None
+    _OS_RT_CACHE[key] = val
+    return val
+
+
+def _os_count(key: str) -> None:
+    if not getattr(_MID_RISE_PEEK, "on", False):
+        _OS_COUNTS[key] = _OS_COUNTS.get(key, 0) + 1
+
+
+def open_spread_override(sym: str, sp_delayed: float | None, sp_max: float, now: float | None,
+                         cfg: dict) -> str | None:
+    """The study's verdict inside the open window, or None (no override: the live gate decides).
+
+    'pass' = let the check through the spread gate; 'spread_wide' / 'spread_unknown' = refuse. Modes
+    (ai_watch_open_spread_mode): both (OPEN16), release (only release delayed refusals), block (only block delayed
+    passes), skip (no spread gate in the window). The random control (rand_release_share / rand_block_share) applies
+    when realtime_min is 0 and the window is given by ai_watch_open_spread_window_min."""
+    rt_min = _f_or_none(cfg.get("ai_watch_open_spread_realtime_min")) or 0.0
+    win = rt_min or (_f_or_none(cfg.get("ai_watch_open_spread_window_min")) or 0.0)
+    rel_sh = _f_or_none(cfg.get("ai_watch_open_spread_rand_release_share")) or 0.0
+    blk_sh = _f_or_none(cfg.get("ai_watch_open_spread_rand_block_share")) or 0.0
+    if win <= 0 or (rt_min <= 0 and rel_sh <= 0 and blk_sh <= 0):
+        return None
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _Z
+    t = float(now if now is not None else time.time())
+    et = _dt.fromtimestamp(t, _Z("America/New_York"))
+    mins = (et.hour * 60 + et.minute - 570) + et.second / 60.0
+    if not (0.0 <= mins < win):
+        return None
+    d_ok = sp_delayed is not None and sp_delayed <= sp_max
+    if rt_min > 0:
+        mode = str(cfg.get("ai_watch_open_spread_mode", "both") or "both").strip().lower()
+        if mode == "skip":
+            return "pass"
+        rt = sip_spread_at(sym, t)
+        r_ok = rt is not None and rt <= sp_max
+        if r_ok and not d_ok and mode in ("both", "release"):
+            _os_count("released_variant")
+            return "pass"
+        if d_ok and not r_ok and mode in ("both", "block"):
+            _os_count("blocked_variant")
+            return "spread_unknown" if rt is None else "spread_wide"
+        return None
+    import hashlib
+    salt = str(cfg.get("ai_watch_open_spread_rand_salt", "") or "")
+    day = et.strftime("%Y-%m-%d")
+    u = int(hashlib.sha256(f"{salt}|{sym}|{day}|{int(t // 30)}".encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
+    if not d_ok and u < rel_sh:
+        _os_count("released_rand")
+        return "pass"
+    if d_ok and u < blk_sh:
+        _os_count("blocked_rand")
+        return "spread_wide"
+    return None
+
+
 def _slot_unseatable(sym: str, cfg: dict, *, now: float | None = None) -> bool:
     """ai_watch_slot_priority: a KNOWN reason the door would refuse this name.
 
@@ -17265,9 +17356,14 @@ def should_arm_buy(
     _sp_max = _spread_gate_max(record.get("source"), cfg)
     if _sp_max > 0 and _gate_sym:
         _sp = sip_spread_pct(_gate_sym, now=now)
-        if _sp is None:
+        _os_why = open_spread_override(_gate_sym, _sp, _sp_max, now, cfg)
+        if _os_why == "pass":
+            pass
+        elif _os_why:
+            return False, _os_why
+        elif _sp is None:
             return False, "spread_unknown"
-        if _sp > _sp_max:
+        elif _sp > _sp_max:
             record["block_detail"] = f"SIP spread {_sp:.2f}% > {_sp_max:g}%"
             return False, "spread_wide"
     # Gap-down exclusion: names that opened > pct under yesterday's close.
