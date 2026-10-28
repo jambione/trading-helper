@@ -12536,6 +12536,33 @@ def _presquare_streak_note(
     return n
 
 
+# square_relax study counters (released checks per variant / control); written only outside the paint, never read
+# by a decision.
+_SQ_COUNTS: dict[str, int] = {}
+
+
+def _presquare_rand_release(sym: str, fast: float, slow: float, gap: float, both_ob: bool,
+                            base_pre: float, base_conf: float, cfg: dict, now: float | None) -> bool:
+    """Study control (default off): release a pre-square check that fails EXACTLY ONE condition inside the envelope
+    gap <= 25 / lower line >= -50, at random with share ai_watch_presquare_rand_release_share."""
+    share = _f_or_none(cfg.get("ai_watch_presquare_rand_release_share")) or 0.0
+    if share <= 0 or both_ob:
+        return False
+    lo = min(fast, slow)
+    wide_only = base_conf + 1e-9 < gap <= 25.0 + 1e-9 and lo >= -base_pre
+    low_only = gap <= base_conf + 1e-9 and -50.0 <= lo < -base_pre
+    if not (wide_only or low_only):
+        return False
+    import hashlib
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    t = float(now if now is not None else time.time())
+    day = datetime.fromtimestamp(t, ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    salt = str(cfg.get("ai_watch_presquare_rand_release_salt", "") or "")
+    key = f"{salt}|{sym}|{day}|{int(t)}"
+    return int(hashlib.sha256(key.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF < share
+
+
 def _presquare_exh_allows_buy(
     record: dict,
     cfg: dict,
@@ -12557,14 +12584,28 @@ def _presquare_exh_allows_buy(
         _presquare_streak_note(sym, False)
         return False, "wait_exh"
     thr = _rte_threshold(cfg)
-    pre = exh_pre_thr(cfg)
+    base_pre, base_conf = exh_pre_thr(cfg), _rte_confluence_max(cfg)
+    pre = _f_or_none(cfg.get("ai_watch_presquare_pre_thr")) or base_pre          # square_relax arm-only knobs
+    conf = _f_or_none(cfg.get("ai_watch_presquare_confluence_max")) or base_conf
     gap = abs(float(fast) - float(slow))
-    tight = gap <= _rte_confluence_max(cfg) + 1e-9
+    tight = gap <= conf + 1e-9
     both_ob = float(fast) >= -thr and float(slow) >= -thr
     both_pre = float(fast) >= -pre and float(slow) >= -pre
-    if (both_ob and tight) or not both_pre or not tight:
+    if both_ob and tight:
         _presquare_streak_note(sym, False)
         return False, "wait_exh"
+    # Which knob (if any) let this check through: the variant's own loosening, or the study's random release
+    # from the single-condition envelope (docs/studies/square_relax_prereg.json amended_2 #1). Counted only once
+    # the check also passes the falling / rising tests below, and never from the paint.
+    base_ok = gap <= base_conf + 1e-9 and float(fast) >= -base_pre and float(slow) >= -base_pre
+    released = None
+    if not both_pre or not tight:
+        if not _presquare_rand_release(sym, float(fast), float(slow), gap, both_ob, base_pre, base_conf, cfg, now):
+            _presquare_streak_note(sym, False)
+            return False, "wait_exh"
+        released = "released_rand"
+    elif not base_ok:
+        released = "released_variant"
     if ind.get("pctr_falling") or exhaustion_state(record, cfg) == "cooling":
         _presquare_streak_note(sym, False)
         return False, "exh_falling"
@@ -12572,6 +12613,10 @@ def _presquare_exh_allows_buy(
         _presquare_streak_note(sym, False)
         return False, "exh_not_rising"
     t_now = float(now if now is not None else time.time())
+    if not getattr(_MID_RISE_PEEK, "on", False):
+        _SQ_COUNTS["checks_passing"] = _SQ_COUNTS.get("checks_passing", 0) + 1
+        if released:
+            _SQ_COUNTS[released] = _SQ_COUNTS.get(released, 0) + 1
     streak = _presquare_streak_note(sym, True, now=t_now)
     if isinstance(record, dict):
         record["presquare_streak"] = int(streak)

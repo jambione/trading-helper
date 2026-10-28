@@ -609,6 +609,12 @@ DEFAULT_CONFIG = {
     "ai_watch_arm_age_mode":             "src",
     "ai_watch_stale_rand_release_share": 0.0,
     "ai_watch_stale_rand_release_salt":  "",
+    # square_relax (docs/studies/square_relax_prereg.json; defaults = live): arm-only overrides read only inside the
+    # pre-square check (0 = the shared rte_confluence_max / ai_watch_exh_pre_thr), and the study's random release.
+    "ai_watch_presquare_confluence_max": 0.0,
+    "ai_watch_presquare_pre_thr":        0.0,
+    "ai_watch_presquare_rand_release_share": 0.0,
+    "ai_watch_presquare_rand_release_salt":  "",
     # Leg-1 RTH gate (operator 10/27): capture 1st Empty Square of day on $20+ stocks (+0.5%..+5.0%, <=11:00 ET).
     "ai_watch_leg1_rth_gate":           False,
     "ai_watch_leg1_min_price":          20.0,
@@ -2197,6 +2203,10 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_arm_age_mode",
     "ai_watch_stale_rand_release_share",
     "ai_watch_stale_rand_release_salt",
+    "ai_watch_presquare_confluence_max",
+    "ai_watch_presquare_pre_thr",
+    "ai_watch_presquare_rand_release_share",
+    "ai_watch_presquare_rand_release_salt",
     "ai_watch_leg1_rth_gate",
     "ai_watch_leg1_min_price",
     "ai_watch_leg1_min_day_chg",

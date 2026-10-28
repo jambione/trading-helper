@@ -19,6 +19,7 @@ SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
 # poll may advance it (see _MID_RISE_PEEK), and the replay must run every
 # caller that touches it.
 ALLOWED = {
+    "_SQ_COUNTS": "square_relax study counter; written only outside the paint, never read by a decision",
     "_ARM_AGE_COUNTS": "stale_age_replay study counter; written only from the poll site (count=True), "
                        "never read by a decision",
     "_MID_RISE_STATE": "decision state; paint is read-only via _MID_RISE_PEEK",
