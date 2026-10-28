@@ -8711,7 +8711,9 @@ def arm_tape_stale(rec: dict, symbol: str, now: float | None, cfg: dict | None, 
         base_stale = age is None or float(age) > max(decision_max_age_sec(cfg), gap)
         for k, on in (("checks", True), ("stale_base", base_stale),
                       ("stale_base_over15", base_stale and age is not None and float(age) > 15.0),
-                      ("released_ceiling", base_stale and not stale)):
+                      ("released_ceiling", base_stale and not stale),
+                      ("age15_30_refused", base_stale and age is not None and 15.0 < float(age) <= 30.0),
+                      ("age15_30_accepted", (not base_stale) and age is not None and 15.0 < float(age) <= 30.0)):
             if on:
                 _ARM_AGE_COUNTS[k] = _ARM_AGE_COUNTS.get(k, 0) + 1
     if stale and share > 0 and age is not None and float(age) > 15.0:
