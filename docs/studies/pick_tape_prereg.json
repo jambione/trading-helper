@@ -1,0 +1,33 @@
+{
+  "study": "pick_tape",
+  "question": "If the book server's picks get a fresh REST latest-trade price before the admission tape check (admission rules unchanged), do they reach the board sooner, without making the desk's trades worse?",
+  "operator_sentence": "Operator 2026-10-28: 'Yes, prereg it' (a forward paper test: give book-server picks fresh tape before the inclusion check, admission rules unchanged; measure off-board minutes, no_tape refusals and per-trade profit against paired OFF days); earlier the same morning: 'optimize as much as they can be without losing value'.",
+  "registered_at": "2026-10-28 ~06:15 ET, before any code or config change.",
+  "registered_before_results": true,
+  "origin": "Read-only diagnostics 10/28 (tools/studies/lag_admission.py; seat-tail check): 349 names in the book server's 'add' list 9/28-10/27 waited > 2 min to reach the board (median 129 min); during the wait inclusion refused them for no_tape (235 names) and stale_tape_admit (216). Code: the inclusion tape check (ai_entry_watch.py ~9917, live_print) only sees prices for names on the dashboard ticker list, which is filled by push_candidates_to_engine, whose room (cap 30 - every known engine name) is <= 0 most of the session. Bought names were mostly already in the engine (541 of 555) - a survivor population, which is why this was missed earlier. Off-board time is ~2.4 min per buy on 10/16-10/27 (15-minute pre-buy proxy).",
+  "change": {
+    "knob": "NEW ai_watch_admit_rest_tape (default false = off, live unchanged).",
+    "behaviour": "Once per book-server cycle, for symbols in that cycle's 'add' list whose live_print is None or older than the admission ceiling that applies to them, one batched Alpaca latest-trade request (IEX, the data-only key, at most 12 symbols per call, existing alpaca_api multi-symbol helper) is made and cached as symbol -> (price, trade timestamp). In the inclusion tape check, when live_print gives no dated print, the cached trade is used with age = now - trade timestamp. Nothing else changes: the ceilings (ai_watch_admit_max_tape_age_sec 120, movers 180, heating 300), every other inclusion rule, the push cap, the engine and the stream are untouched. A cached trade older than its ceiling still refuses (stale_tape_admit).",
+    "cost": "At most one extra REST call per book-server cycle (median 7.8 s apart, 12 symbols max); counted in the guardrails."
+  },
+  "schedule": "Code is deployed once (default off) before the first pair, with a restart after a close; the knob is then switched by an atomic single-key edit of config/bot_config.json after each close (hot reload), never by a git pull. Paired adjacent trading days, ON/OFF order fixed by sha256('pick_tape|pair-k') parity, recorded in this file before the first pair. Five pairs, starting with the first pair of adjacent trading days after the code is deployed and this file is READY, skipping 11/3 (Election Day) and 11/6 (jobs report); the pair dates are written here before pair 1. A pair lost to an outage, holiday or a voiding change is not replaced.",
+  "measures": {
+    "primary_1": "Unconditional, per session: share of book-server 'add' list name-minutes (09:45-15:30; one label per name-minute from proposal_ledger, the last inclusion row at or before the minute's end) refused for no_tape or stale_tape_admit.",
+    "primary_2": "Per buy: off-board minutes in the 15 minutes before the fill (entry_watch_state snapshots, lag_blockers labels; the proxy used on 10/28, so no bar fetch is needed).",
+    "value_guard": "Per trade: mean net bp (fill to exit, full SIP spread charged as in replay_costing) per session.",
+    "information": "Book-server picks seated per session and their median would-seat -> board minutes; trades per session; opens per 10 minutes; share of refusals by reason; cached-trade age distribution."
+  },
+  "pass": "All of: (1) primary_1 lower on the ON day than its paired OFF day in >= 4 of 5 pairs, mean paired reduction >= 50%; (2) primary_2 lower on ON in >= 4 of 5 pairs, mean paired reduction >= 20%; (3) VALUE GUARD: the mean over pairs of (ON - OFF) per-trade net >= -5 bp, and ON is not worse than OFF by more than 15 bp in any single pair; (4) no guardrail rollback on an ON day. PASS keeps the knob on. It is a speed result with a value guard, not a profit claim; profit stays information.",
+  "fail": "Anything else keeps the knob off. Two ON-day rollbacks end the study early as FAIL (unsafe).",
+  "placebo": "Before pair 1: apply the pass rule's parts (1) and (2) to the 14 days 9/28-10/15 as 7 adjacent pairs, enumerating all 128 ON/OFF labellings with the 7-pair version of the rule ('>= 6 of 7'); report the false-pass rate. If it exceeds 5%, the study does not start and the operator is told.",
+  "guardrails": {
+    "how": "A watchdog (snapshot-based, no log parsing) runs every 5 minutes on ON and OFF days alike (observe-only on OFF days, which gives the OFF-day reference). On an ON-day breach it sets ai_watch_admit_rest_tape false (atomic single-key edit), records why, and raises a desktop banner. It writes a heartbeat every minute; if the heartbeat is older than 10 minutes on an ON day, a fallback sets the knob false at the next 5-minute mark.",
+    "rate_limits": "Alpaca 429s in the live ai_reports/sessions/<day>/wire.jsonl.gz 'err' field: breach if >= 20 in 15 minutes and > 3 x the same pair's OFF-day rate at that clock time.",
+    "loops": "Breach if the 15-minute p95 gap of ai_positions_state 'updated' (exit loop) exceeds max(10 s, 3 x OFF-day p95), or of signal_state 'updated' exceeds max(15 s, 3 x OFF-day p95).",
+    "false_alarms": "Before pair 1: run every guardrail on the 14 baseline days' recordings; if it would have rolled back on more than 1 of 14 days, the study does not start and the operator is told."
+  },
+  "freeze": "From the deploy to the last pair: no other change to the watch, dashboard or engine code or config; pytest is not run on the mini (the suite rewrites bot_config.json). Live entry gates (wr_trend 15, 5m veto, slope-now) stay as they are on 10/28. git_version and config_fp are logged per session; any other change voids its pair.",
+  "if_pass": "Keep the knob on; record off-board minutes before and after.",
+  "if_fail": "Knob off. If primary_1 fell but primary_2 did not, the book-server picks were not the names that got bought, and the off-board delay of bought names needs a different explanation.",
+  "script": "Knob + cache + inclusion hook in ai_entry_watch.py (default off) with tests, the watchdog tools/pick_tape_watchdog.py and a scorer reusing lag_blockers / lag_admission, written after this file is committed and after a result-skeptic READY; they may not change anything above."
+}
