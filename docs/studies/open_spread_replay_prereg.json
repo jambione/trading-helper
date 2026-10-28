@@ -58,5 +58,15 @@
   "7_power": "sd_session = sd across sessions of (RAND_1 added net - mean(RAND_2, RAND_3) added net) x sqrt(3/2). Count-only runs also produce RAND's matched added counts. If the projected RAND or OPEN16 added count is < 30, stop.",
   "9_small": "A session is excluded for every arm when >= 2 window trades in any arm lack an entry spread.",
   "verdict_wording": "Report FAIL (point < 0) separately from FAIL (bound only); the second is recorded as 'not shown', not 'refuted'."
+ },
+ "ready": {
+  "when": "2026-10-28 ~10:55 ET",
+  "verdict": "READY",
+  "review_ids": [
+   "round 1 (findings 1-9)",
+   "round 2 (amended_2 text applied verbatim)"
+  ],
+  "accepted_by": "operator 2026-10-28 in chat: 'Accept READY' (two-round rule: no third Mode 1 review)",
+  "next": "Knobs (default off), the replay delay-0 read, tools/studies/open_spread_run.py and open_spread_read.py with tests; runs after square_relax in the after-hours queue."
  }
 }
