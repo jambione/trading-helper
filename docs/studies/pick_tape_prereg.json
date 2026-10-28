@@ -29,5 +29,16 @@
   "freeze": "From the deploy to the last pair: no other change to the watch, dashboard or engine code or config; pytest is not run on the mini (the suite rewrites bot_config.json). Live entry gates (wr_trend 15, 5m veto, slope-now) stay as they are on 10/28. git_version and config_fp are logged per session; any other change voids its pair.",
   "if_pass": "Keep the knob on; record off-board minutes before and after.",
   "if_fail": "Knob off. If primary_1 fell but primary_2 did not, the book-server picks were not the names that got bought, and the off-board delay of bought names needs a different explanation.",
-  "script": "Knob + cache + inclusion hook in ai_entry_watch.py (default off) with tests, the watchdog tools/pick_tape_watchdog.py and a scorer reusing lag_blockers / lag_admission, written after this file is committed and after a result-skeptic READY; they may not change anything above."
+  "script": "Knob + cache + inclusion hook in ai_entry_watch.py (default off) with tests, the watchdog tools/pick_tape_watchdog.py and a scorer reusing lag_blockers / lag_admission, written after this file is committed and after a result-skeptic READY; they may not change anything above.",
+  "review_r1": {
+    "when": "2026-10-28 ~06:40 ET",
+    "verdict": "FIX FIRST (10 findings)",
+    "key": [
+      "Tape refusals are only 20.5% of off-board minutes (no_tape 18.1%, stale_tape_admit 2.4%; lag_admission.py), ~0.5 min/buy; 'kept, not seated' is 27.8%.",
+      "Right after inclusion, _arm_ready_young_tape re-reads live_print at min(15, 120) = 15 s and needs engine indicators: a mocked 40 s pick was refused arm_ready_stale, a fresh-tape pick without engine data arm_ready_no_rsi_data, so rescued picks would move to another bucket.",
+      "Primary_1 falls by relabelling: after a tape refusal the next refusal was float_too_big 3830, not_uptrend 1537, spread_wide 1222 times (10/16-10/27).",
+      "Value guard false-fails ~34% (one pair < -15 bp) on noise with 5 pairs; placebo tested a 7-pair rule; guardrails referenced OFF days that may come later; the REST helper retries inside the watch loop."
+    ]
+  },
+  "status": "PARKED (not built, not run). Expected gain ~0.5 min/buy at most and only if the arm-ready and engine-indicator gates are also addressed; effort moves to stale_age_replay redesign. Reopen only with a replay showing rescued picks reach an armable state."
 }
