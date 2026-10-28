@@ -517,7 +517,7 @@
   "ai_movers_max_rows": 50,
   "ai_watch_wr_slow_5m_veto": true,
   "ai_watch_wr_slow_5m_min_pitch": 0.0,
-  "ai_watch_slope_now_gate": true,
+  "ai_watch_slope_now_gate": false,
   "ai_watch_slope_now_missing_refuses": false,
   "ai_watch_leg1_rth_gate": false,
   "ai_watch_leg1_min_price": 25.0,
