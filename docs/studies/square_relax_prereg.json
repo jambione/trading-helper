@@ -60,5 +60,15 @@
     "4_half_b": "Half B counts SCORED sessions (>= 5 REF trades each) from the first session after READY; the read needs >= 10 scored sessions AND >= 120 REF and >= 120 v trades in half B. If 10 scored sessions give fewer than 120 trades, half B extends session by session (trade counts only, no lift read) up to 20 scored sessions; still short = UNDERPOWERED.",
     "5_fidelity_zero": "Fidelity share ratios apply only to codes with >= 1% of live arm rows on 10/27; rarer codes (e.g. exh_not_rising, live share 0) use an absolute tolerance: replay share <= 1%.",
     "6_loose_ends": "TIMING passes when BOTH the median and the mean over moved pairs are <= -1.0 min. The 'fail' block's -3 bp is replaced by -M (M = 2 bp, margin block). 'Faster and better' requires lift_ref >= +3 bp with one-sided t >= 2.0 at Bonferroni over 2 (t >= 2.24 two-sided-equivalent replaced by the 1 - 0.05/2 one-sided critical value at n-1 df). A released check advances _presquare_streak_note exactly as a natural pre-square pass does."
+  },
+  "ready": {
+    "when": "2026-10-28 ~07:00 ET",
+    "verdict": "READY",
+    "review_ids": [
+      "round 1 (11 findings)",
+      "round 2 (6 findings, amended_2)"
+    ],
+    "text": "READY: square_relax amended r2; primaries TIGHT20, PRE45; M = 2 bp lower bound and estimate >= 0 in both halves; RAND on the declared single-condition envelope pool; half B >= 10 scored sessions, extended (trade count only) to >= 120 trades, cap 20.",
+    "accepted_by": "operator 2026-10-28 in chat: 'Accept READY' (two-round rule)"
   }
 }
