@@ -46,5 +46,10 @@
     "10_power": "If the MDE floor is met but the bound misses -M with lift_ref's point estimate >= 0, the verdict is UNPROVEN (not FAIL).",
     "11_margin": "PASS requires the lower bound of lift_ref (SIP-repriced) >= -M in BOTH halves, where M is the operator's non-inferiority margin, recorded here before any run (proposed M = 2 bp; the desk's whole net per trade is about -3.5 bp, so 3 bp would be too loose for 'preserve all of the value').",
     "supersedes": "variants FLATOK and RAND_v pool definitions, TIMING and MOVED SHARE, fidelity_gate, the trade floors, the -3 bp margin, multiplicity (now 2 primaries)."
+  },
+  "margin": {
+    "when": "2026-10-28 ~08:20 ET, before any code or replay",
+    "by": "operator in chat: '2 bp + average >= 0'",
+    "rule": "M = 2 bp. A primary v PASSES only if, in BOTH halves, the lower bound of lift_ref (SIP-repriced, day-clustered, one-sided at 1 - 0.05/2) >= -2 bp AND lift_ref's point estimate >= 0, together with every other condition in pass / amended. REF_DUP tightens M as in amended #8."
   }
 }
