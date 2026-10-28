@@ -1,0 +1,37 @@
+{
+  "study": "stale_age_replay",
+  "question": "Does loosening the arm's tape-age ceiling (ai_watch_decision_max_age_sec, the 'stale quote' refusal) from 15 s to 30 s get the desk into the same names sooner and make its trades at least as profitable per trade, against the current desk and against releasing the same share of stale refusals at random?",
+  "operator_sentence": "Operator 2026-10-28: 'Yes, staleness test' (preregister a replay test of the staleness rule: quote-based freshness or a looser threshold vs the current 15 s last-trade rule, measuring arm timing and per-trade profit against the current desk and a matched random control).",
+  "registered_at": "2026-10-28 ~05:30 ET, before any variant of this study is run or read.",
+  "registered_before_results": true,
+  "origin": "Lag diagnostics 10/27-10/28 on 555 buys 9/28-10/15 (tools/studies/lag_blockers.py, lag_ready.py, lag_tape.py, lag_admission.py, lag_engine_join.py): tape-blocked 1.1 min/buy at the arm plus tape refusals inside 'no verdict' minutes; while blocked the last print a name had was a median 26 s old (61% over 15 s). 541 of 555 bought names were already in the engine at admission, so the delay is print frequency against the 15 s ceiling, not missing stream slots. Memory iex-trade-gaps-are-not-staleness: the IEX last-trade rule marks liquid names stale 16-63% of the time while SIP trades every 2-9 s.",
+  "scope": "Only the arm's ceiling (_row_tape_stale -> decision_max_age_sec). Quote-based freshness is out of scope: the recordings keep print ages (recorder_prints age_sec) but not bid/ask update times (recorder_quotes_meta holds request counts only), so it cannot be replayed. Admission's own tape ceilings (ai_watch_admit_max_tape_age_sec 120, movers 180, heating 300) are unchanged.",
+  "prior": "Two forces: entering sooner on the same names should help (the price drifts ~1.7 bp/min between the %R turn and the arm, hindsight-selected), but a looser ceiling also buys on an older print, so the realized entry can be worse than it looks. Prior lift 0 +- 4 bp per trade.",
+  "variants": {
+    "REF": "The current live desk: the day's recorded config with the late_gates_run.PIN regime (presquare_only true, Leg-1 OFF, ai_max_positions 5, ai_max_position_pct 20, ai_risk_pct 1.0, ai_watch_min_price 20, ai_position_slot_equity 60) and the live entry gates of 2026-10-28 (ai_watch_wr_trend_min_rise 15, ai_watch_wr_slow_5m_veto true / min_pitch 0, ai_watch_slope_now_gate true with ai_watch_slope_now_missing_refuses false), ai_watch_decision_max_age_sec 15 and ai_watch_quote_max_age_sec 15 (live values).",
+    "AGE30": "REF + ai_watch_decision_max_age_sec 30 and ai_watch_quote_max_age_sec 30. PRIMARY.",
+    "AGE60": "REF + both at 60. Information only.",
+    "RREL_k (k=1,2,3)": "REF + a NEW knob ai_watch_stale_rand_release_share = s with salt 'SA-k': when _row_tape_stale would refuse a print aged between 15 and 30 s, it is released (treated as fresh) when sha256(salt|symbol|day|floor(ts/30)) < s; prints older than 30 s are never released. s is calibrated per session by count, as slope_now amended_2 (1): start at AGE30's per-check release rate, bisect (at most 4 passes per seed set) until the seed-averaged RREL trade count is within +-15% of AGE30's. This tests whether WHICH 15-30 s prints are trusted matters, against trusting a random same-sized subset. Default 0 = off, live unchanged.",
+    "REF_DUP": "REF twice on the first, middle and last scored session (determinism; late_gates amended #8 rule)."
+  },
+  "harness": "late_gates exactly (tools/replay_session.py, --start 09:00 --end 15:50 --step 2.0 --engine recorded --exits live --live-staleness, paint on, one pinned --sha that contains the RREL knob and the slope-now gate). Outputs ~/replay_runs/stale_age/DAY-VAR.json. Costing: full SIP spread at entry. Repriced check: every entry repriced at the SIP 1-minute close of the entry minute, ret from the replay's own ret (late_gates amended_2 #16). open_at_end marked at the SIP 15:49 close. Classes vs REF: same (same symbol, entries within 120 s), EARLIER (same symbol, AGE30 entry 120 s to 30 min BEFORE an unmatched REF entry), later, removed, new.",
+  "fidelity_gate": "Before any variant: replay 2026-10-27 at the pinned sha on its recorded config; buy recall vs live fills >= 0.85 (90 s match) and stale_quote refusal count within 50-200% of live's on that day; else NOT TESTABLE.",
+  "sessions": "Recorded sessions with a wire recording: 2026-09-28 .. 2026-10-27 (22), plus forward sessions to a cap of 40. Halves by count in date order. A session needs >= 5 REF trades. Runs after the late_gates info phase and before the slope_now study, one batch at a time, after hours only.",
+  "statistic": "Per session: lift_ref = mean net(AGE30) - mean net(REF) and lift_rand = mean net(AGE30) - mean over k of mean net(RREL_k), bp per trade, sessions equal-weighted, t = std_scorer.day_stat. TIMING: over EARLIER-class pairs, the minutes by which AGE30 entered before REF (median), and the share of REF trades that have an EARLIER partner.",
+  "power": "MDE per half = 3.08 x max(sd_session(RREL avg - REF), sd_session(MDE1 - REF)) / sqrt(sessions in the half), MDE1 = REF + rand release share 0.25 salt 'SA-MDE'. Floors per half: >= 10 scored sessions, MDE <= 6 bp; else UNDERPOWERED (no means); at the cap UNDERPOWERED = FAIL.",
+  "pass": "PASS needs all of: lift_ref >= +3 bp/trade with t >= 2.0 overall, > 0 in BOTH halves; repriced lift_ref >= +3 with t >= 2.0 and > 0 in both halves; lift_rand > 0 with t >= 2.0 (CONTROL UNMATCHED if more than a third of sessions cannot be count-matched, as slope_now amended_2); TIMING median >= 1.0 min earlier; >= 300 REF and >= 300 AGE30 trades.",
+  "speed_only": "Declared second outcome, not a PASS: if TIMING is >= 1.0 min earlier AND the repriced lift_ref's 95% lower bound (day-clustered) is >= -3 bp in both halves, the verdict reads 'FASTER, NOT WORSE' and the operator may choose to switch on speed alone. Anything else short of PASS is FAIL.",
+  "fail": "lift_ref <= 0 in either half (raw or repriced) with no FASTER, NOT WORSE reading is FAIL.",
+  "information_only": [
+    "AGE60 vs REF (same statistics).",
+    "Refusal counts: stale_quote, no_quote_age per variant.",
+    "Class split with mean net per class; trades per session; opens per 10 minutes.",
+    "Lift restricted to entries before 11:00 (Leg 1).",
+    "Drop top 3 sessions and top 5 names from lift_ref."
+  ],
+  "if_pass": "result-skeptic Mode 3, then the operator decides on raising ai_watch_decision_max_age_sec live (a config edit, hot-reloaded, after the close).",
+  "if_fail": "Keep 15 s. Record that a looser ceiling does not buy better entries on IEX prints, and that quote-based freshness (needs new recording) is the remaining option.",
+  "no_retuning": "No other ceiling (20, 45 s) is scored as primary.",
+  "script": "RREL knob in ai_entry_watch.py (default off), runner tools/studies/stale_age_run.py and scorer tools/studies/stale_age_read.py (reusing late_gates_run / late_gates_read), written after this file is committed and after a result-skeptic READY; they may not change anything above.",
+  "multiplicity": "One primary (AGE30). AGE60 and every information line have no pass."
+}
