@@ -8675,6 +8675,10 @@ def name_tape_ceiling(symbol: str, cfg: dict | None) -> float:
 # decision_max_age_sec, so the last_ask_src that admission and seat eviction read is untouched; these knobs only
 # change whether the ARM treats this check's print as stale. 'age' mode judges every check by print age (the replay
 # patches _arm_tape_age to the recorded prints); the random release is the study's matched control.
+# Counts for the study's matched control (written only from the poll site, count=True; nothing decides on them).
+_ARM_AGE_COUNTS: dict[str, int] = {}
+
+
 def _arm_gap_ceiling(symbol: str, cfg: dict | None) -> float:
     """The per-name gap ceiling the arm verdict uses (the replay substitutes its recorded-print history)."""
     return name_tape_ceiling(symbol, cfg)
@@ -8687,7 +8691,8 @@ def _arm_tape_age(rec: dict, symbol: str, now: float) -> float | None:
     return age
 
 
-def arm_tape_stale(rec: dict, symbol: str, now: float | None, cfg: dict | None, src_stale: bool) -> bool:
+def arm_tape_stale(rec: dict, symbol: str, now: float | None, cfg: dict | None, src_stale: bool,
+                   *, count: bool = False) -> bool:
     """True when the arm must treat this check's print as stale. With every knob off: src_stale, unchanged."""
     cfg = cfg if isinstance(cfg, dict) else {}
     mode = str(cfg.get("ai_watch_arm_age_mode") or "src").strip().lower()
@@ -8699,8 +8704,16 @@ def arm_tape_stale(rec: dict, symbol: str, now: float | None, cfg: dict | None, 
         return False
     t = float(now if now is not None else time.time())
     age = _arm_tape_age(rec, symbol, t)
-    ceiling = max(arm_max if arm_max > 0 else decision_max_age_sec(cfg), _arm_gap_ceiling(symbol, cfg))
+    gap = _arm_gap_ceiling(symbol, cfg)
+    ceiling = max(arm_max if arm_max > 0 else decision_max_age_sec(cfg), gap)
     stale = age is None or float(age) > ceiling
+    if count:
+        base_stale = age is None or float(age) > max(decision_max_age_sec(cfg), gap)
+        for k, on in (("checks", True), ("stale_base", base_stale),
+                      ("stale_base_over15", base_stale and age is not None and float(age) > 15.0),
+                      ("released_ceiling", base_stale and not stale)):
+            if on:
+                _ARM_AGE_COUNTS[k] = _ARM_AGE_COUNTS.get(k, 0) + 1
     if stale and share > 0 and age is not None and float(age) > 15.0:
         import hashlib
         from datetime import datetime
@@ -8710,6 +8723,8 @@ def arm_tape_stale(rec: dict, symbol: str, now: float | None, cfg: dict | None, 
         key = f"{salt}|{str(symbol).upper()}|{day}|{int(t)}"
         if int(hashlib.sha256(key.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF < share:
             stale = False
+            if count:
+                _ARM_AGE_COUNTS["released_rand"] = _ARM_AGE_COUNTS.get("released_rand", 0) + 1
     return stale
 
 
@@ -19145,7 +19160,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # _src_stale drives the stale streak and the feed drops (eviction state, unchanged by the arm-only
         # tape-age knobs); _arm_stale decides whether this check may arm. With the knobs off they are equal.
         _src_stale = bool(tape_only or px_src == "stale_tape")
-        _arm_stale = arm_tape_stale(rec, sym, t0, cfg, _src_stale)
+        _arm_stale = arm_tape_stale(rec, sym, t0, cfg, _src_stale, count=True)
         if _arm_stale:
             # Prefer a live zone blocker when we already have structure so the
             # column still says above/below rather than a blank "no quote".
