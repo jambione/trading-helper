@@ -1,0 +1,39 @@
+{
+  "study": "seat_picks",
+  "question": "If the book server's admitted picks may take a seat without arm_ready (the arm's own gates unchanged) and the engine push cap counts only book names plus in-flight pushes, do picks reach the board sooner and bought names spend fewer minutes off the board, without making the desk's trades worse?",
+  "operator_sentence": "Operator 2026-10-28: 'Yes, prereg it' (a forward paper test: seat admitted book-server picks without arm_ready (arm gates unchanged) plus ai_watch_engine_push_count='book', paired ON/OFF days; measure off-board minutes before buys, trades per session and a per-trade value guard); standing order the same day: optimize everything outside the strategy without losing value.",
+  "registered_at": "2026-10-28 ~06:45 ET, before any code for the seat knob or any config change.",
+  "registered_before_results": true,
+  "origin": "Recent pre-buy proxy (10/16-10/27, 239 buys, 15 minutes before each fill): off-board 2.36 min/buy, ~75% of the remaining non-strategy delay. Code: the soft-seed seat pass (ai_entry_watch.py ~2510) skips a ranked row unless arm_ready (fresh 15 s tape + engine indicators, _arm_ready_young_tape) or its exh_seat_class is already a square class; the comment there says arm_ready 'gates the OPEN, not the seat'. Engine data and stream tape come from the push to the engine, whose room (cap 30 minus every known engine name) is <= 0 most of the day. The pick_tape review (docs/studies/pick_tape_prereg.json review_r1) showed a tape-only fix moves minutes between buckets instead of removing them; this package addresses the seat and the engine room together.",
+  "change": {
+    "seat_knob": "NEW ai_watch_seat_picks_without_arm_ready (default false = live unchanged). When true, in the seat passes that currently skip a ranked row for 'not arm_ready', a row that the book server would seat this cycle (its would_symbols) and that inclusion kept is seated anyway (scout_only false), still subject to every other seat rule (max seats, flood, far cap, chg band). Nothing on the arm path changes: should_arm_buy, the tape checks, the new gates and the pre-place re-price all apply as before, so a seat never implies a buy.",
+    "push_knob": "ai_watch_engine_push_count = 'book' (commit 3a4f3b2a; default 'all'): the push cap counts src=book engine names plus pushes in flight, so seated picks get engine data and the stream.",
+    "package": "Both knobs switch together; this tests the package, not each knob (declared). A PASS does not say which knob did it."
+  },
+  "pre_checks": {
+    "path": "Before pair 1, a code trace (written into this file) shows that with ai_book_server_mode 'live' the book server's picks go through the soft-seed seat passes this knob touches; if they do not, the knob is re-specified at the actual seat site before any switch.",
+    "replay_smoke": "Replay 2 recorded sessions (10/22 and 10/27) with both knobs on vs off, information only: count picks seated and whether seated picks reach a non-tape blocker or an arm; this is a mechanism check, not a result (the replay cannot reproduce stream tape for names live did not subscribe).",
+    "engine_room": "From the 14 baseline days' signal_state snapshots, the engine's name count and non-book names: with push_count 'book', projected max engine names must stay <= 42 (MAX_ACTIVE_TICKERS 44); if not, the study does not start and the operator is told."
+  },
+  "schedule": "Code deployed once with both knobs off, restart after a close. Then 5 pairs of adjacent trading days, starting with the first pair after the deploy and a READY on this file, skipping 11/3 (Election Day) and 11/6 (jobs report); ON/OFF order within pair k by sha256('seat_picks|pair-k') parity; the dates are written here before pair 1. Knobs are switched after each close by an atomic edit of only these two keys in config/bot_config.json (hot reload), never by a git pull. A pair lost to an outage, holiday or voiding change is not replaced.",
+  "measures": {
+    "primary_1": "Unconditional, per session: share of book-server would-seat name-minutes (09:45-15:30; would_symbols from book_server_shadow.jsonl, board presence from entry_watch_state snapshots) in which the name was NOT on the board.",
+    "primary_2": "Per buy: off-board minutes in the 15 minutes before the fill (lag_blockers labels, the proxy used 10/28).",
+    "bucket_shift": "Reported with the primaries and part of the pass: per buy, minutes in tape-blocked (plumbing) codes in the same window; it must not rise by more than half of primary_2's fall.",
+    "guards": "Trades per session and opens per 10 minutes (must not fall); per-trade mean net bp (full SIP spread charged)."
+  },
+  "pass": "All of: (1) primary_1 lower on ON than its paired OFF day in >= 4 of 5 pairs, mean paired reduction >= 30%; (2) primary_2 lower on ON in >= 4 of 5 pairs, mean paired reduction >= 20%; (3) bucket_shift rule holds on the pair means; (4) trades per session on ON >= 90% of OFF on the pair means; (5) VALUE GUARD on pairs where both days have >= 15 trades: mean over those pairs of (ON - OFF) per-trade net >= -5 bp, and the guard's false-fail rate measured below is <= 10% (if higher, the guard is replaced by a one-sided 90% bound >= -5 bp computed on trades); (6) no guardrail rollback on an ON day.",
+  "fail": "Anything else switches both knobs off. Two ON-day rollbacks end the study early as FAIL (unsafe).",
+  "placebo": "Before pair 1 on the 14 baseline days 9/28-10/15: (a) apply the exact 5-pair rule for (1) and (2) to every set of 5 adjacent pairs from those days with every ON/OFF labelling, and report the false-pass rate; if > 5% the study does not start; (b) the value guard's false-fail rate on the same pairs; (c) every guardrail run on the 14 days' recordings: more than 1 false rollback in 14 days and the study does not start.",
+  "guardrails": {
+    "how": "Snapshot-based watchdog every 5 minutes, observe-only on OFF days, acting on ON days: on a breach it sets both knobs back (atomic two-key edit), records why and raises a desktop banner; heartbeat each minute, and a fallback that switches the knobs off if the heartbeat is older than 10 minutes on an ON day.",
+    "engine": "signal_state ticker count >= 43, or any non-book name present at the previous check missing at this one while the count is >= 42 (an eviction for room), over the last 15 minutes: breach.",
+    "loops": "15-minute p95 gap of ai_positions_state 'updated' > max(10 s, 3 x the baseline p95); of signal_state 'updated' > max(15 s, 3 x baseline); median per-name entry_watch_state last_poll_ts gap > 2 x the baseline median (14.5 s).",
+    "rate_limits": "Alpaca 429s in the live wire 'err' field >= 20 in 15 minutes AND > 3 x the baseline rate at that clock time.",
+    "baselines": "All guardrail baselines from the 14 days 9/28-10/15, computed before pair 1."
+  },
+  "freeze": "From the deploy to the last pair: no other change to the watch, dashboard or engine code or config; no pytest on the mini (the suite rewrites bot_config.json). Live gates stay as on 10/28. git_version and config_fp logged per session; any other change voids its pair.",
+  "if_pass": "Keep both knobs on; then test each knob alone only if the operator wants to know which did it.",
+  "if_fail": "Both off. If primary_1 fell but primary_2 did not, picks seated sooner were not the names bought, and the off-board time of bought names needs another explanation.",
+  "script": "The seat knob in ai_entry_watch.py (default off) with tests (off = identical seat decisions; on = admitted would-seat rows seated without arm_ready, every other rule kept), the watchdog tools/seat_picks_watchdog.py, and a scorer reusing lag_blockers, written after this file is committed and after a result-skeptic READY; they may not change anything above."
+}
