@@ -24,6 +24,7 @@ import { init as initAdmin, open as openAdmin, toggle as toggleAdmin }  from './
 import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=133';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 import { init as initMobilePager }                from './mobilePager.js?v=133';
+import { init as initTabSignal }                  from './tabSignal.js?v=1';
 
 // Product badge — "Trader Bro v0.8", replacing the old WS·Discord·AI Grok
 // text row. The connectivity/trader-on dots stay (they're live status, not
@@ -239,6 +240,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try { initResizer(document.querySelector('.main-grid'), document.getElementById('ticker-tv-resizer'), { hosted: !_isLocal }); } catch (e) { console.error('[app] initResizer', e); }
   try { initSessions(); }                                                          catch (e) { console.error('[app] initSessions', e); }
   try { initMobilePager(); }                                                       catch (e) { console.error('[app] initMobilePager', e); }
+  try { initTabSignal(); }                                                         catch (e) { console.error('[app] initTabSignal', e); }
   notifications.init();
 
   // ── Refresh sessions when Settings → Sessions tab is opened ──
