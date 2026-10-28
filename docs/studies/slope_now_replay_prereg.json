@@ -50,5 +50,15 @@
     "7_power": "Unchanged; declared likely UNDERPOWERED (live 10/27 had ~44 checks that passed every gate).",
     "pass_update": "In 'pass', lift_rand means the CRAND (per-check, delay-matched) leg."
   },
-  "amended_2": "amended_2 (skeptic r2): (1) CRAND share is calibrated per session by count, not by check rate: starting at SLOPE's per-check rate, bisect the share (at most 4 passes per seed set) until the seed-averaged CRAND trade count is within ±15% of SLOPE's. CRAND and SLOPE are evaluated at the same position in should_arm_buy, after every other gate. If more than a third of scored sessions cannot be matched, the verdict is CONTROL UNMATCHED (UNPROVEN), not FAIL; the lift_ref result is still reported. (2) Fidelity matching uses the row's last_poll_ts (the time of the indicator reading), not the snapshot ts: nearest live row for the same symbol with |last_poll_ts − replay check ts| ≤ 5 s. (3) In fidelity check (d), the live-side rule ignores staleness (live snapshots carry no pctr_pitch_ts); the replay side counts both slope_not_rising and slope_unknown."
+  "amended_2": "amended_2 (skeptic r2): (1) CRAND share is calibrated per session by count, not by check rate: starting at SLOPE's per-check rate, bisect the share (at most 4 passes per seed set) until the seed-averaged CRAND trade count is within ±15% of SLOPE's. CRAND and SLOPE are evaluated at the same position in should_arm_buy, after every other gate. If more than a third of scored sessions cannot be matched, the verdict is CONTROL UNMATCHED (UNPROVEN), not FAIL; the lift_ref result is still reported. (2) Fidelity matching uses the row's last_poll_ts (the time of the indicator reading), not the snapshot ts: nearest live row for the same symbol with |last_poll_ts − replay check ts| ≤ 5 s. (3) In fidelity check (d), the live-side rule ignores staleness (live snapshots carry no pctr_pitch_ts); the replay side counts both slope_not_rising and slope_unknown.",
+  "ready": {
+    "when": "2026-10-28 ~04:30 ET",
+    "verdict": "READY",
+    "review_ids": [
+      "round 1 (findings 1-9)",
+      "round 2 (findings 1-3, amended_2 text applied verbatim)"
+    ],
+    "accepted_by": "operator 2026-10-28 in chat: 'Accept READY' (two-round rule: no third Mode 1 review)",
+    "next": "Knob ai_watch_slope_now_gate + the per-check random control knob + ledger pitch fields (defaults off/unchanged), runner tools/studies/slope_now_run.py and scorer tools/studies/slope_now_read.py are written next; runs start only after the late_gates info phase has finished on the mini."
+  }
 }
