@@ -58,5 +58,15 @@
     "5_gap_era": "Declared: the per-name gap rule was live from 10/15 (0 stream rows older than 15 s on 9/28-10/14), so on the 12 half-A sessions before 10/15 the pinned REF differs from what live ran. A second fidelity day, 2026-10-13 (pre-gap era), runs the same counts against its own live ledger with the gap rule OFF in that fidelity replay only; the scored variants keep the pinned gap rule on every session.",
     "6_mde1": "MDE1 = REF + random release (salt 'SA-MDE') of a fixed 25% of the amended RREL population (all arm checks REF refuses as stale with age > 15 s).",
     "note": "This needs two replay-tool additions before any run (the recorder_prints age source and the SIP-trade entry pricing), plus the arm-only knob and RREL in ai_entry_watch.py, all default-off and tested."
+  },
+  "ready": {
+    "when": "2026-10-28 ~07:20 ET",
+    "verdict": "READY",
+    "review_ids": [
+      "round 1 (11 findings)",
+      "round 2 (6 findings, amended_2)"
+    ],
+    "accepted_by": "operator 2026-10-28 in chat: 'Accept READY' (two-round rule: no third Mode 1 review)",
+    "build": "default-off arm-only knob ai_watch_arm_max_age_sec + RREL (ai_watch_stale_rand_release_share, salt) at the two arm sites; replay additions: recorder_prints arm age source, SIP-trade entry pricing in the scorer; runner tools/studies/stale_age_run.py and scorer tools/studies/stale_age_read.py; unit tests incl. eviction/admission unchanged with the knob at 30."
   }
 }
