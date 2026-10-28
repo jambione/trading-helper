@@ -70,5 +70,11 @@
     ],
     "text": "READY: square_relax amended r2; primaries TIGHT20, PRE45; M = 2 bp lower bound and estimate >= 0 in both halves; RAND on the declared single-condition envelope pool; half B >= 10 scored sessions, extended (trade count only) to >= 120 trades, cap 20.",
     "accepted_by": "operator 2026-10-28 in chat: 'Accept READY' (two-round rule)"
+  },
+  "screen_first": {
+    "when": "2026-10-28 ~07:30 ET, before any variant run or result, at the operator's request: 'Maybe it might be worth deciding if it's a good idea before investing 10 sessions on it.'",
+    "stage_1_screen": "The 22 recorded sessions 2026-09-28..2026-10-27 are split by count in date order into an EARLY half (first 11) and a LATE half (last 11). The study's own pass rule is applied with EARLY and LATE as the two halves (same statistics, controls, margins, Bonferroni, power floors). Declared weakness: these days fed the lag diagnostics that motivated the study, so this is a screen, not a confirmation.",
+    "screen_outcomes": "SCREEN FAIL (or UNDERPOWERED, or CONTROL UNMATCHED) on the recorded days: the study stops there; no forward sessions are spent and nothing is switched on. SCREEN PASS: the original half-B confirmation on >= 10 forward sessions (as amended) is run; the operator decides at that point whether the change also runs live on paper during the confirmation, under a switch-off rule written into this file before any switch.",
+    "supersedes": "The original half A / half B roles: half A becomes the stage-1 screen (split EARLY / LATE); half B (forward) becomes stage-2 confirmation, run only after a screen pass."
   }
 }
