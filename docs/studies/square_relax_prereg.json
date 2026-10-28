@@ -51,5 +51,14 @@
     "when": "2026-10-28 ~08:20 ET, before any code or replay",
     "by": "operator in chat: '2 bp + average >= 0'",
     "rule": "M = 2 bp. A primary v PASSES only if, in BOTH halves, the lower bound of lift_ref (SIP-repriced, day-clustered, one-sided at 1 - 0.05/2) >= -2 bp AND lift_ref's point estimate >= 0, together with every other condition in pass / amended. REF_DUP tightens M as in amended #8."
+  },
+  "amended_2": {
+    "when": "2026-10-28 ~06:55 ET, after result-skeptic round 2 FIX FIRST (6 findings), before any code or replay. Two-round rule: READY is the operator's decision.",
+    "1_rand_pool": "RAND_v draws from one declared WIDER pool shared by both primaries: pre-square checks with both lines present, fast rising and not falling/cooling, not both >= -rte_threshold (20), that fail EXACTLY ONE pre-square condition inside the envelope gap <= 25 and lower line >= -50 (i.e. gap in (15, 25] with both >= -35, or gap <= 15 with the lower line in [-50, -35)). RAND_v_k releases checks from that pool at random, count-matched (+-10%) to v's released checks. lift_rand >= 0 therefore asks whether v's specific condition is safer to drop than a random same-sized release from the envelope.",
+    "2_tight_scope": "ai_watch_presquare_confluence_max replaces 15 in BOTH tightness uses inside the pre-square check (the 'both_ob and tight' full-square exclusion and the 'not tight' test, ~12562-12565), so a both-overbought check is still not a pre-square. TIGHT20's own pool is gap in (15, 20], both lines >= -35, not both >= -20, rising, not falling; TIGHT25's is gap in (15, 25] likewise.",
+    "3_mde1": "MDE1 = REF + a random release of a fixed 25% of the amended_2 #1 envelope pool (salt 'SQ-MDE').",
+    "4_half_b": "Half B counts SCORED sessions (>= 5 REF trades each) from the first session after READY; the read needs >= 10 scored sessions AND >= 120 REF and >= 120 v trades in half B. If 10 scored sessions give fewer than 120 trades, half B extends session by session (trade counts only, no lift read) up to 20 scored sessions; still short = UNDERPOWERED.",
+    "5_fidelity_zero": "Fidelity share ratios apply only to codes with >= 1% of live arm rows on 10/27; rarer codes (e.g. exh_not_rising, live share 0) use an absolute tolerance: replay share <= 1%.",
+    "6_loose_ends": "TIMING passes when BOTH the median and the mean over moved pairs are <= -1.0 min. The 'fail' block's -3 bp is replaced by -M (M = 2 bp, margin block). 'Faster and better' requires lift_ref >= +3 bp with one-sided t >= 2.0 at Bonferroni over 2 (t >= 2.24 two-sided-equivalent replaced by the 1 - 0.05/2 one-sided critical value at n-1 df). A released check advances _presquare_streak_note exactly as a natural pre-square pass does."
   }
 }
