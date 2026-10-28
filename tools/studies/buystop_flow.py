@@ -38,7 +38,7 @@ MIN_PX, N_MAX, BUDGET_H, REQ_PER_MIN = 20.0, 8000, 6.0, 140
 READ_AGE, T_ARM, ENTRY_AGE = 30.0, 2.24, 3.0
 TRIGGER_CODES = frozenset({" ", "@", "F"})          # round lots (amended_2 (1)); odd lots 'I' never trigger a stop
 R_RATIO = 0.05009                                    # amended_2 (4): median desk R/entry, fills >= $20
-CONFIG_SHA_PREFIX = "837dfd79268ebf16"               # amended_2 (3)
+CONFIG_SHA_PREFIX = "837dfd79268ebf16"               # amended_2 (3)  # pragma: allowlist secret (a git commit prefix)
 CHUNKS_MIN = (15, 60, 120)                           # amended_2 (5): arm-B print fetch horizons after T
 MDE_BAR, FLOOR_TRADES, FLOOR_DAYS = 0.0003, 300, 20
 
