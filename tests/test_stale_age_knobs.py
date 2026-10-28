@@ -72,3 +72,25 @@ def test_admission_and_eviction_do_not_read_the_arm_knobs():
             assert ew._arm_ready_young_tape(dict(r), {}, now=T) == ew._arm_ready_young_tape(dict(r), {**AGE30}, now=T)
             assert ew._is_unarmable_stale_watching(dict(r), {}, now=T) == \
                 ew._is_unarmable_stale_watching(dict(r), {**AGE30, "ai_watch_arm_age_mode": "age"}, now=T)
+
+
+def test_replay_print_ages_and_gap_ceiling(tmp_path):
+    import gzip
+    import json
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    import replay_session as R
+    p = tmp_path / "recorder_prints.jsonl.gz"
+    with gzip.open(p, "wt") as fh:
+        for k in range(12):   # a print every 20 s, each repeated twice (the recorder writes snapshots)
+            for _ in range(2):
+                fh.write(json.dumps({"ts": T + 20 * k + 1, "symbol": "AAA", "trade_ts": T + 20 * k}) + "\n")
+        fh.write(json.dumps({"ts": T, "symbol": "BBB", "trade_ts": None}) + "\n")
+    pa = R.PrintAges(p)
+    assert pa.age("AAA", T - 1) is None and pa.age("BBB", T + 5) is None
+    assert pa.age("AAA", T + 45) == 5.0
+    cfg = {"ai_watch_tape_gap_mult": 1.5, "ai_watch_tape_gap_max_sec": 60.0}
+    assert pa.gap_ceiling("AAA", T + 60, cfg) == 0.0          # 3 gaps so far: fewer than 5
+    assert pa.gap_ceiling("AAA", T + 230, cfg) == 30.0        # 1.5 x 20
+    assert pa.gap_ceiling("AAA", T + 230, {}) == 0.0

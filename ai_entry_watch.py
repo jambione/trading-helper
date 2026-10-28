@@ -8675,6 +8675,11 @@ def name_tape_ceiling(symbol: str, cfg: dict | None) -> float:
 # decision_max_age_sec, so the last_ask_src that admission and seat eviction read is untouched; these knobs only
 # change whether the ARM treats this check's print as stale. 'age' mode judges every check by print age (the replay
 # patches _arm_tape_age to the recorded prints); the random release is the study's matched control.
+def _arm_gap_ceiling(symbol: str, cfg: dict | None) -> float:
+    """The per-name gap ceiling the arm verdict uses (the replay substitutes its recorded-print history)."""
+    return name_tape_ceiling(symbol, cfg)
+
+
 def _arm_tape_age(rec: dict, symbol: str, now: float) -> float | None:
     age = row_quote_age_sec(rec, now=now) if isinstance(rec, dict) else None
     if age is None and isinstance(rec, dict):
@@ -8694,7 +8699,7 @@ def arm_tape_stale(rec: dict, symbol: str, now: float | None, cfg: dict | None, 
         return False
     t = float(now if now is not None else time.time())
     age = _arm_tape_age(rec, symbol, t)
-    ceiling = max(arm_max if arm_max > 0 else decision_max_age_sec(cfg), name_tape_ceiling(symbol, cfg))
+    ceiling = max(arm_max if arm_max > 0 else decision_max_age_sec(cfg), _arm_gap_ceiling(symbol, cfg))
     stale = age is None or float(age) > ceiling
     if stale and share > 0 and age is not None and float(age) > 15.0:
         import hashlib

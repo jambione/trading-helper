@@ -148,6 +148,11 @@ def parse_args(argv=None):
                          "sync/paint/poll at live's own moments; score decisions check by check")
     ap.add_argument("--sessions", default=None,
                     help="session recorder dir (default <repo>/ai_reports/sessions/DAY)")
+    ap.add_argument("--arm-age-from-prints", action="store_true",
+                    help="the arm's tape age (ai_entry_watch._arm_tape_age) and per-name gap ceiling "
+                         "(_arm_gap_ceiling) come from recorder_prints trade times "
+                         "(docs/studies/stale_age_replay_prereg.json amended_2 #1, #4); use with "
+                         "ai_watch_arm_age_mode=age")
     ap.add_argument("--live-staleness", action="store_true",
                     help="refuse an entry when live's decision ledger had the name on stale "
                          "tape at that moment (live's stream staleness is not in the recording)")
@@ -440,6 +445,66 @@ def _run_export(args, sha: str, work: Path) -> int:
 
 
 # ── stage 2 helpers (run inside the export) ─────────────────────────────────
+
+class PrintAges:
+    """Trade times per symbol from recorder_prints, for the arm's tape age in replay (stale_age_replay amended_2).
+
+    age(sym, t) = t minus the latest recorded trade time <= t (None before the first). gap_ceiling mirrors
+    ai_entry_watch.name_tape_ceiling on the same rows: mult x the median of the last 30 gaps between distinct
+    trade times <= t, capped, 0 with fewer than 5 gaps.
+    """
+
+    def __init__(self, path):
+        import bisect as _bisect
+        self._bisect = _bisect
+        by: dict[str, set] = {}
+        n = 0
+        try:
+            with gzip.open(path, "rt") as fh:
+                for line in fh:
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue
+                    tt = r.get("trade_ts")
+                    sym = str(r.get("symbol") or "").upper()
+                    if tt is None or not sym:
+                        continue
+                    by.setdefault(sym, set()).add(round(float(tt), 3))
+                    n += 1
+        except OSError:
+            pass
+        self.times = {s: sorted(v) for s, v in by.items()}
+        self.n_symbols, self.n_prints = len(self.times), n
+
+    def _upto(self, sym: str, t: float) -> list:
+        ts = self.times.get(sym)
+        if not ts:
+            return []
+        return ts[:self._bisect.bisect_right(ts, t)]
+
+    def age(self, sym: str, t: float):
+        ts = self._upto(sym, t)
+        return (t - ts[-1]) if ts else None
+
+    def gap_ceiling(self, sym: str, t: float, cfg) -> float:
+        cfg = cfg if isinstance(cfg, dict) else {}
+        try:
+            mult = float(cfg.get("ai_watch_tape_gap_mult") or 0.0)
+        except (TypeError, ValueError):
+            mult = 0.0
+        if mult <= 0:
+            return 0.0
+        ts = self._upto(sym, t)[-31:]
+        gaps = sorted(b - a for a, b in zip(ts, ts[1:]) if b > a + 0.5)
+        if len(gaps) < 5:
+            return 0.0
+        try:
+            cap = float(cfg.get("ai_watch_tape_gap_max_sec") or 60.0)
+        except (TypeError, ValueError):
+            cap = 60.0
+        return min(cap, mult * gaps[len(gaps) // 2])
+
 
 class SimClock:
     def __init__(self, t: float):
@@ -2024,6 +2089,12 @@ def run_inside(args) -> int:
             setattr(gt, fn, lambda *a, **k: 0)
     ew._recent_exit_ts = lambda s: broker.last_exit.get(str(s).upper())
     ew._entries_today = lambda s: broker.entries.get(str(s).upper(), 0)
+
+    if getattr(args, "arm_age_from_prints", False):
+        _pa = PrintAges(snap_dir / "recorder_prints.jsonl.gz")
+        print(f"[replay] --arm-age-from-prints: {_pa.n_symbols} symbols, {_pa.n_prints} trade times")
+        ew._arm_tape_age = lambda r, s, t: _pa.age(str(s).upper(), float(t))
+        ew._arm_gap_ceiling = lambda s, c: _pa.gap_ceiling(str(s).upper(), clock.t, c)
 
     live_stale = LiveStaleness(snap_dir) if args.live_staleness else None
     if live_stale is not None and not live_stale.loaded:
