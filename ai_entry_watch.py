@@ -376,6 +376,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "in_square": "in square",
     "last_macd_gap": "MACD gap",
     "wr_slow_5m_falling": "5m slow %R↓",
+    "slope_not_rising": "%R not rising now",
+    "slope_unknown": "no %R pitch",
     "leg1_below_min_price": "px < $25 (Leg 1)",
     "leg1_after_1300": "after 13:00 (Leg 1)",
     "leg1_after_1100": "after 11:00 (Leg 1)",
@@ -11631,7 +11633,7 @@ def _clear_stale_pctr(rec: dict, *, reason: str, now: float) -> None:
     ind["pctr_src"] = reason
     ind["pctr_ts"] = float(now)
     for k in ("pctr_raw", "pctr_hh", "pctr_ll", "pctr_bars", "pctr_window_sec",
-              "pctr_gap", "pctr_px_src", *_PITCH_WIRE_KEYS):
+              "pctr_gap", "pctr_px_src", *_PITCH_WIRE_KEYS, "pctr_pitch_ts"):
         ind.pop(k, None)
 
 
@@ -16504,7 +16506,7 @@ def pitch_record(rec: dict, now: float) -> None:
     ind = rec.get("indicator") if isinstance(rec, dict) else None
     if not isinstance(ind, dict):
         return
-    for k in _PITCH_WIRE_KEYS:
+    for k in (*_PITCH_WIRE_KEYS, "pctr_pitch_ts"):
         ind.pop(k, None)
     origin = _pitch_origin(ind)
     fast = _f_or_none(ind.get("pctr"))
@@ -16540,9 +16542,45 @@ def pitch_record(rec: dict, now: float) -> None:
     ind["pctr_slow_pitch"] = slow_pitch
     ind["pctr_fast_pitch_prev"] = fast_prev
     ind["pctr_slow_pitch_prev"] = slow_prev
+    ind["pctr_pitch_ts"] = now_f     # when this pitch was computed; the slope-now gate refuses stale ones
     word = _pitch_word(fast, slow, fast_pitch, slow_pitch)
     if word:
         ind["pctr_pitch"] = word
+
+
+# ── Slope-now gate (docs/studies/slope_now_replay_prereg.json; default off) ─────────────────────────────────────────
+# The 5m veto and wr_trend look back 5-10 minutes, so a line that climbed earlier and is flattening at the buy passes
+# both (HOOD 13:00 and ENPH 14:04 on 10/27). This reads the pitch pitch_record stamps: points per minute now, and the
+# slow line's pitch a minute earlier.
+SLOPE_NOW_MAX_AGE_SEC = 12.0
+
+
+def slope_now_refusal(record: dict, now: float | None, cfg: dict) -> str | None:
+    """'slope_not_rising' unless fast pitch > 0, slow pitch > 0 and slow pitch >= its value a minute earlier.
+
+    A pitch older than SLOPE_NOW_MAX_AGE_SEC counts as missing. With ai_watch_slope_now_missing_refuses on, any
+    missing value refuses ('slope_unknown'); with it off, only the values present are tested.
+    """
+    if not bool((cfg or {}).get("ai_watch_slope_now_gate", False)):
+        return None
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+    t = float(now if now is not None else time.time())
+    ts = _f_or_none(ind.get("pctr_pitch_ts"))
+    fresh = ts is not None and 0.0 <= t - ts <= SLOPE_NOW_MAX_AGE_SEC
+    fp = _f_or_none(ind.get("pctr_fast_pitch")) if fresh else None
+    sp = _f_or_none(ind.get("pctr_slow_pitch")) if fresh else None
+    spp = _f_or_none(ind.get("pctr_slow_pitch_prev")) if fresh else None
+    if fp is None or sp is None or spp is None:
+        if bool((cfg or {}).get("ai_watch_slope_now_missing_refuses", True)):
+            return "slope_unknown"
+    if fp is not None and fp <= 0:
+        return "slope_not_rising"
+    if sp is not None and sp <= 0:
+        return "slope_not_rising"
+    if sp is not None and spp is not None and sp < spp:
+        return "slope_not_rising"
+    return None
 
 
 # ── %R trend entry filter (docs/studies/wr_trend_entry_prereg.json; REPLAY/TEST knobs, default off) ────────────────
@@ -17370,6 +17408,10 @@ def should_arm_buy(
         _leg1_why = wr_leg1_refusal(_gate_sym, record, now, cfg, ask=ask)
         if _leg1_why:
             return False, _leg1_why
+        # Slope-now gate (off by default; enabled via ai_watch_slope_now_gate).
+        _slope_why = slope_now_refusal(record, now, cfg)
+        if _slope_why:
+            return False, _slope_why
 
     # MACD direction veto: refuse a crossed-down gap. Fail-open on missing
     # MACD so it cannot starve opens the way macd_src_unknown once did.

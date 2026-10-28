@@ -598,6 +598,10 @@ DEFAULT_CONFIG = {
     # 5-minute Slow %R pitch veto (operator 10/26): refuse buys when 5m slow %R pitch < min_pitch (default 0.0).
     "ai_watch_wr_slow_5m_veto":         False,
     "ai_watch_wr_slow_5m_min_pitch":    0.0,
+    # Slope-now gate (docs/studies/slope_now_replay_prereg.json): refuse unless the live fast and slow %R pitch are
+    # rising now and the slow pitch is not slowing. missing_refuses: a missing/stale pitch refuses too.
+    "ai_watch_slope_now_gate":           False,
+    "ai_watch_slope_now_missing_refuses": True,
     # Leg-1 RTH gate (operator 10/27): capture 1st Empty Square of day on $20+ stocks (+0.5%..+5.0%, <=11:00 ET).
     "ai_watch_leg1_rth_gate":           False,
     "ai_watch_leg1_min_price":          20.0,
@@ -2177,6 +2181,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_wr_trend_min_rise",
     "ai_watch_wr_slow_5m_veto",
     "ai_watch_wr_slow_5m_min_pitch",
+    "ai_watch_slope_now_gate",
+    "ai_watch_slope_now_missing_refuses",
     "ai_watch_leg1_rth_gate",
     "ai_watch_leg1_min_price",
     "ai_watch_leg1_min_day_chg",
