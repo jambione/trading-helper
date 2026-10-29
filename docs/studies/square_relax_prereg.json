@@ -91,7 +91,7 @@
  },
  "amended_harness_fix": "2026-10-29 ~19:20 ET, operator in chat 'Yes, rerun tonight', before any scored result. HARNESS FIX, no rule change: tools/replay_session.py PrintAges built the per-name gap ceiling from gaps between EVERY recorded print (median ~1-3 s), while the live desk (ai_entry_watch.note_print_gap) builds it from the prints SEEN at successive poll checks (~10 s). Effect on 10/27 fidelity: replay accepted 0 prints aged 15-30 s vs live 476, and stale-print (tape_only) refusals ran 2.5x live. Fixed in 88422acf (gaps from prints seen at checks; tests). The failed fidelity outputs are archived, the study is re-pinned to the fixed code, and the SAME fidelity gate is rerun unchanged; nothing else in this file changes.",
  "amended_harness_switch": {
-  "status": "Revised 2026-10-29 ~21:00 ET: result-skeptic round 2 FIX FIRST (text only: R2_sha_pin, R2_ref_clause, risk_declared), applied verbatim. Awaiting operator READY (two-round rule).",
+  "status": "IN FORCE: operator 'Accept READY' 2026-10-29 in chat, after result-skeptic round 1 (F1-F6) and round 2 (text fixes applied verbatim).",
   "why": "square_relax's REF was pinned exactly as stale_age_replay's REF (--arm-age-from-prints, ai_watch_arm_age_mode 'age'); the live desk judges staleness by SOURCE LABEL ('src'). On 10/27 that REF failed the fidelity gate twice (before and after 88422acf): tape_only 18.6% replay vs 7.6% live, wr_no_history 0.61% vs 1.33%, ARM_OK 3.7% vs 0.4%. Skeptic diagnosis: age mode explains 5.3 of the 11.0 pp tape_only excess; the replay's own stale_tape labels run 13.3% vs 7.6% live (1.75x), so 'src' mode is not expected to close the gap by itself. The ARM_OK excess is held-name logging (227/227 replay ARM_OK timestamps on names the replay held; live logs 0 arm rows while held), not staleness. wr_no_history is unexplained.",
   "change": "REF and every variant use the late_gates harness flags (tools/studies/late_gates_run.FLAGS: --start 09:00 --end 15:50 --step 2.0 --engine recorded --exits live --live-staleness), WITHOUT --arm-age-from-prints, with ai_watch_arm_age_mode 'src' and ai_watch_arm_max_age_sec 0 / stale_rand_release_share 0 (the live defaults); all other pins as before (late_gates_run.PIN regime, wr_trend 15, 5m veto, slope-now OFF, tape gap rule 1.5 / 60, decision/quote max age 15). Variants, controls, pass rule, margin, screen_first and stage2_monitoring are unchanged. The fidelity gate is unchanged and rerun on 2026-10-27 under the new harness; the two failed fidelity runs are archived.",
   "risk_declared": "Expected from the 10/27 failed run: ARM_OK about 0.5% (28 episodes x 2 rows; passes the <= 1% rule); tape_only about 13% vs 7.6% (about 1.75x, near the 2x edge); wr_no_history about 0.67% vs 1.33% (about 0.50x, knife edge), unexplained. Under F6 a fail on either is final.",
@@ -102,6 +102,16 @@
   "F6_stop_rule": "If this rerun fails the unchanged fidelity gate on 2026-10-27, square_relax is NOT TESTABLE on this replay: no further harness switch or gate change; it is reported as such.",
   "live_staleness_note": "--live-staleness acts only in place() (refuses an entry when live's ledger, up to 15 s ahead, shows the name stale); symmetric across REF, variants and controls.",
   "R2_sha_pin": "Before the rerun, the bc8e1cfc fidelity outputs and sha.txt are moved to archive_harness_switch_2026-10-29/; the study is re-pinned to 6ddfbfa3 (or the commit that records READY), and every later phase runs at that sha.",
-  "R2_ref_clause": "The stale_age clause in variants.REF is withdrawn: REF stays at arm_max_age_sec 0 whatever stale_age_replay finds."
+  "R2_ref_clause": "The stale_age clause in variants.REF is withdrawn: REF stays at arm_max_age_sec 0 whatever stale_age_replay finds.",
+  "ready": {
+   "when": "2026-10-29 ~21:10 ET",
+   "verdict": "READY",
+   "review_ids": [
+    "round 1 (F1-F6, operator chose 'Fix the replay')",
+    "round 2 (R2_sha_pin, R2_ref_clause, risk_declared applied verbatim)"
+   ],
+   "accepted_by": "operator 2026-10-29 in chat: 'Accept READY' (two-round rule)",
+   "next": "scripts/night_2026-10-30.sh: archive the bc8e1cfc outputs, re-pin to the queue's HEAD, rerun the 10/27 fidelity; primary/controls/info only if it passes."
+  }
  }
 }
