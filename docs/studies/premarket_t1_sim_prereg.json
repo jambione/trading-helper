@@ -1,0 +1,47 @@
+{
+ "study": "premarket_t1_sim",
+ "question": "Would the desk's own entry (the empty-square arm on the dual %R lines) taken PREMARKET (04:00-09:20 ET) on gapping names, with Phase B's limit-order and exit mechanics, make money after the real SIP spread, more than random premarket minutes, and enough per day to pay for real-time SIP? This is T1 of docs/SIP_MONTH_PLAN_2026-10-15.md, simulated on free historical SIP before any SIP purchase.",
+ "operator_sentence": "Operator 2026-10-29 ~04:20 ET in chat, after the premarket status review ('I wanna see where our project is in trading pre-market... In preparation for hitting that benchmark'), to the offer to simulate premarket entries on historical SIP before any SIP purchase: 'Yes, simulate first'.",
+ "registered_at": "2026-10-29 ~04:30 ET, before any code or data pull for this study.",
+ "registered_before_results": true,
+ "prior": "Low. 106 premarket mention bursts 8/24-9/26: burst -> premarket peak median +6.5% (98% up) but burst -> 09:30 open median -1.8% and -> close -8.4% (spike and fade like RTH); premarket power bar FAIL (-2.5 bp t -2.1); the empty square scores ~0 gross in RTH on 230k events (slope_now_hist 10/28). Premarket spreads are wide (SIP median ~0.23R vs IEX 0.75R). Expected lift 0 +- 10 bp per trade; the economic bar is likely the binding one.",
+ "sessions": "Every weekday with free Alpaca SIP minute bars from 2026-06-01 to 2026-10-23 (about 100 sessions), split by count in date order into EARLY and LATE halves. 2026-10-26 onward is not used (the desk's live premarket lane overlaps it).",
+ "universe": {
+  "scan": "Alpaca SIP 30-minute bars 04:00-09:30 ET for every symbol in the all-symbol daily panel with prior close $5-150 (free historical; prior-close and 20-session ADV from the raw, unadjusted daily panel).",
+  "qualify": "Point-in-time: a name-day enters at the first 1-minute bar starting 04:30..09:15 ET whose close is >= 1.05 x prior close (a gapper), cumulative volume since 04:00 >= 50,000 shares, and cumulative dollar volume since 04:00 >= $2,000,000. Nothing at or after that bar's close is used for selection.",
+  "price_band_primary": "qualifying close $20-100 (the desk's live price band).",
+  "price_band_information": "$5-20, reported separately, no pass.",
+  "seats": "At most 6 names per day held in the book at once, admitted in qualification order (Phase B ai_phase_b_max_seats 6); a later qualifier waits for a free seat."
+ },
+ "entry": {
+  "lines": "Fast %R 21 / EMA 7 and slow %R 112 / EMA 3 on SIP 1-minute bars (the desk's settings), computed over the previous session's 09:30-16:00 bars followed by today's 04:00.. bars; empty minutes inside premarket are filled flat at the previous close (pitch_open.grid, gap fill 15 min).",
+  "signal": "pitch_open.empty_square on completed minutes (both lines >= -35, gap <= 15, not both >= -20, fast rising), onset only, 15-minute refractory per name, decision minutes 04:30..09:20 ET, at most 2 open positions at once (Phase B ai_phase_b_max_open 2).",
+  "fill": "Limit buy at min(ask x 1.0015, ask + $0.05) using the SIP NBBO at the decision second (the first second of the next minute), alive 45 s (Phase B ttl); filled at the limit only if a SIP trade prints at or below the limit within those 45 s, else UNFILLED (counted, no trade). Ask = the last SIP quote at or before the decision second."
+ },
+ "exit": {
+  "primary": "Phase B mechanics simplified to what minute data can show: a 5% hard stop (ai_phase_b_hard_stop_pct) checked on SIP 1-minute lows (filled at the stop price, or at the next minute's open if it gapped through), else exit at the SIP 1-minute close 10 minutes after the fill, but never after 09:25 (Phase B flatten start; then exit at the 09:24 close).",
+  "information": "Exit at 09:25 (hold to the flatten); exit at the SIP 09:30 open (what a hand-off to RTH would see)."
+ },
+ "costing": "Net = exit / fill - 1, minus the full SIP quoted spread at the decision second (bp of mid), charged once (the desk's standard). No commission (Alpaca).",
+ "controls": {
+  "d": "the same name, a random filled-able minute 5-60 minutes later within 04:30..09:20 and before the flatten, same fill and exit rules (seeded sha256(symbol|day|entry|'T1-d')).",
+  "x": "another universe name-day the same session, same decision minute, same rules (seeded 'T1-x').",
+  "lift": "lift_d = net(signal) - net(d); lift_x = net(signal) - net(x); a signal without a usable control is dropped from that lift (counted)."
+ },
+ "statistic": "Per session the mean over that session's filled signal trades; sessions equal-weighted; day-clustered (std_scorer.day_stat), one-sided bounds at 0.975, t at n-1 df.",
+ "pass": "T1 PASSES only if ALL hold for the $20-100 primary band: (1) mean net > 0 with t >= 2.0 over all scored sessions and > 0 in BOTH halves; (2) lift_d > 0 and lift_x > 0 in BOTH halves, each with t >= 1.65 over all sessions; (3) economics: projected net $/day = mean filled trades per day x mean net bp x $384 (the desk's per-trade size, 20% of $1,922) >= $4.70 (the SIP-only keep-bar in docs/SIP_MONTH_PLAN_2026-10-15.md), reported also at $9.50 (SIP + Discord); (4) >= 150 filled trades and >= 40 sessions with a filled trade; (5) fill rate >= 50% of limit orders (a premarket entry that rarely fills is not a strategy).",
+ "power": "Count first, before any return is read: filled trades, sessions with a fill, and MDE per half = 3.08 x sd_session(net) / sqrt(sessions) from a d-vs-x placebo (net(d) - net(x)); MDE > 15 bp per half or fewer than 150 filled trades = UNDERPOWERED (no means read).",
+ "fail": "Any half's mean net <= 0 = FAIL (refuted) regardless of t. Otherwise short of PASS = FAIL (not shown). Either way: premarket stays off the SIP case; the SIP month (if bought) tests only the regular-session items (T2-T6).",
+ "if_pass": "result-skeptic Mode 3, then T1 earns a live paper slot only during a paid SIP month (Phase B on SIP prints, real limit orders), decided by the operator once the regular-session benchmark is met. A simulated pass alone never switches anything on.",
+ "information_only": [
+  "$5-20 band with the same statistics.",
+  "Fill rate, unfilled count, entry spread (median, p90) by half-hour bucket 04:30-09:20.",
+  "Exit variants: hold to 09:25, to the 09:30 open.",
+  "Hard-stop hit rate and gap-through count.",
+  "Trades per day distribution (how many premarket entries the lane would take)."
+ ],
+ "no_retuning": "No other gap threshold, price band, volume floor, window, hold, stop or limit pad is scored as primary.",
+ "multiplicity": "One primary (the $20-100 band).",
+ "data_budget": "Free Alpaca historical only (SIP 30-minute scan bars, SIP 1-minute bars, SIP quotes and trades at each decision second). Runs after hours, after the Leg-1 replay queue, one heavy Alpaca job at a time; quote/trade pulls cached on disk outside /tmp.",
+ "script": "tools/studies/premarket_t1_sim.py (scan, minute, signals, fills, score with count / canary / score modes, reusing pitch_open's lines/empty_square/fires and std_scorer) is written after a result-skeptic READY and may not change anything above."
+}
