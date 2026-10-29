@@ -1,0 +1,31 @@
+{
+ "study": "move_to_cost_hist",
+ "question": "On historical empty-square entries (the desk's arm shape on IEX 1-minute lines), do entries whose name moved fewer than 8 spreads in the 21 minutes before the entry (IEX range in bp / full SIP quoted spread at the entry second, in bp) do worse after the spread than the other entries?",
+ "operator_sentence": "Operator 2026-10-29 ~19:35 ET in chat, after move_to_cost_live came back UNDERPOWERED (trustworthy data, MDE ~18 bp): 'Movement-to-cos - agreed to Historical-bar check, as the fast route'.",
+ "registered_at": "2026-10-29 ~19:45 ET, before any historical event is joined to a spread.",
+ "registered_before_results": true,
+ "origin": "Replay exploration 9/28-10/13 (slope_now_explore): move_to_cost < 8 about -12 bp vs about -3.5 bp above. move_to_cost_holdout (replay 10/14-10/27) UNDERPOWERED (MDE ~21); move_to_cost_live (live fills 9/11-9/25 + 10/14-10/29, 97.5% fill-matched) UNDERPOWERED (MDE ~18). slope_now_hist (10/28, all events, GROSS 10-min, no spread) showed narrow range 0.25-0.5% at about -0.3 bp gross: the cost side was never measured.",
+ "prior": "For: cost is the spread, and a name that barely moves cannot pay it. Against: the population is the whole warehouse universe with a fixed hold, not the desk's names and exits; the RTH history found entry shapes ~0 gross.",
+ "events": "pitch_open / slope_now_hist empty-square fires (fast %R 21/EMA 7, slow 112/EMA 3 on warehouse IEX 1-minute lines with the previous session as warm-up; onset only, 15-minute refractory per name), decision minutes 09:51..15:20 ET (so the 21-minute window is complete and the hold ends before 15:31), entry at the next minute (e = t + 1).",
+ "sessions": "Warehouse sessions 2026-05-11..2026-09-25. 2026-09-28..2026-10-13 is excluded (the exploration window). Halves by date: A 05-11..07-29, B 07-30..09-25.",
+ "sample": "To bound data requests: per session, at most 60 events drawn by seed sha256('MTCH'|day|symbol|t) order (lowest hashes first), from events whose SIP price at e is $10-$200. The draw uses no outcome or spread.",
+ "measure": {
+  "range": "% range (high / low - 1) of the 21 completed IEX bars [t-20, t] ending at the decision minute t (warehouse, raw). Fewer than 15 bars = missing.",
+  "spread": "Full SIP quoted spread (ask - bid) / mid, bp, of the last usable SIP quote (bid > 0, ask > bid, age <= 15 s) at or before the first second of minute e. None = missing. Fetched with the data-only key, retried 3x; an unresolved error counts against that event only; > 5% errors = VOID.",
+  "net": "gross = SIP 1-minute close of e + 9 / SIP 1-minute open of e - 1 (10-minute hold), in bp; net = gross - full spread at entry (the desk's standard: the full spread charged once).",
+  "move_to_cost": "range bp / spread bp; LOW < 8, REST >= 8; missing excluded (counted)."
+ },
+ "statistic": "Per session with at least one LOW and one REST: d = mean net(LOW) - mean net(REST). Sessions equal-weighted, day-clustered (std_scorer.day_stat), one-sided 0.975, t at n-1 df.",
+ "power": "Count stage first, counts and MDE only (no means): LOW n, sessions with both groups, MDE = (t_0.975(n-1) + t_0.80(n-1)) x median sd_session(d) over 200 seeded relabelings ('MTCH-MDE') / sqrt(n), for all sessions and for each half. UNDERPOWERED if MDE > 8 bp over all sessions, LOW < 200, or sessions with both < 40.",
+ "pass": "HOLDS only if ALL: (1) mean d <= -5 bp with t <= -t_0.975(n-1) over all scored sessions; (2) LOW pooled mean net < 0; (3) d's point estimate < 0 in BOTH halves; (4) per session, removing LOW beats removing the same number of events at random (1,000 draws 'MTCH'), by widest spread, and by lowest range, each in >= 95% of draws (ties at the cut seed 'MTCH-TIE', 100 draws); session-equal means over LOW union REST; (5) the power gate passed.",
+ "fail": "Powered and any of (1)-(4) missed: NOT SUPPORTED; 'refuted' only if the all-session upper one-sided 97.5% bound of d > 0.",
+ "if_holds": "Association on the broad market only, never cited as an edge for the desk. With the desk-specific replay and live checks underpowered, a HOLDS earns the replay gate test (knob refusing arms with move_to_cost < 8 at the arm, order-time spread, matched random refusal, forward sessions, '2 bp + average >= 0'), pre-registered separately.",
+ "information_only": [
+  "Bands [0,4), [4,8), [8,16), >=16 by half; LOW vs REST gross (to show how much of d is the spread itself); win rates.",
+  "Price bands $10-20, $20-100, $100-200.",
+  "Drop top 3 days and top 5 names."
+ ],
+ "no_retuning": "No other cut-off, window, hold or sample size is scored.",
+ "data_budget": "<= ~6,000 SIP quote requests (data-only key) plus SIP 1-minute bars for sampled names; after hours, one heavy Alpaca job at a time.",
+ "script": "tools/studies/move_to_cost_hist.py (count -> score), reusing slope_now_hist / pitch_open (events, lines), move_to_cost_holdout (Data, statistics, controls), written after a result-skeptic READY."
+}
