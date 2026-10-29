@@ -54,7 +54,7 @@ def test_range_window_and_early_entries():
 
 
 def test_period_and_power():
-    assert L.period("2026-08-07") == "P1" and L.period("2026-10-01") is None and L.period("2026-10-29") == "P2"
+    assert L.period("2026-09-11") == "P1" and L.period("2026-09-10") is None and L.period("2026-10-01") is None and L.period("2026-10-29") == "P2"
     assert L.powered({"low_n": 60, "both_sessions": 15, "mde": 8.0})
     assert not L.powered({"low_n": 59, "both_sessions": 15, "mde": 8.0})
     assert not L.powered({"low_n": 80, "both_sessions": 20, "mde": 8.5})

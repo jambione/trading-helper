@@ -54,5 +54,9 @@
   ],
   "accepted_by": "operator 2026-10-29 in chat: 'Accept READY' (two-round rule)",
   "next": "tools/studies/move_to_cost_live.py (count -> score) with tests; runs tonight on the mini."
+ },
+ "amended_3": {
+  "when": "2026-10-29 ~19:45 ET, operator in chat 'Yes, amend to 9/11', before any held-out join.",
+  "P1_start": "P1 becomes 2026-09-11..2026-09-25. The current Alpaca paper account was created 2026-09-10 (FILL activities exist from 9/11; 0 on 8/12 and 9/10), so earlier trades cannot be fill-checked (amended 3). Everything else unchanged; the power gate decides whether ~23 sessions suffice."
  }
 }

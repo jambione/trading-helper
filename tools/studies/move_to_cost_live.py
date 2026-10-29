@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """move_to_cost_live.py — docs/studies/move_to_cost_live_prereg.json (amended, amended_2, ready).
 
-Live paper trades (ai_reports/outcomes.jsonl), P1 = 2026-08-07..09-25, P2 = 10-14..10-29 (9/28-10/13 excluded).
+Live paper trades (ai_reports/outcomes.jsonl), P1 = 2026-09-11..09-25 (amended_3), P2 = 10-14..10-29 (9/28-10/13 excluded).
 Rows: entry_path 'watch', paper true, not adopted / scaled_out / exhaustion_scalp, exit_price present, exact duplicates
 collapsed, overlapping same-symbol pairs dropped. Each row is matched to Alpaca FILL activities (buys in
 [entry - 5 s, entry + 120 s], sells in [last buy, exit + 5 s], quantity-weighted, qty must equal total_qty); net bp
@@ -30,7 +30,7 @@ import std_scorer as S  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
 OUT = Path(os.path.expanduser("~/replay_runs/move_to_cost_live"))
-P1, P2 = ("2026-08-07", "2026-09-25"), ("2026-10-14", "2026-10-29")
+P1, P2 = ("2026-09-11", "2026-09-25"), ("2026-10-14", "2026-10-29")   # amended_3: fills exist from 9/11
 DISCUSSED = {"2026-10-27", "2026-10-28", "2026-10-29"}
 FLOOR, MIN_LOW, MIN_SESS, MDE_MAX = 10.0, 60, 15, 8.0
 
