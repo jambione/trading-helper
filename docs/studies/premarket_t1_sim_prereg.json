@@ -64,5 +64,15 @@
   "A3_data": "A failed batch is retried with backoff until it succeeds or 3 attempts fail. Sessions excluded for data are listed with their scan-candidate counts. If more than 5% of sessions are excluded, the study is VOID, not scored. This applies to quote and trade pulls for signals and controls too. Split check: drop a name-day if the prior close from the Alpaca daily bar with adjustment='split' differs from the raw prior close by more than 1%, or if there is a split or reverse split in Alpaca corporate actions between the prior session and the day.",
   "A4_robustness": "Survives = after dropping the top 3 days (by session mean net), and separately the top 5 names (by summed net), the all-session mean net > 0, lift_d > 0 and lift_x > 0.",
   "A5_panel": "The panel extension adds rows only for symbols already in the panel. Symbols new after 2026-10-02 are added only if their listing date is at least 1 session before the day. The script reports how many panel symbols have no bars after their last date (survivorship check)."
+ },
+ "ready": {
+  "when": "2026-10-29 ~05:15 ET",
+  "verdict": "READY",
+  "review_ids": [
+   "round 1 (findings 1-10)",
+   "round 2 (A1-A5 applied verbatim)"
+  ],
+  "accepted_by": "operator 2026-10-29 in chat: 'Accept READY' (two-round rule)",
+  "next": "tools/studies/premarket_t1_sim.py with tests; runs after the Leg-1 replay queue, free historical Alpaca only."
  }
 }
