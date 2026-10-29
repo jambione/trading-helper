@@ -26,5 +26,17 @@
   "Second, independent check (separate script, information only until its own prereg): the same split on a seeded sample of historical empty-square entries (slope_now_hist events 2026-05-11..2026-10-13) with SIP quotes at the entry second."
  ],
  "no_retuning": "No other cut-off, window or range length is scored.",
- "script": "tools/studies/move_to_cost_live.py (count -> score), reusing move_to_cost_holdout's Data class, statistics and controls, written after a result-skeptic READY; runs after hours."
+ "script": "tools/studies/move_to_cost_live.py (count -> score), reusing move_to_cost_holdout's Data class, statistics and controls, written after a result-skeptic READY; runs after hours.",
+ "amended": {
+  "when": "2026-10-29 ~20:00 ET, after result-skeptic round 1 (FIX FIRST, 9), before any held-out trade is joined to a range or spread.",
+  "1_rows": "Keep only rows with entry_path == 'watch' and paper == true; this drops the 23 rows 8/4-8/11 without paper/book_owner (possibly another machine), the 3 'adopted' rows, the 9 scaled_out rows (8/12-8/27, exit_price prices the last tranche only), one copy of each exact duplicate (BCRX 8/11 10:41:09, DVN 8/25 10:13:40) and one row of each of the 2 overlapping same-symbol positions. Every drop is counted and reported.",
+  "2_exit_price": "exit_price only, never exit_price_approx. Rows with entry dates before 2026-08-07 are dropped (before fill-based exits, 7483a89d).",
+  "3_fill_check": "Every row is matched to Alpaca account FILL activities: same symbol, a buy within 120 s of entry_time and a sell within 120 s of exit_time; net uses the activity prices. Unmatched rows are dropped and counted; > 5% unmatched = VOID.",
+  "4_range_window": "Range uses the RTH minutes [m-21, m-1] before the entry minute m; entries before 09:51 count as missing (a truncated window shrinks the range and pushes early entries into LOW). The 10-bar minimum stays; bar counts are reported by group.",
+  "5_price_confound": "PRIMARY population: entries at $10 or more in both periods (the live floor); P1 has 268 entries under $10 and P2 none. All prices together are information only.",
+  "6_strategy_mix": "Rows with edge_mode == 'exhaustion_scalp' (71 in P1) are excluded. Source mix and LOW share by period are information only.",
+  "7_power": "The power gate (LOW >= 60, sessions >= 15, MDE <= 8 bp) applies to the without-10/27-10/29 set as well. P2 alone (9-12 sessions) is direction only.",
+  "8_contamination": "move_to_cost_holdout ran count and recheck only (UNDERPOWERED); no result.json exists and its information-only live-fill split was never computed, so no live-trade LOW/REST number has been seen.",
+  "9_fill_model": "The fills are Alpaca paper simulations, not real-book fills; the write-up states it."
+ }
 }
