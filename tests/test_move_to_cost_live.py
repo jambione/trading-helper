@@ -14,7 +14,7 @@ def ts(day, h, m, s=0):
     return datetime.datetime.fromisoformat(f"{day} {h:02d}:{m:02d}:{s:02d}").replace(tzinfo=ET).timestamp()
 
 
-def row(sym="AAA", day="2026-09-10", h=10, m=30, hold=120, **kw):
+def row(sym="AAA", day="2026-09-15", h=10, m=30, hold=120, **kw):
     t = ts(day, h, m)
     base = {"symbol": sym, "entry_time": t, "exit_time": t + hold, "entry_price": 50.0, "exit_price": 50.1,
             "total_qty": 8, "paper": True, "entry_path": "watch", "edge_mode": "continuation", "scaled_out": False}
