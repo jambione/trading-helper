@@ -596,10 +596,9 @@ def save_state(s: dict) -> None:
 # ── plan ─────────────────────────────────────────────────────────────────────
 
 def universe(tc) -> dict[str, str]:
-    from alpaca.trading.enums import AssetClass, AssetStatus
-    from alpaca.trading.requests import GetAssetsRequest
+    from alpaca_assets import active_us_equities   # raw rows: a new venue code (TXSE) cannot fail the list
     out = {}
-    for a in tc.get_all_assets(GetAssetsRequest(status=AssetStatus.ACTIVE, asset_class=AssetClass.US_EQUITY)):
+    for a in active_us_equities(tc):
         ex = str(getattr(a.exchange, "value", a.exchange))
         nm = a.name or ""
         s = a.symbol

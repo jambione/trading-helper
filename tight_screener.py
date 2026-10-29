@@ -300,9 +300,8 @@ def _fetch_asset_names() -> dict[str, str]:
     ok_ex = {"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS"}
     for paper in (True, False):
         try:
-            assets = TradingClient(api, sec, paper=paper).get_all_assets(
-                GetAssetsRequest(asset_class=AssetClass.US_EQUITY,
-                                 status=AssetStatus.ACTIVE))
+            from alpaca_assets import active_us_equities   # raw rows: a new venue (TXSE) cannot fail the list
+            assets = active_us_equities(TradingClient(api, sec, paper=paper))
         except Exception:  # noqa: BLE001
             continue
         return {a.symbol: (a.name or "") for a in assets

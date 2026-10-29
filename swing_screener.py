@@ -211,8 +211,8 @@ def all_tradable_symbols(cfg: dict) -> list[str]:
         from alpaca.trading.requests import GetAssetsRequest
         from alpaca.trading.enums import AssetClass, AssetStatus
         tc = TradingClient(cfg.get("api_key", ""), cfg.get("secret_key", ""), paper=True)
-        assets = tc.get_all_assets(GetAssetsRequest(status=AssetStatus.ACTIVE,
-                                                    asset_class=AssetClass.US_EQUITY))
+        from alpaca_assets import active_us_equities   # raw rows: a new venue (TXSE) cannot fail the list
+        assets = active_us_equities(tc)
         # skip pair symbols (e.g. "BTC/USD" shape) — bars endpoint chokes on them
         _ASSET_CACHE = [a.symbol for a in assets if a.tradable and "/" not in a.symbol]
         return _ASSET_CACHE

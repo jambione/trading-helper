@@ -321,9 +321,8 @@ def load_scan_universe_assets() -> list[tuple[str, str]]:
     from ticker_filters import is_common, is_levered_etp
 
     tc = _trading_client()
-    assets = tc.get_all_assets(
-        GetAssetsRequest(asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE)
-    )
+    from alpaca_assets import active_us_equities   # raw rows: a new venue (TXSE) cannot fail the list
+    assets = active_us_equities(tc)
     ok_ex = {"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS"}
     out: list[tuple[str, str]] = []
     for a in assets or []:
