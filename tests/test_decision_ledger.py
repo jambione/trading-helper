@@ -197,3 +197,26 @@ def test_arm_rows_carry_the_pitch_and_watch_rows_do_not():
     assert {k: row[k] for k in pitch} == pitch
     watch = dl.row_from_shadow({"symbol": "aaa", "ts": 1_793_000_001.0, **pitch})
     assert watch["stage"] == "watch" and "pctr_fast_pitch" not in watch
+
+
+def test_arm_recheck_rows_carry_the_pitch_at_the_verdict():
+    pitch = {"pctr": -22.4, "pctr_fast_pitch": 3.1, "pctr_slow_pitch": 0.8, "pctr_fast_pitch_prev": 5.0,
+             "pctr_slow_pitch_prev": 1.2, "pctr_pitch_ts": 1_793_000_000.0}
+    row = dl.row_from_event("arm_recheck", {"symbol": "gfl", "ts": 1_793_000_001.0, "ok": True, "why": "pass", **pitch})
+    assert row["stage"] == "arm" and row["arm_ok"] is True and {k: row[k] for k in pitch} == pitch
+    old = dl.row_from_event("arm_recheck", {"symbol": "gfl", "ok": True})      # older events without pitch: no keys
+    assert "pctr_fast_pitch" not in old
+
+
+def test_log_arm_recheck_passes_the_record_pitch(monkeypatch):
+    import ai_entry_watch as ew
+    seen = {}
+
+    class CP:
+        @staticmethod
+        def log_event(kind, **f):
+            seen.update(f)
+    rec = {"indicator": {"pctr": -22.0, "pctr_fast_pitch": 2.0, "pctr_slow_pitch": 1.0, "pctr_slow_pitch_prev": 0.5,
+                         "pctr_fast_pitch_prev": 1.5, "pctr_pitch_ts": 1.0}}
+    ew._log_arm_recheck(CP, "GFL", stage="pass", ok=True, why="x", before={}, after={}, rec=rec)
+    assert seen["pctr_fast_pitch"] == 2.0 and seen["pctr_slow_pitch_prev"] == 0.5

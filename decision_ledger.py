@@ -112,6 +112,10 @@ def _macd_flags(row: dict[str, Any], why: str | None) -> tuple[bool | None, bool
     return narrowing, bearish
 
 
+_PITCH_KEYS = ("pctr", "pctr_fast_pitch", "pctr_slow_pitch", "pctr_fast_pitch_prev", "pctr_slow_pitch_prev",
+               "pctr_pitch_ts")
+
+
 def row_from_shadow(sample: dict[str, Any]) -> dict[str, Any]:
     """Build a ledger row from a shadow sample (watch-poll hook)."""
     s = sample if isinstance(sample, dict) else {}
@@ -162,8 +166,7 @@ def row_from_shadow(sample: dict[str, Any]) -> dict[str, Any]:
     }
     if stage == "arm":
         # Every arm row carries the pitch the slope-now gate reads (slope_now_replay_prereg amended 1).
-        for k in ("pctr", "pctr_fast_pitch", "pctr_slow_pitch", "pctr_fast_pitch_prev", "pctr_slow_pitch_prev",
-                  "pctr_pitch_ts"):
+        for k in _PITCH_KEYS:
             out[k] = _f(s.get(k))
     out.update(_regime_fields())
     return out
@@ -212,6 +215,11 @@ def row_from_event(kind: str, fields: dict[str, Any]) -> dict[str, Any] | None:
     }
     if stage == "arm" and arm_ok is False and not why_s:
         out["arm_bucket"] = "other"
+    if stage == "arm":
+        # arm_recheck carries the pitch at its verdict (the pass row is the entry decision).
+        for k in _PITCH_KEYS:
+            if k in f:
+                out[k] = _f(f.get(k))
     out.update(_regime_fields())
     return out
 

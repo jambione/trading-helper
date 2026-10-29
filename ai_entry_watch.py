@@ -18414,6 +18414,7 @@ def _log_arm_recheck(
     streak: int | None = None,
     need: int | None = None,
     px_src: str | None = None,
+    rec: dict | None = None,
 ) -> None:
     """Record the arm verdicts that happen AFTER the shadow row is written.
 
@@ -18453,9 +18454,18 @@ def _log_arm_recheck(
             changed=changed or None,
             before=before,
             after=after,
+            # The pitch at this verdict: the pass row is the entry decision, and the shadow row before it can be a
+            # different read (operator 10/29: winners vs losers by pitch at entry).
+            **_pitch_fields(rec),
         )
     except Exception:  # noqa: BLE001
         pass
+
+
+def _pitch_fields(rec: dict | None) -> dict:
+    ind = rec.get("indicator") if isinstance(rec, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+    return {k: _f_or_none(ind.get(k)) for k in ("pctr", *_PITCH_LEDGER_KEYS, "pctr_pitch_ts")}
 
 
 def rvol_ranked(state: dict, *, live_lookup=None) -> list[tuple[str, dict]]:
@@ -19674,7 +19684,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _log_arm_recheck(
                 cp, sym, stage="refresh", ok=False, why=why,
                 why_first=_why_first, px_src=px_src,
-                before=_arm_before, after=_arm_gate_snapshot(rec, ask_f))
+                before=_arm_before, after=_arm_gate_snapshot(rec, ask_f), rec=rec)
             _arm_streak(rec, False, seq=poll_seq)
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
@@ -19710,7 +19720,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 cp, sym, stage="confirm", ok=False, why="arm_confirming",
                 why_first=_why_first, px_src=px_src,
                 streak=streak, need=need_arm,
-                before=_arm_before, after=_arm_after)
+                before=_arm_before, after=_arm_after, rec=rec)
             set_block_reason(rec, "arm_confirming", now=t0,
                              detail=f"{streak}/{need_arm}")
             touched[sym] = rec
@@ -19719,7 +19729,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             cp, sym, stage="pass", ok=True, why=why,
             why_first=_why_first, px_src=px_src,
             streak=streak, need=need_arm,
-            before=_arm_before, after=_arm_after)
+            before=_arm_before, after=_arm_after, rec=rec)
         # Package B: freeze the quote that earned streak-pass so the pre-place
         # refresh can refuse a jump / stale stream instead of chasing it.
         rec["confirm_ask"] = float(ask_f)
