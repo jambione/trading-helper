@@ -50,6 +50,6 @@
   "A3_removal": "Added to amended 2_pass (3): each removal takes exactly that session's LOW count from that session.",
   "A4_statistic": "Primary d is computed per session, as before: session-equal, sessions with both groups, day-clustered t at n-1 df.",
   "count_stage": "The count stage prints the realized LOW share and the MDE before any mean; if the MDE exceeds the pass bar, the study stops (UNDERPOWERED).",
-  "power_bar": "PENDING operator: Option 1 = pass bar d <= -5 bp and UNDERPOWERED if all-session MDE > 5 bp, 60 events/session (~12k reads); Option 2 = keep -3 bp, 120 events/session (~25k reads, ~2 h after hours, MDE still borderline ~2.5-3.5 bp)."
+  "power_bar": "Option 1, operator 2026-10-29 in chat '5 bp, 60 per day': amended 2_pass (1) becomes primary d <= -5 bp with t <= -t_0.975(n-1); amended 8_power becomes UNDERPOWERED if all-session MDE > 5 bp (LOW >= 200 and sessions with both >= 40 unchanged); 60 kept events per session; ~12k quote reads."
  }
 }
