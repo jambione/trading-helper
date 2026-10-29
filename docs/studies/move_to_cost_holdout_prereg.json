@@ -1,0 +1,27 @@
+{
+ "study": "move_to_cost_holdout",
+ "question": "Do the desk's entries whose name moved fewer than 8 spreads in the 21 minutes before the buy (range in bp / full SIP spread paid at entry < 8) lose more than the desk's other entries on sessions the exploration never saw?",
+ "operator_sentence": "Operator 2026-10-29 ~05:20 ET in chat, after the slope_now replay exploration (9/28-10/13), to the offer to check the under-8-spreads split on the sealed 10/14-10/27 trades tonight: 'Yes, check it'.",
+ "registered_at": "2026-10-29 ~05:30 ET, before any held-out trade is priced or its range computed.",
+ "registered_before_results": true,
+ "origin": "Exploration (tools/studies/slope_now_explore.py, ~/replay_runs/slope_now/explore.json, 12 sessions 9/28-10/13, 231 REF trades, mean net -3.4 bp): range_per_spread [4,8) n 26, mean -10.8 bp, win 19%, day t -3.0; [2,4) n 3, -19.2; [8,16) n 65, -3.0; >=16 n 89, -4.0; missing (no warehouse bars) n 48, +2.2. The cut-off 8 is taken from that table and fixed here. The 10/27-10/28 desk-trade examples discussed in chat (FE etc.) motivated the feature; 10/28 is therefore excluded from the hold-out.",
+ "prior": "Weakly for: a name that barely moves cannot pay its spread (cost is the spread). Against: the exploration is one 12-session sample with 29 low trades; split-and-cut-off chosen on it shrink out of sample; the RTH history (slope_now_hist) showed narrow range only ~-0.3 bp gross.",
+ "sessions": "The sealed sessions 2026-10-14, 10-15, 10-16, 10-19, 10-20, 10-21, 10-22, 10-23, 10-26, 10-27 (10) - the REF replays already in ~/replay_runs/slope_now (pinned 5d3ff370, run 10/29 in explore-only mode). 10/28 is excluded (seen in chat).",
+ "measure": {
+  "trades": "Every REF trade (closed or open_at_end), priced as slope_now_explore / stale_age_read: entry at the first SIP trade within 60 s of the replayed decision, exit at the replay's exit (open_at_end at the SIP 15:49 close), net = gross - full SIP quoted spread at entry (replay_costing.entry_spread_bp). No SIP print or no NBBO = trade dropped (counted).",
+  "range": "% range (high / low - 1) of the 21 completed IEX 1-minute bars before the minute of the trade's ARM_OK row (the same join as slope_now_explore: last ARM_OK row at or before entry within 90 s). Bars from the warehouse where present, else from Alpaca historical IEX 1-minute bars (the warehouse ends 2026-10-15); fewer than 15 bars in the window = range missing (counted).",
+  "move_to_cost": "range in bp / entry spread in bp. LOW = move_to_cost < 8; REST = move_to_cost >= 8. Missing range or spread = excluded from both groups (counted and reported with its own mean)."
+ },
+ "statistic": "Per session: d = mean net(LOW) - mean net(REST), on sessions with at least one LOW and one REST trade; sessions equal-weighted, day-clustered (std_scorer.day_stat), one-sided bounds at 0.975, t at n-1 df.",
+ "pass": "The split HOLDS only if ALL: (1) mean d <= -5 bp with t <= -2.0; (2) LOW's pooled mean net < 0; (3) >= 20 LOW trades over >= 6 sessions; (4) removal beats random: within each session, remove the same number of trades at random from all trades (1,000 seeded draws, 'MTC-k'); the book's mean net after removing LOW exceeds the random-removal mean in >= 95% of draws.",
+ "underpowered": "Fewer than 20 LOW trades or 6 sessions with LOW: UNDERPOWERED (direction only).",
+ "fail": "Short of HOLDS: the split is not supported out of sample; no filter is built from it.",
+ "if_holds": "Not a switch-on. It earns a replay gate test (a knob refusing arms whose move_to_cost < 8 at the arm, with a matched random refusal and forward sessions, under the '2 bp + average >= 0' rule), pre-registered separately; the arm-time spread there must be the order-time quote, not the 16-min SIP reading.",
+ "information_only": [
+  "LOW vs REST win rate; mean net of the missing-range group.",
+  "Bands [2,4), [4,8), [8,16), >=16 as in the exploration.",
+  "Dollars per session removed at $384/trade."
+ ],
+ "no_retuning": "No other cut-off is scored.",
+ "script": "tools/studies/move_to_cost_holdout.py (count, then score), reusing slope_now_explore's join and pricing, written after a result-skeptic READY and run after the close."
+}
