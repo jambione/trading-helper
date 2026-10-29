@@ -161,7 +161,10 @@ def main() -> int:
         rows, skipped = collect(OUT, pr, sip)
         res = {"window": [EXPLORE_FIRST, EXPLORE_LAST], "sessions": len({r["day"] for r in rows}),
                "skipped": skipped, "joined_share": (sum(r["joined"] for r in rows) / len(rows)) if rows else None,
-               "tables": tables(rows), "note": "exploration only; confirmation sessions 10/14 onward are sealed"}
+               "tables": tables(rows), "note": "exploration only; confirmation sessions 10/14 onward are sealed",
+               "fidelity": (json.loads((OUT / "fidelity.json").read_text()) if (OUT / "fidelity.json").exists() else {}).get("pass"),
+               "caveat": "if fidelity is false, the pitch splits (slow_pitch, fast_pitch, slow_change, min_pitch, gate_rule) are "
+                         "from a replay that finds a pitch far less often than live; range_pct and range_per_spread do not use it"}
         Path(a.out).write_text(json.dumps(res, indent=1, default=str))
         print(json.dumps(res, indent=1, default=str))
         return 0

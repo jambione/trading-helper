@@ -232,6 +232,8 @@ def main() -> int:
     ap.add_argument("--jobs", type=int, default=3)
     ap.add_argument("--stop-at", default="08:45")
     ap.add_argument("--sha", default="HEAD")
+    ap.add_argument("--explore-only", action="store_true",
+                    help="phase ref only: run REF for the exploration tables even when fidelity failed (no gate is scored)")
     a = ap.parse_args()
     use_study_globals()
     sha = subprocess.check_output(["git", "-C", str(L.ROOT), "rev-parse", a.sha], text=True).strip()
@@ -245,7 +247,12 @@ def main() -> int:
         fidelity(sha)
         return 0
     fp = OUT / "fidelity.json"
-    if not (fp.exists() and json.loads(fp.read_text()).get("pass")):
+    explore_only = a.explore_only and a.phase == "ref"
+    if explore_only:
+        # 10/28: fidelity failed on pitch PRESENCE (replay 39% vs live 70%); prices, trades and spreads are unaffected.
+        # The REF runs then feed only the information tables (range, range-per-spread); pitch splits are flagged.
+        print("explore-only: fidelity not passed; REF feeds the information tables only, never the gate test", flush=True)
+    elif not (fp.exists() and json.loads(fp.read_text()).get("pass")):
         print("refusing: fidelity.json missing or not passed (SLOPE NOT TESTABLE IN REPLAY)", file=sys.stderr)
         return 2
     days = L.eligible_days()
