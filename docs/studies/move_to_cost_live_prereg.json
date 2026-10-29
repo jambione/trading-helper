@@ -44,5 +44,15 @@
   "R1_precedence": "Where 'amended' or 'amended_2' conflicts with an earlier key, the later block governs. In particular, 'trades' no longer accepts exit_price_approx; the power gate applies to both sets (amended 7); and the primary population is amended 5 (>= $10) after amended 1, 2, 4 and 6.",
   "R2_fill_match": "Buy side: all buy FILL activities (fill and partial_fill) for the symbol with transaction_time in [entry_time - 5 s, entry_time + 120 s]. Sell side: all sell FILL activities for the symbol in [last matched buy, exit_time + 5 s]. Each side is priced at its quantity-weighted average. Matched only if buy qty = sell qty = total_qty, and no other outcome row of the same symbol overlaps [entry_time - 5 s, exit_time + 5 s]. Otherwise the row is unmatched (dropped and counted; > 5% = VOID). The $10 floor is applied to the matched buy average.",
   "R3_overlap": "For each of the 2 overlapping same-symbol pairs, both rows are dropped (their fills cannot be assigned). This replaces 'one row of each' in amended 1."
+ },
+ "ready": {
+  "when": "2026-10-29 ~19:30 ET",
+  "verdict": "READY",
+  "review_ids": [
+   "round 1 (fixes 1-9)",
+   "round 2 (R1-R3 applied verbatim)"
+  ],
+  "accepted_by": "operator 2026-10-29 in chat: 'Accept READY' (two-round rule)",
+  "next": "tools/studies/move_to_cost_live.py (count -> score) with tests; runs tonight on the mini."
  }
 }
