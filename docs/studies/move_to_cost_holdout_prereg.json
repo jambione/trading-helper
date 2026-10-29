@@ -45,5 +45,15 @@
   "R4_recheck": "Re-check = the exploration's 12 sessions on Alpaca IEX bars. The 48 formerly-missing trades now get a range, and their band shares are reported. Continue only if the exploration's session-equal mean d (LOW - REST net) is < 0. Otherwise STOP, label the split 'source-dependent', and price no held-out trade. Agreement on 10/14-10/15 = share of trades whose LOW/REST label matches the warehouse, reported; below 0.90 is a flag in the write-up.",
   "R5_gate": "If 10/27 recall or precision is < 0.5, a HOLDS is labelled 'replay-only', and if_holds additionally requires the live-fill split d < 0. Live-fill prices come from the positions state (fill avg price), never from the trade log.",
   "R6_power_both_sets": "The underpowered rule and the MDE apply to the without-10/27 set too. If either set is UNDERPOWERED, the verdict is UNDERPOWERED."
+ },
+ "ready": {
+  "when": "2026-10-29 ~06:20 ET",
+  "verdict": "READY",
+  "review_ids": [
+   "round 1 (findings 1-10)",
+   "round 2 (R1-R6 applied verbatim)"
+  ],
+  "accepted_by": "operator 2026-10-29 in chat: 'Accept READY' (two-round rule)",
+  "next": "tools/studies/move_to_cost_holdout.py (count -> recheck -> score) with tests; runs after the close."
  }
 }
