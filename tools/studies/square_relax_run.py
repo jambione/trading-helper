@@ -32,7 +32,11 @@ import late_gates_run as L  # noqa: E402
 import stale_age_run as SA  # noqa: E402
 
 OUT = Path(os.path.expanduser("~/replay_runs/square_relax"))
-PIN = dict(SA.PIN)                       # the stale_age REF desk: gates, gap rule, arm age from prints
+# amended_harness_switch: the stale_age REF desk (gates, gap rule) judged by SOURCE LABEL as live,
+# on the late_gates harness (--live-staleness, no --arm-age-from-prints).
+PIN = {**SA.PIN, "ai_watch_arm_age_mode": "src", "ai_watch_arm_max_age_sec": 0.0,
+       "ai_watch_stale_rand_release_share": 0.0, "ai_watch_stale_rand_release_salt": ""}
+FLAGS = list(L.FLAGS)
 PRIMARY = {"REF": {}, "TIGHT20": {"ai_watch_presquare_confluence_max": 20.0},
            "PRE45": {"ai_watch_presquare_pre_thr": 45.0},
            "MDE1": {"ai_watch_presquare_rand_release_share": 0.25, "ai_watch_presquare_rand_release_salt": "SQ-MDE"}}
@@ -43,7 +47,7 @@ FIDELITY_DAY = "2026-10-27"
 
 
 def use_study_globals() -> None:
-    L.OUT, L.PIN, L.FLAGS, L.FIRST_DAY = OUT, PIN, SA.FLAGS, SA.FIRST
+    L.OUT, L.PIN, L.FLAGS, L.FIRST_DAY = OUT, PIN, FLAGS, SA.FIRST
 
 
 def sq(day: str, var: str) -> dict:

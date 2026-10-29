@@ -372,3 +372,22 @@ def test_work_counts_reads_drops_and_proposals(tmp_path):
     assert c["watch_drop"] == {"dead_unknown|exh_falling": 2}
     assert c["proposals"] == {"momentum|kept": 1, "movers|dropped": 1}
     assert rp.work_counts(None) == {"watch_drop": {}, "proposals": {}}
+
+
+def test_replay_releases_submits_against_its_own_broker():
+    """A name the replay holds stays submitted (no arm rows while held, as live); one it closed is freed."""
+    import types
+    rows = {"HELD": {"symbol": "HELD", "status": "submitted"},
+            "GONE": {"symbol": "GONE", "status": "filled"},
+            "WAIT": {"symbol": "WAIT", "status": "watching"}}
+    calls = []
+
+    def orig(symbols=None, *, force=False):
+        calls.append((list(symbols or []), force))
+        return list(symbols or []) if force else ["HELD", "GONE"]   # recorded live book: holds neither
+
+    ew = types.SimpleNamespace(release_orphaned_submits=orig, load_watch=lambda: rows)
+    rp.bind_release_to_broker(ew, types.SimpleNamespace(open={"HELD": {}}))
+    assert ew.release_orphaned_submits() == ["GONE"] and calls[-1] == (["GONE"], True)
+    assert ew.release_orphaned_submits(["HELD"]) == []
+    assert ew.release_orphaned_submits(["HELD"], force=True) == ["HELD"]          # operator recovery unchanged

@@ -2105,6 +2105,7 @@ def run_inside(args) -> int:
             setattr(gt, fn, lambda *a, **k: 0)
     ew._recent_exit_ts = lambda s: broker.last_exit.get(str(s).upper())
     ew._entries_today = lambda s: broker.entries.get(str(s).upper(), 0)
+    bind_release_to_broker(ew, broker)
 
     if getattr(args, "arm_age_from_prints", False):
         _pa = PrintAges(snap_dir / "recorder_prints.jsonl.gz")
@@ -2535,6 +2536,35 @@ def arm_trader() -> None:
     at._client = TradingClient("replay", "replay", paper=True)
     at._mode = "paper"
     gt._ready, gt._mode = True, "paper"
+
+
+def bind_release_to_broker(ew, broker) -> None:
+    """Free stuck ``submitted`` rows against the replay's own book.
+
+    Live, poll_once returns a submitted row to watching only when Alpaca shows
+    no position and no open order for it, so a held name never reaches the arm
+    path. In a replay that broker read is served from the recording (live's
+    positions), so a name only the replay holds looked unheld, was released
+    every poll, and logged arm rows until the already_held skip (2026-10-29
+    square_relax fidelity: ARM_OK 3.7% replay vs 0.4% live). Held = broker.open.
+    """
+    orig = ew.release_orphaned_submits
+
+    def release(symbols=None, *, force=False):
+        if force:
+            return orig(symbols, force=True)
+        want = None if symbols is None else {str(x).upper().strip() for x in symbols}
+        stuck = []
+        for key, row in (ew.load_watch() or {}).items():
+            if not isinstance(row, dict):
+                continue
+            sym = str(row.get("symbol") or key or "").upper().strip()
+            if (sym and str(row.get("status") or "").lower().strip() in ("submitted", "filled")
+                    and sym not in broker.open and (want is None or sym in want)):
+                stuck.append(sym)
+        return orig(stuck, force=True) if stuck else []
+
+    ew.release_orphaned_submits = release
 
 
 class _WarmPassDone(Exception):
