@@ -476,6 +476,7 @@ class PrintAges:
             pass
         self.times = {s: sorted(v) for s, v in by.items()}
         self.n_symbols, self.n_prints = len(self.times), n
+        self.seen: dict[str, list] = {}
 
     def _upto(self, sym: str, t: float) -> list:
         ts = self.times.get(sym)
@@ -485,7 +486,22 @@ class PrintAges:
 
     def age(self, sym: str, t: float):
         ts = self._upto(sym, t)
-        return (t - ts[-1]) if ts else None
+        if not ts:
+            return None
+        self._note_seen(sym, ts[-1])
+        return t - ts[-1]
+
+    def _note_seen(self, sym: str, pts: float) -> None:
+        """Gap history as the live desk keeps it (ai_entry_watch.note_print_gap): the latest print SEEN at each check,
+        a new gap when it is > 0.5 s newer than the last one seen, last 30 kept. 10/27 fidelity: gaps between every
+        recorded print made the median ~1-3 s, so the ceiling never reached 15 s (replay accepted 0 prints aged
+        15-30 s, live 476)."""
+        st = self.seen.setdefault(sym, [None, []])
+        if st[0] is not None and pts > st[0] + 0.5:
+            st[1].append(pts - st[0])
+            del st[1][:-30]
+        if st[0] is None or pts > st[0] + 0.5:
+            st[0] = pts
 
     def gap_ceiling(self, sym: str, t: float, cfg) -> float:
         cfg = cfg if isinstance(cfg, dict) else {}
@@ -495,8 +511,8 @@ class PrintAges:
             mult = 0.0
         if mult <= 0:
             return 0.0
-        ts = self._upto(sym, t)[-31:]
-        gaps = sorted(b - a for a, b in zip(ts, ts[1:]) if b > a + 0.5)
+        st = self.seen.get(sym)
+        gaps = sorted(st[1]) if st else []
         if len(gaps) < 5:
             return 0.0
         try:
