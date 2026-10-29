@@ -145,6 +145,24 @@ class Data:
         return self._cached(f"q|{sym}|{int(t)}", fn)
 
 
+def sip_price(sip, sym: str, t: float, tries: int = 3):
+    """First SIP trade within 60 s after t, with retries; FetchError when every try fails (never cached)."""
+    key = f"{sym}|{t:.3f}"
+    if key in sip.cache:
+        return sip.cache[key]
+    for k in range(tries):
+        try:
+            prints = sip.fetch(sym, t, t + SR.WINDOW) if sip.fetch else []
+            break
+        except Exception:  # noqa: BLE001
+            time.sleep(2.0 * (k + 1))
+    else:
+        raise FetchError(f"sip {sym}")
+    first = next((p for ts, p in sorted(prints) if ts > t and p > 0), None)
+    sip.cache[key] = first
+    return first
+
+
 # ── trades ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 def label(m2c) -> str:
     return MISSING if m2c is None else ("LOW" if m2c < CUT else "REST")
@@ -166,14 +184,10 @@ def day_trades(day: str, data: Data, sip, ref_dir: Path = REF_DIR) -> list[dict]
         try:
             if sym not in bars_by:
                 bars_by[sym] = data.bars(sym, day)
-            e = sip.price(day, sym, ts)
+            e = sip_price(sip, sym, ts)
             sp = data.spread_bp(sym, ts)
         except FetchError:
-            row["status"] = ERROR
-            out.append(row)
-            continue
-        if day in getattr(sip, "failed", set()):
-            row["status"] = ERROR
+            row["status"] = ERROR          # this trade only: a fetch error is never spread over the session
             out.append(row)
             continue
         if is_open:

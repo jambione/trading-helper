@@ -74,3 +74,23 @@ def test_data_errors_are_not_no_data(tmp_path, monkeypatch):
 
 def test_t_quantiles_small_samples():
     assert M.t_crit(6, 0.975) == 2.447 and M.t_crit(7, 0.80) == 0.896 and M.t_crit(100, 0.975) == 1.96
+
+
+def test_sip_price_retries_and_errors_one_trade_only(monkeypatch):
+    monkeypatch.setattr(M.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def flaky(sym, t0, t1):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("429")
+        return [(t0 + 1, 10.0)]
+    sip = M.SR.SipEntry(flaky)
+    assert M.sip_price(sip, "AAA", 100.0) == 10.0 and calls["n"] == 3
+    dead = M.SR.SipEntry(lambda *a: (_ for _ in ()).throw(RuntimeError("down")))
+    try:
+        M.sip_price(dead, "BBB", 100.0)
+        assert False
+    except M.FetchError:
+        pass
+    assert "BBB|100.000" not in dead.cache
