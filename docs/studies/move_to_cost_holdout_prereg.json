@@ -23,5 +23,18 @@
   "Dollars per session removed at $384/trade."
  ],
  "no_retuning": "No other cut-off is scored.",
- "script": "tools/studies/move_to_cost_holdout.py (count, then score), reusing slope_now_explore's join and pricing, written after a result-skeptic READY and run after the close."
+ "script": "tools/studies/move_to_cost_holdout.py (count, then score), reusing slope_now_explore's join and pricing, written after a result-skeptic READY and run after the close.",
+ "amended": {
+  "when": "2026-10-29 ~05:50 ET, after result-skeptic round 1 FIX FIRST (10 findings), before any held-out trade is priced.",
+  "1_circularity": "Report gross d and spread d next to net d. Add to pass: (5) removing LOW beats removing the same number of trades per session ranked by highest entry spread alone, and beats removing them by lowest range alone, each in >= 95% of seeded tie-broken draws. (6) The gross d is <= 0.",
+  "2_bar_source": "All 10 sessions use Alpaca historical IEX 1m bars (high/low, RTH 09:30-16:00, raw). Before scoring, recompute the 12-session exploration table with these bars and check 10/14-10/15 against the warehouse. Report agreement. If the exploration's < 8 split is not still negative on Alpaca bars, stop.",
+  "3_fetch_errors": "Separate a fetch error from no-data. Retry errors. If more than 5% of trades have an unresolved error, the run is VOID.",
+  "4_bar_count": "The 15-bar rule is dropped (the exploration had none).",
+  "5_population": "Count-stage gate: REF vs live fills on 10/27, giving recall and precision (same symbol, within 120 s), printed. The population is called 'replay trades at 10/27 config', not 'the desk's entries'. Information-only: the same split on actual live fills 10/14-10/27.",
+  "6_contamination": "HOLDS is required both with and without 10/27 (10/27-10/28 examples motivated the feature).",
+  "7_t_bar": "Pass (1) reads: mean d <= -5 bp with t <= -t_0.975(n-1).",
+  "8_power": "The count stage prints LOW n, the number of sessions with both groups, and the MDE (3.08 x sd_session(d) / sqrt(n) from a random-split placebo). If MDE > 10 bp, report UNDERPOWERED without scoring.",
+  "9_criterion4": "The book is LOW union REST (missing excluded). Means are session-equal-weighted, and draws remove trades within each session.",
+  "10_meaning": "HOLDS is an association only, never cited as an edge; a pass only earns the replay gate test in if_holds."
+ }
 }
