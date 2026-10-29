@@ -27,5 +27,20 @@
  ],
  "no_retuning": "No other cut-off, window, hold or sample size is scored.",
  "data_budget": "<= ~6,000 SIP quote requests (data-only key) plus SIP 1-minute bars for sampled names; after hours, one heavy Alpaca job at a time.",
- "script": "tools/studies/move_to_cost_hist.py (count -> score), reusing slope_now_hist / pitch_open (events, lines), move_to_cost_holdout (Data, statistics, controls), written after a result-skeptic READY."
+ "script": "tools/studies/move_to_cost_hist.py (count -> score), reusing slope_now_hist / pitch_open (events, lines), move_to_cost_holdout (Data, statistics, controls), written after a result-skeptic READY.",
+ "amended": {
+  "when": "2026-10-29 ~21:20 ET, after result-skeptic round 1 (FIX FIRST, 12 checks), operator 'Yes, apply them', before any historical event is joined to a spread or quote.",
+  "R0_precedence": "Where this block conflicts with an earlier key, this block governs.",
+  "1_outcome": "PRIMARY outcome is mid-to-mid gross: SIP quote mid at e:00 to SIP quote mid at (e+10):00 (last usable quote at or before each second, same usability rule as 'spread'). Primary d = mean gross_mid(LOW) - mean gross_mid(REST). Net (gross_mid - full spread at entry) and the old bar-based gross are SECONDARY, information only. Why: LOW is defined by a wide spread relative to range, so a net d is partly the spread subtracted twice, and a trade-print entry on a rising tick carries bid-ask bounce.",
+  "2_pass": "HOLDS only if ALL: (1) primary d <= -3 bp with t <= -t_0.975(n-1) over all scored sessions; (2) primary d point estimate < 0 in BOTH halves A and B; (3) removal controls on NET: compare the session-equal mean net of what remains (LOW union REST, all sessions); removing LOW must beat removing the same number at random in >= 95% of 1,000 draws ('MTCH'), and beat removing the same number with the widest entry spread and with the lowest range outright (ties at the cut broken by 'MTCH-TIE', the median of 100 draws); (4) primary d < 0 on the events with SIP spread <= 15 bp (the desk's live gate); (5) the power gate passed. The old pass (1) and (2) ('LOW pooled net < 0', near-automatic) are replaced.",
+  "3_population": "Draw from events whose raw price (SIP quote mid at t) is $20-$200 (the live floor is $20).",
+  "4_price_timing": "The price filter uses the SIP quote mid at the decision minute t, never a price at e.",
+  "5_adjustment": "Warehouse bars are SPLIT-adjusted (warehouse_fetch.py Adjustment.SPLIT), not raw; range and returns are ratios and unaffected; the price filter uses the raw SIP quote (4).",
+  "6_fires": "Fires are computed on 585..920 (pitch_open defaults) so the 15-minute refractory sees fires from 09:45; events are then kept for t >= 591 (09:51) .. 920. Events do NOT require the d/x controls slope_now_hist needs.",
+  "7_missing": "Missing spread or mid quotes are reported by range band; VOID if more than 10% of sampled events are missing overall.",
+  "8_power": "UNDERPOWERED if MDE (on the primary mid-to-mid d) > 3 bp (the pass bar) over all sessions, LOW < 200, or sessions with both groups < 40. Each half's MDE is reported.",
+  "9_budget": "data_budget raised to <= ~12,000 SIP quote requests (three quote reads per event: e:00, (e+10):00, t for the price filter, sharing fetches where one window covers them) plus SIP 1-minute bars; after hours, one heavy Alpaca job at a time.",
+  "10_contamination": "Disclosed: slope_now_hist (10/28) already looked at GROSS 10-minute returns by range band on 5/11-10/13, which includes these sessions (narrow range 0.25-0.5% ~ -0.3 bp gross). Only the spread join and the mid-to-mid outcome are unseen.",
+  "11_if_holds": "Unchanged: association on the broad market only; earns a separate replay-gate prereg, never an edge claim."
+ }
 }
