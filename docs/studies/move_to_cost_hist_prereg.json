@@ -42,5 +42,14 @@
   "9_budget": "data_budget raised to <= ~12,000 SIP quote requests (three quote reads per event: e:00, (e+10):00, t for the price filter, sharing fetches where one window covers them) plus SIP 1-minute bars; after hours, one heavy Alpaca job at a time.",
   "10_contamination": "Disclosed: slope_now_hist (10/28) already looked at GROSS 10-minute returns by range band on 5/11-10/13, which includes these sessions (narrow range 0.25-0.5% ~ -0.3 bp gross). Only the spread join and the mid-to-mid outcome are unseen.",
   "11_if_holds": "Unchanged: association on the broad market only; earns a separate replay-gate prereg, never an edge claim."
+ },
+ "amended_2": {
+  "when": "2026-10-29 ~21:35 ET, result-skeptic round 2 (FIX FIRST): A1-A4 applied verbatim; the power bar (Option 1 or 2) awaits the operator.",
+  "A1_draw": "Replaces amended 3_population and 4_price_timing. Per session, walk the events in sha256('MTCH'|day|symbol|t) order, lowest first. For each, fetch the SIP quote at e:00 (the decision instant: bar t has just completed). Keep the event if the mid is $20-$200, otherwise skip it and count the skip. Stop at 60 kept events or when the events run out. That same e:00 quote supplies the entry spread and the entry mid; the price filter uses no other price.",
+  "A2_budget": "Replaces amended 9_budget's per-event count: <= 2 quote reads per kept event (e:00 and (e+10):00) plus 1 per skipped event.",
+  "A3_removal": "Added to amended 2_pass (3): each removal takes exactly that session's LOW count from that session.",
+  "A4_statistic": "Primary d is computed per session, as before: session-equal, sessions with both groups, day-clustered t at n-1 df.",
+  "count_stage": "The count stage prints the realized LOW share and the MDE before any mean; if the MDE exceeds the pass bar, the study stops (UNDERPOWERED).",
+  "power_bar": "PENDING operator: Option 1 = pass bar d <= -5 bp and UNDERPOWERED if all-session MDE > 5 bp, 60 events/session (~12k reads); Option 2 = keep -3 bp, 120 events/session (~25k reads, ~2 h after hours, MDE still borderline ~2.5-3.5 bp)."
  }
 }
