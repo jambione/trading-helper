@@ -51,5 +51,15 @@
   "A4_statistic": "Primary d is computed per session, as before: session-equal, sessions with both groups, day-clustered t at n-1 df.",
   "count_stage": "The count stage prints the realized LOW share and the MDE before any mean; if the MDE exceeds the pass bar, the study stops (UNDERPOWERED).",
   "power_bar": "Option 1, operator 2026-10-29 in chat '5 bp, 60 per day': amended 2_pass (1) becomes primary d <= -5 bp with t <= -t_0.975(n-1); amended 8_power becomes UNDERPOWERED if all-session MDE > 5 bp (LOW >= 200 and sessions with both >= 40 unchanged); 60 kept events per session; ~12k quote reads."
+ },
+ "ready": {
+  "when": "2026-10-29 ~21:50 ET",
+  "verdict": "READY",
+  "review_ids": [
+   "round 1 (12 checks -> amended)",
+   "round 2 (A1-A4 applied verbatim -> amended_2; power bar Option 1 chosen by the operator)"
+  ],
+  "accepted_by": "operator 2026-10-29 in chat: 'Accept READY' (two-round rule)",
+  "next": "tools/studies/move_to_cost_hist.py (count -> score) with tests; runs after hours on the mini, one heavy Alpaca job at a time."
  }
 }
