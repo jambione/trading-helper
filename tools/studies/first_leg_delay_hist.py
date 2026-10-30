@@ -18,6 +18,7 @@ import datetime as _dt
 import hashlib
 import json
 import os
+import random
 import statistics
 import sys
 from collections import Counter
@@ -61,11 +62,11 @@ def day_events(args) -> dict:
     return {"events": out, "stats": dict(st)}
 
 
-def measure(ev: dict, data, q0) -> dict:
+def measure(ev: dict, data, q0, delays=DELAYS) -> dict:
     """Fill gross/net per delay; q0 is the already-fetched e:00 quote."""
     e = ev["t"] + 1
     row = dict(ev)
-    for d in DELAYS:
+    for d in delays:
         try:
             qa = q0 if d == 0 else data.quote(ev["symbol"], M.minute_ts(ev["day"], e + d))
             qb = data.quote(ev["symbol"], M.minute_ts(ev["day"], e + d + HOLD))
@@ -73,11 +74,13 @@ def measure(ev: dict, data, q0) -> dict:
             row[f"err{d}"] = True
             continue
         ma, sp = M.mid_spread(qa)
-        mb, _ = M.mid_spread(qb)
+        mb, spx = M.mid_spread(qb)
         if ma is None or mb is None:
             continue
         g = (mb / ma - 1) * 1e4
-        row[f"gross{d}"], row[f"spread{d}"], row[f"net{d}"] = g, sp, g - sp
+        # amended F3: half the spread at entry + half at exit against a mid-to-mid gross; full-at-entry secondary
+        row[f"gross{d}"], row[f"spread{d}"], row[f"net{d}"] = g, sp, g - (sp + spx) / 2
+        row[f"net_full{d}"] = g - sp
     return row
 
 
@@ -136,27 +139,53 @@ def cost(k):
     return lambda r: (r["gross0"] - r[f"gross{k}"]) if "gross0" in r and f"gross{k}" in r else None
 
 
-def verdicts(rows) -> dict:
+def signal_verdict(out: dict, control_lift: dict | None) -> dict:
+    """amended F1: one signal label, SPEED_MATTERS alongside (VOID per F6 when d=2 pairs are too thin)."""
+    n0, c2 = out["net0"], out["cost2"]
+    lo, hi = n0["all"]["lo"], n0["all"]["hi"]
+    halves_pos = n0["A"]["mean"] > 0 and n0["B"]["mean"] > 0
+    if lo is not None and lo > 0 and halves_pos:
+        if control_lift is None:
+            label = "CONTROL_NEEDED"
+        elif control_lift["A"]["mean"] > 0 and control_lift["B"]["mean"] > 0:
+            label = "EDGE_BELOW_MARGIN" if hi is not None and hi < MARGIN else "EDGE_AT_SIGNAL"
+        else:
+            label = "NOT_ABOVE_CONTROL"
+    elif hi is not None and hi < MARGIN:
+        label = "NO_EDGE_EVEN_AT_SIGNAL"
+    else:
+        label = "UNCLEAR"
+    sm = c2["all"]["lo"] is not None and c2["all"]["lo"] > 0 and c2["A"]["mean"] > 0 and c2["B"]["mean"] > 0
+    if out.get("speed_void"):
+        speed = "VOID (> 10% of kept events lack the d=2 pair)"
+    elif not sm:
+        speed = "not shown"
+    elif n0["all"]["mean"] <= 0:
+        speed = "SPEED_MATTERS: waiting is worse, but the signal is not profitable"
+    else:
+        speed = "SPEED_MATTERS"
+    return {"signal": label, "speed": speed, "control_lift": control_lift}
+
+
+def verdicts(rows, control_lift: dict | None = None) -> dict:
     ok = [r for r in rows if r.get("status") == "ok"]
-    out = {}
+    out = {"speed_void": missing_share(rows, 2) > MAX_MISSING}
     for name, f in (("net0", get("net0")), ("gross0", get("gross0")), ("net2", get("net2")), ("net5", get("net5")),
                     ("cost2", cost(2)), ("cost5", cost(5))):
         out[name] = {"all": stat(per_session(ok, f)),
                      **{h: stat(per_session([r for r in ok if half(r["day"]) == h], f)) for h in ("A", "B")}}
-    n0, c2 = out["net0"], out["cost2"]
-    v = []
-    if n0["all"]["lo"] is not None and n0["all"]["lo"] > 0 and n0["A"]["mean"] > 0 and n0["B"]["mean"] > 0:
-        v.append("EDGE_AT_SIGNAL")
-    if c2["all"]["lo"] is not None and c2["all"]["lo"] > 0 and c2["A"]["mean"] > 0 and c2["B"]["mean"] > 0:
-        v.append("SPEED_MATTERS")
-    if n0["all"]["hi"] is not None and n0["all"]["hi"] < MARGIN:
-        v.append("NO_EDGE_EVEN_AT_SIGNAL")
-    out["verdicts"] = v or ["UNCLEAR"]
+    out["net_full0"] = {"all": stat(per_session(ok, get("net_full0")))}
+    out.update(signal_verdict(out, control_lift))
     early = [r for r in ok if r["t"] <= 630]
     late = [r for r in ok if r["t"] > 630]
     out["info_early_09_45_10_30"] = {k: stat(per_session(early, f)) for k, f in (("net0", get("net0")), ("cost2", cost(2)))}
     out["info_rest_of_day"] = {k: stat(per_session(late, f)) for k, f in (("net0", get("net0")), ("cost2", cost(2)))}
     return out
+
+
+def missing_share(rows, d) -> float:
+    n = len(rows)
+    return sum(not (r.get("status") == "ok" and f"net{d}" in r) for r in rows) / n if n else 1.0
 
 
 def counts(rows) -> dict:
@@ -165,13 +194,48 @@ def counts(rows) -> dict:
     err = sum(r.get("status") == "error" or any(r.get(f"err{d}") for d in DELAYS) for r in rows)
     ok = [r for r in rows if r.get("status") == "ok" and "net0" in r]
     hw = stat(per_session(ok, get("net0")))["half_width"]
+    hw2 = stat(per_session(ok, cost(2)))["half_width"]
     c = {"kept": n, "scored_d0": len(ok), "sessions": len({r["day"] for r in ok}),
          "by_half": {h: sum(half(r["day"]) == h for r in ok) for h in ("A", "B")},
          "missing_share_d0": miss0 / n if n else None, "error_share": err / n if n else None,
-         "net0_half_width": hw}
+         "net0_half_width": hw, "cost2_half_width": hw2,
+         "missing_share_by_delay": {d: missing_share(rows, d) for d in DELAYS},
+         "by_half_sessions": {h: len({r["day"] for r in ok if half(r["day"]) == h}) for h in ("A", "B")}}
     c["void"] = n == 0 or (c["missing_share_d0"] or 0) > MAX_MISSING or (c["error_share"] or 0) > MAX_ERROR
-    c["underpowered"] = hw is None or hw > MAX_HALF_WIDTH
+    c["underpowered"] = hw is None or hw > MAX_HALF_WIDTH or hw2 is None or hw2 > MAX_HALF_WIDTH
     return c
+
+
+def control_minute(ev: dict, fires: list[int]):
+    """amended F5: same symbol and session, same clock hour, >= 15 min from any fire of that symbol, seed FLD-CTL."""
+    h0 = (ev["t"] // 60) * 60
+    cand = [m for m in range(max(h0, T_LO), min(h0 + 60, T_HI + 1)) if all(abs(m - f) >= 15 for f in fires)]
+    if not cand:
+        return None
+    return random.Random(f"FLD-CTL|{ev['day']}|{ev['symbol']}|{ev['t']}").choice(cand)
+
+
+def control_rows(rows, fires_by, data) -> list[dict]:
+    out = []
+    for r in rows:
+        if r.get("status") != "ok" or "net0" not in r:
+            continue
+        c = control_minute(r, fires_by.get(f"{r['day']}|{r['symbol']}", []))
+        if c is None:
+            continue
+        try:
+            q0 = data.quote(r["symbol"], M.minute_ts(r["day"], c + 1))
+        except M.MH.FetchError:
+            continue
+        m = measure({"day": r["day"], "symbol": r["symbol"], "t": c}, data, q0, delays=(0,))
+        if "net0" in m:
+            out.append({"day": r["day"], "lift": r["net0"] - m["net0"]})
+    return out
+
+
+def lift_stat(ctl) -> dict:
+    return {"all": stat(per_session(ctl, get("lift"))),
+            **{h: stat(per_session([r for r in ctl if half(r["day"]) == h], get("lift"))) for h in ("A", "B")}}
 
 
 def past(stop_at: str) -> bool:
@@ -190,13 +254,15 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     data = M.QuoteData.live()
     data.dir = M.OUT / "cache"            # same quote rule and key space as move_to_cost_hist
-    rows, st, run, done = [], Counter(), M.sessions(), 0
+    rows, st, run, done, fires_by = [], Counter(), M.sessions(), 0, {}
     run = [(d, p) for d, p in run if M.FIRST <= d <= M.LAST]
     with ProcessPoolExecutor(max_workers=a.workers) as ex:
         for i, res in enumerate(ex.map(day_events, run, chunksize=2), 1):
             if past(a.stop_at):
                 print(f"stopped at {a.stop_at} ET after {done} sessions", file=sys.stderr)
                 break
+            for ev in res["events"]:
+                fires_by.setdefault(f"{ev['day']}|{ev['symbol']}", []).append(ev["t"])
             kept, s2 = draw_session(res["events"], data)
             rows += kept
             st.update(s2)
@@ -210,6 +276,9 @@ def main() -> int:
     res = {"count": c}
     if c["complete"] and not c["void"] and not c["underpowered"]:
         res["result"] = verdicts(rows)
+        if res["result"]["signal"] == "CONTROL_NEEDED" and not past(a.stop_at):
+            ctl = control_rows(rows, fires_by, data)
+            res["result"] = verdicts(rows, lift_stat(ctl))
     else:
         res["result"] = "INCOMPLETE" if not c["complete"] else ("VOID" if c["void"] else "UNDERPOWERED")
     (OUT / "result.json").write_text(json.dumps(res, indent=1, default=str))

@@ -26,11 +26,24 @@
  "information_only": [
   "Delay cost(5); net(2), net(5).",
   "Early window (fires 09:45-10:30, the Leg-1 window) vs the rest of the day, same measures.",
-  "By SIP spread at e:00 (<= 5, 5-15, > 15 bp).",
-  "10-minute exit at d = 0 for comparison with move_to_cost_hist."
+  "By SIP spread at e:00 (<= 5, 5-15, > 15 bp)."
  ],
  "not_this_study": "The desk's exits (trail, dead-trade) are not simulated: a fixed 3-minute mid-to-mid hold. exits-keep-a-fast-edge (10/21) says live exits keep 70-78% of a 3-minute edge, so a 3-minute mid edge below ~+11 bp gross does not survive the desk's costs and exits. The population is the broad warehouse universe at $20-200, not the desk's movers; a NO_EDGE reading is about this signal on this population.",
  "no_retuning": "No other delay, horizon, sample size or price band is scored as a verdict.",
  "data_budget": "<= ~16,000 SIP quote requests (5 distinct seconds per kept event: e, e+2, e+3, e+5, e+8, plus skips), data-only key, after hours, one heavy Alpaca job at a time.",
- "script": "tools/studies/first_leg_delay_hist.py (count -> score), reusing move_to_cost_hist (events, draw, QuoteData), written after a result-skeptic READY."
+ "script": "tools/studies/first_leg_delay_hist.py (count -> score), reusing move_to_cost_hist (events, draw, QuoteData), written after a result-skeptic READY.",
+ "amended": {
+  "when": "2026-10-30 ~05:05 ET, after result-skeptic round 1 (FIX FIRST, F1-F7), before any fetch.",
+  "R0_precedence": "Where this block conflicts with an earlier key, this block governs.",
+  "F1_verdicts": "EDGE_AT_SIGNAL: net(0) lower bound > 0 all sessions AND point > 0 in both halves AND (control stage) net(0) minus the control's net > 0 in both halves. NO_EDGE_EVEN_AT_SIGNAL: net(0) upper bound < +2 bp AND not EDGE_AT_SIGNAL. If net(0) lower > 0 but upper < +2, the label is EDGE_BELOW_MARGIN (too small to pay; see not_this_study). SPEED_MATTERS is reported alongside either one; it does not override them. If net(0) <= 0, SPEED_MATTERS reads 'waiting is worse, but the signal is not profitable.'",
+  "F2_seen_before": "Same sessions and event population as move_to_cost_hist; NO_EDGE is expected from the seen 10-minute number and confirms it rather than testing it independently. The new information is the 3-minute gross and the delay costs.",
+  "F3_cost": "net(d) = gross(d) - (spread(e+d) + spread(e+d+3)) / 2, both SIP quoted spreads in bp of mid. Full spread at entry is reported as secondary, for continuity with move_to_cost_hist.",
+  "F4_power": "Count stage prints, before any mean, the all-session 95% half-width (t at n-1 df times the session-mean se) of net(0) and of delay cost(2), plus kept, sessions and missing share per delay and per half. UNDERPOWERED, and the study stops, if either half-width > 3 bp.",
+  "F5_control": "Control stage, run only if net(0) lower bound > 0: for each scored event, a same-symbol, same-session minute in the same clock hour, at least 15 minutes from any fire, seed 'FLD-CTL', with the same d=0 measure. EDGE_AT_SIGNAL requires the lift > 0 in both halves.",
+  "F6_missing": "Missing share reported per delay. SPEED_MATTERS is VOID if more than 10% of kept events lack the d=2 pair.",
+  "F7_not_this_study": "d=0 is the bar-close proxy at e:00.000. Live bars arrive seconds later, and the live arm runs on the engine's streaming lines, which may come before or after this proxy. The 2- and 5-minute delays are far longer than the desk's arm-to-fill latency (seconds, up to ~70 s), so SPEED_MATTERS does not price the desk's actual delay. Not out of sample relative to move_to_cost_hist (F2). SIP NBBO quotes; the live desk trades on IEX bars.",
+  "split": "Warehouse bars are split-adjusted; every price here is a raw SIP quote, so the adjustment does not enter.",
+  "no_range_filter": "move_to_cost_hist's range-missing drop is NOT carried over; fires at t 585..590 are kept.",
+  "budget": "The 10-minute information item is dropped (5 quote times per event: e, e+2, e+3, e+5, e+8). The move_to_cost_hist quote cache is reused (same rule and keys). Stops launching sessions at 09:15 ET; a run that does not finish is INCOMPLETE and not scored."
+ }
 }
