@@ -41,7 +41,16 @@
   "F6_power": "Pass (6) applies to the primary (conditioned) subset of half B.",
   "F7_transfer": "Live check becomes a guard: if >= 10 SIP-wide desk fills (10/14-10/29), recall at X must be >= 20%, else NOT TRANSFERABLE.",
   "F8_switch_off": "Replaces if_usable's switch-off: every live refusal is logged (symbol, ts, IEX bid/ask, age); after >= 5 sessions and >= 10 refusals, stop if precision against next-day historical SIP is < 35%.",
-  "existing_gate": "ai_max_spread_r (2.0) is already an IEX-based check on the fill path (ai_entry_watch.py ~19801); the new knob is evaluated at the same point and must not double-count it (refusals by the existing check are reported, not attributed to X).",
+  "existing_gate": "ai_max_spread_r (2.0) is already an IEX-based check on the fill path (ai_entry_watch.py ~19801); the new knob is evaluated at the same point and must not double-count it (refusals by the existing check are reported, not attributed to X). Hist: not applied. Live: reported only.",
   "data_budget": "Raised to ~12,500 requests (IEX at ts, SIP at ts - 16 min) plus the live check."
+ },
+ "amended_2": {
+  "when": "2026-10-30 ~06:20 ET, result-skeptic round 2 (FIX FIRST): G1-G5 and stage 0 applied verbatim, before any fetch.",
+  "G1_pass_1b": "Replaces amended F4_pass_1 (1b): per-session gross of refused minus kept (sessions with >= 1 refused and >= 1 kept, std_scorer.day_stat). If the 95% LOWER bound is > 0 (refusals remove significantly better gross), the result is NOT USABLE. If the point estimate is > 0 but not significant, the result reads USABLE-GROSS-UNCERTAIN, and the switch-off must also monitor refused gross.",
+  "G2_endpoint": "Replaces F2_endpoint_check's pass condition: Comparable = desk order rows with both bid and ask logged (price_src == 'quote'). Match = some IEX historical quote stamped in [log ts - 3 s, log ts] equals the logged bid and ask within 1 cent. Pass (7): >= 90% match with n >= 30. If n < 30 the endpoint is UNVERIFIED and the verdict cannot be USABLE.",
+  "G3_delayed_input": "SIP at ts - 16 min uses the move_to_cost_hist rule (last usable quote at or before ts - 16 min, age <= 15 s). No usable quote means the moment is excluded from the primary, because the live gate refuses unknowns. The threshold is the live ai_watch_max_sip_spread_pct read from the mini's bot_config.json and recorded here before fetching: 0.15 (read 2026-10-30 ~06:15 ET; config last changed in 5d3ff370). Ties in the F3 control ranking are broken by sha256('IEXC'|day|sym|t).",
+  "G4_verdict_order": "VOID (errors > 5% or (7) failed) -> UNDERPOWERED ((6)) -> NOT USABLE (any of (1b), (2), (3), (4), (5) or the F7 guard missed) -> USABLE.",
+  "stage_0": "Stage 0 (count, before any IEX fetch): fetch only SIP at ts - 16 min (about 5,500 requests). Report per half the primary n, the SIP-wide count in the primary, the base rate, and the mean SIP spread of primary-wide moments. If B's primary-wide count is < 150 or covers < 30 sessions: UNDERPOWERED. Stop and do not fetch IEX; the finding is 'the delayed gate leaves too few wide orders for an order check to matter'.",
+  "declared": "The round-2 reviewer estimates (not measured) 65-110 primary-wide moments in B, so stage 0 is expected to stop the study as UNDERPOWERED."
  }
 }
