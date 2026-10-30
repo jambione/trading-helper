@@ -1,0 +1,36 @@
+{
+ "study": "first_leg_delay_hist",
+ "question": "On historical empty-square signals (the desk's arm shape), what does an entry earn over the next 3 minutes, net of the full spread, if made AT the signal versus 2 and 5 minutes later? (1) Is there an edge at the signal that the desk's delay gives away (then removing the delay is worth pursuing)? (2) Or is even the first-moment entry break-even at best (then speed cannot fix the book)?",
+ "operator_sentence": "Operator 2026-10-30 ~07:25 ET in chat: 'it would also help to know these things sooner than having to wait weeks for the answers. At least a confidence score so I can set my expectations', then to the offer of one historical run measuring the first leg directly: 'sure'.",
+ "registered_at": "2026-10-30 ~07:35 ET, before any quote is fetched for this study.",
+ "registered_before_results": true,
+ "seen_before": "move_to_cost_hist (10/30) already measured, on 5,476 empty-square events, the 10-minute mid-to-mid move from the entry second e:00: about +0.9 bp gross, about -5 bp net of the full spread. The 3-minute horizon and later entries are unseen. memory: waiting after a signal for a dip cost 14-36 bp (10/14-10/16); exits keep 70-78% of a 3-minute edge and the break-even entry edge is ~+11 bp at 3 minutes (10/21).",
+ "prior": "Mostly against an edge at the signal (the 10-minute number is ~+1 bp gross; entry setups have scored noise-equivalent). For a delay cost: waiting has measured negative before. Prior: net(0) between -6 and -2 bp; delay cost 0 to 3 bp.",
+ "events": "As move_to_cost_hist: pitch_open empty-square fires on warehouse IEX 1-minute lines (fast 21/EMA 7, slow 112/EMA 3, previous session warm-up), fires on 585..920 with the 15-minute refractory, kept for decision minutes t 585..910 (the latest exit e+5+3 = t+9 ends by 15:20); entry base e = t + 1, at e:00 (bar t has just completed). No range filter. Sessions 2026-05-11..2026-09-25 (9/28-10/13 excluded). Halves A 05-11..07-29, B 07-30..09-25.",
+ "draw": "Per session, walk events in sha256('FLD'|day|symbol|t) order; fetch the SIP quote at e:00; keep if its mid is $20-$200, else skip (counted). Stop at 30 kept events per session. No usable e:00 quote = kept as missing (counts toward 30 and toward VOID).",
+ "measure": {
+  "quote": "Last usable SIP quote at or before the second (bid > 0, ask > bid, age <= 15 s), as move_to_cost_hist (data-only key, retried 3x; an unresolved error counts against that event only).",
+  "entries": "Delay d in {0, 2, 5} minutes: entry at (e+d):00, exit at (e+d+3):00.",
+  "gross": "gross(d) = mid(exit) / mid(entry) - 1, bp.",
+  "net": "net(d) = gross(d) - full SIP spread at (e+d):00 in bp (the desk's standard: the full spread charged once).",
+  "missing": "An event is scored at a delay only when both of that delay's quotes are usable. More than 10% of kept events missing at d = 0 = VOID; > 5% fetch errors = VOID."
+ },
+ "statistic": "Per session, mean over that session's scored events; sessions equal-weighted, day-clustered (std_scorer.day_stat), two-sided 95% bounds with t at n-1 df. Delay cost(k) = per session mean of [gross(0) - gross(k)] over events scored at both delays.",
+ "verdicts": {
+  "EDGE_AT_SIGNAL": "net(0) lower bound > 0 over all sessions AND net(0) point > 0 in both halves. Reading: there is profit at the first moment; removing the delay is worth pursuing, sized by delay cost.",
+  "SPEED_MATTERS": "delay cost(2) lower bound > 0 over all sessions AND point > 0 in both halves. Reading: each minute of delay gives away measurable gross.",
+  "NO_EDGE_EVEN_AT_SIGNAL": "net(0) upper bound < +2 bp (the operator's 2 bp margin) over all sessions. Reading: even a zero-delay entry on this signal does not clear its own spread; speed alone cannot make the book positive.",
+  "UNCLEAR": "None of the three; the bounds and point estimates are reported as they are."
+ },
+ "power": "Count first: kept events and sessions per half, and the placebo MDE of net(0) (200 draws, sign-flipped session means, seed 'FLD-MDE'). UNDERPOWERED if the all-session 95% half-width of net(0) exceeds 3 bp.",
+ "information_only": [
+  "Delay cost(5); net(2), net(5).",
+  "Early window (fires 09:45-10:30, the Leg-1 window) vs the rest of the day, same measures.",
+  "By SIP spread at e:00 (<= 5, 5-15, > 15 bp).",
+  "10-minute exit at d = 0 for comparison with move_to_cost_hist."
+ ],
+ "not_this_study": "The desk's exits (trail, dead-trade) are not simulated: a fixed 3-minute mid-to-mid hold. exits-keep-a-fast-edge (10/21) says live exits keep 70-78% of a 3-minute edge, so a 3-minute mid edge below ~+11 bp gross does not survive the desk's costs and exits. The population is the broad warehouse universe at $20-200, not the desk's movers; a NO_EDGE reading is about this signal on this population.",
+ "no_retuning": "No other delay, horizon, sample size or price band is scored as a verdict.",
+ "data_budget": "<= ~16,000 SIP quote requests (5 distinct seconds per kept event: e, e+2, e+3, e+5, e+8, plus skips), data-only key, after hours, one heavy Alpaca job at a time.",
+ "script": "tools/studies/first_leg_delay_hist.py (count -> score), reusing move_to_cost_hist (events, draw, QuoteData), written after a result-skeptic READY."
+}
