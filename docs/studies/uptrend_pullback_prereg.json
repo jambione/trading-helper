@@ -34,5 +34,15 @@
   "power": "MDE = pitch_open.mde (2.84 * sd / sqrt(days)). If a half has < 300 events, verdict UNDERPOWERED; no threshold cell substitutes.",
   "multiplicity": "About the 9th %R timing rule on these sessions (OSL, PRE, SQ, BOTHUP, MID, pitch x3, trend_dip). Conditions (2)-(3) equal trend_dip's dip=-80 trigger; a pass in one is not a replication of the other.",
   "declared_deviations": "completed bars vs intrabar live; RTH-only prior-session warm-up vs live 5 days; SIP open vs a live fill at the ask; ETP list = ticker_filters.is_levered_etp (ticker_filters.py)."
+ },
+ "amended_2": {
+  "when": "2026-10-30 ~11:45 ET, result-skeptic round 2 (FIX FIRST, text only) applied verbatim; reviewer: READY once added.",
+  "u_exact": "For each event t, the u candidates are minutes m in 09:45..15:20, same name and session, with: slow(m) >= -20; no minute within m-15..m+15 where conditions (1)-(4) all hold; m not in t-25..t+3; SIP open of m+1 and SIP close of m+3 both present. Use candidates whose m+1 falls in the same clock hour as t+1 if any exist, else all candidates; pick one with seeded('UTP-u', sym, day, t). u is scored exactly like an event (SIP open of m+1 to SIP close of m+3). With no candidate, lift_u = None for that event: it is counted ('no_u'), dropped from lift_u only, and kept in lift_d, lift_x and net. If no_u > 20% of events in a half, the lift_u condition for that half is UNDERPOWERED and the verdict cannot be PASS. Also report lift_d on the u-scored events.",
+  "x_exact": "x pool at t = other names with a SIP close at t in [$20, $1,000], not is_levered_etp, not split_jump that session, series_ok, and SIP open of t+1 and SIP close of t+3 present.",
+  "price_filter_missing": "An event with no SIP close at t is skipped and counted ('no_price_t').",
+  "bounce_exact": "Bounce lift_d = (SIP close t+4 / SIP close t+1 - 1) minus the same quantity for d's minute c (close c+1 to close c+4), with c drawn exactly as in measure_d.",
+  "d_scope": "d at t+4..t+63 does not overlap the 3-minute measure; 10-minute d overlaps and is information only.",
+  "power_exact": "Count step (no lift means printed): events, days, no_u, no_price_t per half, and MDE = 2.84 * sd(per-day lift_d at 3 min) / sqrt(days). UNDERPOWERED if a half has < 300 events, < 30 days, or MDE > 5 bp; no threshold cell substitutes.",
+  "verdicts_exact": "PASS = all of (1)-(5) in both halves. PROMISING = in both halves lift_d > 0 with t >= 1.5, lift_x > 0, lift_u > 0, net at 5 bp > 0, and the bounce lift_d > 0. UNDERPOWERED as in power_exact. Every other outcome with power met = FAIL."
  }
 }
