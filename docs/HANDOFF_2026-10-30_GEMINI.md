@@ -11,6 +11,10 @@ The operator has two levers:
 
 The desk is a paper desk (Alpaca paper) on the Mac mini (`ssh mac-mini`). Recent book: about −5 bp per trade over 350 trades from 10/14 to 10/29.
 
+## The standard desk (operator 10/30)
+
+This week's desk is the baseline: docs/BASELINE_2026-10-30.md, config/baselines/standard_2026-10-30.json, git tag `standard-2026-10-30`. Judge every change against it, and pin it as REF in replays.
+
 ## House rules
 
 - **No mid-session trading changes without asking the operator.** The default is after the close. Read-only tools are fine at any time.
