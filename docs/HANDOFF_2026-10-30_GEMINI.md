@@ -1,52 +1,57 @@
 # Handoff to Gemini — Fri 2026-10-30 to Tue 2026-11-03
 
-Written by Claude at ~05:05 ET Fri. The operator decides; you run the work. Read this file, then `docs/running_list.md` (rows 34-44).
+Updated by Claude ~12:15 ET Fri; Claude's usage is running out. The operator decides; you run the work. Read this file, then
+`docs/running_list.md` (rows 34-49), `docs/BASELINE_2026-10-30.md`, and `docs/research/LEVER1_REFRAME_2026-10-30.md`.
 
-## The goal
+## The goal (operator 10/30)
 
-The operator has two levers:
-
-1. **Catch the first leg (Leg 1).** Remove the delay so the desk gets into a mover's first run, not the tail.
-2. **Keep losers out.**
-
-The desk is a paper desk (Alpaca paper) on the Mac mini (`ssh mac-mini`). Recent book: about −5 bp per trade over 350 trades from 10/14 to 10/29.
+- **The goal:** income from a day-trading system the operator trusts. Everything else is a bonus.
+- **Horizon:** keep going until the operator is out of ideas. Never recommend quitting. Frame results as "this idea is closed, here is the next one".
+- **Style:** day trading only. No desk that holds a few trades for hours.
+- **The two levers:**
+  1. Catch the first leg (get in sooner).
+  2. Keep losers out.
 
 ## The standard desk (operator 10/30)
 
-This week's desk is the baseline: docs/BASELINE_2026-10-30.md, config/baselines/standard_2026-10-30.json, git tag `standard-2026-10-30`. Judge every change against it, and pin it as REF in replays.
+**This week is the baseline:** 10/26-10/29, 101 trades, 59% win, -0.6 bp/trade, improving daily.
+- Files: docs/BASELINE_2026-10-30.md, config/baselines/standard_2026-10-30.json, git tag `standard-2026-10-30`.
+- Judge every change against it, and pin it as REF in replays.
+- It keeps trading unchanged; each session extends its record.
+- Today (10/30) its first losers were quiet "tight"-source megacaps (KO, WMT). Nothing changed in config or trading code.
 
 ## House rules
 
-- **No mid-session trading changes without asking the operator.** The default is after the close. Read-only tools are fine at any time.
-- **Studies follow one order:**
-  1. Write a prereg (`docs/studies/*_prereg.json`).
-  2. The result-skeptic reviews it. Two rounds; fix text is applied verbatim.
+- **Mid-session:** no trading changes without asking the operator; the default is after the close. Read-only tools are fine at any time.
+- **Study order:**
+  1. Write a prereg (`docs/studies/*_prereg.json`) with a written confidence estimate.
+  2. The result-skeptic reviews it: two rounds, with fix text applied verbatim.
   3. The operator says READY.
-  4. Then build, then run.
+  4. Then build, code-review if the code is new, and run.
 
   Never change a prereg after seeing results. Positive results go back to the skeptic before anything ships.
-- **One heavy Alpaca job at a time.** Historical-quote jobs use the data-only key (`secrets_data.json`). Replays run after hours only.
-- **"Ship it" means:** commit, push, pull on the mini, then restart the desk with `launchctl kickstart -k gui/$(id -u)/com.jambi.trading-desk`. If a restart breaks the AGY login, alert the operator, who restarts it.
-- **The mini cannot `git push`.** Commit there, fetch from the MacBook, and push from the MacBook.
-- **Live knobs live in `config/bot_config.json`** (hot reload). `signal_engine.env` is not read for them.
-- **Keep the running list updated:** `docs/running_list.md`.
+- **Alpaca:** one heavy Alpaca job at a time. Historical jobs use the data-only key (`secrets_data.json`). Replays run after hours only. Warehouse-only studies (no Alpaca) may run any time at `nice -n 19`.
+- **"Ship it" means:** commit, push, pull on the mini, and restart the desk with `launchctl kickstart -k gui/$(id -u)/com.jambi.trading-desk`. If a restart breaks the AGY login, alert the operator.
+- **The mini cannot `git push`.** Commit there, then push from the MacBook.
+- **Live knobs** live in `config/bot_config.json` (hot reload).
+- **CI:** the GitHub "Secret Scan" fails on high-entropy strings. Audit false positives into `.secrets.baseline`, or add `# pragma: allowlist secret` (see commit 1b2e4379).
 
-## Running right now
+## Running right now (mini, low priority, warehouse only — no Alpaca, no effect on the desk)
 
-**`first_leg_delay_hist`** (READY, operator "Accept and run").
-- Started 05:00 ET on the mini. It should finish around 06:25 and stops itself at 09:15.
-- Log: `~/repo/trading-helper/logs/first_leg_delay.log`. Result: `~/replay_runs/first_leg_delay/result.json`.
-- It answers whether an empty-square entry earns money over 3 minutes at the signal (net of half the spread at entry plus half at exit), and what a 2- or 5-minute delay costs.
-- Labels:
-  - `signal`: EDGE_AT_SIGNAL / EDGE_BELOW_MARGIN / NO_EDGE_EVEN_AT_SIGNAL / NOT_ABOVE_CONTROL / CONTROL_NEEDED / UNCLEAR
-  - `speed`: SPEED_MATTERS / not shown / VOID
-- Expected: NO_EDGE_EVEN_AT_SIGNAL. The 10-minute net was already about −5 bp in move_to_cost_hist.
-- **If the label is EDGE_AT_SIGNAL or EDGE_BELOW_MARGIN**, send the result to the result-skeptic (Mode 3) before telling the operator it's an edge.
-- **Report to the operator:** the label, net(0), the delay costs, and the 09:45-10:30 split. Use plain words and give your confidence.
+1. **`trend_dip`** (operator's 10/17 idea, READY 10/30): `tools/studies/trend_dip_sweep.py --score --workers 2`.
+   - Log: `logs/trend_dip.log`; it writes its report itself.
+   - Picks one cell on half A and confirms it on held-out B.
+   - **Any PASS / PROMISING is PROVISIONAL** until it is rerun on 20+ sessions after 10/15.
+2. **`uptrend_pullback`** (the operator's TCOM pattern: slow %R high, fast dips and turns up; READY 10/30). It starts automatically when trend_dip finishes, `count` then `score`.
+   - Log: `logs/uptrend_pullback.log`. Results: `ai_reports/uptrend_pullback/{count,result}.json`.
+   - Labels: PASS / PROMISING / UNDERPOWERED / FAIL.
+   - Information lines include the operator's inverse exit (fast rolling over from the top).
+3. **Both:** about 15% PASS each. A PASS/PROMISING goes to the result-skeptic (Mode 3) before anything else.
+   - If one passes, it becomes a candidate **second arm** next to the empty square. It does not replace it. See "Multi-arm rule" below.
 
 ## Tonight (Fri, after the close) — the operator must start it or tell you to
 
-`scripts/night_2026-10-30.sh` is already on the mini. Start it after the 16:05 snapshot. Do not start it before 16:40: its wait check treats any time after 20:00 as done, so it must run after the nightly job.
+Start it after the 16:05 snapshot and not before 16:40; its wait check treats any time after 20:00 as done:
 
 ```bash
 cd ~/repo/trading-helper && nohup scripts/night_2026-10-30.sh > logs/night_2026-10-30.log 2>&1 &
@@ -54,46 +59,69 @@ cd ~/repo/trading-helper && nohup scripts/night_2026-10-30.sh > logs/night_2026-
 
 It runs, in order:
 
-1. **square_relax fidelity rerun on 10/27.** This is the replay with the held-name fix, 6ddfbfa3.
-   - Pass needs code shares within 0.5-2x of live, buy recall ≥ 0.85 and a median offset ≤ 10 s.
-   - Expected: ARM_OK about 0.5% (ok). tape_only about 1.75x and wr_no_history about 0.5x are knife edges.
-   - **A FAIL is final.** square_relax is then NOT TESTABLE, per its stop rule. Do not change the harness.
-2. **iex_order_spread_calibration stage 0.** About 5,500 delayed-SIP reads.
-   - It counts how many orders are wide (SIP > 15 bp) after the 16-minute-delayed gate passed them.
-   - If half B has fewer than 150 such orders, or they cover fewer than 30 sessions: UNDERPOWERED. Stop, and fetch no IEX.
-   - Expected: UNDERPOWERED. The skeptic estimates 65-110.
-3. **square_relax primary, controls and info.** These run only if step 1 passed, with stop-at 08:45.
+1. **marketable_limit_hist** (READY): would capping the entry at the desk's own send price + 5 bp have cut losses?
+   - Labels: PROMISING / SPREAD-EQUIVALENT / NOT USEFUL / UNDERPOWERED.
+   - PROMISING earns a paper forward test using the existing `ai_entry_order_style` limit mode, with pad 0.05.
+2. **square_relax fidelity rerun on 10/27.** A FAIL is final (NOT TESTABLE).
+3. **iex_order_spread_calibration stage 0.** Expected UNDERPOWERED; if so, fetch no IEX.
+4. **square_relax primary, controls and info.** These run only if step 2 passed.
+5. **ORB long-history fetch:** `orb_in_play.py --fetch-daily`, `--fetch-open`, `--fetch-day`, then the count.
+   - About 35k SDK calls; it runs into the weekend.
+   - The count prints only power; `--score` refuses unless it is powered.
+   - Score with `--skeptic-ready <round ids> --prereg-commit <sha>` only after the count shows `powered: true`.
 
-Report each verdict the next morning. Do not interpret square_relax primary results until all phases are done and the reader (`tools/studies/square_relax_read.py`) has run.
+Report each verdict the next morning in plain words, with your confidence.
+
+## After the close (to write up for the operator's OK — do not ship without it)
+
+- **Seat-churn plumbing fix.**
+  - Names evicted as `never_armable` / `dead_unknown` and later re-seated and bought (about 26 names 10/16-10/29) waste seat time.
+  - Write up a fix and its test. The operator wants the plumbing fixed even though it adds no profit on the current signal.
+  - Diagnosis is in running list rows 46-47; the script is the scratchpad `seat_why.py` logic, which reads `~/replay_runs/lag_breakdown_recent.json`, the admit ledgers and `events.jsonl`.
+- **Engine-print recording.** The recorder lacks the engine's real-time print times, which weakens replay fidelity. Propose a recording-only change.
 
 ## Decided this week (do not reopen)
 
-- **move_to_cost: CLOSED, NOT SUPPORTED** (well powered). The "sideways names lose" pattern was the spread itself. A widest-spread cut beats it.
-- **stale_age: CLOSED, NOT TESTABLE.**
-  - Its replay judges staleness by print age. Live judges by where the print came from.
-  - Its 10/13 fidelity day ran the wrong strategy pins.
-  - Live tape_only is only 7.6% of arm checks.
-- **order_spread_replay: WITHDRAWN** (underpowered, and cost-only by construction). It was replaced by the IEX calibration.
-- **Overnight book and tight-trail nightlies: RETIRED** by the operator. Do not propose overnight work.
-- **Sizing:** move to 3 slots × 33% only once the book is consistently positive.
-- **Losers by exit (never-green cut):** the operator said "Not now". Parked.
+- **move_to_cost:** NOT SUPPORTED. It was the spread.
+- **stale_age:** NOT TESTABLE on the replay.
+- **order_spread_replay:** WITHDRAWN.
+- **Overnight book and tight-trail nightlies:** RETIRED.
+- **first_leg_delay_hist** (VOID: 14.6% missing quotes; strong but unofficial):
+  - the empty square has no edge even at the instant it fires (3-min gross -0.2 bp);
+  - a 2-5 minute delay costs nothing measurable;
+  - 09:45-10:30 entries cost the most.
+- **The empty square buys the top of leg 1 by design.** It needs both %R lines high (KO/WMT 10/30: refused `exh_not_tight` through the leg, then bought the top).
+- **Plumbing:** arm-to-fill is fixed (2.0 to 0.4 min). The remaining delay is the signal's own wait and the seat churn.
+- **Sizing:** 3 x 33% only once the book is consistently positive.
+- **The never-green cut and the other exit re-tests:** parked behind a Leg-1 edge trigger (row 45).
 
-## Next, in order (operator priorities)
+## Multi-arm rule (operator 10/30)
 
-1. Read `first_leg_delay_hist`.
-2. Read tonight's queue (square_relax fidelity, IEX stage 0).
-3. **open_spread_replay** (READY, built, knobs off). It needs a passing REF fidelity on the same harness, so it runs only if square_relax's fidelity passes. Queue it after square_relax finishes.
-4. **Board ranking** (no prereg yet). At 09:58 on 10/29 the board held slow megacaps while +5-28% movers waited. Answer first whether steady names suit the empty-square entry better than fast movers.
-5. **Premarket T1 simulation** (READY `b46fdc22`). Runs only after the Leg-1 tests have run.
-6. **Later:** fix the slope_now replay pitch bug (pitch present 39% in replay vs 70% live); slope-now winners vs losers; lower the price floor; marketable-limit entries; the real-time SIP decision.
+The desk already supports several arm types (`arm_bucket` per entry); `ai_watch_presquare_only` currently restricts it to the empty square.
+- A new arm earns a slot only through its own test (prereg, skeptic, READY), then a paper forward test next to the standard desk with a switch-off rule.
+- Switch on one arm at a time.
+- Arms compete for the 5 slots by measured results.
+- The empty square stays until something beats it.
+
+## Backlog (running list rows 48-49), day trading only
+
+1. **The cost stack:** marketable limit tonight, then buy-stop entry plus order-flow confirmation (both proven small, about +2 bp).
+2. **ORB** as an entry signal (this weekend's fetch). If it passes, test an intraday-exit version that is flat before the close.
+3. **The %R uptrend pullback** (trend_dip and uptrend_pullback, running now).
+4. **Catalyst day trades:** earnings and news gappers, first-pullback entry.
+5. **Board ranking:** tight-source megacaps vs movers.
+6. **Real-time SIP**, only after a free-data test points there.
+
+Parked with triggers: exit re-tests, a lower price floor, sizing up, the day-hold read (~11/13), the floor-20 window (~Dec).
 
 ## Parked re-tests with a trigger (operator 10/30)
 
-Old exit failures were measured on an older desk. Re-test them on the current system's trades (10/14 onward) ONLY if a Leg-1 result shows a real early edge:
+Re-test old exit failures on current-system trades ONLY if a Leg-1 result shows a real early edge:
+- exit capture;
+- holding longer;
+- the never-green cut.
 
-- **Trigger:** `first_leg_delay_hist` signal = EDGE_AT_SIGNAL or EDGE_BELOW_MARGIN, or square_relax / open_spread shows a real early edge.
-- **Then, at the front of the queue (each needs a prereg, the skeptic and the operator's READY):** (1) exit capture: the share of a 3- and 10-minute move the current exits keep; (2) holding longer; (3) the never-green cut.
-- **Otherwise leave them parked:** exits change the win rate, not the mean, and ~350 current-system trades cannot show a few-bp effect. Running list row 45.
+Running list row 45.
 
 ## Before every preregistration (new, operator 10/30)
 
