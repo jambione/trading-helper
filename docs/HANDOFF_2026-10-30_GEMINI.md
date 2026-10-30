@@ -76,10 +76,11 @@ Report each verdict the next morning in plain words, with your confidence.
 
 ## After the close (to write up for the operator's OK — do not ship without it)
 
-- **Seat-churn plumbing fix.**
-  - Names evicted as `never_armable` / `dead_unknown` and later re-seated and bought (about 26 names 10/16-10/29) waste seat time.
-  - Write up a fix and its test. The operator wants the plumbing fixed even though it adds no profit on the current signal.
-  - Diagnosis is in running list rows 46-47; the script is the scratchpad `seat_why.py` logic, which reads `~/replay_runs/lag_breakdown_recent.json`, the admit ledgers and `events.jsonl`.
+- **Seat-churn plumbing fix: BUILT** (row 56). The knob `ai_watch_wait_state_evict_sec` defaults to 0, so nothing changes until it's set.
+  - **After the close:** pull on the mini and restart the desk (the code needs a restart; at 0 nothing changes).
+  - **Turning it on:** propose 600 s to the operator and set it only on their OK.
+  - Turning it on ends the standard desk's record and starts a new one.
+  - Judge it by turn-to-fill minutes (`tools/studies/lag_breakdown_recent.py`) and per-trade net against the standard desk.
 - **Engine-print recording.** The recorder lacks the engine's real-time print times, which weakens replay fidelity. Propose a recording-only change.
 
 ## Decided this week (do not reopen)
@@ -93,6 +94,8 @@ Report each verdict the next morning in plain words, with your confidence.
   - a 2-5 minute delay costs nothing measurable;
   - 09:45-10:30 entries cost the most.
 - **The empty square buys the top of leg 1 by design.** It needs both %R lines high (KO/WMT 10/30: refused `exh_not_tight` through the leg, then bought the top).
+- **Slope-now / %R pitch timing:** CLOSED (operator 10/30). Every pitch band was within about 1.5 bp of random on 230k events. Pitch stays logged, for review only (row 55).
+- **%R dip / pullback timing:** CLOSED (trend_dip and uptrend_pullback FAIL, row 54).
 - **Plumbing:** arm-to-fill is fixed (2.0 to 0.4 min). The remaining delay is the signal's own wait and the seat churn.
 - **Sizing:** 3 x 33% only once the book is consistently positive.
 - **The never-green cut and the other exit re-tests:** parked behind a Leg-1 edge trigger (row 45).

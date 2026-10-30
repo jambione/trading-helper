@@ -816,6 +816,10 @@ DEFAULT_CONFIG = {
     # Drop watching seats stuck on rsi_not_rising / exh_falling / above_max
     # past this grace so arm-ready candidates can enter. 0 disables.
     "ai_watch_unarmable_evict_sec": 90.0,
+    # Seat churn (operator 10/30, SEAT_RETENTION_DESIGN option 1 generalised): seconds a seat may sit in the empty
+    # square's "not yet" states (exh_falling / exh_not_tight / wait_exh) before never_armable or dead_unknown evicts it.
+    # 0 = off (those codes use the 30 s clocks above, as before).
+    "ai_watch_wait_state_evict_sec": 0.0,
     # Soft day CHG% band (admit/rank only — not arm). Prefer +8…+40; soft-demote
     # above soft_max unless pullback + arm-ready + young tape.
     "ai_watch_admit_chg_prefer_min": 8.0,
@@ -1970,6 +1974,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_admit_require_arm_ready",
     "ai_watch_admit_arm_ready_rth_only",
     "ai_watch_unarmable_evict_sec",
+    "ai_watch_wait_state_evict_sec",
     "ai_watch_admit_chg_prefer_min",
     "ai_watch_admit_chg_prefer_max",
     "ai_watch_admit_chg_soft_max",
@@ -2526,6 +2531,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_admit_require_arm_ready",
     "ai_watch_admit_arm_ready_rth_only",
     "ai_watch_unarmable_evict_sec",
+    "ai_watch_wait_state_evict_sec",
     "ai_watch_admit_chg_prefer_min",
     "ai_watch_admit_chg_prefer_max",
     "ai_watch_admit_chg_soft_max",
