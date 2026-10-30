@@ -60,8 +60,9 @@ REQUESTS = [0]
 
 
 def segment(d: str) -> int:
-    """Sessions after the held-out gap form their own segment: look-backs never bridge 01-13 -> 04-27."""
-    return 1 if d >= SEG2 else 0
+    """Look-back segments (prereg session_index, read literally): H1, H2 before the held-out gap, and the sessions after
+    it. A look-back never crosses 2020-12-31 -> 2021-01-04 or 2026-01-13 -> 2026-04-27."""
+    return 2 if d >= SEG2 else (1 if d >= HALVES["H2"][0] else 0)
 
 
 def half_of(d: str) -> str | None:
@@ -117,8 +118,9 @@ def fetch_daily() -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
     pickle.dump(raw_close, open(os.path.join(OUT_DIR, "daily_raw_close.pkl"), "wb"))
     pickle.dump(out, open(os.path.join(OUT_DIR, "daily.pkl"), "wb"))
-    json.dump({"failed": failed, "requests": REQUESTS[0]}, open(os.path.join(OUT_DIR, "daily_fetch_log.json"), "w"))
-    print("names", len(out), "failed", failed, "requests", REQUESTS[0])
+    json.dump({"failed": failed, "sdk_calls_total": REQUESTS[0]},
+              open(os.path.join(OUT_DIR, "daily_fetch_log.json"), "w"))
+    print("names", len(out), "failed", failed, "sdk calls", REQUESTS[0])
 
 
 def universe(daily: dict, raw_close: dict | None = None) -> dict[str, list[str]]:
@@ -157,24 +159,38 @@ def universe(daily: dict, raw_close: dict | None = None) -> dict[str, list[str]]
         top = sorted(x, reverse=True)[:TOP_UNIV]
         out[t] = [s for _, s in top]
         universe.cutoff_dv[t] = top[-1][0] if top else None           # superset check (skeptic r1 #6)
+        universe.size[t] = len(top)                                    # code review: a short universe fails (e)
     return out
 
 
 universe.cutoff_dv = {}
+universe.size = {}
 
 
-def unions(univ: dict[str, list[str]]) -> dict[str, list[str]]:
-    """amended_5: day d is fetched for every name in the top 1,000 on any session in [d, d+14] of its segment (what
-    the 14-session look-back of later days needs)."""
-    days = sorted(univ)
+def sessions_of(daily: dict) -> list[str]:
+    """Every daily session in the fetch windows (the index in_play uses), held-out never included."""
+    return sorted({d for v in daily.values() for d in v if not (HELD[0] <= d <= HELD[1])})
+
+
+def unions(univ: dict[str, list[str]], sessions: list[str] | None = None) -> dict[str, list[str]]:
+    """amended_5: session d is fetched for every name in the top 1,000 on any session in [d, d+14] of its segment (what
+    the 14-session look-back of later days needs). Keyed on every session, warm-up included."""
+    days = sessions if sessions is not None else sorted(univ)
     out = {}
     for i, d in enumerate(days):
         names = set()
         for p in days[i:i + OPEN_LB + 1]:
             if segment(p) == segment(d):
-                names |= set(univ[p])
+                names |= set(univ.get(p, ()))
         out[d] = sorted(names)
     return out
+
+
+def _add_requests(log_name: str) -> int:
+    """Cumulative SDK calls across resumed runs (pagination inside a call is not counted)."""
+    p = os.path.join(OUT_DIR, log_name)
+    prev = json.load(open(p)).get("sdk_calls_total", 0) if os.path.exists(p) else 0
+    return prev + REQUESTS[0]
 
 
 def fetch_open() -> None:
@@ -182,15 +198,14 @@ def fetch_open() -> None:
     cl, failed = _client(), []
     daily = pickle.load(open(os.path.join(OUT_DIR, "daily.pkl"), "rb"))
     univ = universe(daily)
-    un = unions(univ)
+    un = unions(univ, sessions_of(daily))
     out_p, un_p = os.path.join(OUT_DIR, "open.pkl"), os.path.join(OUT_DIR, "open_union.pkl")
     out = pickle.load(open(out_p, "rb")) if os.path.exists(out_p) else {}
     stored = pickle.load(open(un_p, "rb")) if os.path.exists(un_p) else {}
-    old = sorted({s for d in out if d in univ for s in univ[d]})       # the 10/24 run fetched its whole-window union
-    for d in out:
-        stored.setdefault(d, old)
+    if set(out) - set(stored):
+        raise SystemExit("open.pkl has days without a stored union (the 10/24 files must be archived first)")
     for n, d in enumerate(sorted(un)):
-        if d in out:
+        if d in out or not un[d]:
             continue
         a = datetime.fromisoformat(d).replace(hour=9, minute=30, tzinfo=ET)
         rec, ok, syms = {}, True, un[d]
@@ -211,24 +226,26 @@ def fetch_open() -> None:
             for obj, path in ((out, out_p), (stored, un_p)):
                 pickle.dump(obj, open(path + ".tmp", "wb"))
                 os.replace(path + ".tmp", path)
-            print(d, len(rec), "requests", REQUESTS[0], flush=True)
+            print(d, len(rec), "sdk calls", REQUESTS[0], flush=True)
     for obj, path in ((out, out_p), (stored, un_p)):
         pickle.dump(obj, open(path + ".tmp", "wb"))
         os.replace(path + ".tmp", path)
-    json.dump({"failed": failed, "requests": REQUESTS[0]}, open(os.path.join(OUT_DIR, "open_fetch_log.json"), "w"))
-    print("failed", failed, "requests", REQUESTS[0])
+    tot = _add_requests("open_fetch_log.json")
+    json.dump({"failed": failed, "sdk_calls_total": tot}, open(os.path.join(OUT_DIR, "open_fetch_log.json"), "w"))
+    print("failed", failed, "sdk calls (cumulative)", tot)
 
 
-def lookback_misses(univ: dict, opens: dict, stored: dict) -> dict:
+def lookback_misses(univ: dict, opens: dict, stored: dict, sessions: list[str] | None = None) -> dict:
     """amended_5: (d, s, p) misses = a top-1,000 name on d whose look-back session p was not requested for it; and
-    sessions of the window missing from open.pkl."""
-    days = sorted(univ)
+    sessions (warm-up included) missing from open.pkl. Indexed on every session, as in_play is."""
+    days = sessions if sessions is not None else sorted(univ)
     misses = 0
     for i, d in enumerate(days):
         prev = [p for p in days[max(0, i - OPEN_LB):i] if segment(p) == segment(d)]
-        for s in univ[d]:
+        for s in univ.get(d, ()):
             misses += sum(1 for p in prev if s not in set(stored.get(p, ())))
-    missing_sessions = [d for d in days if d not in opens]
+    missing_sessions = [d for d in days if d not in opens and any(univ.get(q) for q in days[days.index(d):
+                                                                                           days.index(d) + OPEN_LB + 1])]
     return {"misses": misses, "missing_sessions": missing_sessions}
 
 
@@ -266,16 +283,16 @@ def fetch_day() -> None:
     out = pickle.load(open(out_p, "rb")) if os.path.exists(out_p) else {}
     n = 0
     for d, rows in sorted(ip.items()):
-        have = out.get(d)
-        if have is not None and SPY in have:
+        have = out.get(d) or {}
+        syms = [s for s in [r[1] for r in rows] + [SPY] if s not in have]     # amended_5: SPY for the hedge
+        if not syms:
             continue
-        syms = [SPY] if have is not None else [r[1] for r in rows] + [SPY]     # amended_5: SPY for the hedge
         a = datetime.fromisoformat(d).replace(hour=9, minute=30, tzinfo=ET)
         got = _get(cl, syms, TimeFrame.Minute, a, a.replace(hour=15, minute=59, second=59), failed, f"day {d}",
                    raw=True)                               # RAW full-day bars: range, trigger and exits (r1 #3)
         if got is None:
             continue
-        rec = dict(have or {})
+        rec = dict(have)
         rec.update({s: [(x.timestamp.astimezone(ET).hour * 60 + x.timestamp.astimezone(ET).minute, x.open, x.high,
                          x.low, x.close) for x in bars] for s, bars in got.items()})
         out[d] = rec
@@ -287,8 +304,9 @@ def fetch_day() -> None:
         time.sleep(0.4)
     pickle.dump(out, open(out_p + ".tmp", "wb"))
     os.replace(out_p + ".tmp", out_p)
-    json.dump({"failed": failed, "requests": REQUESTS[0]}, open(os.path.join(OUT_DIR, "day_fetch_log.json"), "w"))
-    print("days", len(out), "failed", failed, "requests", REQUESTS[0])
+    tot = _add_requests("day_fetch_log.json")
+    json.dump({"failed": failed, "sdk_calls_total": tot}, open(os.path.join(OUT_DIR, "day_fetch_log.json"), "w"))
+    print("days", len(out), "failed", failed, "sdk calls (cumulative)", tot)
 
 
 def walk(rows: list, k: int, entry: float, stop: float, side: int, from_trigger: bool) -> dict:
@@ -420,7 +438,8 @@ def coverage(daily: dict, opens: dict, full: dict) -> dict:
         excluded = sorted(set(excluded) | {"2016"})
     bad_c = sorted(yr for yr, v in out.items() if v["c_top20_fullday_share"] is not None
                    and v["c_top20_fullday_share"] < 0.98)
-    low_cut = sorted(d for d, v in universe.cutoff_dv.items() if half_of(d) and v is not None and v < MIN_CUT_DV)
+    low_cut = sorted(d for d, v in universe.cutoff_dv.items()
+                     if half_of(d) and (v is None or v < MIN_CUT_DV or universe.size.get(d, 0) < TOP_UNIV))
     return {"by_year": out, "excluded_years": excluded, "c_failed_years": bad_c, "e_low_cutoff_days": low_cut}
 
 
@@ -492,7 +511,8 @@ def verdict(longs: list[dict]) -> dict:
     p_hnet, p_hlift = dstats(longs, hnet)[0], dstats(longs, hlift)[0]
     dby = drop_best_year(longs, net)
     c1 = (pooled["mean"] or 0) > 0 and (pooled["t"] or 0) >= T_PASS and (mt["t"] or 0) >= T_PASS
-    c2 = all((halves[h]["net"]["mean"] or 0) > 0 and (halves[h]["hedged_lift"]["mean"] or -1) >= 0 for h in HALVES)
+    c2 = all((halves[h]["net"]["mean"] or 0) > 0 and halves[h]["hedged_lift"]["mean"] is not None
+             and halves[h]["hedged_lift"]["mean"] >= 0 for h in HALVES)
     c3 = (p_hnet["mean"] or 0) > 0 and (p_hlift["mean"] if p_hlift["mean"] is not None else -1) >= 0
     c4 = (dby["mean_without"] or 0) > 0
     fail = ((pooled["t"] is not None and pooled["t"] <= -2)
@@ -539,20 +559,24 @@ def main():
         j = json.load(open(os.path.join(OUT_DIR, lg)))
         if j.get("failed"):
             raise SystemExit(f"{lg} has failures (C4)")
-        reqs[lg] = j.get("requests")
+        reqs[lg] = j.get("sdk_calls_total")
     if not a.score:
         daily = pickle.load(open(os.path.join(OUT_DIR, "daily.pkl"), "rb"))
         opens = pickle.load(open(os.path.join(OUT_DIR, "open.pkl"), "rb"))
         full = pickle.load(open(os.path.join(OUT_DIR, "fullday.pkl"), "rb"))
         stored = pickle.load(open(os.path.join(OUT_DIR, "open_union.pkl"), "rb"))
         univ = universe(daily)
-        lb = lookback_misses({d: v for d, v in univ.items()}, opens, stored)
+        lb = lookback_misses(univ, opens, stored, sessions_of(daily))
         if lb["misses"] or lb["missing_sessions"]:
             raise SystemExit(f"look-back check failed: {lb['misses']} misses, "
                              f"{len(lb['missing_sessions'])} sessions missing (refetch)")
+        ip_days = [d for d, top in in_play(daily, opens).items() if top and half_of(d)]
+        no_full = [d for d in ip_days if SPY not in full.get(d, {})]
+        if no_full:
+            raise SystemExit(f"fullday.pkl lacks {len(no_full)} scored in-play days or their SPY bars: run --fetch-day")
         cov = coverage(daily, opens, full)
         if cov["e_low_cutoff_days"]:
-            raise SystemExit(f"ABORT (coverage e): 1,000th-name cutoff < $20M on {cov['e_low_cutoff_days'][:5]}...")
+            raise SystemExit(f"ABORT (coverage e): fewer than 1,000 names or 1,000th-name cutoff < $20M on {cov['e_low_cutoff_days'][:5]}...")
         if cov["c_failed_years"]:
             raise SystemExit(f"coverage (c) failed for {cov['c_failed_years']}: refetch; if it still fails, ABORT")
         rows, st, refused = build_rows(set(cov["excluded_years"]))

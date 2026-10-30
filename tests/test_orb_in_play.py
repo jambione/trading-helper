@@ -11,7 +11,8 @@ def test_halves_segments_and_warmup():
     assert O.half_of("2016-03-01") == "H1" and O.half_of("2021-06-01") == "H2"
     assert O.half_of("2016-01-15") is None and O.half_of("2026-02-01") is None and O.half_of("2026-05-20") is None
     assert O.half_of("2026-05-26") == "H2"
-    assert O.segment("2026-01-13") == 0 and O.segment("2026-04-27") == 1
+    assert O.segment("2020-12-31") == 0 and O.segment("2021-01-04") == 1
+    assert O.segment("2026-01-13") == 1 and O.segment("2026-04-27") == 2
 
 
 def test_unions_cover_the_lookback_and_never_bridge_the_gap():
@@ -62,3 +63,21 @@ def test_verdict_labels():
     assert flat["label"] == "FAIL"
     assert O.drop_best_year(_longs(), lambda x: x["gross"] - O.COST)["best_year"] is not None
     assert O.month_t(_longs(), lambda x: x["gross"] - O.COST)["months"] > 100
+
+
+def test_unions_keyed_on_every_session_and_split_at_the_half():
+    sessions = ["2020-12-30", "2020-12-31", "2021-01-04", "2021-01-05"]
+    univ = {"2020-12-31": ["A"], "2021-01-05": ["B"]}           # 12-30 and 01-04 have no universe (warm-up)
+    un = O.unions(univ, sessions)
+    assert un["2020-12-30"] == ["A"] and un["2020-12-31"] == ["A"] and un["2021-01-04"] == ["B"]
+    opens = {d: {} for d in sessions}
+    assert O.lookback_misses(univ, opens, un, sessions)["misses"] == 0
+    assert O.lookback_misses(univ, {"2020-12-31": {}, "2021-01-05": {}}, un, sessions)["missing_sessions"] == \
+        ["2020-12-30", "2021-01-04"]
+
+
+def test_zero_hedged_lift_counts_as_not_worse():
+    longs = _longs(lift=0.0)
+    for x in longs:
+        x["ctrl_hedged"] = x["hedged"]                              # lift exactly 0 everywhere
+    assert O.verdict(longs)["checks"]["2_halves_net_and_hedged_lift"]
