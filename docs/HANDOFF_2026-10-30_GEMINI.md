@@ -3,7 +3,7 @@
 The operator may hand this to Grok 4.7 instead of Gemini; everything below applies to whichever model takes it.
 
 Updated by Claude ~12:15 ET Fri; Claude's usage is running out. The operator decides; you run the work. Read this file, then
-`docs/running_list.md` (rows 34-49), `docs/BASELINE_2026-10-30.md`, and `docs/research/LEVER1_REFRAME_2026-10-30.md`.
+`docs/running_list.md` (rows 34-53), `docs/BASELINE_2026-10-30.md`, and `docs/research/LEVER1_REFRAME_2026-10-30.md`.
 
 ## The goal (operator 10/30)
 
@@ -135,6 +135,10 @@ The sweep on 10/26-10/30 covered N = 1-10 minutes and both rule shapes: every se
 2. Amend it for power with more half-A sessions; the held-out window stays reserved.
 3. Two skeptic rounds, then the operator's READY, then score.
 4. If it passes, pre-register the combined 'first-leg start' arm: uptrend context + buy-stop + flow.
+
+**The operator's success criterion for that arm:** fewer trades are fine if it proves consistent profit with fewer losses. Score it on two things:
+- net per trade and per session against the standard desk, consistent across halves and weeks;
+- the empty-square trades it would skip must be the losers.
 
 ## Backlog (running list rows 48-49), day trading only
 
