@@ -479,3 +479,32 @@ def test_default_config_bakes_mid_session_knobs():
     assert DEFAULT_CONFIG["ai_entry_confirm_max_slip_pct"] == 0.5
     # High-but-sane daily loss (not emergency 999, not tight 3.0).
     assert DEFAULT_CONFIG["ai_daily_loss_limit_r"] >= 12.0
+
+
+def _wait_rec(code, age, now):
+    return {"symbol": "WAIT", "status": "watching", "admit_ts": now - 3600.0, "block_code": code,
+            "block_ts": now - age, "unarmable_since": now - age, "last_ask_src": "stream", "last_ask_age_sec": 2.0,
+            "indicator": {"cm_rsi": 50.0, "cm_rsi_rising": True, "pctr": -40.0, "pctr_rising": True}}
+
+
+def test_wait_state_seat_kept_until_its_own_clock(monkeypatch):
+    """ai_watch_wait_state_evict_sec (10/30): exh_not_tight / wait_exh / exh_falling are the square's 'not yet' states."""
+    dropped = []
+    monkeypatch.setattr(ew, "drop_watch_symbols", lambda syms: dropped.extend(syms))
+    monkeypatch.setattr(ew, "evaluate_arm_ready", lambda rec, cfg, now=None: (False, rec.get("block_code")))
+    now = time.time()
+    for code in ("exh_not_tight", "wait_exh", "exh_falling"):
+        # off (0): the old 30 s clock evicts at 120 s
+        dropped.clear()
+        assert ew._maybe_never_armable_evict(_wait_rec(code, 120.0, now), sym="WAIT", cfg=_cfg(),
+                                             now=now, events=[], cp=_FakeCP(), gt=_FakeGT()) is True
+        # on (600 s): kept at 120 s, evicted at 700 s
+        cfg = {**_cfg(), "ai_watch_wait_state_evict_sec": 600.0}
+        assert ew._maybe_never_armable_evict(_wait_rec(code, 120.0, now), sym="WAIT", cfg=cfg,
+                                             now=now, events=[], cp=_FakeCP(), gt=_FakeGT()) is False
+        assert ew._maybe_never_armable_evict(_wait_rec(code, 700.0, now), sym="WAIT", cfg=cfg,
+                                             now=now, events=[], cp=_FakeCP(), gt=_FakeGT()) is True
+    # a non-wait never-armable block keeps the short clock even with the knob on
+    rec = _wait_rec("rsi_extended", 120.0, now)
+    assert ew._maybe_never_armable_evict(rec, sym="WAIT", cfg={**_cfg(), "ai_watch_wait_state_evict_sec": 600.0},
+                                         now=now, events=[], cp=_FakeCP(), gt=_FakeGT()) is True

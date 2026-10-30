@@ -1690,6 +1690,21 @@ def admit_require_arm_ready(cfg: dict | None, now: float | None = None) -> bool:
         return True
 
 
+# The empty square's own "not yet" states: the lines are falling, not close together yet, or close but not high yet.
+# They are the normal path to a square, not a sign the name can never arm (10/16-10/29: 5,458 never_armable drops on
+# these three codes; later-bought names were evicted mid-wait and re-seated minutes later).
+_WAIT_STATE_CODES = frozenset({"exh_falling", "exh_not_tight", "wait_exh"})
+
+
+def wait_state_evict_sec(cfg: dict | None = None) -> float:
+    """Seconds a seat may wait in a square 'not yet' state before eviction. 0 = off (the old 30 s clocks apply)."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(cfg.get("ai_watch_wait_state_evict_sec", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def unarmable_evict_sec(cfg: dict | None = None) -> float:
     """Seconds a never-armable block may stick before eviction. 0 disables."""
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -3522,6 +3537,8 @@ def _maybe_never_armable_evict(
     since = _f_or_none(rec.get("unarmable_since"))
     if since is None or since <= 0:
         return False
+    if code in _WAIT_STATE_CODES and wait_state_evict_sec(cfg) > 0:
+        limit = max(limit, wait_state_evict_sec(cfg))     # a square that is not ready yet keeps its seat longer
     if (float(now) - float(since)) < limit:
         return False
     try:
@@ -3751,6 +3768,8 @@ def _maybe_dead_unknown_evict(
         feed_limit = 0.0
     if feed_limit > 0 and (code in _DEAD_FEED_BLOCKS or (missing_unknown and not dead_block)):
         limit = max(limit, feed_limit)
+    if code in _WAIT_STATE_CODES and wait_state_evict_sec(cfg) > 0:
+        limit = max(limit, wait_state_evict_sec(cfg))
     if (float(now) - float(since)) < limit:
         return False
 

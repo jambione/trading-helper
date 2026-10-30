@@ -76,10 +76,11 @@ Report each verdict the next morning in plain words, with your confidence.
 
 ## After the close (to write up for the operator's OK — do not ship without it)
 
-- **Seat-churn plumbing fix.**
-  - Names evicted as `never_armable` / `dead_unknown` and later re-seated and bought (about 26 names 10/16-10/29) waste seat time.
-  - Write up a fix and its test. The operator wants the plumbing fixed even though it adds no profit on the current signal.
-  - Diagnosis is in running list rows 46-47; the script is the scratchpad `seat_why.py` logic, which reads `~/replay_runs/lag_breakdown_recent.json`, the admit ledgers and `events.jsonl`.
+- **Seat-churn plumbing fix: BUILT** (row 56). The knob `ai_watch_wait_state_evict_sec` defaults to 0, so nothing changes until it's set.
+  - **After the close:** pull on the mini and restart the desk (the code needs a restart; at 0 nothing changes).
+  - **Turning it on:** propose 600 s to the operator and set it only on their OK.
+  - Turning it on ends the standard desk's record and starts a new one.
+  - Judge it by turn-to-fill minutes (`tools/studies/lag_breakdown_recent.py`) and per-trade net against the standard desk.
 - **Engine-print recording.** The recorder lacks the engine's real-time print times, which weakens replay fidelity. Propose a recording-only change.
 
 ## Decided this week (do not reopen)
