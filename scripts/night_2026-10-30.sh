@@ -19,7 +19,7 @@ while pgrep -f "tools/nightly.py" > /dev/null; do sleep 60; done
 say "nightly done"
 
 # R2_sha_pin: archive the bc8e1cfc outputs, then re-pin to this queue's sha.
-if [ "$(cat $OUT/sha.txt 2>/dev/null)" = "bc8e1cfc7a4ac2ba3467c0fcff8e650e4ba773b6" ]; then
+if [ "$(cat $OUT/sha.txt 2>/dev/null)" = "bc8e1cfc7a4ac2ba3467c0fcff8e650e4ba773b6" ]; then  # pragma: allowlist secret (a git commit id)
   mkdir -p $OUT/archive_harness_switch_2026-10-29
   mv $OUT/sha.txt $OUT/fidelity.json $OUT/2026-10-27-FIDELITY.json $OUT/archive_harness_switch_2026-10-29/ 2>/dev/null
   say "archived bc8e1cfc outputs"
