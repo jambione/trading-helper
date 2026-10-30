@@ -129,6 +129,24 @@ Ranked:
 
 Do #1 and #2 first. Every code change gets a design note, tests and the operator's OK. Trading-path changes ship only after the close.
 
+## Engineering work (running list rows 51-52, operator 10/30)
+
+**Safe to do alone** (no trading-path change). Work on a branch; the operator reviews the PR.
+1. **Fill-matched trades table.** Nightly, from Alpaca FILL activities. Reuse `move_to_cost_live.fetch_fills` / `match_fills`.
+2. **Health and freshness alarms.** A per-process watchdog, plus data-age alarms with desktop/phone alerts.
+3. **Standard-desk scorecard.** Nightly, against the baseline.
+4. Study registry.
+5. One-page architecture overview.
+6. Test-suite health: the flake, CI test runs, speed.
+7. Config schema with dead-key warnings.
+8. Dead-code removal.
+
+**Needs the operator's OK:**
+- the live-money readiness checklist;
+- cache and data consolidation.
+
+**Order:** 1, 2, 3 first, then the rest. Each gets a short design note and tests. Never touch `config/bot_config.json` or the trading path without asking. Don't run heavy Alpaca jobs while a study fetch is running.
+
 ## Parked re-tests with a trigger (operator 10/30)
 
 Re-test old exit failures on current-system trades ONLY if a Leg-1 result shows a real early edge:
