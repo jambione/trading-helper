@@ -45,5 +45,15 @@
   "R2_3_unit": "(3) session_sum beats random blocking of the same per-session count in >= 90% of draws; (4) per-session paired difference, session_sum(cap) - session_sum(spread-ranked), mean > 0 with day-clustered t >= 1.0.",
   "R2_4_spread_proxy": "spread proxy = features.ask - features.bid (print minus bid; may be <= 0). Ties are broken by seeded random draw (seed 'MLH-S').",
   "declared": "The round-2 reviewer expects (1), (3) and (4) to pass almost entirely from the slip term; the result is decided by (2), the re-arm model, and read through the F3 decomposition."
+ },
+ "ready": {
+  "when": "2026-10-30 ~06:45 ET",
+  "verdict": "READY",
+  "review_ids": [
+   "round 1 (F1-F9)",
+   "round 2 (R2-1..R2-4 verbatim)"
+  ],
+  "accepted_by": "operator 2026-10-30 in chat: 'I accept' (two-round rule)",
+  "next": "tools/studies/marketable_limit_hist.py with tests; runs after the 10/30 close."
  }
 }
