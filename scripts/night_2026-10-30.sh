@@ -28,11 +28,10 @@ fi
 # F6: a fail here is final (NOT TESTABLE on this replay); the later phases refuse without a pass.
 .venv/bin/python tools/studies/square_relax_run.py fidelity --sha $SHA
 say "fidelity: $(.venv/bin/python -c "import json;print(json.load(open('$OUT/fidelity.json')).get('pass'))" 2>/dev/null)"
+# iex_order_spread_calibration stage 0 (READY b1818e60): ~5,500 delayed-SIP reads, ~30 min, before the long replays.
+.venv/bin/python tools/studies/iex_order_spread_calibration.py stage0
+say "iex stage0 done"
 .venv/bin/python tools/studies/square_relax_run.py primary  --sha $SHA --jobs 3 --stop-at $STOP
 .venv/bin/python tools/studies/square_relax_run.py controls --sha $SHA --jobs 3 --stop-at $STOP
 .venv/bin/python tools/studies/square_relax_run.py info     --sha $SHA --jobs 3 --stop-at $STOP
 say "done"
-
-# iex_order_spread_calibration stage 0 (READY b1818e60): delayed SIP only; IEX stages only if powered.
-.venv/bin/python tools/studies/iex_order_spread_calibration.py stage0
-say "iex stage0 done"
