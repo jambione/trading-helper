@@ -38,18 +38,31 @@ Updated by Claude ~12:15 ET Fri; Claude's usage is running out. The operator dec
 - **Live knobs** live in `config/bot_config.json` (hot reload).
 - **CI:** the GitHub "Secret Scan" fails on high-entropy strings. Audit false positives into `.secrets.baseline`, or add `# pragma: allowlist secret` (see commit 1b2e4379).
 
-## Running right now (mini, low priority, warehouse only — no Alpaca, no effect on the desk)
+## Done today (10/30), recorded
 
-1. **`trend_dip`** (operator's 10/17 idea, READY 10/30): `tools/studies/trend_dip_sweep.py --score --workers 2`.
-   - Log: `logs/trend_dip.log`; it writes its report itself.
-   - Picks one cell on half A and confirms it on held-out B.
-   - **Any PASS / PROMISING is PROVISIONAL** until it is rerun on 20+ sessions after 10/15.
-2. **`uptrend_pullback`** (the operator's TCOM pattern: slow %R high, fast dips and turns up; READY 10/30). It starts automatically when trend_dip finishes, `count` then `score`.
-   - Log: `logs/uptrend_pullback.log`. Results: `ai_reports/uptrend_pullback/{count,result}.json`.
-   - Labels: PASS / PROMISING / UNDERPOWERED / FAIL.
-   - Information lines include the operator's inverse exit (fast rolling over from the top).
-3. **Both:** about 15% PASS each. A PASS/PROMISING goes to the result-skeptic (Mode 3) before anything else.
-   - If one passes, it becomes a candidate **second arm** next to the empty square. It does not replace it. See "Multi-arm rule" below.
+- trend_dip and uptrend_pullback: both FAIL, both powered (row 54).
+- slope-now / pitch timing: CLOSED (row 55).
+- Never-green / below-entry cut: CLOSED (row 57).
+- EXH-high as an arm: same %R-high family; closed.
+
+## buystop_flow — FIRST, before ORB (running list row 53, operator 10/30 'A')
+
+**Done:**
+- Grok committed the 10/24 edits (ab8f24b9).
+- Grok applied two skeptic rounds to the power proposal (72b5cfb8).
+- **The operator said READY.** The proposal is registered verbatim as prereg `amended_5_power`, sha pinned.
+
+**Next, for Grok:**
+1. **Code the ten-day build exactly as the proposal says.** Sessions 2026-04-27..05-08, built through `batch2.t2_step`, in a separate rows file. The frozen keys are untouched, and the half-A cut pairs are frozen.
+2. **Code the pinned arm-B cfg.** Start from `config.DEFAULT_CONFIG`, apply `ai_reports/buystop_flow/pinned_bot_config_837dfd79.json`, and never open `config/bot_config.json`.
+   - **CAUTION:** `module_shas()` covers `ai_entry_watch.py` and `config.py`, and both changed on 10/30 (the seat-churn knob, bfd928df).
+   - The proposal says the frozen sample is NOT rebuilt when `module_shas` changes. Don't let `assert_sample_current` force a rebuild of the frozen 7,975 + 7,975 keys.
+   - Handle this as the proposal specifies, and declare it.
+3. **Tests, then a result-skeptic code review.**
+4. **Fetch the new days** (data-only key, at most 145 trades a day), **then count.**
+   - If both halves meet `floors_met`, fetch arm B for the G1-IN set and run `--score`.
+   - If not: UNDERPOWERED, final; no more sessions.
+5. **Then start ORB:** `nohup scripts/orb_fetch_chain.sh > logs/orb_fetch_chain.log 2>&1 &`.
 
 ## Tonight (Fri, after the close) — the operator must start it or tell you to
 
@@ -67,8 +80,8 @@ It runs, in order:
 2. **square_relax fidelity rerun on 10/27.** A FAIL is final (NOT TESTABLE).
 3. **iex_order_spread_calibration stage 0.** Expected UNDERPOWERED; if so, fetch no IEX.
 4. **square_relax primary, controls and info.** These run only if step 2 passed.
-5. **ORB long-history fetch:** `orb_in_play.py --fetch-daily`, `--fetch-open`, `--fetch-day`, then the count.
-   - About 35k SDK calls; it runs into the weekend.
+5. **ORB is no longer in this queue.** It runs from `scripts/orb_fetch_chain.sh` AFTER buystop_flow's fetch and count. The steps are the same: `--fetch-daily`, `--fetch-open`, `--fetch-day`, then the count.
+   - About 35k SDK calls.
    - The count prints only power; `--score` refuses unless it is powered.
    - Score with `--skeptic-ready <round ids> --prereg-commit <sha>` only after the count shows `powered: true`.
 
