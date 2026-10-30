@@ -61,5 +61,15 @@
   "report": "The per-cell table's last column reads 'B verdict (information only; only the picked cell is graded)'.",
   "prior_add": "LOW: prescreen_turn 10/17 BOTHUP/OSL lift ~0 (n 283k), wr_trend_trade 10/24 FAIL. Only the 10:30 trend selection is new. Not the TCOM test; uptrend_pullback is a second same-family test on these sessions.",
   "pass_add": "If the picked cell's A lift <= 0, FAIL without reading B."
+ },
+ "ready": {
+  "when": "2026-10-30 ~12:05 ET",
+  "verdict": "READY",
+  "review_ids": [
+   "round 1",
+   "round 2"
+  ],
+  "accepted_by": "operator 2026-10-30 in chat: 'Accept READY'",
+  "next": "trend_dip_sweep.py --score on the mini at low priority (warehouse only)."
  }
 }

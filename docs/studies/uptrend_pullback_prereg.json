@@ -19,7 +19,8 @@
   "slow >= -30 and slow >= -10; fast dip <= -70 and <= -90 (no cell is promoted without its own prereg).",
   "Early window 09:45-10:30 vs the rest of the day.",
   "The same rule with slow <= -50 (no uptrend) as a contrast: if it does as well, the slow condition adds nothing.",
-  "Overlap with the live empty square: share of events followed by an empty-square fire within 15 minutes, and the minutes between them."
+  "Overlap with the live empty square: share of events followed by an empty-square fire within 15 minutes, and the minutes between them.",
+  "Operator's inverse exit (10/30 TCOM chart: fast %R rolling over from the top while slow stays high): for each primary event, gross from the SIP open of t+1 to the SIP close of the first minute k >= t+2 where fast(k-1) >= -20 and fast(k) < fast(k-1) - 0.05, capped at t+30; compared with the fixed 3-minute hold. Added before any data, information only; it changes no pass rule."
  ],
  "if_pass": "result-skeptic Mode 3, then a replay test on the standard desk (an arm knob for this pattern, default off) against the standard desk's REF with a matched random arm control, then paper forward with a switch-off rule. Never a direct switch-on.",
  "no_retuning": "Thresholds (-20, -80, -60), the 5-bar dip window, onset/refractory, entry minute, holds, controls, cost and halves are fixed.",
@@ -44,5 +45,15 @@
   "d_scope": "d at t+4..t+63 does not overlap the 3-minute measure; 10-minute d overlaps and is information only.",
   "power_exact": "Count step (no lift means printed): events, days, no_u, no_price_t per half, and MDE = 2.84 * sd(per-day lift_d at 3 min) / sqrt(days). UNDERPOWERED if a half has < 300 events, < 30 days, or MDE > 5 bp; no threshold cell substitutes.",
   "verdicts_exact": "PASS = all of (1)-(5) in both halves. PROMISING = in both halves lift_d > 0 with t >= 1.5, lift_x > 0, lift_u > 0, net at 5 bp > 0, and the bounce lift_d > 0. UNDERPOWERED as in power_exact. Every other outcome with power met = FAIL."
+ },
+ "ready": {
+  "when": "2026-10-30 ~12:05 ET",
+  "verdict": "READY",
+  "review_ids": [
+   "round 1",
+   "round 2"
+  ],
+  "accepted_by": "operator 2026-10-30 in chat: 'Accept READY'",
+  "next": "tools/studies/uptrend_pullback_hist.py with tests; warehouse only, runs at low priority."
  }
 }
