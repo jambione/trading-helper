@@ -106,6 +106,16 @@
    ],
    "accepted_by": "operator 2026-10-30 in chat: 'Accept both' (two-round rule)",
    "next": "Read-only diagnosis (a)-(f) on 10/27 and 10/13 recorded files and bc8e1cfc outputs; no rerun until it explains all four gaps."
+  },
+  "diagnosis_result": {
+   "when": "2026-10-30 ~07:15 ET, read-only (10/27 live decision ledger; the bc8e1cfc 10/27 replay ledger kept by square_relax's fidelity run, same sha and stale_age pins; 10/13 recorder_config and run log).",
+   "a_live_recount": "Live arm rows aged (15,30]: 702 (stream 476, stale_tape 226); one per symbol per 30 s: 470 / 214. tape_src takes only stream/stale_tape (no quote fallback).",
+   "b_live_code_vs_PrintAges": "Replay rows aged (15,30] by the live code's own decision_price label, non-held: stream 811 (266 passed the tape check, 545 refused tape_only by the PrintAges age verdict), stale_tape 642. Judged as live judges, the replay would ACCEPT ~811 vs live 476: the 10/27 accepted shortfall (467) is entirely the PrintAges age-mode verdict (>100%).",
+   "refused_excess_10_27": "1,071 (1,297 vs 226) splits into: PrintAges overriding stream labels 556 (52%), the replay's own stale_tape labels 642 vs 226 (416, 39%; rows per symbol-minute 5.45 vs 4.44 explains ~1.2x of the 2.8x), held names 43 (4%). No single part reaches 80%.",
+   "e_quote_fallback": "0: neither side logs a quote-source row in the band.",
+   "f_10_13": "Named cause for recall 0.05: the 10/13 fidelity replay ran the study pins (presquare_only true, wr_trend 15, 5m veto, $20 floor) on a day live ran presquare_only false, wr_trend 0, $10 floor, max positions changing 5/100/2: a different strategy, so its buys and refusal counts cannot match live by construction. The 10/13 refused excess (2,056) is not decomposed (no kept replay ledger).",
+   "verdict": "Under the 80% rule the 10/27 refused excess and the 10/13 refused excess are unexplained by any single part: stale_age is NOT TESTABLE on this replay, closed without a rerun (stop rule). The diagnosis also shows the gate compares an age-mode REF to live's source-label counts, which cannot match by design.",
+   "what_it_tells_us": "Live, the tape-age refusal is small: on 10/27 live refused 226 arm checks for 15-30 s prints and 834 tape_only in all, 7.6% of 10,985 arm rows; 476 aged prints were already accepted by the gap ceiling."
   }
  }
 }
