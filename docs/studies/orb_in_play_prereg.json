@@ -74,5 +74,20 @@
    "(5) VERDICT: FAIL when t <= -2 in a half, or both halves' 97.5% upper bound of net <= 0; otherwise not passed = UNDERPOWERED.",
    "(6) The count step prints each day's 1,000th-name dollar volume (min, median) to confirm the ever-liquid list ($20M cut) is a superset."
   ]
+ },
+ "amended_5": {
+  "status": "PROPOSED 2026-10-30 ~07:20 ET (operator 'Yes, start it' to the Lever-1 reframe research, docs/research/LEVER1_REFRAME_2026-10-30.md), pending result-skeptic and operator READY. No outcome of this study has been read: the 10/24 run stopped at the count step (UNDERPOWERED: A 1,555 long trades / 198 days, MDE 27.5 bp; B 818 / 100, MDE 27.9 bp; floor 10 bp).",
+  "why": "Power, not a result. The day-level SD implied by the 10/24 count (~136 bp) needs ~1,500 sessions per half for a 10 bp MDE. The published test runs 2016-2023; Alpaca's free historical SIP starts 2016.",
+  "change_sample": "Add sessions 2016-02-01 .. 2025-03-31 (look-backs from 2015-12-01). Held-out window 2026-01-14 .. 04-24 still never fetched or read. New halves by date: H1 = 2016-02-01 .. 2020-12-31 (~1,235 sessions), H2 = 2021-01-04 .. 2026-10-15 excluding the held-out window (~1,370 sessions). The old A/B split is replaced (A and B were counted, never scored).",
+  "change_power": "Projected MDE per half ~10.5-11 bp, at the 10 bp floor's edge. PRIMARY power gate moves to the POOLED sample (both halves, ~2,600 sessions, projected MDE ~7.6 bp <= 10 bp); each half must still meet >= 300 long trades and >= 20 days.",
+  "change_pass": "PASS only if ALL: (1) pooled mean trade net (after the binding 10 bp cost) > 0 with day-clustered t >= 2.0; (2) point estimate of mean trade net > 0 in EACH half (H1, H2); (3) pooled LIFT >= 0 (the breakout is not worse than the seeded random entry in the same name-day); (4) the pooled power gate. FAIL: pooled t <= -2, or pooled 97.5% upper bound of net <= 0; otherwise not passed = UNDERPOWERED/NOT SHOWN. Selection-only evidence (net > 0, LIFT < 0) is reported as 'in-play names drift, timing adds nothing'.",
+  "change_universe": "Unchanged rules (ever-liquid list incl. delisted names, top 1,000 by prior 20-day median dollar volume, raw prior close > $10, ATR(14) > $0.50, top 20 by opening-volume score, green first candle, buy stop at range high + $0.01, stop at range low, exit at the 15:59 close). Declared: the ever-liquid list was built for 2016+ (gap-down study), so 2016 coverage is as complete as that list.",
+  "change_fetch": "Opening bars (09:30-09:34) are fetched per day for the union of names in the top 1,000 on any session in [d, d+14] (what the 14-session look-back of later days needs), instead of the whole-window union, to keep the request count near ~25,000. Resumable; runs on the data-only key after hours and weekends, one heavy job at a time; days with a failed batch are retried, never scored partially. Full-day RAW minute bars for each day's top 20 as before.",
+  "information_only_added": [
+   "Market-neutral variant: each trade minus SPY's return over the same entry-to-exit minutes (the Lever-1 brief's R2).",
+   "By year, and 2016-2023 (the paper's window) vs 2024-2026 (after publication).",
+   "$20+ entries (the desk floor)."
+  ],
+  "confidence": "~20-25% PASS (Claude, before any data; the Lever-1 brief)."
  }
 }
