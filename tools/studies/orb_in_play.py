@@ -244,8 +244,8 @@ def lookback_misses(univ: dict, opens: dict, stored: dict, sessions: list[str] |
         prev = [p for p in days[max(0, i - OPEN_LB):i] if segment(p) == segment(d)]
         for s in univ.get(d, ()):
             misses += sum(1 for p in prev if s not in set(stored.get(p, ())))
-    missing_sessions = [d for d in days if d not in opens and any(univ.get(q) for q in days[days.index(d):
-                                                                                           days.index(d) + OPEN_LB + 1])]
+    missing_sessions = [d for i, d in enumerate(days) if d not in opens
+                        and any(univ.get(q) for q in days[i:i + OPEN_LB + 1] if segment(q) == segment(d))]
     return {"misses": misses, "missing_sessions": missing_sessions}
 
 
@@ -623,7 +623,9 @@ def main():
                        "heaviest 2016-18); RAW prior close for the $10 floor, ATR in raw dollars, RAW full-day bars",
                        "beta-1 SPY hedge binding; no by-year / post-publication / $20+ / hedge-variant cell is "
                        "promotable without its own prereg",
-                       "held-out confirmation (~70 sessions, MDE ~46 bp) can only falsify (t <= -2)"]
+                       "held-out confirmation (~70 sessions, MDE ~46 bp) can only falsify (t <= -2)",
+                       "segments break at 2021-01-04 and 2026-04-27 (session_index): H2 scores from ~2021-02-02 and "
+                       "2021-01-04 .. ~02-01 are warm-up, as are 2026-04-27 .. 05-22"]
     res["skeptic_ready"], res["module_sha256"], res["stats"] = a.skeptic_ready, module_shas(), dict(st)
     write("result.json", res)
     print(json.dumps(res, indent=1, default=str))
