@@ -25,6 +25,10 @@ if [ "$(cat $OUT/sha.txt 2>/dev/null)" = "bc8e1cfc7a4ac2ba3467c0fcff8e650e4ba773
   say "archived bc8e1cfc outputs"
 fi
 
+# marketable_limit_hist (READY, operator 'I accept'): local logs + Alpaca FILL activities + 1m bars for blocked trades.
+.venv/bin/python tools/studies/marketable_limit_hist.py
+say "marketable_limit done"
+
 # F6: a fail here is final (NOT TESTABLE on this replay); the later phases refuse without a pass.
 .venv/bin/python tools/studies/square_relax_run.py fidelity --sha $SHA
 say "fidelity: $(.venv/bin/python -c "import json;print(json.load(open('$OUT/fidelity.json')).get('pass'))" 2>/dev/null)"
