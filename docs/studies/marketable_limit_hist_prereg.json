@@ -23,5 +23,19 @@
  "not_this_study": "Paper fills are Alpaca simulations; a live marketable limit's fill rate against a real book may differ. The desk's ref can be seconds old (stream), so slip mixes quote staleness and real movement; the live rule would see the same mix.",
  "no_retuning": "Only k = 5 is scored as primary; no other reference price, window or period split.",
  "data_budget": "Local files only (outcomes.jsonl, shadow.jsonl, Alpaca account FILL activities via the trading API: a few paged calls, after the close). No quote requests except the information item's SIP mids (~2 per blocked trade, data-only key).",
- "script": "tools/studies/marketable_limit_hist.py reusing move_to_cost_live (clean_rows, fetch_fills, match_fills), written after a result-skeptic READY."
+ "script": "tools/studies/marketable_limit_hist.py reusing move_to_cost_live (clean_rows, fetch_fills, match_fills), written after a result-skeptic READY.",
+ "amended": {
+  "when": "2026-10-30 ~06:25 ET, after result-skeptic round 1 (FIX FIRST, F1-F9), before any join.",
+  "R0_precedence": "Where this block conflicts with an earlier key, this block governs.",
+  "F1_reference": "ref = features.ask of the outcome row (the exact current_ask passed to place_scaled_entry). The shadow.jsonl decision price is information only. ref is a last-trade print when last_ask_src=stream, not an ask.",
+  "F2_spread_control": "Per session, block the same count of trades with the widest send-time spread (features ask - bid). PROMISING requires lift > spread-ranked lift. Otherwise the verdict is SPREAD-EQUIVALENT: tighten the existing spread cap instead.",
+  "F3_decomposition": "Replaces pass (4): decompose lift into selection (sell/ref) and slip. Report both. If blocked trades' sell/ref beats unblocked (they are the runners), the verdict is at most PROMISING. The primary test is session P&L, not per-trade mean: session_sum > 0, i.e. blocked mean net < 0, day-clustered.",
+  "F4_rearm_bound": "Conservative bound: a blocked trade with an arm_ok shadow row for the symbol within fill+30 to fill+300 s counts as taken at its actual net. PROMISING requires session_sum > 0 under this bound too.",
+  "F5_rows": "Apply clean_rows' filters with its period gate replaced by 2026-09-11..2026-10-29. Re-attach features.ask/bid and entry_test. Exclude 2026-10-27..10-29 (SMCI/ALGM motivated the study), or report with and without: primary WITHOUT 10/27-10/29, the with-set reported.",
+  "F6_g2": "Keep entry_test is None or arm == 'ask' only (the G2 passive / wait arms are not market orders). if_useful names the existing knob: ai_entry_order_style 'limit' with ai_entry_limit_anchor 'ask' and pad ai_entry_limit_pad_pct (live 10/30: order_style 'market', anchor 'ask', pad 0.15) set to 0.05 for the forward test, rather than a new knob.",
+  "F7_label": "The positive outcome is renamed PROMISING (not USEFUL); the n gate (>= 40 blocked over >= 15 sessions) stays; t >= 1.0 is a direction screen.",
+  "F8_sessions": "A session with 0 blocked trades counts with lift 0 and session_sum 0 (included). A session with every trade blocked has book_kept = 0 (no trades) and lift = -book_all.",
+  "F9_paper": "slip mixes the IEX print the desk anchored on against Alpaca paper's simulated quote at the fill.",
+  "pass_restated": "PROMISING only if ALL at k = 5 on the primary set (9/11-10/26, G2 non-ask arms excluded): (1) session_sum > 0 over all sessions (day-clustered, t >= 1.0) and point > 0 in BOTH periods; (2) session_sum > 0 under the F4 re-arm bound; (3) lift beats random blocking in >= 90% of draws; (4) lift > the F2 spread-ranked lift; (5) the n gate. The F3 decomposition is reported; if blocked trades' sell/ref beats unblocked, the verdict cannot exceed PROMISING and the switch-off watch for blocked winners is mandatory."
+ }
 }
