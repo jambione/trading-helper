@@ -4,8 +4,8 @@
 Events: pitch_open empty-square fires on warehouse IEX 1-minute lines, fires on 585..920 with the 15-minute refractory,
 kept for t 585..910; entry base e = t + 1 at e:00. Sessions 2026-05-11..2026-09-25. Draw: per session, events in
 sha256('FLD'|day|symbol|t) order, SIP quote at e:00, mid $20-$200 kept, 30 kept per session (no usable e:00 quote =
-kept as missing). For d in {0, 2, 5}: entry (e+d):00, exit (e+d+3):00; gross = mid ratio, net = gross - full SIP
-spread at entry.
+kept as missing). For d in {0, 2, 5}: entry (e+d):00, exit (e+d+3):00; gross = mid ratio, net = gross - (entry spread + exit spread) / 2;
+net_full (full spread at entry) secondary.
 
   run     fetch, write rows.json, then count (VOID / power) and score the verdicts. Stops launching sessions at
           --stop-at ET (default 09:15) on a weekday so it never overlaps the session; a stopped run is INCOMPLETE.
@@ -34,6 +34,8 @@ import std_scorer as S  # noqa: E402
 OUT = Path(os.path.expanduser("~/replay_runs/first_leg_delay"))
 T_LO, T_HI, PER_SESSION, DELAYS, HOLD = 585, 910, 30, (0, 2, 5), 3
 MAX_MISSING, MAX_ERROR, MAX_HALF_WIDTH, MARGIN = 0.10, 0.05, 3.0, 2.0
+_PRE = json.loads((ROOT / "docs" / "studies" / "first_leg_delay_hist_prereg.json").read_text())["amended"]
+NOTE = _PRE["F7_not_this_study"] + " " + _PRE["F2_seen_before"]
 
 
 def key(day: str, sym: str, t: int) -> str:
@@ -215,9 +217,12 @@ def control_minute(ev: dict, fires: list[int]):
     return random.Random(f"FLD-CTL|{ev['day']}|{ev['symbol']}|{ev['t']}").choice(cand)
 
 
-def control_rows(rows, fires_by, data) -> list[dict]:
+def control_rows(rows, fires_by, data, stop_at: str | None = None) -> list[dict] | None:
+    """None when the stop time is reached mid-stage (the caller keeps CONTROL_NEEDED)."""
     out = []
     for r in rows:
+        if stop_at and past(stop_at):
+            return None
         if r.get("status") != "ok" or "net0" not in r:
             continue
         c = control_minute(r, fires_by.get(f"{r['day']}|{r['symbol']}", []))
@@ -273,12 +278,15 @@ def main() -> int:
     c = counts(rows)
     c.update({"sessions_run": done, "sessions_planned": len(run), "stats": dict(st), "quote_calls": data.calls,
               "complete": done == len(run)})
-    res = {"count": c}
+    res = {"count": c, "note": NOTE}
     if c["complete"] and not c["void"] and not c["underpowered"]:
         res["result"] = verdicts(rows)
         if res["result"]["signal"] == "CONTROL_NEEDED" and not past(a.stop_at):
-            ctl = control_rows(rows, fires_by, data)
-            res["result"] = verdicts(rows, lift_stat(ctl))
+            ctl = control_rows(rows, fires_by, data, a.stop_at)
+            if ctl is not None:
+                scored = sum(r.get("status") == "ok" and "net0" in r for r in rows)
+                res["result"] = verdicts(rows, lift_stat(ctl))
+                res["result"]["control_missing_share"] = 1 - len(ctl) / scored if scored else None
     else:
         res["result"] = "INCOMPLETE" if not c["complete"] else ("VOID" if c["void"] else "UNDERPOWERED")
     (OUT / "result.json").write_text(json.dumps(res, indent=1, default=str))

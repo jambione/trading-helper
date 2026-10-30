@@ -66,3 +66,9 @@ def test_control_minute_same_hour_and_away_from_fires():
     c = F.control_minute(ev, [610, 640])
     assert 600 <= c < 660 and abs(c - 610) >= 15 and abs(c - 640) >= 15
     assert F.control_minute(ev, list(range(585, 921, 10))) is None
+
+
+def test_control_stage_stops_at_the_stop_time(monkeypatch):
+    monkeypatch.setattr(F, "past", lambda stop_at: True)
+    rows = [{"day": "2026-06-01", "symbol": "A", "t": 610, "status": "ok", "net0": 1.0}]
+    assert F.control_rows(rows, {}, None, "09:15") is None
