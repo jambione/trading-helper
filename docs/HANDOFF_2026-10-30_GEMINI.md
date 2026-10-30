@@ -108,6 +108,13 @@ The desk already supports several arm types (`arm_bucket` per entry); `ai_watch_
 - Arms compete for the 5 slots by measured results.
 - The empty square stays until something beats it.
 
+## Never-green cut simulation (row 57, operator 10/30)
+
+The prereg is drafted: `docs/studies/never_green_cut_prereg.json`.
+1. Get two result-skeptic rounds, then the operator's READY.
+2. Write `tools/studies/never_green_cut.py`. The exploration replay is in `tools/studies/never_green_cut_explore_1030.py`.
+3. Score after 11/13: the forward period P2 needs sessions through then.
+
 ## Backlog (running list rows 48-49), day trading only
 
 1. **The cost stack:** marketable limit tonight, then buy-stop entry plus order-flow confirmation (both proven small, about +2 bp).
