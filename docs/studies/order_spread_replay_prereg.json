@@ -43,5 +43,11 @@
  ],
  "no_retuning": "No other order-time cap, pre-filter cap or quote-age rule is scored as primary.",
  "multiplicity": "Two primaries in fixed sequence: A at full alpha; B only after A passes.",
- "script": "Knobs (ai_entry_watch, default off), a pure order-time SIP read with tests (no look-ahead, no cache leak, runner refuses non-zero live config), tools/studies/order_spread_run.py (reusing square_relax_run / late_gates_run, parallel control seeds) and order_spread_read.py (stale_age_read pricing, square_relax_read screen/stage-2 checks), written after a result-skeptic READY; they may not change anything above. Runs after square_relax in the after-hours queue, one batch at a time."
+ "script": "Knobs (ai_entry_watch, default off), a pure order-time SIP read with tests (no look-ahead, no cache leak, runner refuses non-zero live config), tools/studies/order_spread_run.py (reusing square_relax_run / late_gates_run, parallel control seeds) and order_spread_read.py (stale_age_read pricing, square_relax_read screen/stage-2 checks), written after a result-skeptic READY; they may not change anything above. Runs after square_relax in the after-hours queue, one batch at a time.",
+ "withdrawn": {
+  "when": "2026-10-30 ~05:20 ET, after result-skeptic round 1 (FIX FIRST, F1-F9), before any code or run.",
+  "by": "operator in chat: 'Yes, switch'",
+  "why": "F5: about 2 wide-at-order trades per session gives an MDE near 75 bp against a 6 bp bar (A UNDERPOWERED, B never scored). F4: refusing the widest-spread orders passes on cost alone. move_to_cost_hist rows (96 sessions, exploratory, not preregistered) show mid-to-mid gross does not rise with entry spread (0-5 bp +0.2, 15-25 bp +5.3 t 1.6, 25-50 bp -6.6) while net falls -3 to -40 bp, so the cost side needs no replay. The open question is the live source.",
+  "replaced_by": "docs/studies/iex_order_spread_calibration_prereg.json"
+ }
 }

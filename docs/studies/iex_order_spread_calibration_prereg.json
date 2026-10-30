@@ -1,0 +1,32 @@
+{
+ "study": "iex_order_spread_calibration",
+ "question": "At the moment the desk would send an entry order, can the free real-time IEX quote (the feed the desk already reads live: ai_trading._latest_ask / StockLatestQuoteRequest on live_data_feed()) tell an order whose true SIP spread is wide (> 15 bp) from one that is tight, well enough that refusing on an IEX threshold improves the book after costs without refusing many tight orders?",
+ "operator_sentence": "Operator 2026-10-30 ~05:20 ET in chat, to replacing the replay order-time test with a check of the free quote against the real spread: 'Yes, switch'. Origin request: 'If we have an answer to keep out the losers, let's go with that.'",
+ "registered_at": "2026-10-30 ~05:30 ET, before any IEX quote is fetched for these moments.",
+ "registered_before_results": true,
+ "origin": "order_spread_replay withdrawn (skeptic F4/F5). move_to_cost_hist rows, exploratory: gross mid-to-mid does not rise with the SIP entry spread while net falls -3 bp (0-5 bp) to -40 bp (25-50 bp), so refusing wide-at-order entries is a cost saving if the desk can see the spread live. Live SIP is 16 min delayed on this plan; earlier checks found IEX quotes overstate the SIP spread 1.5-3.3x (memory: iex-spreads-overstate-the-book).",
+ "prior": "IEX's own book is often wider than the NBBO and is sometimes one-sided or stale, so the threshold will sit well above 15 bp and some wide orders will be missed. Prior: usable but imperfect (recall 40-70% at a <= 10% false-refusal rate).",
+ "moments": {
+  "primary": "The 5,476 scored rows of move_to_cost_hist (empty-square events, $20-200, 96 sessions 2026-05-11..2026-09-25, entry second e:00), with their SIP quote at e:00 already fetched (truth) and their mid-to-mid gross. Halves: A 05-11..07-29 (CALIBRATION), B 07-30..09-25 (HELD OUT).",
+  "live_check": "Information: the desk's live paper entries 2026-10-14..2026-10-29 (fill-matched as move_to_cost_live, >= $20), SIP and IEX quotes at the entry second."
+ },
+ "measure": {
+  "sip_spread": "As move_to_cost_hist: last usable SIP quote at or before ts (bid > 0, ask > bid, age <= 15 s), (ask - bid) / mid in bp. TRUTH: wide = sip_spread > 15 bp (the live 0.15% cap).",
+  "iex_spread": "Last usable IEX quote (feed=iex historical quotes, the same book the live latest-quote request serves) stamped at or before ts, bid > 0, ask > bid, age <= 15 s; (ask - bid) / mid in bp. No usable IEX quote = UNKNOWN. Fetch retried 3x; an unresolved error counts against that moment only; > 5% errors = VOID.",
+  "rule": "Refuse when iex_spread > X. UNKNOWN is handled one fixed way: it PASSES (the order goes; live falls back to the delayed gate it already has). The UNKNOWN share is reported and capped below.",
+  "value": "Per session: mean net of the kept moments minus mean net of all moments (net = gross_mid - SIP spread, as move_to_cost_hist), bp per moment; sessions equal-weighted, day-clustered (std_scorer.day_stat), t at n-1 df."
+ },
+ "calibration": "On half A only: X from the grid {15, 20, 25, 30, 40, 50, 75, 100} bp. Choose the X with the largest session-mean value among X whose false-refusal rate (share of SIP-tight moments refused) <= 10%; ties -> the larger X. X is written to calibration.json and committed before half B is fetched.",
+ "pass": "USABLE only if ALL on half B at the chosen X: (1) value > 0 with t >= t_0.975(n-1); (2) false-refusal rate <= 10%; (3) recall (share of SIP-wide moments refused) >= 40%; (4) UNKNOWN share <= 10% of moments; (5) value beats a random refusal of the same number of moments per session (1,000 draws, seed 'IEXC') in >= 95% of draws; (6) B has >= 150 SIP-wide moments over >= 30 sessions, else UNDERPOWERED.",
+ "fail": "Powered and any of (1)-(5) missed: NOT USABLE. The finding is recorded as 'the free quote cannot see the order spread'; it becomes the evidence for the paid real-time SIP decision.",
+ "if_usable": "Paper only: a live knob refusing an entry when the IEX quote at the order is > X (default off), switched on by the operator after the close, with a switch-off rule (stop if, after 5 sessions, refused orders' SIP spread at the order averages <= 15 bp, or false refusals exceed 20% when checked against the next day's historical SIP). Then the loosened delayed pre-filter (old order_spread B) can be preregistered separately on forward sessions.",
+ "information_only": [
+  "Full grid on both halves: recall, false-refusal, UNKNOWN share, value.",
+  "IEX / SIP spread ratio by price band and minute (09:30-10:00 vs later).",
+  "UNKNOWN treated as refuse (value and false refusals).",
+  "Live entries 10/14-10/29: how many were SIP-wide at the order and how many the chosen X would have refused."
+ ],
+ "no_retuning": "Only X is calibrated, only on half A, only on the grid; the 15 bp truth line, the age rule and the UNKNOWN handling are fixed.",
+ "data_budget": "<= ~6,000 IEX quote requests (one per moment) plus ~700 for the live check, data-only key, after hours, one heavy Alpaca job at a time.",
+ "script": "tools/studies/iex_order_spread_calibration.py (calibrate on A -> commit X -> score B), reusing move_to_cost_hist's rows and QuoteData, written after a result-skeptic READY."
+}
