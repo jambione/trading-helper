@@ -52,5 +52,15 @@
   "G4_verdict_order": "VOID (errors > 5% or (7) failed) -> UNDERPOWERED ((6)) -> NOT USABLE (any of (1b), (2), (3), (4), (5) or the F7 guard missed) -> USABLE.",
   "stage_0": "Stage 0 (count, before any IEX fetch): fetch only SIP at ts - 16 min (about 5,500 requests). Report per half the primary n, the SIP-wide count in the primary, the base rate, and the mean SIP spread of primary-wide moments. If B's primary-wide count is < 150 or covers < 30 sessions: UNDERPOWERED. Stop and do not fetch IEX; the finding is 'the delayed gate leaves too few wide orders for an order check to matter'.",
   "declared": "The round-2 reviewer estimates (not measured) 65-110 primary-wide moments in B, so stage 0 is expected to stop the study as UNDERPOWERED."
+ },
+ "ready": {
+  "when": "2026-10-30 ~06:45 ET",
+  "verdict": "READY",
+  "review_ids": [
+   "round 1",
+   "round 2 (text applied verbatim)"
+  ],
+  "accepted_by": "operator 2026-10-30 in chat: 'Accept both' (two-round rule)",
+  "next": "tools/studies/iex_order_spread_calibration.py stage0 (delayed SIP only) tonight after square_relax; IEX stages only if stage 0 is powered."
  }
 }
