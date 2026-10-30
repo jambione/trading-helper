@@ -136,6 +136,15 @@ The sweep on 10/26-10/30 covered N = 1-10 minutes and both rule shapes: every se
 
 Parked with triggers: exit re-tests, a lower price floor, sizing up, the day-hold read (~11/13), the floor-20 window (~Dec).
 
+## Added to the backlog (row 58, operator 10/30), after buystop_flow and ORB
+
+1. **Spread compression as a run-onset trigger:** a one-night test on historical SIP quotes; ~10-15%.
+2. **Low-float catalyst names** as a separate group inside the catalyst item.
+   - Needs the operator's call on the $20 floor for that group only.
+   - The test must count the real spread, halts and gap-through stops. ~10%.
+
+**Do NOT re-test** premarket-high or prior-day-high breaks or VWAP reclaim: they failed on 10/02.
+
 ## Architecture work (running list row 50, operator 10/30)
 
 Ranked:
