@@ -94,9 +94,29 @@
  },
  "count_2026_10_24": {
   "when": "2026-10-24 15:55 ET, after --fetch exited. failed 0, 15,950 keys, 492 no_trigger_in_tape. Outcome-blind count only. --cuts not started. --score not run.",
-  "A": {"in_trades": 2235, "days": 55, "mde_bp": 3.026, "floors_met": false},
-  "B": {"in_trades": 2319, "days": 55, "mde_bp": 2.439, "floors_met": true},
+  "A": {
+   "in_trades": 2235,
+   "days": 55,
+   "mde_bp": 3.026,
+   "floors_met": false
+  },
+  "B": {
+   "in_trades": 2319,
+   "days": 55,
+   "mde_bp": 2.439,
+   "floors_met": true
+  },
   "result": "UNDERPOWERED. Half A realized MDE is 3.026 bp against the 3 bp bar. No outcome is read."
  },
- "status": "UNDERPOWERED at the count step 2026-10-24; half A MDE 3.03 bp; not scored; arm B not fetched"
+ "status": "UNDERPOWERED at the count step 2026-10-24; half A MDE 3.03 bp; not scored; arm B not fetched",
+ "amended_5_power": {
+  "when": "2026-10-30 ~15:50 ET",
+  "status": "IN FORCE: operator 'Accept READY' after result-skeptic round 1 (7 items) and round 2 (3 items), both applied verbatim in the proposal.",
+  "text": "docs/studies/buystop_flow_power_amendment_PROPOSAL.md (commit 72b5cfb8) is the registered text, verbatim; it governs where it conflicts with earlier keys.",
+  "proposal_sha256": "99c755fc5e273634",
+  "ready": {
+   "accepted_by": "operator 2026-10-30 in chat: 'Accept READY' (two-round rule)",
+   "next": "code the ten-day build and the pinned arm-B cfg, code review, fetch (ahead of the ORB fetch), count, then --score only if both halves floors_met."
+  }
+ }
 }
