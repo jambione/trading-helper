@@ -76,7 +76,7 @@
   ]
  },
  "amended_5": {
-  "status": "PROPOSED 2026-10-30; revised ~07:40 ET after result-skeptic round 1 (FIX FIRST): replacement text applied verbatim below. Pending round 2, then operator READY; the script implements amended_4 and needs a code-review round after the code change.",
+  "status": "PROPOSED 2026-10-30; result-skeptic round 1 and round 2 (text only) applied verbatim. Awaiting operator READY; then code changes (orb_in_play.py) and a code-review round before any fetch.",
   "why": "Power, not a result. The day-level SD implied by the 10/24 count (~136 bp) needs ~1,500 sessions per half for a 10 bp MDE. The published test runs 2016-2023; Alpaca's free historical SIP starts 2016.",
   "change_sample": "Add sessions 2016-02-01 .. 2025-03-31 (look-backs from 2015-12-01). Held-out window 2026-01-14 .. 04-24 still never fetched or read. New halves by date: H1 = 2016-02-01 .. 2020-12-31 (~1,235 sessions), H2 = 2021-01-04 .. 2026-10-15 excluding the held-out window (~1,370 sessions). The old A/B split is replaced (A and B were counted, never scored).",
   "change_power": "Projected MDE per half ~10.5-11 bp, at the 10 bp floor's edge. PRIMARY power gate moves to the POOLED sample (both halves, ~2,600 sessions, projected MDE ~7.6 bp <= 10 bp); each half must still meet >= 300 long trades and >= 20 days.",
@@ -84,14 +84,22 @@
   "change_universe": "Unchanged rules (ever-liquid list incl. delisted names, top 1,000 by prior 20-day median dollar volume, raw prior close > $10, ATR(14) > $0.50, top 20 by opening-volume score, green first candle, buy stop at range high + $0.01, stop at range low, exit at the 15:59 close). Declared: the ever-liquid list was built for 2016+ (gap-down study), so 2016 coverage is as complete as that list.",
   "change_fetch": "Opening bars (09:30-09:34) are fetched per day for the union of names in the top 1,000 on any session in [d, d+14] (what the 14-session look-back of later days needs), instead of the whole-window union, to keep the request count near ~25,000. Resumable; runs on the data-only key after hours and weekends, one heavy job at a time; days with a failed batch are retried, never scored partially. Full-day RAW minute bars for each day's top 20 as before. ADD: store each day's union in open.pkl; the count step asserts zero (d, s, p) look-back misses and that every session in the window is present; fetch_day checkpoints every 10 days; print the actual request count (expected ~35,000, not ~25,000).",
   "information_only_added": [
-   "Market-neutral variant: each trade minus SPY's return over the same entry-to-exit minutes (the Lever-1 brief's R2).",
+   "Raw (unhedged) LIFT and beta-estimated hedges (the beta 1 hedge is binding, see change_pass).",
    "By year, and 2016-2023 (the paper's window) vs 2024-2026 (after publication).",
    "$20+ entries (the desk floor)."
   ],
   "confidence": "~20-25% PASS (Claude, before any data; the Lever-1 brief).",
-  "coverage_step": "Before any outcome, by year, printed and gated: (a) share of top-1,000 name-days with all 5 opening minutes: >= 90% every year, else that year is excluded and declared; (b) median of 09:30-09:34 volume / daily volume; (c) share of top-20 name-days with full-day bars: >= 98%; (d) names that died per year, 2016 included: the 2016 count must be at least half the 2017-19 mean; (e) the 1,000th-name cutoff >= $20M on every scored day: a HARD abort, not a print.",
+  "coverage_step": "Before any outcome, by year, printed and gated: (a) share of top-1,000 name-days with all 5 opening minutes: >= 90% every year, else that year is excluded and declared; (b) median of 09:30-09:34 volume / daily volume; (c) share of top-20 name-days with full-day bars: >= 98%; (d) names that died per year, 2016 included: the 2016 count must be at least half the 2017-19 mean; (e) the 1,000th-name cutoff >= $20M on every scored day: a HARD abort, not a print. Failure of (c) means refetch; if it still fails, ABORT. Failure of (d) means 2016 is excluded and declared (H1 starts 2017-01-03). After any year exclusion, the pooled MDE and the per-half floors are recomputed before any outcome is read. Exclusions are final.",
   "follow_on": "If the 2024-2026 net <= 0, the result is 'DECAYED, no forward'. A PASS is SIP-only, and a forward test needs an IEX-score cell (2021+) or paid SIP before any desk use. The held-out confirmation (about 70 sessions, MDE ~46 bp) can only falsify (t <= -2), not confirm.",
   "cost_note": "Net at 20 bp printed for H1; a PASS with H1 20-bp net <= 0 is labelled COST-FRAGILE.",
-  "declared_coverage": "The ever-liquid list (Alpaca assets ACTIVE + INACTIVE, gapdown_short.py) loses tickers later reused by another company (no as-of mapping), heaviest in 2016-18: a bias in H1, gated by coverage step (d)."
+  "declared_coverage": "The ever-liquid list (Alpaca assets ACTIVE + INACTIVE, gapdown_short.py) loses tickers later reused by another company (no as-of mapping), heaviest in 2016-18: a bias in H1, gated by coverage step (d).",
+  "supersedes": "This replaces the base 'pass', amended_4 (2) per-half MDE gate and amended_4 (5) verdict. HALVES = H1/H2. count.json floors: per half >= 300 long trades and >= 20 days. The MDE gate is pooled only.",
+  "hedge_def": "SPY RAW 1m full-day bars are fetched with each day's top 20 (same request). Hedged return = trade gross - (SPY close of the exit bar / SPY open of the entry bar - 1). The entry bar is the trigger bar for the trade and the random bar for the control. The exit bar is the stop bar or the last bar <= 15:59. Hedged LIFT = hedged trade - hedged control. A missing SPY bar means the day is refused and counted; the run aborts if more than 0.5% of days are refused.",
+  "month_t_def": "Month-clustered t = mean of the per-month means of the day means / (SD of the month means / sqrt(months)), df = months - 1.",
+  "drop_best_year_def": "Best year = the calendar year with the highest mean of its day means of net. Recompute the pooled day-equal mean without it; it must be > 0.",
+  "selection_only": "Pooled net conditions (1) and (4) are met, but hedged LIFT < 0 in a half or pooled: report 'SELECTION ONLY (in-play names drift, timing adds nothing)', not PASS.",
+  "session_index": "Look-back and union windows count sessions per half and never bridge the gap 2026-01-13 -> 2026-04-27. The 04-27 .. 05-22 sessions are warm-up only.",
+  "multiplicity": "No by-year, post-publication, $20+ or hedge-variant cell can be promoted without its own prereg.",
+  "power_note": "Round-2 reviewer estimate (not measured): joint PASS probability ~65-75% at a true +10 bp edge and ~80% at +15 bp if the timing is real; ~30% per-half hedged LIFT if timing adds nothing. Nothing relaxed."
  }
 }
