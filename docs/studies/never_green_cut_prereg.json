@@ -12,8 +12,18 @@
  "statistic": "Per session: lift = mean rule net - mean actual net (bp per trade). Sessions equal-weighted, day-clustered (std_scorer.day_stat), t at n-1 df.",
  "control": "Random cut: per session, cut the same number of trades chosen at random among trades held > 180 s (1,000 draws, seed 'NGC'), each at its own m0+3 close - 1 bp. The rule's lift must beat the random cut's lift in >= 90% of draws (it must pick the losers, not just shorten holds).",
  "pass": "PASS (worth a paper forward test) only if ALL: (1) lift > 0 in BOTH periods P1 and P2 (point); (2) pooled lift >= +1 bp with t >= 2.0; (3) beats the random cut in >= 90% of draws; (4) the operator's rule: the cut trades' actual mean net < the kept trades' actual mean net, and the cut trades that were eventual winners give back less than the losses saved (sum of (actual - rule) over cut winners < sum of (rule - actual) over cut losers); (5) >= 60 cut trades in all and >= 10 sessions per period, else UNDERPOWERED. FAIL otherwise with power met.",
- "information_only": ["N = 2, 4, 5 (no other N promotable without its own prereg).", "10/26-10/30 (the seen week) with the same rule.", "By source (tight vs movers) and by SPY day sign (up vs down days).", "Fill-matched version."],
+ "information_only": [
+  "N = 2, 4, 5 (no other N promotable without its own prereg).",
+  "10/26-10/30 (the seen week) with the same rule.",
+  "By source (tight vs movers) and by SPY day sign (up vs down days).",
+  "Fill-matched version."
+ ],
  "if_pass": "Paper forward test as a live exit knob (default off), switched on by the operator after the close, with a switch-off rule: stop if after 5 sessions the cut trades' later 10-minute move averages > +10 bp (it is cutting runners).",
  "data": "outcomes.jsonl (local) and IEX 1-minute bars via move_to_cost_holdout.Data (data-only key, cached); about 2 requests per trade-day; after the close.",
- "script": "tools/studies/never_green_cut.py (reuse the replay in scratchpad never_green3.py and marketable_limit_hist.rows_from), written after a result-skeptic READY. P2 needs sessions through at least 11/13, so the earliest score is 11/13 after the close."
+ "script": "tools/studies/never_green_cut.py (reuse the replay in scratchpad never_green3.py and marketable_limit_hist.rows_from), written after a result-skeptic READY. P2 needs sessions through at least 11/13, so the earliest score is 11/13 after the close.",
+ "withdrawn": {
+  "when": "2026-10-30 ~15:10 ET, before any skeptic review or score",
+  "by": "operator in chat: 'Close it'",
+  "why": "Exploration sweep on the seen week 10/26-10/30 (130 trades, 1 bp extra-sale cost): 'below entry at minute N' and 'never green by minute N' at N = 1,2,3,4,5,7,10 all within -1.2..+0.5 bp/trade; each cut saves about what it gives up on eventual winners (e.g. N=3 below entry: 431 bp saved vs 508 given up); hurts on the up day (Thu -2..-9 bp/trade at every N). Consistent with the September never-green tests. 10/14-10/23 was not touched."
+ }
 }

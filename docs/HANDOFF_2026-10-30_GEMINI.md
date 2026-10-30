@@ -108,12 +108,9 @@ The desk already supports several arm types (`arm_bucket` per entry); `ai_watch_
 - Arms compete for the 5 slots by measured results.
 - The empty square stays until something beats it.
 
-## Never-green cut simulation (row 57, operator 10/30)
+## Never-green / below-entry cut: CLOSED (row 57, operator 10/30)
 
-The prereg is drafted: `docs/studies/never_green_cut_prereg.json`.
-1. Get two result-skeptic rounds, then the operator's READY.
-2. Write `tools/studies/never_green_cut.py`. The exploration replay is in `tools/studies/never_green_cut_explore_1030.py`.
-3. Score after 11/13: the forward period P2 needs sessions through then.
+The sweep on 10/26-10/30 covered N = 1-10 minutes and both rule shapes: every setting landed within about 1 bp of zero. Don't re-propose early loss cuts.
 
 ## Backlog (running list rows 48-49), day trading only
 
