@@ -114,6 +114,19 @@ The desk already supports several arm types (`arm_bucket` per entry); `ai_watch_
 
 Parked with triggers: exit re-tests, a lower price floor, sizing up, the day-hold read (~11/13), the floor-20 window (~Dec).
 
+## Architecture work (running list row 50, operator 10/30)
+
+Ranked:
+1. A trustworthy replay: record every live input at the wire.
+2. A shared signal-study harness, a nightly warehouse top-up, and a power estimate before each prereg.
+3. An arm registry plus seat retention.
+4. Split `ai_entry_watch.py` and prune dead knobs.
+5. Per-arm exits, including hold-the-leg.
+6. A data layer that records each gate's feed source and age.
+7. Ops: a safe deploy/restart script and guards on study jobs.
+
+Do #1 and #2 first. Every code change gets a design note, tests and the operator's OK. Trading-path changes ship only after the close.
+
 ## Parked re-tests with a trigger (operator 10/30)
 
 Re-test old exit failures on current-system trades ONLY if a Leg-1 result shows a real early edge:
