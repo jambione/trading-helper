@@ -1,0 +1,27 @@
+{
+ "study": "uptrend_pullback",
+ "question": "When the slow %R line is high (the stock sits near the top of its longer range: an uptrend) and the fast %R line dips into oversold and then turns up, does the stock rise more over the next 3 and 10 minutes than at a random minute in the same stock and session, by enough to pay for the desk's costs and exits?",
+ "operator_sentence": "Operator 2026-10-30 ~10:50 ET with a TCOM chart: 'Both lines are not high but this is the start of the profit run', after the KO / WMT trades showed the empty square buying the top of leg 1; then to the offer to pre-register this exact pattern: 'do that'.",
+ "registered_at": "2026-10-30 ~11:00 ET, before any event of this rule is computed.",
+ "registered_before_results": true,
+ "origin": "The live empty square requires both %R lines high and tight, so it fires at the end of leg 1 (KO 10/30: refused exh_not_tight 10:03-10:15, bought 10:16 at the top; WMT the same). Leaving-oversold and both-lines-turning-up tested ~random on the whole board (oversold leave 10/15, pitch 10/27), but never conditioned on the slow line showing an uptrend. trend_dip (10/17, never scored) conditions on the day's trend instead.",
+ "prior": "Low-medium (~15%). For: it adds the one condition the failed %R timing tests lacked. Against: every %R timing family has scored ~random; three-minute moves are symmetric; one chart is not evidence.",
+ "confidence": "~15% PASS (Claude, before any data).",
+ "lines": "As pitch_open / slope_now_hist: warehouse IEX 1-minute bars, fast %R 21 / EMA 7, slow %R 112 / EMA 3, warmed on the previous session's bars (in-session gaps of 2-15 min filled flat), completed bars only.",
+ "events": "Decision minute t in 09:45..15:20 ET. FIRE when ALL: (1) slow(t) >= -20; (2) min(fast over t-4..t) <= -80; (3) fast(t) > fast(t-1) + 0.05 (turning up now); (4) fast(t-1) <= -60 (the turn is near the low, not the top). Onset only (not fired at t-1), 15-minute refractory per name. Entry at the SIP open of minute t+1.",
+ "universe": "Warehouse names on each session with SIP price at t+1 between $20 and $1,000 (the desk floor), excluding levered/inverse ETPs, split-jump days (pitch_open SPLIT_JUMP) and names failing series_ok.",
+ "sessions": "Warehouse 2026-05-11 .. 2026-10-15 (as slope_now_hist / move_to_cost_hist), halves A <= 2026-07-29, B after. 09-28 .. 10-13 included (no rule of this shape was explored there).",
+ "measure": "gross_3 = SIP close of t+3 / SIP open of t+1 - 1; gross_10 = SIP close of t+10 / SIP open of t+1 - 1 (bp). Controls (pitch_open draw_d / draw_x): d = the same name, a seeded random minute within 60 minutes after t (seed 'UTP-d'), same measures; x = a seeded random other name at the same minute (seed 'UTP-x'). lift_d / lift_x = gross - control. Cost charged on net only: 5 bp round trip (the desk's measured RT on $20+ names ~3 bp).",
+ "statistic": "Per half: per day, mean over that day's events; day-equal mean; day-clustered t (std_scorer.day_stat), df = days - 1.",
+ "pass": "PASS only if ALL in BOTH halves: (1) lift_d at 3 min >= +5 bp with t >= 2.0 (the desk exits' 3-minute break-even band starts at ~+5 bp); (2) lift_x at 3 min > 0; (3) net_3 (gross_3 - 5 bp) > 0; (4) >= 300 events and >= 30 days per half. PROMISING: (1)-(3) point estimates > 0 in both halves with lift_d t >= 1.5. FAIL: lift_d <= 0 in either half with power met. 10-minute measures are information (exits keep only ~40% of a 10-minute move).",
+ "power": "Count first (no means): events and days per half and the placebo MDE of lift_d at 3 min (200 draws relabelling the same number of minutes per name-day as events, seed 'UTP-MDE'). UNDERPOWERED if MDE > 5 bp in either half.",
+ "information_only": [
+  "slow >= -30 and slow >= -10; fast dip <= -70 and <= -90 (no cell is promoted without its own prereg).",
+  "Early window 09:45-10:30 vs the rest of the day.",
+  "The same rule with slow <= -50 (no uptrend) as a contrast: if it does as well, the slow condition adds nothing.",
+  "Overlap with the live empty square: share of events followed by an empty-square fire within 15 minutes, and the minutes between them."
+ ],
+ "if_pass": "result-skeptic Mode 3, then a replay test on the standard desk (an arm knob for this pattern, default off) against the standard desk's REF with a matched random arm control, then paper forward with a switch-off rule. Never a direct switch-on.",
+ "no_retuning": "Thresholds (-20, -80, -60), the 5-bar dip window, onset/refractory, entry minute, holds, controls, cost and halves are fixed.",
+ "script": "tools/studies/uptrend_pullback_hist.py reusing pitch_open (lines, fires, gross_at, draw_d, draw_x) and std_scorer, written after a result-skeptic READY; warehouse only (no Alpaca calls), so it may run at any time on the mini at low priority."
+}
