@@ -83,6 +83,14 @@ Report each verdict the next morning. Do not interpret square_relax primary resu
 5. **Premarket T1 simulation** (READY `b46fdc22`). Runs only after the Leg-1 tests have run.
 6. **Later:** fix the slope_now replay pitch bug (pitch present 39% in replay vs 70% live); slope-now winners vs losers; lower the price floor; marketable-limit entries; the real-time SIP decision.
 
+## Parked re-tests with a trigger (operator 10/30)
+
+Old exit failures were measured on an older desk. Re-test them on the current system's trades (10/14 onward) ONLY if a Leg-1 result shows a real early edge:
+
+- **Trigger:** `first_leg_delay_hist` signal = EDGE_AT_SIGNAL or EDGE_BELOW_MARGIN, or square_relax / open_spread shows a real early edge.
+- **Then, at the front of the queue (each needs a prereg, the skeptic and the operator's READY):** (1) exit capture: the share of a 3- and 10-minute move the current exits keep; (2) holding longer; (3) the never-green cut.
+- **Otherwise leave them parked:** exits change the win rate, not the mean, and ~350 current-system trades cannot show a few-bp effect. Running list row 45.
+
 ## Before every preregistration (new, operator 10/30)
 
 Write your expected odds into the prereg (a `confidence` field) before it runs. The operator wants to set expectations. My current estimates (judgment, not measured):
