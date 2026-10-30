@@ -28,5 +28,20 @@
  ],
  "no_retuning": "Only X is calibrated, only on half A, only on the grid; the 15 bp truth line, the age rule and the UNKNOWN handling are fixed.",
  "data_budget": "<= ~6,000 IEX quote requests (one per moment) plus ~700 for the live check, data-only key, after hours, one heavy Alpaca job at a time.",
- "script": "tools/studies/iex_order_spread_calibration.py (calibrate on A -> commit X -> score B), reusing move_to_cost_hist's rows and QuoteData, written after a result-skeptic READY."
+ "script": "tools/studies/iex_order_spread_calibration.py (calibrate on A -> commit X -> score B), reusing move_to_cost_hist's rows and QuoteData, written after a result-skeptic READY.",
+ "amended": {
+  "when": "2026-10-30 ~06:00 ET, after result-skeptic round 1 (FIX FIRST, F1-F8), before any IEX quote is fetched.",
+  "R0_precedence": "Where this block conflicts with an earlier key, this block governs.",
+  "F2_iex_rule": "Replaces measure.iex_spread: the single last IEX quote at or before ts, any age since 09:30 (window start 09:30). If that quote is one-sided or crossed it is UNKNOWN, with no walk-back. Its age is recorded. The live knob applies exactly this rule.",
+  "F2_endpoint_check": "Compare the historical IEX quote against the bid/ask the desk logged at its 10/14-10/29 orders (shadow bid/ask, cache TTL 3 s). Pass condition (7): historical IEX bid and ask within 1 cent of the desk-logged quote in >= 90% of comparable orders, else VOID.",
+  "F3_population_and_control": "Each moment also gets the SIP spread at ts - 16 min (the desk's delayed gate input; ~5,500 more requests). PRIMARY population = moments whose ts - 16 min SIP spread is <= 15 bp (what the live delayed gate already lets through); recall, false refusals and precision are reported on that subset as the primary. Replaces pass (5): IEX recall beats a refusal of the same number of moments per session ranked by the SIP spread at ts - 16 min, by at least 10 points, on that subset.",
+  "F1_pass_2": "Replaces pass (2): false-refusal <= 5% AND precision (share of refused that are SIP-wide) >= 50%.",
+  "F4_pass_1": "Replaces pass (1): (1a) cost saved per session > 0 (reported). (1b) gross of refused minus kept: the upper 95% bound must not be positive, or the result reads UNPROVEN-GROSS. The value MDE from 200 placebo draws is recorded.",
+  "F5_calibration": "Replaces calibration's selection: X = the smallest grid value meeting false-refusal <= 5% and precision >= 50% on half A (primary subset). No X qualifies = NOT USABLE without scoring B.",
+  "F6_power": "Pass (6) applies to the primary (conditioned) subset of half B.",
+  "F7_transfer": "Live check becomes a guard: if >= 10 SIP-wide desk fills (10/14-10/29), recall at X must be >= 20%, else NOT TRANSFERABLE.",
+  "F8_switch_off": "Replaces if_usable's switch-off: every live refusal is logged (symbol, ts, IEX bid/ask, age); after >= 5 sessions and >= 10 refusals, stop if precision against next-day historical SIP is < 35%.",
+  "existing_gate": "ai_max_spread_r (2.0) is already an IEX-based check on the fill path (ai_entry_watch.py ~19801); the new knob is evaluated at the same point and must not double-count it (refusals by the existing check are reported, not attributed to X).",
+  "data_budget": "Raised to ~12,500 requests (IEX at ts, SIP at ts - 16 min) plus the live check."
+ }
 }
