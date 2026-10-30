@@ -37,5 +37,13 @@
   "F8_sessions": "A session with 0 blocked trades counts with lift 0 and session_sum 0 (included). A session with every trade blocked has book_kept = 0 (no trades) and lift = -book_all.",
   "F9_paper": "slip mixes the IEX print the desk anchored on against Alpaca paper's simulated quote at the fill.",
   "pass_restated": "PROMISING only if ALL at k = 5 on the primary set (9/11-10/26, G2 non-ask arms excluded): (1) session_sum > 0 over all sessions (day-clustered, t >= 1.0) and point > 0 in BOTH periods; (2) session_sum > 0 under the F4 re-arm bound; (3) lift beats random blocking in >= 90% of draws; (4) lift > the F2 spread-ranked lift; (5) the n gate. The F3 decomposition is reported; if blocked trades' sell/ref beats unblocked, the verdict cannot exceed PROMISING and the switch-off watch for blocked winners is mandatory."
+ },
+ "amended_2": {
+  "when": "2026-10-30 ~06:40 ET, result-skeptic round 2 (FIX FIRST): R2-1..R2-4 applied verbatim, before any join.",
+  "R2_1_F4_replaced": "F4 (replaced): a blocked trade is re-entered at the first 1m IEX bar close at or after send+60 s, times (1 + (fill - features.bid)/(2*fill)), and exits at its actual exit if exit_time > send+60 s. Otherwise it is a no-trade. Pass (2) requires session_sum > 0 with blocked trades scored at this re-entry net. This is an approximation: the exit path was set by the real entry. data_budget adds about 1 IEX 1m bar request per blocked trade.",
+  "R2_2_periods": "Primary periods: P1 2026-09-11..09-30, P2 2026-10-01..10-26.",
+  "R2_3_unit": "(3) session_sum beats random blocking of the same per-session count in >= 90% of draws; (4) per-session paired difference, session_sum(cap) - session_sum(spread-ranked), mean > 0 with day-clustered t >= 1.0.",
+  "R2_4_spread_proxy": "spread proxy = features.ask - features.bid (print minus bid; may be <= 0). Ties are broken by seeded random draw (seed 'MLH-S').",
+  "declared": "The round-2 reviewer expects (1), (3) and (4) to pass almost entirely from the slip term; the result is decided by (2), the re-arm model, and read through the F3 decomposition."
  }
 }
