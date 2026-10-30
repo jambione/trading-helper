@@ -1,4 +1,6 @@
-# Handoff to Gemini — Fri 2026-10-30 to Tue 2026-11-03
+# Handoff to Grok (or Gemini) — Fri 2026-10-30 to Tue 2026-11-03
+
+The operator may hand this to Grok 4.7 instead of Gemini; everything below applies to whichever model takes it.
 
 Updated by Claude ~12:15 ET Fri; Claude's usage is running out. The operator decides; you run the work. Read this file, then
 `docs/running_list.md` (rows 34-49), `docs/BASELINE_2026-10-30.md`, and `docs/research/LEVER1_REFRAME_2026-10-30.md`.
