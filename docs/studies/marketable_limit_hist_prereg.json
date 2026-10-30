@@ -1,0 +1,27 @@
+{
+ "study": "marketable_limit_hist",
+ "question": "If the desk's market entry had been a marketable limit capped at k bp above the price the desk itself saw when it armed (the shadow log's decision price), the orders that would have filled above the cap would not have filled. Would the book have done better without those trades?",
+ "operator_sentence": "Operator 2026-10-30 ~06:00 ET in chat, on Lever 2: 'If lever 2 worth maybe +1 to +3 bp a trade - I'll take that', 'Marketable-limit first', then on the G2 wait arm vs a marketable limit: 'can we test it?'.",
+ "registered_at": "2026-10-30 ~06:10 ET, before any fill is joined to a shadow decision price.",
+ "registered_before_results": true,
+ "origin": "G2 entry arms 10/1-10/15 (tools/entry_arm_score.py, 447 trades, 10 days): vs market at the ask, mid_down -0.9, bid -0.2, wait-for-tighter-spread +0.5 bp (t 0.26). A marketable limit is untested: it refuses to fill when the ask has moved or widened above the desk's own price at the decision. ALGM 10/28 13:15 filled at the SIP ask on a 0.20% spread. SMCI 10/27 14:06: shadow decision price 33.89 (stream, 6.9 s old), fill 33.92 (+8.9 bp).",
+ "prior": "For: chasing a jumped quote buys the top of a tick. Against: the trades that fill above the desk's price are often the ones moving up fastest (the would-be winners), and the G2 wait arm found ~0. Prior +0 to +2 bp per trade; confidence that it is worth switching on: ~25-35%.",
+ "trades": "Closed live paper day trades from ai_reports/outcomes.jsonl, cleaned and fill-matched exactly as move_to_cost_live (clean_rows, amended_2 R2 fill matching: buy FILL activities in [entry_time - 5 s, entry_time + 120 s], sell FILLs to exit_time + 5 s, quantity-weighted, strict qty), matched buy average >= $20. Net (bp) = (sell avg / buy avg - 1) x 1e4: the live fill already paid its spread. Sessions 2026-09-11..2026-10-29 (the fill-checkable era). Periods P1 09-11..09-30, P2 10-01..10-29.",
+ "reference": "ref = the 'price' of the last ai_reports/shadow.jsonl row for the symbol with arm_ok true and ts <= the first matched buy fill's transaction time and within 60 s before it (the desk's own decision price, the price a live limit would be set from). No such row = missing (excluded, counted). Its price_src and age are recorded.",
+ "rule": "slip = buy avg / ref - 1 (bp). Blocked at cap k when slip > k. PRIMARY k = 5 bp. Information: k = 0, 10, 20. A blocked order is treated as no trade (live, the desk might re-arm and buy later; that path is not simulated; re-arms of the same symbol within 10 minutes in the live data are reported).",
+ "statistic": "Per session: book_all = mean net of all scored trades; book_kept = mean net of unblocked trades; lift = book_kept - book_all (bp per trade); session_sum = - sum net(blocked) (bp per session at equal size). Sessions equal-weighted, day-clustered (std_scorer.day_stat), t at n-1 df.",
+ "control": "Per session, block the same number of trades chosen at random (1,000 draws, seed 'MLH'); random_lift distribution.",
+ "pass": "USEFUL only if ALL at k = 5: (1) lift point estimate > 0 in BOTH periods; (2) lift over all sessions > 0 with t >= 1.0 (direction screen, not proof); (3) lift beats the random control in >= 90% of draws; (4) blocked trades' mean net < unblocked trades' mean net; (5) >= 40 blocked trades over >= 15 sessions, else UNDERPOWERED.",
+ "fail": "Powered and any of (1)-(4) missed: NOT USEFUL; the entry stays a market order.",
+ "if_useful": "Not a switch-on. It earns a paper forward test: a live knob (default off) sending a marketable limit at ref x (1 + 5 bp) with the existing 30 s limit TTL, on paper for >= 10 sessions, every unfilled order logged with its later price, scored against this study's lift with a switch-off rule (stop if after 5 sessions the unfilled orders' 10-minute later move averages > +10 bp, i.e. it is blocking winners). Prereg'd separately.",
+ "information_only": [
+  "slip distribution by period, price band and source; share of trades with slip > 0, > 5, > 10, > 20 bp.",
+  "k = 0, 10, 20 lift and blocked counts.",
+  "Blocked trades' net vs their 3- and 10-minute SIP mid move after the fill (are they the runners?).",
+  "price_src / age of ref for blocked vs unblocked."
+ ],
+ "not_this_study": "Paper fills are Alpaca simulations; a live marketable limit's fill rate against a real book may differ. The desk's ref can be seconds old (stream), so slip mixes quote staleness and real movement; the live rule would see the same mix.",
+ "no_retuning": "Only k = 5 is scored as primary; no other reference price, window or period split.",
+ "data_budget": "Local files only (outcomes.jsonl, shadow.jsonl, Alpaca account FILL activities via the trading API: a few paged calls, after the close). No quote requests except the information item's SIP mids (~2 per blocked trade, data-only key).",
+ "script": "tools/studies/marketable_limit_hist.py reusing move_to_cost_live (clean_rows, fetch_fills, match_fills), written after a result-skeptic READY."
+}
