@@ -76,7 +76,7 @@
   ]
  },
  "amended_5": {
-  "status": "PROPOSED 2026-10-30; result-skeptic round 1 and round 2 (text only) applied verbatim. Awaiting operator READY; then code changes (orb_in_play.py) and a code-review round before any fetch.",
+  "status": "IN FORCE: operator 'Accept READY' 2026-10-30, after result-skeptic rounds 1 and 2. Code (orb_in_play.py) is updated and reviewed before any fetch.",
   "why": "Power, not a result. The day-level SD implied by the 10/24 count (~136 bp) needs ~1,500 sessions per half for a 10 bp MDE. The published test runs 2016-2023; Alpaca's free historical SIP starts 2016.",
   "change_sample": "Add sessions 2016-02-01 .. 2025-03-31 (look-backs from 2015-12-01). Held-out window 2026-01-14 .. 04-24 still never fetched or read. New halves by date: H1 = 2016-02-01 .. 2020-12-31 (~1,235 sessions), H2 = 2021-01-04 .. 2026-10-15 excluding the held-out window (~1,370 sessions). The old A/B split is replaced (A and B were counted, never scored).",
   "change_power": "Projected MDE per half ~10.5-11 bp, at the 10 bp floor's edge. PRIMARY power gate moves to the POOLED sample (both halves, ~2,600 sessions, projected MDE ~7.6 bp <= 10 bp); each half must still meet >= 300 long trades and >= 20 days.",
@@ -100,6 +100,11 @@
   "selection_only": "Pooled net conditions (1) and (4) are met, but hedged LIFT < 0 in a half or pooled: report 'SELECTION ONLY (in-play names drift, timing adds nothing)', not PASS.",
   "session_index": "Look-back and union windows count sessions per half and never bridge the gap 2026-01-13 -> 2026-04-27. The 04-27 .. 05-22 sessions are warm-up only.",
   "multiplicity": "No by-year, post-publication, $20+ or hedge-variant cell can be promoted without its own prereg.",
-  "power_note": "Round-2 reviewer estimate (not measured): joint PASS probability ~65-75% at a true +10 bp edge and ~80% at +15 bp if the timing is real; ~30% per-half hedged LIFT if timing adds nothing. Nothing relaxed."
+  "power_note": "Round-2 reviewer estimate (not measured): joint PASS probability ~65-75% at a true +10 bp edge and ~80% at +15 bp if the timing is real; ~30% per-half hedged LIFT if timing adds nothing. Nothing relaxed.",
+  "ready": {
+   "when": "2026-10-30 ~08:00 ET",
+   "verdict": "READY",
+   "accepted_by": "operator 2026-10-30 in chat: 'Accept READY' (two-round rule)"
+  }
  }
 }
