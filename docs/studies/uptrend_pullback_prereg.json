@@ -23,5 +23,16 @@
  ],
  "if_pass": "result-skeptic Mode 3, then a replay test on the standard desk (an arm knob for this pattern, default off) against the standard desk's REF with a matched random arm control, then paper forward with a switch-off rule. Never a direct switch-on.",
  "no_retuning": "Thresholds (-20, -80, -60), the 5-bar dip window, onset/refractory, entry minute, holds, controls, cost and halves are fixed.",
- "script": "tools/studies/uptrend_pullback_hist.py reusing pitch_open (lines, fires, gross_at, draw_d, draw_x) and std_scorer, written after a result-skeptic READY; warehouse only (no Alpaca calls), so it may run at any time on the mini at low priority."
+ "script": "tools/studies/uptrend_pullback_hist.py reusing pitch_open (lines, fires, gross_at, draw_d, draw_x) and std_scorer, written after a result-skeptic READY; warehouse only (no Alpaca calls), so it may run at any time on the mini at low priority.",
+ "amended": {
+  "when": "2026-10-30 ~11:30 ET, after result-skeptic round 1 (FIX FIRST), replacement text applied verbatim, before any event is computed.",
+  "R0_precedence": "Where this block conflicts with an earlier key, this block governs.",
+  "events": "...(2) fast exists on every minute t-4..t and min <= -80; ... Price filter: SIP close of t in [$20, $1,000].",
+  "measure_d": "d = same name, seeded minute t+4..t+63 (non-overlapping).",
+  "measure_u": "u = same name, same session, seeded minute in 09:45..15:20 with slow(u) >= -20, no fire within +-15 min and not within t-25..t+3, preferring the same clock hour (seed 'UTP-u'). x drawn only from names passing the same universe filter at t.",
+  "pass": "(2) lift_x > 0 AND lift_u > 0 at 3 min; (3) net_3 at 10 bp > 0; (5) bounce check: lift_d from the SIP close of t+1 to the SIP close of t+4 > 0 and >= half the primary lift_d. PROMISING uses net at 5 bp.",
+  "power": "MDE = pitch_open.mde (2.84 * sd / sqrt(days)). If a half has < 300 events, verdict UNDERPOWERED; no threshold cell substitutes.",
+  "multiplicity": "About the 9th %R timing rule on these sessions (OSL, PRE, SQ, BOTHUP, MID, pitch x3, trend_dip). Conditions (2)-(3) equal trend_dip's dip=-80 trigger; a pass in one is not a replication of the other.",
+  "declared_deviations": "completed bars vs intrabar live; RTH-only prior-session warm-up vs live 5 days; SIP open vs a live fill at the ask; ETP list = ticker_filters.is_levered_etp (ticker_filters.py)."
+ }
 }

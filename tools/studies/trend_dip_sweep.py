@@ -135,6 +135,7 @@ def day_job(args) -> tuple[str, dict]:
     pclose = {s: float(sip_p[s]["close"].iloc[-1]) for s in names}
     acc = {c: [0, 0.0, 0.0, 0, 0.0] for c in CELLS}
     info = {"cmp_dip": {d: [0, 0.0] for d in GRID["dip"]}, "rnd_top": [0, 0.0], "rnd_cmp": [0, 0.0],
+            "dropped_no_markout_or_control": [0, 0.0],
             "hold_top": [0, 0.0], "hold_cmp": [0, 0.0], "n_top": len(top), "names": len(names), "ind_fail": 0,
             "ind_fail_top": 0, "macro": {(c, k): [0, 0.0] for c in CELLS for k in ("up", "other", "unknown")}}
     for s in names:
@@ -154,6 +155,7 @@ def day_job(args) -> tuple[str, dict]:
                 g = E.markout(sip, em)
                 km = E.control_minute(s, day, RULE, sip, board[s], em)
                 if g is None or km is None:
+                    info["dropped_no_markout_or_control"][0] += 1      # amended_2: counted, information only
                     continue
                 gc = E.markout(sip, km)
                 if rank is None:
@@ -230,7 +232,7 @@ def report(summary: dict, per_day: dict, days: list[str], cut: str) -> str:
         bdays = [d for d in days if d > cut and per_day[d][best][0]]
         bl = sorted(per_day[d][best][1] / per_day[d][best][0] for d in bdays)
         L += [f"Information: held-out B lift with the 3 best B days dropped: {bp(T._de(bl[:-3])[0] if len(bl) > 3 else None)} bp", ""]
-    L += ["| cell (N, dip) | A lift (t, n) | B lift (t, n) | B cross | B verdict |", "|---|---:|---:|---:|---|"]
+    L += ["| cell (N, dip) | A lift (t, n) | B lift (t, n) | B cross | B verdict (information only; only the picked cell is graded) |", "|---|---:|---:|---:|---|"]
     for c in CELLS:
         a, bb = summary[c]["A"], summary[c]["B"]
         L.append(f"| {c} | {bp(a['lift'])} ({tt(a['t'])}, {a['n']}) | {bp(bb['lift'])} ({tt(bb['t'])}, {bb['n']}) | "

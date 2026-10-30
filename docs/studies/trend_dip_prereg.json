@@ -1,49 +1,65 @@
 {
-  "study": "Few trending names, kept all day, buy their %R dips - instead of find -> book -> wait for the arm.",
-  "registered_at": "2026-10-17 ~02:00 ET, before any return of this design was computed.",
-  "registered_before_results": true,
-  "origin": "Operator 10/17: '%R and RSI are directionally correct ... they find the names, but they're in at the tail end ... maybe keep a few names and just keep an eye on them, make profit off a few volatile names that are trending - watching their dips and buying the trends based on the %R. Maybe the whole process of finding names, having them on the book, then waiting for the arms is preventing us from entering when we should.'",
-  "prior": "LOW-MEDIUM. Related evidence: day-hold pilot (hold 2-3 morning picks all day) +17 bp/day vs random -30 (t 1.5, forward); 'up > 2.35% + first 76 min holds' runway predictor held on 60 days; but buying oversold dips on board names (OSL) FAILED and the unscreened OSL read ~0 (n 115k); the screened board fades.",
-  "data": "Warehouse, pinned: 119 sessions 2026-04-28..2026-10-15, half A <= 2026-07-23. SELECTION uses ALL liquid names in the day-file (not the 400 sample). Lines: IEX %R warmed on the previous session's last 220 IEX bars. Markouts: SIP.",
-  "selection": "At 10:30, using SIP bars through the 10:29 close only: day change = 10:29 close / previous session's last SIP close - 1; keep names with day change >= +2% AND the 10:29 close above the 09:30-09:59 opening-range high; rank by day change; the top N are watched 10:31-15:30.",
-  "entry": "The EARLIEST bar of a dip-and-turn in a watched name: fast %R <= dip on one of the last 5 bars (incl. this one), fast rising now (> previous + 0.05), IEX close above the previous session's last SIP (15:59) close (still up on the day). Entry at the SIP open of the next minute, 10-minute hold, 15-minute refractory per name, 10:31-15:30.",
-  "grid": {
-    "top_n": [
-      3,
-      5,
-      10
-    ],
-    "dip": [
-      -90,
-      -80,
-      -70
-    ],
-    "cells": 9
-  },
-  "controls_cost": "lift = markout minus the same name's random LATER minute (entry+1..+60, seed early-honest-v1, rule TRENDDIP); cross = markout minus a random other watched-or-comparison name at the same minute; 10 bp for PASS, 3 bp for PROMISING; day-equal, day-clustered t.",
-  "protocol": "Pick ONE cell on half A: the highest day-equal lift among cells with >= 150 A signals and >= 30 A days. Confirm on held-out half B only.",
-  "pass": "B: lift >= +5 bp, t >= 2.0, net at 10 bp > 0, cross > 0, >= 100 signals, >= 6 days. PROMISING: B lift > 0, t >= 1.5, net at 3 bp > 0, cross > 0. Else FAIL / UNDERPOWERED. If indicator failures exceed 1% of name-days, every B verdict is UNDERPOWERED.",
-  "information_only": [
-    "the same dip rule on a seeded 100-name comparison sample (does trend selection matter for the dip?)",
-    "random 10-minute holds in the trending names vs the comparison names (does the trend persist after 10:30?)",
-    "10:31 open -> close hold of the trending names vs the comparison names (the day-hold idea)",
-    "trending names selected per session",
-    "the picked cell's held-out B lift with the 3 best B days dropped",
-    "macro split (operator 10/17 'macro vs micro trend'): trending-name dip lift for names whose previous-session adjusted close is above its 50-session average AND above its close 20 sessions earlier ('up') vs the rest ('other'), per cell, pooled (daily data from ai_reports/gapdown/daily.pkl, known before the open)"
+ "study": "Few trending names, kept all day, buy their %R dips - instead of find -> book -> wait for the arm.",
+ "registered_at": "2026-10-17 ~02:00 ET, before any return of this design was computed.",
+ "registered_before_results": true,
+ "origin": "Operator 10/17: '%R and RSI are directionally correct ... they find the names, but they're in at the tail end ... maybe keep a few names and just keep an eye on them, make profit off a few volatile names that are trending - watching their dips and buying the trends based on the %R. Maybe the whole process of finding names, having them on the book, then waiting for the arms is preventing us from entering when we should.'",
+ "prior": "LOW-MEDIUM. Related evidence: day-hold pilot (hold 2-3 morning picks all day) +17 bp/day vs random -30 (t 1.5, forward); 'up > 2.35% + first 76 min holds' runway predictor held on 60 days; but buying oversold dips on board names (OSL) FAILED and the unscreened OSL read ~0 (n 115k); the screened board fades.",
+ "data": "Warehouse, pinned: 119 sessions 2026-04-28..2026-10-15, half A <= 2026-07-23. SELECTION uses ALL liquid names in the day-file (not the 400 sample). Lines: IEX %R warmed on the previous session's last 220 IEX bars. Markouts: SIP.",
+ "selection": "At 10:30, using SIP bars through the 10:29 close only: day change = 10:29 close / previous session's last SIP close - 1; keep names with day change >= +2% AND the 10:29 close above the 09:30-09:59 opening-range high; rank by day change; the top N are watched 10:31-15:30.",
+ "entry": "The EARLIEST bar of a dip-and-turn in a watched name: fast %R <= dip on one of the last 5 bars (incl. this one), fast rising now (> previous + 0.05), IEX close above the previous session's last SIP (15:59) close (still up on the day). Entry at the SIP open of the next minute, 10-minute hold, 15-minute refractory per name, 10:31-15:30.",
+ "grid": {
+  "top_n": [
+   3,
+   5,
+   10
   ],
-  "no_retuning": "2% / opening-range rule / 10:30 / 5 dip bars / the grid / the pick rule / the split / hold / controls / cost are fixed.",
-  "if_pass": "Forward test on paper as a separate 'trending few' desk mode for >= 10 sessions, then result-skeptic review.",
-  "if_promising": "Paper slot only.",
-  "if_fail": "Buying %R dips in the day's trending names has no edge at these settings; read the information lines (does the trend persist? does holding pay?) for the 10/30 verdict.",
-  "declared_deviations": [
-    "Completed 1-minute bars; live acts intrabar.",
-    "RTH-only warm-up (prescreen amended F2).",
-    "The live desk could seat these names on the 50-name stream; this tests the signal, not the plumbing.",
-    "selection eligibility: SIP+IEX prior-session bars and >= 1 IEX bar before 10:30"
+  "dip": [
+   -90,
+   -80,
+   -70
   ],
-  "command": "cd ~/repo/trading-helper && nohup nice -n 10 .venv/bin/python tools/studies/trend_dip_sweep.py --score --workers 6 > /tmp/trenddip.log 2>&1 &",
-  "amended_1": {
-    "at": "2026-10-17 ~02:30 ET, after the single result-skeptic round (F1-F4) and the operator's macro/micro request, before any score.",
-    "fixes": "F1 eligibility before the top-N slice and known at 10:30; F2 counted indicator failures with a 1% UNDERPOWERED rule; F3 drop-3-best-B-days info; F4 entry text and declared deviation. Plus the macro split (information only)."
-  }
+  "cells": 9
+ },
+ "controls_cost": "lift = markout minus the same name's random LATER minute (entry+1..+60, seed early-honest-v1, rule TRENDDIP); cross = markout minus a random other watched-or-comparison name at the same minute; 10 bp for PASS, 3 bp for PROMISING; day-equal, day-clustered t.",
+ "protocol": "Pick ONE cell on half A: the highest day-equal lift among cells with >= 150 A signals and >= 30 A days. Confirm on held-out half B only.",
+ "pass": "B: lift >= +5 bp, t >= 2.0, net at 10 bp > 0, cross > 0, >= 100 signals, >= 6 days. PROMISING: B lift > 0, t >= 1.5, net at 3 bp > 0, cross > 0. Else FAIL / UNDERPOWERED. If indicator failures exceed 1% of name-days, every B verdict is UNDERPOWERED.",
+ "information_only": [
+  "the same dip rule on a seeded 100-name comparison sample (does trend selection matter for the dip?)",
+  "random 10-minute holds in the trending names vs the comparison names (does the trend persist after 10:30?)",
+  "10:31 open -> close hold of the trending names vs the comparison names (the day-hold idea)",
+  "trending names selected per session",
+  "the picked cell's held-out B lift with the 3 best B days dropped",
+  "macro split (operator 10/17 'macro vs micro trend'): trending-name dip lift for names whose previous-session adjusted close is above its 50-session average AND above its close 20 sessions earlier ('up') vs the rest ('other'), per cell, pooled (daily data from ai_reports/gapdown/daily.pkl, known before the open)"
+ ],
+ "no_retuning": "2% / opening-range rule / 10:30 / 5 dip bars / the grid / the pick rule / the split / hold / controls / cost are fixed.",
+ "if_pass": "Forward test on paper as a separate 'trending few' desk mode for >= 10 sessions, then result-skeptic review.",
+ "if_promising": "Paper slot only.",
+ "if_fail": "Buying %R dips in the day's trending names has no edge at these settings; read the information lines (does the trend persist? does holding pay?) for the 10/30 verdict.",
+ "declared_deviations": [
+  "Completed 1-minute bars; live acts intrabar.",
+  "RTH-only warm-up (prescreen amended F2).",
+  "The live desk could seat these names on the 50-name stream; this tests the signal, not the plumbing.",
+  "selection eligibility: SIP+IEX prior-session bars and >= 1 IEX bar before 10:30"
+ ],
+ "command": "cd ~/repo/trading-helper && nohup nice -n 10 .venv/bin/python tools/studies/trend_dip_sweep.py --score --workers 6 > /tmp/trenddip.log 2>&1 &",
+ "amended_1": {
+  "at": "2026-10-17 ~02:30 ET, after the single result-skeptic round (F1-F4) and the operator's macro/micro request, before any score.",
+  "fixes": "F1 eligibility before the top-N slice and known at 10:30; F2 counted indicator failures with a 1% UNDERPOWERED rule; F3 drop-3-best-B-days info; F4 entry text and declared deviation. Plus the macro split (information only)."
+ },
+ "amended_2": {
+  "at": "2026-10-30 ~11:20 ET, result-skeptic round 2 (FIX FIRST, F1-F6 text) applied verbatim, before any score.",
+  "declared_deviations_add": [
+   "Selection ranks on SIP 10:29 closes; live SIP is 15-min delayed, so a live mode must rank on IEX. Information line: share of top-N names that differ when selection runs on IEX bars.",
+   "B overlaps the steady_60d window (7/24-9/11) that suggested the 2% threshold, and the operator's live sessions (9/12-10/15)."
+  ],
+  "if_pass": "Forward paper as a 'trending few' mode with a FIXED 10-minute time exit (market at entry+10) and only a catastrophe stop; desk ratchet/trail off for these entries, so the live path matches the markout.",
+  "information_only_add": [
+   "picked cell B gross vs +24 bp (desk-exit break-even, EXIT_CAPTURE 10/21)",
+   "signals dropped for a missing markout or control (counted)"
+  ],
+  "protocol_add": "Any B PASS/PROMISING is PROVISIONAL until rerun unchanged on >=20 sessions after 2026-10-15; warehouse_confirm stays reserved.",
+  "report": "The per-cell table's last column reads 'B verdict (information only; only the picked cell is graded)'.",
+  "prior_add": "LOW: prescreen_turn 10/17 BOTHUP/OSL lift ~0 (n 283k), wr_trend_trade 10/24 FAIL. Only the 10:30 trend selection is new. Not the TCOM test; uptrend_pullback is a second same-family test on these sessions.",
+  "pass_add": "If the picked cell's A lift <= 0, FAIL without reading B."
+ }
 }
