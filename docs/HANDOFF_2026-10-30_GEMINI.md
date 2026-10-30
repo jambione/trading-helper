@@ -125,6 +125,17 @@ The desk already supports several arm types (`arm_bucket` per entry); `ai_watch_
 
 The sweep on 10/26-10/30 covered N = 1-10 minutes and both rule shapes: every setting landed within about 1 bp of zero. Don't re-propose early loss cuts.
 
+## SUPERSEDED: buystop_flow first (running list row 61, was 53)
+
+> buystop_flow was scored FAIL on 2026-10-30 (row 27). Kept for the record; do not act on the steps below.
+
+**buystop_flow** combines the only two entry signals with real evidence: the buy-stop (+2 bp) and buyer order flow (+1.5-2 bp). It stopped UNDERPOWERED by 0.026 bp in half A on 10/24 and was never scored.
+
+1. Review the uncommitted `buystop_flow` edits on the MacBook.
+2. Amend it for power with more half-A sessions; the held-out window stays reserved.
+3. Two skeptic rounds, then the operator's READY, then score.
+4. If it passes, pre-register the combined 'first-leg start' arm: uptrend context + buy-stop + flow.
+
 ## Backlog (running list rows 48-49), day trading only
 
 1. **The cost stack:** marketable limit tonight, then buy-stop entry plus order-flow confirmation (both proven small, about +2 bp).
