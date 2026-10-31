@@ -64,7 +64,7 @@ def _paper(cfg: dict) -> bool:
 
 
 def feed_kw(cfg: dict | None = None) -> dict:
-    """Public helper: always IEX (free tier). SIP not used without a paid plan."""
+    """Public helper: returns configured DataFeed (SIP or IEX)."""
     return _feed_kw(cfg or {})
 
 
@@ -75,7 +75,12 @@ def _feed_kw(cfg: dict) -> dict:
         import alpaca_api
         return {"feed": alpaca_api.live_data_feed(cfg)}
     except Exception:
-        return {}
+        try:
+            from alpaca.data.enums import DataFeed
+            feed = str(cfg.get("alpaca_data_feed") or cfg.get("alpaca_bar_feed") or "iex").strip().lower()
+            return {"feed": DataFeed.SIP if feed == "sip" else DataFeed.IEX}
+        except Exception:
+            return {}
 
 
 def quote_to_book(quote, ts: float | None = None) -> Optional[L2Book]:

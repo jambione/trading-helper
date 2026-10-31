@@ -221,12 +221,36 @@ def retry_with_backoff(max_retries: int = 3, base_wait: float = 1.0):
     return decorator
 
 
-def connect_data_client(cfg: dict):
+def connect_data_client(cfg: dict = None):
     """Return an Alpaca StockHistoricalDataClient for bar/price fetching."""
     from alpaca.data.historical import StockHistoricalDataClient
     from requests.adapters import HTTPAdapter
 
-    client = StockHistoricalDataClient(cfg["api_key"], cfg["secret_key"])
+    cfg = cfg or {}
+    api_key = (
+        cfg.get("api_key")
+        or cfg.get("alpaca_api_key")
+        or cfg.get("alpaca_key")
+        or os.getenv("ALPACA_API_KEY")
+    )
+    secret_key = (
+        cfg.get("secret_key")
+        or cfg.get("alpaca_secret_key")
+        or cfg.get("alpaca_secret")
+        or os.getenv("ALPACA_SECRET_KEY")
+    )
+    if not api_key or not secret_key:
+        try:
+            from config import load_config_ro
+            c = load_config_ro() or {}
+            api_key = api_key or c.get("api_key") or c.get("alpaca_api_key") or c.get("alpaca_key")
+            secret_key = secret_key or c.get("secret_key") or c.get("alpaca_secret_key") or c.get("alpaca_secret")
+        except Exception:
+            pass
+    if not api_key or not secret_key:
+        return None
+
+    client = StockHistoricalDataClient(api_key, secret_key)
     # Mid-RTH the dashboard shares one data client across price fallback,
     # bars, and snapshot helpers. urllib3's default pool_maxsize=10 then
     # logs "Connection pool is full … pool size: 10" and stalls /api/state.
@@ -286,14 +310,44 @@ def sip_delay_min(configured: float, cfg: dict | None = None) -> float:
 
 
 def sip_is_realtime(cfg: dict | None = None) -> bool:
-    """S1: ``ai_sip_realtime`` true only while the account has live SIP; then the 15-16 min SIP delay terms are 0."""
+    """S1: ``ai_sip_realtime`` true only while the account has live SIP; then the 15-16 min SIP delay terms are 0.
+
+    Also automatically true whenever ``alpaca_bar_feed`` or ``alpaca_data_feed`` is 'sip'.
+    """
     if cfg is None:
         try:
             from config import load_config
             cfg = load_config() or {}
         except Exception:  # noqa: BLE001
             cfg = {}
-    return bool(cfg.get("ai_sip_realtime", False))
+    if bool(cfg.get("ai_sip_realtime", False)):
+        return True
+    feed = str(cfg.get("alpaca_bar_feed") or cfg.get("alpaca_data_feed") or "").strip().lower()
+    return feed == "sip"
+
+
+def probe_feed_entitlement(cfg: dict | None = None, *, symbol: str = "SPY") -> tuple[bool, str]:
+    """Test market data feed entitlement with Alpaca.
+
+    Returns (is_ok, message). If feed is SIP and Alpaca returns 403 Forbidden,
+    returns (False, 'sip_forbidden_403').
+    """
+    try:
+        from alpaca.data.requests import StockLatestQuoteRequest
+        from alpaca.data.enums import DataFeed
+        client = connect_data_client(cfg or {})
+        if client is None:
+            return False, "no_client_credentials"
+        feed = live_data_feed(cfg)
+        req = StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=feed)
+        client.get_stock_latest_quote(req)
+        feed_name = "SIP" if feed == DataFeed.SIP else "IEX"
+        return True, f"{feed_name.lower()}_ok"
+    except Exception as e:
+        msg = str(e)
+        if "403" in msg or "forbidden" in msg.lower() or "not entitled" in msg.lower():
+            return False, "sip_forbidden_403"
+        return False, f"error:{e}"
 
 
 def normalize_research_feed(feed) -> str:
