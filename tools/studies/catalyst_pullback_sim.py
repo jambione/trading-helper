@@ -271,7 +271,7 @@ def fetch_news():
 
 
 def fetch_bars():
-    """Stage 2b: Fetch 1m bars for candidates."""
+    """Stage 2b: Fetch 1m bars for candidates, grouped by day for fast batching."""
     classified_file = os.path.join(OUT_DIR, "classified_candidates.json")
     if not os.path.exists(classified_file):
         raise SystemExit(f"Missing {classified_file}; run --fetch-news first.")
@@ -285,21 +285,61 @@ def fetch_bars():
     from alpaca.data.enums import DataFeed, Adjustment
     from alpaca.data.requests import StockBarsRequest
     
-    print(f"Fetching 1m SIP bars for {len(candidates)} candidates...")
-    for idx, c in enumerate(candidates):
-        day_str = c["day"]
-        sym = c["sym"]
-        bar_path = os.path.join(bars_dir, f"{day_str}_{sym}.json")
-        if os.path.exists(bar_path):
+    # First: extract any candidates available in local warehouse sip
+    wh_dir = os.path.join(ROOT, "ai_reports", "warehouse", "sip")
+    by_day = defaultdict(set)
+    for c in candidates:
+        bar_path = os.path.join(bars_dir, f"{c['day']}_{c['sym']}.json")
+        if not os.path.exists(bar_path):
+            by_day[c["day"]].add(c["sym"])
+            
+    print(f"Candidates needing bars: {sum(len(s) for s in by_day.values())} across {len(by_day)} sessions...")
+    
+    # Try warehouse extraction first
+    if os.path.exists(wh_dir):
+        extracted = 0
+        for day, syms in list(by_day.items()):
+            p = os.path.join(wh_dir, f"{day}.npz")
+            if not os.path.exists(p):
+                continue
+            z = np.load(p)
+            w_syms, idx, mins, o, h, l, c, v = z["syms"], z["sym_idx"], z["minute"], z["o"], z["h"], z["l"], z["c"], z["v"]
+            order = np.lexsort((mins, idx))
+            idx, mins, o, h, l, c, v = idx[order], mins[order], o[order], h[order], l[order], c[order], v[order]
+            bounds = np.searchsorted(idx, np.arange(len(w_syms) + 1))
+            
+            for s in list(syms):
+                if s not in w_syms:
+                    continue
+                si = int(np.where(w_syms == s)[0][0])
+                a, b = bounds[si], bounds[si + 1]
+                s_mins = mins[a:b]
+                mask = (s_mins >= 570) & (s_mins <= 695)
+                bar_list = [
+                    {"t": f"{day}T{int(m)//60:02d}:{int(m)%60:02d}:00-04:00", "o": float(o_), "h": float(h_), "l": float(l_), "c": float(c_), "v": float(v_)}
+                    for m, o_, h_, l_, c_, v_ in zip(s_mins[mask], o[a:b][mask], h[a:b][mask], l[a:b][mask], c[a:b][mask], v[a:b][mask])
+                ]
+                with open(os.path.join(bars_dir, f"{day}_{s}.json"), "w") as f:
+                    json.dump(bar_list, f)
+                syms.remove(s)
+                extracted += 1
+            if not syms:
+                del by_day[day]
+        print(f"Extracted {extracted} bars from local warehouse.")
+    
+    # For remaining, batch query Alpaca by day
+    days_list = sorted(by_day.keys())
+    print(f"Querying Alpaca SIP for remaining {len(days_list)} sessions...")
+    for idx, day_str in enumerate(days_list):
+        syms = list(by_day[day_str])
+        if not syms:
             continue
-        
         d_obj = datetime.strptime(day_str, "%Y-%m-%d").date()
-        # 09:30 to 11:35 ET
         t0 = datetime(d_obj.year, d_obj.month, d_obj.day, 9, 30, tzinfo=ET)
         t1 = datetime(d_obj.year, d_obj.month, d_obj.day, 11, 35, tzinfo=ET)
         
         req = StockBarsRequest(
-            symbol_or_symbols=sym,
+            symbol_or_symbols=syms,
             timeframe=TimeFrame.Minute,
             start=t0,
             end=t1,
@@ -307,27 +347,22 @@ def fetch_bars():
             adjustment=Adjustment.SPLIT,
         )
         try:
-            res = cl.get_stock_bars(req).data.get(sym) or []
-            bar_list = [
-                {
-                    "t": b.timestamp.isoformat(),
-                    "o": float(b.open),
-                    "h": float(b.high),
-                    "l": float(b.low),
-                    "c": float(b.close),
-                    "v": float(b.volume),
-                }
-                for b in res
-            ]
-            with open(bar_path, "w") as f:
-                json.dump(bar_list, f)
-            time.sleep(0.1)
+            res = cl.get_stock_bars(req).data
+            for sym in syms:
+                sym_bars = res.get(sym) or []
+                bar_list = [
+                    {"t": b.timestamp.isoformat(), "o": float(b.open), "h": float(b.high), "l": float(b.low), "c": float(b.close), "v": float(b.volume)}
+                    for b in sym_bars
+                ]
+                with open(os.path.join(bars_dir, f"{day_str}_{sym}.json"), "w") as f:
+                    json.dump(bar_list, f)
+            time.sleep(0.3)
         except Exception as e:
-            print(f"Error fetching bars for {sym} {day_str}: {e}")
-            time.sleep(1)
+            print(f"Error fetching bars for {day_str} {syms}: {e}")
+            time.sleep(2)
         
-        if (idx + 1) % 50 == 0 or idx + 1 == len(candidates):
-            print(f"Fetched bars for {idx + 1}/{len(candidates)} candidates...")
+        if (idx + 1) % 50 == 0 or idx + 1 == len(days_list):
+            print(f"Processed {idx + 1}/{len(days_list)} Alpaca sessions...")
 
 
 def run_count():
