@@ -22,7 +22,8 @@ import fill_truth_report as ft
 from desk_core import load_desk_env
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockQuotesRequest, StockBarsRequest
-from alpaca.data.enums import DataFeed, TimeFrame
+from alpaca.data.enums import DataFeed
+from alpaca.data.timeframe import TimeFrame
 
 ET = ZoneInfo("America/New_York")
 
