@@ -3,12 +3,13 @@
 desk's live exit stack. Spec: docs/studies/buystop_flow_prereg.json (main + amended).
 
 Phases (each resumable, data-only account for every fetch):
-  --sample   seeded, day-stratified sample of batch 2 T2 trades >= $20 (no outcomes read); re-derives each trade's stop
-  --probe    real fetch_one + fetch_arm_b on >= 10 stride-spread trades -> largest N per half inside 9 hours
-  --fetch    per trade: SIP trades [k-60 s, k+60 s) (trigger T + flow), quotes [T-120 s, T+1 s], exit quotes
-  --cuts     G1 (OFI60) top-tercile cut from HALF A features only (outcome-blind), then arm-B prints + IEX bars for
-             G1-IN trades
-  (default)  count step (outcome-blind)       --score  verdicts (refuses without READY / floors / same code)
+  --sample   REFUSED. The frozen 7,975 + 7,975 keys are not rebuilt.
+  --probe    REFUSED. probe.json n_half stays 7,975.
+  --fetch    REFUSED. Frozen fetched.json is not rewritten.
+  --build-addon   ten warehouse sessions 2026-04-27 .. 2026-05-08 into addon_rows.json (no Alpaca)
+  --fetch-addon   arm-A quotes for those rows only, at most 145 a day, into addon_fetched.json
+  --cuts     arm-B prints for the enlarged G1-IN set, only after both halves have floors_met
+  (default)  enlarged count (outcome-blind)   --score  only if both halves then have floors_met
 """
 from __future__ import annotations
 
@@ -46,6 +47,20 @@ PROBE_MIN, PROBE_CAP = 10, 40
 MDE_BAR, FLOOR_TRADES, FLOOR_DAYS = 0.0003, 300, 20
 # amended_2 (6): projected MDE at 8,000 trades per half, from the batch2 control rows (outcome-blind)
 PREREG_MDE_AT_8000 = {"A": 2.63e-4, "B": 2.23e-4}
+# amended_5_power: ten sessions before the frozen sample. 2026-04-27 has no previous warehouse session.
+ADDON_DAYS = (
+    "2026-04-27", "2026-04-28", "2026-04-29", "2026-04-30", "2026-05-01",
+    "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08",
+)
+ADDON_CAP = 145
+FROZEN_N_HALF = 7975
+FROZEN_OFI = (0.2882797731568998, 0.057809488368586855)
+FROZEN_QI = (0.2, 0.7704854285098521)
+FROZEN_B_TRADES, FROZEN_B_DAYS, FROZEN_B_MDE_BP = 2319, 55, 2.439
+ADDON_ROWS_NAME = "addon_rows.json"
+ADDON_FETCHED_NAME = "addon_fetched.json"
+PINNED_CFG_NAME = "pinned_bot_config_837dfd79.json"
+HELD_OUT_PREV, WRAP_PREV = "2026-04-24", "2026-10-15"
 SHA_IN_STUDIES = (
     "buystop_flow", "batch2", "wr_trend_trade", "order_flow_pilot", "exit_capture",
     "leash_replay", "eod_reversal", "indicator_confirm_hist",
@@ -241,7 +256,9 @@ def t2_with_stops(fast, slow, sipf, iexf) -> list[tuple]:
 
 
 def build_sample(n_half: int) -> dict:
-    import indicator_confirm_hist as H
+    """Not used. The frozen 7,975 + 7,975 keys stay in sample.json."""
+    raise SystemExit("refusing build_sample: the frozen sample is not rebuilt")
+    import indicator_confirm_hist as H  # noqa: F401
     rows = json.load(open(os.path.join(ROOT, "ai_reports", "batch2", "rows.json")))["rows"]
     t2 = [r for r in rows if r["test"] == "T2" and r["px"] >= MIN_PX]
     by_day = defaultdict(list)
@@ -404,13 +421,8 @@ def dstat(rows, key):
 
 
 def desk_cfg():
-    import leash_replay as L
-    sha = hashlib.sha256(open(os.path.join(ROOT, "config", "bot_config.json"), "rb").read()).hexdigest()
-    if not sha.startswith(CONFIG_SHA_PREFIX):
-        raise SystemExit(f"config sha {sha[:16]} != pinned {CONFIG_SHA_PREFIX} (amended_2 (3))")
-    cfg = copy.deepcopy(L.load_config())
-    cfg.pop("_min_hold", None)
-    return cfg, max(2, int(cfg.get("ai_local_trail_print_ring", 3) or 3))
+    """Retired. Opening bot_config.json here would refuse the live book and could rewrite the pin."""
+    raise SystemExit("desk_cfg is not used; arm B reads the pinned file and does not open bot_config.json")
 
 
 def ub_at(rows, key, p):
@@ -438,14 +450,302 @@ def module_shas():
     return {m: hashlib.sha256(open(p, "rb").read()).hexdigest() for m, p in paths.items()}
 
 
-def assert_sample_current(smp: dict | None) -> None:
-    """Probe, fetch, count and score all refuse a sample built by older code."""
-    if (smp or {}).get("module_sha256") != module_shas():
-        raise SystemExit("sample.json was built by different code; rerun --sample")
+def assert_sample_current(smp: dict | None) -> str | None:
+    """Keep a frozen sample that still has its trades when module_shas changes.
+
+    module_shas covers ai_entry_watch.py and config.py. Both changed on 2026-10-30.
+    A hash mismatch is declared and the 7,975 + 7,975 keys are not rebuilt.
+    A missing sample, or a sample with no trades, still refuses and is not rebuilt.
+    """
+    trades = smp.get("trades") if isinstance(smp, dict) else None
+    if not trades:
+        raise SystemExit("sample.json has no trades; the frozen sample is not rebuilt")
+    if smp.get("module_sha256") != module_shas():
+        return ("frozen sample kept: module_sha256 differs from current module_shas "
+                "(covers ai_entry_watch.py and config.py, both changed 2026-10-30); "
+                f"the frozen {FROZEN_N_HALF}+{FROZEN_N_HALF} keys are not rebuilt")
+    return None
+
+
+def prev_warehouse_session(day: str, days: list[str]) -> str | None:
+    """Prior session in the sorted warehouse list. No wrap.
+
+    2026-04-27 is defined to have none, so it is not warmed on 2026-10-15 or on 2026-04-24.
+    A previous session before 2026-04-27, the held-out day, or the wrap day is refused.
+    """
+    if day == ADDON_DAYS[0]:
+        return None
+    ordered = sorted(days)
+    if day not in ordered:
+        return None
+    i = ordered.index(day)
+    if i == 0:
+        return None
+    prev = ordered[i - 1]
+    if prev < ADDON_DAYS[0] or prev in (HELD_OUT_PREV, WRAP_PREV):
+        raise SystemExit(f"refusing previous session {prev} for {day}")
+    return prev
+
+
+def cap_addon_day(rows: list, day: str, cap: int = ADDON_CAP) -> list:
+    """Sort by (sym, entry minute), seeded shuffle, prefix. A short day is not backfilled."""
+    pick = sorted(rows, key=lambda r: (r["sym"], r["k"]))
+    seeded("bsf-sample", day).shuffle(pick)
+    return pick[:cap]
+
+
+def assert_addon_cap(trades: list) -> None:
+    by = Counter(t["day"] for t in trades)
+    over = sorted(d for d, n in by.items() if n > ADDON_CAP)
+    if over:
+        raise SystemExit(f"addon day over {ADDON_CAP}: {over}")
+    extra = sorted(set(by) - set(ADDON_DAYS))
+    if extra:
+        raise SystemExit(f"addon day outside the ten sessions: {extra}")
+
+
+def _sipf_of(raw) -> dict:
+    return {int(x[0]): (float(x[1]), float(x[2]), float(x[3]), float(x[4]), float(x[5])) for x in raw}
+
+
+def _oc_of(sipf: dict) -> dict:
+    return {m: (v[0], v[3]) for m, v in sipf.items()}
+
+
+def addon_row(day: str, sym: str, e: int, px: float, x_min: int, stop, sip_oc: dict) -> dict | None:
+    """One T2 fill. Drops a missing stop, a price under $20, and a missing bar gross."""
+    if stop is None or px is None or px < MIN_PX:
+        return None
+    g = B2.gross(sip_oc, e, px, x_min)
+    if g is None:
+        return None
+    hold = x_min - e
+    return {"day": day, "sym": sym, "half": "A", "k": e, "px_bar": px, "stop": stop, "exit_min": x_min,
+            "bar_gross": g, "ctrl_d": W.d_control(sip_oc, sym, day, e, hold, "b2-T2-d")}
+
+
+def build_addon_day(day: str, days: list[str], load_raw) -> list:
+    """T2 fills for one of the ten sessions. 2026-04-27 returns no trades and loads nothing."""
+    if day == ADDON_DAYS[0]:
+        return []
+    if day not in ADDON_DAYS:
+        raise SystemExit(f"{day} is outside the ten-day block")
+    prev = prev_warehouse_session(day, days)
+    if prev is None:
+        raise SystemExit(f"{day} has no previous warehouse session")
+    sip_raw = load_raw("sip", day)
+    sip_prev = load_raw("sip", prev)
+    iex = load_raw("iex", day)
+    iex_prev = load_raw("iex", prev)
+    rows = []
+    for sym in sorted(sip_raw):
+        raw = sip_raw[sym]
+        if sym in sip_prev and len(sip_prev[sym]) and len(raw):
+            pc, op = float(sip_prev[sym][-1][4]), float(raw[0][1])
+            if pc > 0 and abs(op / pc - 1) > W.SPLIT_JUMP:
+                continue
+        if sym not in iex or sym not in iex_prev:
+            continue
+        W.REAL.clear()
+        fast, slow = W.lines(iex_prev[sym], iex[sym])
+        sipf = _sipf_of(raw)
+        iexf = _sipf_of(iex[sym])
+        for e, px, x_min, stop in t2_with_stops(fast, slow, sipf, iexf):
+            row = addon_row(day, sym, e, px, x_min, stop, _oc_of(sipf))
+            if row is not None:
+                rows.append(row)
+    return cap_addon_day(rows, day)
+
+
+def build_addon_rows(days: list[str] | None = None, load_raw=None) -> dict:
+    """The ten sessions only. Does not call batch2.main and does not write batch2/rows.json."""
+    if W.FIRST != "2026-05-11":
+        raise SystemExit("wr_trend_trade.FIRST must stay 2026-05-11")
+    import indicator_confirm_hist as H
+    if days is None:
+        days = H.warehouse_days()
+    if load_raw is None:
+        load_raw = H.load_raw
+
+    def guarded(feed, day):
+        if day < ADDON_DAYS[0] or day in (HELD_OUT_PREV, WRAP_PREV):
+            raise SystemExit(f"refusing to open {day}")
+        return load_raw(feed, day)
+
+    trades = []
+    for day in ADDON_DAYS:
+        trades.extend(build_addon_day(day, days, guarded))
+    assert_addon_cap(trades)
+    return {"trades": trades, "days": list(ADDON_DAYS), "cap": ADDON_CAP}
+
+
+def pinned_arm_b_cfg(path: str | None = None):
+    """DEFAULT_CONFIG updated by the pinned file so the pin wins. Drops _min_hold.
+
+    Does not call desk_cfg, load_config, or load_config_ro, and does not open bot_config.json.
+    """
+    import config as cfgmod
+    p = path or os.path.join(OUT, PINNED_CFG_NAME)
+    raw = open(p, "rb").read()
+    sha = hashlib.sha256(raw).hexdigest()
+    if not sha.startswith(CONFIG_SHA_PREFIX):
+        raise SystemExit(f"pinned config sha {sha[:16]} != {CONFIG_SHA_PREFIX}")
+    pin = json.loads(raw.decode())
+    if not isinstance(pin, dict):
+        raise SystemExit("pinned config is not an object")
+    cfg = copy.deepcopy(cfgmod.DEFAULT_CONFIG)
+    cfg.update(pin)
+    cfg.pop("_min_hold", None)
+    ring = max(2, int(cfg.get("ai_local_trail_print_ring", 3) or 3))
+    return cfg, ring
+
+
+def frozen_intersection(trades: list, fetched: dict) -> tuple[list, list]:
+    """Sample order. A missing key is a C4 refusal. Status other than ok is skipped."""
+    a, b, missing = [], [], []
+    for t in trades:
+        key = f"{t['day']}|{t['sym']}|{t['k']}"
+        if key not in fetched:
+            missing.append(key)
+            continue
+        got = fetched[key]
+        if got.get("status") != "ok":
+            continue
+        row = {**t, **got, "m": t["k"]}
+        (a if t.get("half") == "A" else b).append(row)
+    if missing:
+        raise SystemExit(f"{len(missing)} frozen trades not fetched (C4)")
+    return a, b
+
+
+def addon_fetched_or_refuse(trades: list, fetched: dict) -> list:
+    """Addon rows with a fetch. A missing key is a C4 refusal, not a silent drop."""
+    missing, rows = [], []
+    for t in trades:
+        key = f"{t['day']}|{t['sym']}|{t['k']}"
+        got = fetched.get(key)
+        if got is None:
+            missing.append(key)
+            continue
+        if got.get("status") != "ok":
+            continue
+        rows.append({**t, **got, "m": t["k"]})
+    if missing:
+        raise SystemExit(f"{len(missing)} addon trades not fetched (C4)")
+    return rows
+
+
+def _pair(got) -> tuple | None:
+    if not got or len(got) != 2:
+        return None
+    return (float(got[0]), float(got[1]))
+
+
+def frozen_cuts_or_refuse(original_half_a: list) -> None:
+    """top_cut on the original half-A rows only. Refuse unless it is the frozen pair."""
+    import order_flow_pilot as OF
+    for r in original_half_a:
+        r["m"] = r["k"]
+    cut = OF.top_cut([(r["ofi60"], OF.tie_u(r)) for r in original_half_a if r.get("ofi60") is not None])
+    cut_qi = OF.top_cut([(r["qi"], OF.tie_u(r)) for r in original_half_a if r.get("qi") is not None])
+    if _pair(cut) != FROZEN_OFI or _pair(cut_qi) != FROZEN_QI:
+        raise SystemExit("top_cut on the original half-A rows is not the frozen pair")
+
+
+def label_rows(rows: list) -> None:
+    """groups() at the frozen pairs. tie_u reads field m, the fill minute k."""
+    import order_flow_pilot as OF
+    for r in rows:
+        r["m"] = r["k"]
+        g = OF.groups(r, {"ofi60": FROZEN_OFI, "qi": FROZEN_QI})
+        r["g1"], r["g2"], r["g3"] = g["G1"], g["G2"], g["G3"]
+        ask, bid = r.get("ask_in"), r.get("bid_out")
+        r["net_A"] = (bid / ask - 1) if ask and bid else None
+
+
+def assemble_labeled(frozen_a: list, addon_rows: list, frozen_b: list) -> list:
+    """Addon rows sit after the frozen half-A keys. Half B is the frozen half only."""
+    frozen_cuts_or_refuse(frozen_a)
+    rows = list(frozen_a) + list(addon_rows) + list(frozen_b)
+    label_rows(rows)
+    return rows
+
+
+def control_mde(inn: list) -> float | None:
+    """(2.24 + 0.84) * stdev(day means of ctrl_d) / sqrt(days that have a mean)."""
+    per = defaultdict(list)
+    for r in inn:
+        if r.get("net_A") is None or r.get("ctrl_d") is None:
+            continue
+        per[r["day"]].append(r["ctrl_d"])
+    xs = [statistics.mean(v) for v in per.values()]
+    if len(xs) < 2:
+        return None
+    return (T_ARM + 0.84) * statistics.stdev(xs) / math.sqrt(len(xs))
+
+
+def half_public(rows: list, half: str) -> dict:
+    inn = [r for r in rows if r.get("half") == half and r.get("g1") == "IN" and r.get("net_A") is not None]
+    mde = control_mde(inn)
+    nd = len({r["day"] for r in inn})
+    floors = len(inn) >= FLOOR_TRADES and nd >= FLOOR_DAYS and mde is not None and mde <= MDE_BAR
+    return {"in_trades": len(inn), "days": nd, "mde": mde, "floors_met": floors}
+
+
+def half_b_fingerprint(block: dict) -> None:
+    """Half B stays the frozen count. A mismatch refuses the run."""
+    mde = block.get("mde")
+    bp = None if mde is None else round(float(mde) * 10000, 3)
+    if not (block.get("in_trades") == FROZEN_B_TRADES and block.get("days") == FROZEN_B_DAYS
+            and bp == FROZEN_B_MDE_BP and block.get("floors_met") is True):
+        raise SystemExit("half B is not the frozen count (2319 trades, 55 days, 2.439 bp, floors_met true)")
+
+
+def count_report(block_a: dict, block_b: dict, declaration: str | None, prereg_commit: str) -> dict:
+    """Trade counts, day counts, the one MDE number, and floors_met. Nothing else from the returns."""
+    keep = ("in_trades", "days", "mde", "floors_met")
+    pub = {"A": {k: block_a[k] for k in keep}, "B": {k: block_b[k] for k in keep},
+           "module_sha256": module_shas(), "prereg_commit": prereg_commit}
+    half_b_fingerprint(pub["B"])
+    if declaration:
+        pub["sample_kept"] = declaration
+    return pub
+
+
+def _refuse_count_leak(text: str) -> None:
+    for banned in ("net_A", "net_B", "bar_gross", "ctrl_d", "day_means"):
+        if banned in text:
+            raise SystemExit("count report would print a return")
+
+
+def fetch_addon() -> None:
+    """Arm-A quotes for the ten-day rows only. Does not write fetched.json."""
+    blob = jload(ADDON_ROWS_NAME)
+    if not blob or "trades" not in blob:
+        raise SystemExit("addon_rows.json missing; run --build-addon")
+    trades = blob["trades"]
+    assert_addon_cap(trades)
+    cl, done = client(), jload(ADDON_FETCHED_NAME, {}) or {}
+    failed = []
+    for i, t in enumerate(trades):
+        key = f"{t['day']}|{t['sym']}|{t['k']}"
+        if key in done:
+            continue
+        try:
+            done[key] = fetch_one(cl, t)
+        except RuntimeError:
+            failed.append(key)
+        if i % 100 == 0:
+            jwrite(ADDON_FETCHED_NAME, done)
+            print(f"  {i}/{len(trades)}", flush=True)
+    jwrite(ADDON_FETCHED_NAME, done)
+    jwrite("addon_fetch_log.json", {"failed": failed, "n": len(trades)})
+    print(json.dumps({"failed": len(failed), "n": len(trades)}))
 
 
 def chosen_trades(smp: dict) -> list:
-    """The day-stratified subset the probe's budget allows. Fetch, count and score all use this."""
+    """Retired. select_trades would drop frozen keys once the ten days change the day count."""
+    raise SystemExit("refusing chosen_trades: frozen keys are not passed through select_trades")
     probe = jload("probe.json")
     if not probe or "n_half" not in probe:
         raise SystemExit("run --probe first")
@@ -477,112 +777,56 @@ def rollup(hv: list, ubs: list) -> str:
     return "UNDERPOWERED"
 
 
+def _print_count(pub: dict) -> None:
+    text = json.dumps(pub, indent=1, default=str)
+    _refuse_count_leak(text)
+    print(text)
+    print(jwrite("count.json", pub))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    for f_ in ("--sample", "--probe", "--fetch", "--cuts", "--score"):
+    for f_ in ("--sample", "--probe", "--fetch", "--cuts", "--score", "--build-addon", "--fetch-addon"):
         ap.add_argument(f_, action="store_true")
     ap.add_argument("--n-half", type=int, default=N_MAX)
     ap.add_argument("--skeptic-ready", default="")
     ap.add_argument("--prereg-commit", default="")
     a = ap.parse_args()
     if a.sample:
-        smp = build_sample(a.n_half)
-        print(len(smp["trades"]), smp["stats"])
-        jwrite("sample.json", {**smp, "module_sha256": module_shas()})
+        raise SystemExit("refusing --sample: the frozen sample is not rebuilt")
+    if a.probe:
+        raise SystemExit("refusing --probe: probe.json n_half stays 7975 and is not rewritten")
+    if a.fetch:
+        raise SystemExit("refusing --fetch: frozen fetched.json is not rewritten; use --fetch-addon")
+    if a.build_addon:
+        built = build_addon_rows()
+        jwrite(ADDON_ROWS_NAME, built)
+        by = Counter(t["day"] for t in built["trades"])
+        print(json.dumps({"trades": len(built["trades"]), "days": len(ADDON_DAYS), "cap": ADDON_CAP,
+                          "by_day": {d: by.get(d, 0) for d in ADDON_DAYS}}))
+        return
+    if a.fetch_addon:
+        fetch_addon()
         return
     smp = jload("sample.json")
-    assert_sample_current(smp)
-    if a.probe:
-        cl = client()
-        cfg, ring = desk_cfg()
-        a_times, b_times, a_reqs, b_reqs = [], [], [], []
-        complete = attempts = 0
-        for block in probe_blocks(len(smp["trades"])):
-            for i in block:
-                t = smp["trades"][i]
-                attempts += 1
-                try:
-                    s0 = time.time()
-                    got = fetch_one(cl, t)
-                    a_times.append(time.time() - s0)
-                    a_reqs.append(got.get("requests") or 0)
-                except RuntimeError as e:
-                    print(f"  probe skip {t.get('sym')}: {e}", flush=True)
-                    continue
-                if got.get("status") != "ok" or not got.get("ask_in") or got.get("T") is None:
-                    continue
-                try:
-                    s1 = time.time()
-                    b = fetch_arm_b(cl, {**t, **got}, cfg, ring)
-                    b_times.append(time.time() - s1)
-                    b_reqs.append(b.get("requests") or 0)
-                except RuntimeError as e:
-                    print(f"  probe skip arm B {t.get('sym')}: {e}", flush=True)
-                    continue
-                complete += 1
-                break
-        if complete < PROBE_MIN:
-            raise SystemExit(f"probe finished both fetches on {complete} of {attempts} trades; need {PROBE_MIN}")
-        halves = Counter(t["half"] for t in smp["trades"])
-        sample_half = min(halves.get("A", 0), halves.get("B", 0))
-        out = budget_n_half(statistics.mean(a_times), statistics.mean(b_times), sample_half)
-        out["probe_complete"] = complete
-        out["probe_attempts"] = attempts
-        out["req_per_trade_A"] = statistics.mean(a_reqs)
-        out["req_per_in_trade_B"] = statistics.mean(b_reqs)
-        n_full = sample_half * 2
-        out["est_requests_at_full_sample"] = (n_full * out["req_per_trade_A"]
-                                               + n_full * IN_SHARE * out["req_per_in_trade_B"])
-        out["est_hours_from_requests_at_full"] = out["est_requests_at_full_sample"] / REQ_PER_MIN / 60
-        n = out["n_half"] * 2
-        out["est_requests_at_n"] = n * out["req_per_trade_A"] + n * IN_SHARE * out["req_per_in_trade_B"]
-        print(out)
-        jwrite("probe.json", out)
+    declaration = assert_sample_current(smp)
+    addon = jload(ADDON_ROWS_NAME)
+    if not addon or "trades" not in addon:
+        raise SystemExit("addon_rows.json missing; run --build-addon")
+    assert_addon_cap(addon["trades"])
+    if jload("addon_fetch_log.json", {}).get("failed"):
+        raise SystemExit("addon fetch failures (C4): rerun --fetch-addon")
+    frozen_a, frozen_b = frozen_intersection(smp["trades"], jload("fetched.json", {}) or {})
+    addon_rows = addon_fetched_or_refuse(addon["trades"], jload(ADDON_FETCHED_NAME, {}) or {})
+    rows = assemble_labeled(frozen_a, addon_rows, frozen_b)
+    pub = count_report(half_public(rows, "A"), half_public(rows, "B"), declaration, a.prereg_commit)
+    _print_count(pub)
+    if not a.score and not a.cuts:
         return
-    chosen = chosen_trades(smp)
-    if a.fetch:
-        cl, done = client(), jload("fetched.json", {})
-        failed = []
-        for i, t in enumerate(chosen):
-            key = f"{t['day']}|{t['sym']}|{t['k']}"
-            if key in done:
-                continue
-            try:
-                done[key] = fetch_one(cl, t)
-            except RuntimeError:
-                failed.append(key)
-            if i % 100 == 0:
-                jwrite("fetched.json", done)
-                print(f"  {i}/{len(chosen)}", flush=True)
-        jwrite("fetched.json", done)
-        jwrite("fetch_log.json", {"failed": failed, "n_chosen": len(chosen)})
-        print("failed", len(failed))
-        return
-    fetched = jload("fetched.json", {})
-    if jload("fetch_log.json", {}).get("failed"):
-        raise SystemExit("fetch failures (C4): rerun --fetch")
-    import order_flow_pilot as OF
-    rows, st = [], Counter()
-    for t in chosen:
-        f = fetched.get(f"{t['day']}|{t['sym']}|{t['k']}")
-        if f is None:
-            st["not_fetched"] += 1
-            continue
-        if f["status"] != "ok":
-            st[f["status"]] += 1
-            continue
-        rows.append({**t, **f, "m": t["k"]})
-    if any(v for k, v in st.items() if k == "not_fetched"):
-        raise SystemExit(f"{st['not_fetched']} sampled trades not fetched (C4)")
-    cut = OF.top_cut([(r["ofi60"], OF.tie_u(r)) for r in rows if r["half"] == "A" and r["ofi60"] is not None])
-    cut_qi = OF.top_cut([(r["qi"], OF.tie_u(r)) for r in rows if r["half"] == "A" and r["qi"] is not None])
-    for r in rows:
-        g = OF.groups(r, {"ofi60": cut, "qi": cut_qi})
-        r["g1"], r["g2"], r["g3"] = g["G1"], g["G2"], g["G3"]
-        ok = r["ask_in"] and r["bid_out"]
-        r["net_A"] = (r["bid_out"] / r["ask_in"] - 1) if ok else None
+    if not all(pub[h]["floors_met"] for h in ("A", "B")):
+        raise SystemExit("UNDERPOWERED at the count step: no outcome is read")
     if a.cuts:
-        cfg, ring = desk_cfg()
+        cfg, ring = pinned_arm_b_cfg()
         cl = client()
         store = os.path.join(OUT, "armB.pkl")
         data = pickle.load(open(store, "rb")) if os.path.exists(store) else {}
@@ -598,46 +842,14 @@ def main() -> None:
         pickle.dump(data, open(store, "wb"))
         print("arm B paths", len(data))
         return
-    half_rows = lambda h, g=None: [r for r in rows if r["half"] == h and (g is None or r["g1"] == g)  # noqa: E731
-                                   and r["net_A"] is not None]
-    if not a.score:
-        cnt = {"stats": dict(st), "cut": cut, "cut_qi": cut_qi, "n_chosen": len(chosen),
-               "dollar_10_20": "DROPPED: sample is entry price >= $20",
-               "module_sha256": module_shas(), "prereg_commit": a.prereg_commit}
-        for h in ("A", "B"):
-            inn = half_rows(h, "IN")
-            ctrl = [r for r in inn if r.get("ctrl_d") is not None]
-            per = defaultdict(list)
-            for r in ctrl:
-                per[r["day"]].append(r["ctrl_d"])
-            xs = [statistics.mean(v) for v in per.values()]
-            mde = (T_ARM + 0.84) * statistics.stdev(xs) / math.sqrt(len(xs)) if len(xs) >= 2 else None
-            nd = len({r["day"] for r in inn})
-            cnt[h] = {"in_trades": len(inn), "out_trades": len(half_rows(h, "OUT")),
-                      "g2_in": sum(1 for r in rows if r["half"] == h and r["g2"] == "IN"),
-                      "g3_in": sum(1 for r in rows if r["half"] == h and r["g3"] == "IN"),
-                      "drops_by_reason": dict(Counter(
-                          (fetched.get(f"{t['day']}|{t['sym']}|{t['k']}") or {}).get("status", "not_fetched")
-                          for t in chosen if t["half"] == h)),
-                      "missing_quote_by_side": dict(Counter(r["g1"] for r in rows if r["half"] == h
-                                                            and r["net_A"] is None)),
-                      "ask_below_trigger_share": (sum(1 for r in inn if r.get("ask_below_trigger")) / len(inn))
-                      if inn else None,
-                      "missing_flow": sum(1 for r in rows if r["half"] == h and r["g1"] is None), "days": nd,
-                      "mde": mde, "floors_met": len(inn) >= FLOOR_TRADES and nd >= FLOOR_DAYS
-                      and mde is not None and mde <= MDE_BAR}
-        print(json.dumps(cnt, indent=1, default=str))
-        print(jwrite("count.json", cnt))
-        return
     if not a.skeptic_ready:
         raise SystemExit("--score needs --skeptic-ready")
-    cnt = jload("count.json")
-    if cnt.get("module_sha256") != module_shas() or not cnt.get("prereg_commit"):
+    if pub.get("module_sha256") != module_shas() or not pub.get("prereg_commit"):
         raise SystemExit("count.json from different code or without --prereg-commit")
-    if not all(cnt[h]["floors_met"] for h in ("A", "B")):
-        raise SystemExit("UNDERPOWERED at the count step: no outcome is read")
     import exit_capture as XC
-    cfg, ring = desk_cfg()
+    cfg, ring = pinned_arm_b_cfg()
+    half_rows = lambda h, g=None: [r for r in rows if r["half"] == h and (g is None or r["g1"] == g)  # noqa: E731
+                                   and r["net_A"] is not None]
     data = pickle.load(open(os.path.join(OUT, "armB.pkl"), "rb"))
     cl = client()
     spy_cache: dict = {}

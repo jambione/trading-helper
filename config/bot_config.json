@@ -188,6 +188,7 @@
   "ai_watch_admit_arm_ready_rth_only": true,
   "ai_watch_unarmable_evict_sec": 30.0,
   "ai_watch_dead_seat_evict_sec": 30.0,
+  "ai_watch_wait_state_evict_sec": 600.0,
   "ai_watch_admit_chg_prefer_min": 8.0,
   "ai_watch_admit_chg_prefer_max": 40.0,
   "ai_watch_admit_chg_soft_max": 50.0,

@@ -1,9 +1,11 @@
 """Pure checks for the buystop_flow code-review fixes. No network, no warehouse, no outcomes."""
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
+import statistics
 import sys
 from pathlib import Path
 
@@ -140,12 +142,257 @@ def test_module_shas_cover_the_exit_stack():
         assert len(shas[name]) == 64
 
 
-def test_stale_sample_is_refused():
-    with pytest.raises(SystemExit, match="rerun --sample"):
+def test_stale_sample_with_trades_is_kept_and_not_rebuilt():
+    """A hash mismatch declares the freeze. No trades still refuses, and nothing asks for --sample."""
+    with pytest.raises(SystemExit, match="not rebuilt"):
         B.assert_sample_current({"module_sha256": {}})
-    with pytest.raises(SystemExit, match="rerun --sample"):
+    with pytest.raises(SystemExit, match="not rebuilt"):
         B.assert_sample_current(None)
-    B.assert_sample_current({"module_sha256": B.module_shas()})
+    with pytest.raises(SystemExit, match="not rebuilt"):
+        B.assert_sample_current({"module_sha256": B.module_shas(), "trades": []})
+    assert B.assert_sample_current({"module_sha256": B.module_shas(), "trades": [{"k": 1}]}) is None
+    note = B.assert_sample_current({"module_sha256": {"buystop_flow": "old"}, "trades": [{"k": 1}]})
+    assert note and "not rebuilt" in note and "7975" in note
+    assert "rerun --sample" not in note
+
+
+def test_april_27_contributes_nothing_and_does_not_wrap():
+    def load_raw(feed, day):
+        raise AssertionError((feed, day))
+
+    wrapped = ["2026-04-27", "2026-04-28", "2026-10-15"]
+    assert wrapped[wrapped.index("2026-04-27") - 1] == "2026-10-15"
+    assert B.prev_warehouse_session("2026-04-27", wrapped) is None
+    days = ["2026-10-15", "2026-04-24", "2026-04-27"]
+    assert B.prev_warehouse_session("2026-04-27", days) is None
+    assert B.build_addon_day("2026-04-27", days, load_raw) == []
+    assert B.prev_warehouse_session("2026-04-28", ["2026-04-27", "2026-04-28", "2026-10-15"]) == "2026-04-27"
+    with pytest.raises(SystemExit, match="refusing previous session"):
+        B.prev_warehouse_session("2026-04-28", ["2026-04-24", "2026-04-28"])
+    with pytest.raises(SystemExit, match="no previous"):
+        B.build_addon_day("2026-05-01", ["2026-05-01"], load_raw)
+
+
+def test_cap_is_a_stable_prefix_and_a_short_day_is_not_backfilled():
+    rows = [{"sym": f"S{i:03d}", "k": 600 + (i % 5), "day": "2026-04-28"} for i in range(200)]
+    first = B.cap_addon_day(rows, "2026-04-28")
+    second = B.cap_addon_day(rows, "2026-04-28")
+    assert first == second and len(first) == 145
+    ordered = sorted(rows, key=lambda r: (r["sym"], r["k"]))
+    B.seeded("bsf-sample", "2026-04-28").shuffle(ordered)
+    assert first == ordered[:145]
+    assert len(B.cap_addon_day(rows[:10], "2026-04-28")) == 10
+
+
+def test_addon_row_drops_a_cheap_fill_and_a_missing_gross():
+    sip = {600: (22.0, 22.0), 610: (23.0, 23.0)}
+    assert B.addon_row("2026-04-28", "BBB", 600, 19.0, 610, 18.0, sip) is None
+    assert B.addon_row("2026-04-28", "BBB", 600, 22.0, 610, None, sip) is None
+    assert B.addon_row("2026-04-28", "BBB", 800, 21.0, 810, 20.0, sip) is None
+    kept = B.addon_row("2026-04-28", "BBB", 600, 22.0, 610, 21.0, sip)
+    assert kept["half"] == "A" and kept["k"] == 600 and kept["px_bar"] == 22.0
+    assert kept["stop"] == 21.0 and "bar_gross" in kept and "ctrl_d" in kept
+
+
+def test_build_skips_the_split_and_keeps_only_a_priced_fill(monkeypatch):
+    seen = []
+
+    def lines(prev, today):
+        return ({600: -90}, {600: -85})
+
+    def stops(fast, slow, sipf, iexf):
+        seen.append(sorted(sipf))
+        return [(600, 19.0, 610, 18.0), (800, 21.0, 810, 20.0), (600, 22.0, 610, 21.0)]
+
+    monkeypatch.setattr(B.W, "lines", lines)
+    monkeypatch.setattr(B, "t2_with_stops", stops)
+
+    def bars(opens):
+        return [(minute, px, px, px, px, 1) for minute, px in opens]
+
+    store = {
+        ("sip", "2026-04-27"): {"AAA": bars([(570, 10.0)]), "BBB": bars([(570, 21.0)]),
+                                "CCC": bars([(570, 21.0)])},
+        ("sip", "2026-04-28"): {"AAA": bars([(570, 20.0)]),
+                                "BBB": bars([(570, 21.0), (600, 22.0), (610, 23.0)]),
+                                "CCC": bars([(570, 21.0), (600, 22.0), (610, 23.0)])},
+        ("iex", "2026-04-27"): {"AAA": bars([(570, 10.0)]), "BBB": bars([(570, 21.0)])},
+        ("iex", "2026-04-28"): {"AAA": bars([(570, 20.0)]), "BBB": bars([(570, 21.0)])},
+    }
+    loaded = []
+
+    def load_raw(feed, day):
+        loaded.append(day)
+        if day in ("2026-04-24", "2026-10-15"):
+            raise AssertionError(day)
+        return store[(feed, day)]
+
+    rows = B.build_addon_day("2026-04-28", ["2026-04-27", "2026-04-28", "2026-10-15"], load_raw)
+    assert len(seen) == 1
+    assert [r["sym"] for r in rows] == ["BBB"]
+    assert rows[0]["px_bar"] == 22.0
+    assert "2026-04-24" not in loaded and "2026-10-15" not in loaded
+
+
+def test_ten_day_build_leaves_first_and_batch2_alone(monkeypatch):
+    monkeypatch.setattr(B.B2, "main", lambda *a, **k: (_ for _ in ()).throw(AssertionError("batch2.main")))
+    loaded = []
+
+    def load_raw(feed, day):
+        loaded.append(day)
+        if day in ("2026-04-24", "2026-10-15") or day < "2026-04-27":
+            raise AssertionError(day)
+        return {}
+
+    out = B.build_addon_rows(list(B.ADDON_DAYS), load_raw)
+    assert out["trades"] == [] and out["days"] == list(B.ADDON_DAYS)
+    assert B.W.FIRST == "2026-05-11"
+    assert "2026-04-24" not in loaded and "2026-10-15" not in loaded
+    import inspect
+    assert "days.index" not in inspect.getsource(B.build_addon_day)
+    assert "days.index" not in inspect.getsource(B.prev_warehouse_session)
+
+
+def test_pinned_cfg_pin_wins_and_does_not_open_bot_config(tmp_path, monkeypatch):
+    import config
+    pin = {"ai_watch_presquare_only": True, "ai_local_trail_print_ring": 7, "_min_hold": 15}
+    assert config.DEFAULT_CONFIG["ai_watch_presquare_only"] is False
+    raw = json.dumps(pin).encode()
+    path = tmp_path / "pinned.json"
+    path.write_bytes(raw)
+    monkeypatch.setattr(B, "CONFIG_SHA_PREFIX", hashlib.sha256(raw).hexdigest()[:16])
+
+    def boom(*_a, **_k):
+        raise AssertionError("config loader called")
+
+    monkeypatch.setattr(config, "load_config", boom)
+    monkeypatch.setattr(config, "load_config_ro", boom)
+    monkeypatch.setattr(B, "desk_cfg", boom)
+    real_open = open
+
+    def guard(file, *a, **k):
+        if str(file).endswith("bot_config.json"):
+            raise AssertionError(file)
+        return real_open(file, *a, **k)
+
+    monkeypatch.setattr("builtins.open", guard)
+    cfg, ring = B.pinned_arm_b_cfg(str(path))
+    assert cfg["ai_watch_presquare_only"] is True
+    assert cfg["ai_local_trail_print_ring"] == 7
+    assert "_min_hold" not in cfg and ring == 7
+    monkeypatch.setattr(B, "CONFIG_SHA_PREFIX", "0000000000000000")
+    with pytest.raises(SystemExit, match="pinned config sha"):
+        B.pinned_arm_b_cfg(str(path))
+
+
+def test_frozen_intersection_keeps_sample_order(monkeypatch):
+    monkeypatch.setattr(B, "select_trades", lambda *a, **k: (_ for _ in ()).throw(AssertionError("select")))
+    monkeypatch.setattr(B, "chosen_trades", lambda *a, **k: (_ for _ in ()).throw(AssertionError("chosen")))
+    trades = [
+        {"day": "d", "sym": "A", "k": 1, "half": "A"},
+        {"day": "d", "sym": "B", "k": 2, "half": "A"},
+        {"day": "d", "sym": "C", "k": 3, "half": "B"},
+    ]
+    fetched = {"d|A|1": {"status": "ok", "ofi60": 0.1}, "d|B|2": {"status": "no_trigger_in_tape"},
+               "d|C|3": {"status": "ok", "ofi60": 0.2}}
+    a, b = B.frozen_intersection(trades, fetched)
+    assert [r["sym"] for r in a] == ["A"] and a[0]["m"] == 1
+    assert [r["sym"] for r in b] == ["C"]
+    with pytest.raises(SystemExit, match="C4"):
+        B.frozen_intersection(trades, {"d|A|1": {"status": "ok"}})
+
+
+def test_top_cut_sees_only_frozen_half_a_and_addon_is_appended(monkeypatch):
+    import order_flow_pilot as OF
+    calls = []
+
+    def fake_top(values):
+        calls.append(list(values))
+        return B.FROZEN_OFI if len(calls) == 1 else B.FROZEN_QI
+
+    seen = []
+
+    def fake_groups(row, cuts):
+        seen.append(cuts)
+        return {"G1": "OUT", "G2": "OUT", "G3": "OUT"}
+
+    monkeypatch.setattr(OF, "top_cut", fake_top)
+    monkeypatch.setattr(OF, "groups", fake_groups)
+    frozen_a = [
+        {"day": "2026-06-01", "sym": "AAA", "half": "A", "k": 600, "ofi60": 0.1, "qi": 0.1},
+        {"day": "2026-06-02", "sym": "BBB", "half": "A", "k": 601, "ofi60": 0.2, "qi": 0.2},
+    ]
+    addon = [{"day": "2026-04-28", "sym": "NEW", "half": "A", "k": 610, "ofi60": 9.9, "qi": 9.9,
+              "ask_in": 20.0, "bid_out": 21.0}]
+    frozen_b = [{"day": "2026-08-03", "sym": "CCC", "half": "B", "k": 620, "ofi60": 0.3, "qi": 0.3}]
+    rows = B.assemble_labeled(frozen_a, addon, frozen_b)
+    flat = [v[0] for call in calls for v in call]
+    assert 9.9 not in flat
+    assert [r["sym"] for r in rows] == ["AAA", "BBB", "NEW", "CCC"]
+    assert all(c["ofi60"] == B.FROZEN_OFI and c["qi"] == B.FROZEN_QI for c in seen)
+
+
+def test_missing_addon_fetch_is_a_hard_refusal():
+    with pytest.raises(SystemExit, match="C4"):
+        B.addon_fetched_or_refuse([{"day": "2026-04-28", "sym": "A", "k": 1}], {})
+    with pytest.raises(SystemExit, match="145"):
+        B.assert_addon_cap([{"day": "2026-04-28", "sym": "A", "k": i} for i in range(146)])
+
+
+def test_mde_uses_the_days_that_have_a_mean():
+    inn = []
+    for day, xs in (("d1", [0.01, 0.03]), ("d2", [0.02]), ("d3", [-0.01]), ("d4", [0.0, 0.0])):
+        for x in xs:
+            inn.append({"day": day, "net_A": 0.0, "ctrl_d": x, "g1": "IN"})
+    got = B.control_mde(inn)
+    means = [0.02, 0.02, -0.01, 0.0]
+    want = (2.24 + 0.84) * statistics.stdev(means) / math.sqrt(4)
+    assert got == want
+    assert got != (2.24 + 0.84) * statistics.stdev(means) / math.sqrt(65)
+
+
+def test_half_b_fingerprint_and_the_public_count():
+    ok = {"in_trades": 2319, "days": 55, "mde": 0.0002439410280593733, "floors_met": True}
+    B.half_b_fingerprint(ok)
+    with pytest.raises(SystemExit, match="frozen count"):
+        B.half_b_fingerprint({"in_trades": 2318, "days": 55, "mde": ok["mde"], "floors_met": True})
+    note = B.assert_sample_current({"module_sha256": {"buystop_flow": "old"}, "trades": [{"k": 1}]})
+    pub = B.count_report(
+        {"in_trades": 1, "days": 1, "mde": 0.01, "floors_met": False, "net_A": 1, "bar_gross": [1],
+         "day_means": [0.1]},
+        {"in_trades": 2319, "days": 55, "mde": ok["mde"], "floors_met": True, "net_B": 1, "ctrl_d": 1},
+        note, "72b5cfb8")
+    blob = json.dumps(pub)
+    for banned in ("net_A", "net_B", "bar_gross", "ctrl_d", "day_means"):
+        assert banned not in blob
+    assert pub["A"] == {"in_trades": 1, "days": 1, "mde": 0.01, "floors_met": False}
+    assert pub["B"]["in_trades"] == 2319 and pub["B"]["floors_met"] is True
+    assert "not rebuilt" in pub["sample_kept"]
+
+
+def test_retired_paths_refuse_without_opening_bot_config():
+    import inspect
+    assert "open(" not in inspect.getsource(B.desk_cfg)
+    with pytest.raises(SystemExit, match="not rebuilt"):
+        B.build_sample(8000)
+    with pytest.raises(SystemExit, match="select_trades"):
+        B.chosen_trades({"trades": []})
+    with pytest.raises(SystemExit, match="does not open bot_config"):
+        B.desk_cfg()
+
+
+def test_main_refuses_to_rewrite_the_frozen_artifacts(monkeypatch):
+    import inspect
+    src = inspect.getsource(B.main)
+    assert "desk_cfg(" not in src
+    assert "chosen_trades(" not in src
+    assert "select_trades(" not in src
+    assert "load_config(" not in src
+    assert "build_sample(" not in src
+    for flag in ("--sample", "--probe", "--fetch"):
+        monkeypatch.setattr(sys, "argv", ["buystop_flow.py", flag])
+        with pytest.raises(SystemExit, match="not rebuilt|not rewritten"):
+            B.main()
 
 
 def test_arm_b_fetches_bars_through_req(monkeypatch):
