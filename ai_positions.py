@@ -5260,7 +5260,7 @@ def apply_local_trail(
     # shelf. Once LAST ≤ shelf, cancel resting orders and sell market.
     if _trail_hit:
         last = trigger
-        if _premarket_working_sell_on():
+        if _premarket_working_sell_on(pos):
             bid = _premarket_bid(ticker)
             px = round(float(bid), 2) if bid and bid > 0 else None
             if px is None:
@@ -5422,7 +5422,7 @@ def apply_local_trail(
                     peak=pos.get("peak_price"), mfe_r=pos.get("mfe_r"),
                 )
         if (
-            _premarket_working_sell_on()
+            _premarket_working_sell_on(pos)
             and str(pos.get("working_sell_state") or "") != "flatten"
         ):
             bid = _premarket_bid(ticker)
@@ -5432,7 +5432,7 @@ def apply_local_trail(
                 if _rest_working_sell(ticker, pos, px, "protect"):
                     changed = True
     if (
-        _premarket_working_sell_on()
+        _premarket_working_sell_on(pos)
         and str(pos.get("working_sell_state") or "") != "flatten"
         and not pos.get("working_sell_id")
     ):
@@ -5838,12 +5838,23 @@ def _tick_prints(ticker: str, live: dict | None) -> tuple[float | None, float | 
     return max(vals), min(vals)
 
 
-def _premarket_working_sell_on(now: float | None = None) -> bool:
+def _premarket_working_sell_on(now: float | dict | None = None, pos: dict | None = None) -> bool:
     """Session adapter: current shelf, DAY ext-hours sell. Default off."""
-    if not _cfg_flag("ai_premarket_working_sell", False):
-        return False
+    if isinstance(now, dict) and pos is None:
+        pos = now
+        now = None
     ts = time.time() if now is None else float(now)
-    return not _rth_now(ts)
+    if _rth_now(ts):
+        return False
+    if isinstance(pos, dict):
+        try:
+            import phase_b as _pb
+            if _pb.is_phase_b_position(pos):
+                return _pb.working_sell_on()
+        except Exception:
+            if pos.get("phase_b"):
+                return True
+    return bool(_cfg_flag("ai_premarket_working_sell", False))
 
 
 def _premarket_bid(symbol: str) -> float | None:
@@ -7321,7 +7332,7 @@ def manage_open_positions(
                         )
                     ):
                         alpaca_trader.cancel_open_orders(ticker)
-                        if _premarket_working_sell_on():
+                        if _premarket_working_sell_on(pos):
                             bid = _premarket_bid(ticker)
                             px = round(float(bid), 2) if bid and bid > 0 else None
                             if px is not None:
