@@ -100,6 +100,7 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 | 67 | CLOSED: Order Flow Breakout with Spread Compression FAIL (120 sessions, high confidence) | 11,017 real millisecond SIP executions from warehouse tape ($P \ge \$35.09$). Quoted spread compression to $0.01 provides a massive +13.38 bp lift (-2.68 bp vs -16.06 bp, t > 15), cutting execution friction by 83%. However, primary arm fails positive net hurdle (H1 -2.07 bp t -1.90, H2 -3.13 bp t -3.78; pooled -2.68 bp t -4.04). Cause: entry pays compressed 1c spread (1.4 bp half-spread), but exit pays uncompressed prevailing SIP bid (4-6 bp half-spread) + 1 bp fee, total 7.2 bp cost; gross signal (+4.8 bp) is mathematically insufficient to cover uncompressed exit spread. | docs/studies/FLOW_COMPRESSION_2026-10-31.md |
 
 ### Shipped today
+- Anti-Pullback Gate Option 2 LIVE (2026-10-31): Blocks entries where Price < (VWAP - 15 bp) OR Drop >= 2.0% from HOD. Full-month October counterfactual (923 trades) proved +1,290 bp cost reduction across 22 sessions (19/22 improved or neutral); eliminated -8.96 bp/trade negative edge on 144 blocked trades. Enabled via ai_watch_anti_pullback_gate.
 - Weekly book live (paper); AGY on gemini-3.8-flash-high; first order Fri 10/16 15:58
 - Discord OCR on ScreenCaptureKit (Screen Recording re-granted 09:56)
 - Desk AGY model fixed (all AGY calls had failed since 10/14 11:00)
