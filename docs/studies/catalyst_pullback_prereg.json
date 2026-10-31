@@ -1,0 +1,71 @@
+{
+  "study": "Morning Catalyst First-Pullback: buying the first 1-minute pullback consolidation near VWAP on premarket news gappers (09:40-10:30 ET) vs random timing and technical non-catalyst controls.",
+  "registered_at": "2026-10-31, after operator READY, before any simulation script execution or outcome read",
+  "registered_before_results": true,
+  "skeptic_rounds": 2,
+  "skeptic_verdict": "READY FOR OPERATOR REVIEW (2026-10-31)",
+  "period": {
+    "start": "2024-01-02",
+    "end": "2026-10-30",
+    "half_A": ["2024-01-02", "2025-05-31"],
+    "half_B": ["2025-06-01", "2026-10-30"]
+  },
+  "universe": {
+    "exchanges": ["NYSE", "NASDAQ"],
+    "min_price": 20.00,
+    "price_rule": "min(close_D_minus_1, open_D0, entry_px) >= 20.00",
+    "min_adv20": 20000000.0,
+    "min_gap": 0.03,
+    "gap_rule": "open_0930 / close_D_minus_1 - 1.0 >= 0.03",
+    "min_rvol10": 2.5,
+    "rvol10_rule": "volume_0930_0940 / trailing_20d_mean_0930_0940 >= 2.5"
+  },
+  "catalyst": {
+    "source": "Alpaca Benzinga News API",
+    "window": "16:00 ET (D-1) to 09:25 ET (D0)",
+    "categories": {
+      "earnings_beat": {
+        "pattern": "(?i)\\b(beats?|tops?|surpasses?|exceeds?)\\b.*\\b(eps|earnings|estimates?|views?|rev(enue)?)\\b",
+        "exclude": "(?i)\\b(misses?|lags?|falls short|cuts?|lowers?)\\b"
+      },
+      "guidance_raised": {
+        "pattern": "(?i)\\b(raises?|boosts?|lifts?|hikes?|upgrades?)\\b.*\\b(guidance|outlook|forecast|views?|fy\\d\\d?)\\b"
+      },
+      "fda_approval": {
+        "pattern": "(?i)\\b(fda\\b.*\\b(approv|clears?|authoriz)|receives? fda approval)\\b"
+      }
+    }
+  },
+  "entry": {
+    "window": "09:40:00 ET to 10:30:00 ET",
+    "max_trades_per_symbol_day": 1,
+    "condition": "Price pulls back toward cash VWAP (low <= cash_vwap * 1.01) and closes above prior pullback candle high with close >= cash_vwap",
+    "fill": "SIP Ask price at the open of the immediately following 1-minute candle"
+  },
+  "cost_model": {
+    "entry": "Full quoted SIP half-spread (Ask - Mid)",
+    "exit": "Full quoted SIP half-spread (Mid - Bid)",
+    "broker_friction_bp": 1.0,
+    "formula": "(Bid_exit - Ask_entry) / Ask_entry - 0.0001"
+  },
+  "exits": {
+    "horizons": ["3m", "5m", "15m", "30m"],
+    "desk_leash": "leash_replay.walk / trail_trend_hold",
+    "initial_stop": "under low of pullback consolidation (capped at 1.5%)",
+    "time_stop": "11:30:00 ET flat"
+  },
+  "controls": {
+    "control_1_timing": "Seeded random minute entry on same catalyst stock between 09:40 and 11:30 ET, identical markout horizons",
+    "control_2_technical": "Exact same pullback rule on non-catalyst morning gappers (gap >= 3%, RVOL >= 2.5, no catalyst)"
+  },
+  "pass_criteria": {
+    "min_trades_per_half": 300,
+    "min_sessions_per_half": 40,
+    "max_mde_bp": 30.0,
+    "pooled_net_bp": 10.0,
+    "both_halves_net_gt_zero": true,
+    "min_t_stat": 2.0,
+    "lift_vs_control_1_bp": 10.0,
+    "lift_vs_control_2_bp": 10.0
+  }
+}

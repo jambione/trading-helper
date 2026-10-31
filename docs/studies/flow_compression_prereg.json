@@ -1,0 +1,68 @@
+{
+  "study": "Two-Stage Order Flow Breakout with Spread Compression: buy-stop breakout with Lee-Ready buyer flow >= 65% when quoted spread compresses to $0.01 (<= 2.85 bp, <= 50% trailing median) vs uncompressed and timing controls.",
+  "registered_at": "2026-10-31, after operator READY, before any simulation script execution or outcome read",
+  "registered_before_results": true,
+  "skeptic_rounds": 2,
+  "skeptic_verdict": "READY FOR OPERATOR REVIEW (2026-10-31)",
+  "period": {
+    "start": "2024-01-02",
+    "end": "2026-10-30",
+    "half_A": ["2024-01-02", "2025-05-31"],
+    "half_B": ["2025-06-01", "2026-10-30"]
+  },
+  "universe": {
+    "exchanges": ["NYSE", "NASDAQ"],
+    "min_price": 35.09,
+    "price_rule": "min(close_D_minus_1, open_D0, trigger_px) >= 35.09",
+    "min_adv20": 20000000.0,
+    "trading_hours": "09:45:00 ET to 15:45:00 ET"
+  },
+  "pipeline_architecture": {
+    "stage_1": "Identify candidate buy-stop breakout minutes on 1m bars across liquid universe",
+    "stage_2_fetch": {
+      "quotes_window": "[T - 10m, T + 15m] for trailing median spread and forward markout/leash exits",
+      "trades_window": "[T - 60s, T] for Lee-Ready signed volume classification"
+    }
+  },
+  "entry_conditions": {
+    "spread_compression": {
+      "nominal_spread_max": 0.01,
+      "relative_to_price_max_bp": 2.85,
+      "relative_to_median_max_ratio": 0.50,
+      "implied_min_median_spread": 0.02
+    },
+    "order_flow": {
+      "algorithm": "Lee-Ready signed trades (tick test on midpoint ties)",
+      "window_sec": 60,
+      "min_buyer_ratio": 0.65
+    },
+    "breakout_trigger": "Price at second T crosses above high of prior 1-minute candle",
+    "fill": "SIP Ask price at second T (charging $0.01 spread)"
+  },
+  "cost_model": {
+    "entry": "Quoted SIP Ask (compressed spread)",
+    "exit": "Prevailing quoted SIP Bid at exit timestamp (uncompressed spread)",
+    "broker_friction_bp": 1.0,
+    "formula": "(Bid_exit - Ask_entry) / Ask_entry - 0.0001"
+  },
+  "exits": {
+    "horizons": ["1m", "3m", "5m", "15m"],
+    "desk_leash": "leash_replay.walk / trail_trend_hold",
+    "initial_stop": "under low of preceding 1-minute candle (or 1.0R ATR)"
+  },
+  "controls": {
+    "control_1_uncompressed": "Candidate breakouts with buyer flow >= 0.65 where quoted spread is uncompressed (spread > $0.01 OR relative spread > 50% of median)",
+    "control_2_flow_contrast": "Candidate breakouts with spread compression (spread == $0.01) but buyer flow < 0.50",
+    "control_3_placebo": "Random minute on same candidate ticker within [T - 30m, T + 30m], evaluated at prevailing SIP Ask/Bid"
+  },
+  "pass_criteria": {
+    "min_trades_per_half": 500,
+    "min_sessions_per_half": 40,
+    "max_mde_bp": 3.0,
+    "pooled_net_bp": 3.0,
+    "both_halves_net_gt_zero": true,
+    "min_t_stat": 2.0,
+    "lift_vs_uncompressed_bp": 3.0,
+    "lift_vs_placebo_bp": 2.0
+  }
+}
