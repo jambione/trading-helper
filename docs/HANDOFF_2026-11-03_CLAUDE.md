@@ -30,6 +30,8 @@
   * **Empirical Proof:** Full-month October counterfactual (923 trades) proved **+1,290.2 bp GAIN** across 22 sessions (19/22 improved or neutral), removing a -8.96 bp/trade negative expectation. Last week's live audit cut dollar losses by **60.9% (+108.3 bp / +$4.00 paper / +$10.83 on $1k tranche)**.
 * **Seat-Churn Retention (LIVE):**
   * `ai_watch_wait_state_evict_sec: 600` active on mini (Row 56). Keeps setup names (`exh_falling`, `exh_not_tight`, `wait_exh`) seated for 10 minutes to avoid re-seating and buying at the top of Leg 1.
+* **Book Sizing (LIVE):**
+  * 3 slots × 33% equity (Row 41). Active in [`config/bot_config.json`](../config/bot_config.json): `ai_max_positions: 3`, `ai_max_position_pct: 33.0`, `ai_risk_pct: 1.65` (~$634/slot on ~$1,920 equity, max open risk 4.95% $\le$ 5.0%).
 * **Mac Mini Processes:** LaunchAgent `com.jambi.trading-desk` running in user console session (`dashboard.py` PID 57894, `signal_engine.py` PID 57904).
 
 ---
