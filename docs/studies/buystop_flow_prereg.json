@@ -60,5 +60,63 @@
    "b_filters": "T uses round-lot prints {' ', '@', 'F'}; OFI60 keeps the pilot KEEP_CODES (odd lots included); arm B's prints come from leash_replay.fetch_seconds (drops I/Z/U/T) - both exclude odd lots; the T filter is the narrower set (declared)."
   }
  },
- "status": "READY after skeptic round 2 (conditions checked); code review next"
+ "amended_3": {
+  "when": "2026-10-24, after the code-review FIX FIRST, before round 2 and before any fetch.",
+  "changes": [
+   "CODE FIXES, no pass-bar change. Arm B's last print chunk ends at min(T + MAX_HOLD + 60, 15:50), so a time-cap exit is inside the fetched prints. The 98.75% bound uses t_ppf(0.9875). A second split across a chunk boundary keeps the lowest low and the later last price. An arm-B trade whose exit bid is missing is counted, and a half that then has under 300 trades or under 20 days is UNDERPOWERED. Module hashes add ai_positions, bars, config, leash_replay, eod_reversal and indicator_confirm_hist. The probe times real fetch_one plus fetch_arm_b (bars and the walk included) on at least 10 stride-spread trades. N is the largest half that fits 6 hours and whose projected MDE is <= 3 bp. The projection scales amended_2's 2.63 / 2.23 bp at 8,000 by sqrt(8000/N). A projection over 3 bp refuses the fetch.",
+   "DECLARED: an empty SIP condition list is a regular round-lot trigger. It is a subset of {' ', '@', 'F'}, and leash_replay.fetch_seconds keeps it. OFI60 still drops empty codes, as the pilot does. The trigger and the flow feature stay different filters.",
+   "DECLARED DROPPED: the $10-$20 information cell. The sample is entry price >= $20, so that cell has no rows.",
+   "INFORMATION, not graded: G2 and G3 (order_flow_pilot groups; the QI cut is set on half A), the quoted entry and exit spread by G1 side (the quote's ask and bid, not the stop-adjusted fill), and SPY-hedged NET. The hedge subtracts SPY's warehouse SIP open-to-open return from the entry minute to the exit minute (split-adjusted minute bars). A missing SPY bar is counted and left out of that cell."
+  ]
+ },
+ "code_review_round_2": {
+  "when": "2026-10-24, result-skeptic FIX FIRST on the script. Applied the same day, before any fetch. No third round (two-round rule).",
+  "applied": [
+   "Probe takes one completed fetch_one+fetch_arm_b from each of 10 blocks spread across the sample, not the first 10 hits.",
+   "fetch_bars goes through _req (429s retried) on the probe and on --cuts.",
+   "module hashes add tools/sell_double_check.py and ai_entry_watch.py (trail_exit_trend_hold -> live_value -> _live_percent_r_line).",
+   "fetch, count, score, and probe refuse a sample.json whose module_sha256 is not the current module_shas(); rerun --sample."
+  ]
+ },
+ "probe_2026_10_24": {
+  "when": "2026-10-24, after the sample rebuild, before any study fetch.",
+  "result": "10 completed probes, 11 attempts. 1.61 s per arm-A trade, 1.14 s per arm-B trade. The full sample would take 8.82 hours. The largest half inside 6 hours is 5,422. Projected MDE at that N is 3.19 bp for arm A and 2.71 bp for arm B. Arm A is over the 3 bp bar, so the fetch is refused. No outcomes were read."
+ },
+ "amended_4": {
+  "when": "2026-10-24, after the 6-hour probe refused the fetch, before any fetch. Operator ordered the time budget raised to 9 hours. No outcomes read.",
+  "changes": [
+   "TIME BUDGET ONLY. The joint fetch may take 9 hours instead of 6. The 3 bp MDE bar, the pass rule, R, the arms, and the sample are unchanged. The probe is re-run so N is recomputed at the measured pace. The full sample is 7,975 per half and measured 8.82 hours, inside 9. A projection still over 3 bp refuses the fetch."
+  ]
+ },
+ "probe_9h_2026_10_24": {
+  "when": "2026-10-24, after amended_4, before the fetch.",
+  "result": "10 completed probes, 11 attempts. Full sample 7,975 per half measures 8.71 hours. Projected MDE is 2.63 bp for arm A and 2.23 bp for arm B. projected_under_bar is true. Fetch started the same morning on the data-only account. No outcomes read before the fetch."
+ },
+ "count_2026_10_24": {
+  "when": "2026-10-24 15:55 ET, after --fetch exited. failed 0, 15,950 keys, 492 no_trigger_in_tape. Outcome-blind count only. --cuts not started. --score not run.",
+  "A": {
+   "in_trades": 2235,
+   "days": 55,
+   "mde_bp": 3.026,
+   "floors_met": false
+  },
+  "B": {
+   "in_trades": 2319,
+   "days": 55,
+   "mde_bp": 2.439,
+   "floors_met": true
+  },
+  "result": "UNDERPOWERED. Half A realized MDE is 3.026 bp against the 3 bp bar. No outcome is read."
+ },
+ "status": "UNDERPOWERED at the count step 2026-10-24; half A MDE 3.03 bp; not scored; arm B not fetched",
+ "amended_5_power": {
+  "when": "2026-10-30 ~15:50 ET",
+  "status": "IN FORCE: operator 'Accept READY' after result-skeptic round 1 (7 items) and round 2 (3 items), both applied verbatim in the proposal.",
+  "text": "docs/studies/buystop_flow_power_amendment_PROPOSAL.md (commit 72b5cfb8) is the registered text, verbatim; it governs where it conflicts with earlier keys.",
+  "proposal_sha256": "99c755fc5e273634",
+  "ready": {
+   "accepted_by": "operator 2026-10-30 in chat: 'Accept READY' (two-round rule)",
+   "next": "code the ten-day build and the pinned arm-B cfg, code review, fetch (ahead of the ORB fetch), count, then --score only if both halves floors_met."
+  }
+ }
 }

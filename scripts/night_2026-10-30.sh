@@ -40,15 +40,6 @@ say "iex stage0 done"
 .venv/bin/python tools/studies/square_relax_run.py info     --sha $SHA --jobs 3 --stop-at $STOP
 say "queue done"
 
-# orb_in_play amended_5 (READY; code review round 2 READY TO FETCH): long-history fetch, then the outcome-blind count.
-# Runs into the weekend (no desk). The 10/24 files are archived so nothing old is reused.
-ORB=ai_reports/orb_in_play
-if [ -f $ORB/open.pkl ] && [ ! -f $ORB/open_union.pkl ]; then
-  mkdir -p $ORB/archive_1024 && mv $ORB/*.pkl $ORB/*.json $ORB/archive_1024/ 2>/dev/null
-  say "archived the 10/24 ORB files"
-fi
-.venv/bin/python tools/studies/orb_in_play.py --fetch-daily && say "orb daily done" \
- && .venv/bin/python tools/studies/orb_in_play.py --fetch-open && say "orb open done" \
- && .venv/bin/python tools/studies/orb_in_play.py --fetch-day && say "orb fullday done" \
- && .venv/bin/python tools/studies/orb_in_play.py --prereg-commit "$(git rev-parse --short HEAD)" && say "orb count done"
+# ORB moved to scripts/orb_fetch_chain.sh (operator 10/30 chose buystop_flow first): run it after the buystop_flow
+# fetch and count finish (one heavy Alpaca job at a time).
 say "done"
