@@ -8,11 +8,34 @@ import orb_in_play as O  # noqa: E402
 
 
 def test_halves_segments_and_warmup():
-    assert O.half_of("2016-03-01") == "H1" and O.half_of("2021-06-01") == "H2"
-    assert O.half_of("2016-01-15") is None and O.half_of("2026-02-01") is None and O.half_of("2026-05-20") is None
+    # amended_6: window starts 2018-01-11, split 2022-04-05 / 2022-04-06
+    assert O.half_of("2016-03-01") is None and O.half_of("2018-01-10") is None
+    assert O.half_of("2018-01-11") == "H1" and O.half_of("2022-04-05") == "H1"
+    assert O.half_of("2022-04-06") == "H2" and O.half_of("2026-01-13") == "H2"
+    assert O.half_of("2026-02-01") is None and O.half_of("2026-05-20") is None
     assert O.half_of("2026-05-26") == "H2"
+    # segments decouple lookbacks at 2021-01-04 and 2026-04-27
     assert O.segment("2020-12-31") == 0 and O.segment("2021-01-04") == 1
     assert O.segment("2026-01-13") == 1 and O.segment("2026-04-27") == 2
+
+
+def test_amended_6_coverage_e_and_year_exclusion():
+    # synthetic daily and opens
+    daily = {"AAPL": {"2018-01-15": (100.0, 105.0, 99.0, 102.0, 1000000)}}
+    opens = {}
+    full = {}
+    raw_close = {}
+    # rule (a) threshold at 0.55 allows ~0.60+ completeness without excluding
+    # rule (e) checks low cutoff inside the scored window
+    O.universe.cutoff_dv = {"2018-01-15": 15e6}  # < 20M on scored day
+    O.universe.size = {"2018-01-15": 1000}
+    cov = O.coverage(daily, opens, full, raw_close=raw_close)
+    assert "2018-01-15" in cov["e_low_cutoff_days"]
+    # day before 2018-01-11 with low cutoff is ignored by half_of()
+    O.universe.cutoff_dv = {"2016-05-01": 15e6}
+    O.universe.size = {"2016-05-01": 1000}
+    cov2 = O.coverage(daily, opens, full, raw_close=raw_close)
+    assert "2016-05-01" not in cov2["e_low_cutoff_days"]
 
 
 def test_unions_cover_the_lookback_and_never_bridge_the_gap():

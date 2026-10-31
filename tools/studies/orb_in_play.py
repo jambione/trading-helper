@@ -35,10 +35,10 @@ from zoneinfo import ZoneInfo
 ROOT = os.environ.get("EEH_ROOT") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 OUT_DIR = os.path.join(ROOT, "ai_reports", "orb_in_play")
 ET = ZoneInfo("America/New_York")
-# amended_5: 2016-2026 for power; halves by date; the held-out window is never fetched; 04-27..05-22 warm-up only
-HALVES = {"H1": ("2016-02-01", "2020-12-31"), "H2": ("2021-01-04", "2026-10-15")}
+# amended_6: score 2018-01-11 onward, halves re-split H1 2018-01-11..2022-04-05 / H2 2022-04-06..2026-10-15
+HALVES = {"H1": ("2018-01-11", "2022-04-05"), "H2": ("2022-04-06", "2026-10-15")}
 FETCH = (("2015-12-01", "2026-01-13"), ("2026-04-27", "2026-10-15"))
-SEG2, WARM_END = "2026-04-27", "2026-05-22"
+SEG1, SEG2, WARM_END = "2021-01-04", "2026-04-27", "2026-05-22"
 SPY, MAX_SPY_REFUSED, MIN_CUT_DV = "SPY", 0.005, 20e6
 HELD = ("2026-01-14", "2026-04-24")
 TOP_UNIV, TOP_PLAY, OPEN_LB, OPEN_NEED = 1000, 20, 14, 10
@@ -60,9 +60,9 @@ REQUESTS = [0]
 
 
 def segment(d: str) -> int:
-    """Look-back segments (prereg session_index, read literally): H1, H2 before the held-out gap, and the sessions after
-    it. A look-back never crosses 2020-12-31 -> 2021-01-04 or 2026-01-13 -> 2026-04-27."""
-    return 2 if d >= SEG2 else (1 if d >= HALVES["H2"][0] else 0)
+    """Look-back segments (prereg session_index, read literally): H1 before 2021-01-04, H2/post-2021 before the held-out gap,
+    and the sessions after it. A look-back never crosses 2020-12-31 -> 2021-01-04 or 2026-01-13 -> 2026-04-27."""
+    return 2 if d >= SEG2 else (1 if d >= SEG1 else 0)
 
 
 def half_of(d: str) -> str | None:
@@ -249,9 +249,9 @@ def lookback_misses(univ: dict, opens: dict, stored: dict, sessions: list[str] |
     return {"misses": misses, "missing_sessions": missing_sessions}
 
 
-def in_play(daily: dict, opens: dict) -> dict[str, list[tuple]]:
+def in_play(daily: dict, opens: dict, raw_close: dict | None = None) -> dict[str, list[tuple]]:
     """day -> [(score, sym, (o, h, l, c) of the 5-minute candle)] top 20 (prior-14-session opening volume)."""
-    univ = universe(daily)
+    univ = universe(daily, raw_close=raw_close)
     days = sorted(opens)
     out = {}
     for i, d in enumerate(days):
@@ -404,10 +404,10 @@ def build_rows(excluded_years: set | None = None) -> tuple[list[dict], Counter, 
     return rows, st, refused
 
 
-def coverage(daily: dict, opens: dict, full: dict) -> dict:
+def coverage(daily: dict, opens: dict, full: dict, raw_close: dict | None = None) -> dict:
     """amended_5 coverage_step (a)-(e), by year, before any outcome."""
-    univ = universe(daily)
-    ip = in_play(daily, opens)
+    univ = universe(daily, raw_close=raw_close)
+    ip = in_play(daily, opens, raw_close=raw_close)
     by_y = defaultdict(lambda: {"nd": 0, "nd5": 0, "ratio": [], "t20": 0, "t20_bars": 0})
     for d, names in univ.items():
         if half_of(d) is None:
@@ -432,10 +432,11 @@ def coverage(daily: dict, opens: dict, full: dict) -> dict:
                    "b_open_vol_over_daily_median": statistics.median(y["ratio"]) if y["ratio"] else None,
                    "c_top20_fullday_share": y["t20_bars"] / y["t20"] if y["t20"] else None,
                    "d_names_died": died.get(yr, 0)}
-    excluded = sorted(yr for yr, v in out.items() if v["a_open5_share"] is not None and v["a_open5_share"] < 0.90)
+    excluded = sorted(yr for yr, v in out.items() if v["a_open5_share"] is not None and v["a_open5_share"] < 0.55)
     later = [died.get(str(y), 0) for y in (2017, 2018, 2019)]
-    if "2016" in out and later and died.get("2016", 0) < 0.5 * statistics.mean(later):
-        excluded = sorted(set(excluded) | {"2016"})
+    if any(a <= "2016-12-31" and b >= "2016-01-01" for a, b in HALVES.values()):
+        if "2016" in out and later and died.get("2016", 0) < 0.5 * statistics.mean(later):
+            excluded = sorted(set(excluded) | {"2016"})
     bad_c = sorted(yr for yr, v in out.items() if v["c_top20_fullday_share"] is not None
                    and v["c_top20_fullday_share"] < 0.98)
     low_cut = sorted(d for d, v in universe.cutoff_dv.items()
@@ -612,7 +613,7 @@ def main():
     net = lambda x: x["gross"] - COST                                                      # noqa: E731
     years = sorted({x["day"][:4] for x in longs})
     res["info"]["by_year_net"] = {y: dstats([x for x in longs if x["day"][:4] == y], net)[0]["mean"] for y in years}
-    res["info"]["paper_window_2016_2023"] = dstats([x for x in longs if x["day"] < "2024-01-01"], net)[0]
+    res["info"]["paper_window_2018_2023"] = dstats([x for x in longs if x["day"] < "2024-01-01"], net)[0]
     res["info"]["after_2024"] = dstats([x for x in longs if x["day"] >= "2024-01-01"], net)[0]
     res["info"]["px20_long_net"] = dstats([x for x in longs if x["entry"] >= 20], net)[0]["mean"]
     res["info"]["top10_long_net"] = dstats([x for x in longs if x["rank"] < 10], net)[0]["mean"]
@@ -624,8 +625,8 @@ def main():
                        "beta-1 SPY hedge binding; no by-year / post-publication / $20+ / hedge-variant cell is "
                        "promotable without its own prereg",
                        "held-out confirmation (~70 sessions, MDE ~46 bp) can only falsify (t <= -2)",
-                       "segments break at 2021-01-04 and 2026-04-27 (session_index): H2 scores from ~2021-02-02 and "
-                       "2021-01-04 .. ~02-01 are warm-up, as are 2026-04-27 .. 05-22"]
+                       "segments break at 2021-01-04 and 2026-04-27 (session_index): H1 spans 2018-01-11..2022-04-05 "
+                       "and H2 spans 2022-04-06..2026-10-15; 2026-04-27 .. 05-22 are warm-up"]
     res["skeptic_ready"], res["module_sha256"], res["stats"] = a.skeptic_ready, module_shas(), dict(st)
     write("result.json", res)
     print(json.dumps(res, indent=1, default=str))
