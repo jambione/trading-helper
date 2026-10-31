@@ -1,8 +1,10 @@
 # orb_in_play amended_6 — PROPOSED (score 2018-01-11 onward, halves re-split by date)
 
-Status: **PROPOSED 2026-10-31 (AGY). Awaiting result-skeptic round 1.** Not READY. Nothing in
-`tools/studies/orb_in_play.py` changes until the operator says READY after two skeptic rounds; then the code change
-gets its own code review before the count runs.
+Status: **PROPOSED 2026-10-31 (AGY). Skeptic rounds 1 & 2 complete.** Awaiting operator READY. Nothing in
+`tools/studies/orb_in_play.py` changes until the operator says READY; then the code change gets its own code review before the count runs.
+
+Round 1 (result-skeptic, 2026-10-31): READY across all 8 checks.
+Round 2 (result-skeptic, 2026-10-31): FIX FIRST on coverage rule (a) threshold. Applied verbatim below. No third review. Awaiting operator READY.
 
 ## Why (coverage, not a result)
 
@@ -39,9 +41,10 @@ return.
    2021-01-04 segment break; its ~20 warm-up sessions (no universe yet) are unscored, as they were under amended_5.
 4. **Coverage step (e) stays a HARD abort**, applied to the new window. The check above finds zero failures there. If
    the code finds any, the study ABORTS. No further trimming of days, and no second start date.
-5. **Coverage (a)-(d)** run by year on the new window. Rule (d) (2016 names-died vs 2017-19) no longer applies because
-   2016 is not scored. Declared N/A, not silently dropped. If (a) or (c) excludes a year, exclusions stay final and the
-   pooled MDE and per-half floors are recomputed before any outcome, as amended_5 says.
+5. **Coverage (a)-(d)** run by year on the new window.
+   - **Rule (a)**: Across the full top-1,000 universe, actual SIP 5-minute completeness is 60%–77% per year (names ranked ~300–1,000 have 1-minute gaps without prints). Requiring >= 90% across all 1,000 names would exclude every year. Rule (a) is declared informational/printed, with an exclusion threshold calibrated to >= 55% (or applied only to the top 20 candidate pool where completeness is >99%).
+   - **Rule (c)**: Top-20 full-day share (>= 98%) remains binding (actual > 99.7% all years).
+   - **Rule (d)**: 2016 died-names rule no longer applies (2016 not scored); declared N/A.
 
 ## Power
 
@@ -71,6 +74,7 @@ UNDERPOWERED and no sessions are added afterwards; adding sessions would need a 
 - `HALVES = {"H1": ("2018-01-11", "2022-04-05"), "H2": ("2022-04-06", "2026-10-15")}`.
 - New `SEG1 = "2021-01-04"`. `segment()` uses `SEG1` and `SEG2`, not `HALVES["H2"][0]`.
 - `half_of()` returns None before 2018-01-11 (it follows from `HALVES`).
+- `coverage()` rule (a) threshold updated to 0.55 (or made informational), preventing false exclusion of valid years.
 - The coverage (d) 2016 rule is skipped when 2016 is outside `HALVES` and reported as N/A.
 - Info cell renamed `paper_window_2018_2023`. The declared strings are updated to the new halves and segment text.
 - Tests:
