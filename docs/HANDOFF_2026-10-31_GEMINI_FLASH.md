@@ -21,15 +21,16 @@ disagree, ask the operator.
    merge: `test_effective_max_positions_scales_with_equity`, `test_no_new_state_is_written_on_the_arm_path`,
    4 × `test_sim_rstop_path`, `test_arm_ceiling_releases_a_20s_print_but_not_a_40s_one`. Any *new* failure is yours.
 
-## State at handoff (master-mac `301a1798`, MacBook = GitHub = mini)
+## State at handoff (master-mac, MacBook = GitHub = mini)
 
 - Nothing is running on the mini.
 - Seat-churn on at 600 s (row 56). Judge it on next week's trades.
 - Closed: buystop_flow FAIL (row 27), marketable limit NOT USEFUL (row 60), never-green (57), %R family (54), slope-now (55).
 - `eng/safe-alone-2026-10-30`: Grok's engineering commits (fill-matched trades, alarms, CI, config schema), **waiting
   for operator review**. Do not merge it.
-- MacBook only (not pushed): `stash@{0}` (name_history SIP-end fix + callout_exits draft) and 4 untracked files. The
-  operator is deciding keep/park. Leave them alone.
+- The 10/28 MacBook WIP is sorted: the name_history SIP-end fix + test, the callout_exits draft (NOT READY) and
+  `tools/blocked_today.py` are on master-mac. The sizing simulators sit on the local branch `parked/sim-sizing-1028`
+  (MacBook only, not for master-mac).
 
 ## Next, in order
 
