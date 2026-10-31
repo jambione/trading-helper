@@ -144,12 +144,13 @@ def scan_gappers(start_date: str = "2024-01-02", end_date: str = "2026-10-30"):
             gapper_mask = valid & (gaps >= MIN_GAP)
             
             cand_sym_indices = np.where(gapper_mask)[0]
+            day_cands = []
             for si in cand_sym_indices:
                 sym = syms[si]
                 gap_val = float(gaps[si])
                 p_close = float(c_prev[si])
                 p_open = float(o_today[si])
-                candidates.append({
+                day_cands.append({
                     "day": day_str,
                     "sym": sym,
                     "half": h_label,
@@ -158,6 +159,9 @@ def scan_gappers(start_date: str = "2024-01-02", end_date: str = "2026-10-30"):
                     "gap": gap_val,
                     "adv20": float(adv20[si]),
                 })
+            # Keep top 5 gappers for the session
+            day_cands.sort(key=lambda x: x["gap"], reverse=True)
+            candidates.extend(day_cands[:5])
         print(f"Panel scan complete: {len(candidates)} candidate gappers found.")
     else:
         print("Panel not found locally; candidate scan will query Alpaca data or warehouse.")

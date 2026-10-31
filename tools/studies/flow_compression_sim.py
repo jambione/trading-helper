@@ -29,8 +29,8 @@ OUT_DIR = os.path.join(ROOT, "ai_reports", "flow_compression")
 ET = ZoneInfo("America/New_York")
 
 HALVES = {
-    "A": (date(2024, 1, 2), date(2025, 5, 31)),
-    "B": (date(2025, 6, 1), date(2026, 10, 30)),
+    "A": (date(2026, 4, 27), date(2026, 7, 29)),
+    "B": (date(2026, 7, 30), date(2026, 10, 15)),
 }
 
 MIN_PRICE = 35.09
@@ -129,6 +129,7 @@ def scan_candidates(start_date: str = "2024-01-02", end_date: str = "2026-10-30"
             h, c, v, o_arr = h[order], c[order], v[order], o[order]
             bounds = np.searchsorted(sym_idx, np.arange(len(syms) + 1))
             
+            day_cands = []
             for si, sym in enumerate(syms):
                 a, b = bounds[si], bounds[si + 1]
                 if b - a < 30:
@@ -147,9 +148,9 @@ def scan_candidates(start_date: str = "2024-01-02", end_date: str = "2026-10-30"
                 for i in range(1, len(s_mins)):
                     m = int(s_mins[i])
                     if RTH_START <= m <= RTH_END:
-                        # Price crosses above prior 1m bar high
+                        # Price crosses above prior 1m bar high on volume
                         if s_h[i] > s_h[i - 1] and s_v[i] > np.median(s_v[max(0, i - 10):i]):
-                            candidates.append({
+                            day_cands.append({
                                 "day": day_str,
                                 "sym": str(sym),
                                 "half": h_label,
@@ -157,12 +158,13 @@ def scan_candidates(start_date: str = "2024-01-02", end_date: str = "2026-10-30"
                                 "trigger_px": float(s_h[i - 1]),
                                 "px": float(s_c[i]),
                             })
-                            if len(candidates) >= 15_000:
-                                break
-                if len(candidates) >= 15_000:
-                    break
-            if len(candidates) >= 15_000:
-                break
+            
+            # Stratified sample: up to 30 per day
+            rng = random.Random(int(hashlib.sha256(f"flow_cand_{day_str}".encode()).hexdigest()[:16], 16))
+            if len(day_cands) > 30:
+                day_cands = rng.sample(day_cands, 30)
+            candidates.extend(day_cands)
+            print(f"  {day_str} ({h_label}): {len(day_cands)} candidates (running total: {len(candidates)})")
     else:
         print("Warehouse directory not found locally; generating template candidate registry.")
     

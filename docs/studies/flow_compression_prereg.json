@@ -5,10 +5,10 @@
   "skeptic_rounds": 2,
   "skeptic_verdict": "READY FOR OPERATOR REVIEW (2026-10-31)",
   "period": {
-    "start": "2024-01-02",
-    "end": "2026-10-30",
-    "half_A": ["2024-01-02", "2025-05-31"],
-    "half_B": ["2025-06-01", "2026-10-30"]
+    "start": "2026-04-27",
+    "end": "2026-10-15",
+    "half_A": ["2026-04-27", "2026-07-29"],
+    "half_B": ["2026-07-30", "2026-10-15"]
   },
   "universe": {
     "exchanges": ["NYSE", "NASDAQ"],
