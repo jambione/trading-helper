@@ -1259,6 +1259,22 @@ def main() -> None:
                 flush=True,
             )
             raise SystemExit(2)
+    # Probe data feed entitlement (IEX or SIP)
+    try:
+        import alpaca_api as aa
+        from alpaca.data.enums import DataFeed
+        feed = aa.live_data_feed(cfg)
+        feed_str = "SIP" if feed == DataFeed.SIP else "IEX"
+        if feed == DataFeed.SIP:
+            ok, msg = aa.probe_feed_entitlement(cfg)
+            if ok:
+                print(f"[ai] [DATA_FEED] ✓ Alpaca real-time SIP data feed verified active ({msg})", flush=True)
+            else:
+                print(f"[ai] [DATA_FEED] ⚠️ WARNING: alpaca_bar_feed='sip' configured, but probe failed ({msg}).", flush=True)
+        else:
+            print("[ai] [DATA_FEED] Alpaca feed: IEX (free tier)", flush=True)
+    except Exception as e:
+        print(f"[ai] [DATA_FEED] probe notice: {e}", flush=True)
     # Record every external read this process makes (desk_io), so a replay
     # can serve the exact bytes the decisions saw. DESK_IO_RECORD=0 disables.
     if os.getenv("DESK_IO_RECORD", "1") != "0":

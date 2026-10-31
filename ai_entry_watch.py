@@ -10231,7 +10231,12 @@ def admit_arm_gates(row: dict, cfg: dict | None, *, now: float | None = None,
     except Exception:  # noqa: BLE001
         mins_open = 999
     delay = _f_or_none(cfg.get("ai_movers_sip_delay_min"))
-    delay = 15.0 if delay is None else delay
+    if delay is None or delay == 15.0:
+        import alpaca_api as _aa
+        if _aa.sip_is_realtime(cfg):
+            delay = 0.0
+        elif delay is None:
+            delay = 15.0
     max_sp = _spread_gate_max(row.get("source"), cfg)
     if max_sp > 0 and mins_open >= delay + 1:
         try:

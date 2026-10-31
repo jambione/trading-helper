@@ -429,14 +429,21 @@ def stream_last_print(
     now: float | None = None,
     cfg: dict | None = None,
 ) -> dict[str, Any] | None:
-    """Finnhub stream last + age. None if missing.
+    """Stream last trade + age. None if missing.
 
-    Prefers ``get_latest_print`` when present; falls back to price + ts_unix.
+    Resolution order:
+      1. In-process Finnhub stream (if connected/populated).
+      2. Dashboard/engine tape print via ai_entry_watch.live_print (from /api/state).
+      3. alpaca_price_poll in-memory prices.
+      4. Alpaca SDK StockLatestTradeRequest using live_data_feed (e.g. SIP).
     """
     sym = str(ticker or "").upper().strip()
     if not sym:
         return None
     t0 = float(now if now is not None else time.time())
+    c = _cfg(cfg)
+
+    # 1. In-process Finnhub stream
     try:
         import finnhub_stream as fh
         if hasattr(fh, "get_latest_print"):
@@ -451,24 +458,83 @@ def stream_last_print(
                     "trade_ts": got.get("trade_ts"),
                     "ts_unix": got.get("ts_unix"),
                     "age_sec": float(age) if age is not None else None,
+                    "src": "finnhub_stream",
                 }
         with fh.FINNHUB_STATE.lock:
             data = fh.FINNHUB_STATE.prices.get(sym)
-            if not data or not data.get("price"):
-                return None
-            px = float(data["price"])
-            trade_ts = data.get("trade_ts")
-            ts_unix = data.get("ts_unix")
-            basis = trade_ts if trade_ts is not None else ts_unix
-            age = (t0 - float(basis)) if basis is not None else None
+            if data and data.get("price"):
+                px = float(data["price"])
+                trade_ts = data.get("trade_ts")
+                ts_unix = data.get("ts_unix")
+                basis = trade_ts if trade_ts is not None else ts_unix
+                age = (t0 - float(basis)) if basis is not None else None
+                return {
+                    "price": px,
+                    "trade_ts": trade_ts,
+                    "ts_unix": ts_unix,
+                    "age_sec": age,
+                    "src": "finnhub_state",
+                }
+    except Exception:
+        pass
+
+    # 2. Dashboard / engine tape print (reads from /api/state or engine rt_* prints)
+    try:
+        import ai_entry_watch as ew
+        lp = ew.live_print(sym)
+        if lp is not None and lp[0] and float(lp[0]) > 0:
+            px = float(lp[0])
+            age = float(lp[1]) if lp[1] is not None else None
+            ts = (t0 - age) if age is not None else None
             return {
                 "price": px,
-                "trade_ts": trade_ts,
-                "ts_unix": ts_unix,
+                "trade_ts": ts,
+                "ts_unix": ts,
                 "age_sec": age,
+                "src": "live_print",
             }
     except Exception:
-        return None
+        pass
+
+    # 3. alpaca_price_poll (in-memory polled trades if poller is active)
+    try:
+        import alpaca_price_poll as app
+        with app.STATE.lock:
+            data = app.STATE.prices.get(sym)
+            if data and data.get("price"):
+                px = float(data["price"])
+                ts_unix = data.get("ts_unix")
+                age = (t0 - float(ts_unix)) if ts_unix is not None else None
+                return {
+                    "price": px,
+                    "trade_ts": ts_unix,
+                    "ts_unix": ts_unix,
+                    "age_sec": age,
+                    "src": "alpaca_price_poll",
+                }
+    except Exception:
+        pass
+
+    # 4. Direct Alpaca latest trade request with configured live_data_feed
+    try:
+        import alpaca_api as aa
+        client = aa.connect_data_client(c)
+        if client is not None:
+            quotes = aa.get_latest_trade_quotes(client, [sym], cfg=c)
+            if sym in quotes and quotes[sym] and quotes[sym][0] > 0:
+                px, trade_ts = quotes[sym]
+                age = (t0 - float(trade_ts)) if trade_ts > 0 else None
+                return {
+                    "price": float(px),
+                    "trade_ts": float(trade_ts) if trade_ts > 0 else None,
+                    "ts_unix": float(trade_ts) if trade_ts > 0 else None,
+                    "age_sec": float(age) if age is not None else None,
+                    "src": "alpaca_trade_rest",
+                }
+    except Exception:
+        pass
+
+    return None
 
 
 def fresh_stream_last(
@@ -1542,6 +1608,14 @@ def tick(
                 )
             except Exception:
                 pass
+            if not dry_run(c) and working_sell_on(c):
+                try:
+                    import ai_positions as cp
+                    px = _f(last) or _f(pos.get("last_seen_price"))
+                    if px is not None and px > 0 and hasattr(cp, "_rest_working_sell"):
+                        cp._rest_working_sell(sym, pos, float(px), "flatten")
+                except Exception:
+                    pass
 
     if phase_b_past_flat_deadline(t0, c) and phase_b_opens:
         for sym in phase_b_opens:
