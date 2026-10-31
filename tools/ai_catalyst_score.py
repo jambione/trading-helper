@@ -396,8 +396,11 @@ def default_calendar(start: str, end: str) -> list[str]:
             api, sec = "", ""
     if not api or not sec:
         raise RuntimeError("alpaca credentials missing for calendar")
+    from alpaca.trading.requests import GetCalendarRequest
     tc = TradingClient(api, sec, paper=True)
-    cal = tc.get_calendar(start=start, end=end)
+    start_d = datetime.strptime(start, "%Y-%m-%d").date() if isinstance(start, str) else start
+    end_d = datetime.strptime(end, "%Y-%m-%d").date() if isinstance(end, str) else end
+    cal = tc.get_calendar(GetCalendarRequest(start=start_d, end=end_d))
     out: list[str] = []
     for row in cal or []:
         d = getattr(row, "date", None)

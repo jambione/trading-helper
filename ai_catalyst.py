@@ -273,10 +273,11 @@ def _news_client():
 
 def session_days_around(day: str, *, lookback: int = 10) -> list[str]:
     """Trading session dates ending at *day* (inclusive when it is a session)."""
+    from alpaca.trading.requests import GetCalendarRequest
     tc = _trading_client()
     end = datetime.strptime(day, "%Y-%m-%d").date()
     start = end - timedelta(days=lookback + 14)
-    cal = tc.get_calendar(start=start.isoformat(), end=end.isoformat())
+    cal = tc.get_calendar(GetCalendarRequest(start=start, end=end))
     out = []
     for row in cal or []:
         d = getattr(row, "date", None)
