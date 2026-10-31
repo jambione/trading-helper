@@ -29,7 +29,7 @@ import os
 import random
 import statistics
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 for _p in (ROOT, os.path.join(ROOT, "tools", "studies")):
@@ -158,6 +158,11 @@ def P_(*a):
     print(*a, flush=True)
 
 
+def sip_end_ts(end_ts: float, now_ts: float) -> float:
+    """Cap a SIP query end 16 min before now. daily_bars uses the same lag (403 recent SIP)."""
+    return min(float(end_ts), float(now_ts) - 16 * 60)
+
+
 # ------------------------------------------------------------------ market access
 class StudyMarket(BRO.AlpacaMarket):
     """bro_sr_wr.AlpacaMarket (paced, cached, FetchFail, market_hours_guard) plus multi-symbol daily bars, per-symbol
@@ -233,7 +238,7 @@ class StudyMarket(BRO.AlpacaMarket):
         y, m = map(int, month.split("-"))
         start = BS.et_ts(f"{month}-01", 4)
         nxt = f"{y + (m == 12):04d}-{(m % 12) + 1:02d}-01"
-        end = min(BS.et_ts(nxt, 0), BS.et_ts(hi_day, 16))
+        end = sip_end_ts(min(BS.et_ts(nxt, 0), BS.et_ts(hi_day, 16)), datetime.now(timezone.utc).timestamp())
         try:
             out, token = [], None
             while True:
