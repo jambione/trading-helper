@@ -242,6 +242,9 @@ _BLOCKER_LABELS: dict[str, str] = {
     "gapped_down": "gapped down",
     "near_hod": "near day high",
     "hod_unknown": "day high unknown",
+    "below_vwap": "below VWAP",
+    "anti_pullback_drop": "fading drop",
+    "anti_pullback": "fading pullback",
     "gap_unknown": "gap ?",
     "rvol_pace_low": "volume pace low",
     "rvol_pace_unknown": "volume pace ?",
@@ -9587,6 +9590,131 @@ def room_below_hod_refusal(record: dict, sym: str, ask, cfg: dict,
     return None
 
 
+_DAY_HIGH_VWAP_CACHE: dict[str, tuple[tuple[float | None, float | None], float]] = {}
+
+
+def day_high_and_vwap_iex(
+    sym: str,
+    *,
+    now: float | None = None,
+    ttl: float = 60.0,
+    fetch_bars_fn=None,
+) -> tuple[float | None, float | None]:
+    """Today's regular-session high and cumulative cash VWAP so far from 1m bars.
+
+    Returns ``(hod, vwap)``. Both are None if unknown, before 09:30, or unavailable.
+    Cached for `ttl` seconds (default 60s).
+    """
+    sym = str(sym or "").upper().strip()
+    if not sym:
+        return None, None
+    t = float(now if now is not None else time.time())
+    hit = _DAY_HIGH_VWAP_CACHE.get(sym)
+    if hit is not None and t - hit[1] < ttl:
+        return hit[0]
+    val = (None, None)
+    try:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        import alpaca_api as aa
+        from config import load_config
+        et = ZoneInfo("America/New_York")
+        open_t = _dt.fromtimestamp(t, et).replace(
+            hour=9, minute=30, second=0, microsecond=0
+        ).timestamp()
+        if t >= open_t:
+            bar_cfg = {**(load_config() or {}), "bar_timeframe": "1Min", "bar_count": 420}
+            fetcher = fetch_bars_fn or aa.fetch_bars
+            client = None
+            if fetch_bars_fn is None:
+                try:
+                    client = _data_client()
+                except Exception:
+                    client = None
+            if fetch_bars_fn or client is not None:
+                df = fetcher(client, sym, bar_cfg)
+                if df is not None and len(df):
+                    idx = [ts.timestamp() for ts in df.index]
+                    rth_bars = [
+                        (float(h), float(l), float(c), float(v))
+                        for h, l, c, v, ts in zip(df["high"], df["low"], df["close"], df["volume"], idx)
+                        if open_t <= ts <= t
+                    ]
+                    if rth_bars:
+                        hod = max(b[0] for b in rth_bars)
+                        tot_v = sum(b[3] for b in rth_bars)
+                        if tot_v > 0:
+                            vwap = sum(((b[0] + b[1] + b[2]) / 3.0) * b[3] for b in rth_bars) / tot_v
+                        else:
+                            vwap = rth_bars[-1][2]
+                        val = (hod, vwap)
+    except Exception:  # noqa: BLE001
+        val = (None, None)
+    _DAY_HIGH_VWAP_CACHE[sym] = (val, t)
+    _record_input("day_high_vwap", sym, val, t)
+    return val
+
+
+def anti_pullback_refusal(
+    record: dict,
+    sym: str,
+    ask,
+    cfg: dict,
+    *,
+    now: float | None = None,
+    high_vwap_fn=None,
+) -> str | None:
+    """Option 2 Anti-Pullback Gate:
+    Refuse entries when price has collapsed into a severe fading pullback
+    (Price < VWAP - 15 bp OR Drop >= 2.0% below HOD).
+
+    Controlled by knobs:
+      - ai_watch_anti_pullback_gate: bool (default False; True to activate)
+      - ai_watch_anti_pullback_max_drop_pct: float (default 2.0, 0 = off)
+      - ai_watch_anti_pullback_vwap_buffer_bp: float (default 15.0)
+      - ai_watch_anti_pullback_require_vwap: bool (default True)
+    """
+    if not bool(cfg.get("ai_watch_anti_pullback_gate", False)):
+        return None
+    if not sym:
+        return None
+    try:
+        px = float(ask or 0)
+    except (TypeError, ValueError):
+        return None
+    if px <= 0:
+        return None
+
+    try:
+        max_drop = float(cfg.get("ai_watch_anti_pullback_max_drop_pct", 2.0) or 0.0)
+    except (TypeError, ValueError):
+        max_drop = 2.0
+    try:
+        v_buf_bp = float(cfg.get("ai_watch_anti_pullback_vwap_buffer_bp", 15.0) or 0.0)
+    except (TypeError, ValueError):
+        v_buf_bp = 15.0
+    req_vwap = bool(cfg.get("ai_watch_anti_pullback_require_vwap", True))
+
+    getter = high_vwap_fn or day_high_and_vwap_iex
+    hod, vwap = getter(sym, now=now)
+
+    # 1. Check Waterfall Drop from HOD
+    if max_drop > 0 and hod is not None and hod > 0:
+        drop_pct = (hod - px) / hod * 100.0
+        if drop_pct >= max_drop:
+            record["block_detail"] = f"drop {drop_pct:.1f}% >= {max_drop:.1f}% from HOD {hod:.2f}"
+            return "anti_pullback_drop"
+
+    # 2. Check Clean Break below Cash VWAP (with buffer)
+    if req_vwap and vwap is not None and vwap > 0:
+        floor = vwap * (1.0 - v_buf_bp / 10000.0)
+        if px < floor:
+            record["block_detail"] = f"px {px:.2f} < VWAP floor {floor:.2f} ({vwap:.2f} - {v_buf_bp:g}bp)"
+            return "below_vwap"
+
+    return None
+
+
 _VOL_NOW_CACHE: dict[str, tuple[float | None, float]] = {}
 
 
@@ -17693,6 +17821,10 @@ def should_arm_buy(
         _hod_why = room_below_hod_refusal(record, _gate_sym, ask, cfg, now=now)
         if _hod_why:
             return False, _hod_why
+        # Anti-Pullback Gate (Option 2): block entries below VWAP-15bp or dropped >= 2.0% from HOD.
+        _ap_why = anti_pullback_refusal(record, _gate_sym, ask, cfg, now=now)
+        if _ap_why:
+            return False, _ap_why
         # Volume now vs today's own pace (off at 0): no buys into a quiet tape.
         _vol_why = thin_volume_refusal(record, _gate_sym, cfg, now=now)
         if _vol_why:
