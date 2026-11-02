@@ -183,3 +183,79 @@ def test_quote_is_live_premarket_passes_with_bid_ask(monkeypatch):
 def test_adapter_flag_defaults_off():
     from config import DEFAULT_CONFIG
     assert DEFAULT_CONFIG.get("ai_premarket_working_sell") is False
+
+
+def test_premarket_ratchet_stop_no_order_until_print_le_shelf(monkeypatch):
+    """Pre-market ratchet stop matches RTH:
+    - No order resting while holding/ratcheting above the shelf stop.
+    - Sells only when software detects print <= stop shelf.
+    """
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {
+        "ai_local_trail_enabled": True,
+        "ai_premarket_working_sell": True,
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_be_at_r": 0.15,
+        "ai_stranded_close_sec": 0,
+        "ai_shelf_trace_sec": 0,
+    })
+    monkeypatch.setattr(cp, "_cfg_flag", lambda k, d=True: {
+        "ai_local_trail_enabled": True,
+        "ai_premarket_working_sell": True,
+    }.get(k, d))
+    monkeypatch.setattr(cp, "_rth_now", lambda _n: False)
+    monkeypatch.setattr(cp, "_premarket_bid", lambda _s: 10.85)
+
+    pos = {
+        "symbol": "RATCHET",
+        "entry_confirmed": True,
+        "entry_price": 10.00,
+        "risk_per_share": 0.50,
+        "last_seen_price": 10.00,
+        "local_stop_price": 9.95,
+        "peak_price": 10.00,
+        "entry_time": 1.0,
+        "mfe_r": 0.0,
+        "phase_b": True,
+    }
+    broker_orders = []
+
+    def mock_working_sell(sym, px, **k):
+        broker_orders.append({"sym": sym, "px": px})
+        return {"ok": True, "order_id": f"ws-{len(broker_orders)}"}
+
+    monkeypatch.setattr("alpaca_trader.working_sell_replace", mock_working_sell)
+
+    # 1. Price moves up: $10.00 -> $10.50 (+1.0R gain)
+    events = []
+    cp._update_excursions(pos, 10.50)
+    cp.note_trail_print(pos, 10.50)
+    cp.note_trail_print(pos, 10.50)
+    pos["last_seen_price"] = 10.50
+    ch, closed = cp.apply_local_trail("RATCHET", pos, 10.50, events, {})
+    
+    assert ch is True
+    assert closed is False
+    assert pos.get("local_stop_price") > 9.95  # Stop shelf ratcheted up!
+    # Crucial: NO resting broker order placed while holding!
+    assert len(broker_orders) == 0
+    assert "working_sell_state" not in pos or pos.get("working_sell_state") != "protect"
+
+    # 2. Price sets another peak: $11.00 (+2.0R gain)
+    shelf_before = pos["local_stop_price"]
+    cp._update_excursions(pos, 11.00)
+    cp.note_trail_print(pos, 11.00)
+    pos["last_seen_price"] = 11.00
+    ch2, closed2 = cp.apply_local_trail("RATCHET", pos, 11.00, events, {})
+    assert pos["local_stop_price"] >= shelf_before
+    shelf_at_peak = pos["local_stop_price"]
+    assert len(broker_orders) == 0  # Still zero orders placed at broker!
+
+    # 3. Software detects print <= stop shelf: price drops through shelf
+    drop_px = shelf_at_peak - 0.05
+    ch3, closed3 = cp.apply_local_trail("RATCHET", pos, drop_px, events, {})
+    assert closed3 is False  # Resting working sell, not market dumped
+    assert len(broker_orders) == 1  # NOW order is submitted to broker!
+    assert pos.get("working_sell_state") == "flatten"
+    assert broker_orders[0]["sym"] == "RATCHET"
+    assert broker_orders[0]["px"] == 10.85
+

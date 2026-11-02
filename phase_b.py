@@ -1566,10 +1566,42 @@ def tick(
                 book[sym] = rec
         save_book(book)
 
-    # Hard stop + flatten hooks for open Phase B lots.
+    # Ratchet stop + hard stop + flatten hooks for open Phase B lots.
     for sym, pos in phase_b_opens.items():
         last, _why = fresh_stream_last(sym, now=t0, cfg=c)
+        if last is None:
+            last = _f(pos.get("last_seen_price"))
         entry = _f(pos.get("entry_price"))
+
+        # Ratchet stop exit logic: update excursions and evaluate local trail shelf
+        if last is not None:
+            try:
+                import ai_positions as cp
+                if hasattr(cp, "_update_excursions"):
+                    cp._update_excursions(pos, float(last))
+                trail_events: list[dict[str, Any]] = []
+                trail_why: dict[str, Any] = {}
+                _ch, _closed = cp.apply_local_trail(sym, pos, float(last), trail_events, trail_why)
+                for te in trail_events:
+                    events.append({"kind": te.get("event") or "trail_event", "symbol": sym, **te})
+                    if te.get("event") in ("local_trail_working", "local_trail", "local_trail_raised"):
+                        try:
+                            import phase_b_ledger as pbl
+                            pbl.log_event(
+                                te.get("event"),
+                                symbol=sym,
+                                last=last,
+                                stop=pos.get("local_stop_price"),
+                                peak=pos.get("peak_price"),
+                                mfe_r=pos.get("mfe_r"),
+                                cfg=c,
+                                ts=t0,
+                            )
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
         if last is not None and entry is not None and hard_stop_hit(entry, last, cfg=c):
             events.append({
                 "kind": "hard_stop",
