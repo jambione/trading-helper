@@ -890,6 +890,83 @@ def save_book(book: dict[str, dict[str, Any]]) -> None:
             pass
 
 
+def book_rows_for_dashboard(
+    cfg: dict | None = None,
+    now: float | None = None,
+) -> list[dict[str, Any]]:
+    """Format active Phase B seats for the unified dashboard book view during premarket."""
+    c = _cfg(cfg)
+    if not enabled(c) or not phase_b_session_active(now, c):
+        return []
+    t0 = float(now if now is not None else time.time())
+    book = load_book()
+    out: list[dict[str, Any]] = []
+    max_age = float(print_max_age_sec(c))
+    for sym, rec in book.items():
+        if not isinstance(rec, dict):
+            continue
+        st = str(rec.get("status") or "watching").lower().strip()
+        px = _f(rec.get("price"))
+        ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
+        exh = _f(ind.get("exhaustion"))
+        cm_rsi = _f(ind.get("cm_rsi"))
+        pct = _f(rec.get("pct_change"))
+        score = _f(rec.get("score"))
+
+        last_px, why_px = fresh_stream_last(sym, now=t0, cfg=c)
+        display_px = last_px if last_px is not None else px
+
+        print_info = stream_last_print(sym, now=t0, cfg=c)
+        age = (
+            float(print_info["age_sec"])
+            if (print_info and print_info.get("age_sec") is not None)
+            else None
+        )
+
+        is_ready = st in ("dry_armed", "entry_pending")
+        if is_ready:
+            b_code = None
+            b_label = "ready" if st == "entry_pending" else "dry armed"
+        elif why_px == "phase_b_stale_print":
+            b_code = "stale_quote"
+            b_label = "stale quote"
+        elif why_px == "phase_b_missing_print":
+            b_code = "missing_print"
+            b_label = "no print"
+        else:
+            b_code = "premarket"
+            b_label = "premarket"
+
+        row = {
+            "symbol": sym,
+            "phase": "ready" if is_ready else "watching",
+            "status": st,
+            "ready": is_ready,
+            "in_zone": False,
+            "source": str(rec.get("source") or "movers"),
+            "score": score,
+            "price": display_px,
+            "last_ask": display_px,
+            "pct_change": pct,
+            "admit_pct_change": pct,
+            "exhaustion": exh,
+            "cm_rsi": cm_rsi,
+            "block_code": b_code,
+            "blocker": b_label,
+            "block_reason": b_label,
+            "last_ask_age_sec": age,
+            "price_age_sec": age,
+            "decision_max_age_sec": max_age,
+            "g_tape_age": age,
+            "g_tape_max": max_age,
+            "phase_b": True,
+            "is_position": False,
+            "reason": f"Phase B ({st})",
+        }
+        out.append(row)
+    return out
+
+
 def seat_symbol(
     row: dict,
     *,
@@ -1669,6 +1746,7 @@ def tick(
 __all__ = [
     "SOURCE_PRIORITY",
     "admit_candidate",
+    "book_rows_for_dashboard",
     "build_entry_decision",
     "can_open_another",
     "cancel_entry_on_ttl",
