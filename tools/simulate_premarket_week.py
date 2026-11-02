@@ -70,6 +70,24 @@ def parse_args():
         help="Peak-give R for ratchet stop trail",
     )
     parser.add_argument(
+        "--max-entries",
+        type=int,
+        default=2,
+        help="Max entries per symbol per day",
+    )
+    parser.add_argument(
+        "--lockout-on-loss",
+        action="store_true",
+        default=True,
+        help="Lockout symbol for remainder of day after a hard stop / loss",
+    )
+    parser.add_argument(
+        "--min-prints-window",
+        type=int,
+        default=5,
+        help="Min prints in recent 60s window to arm",
+    )
+    parser.add_argument(
         "--out-json",
         default="",
         help="Path to write full results JSON",
@@ -85,6 +103,9 @@ def simulate_day(
     max_open: int = 2,
     hard_stop_pct: float = 5.0,
     give_r: float = 0.35,
+    max_entries: int = 2,
+    lockout_on_loss: bool = True,
+    min_prints_window: int = 5,
 ) -> tuple[list[dict], dict[str, Any]]:
     day_dir = snapshots_dir / day
     prints_path = day_dir / "recorder_prints.jsonl.gz"
@@ -146,6 +167,9 @@ def simulate_day(
     open_positions: dict[str, dict] = {}
     pending_orders: dict[str, dict] = {}  # sym -> {lim_px, submit_ts, submit_et}
     closed_trades: list[dict] = []
+    entries_count: dict[str, int] = defaultdict(int)
+    locked_out_symbols: set[str] = set()
+    recent_prints: dict[str, list[float]] = defaultdict(list)
 
     # Indicators state: 1-minute high/low window for exhaustion
     minute_bars: dict[str, list[tuple[float, float, float]]] = defaultdict(list) # sym -> [(high, low, close)]
@@ -230,6 +254,8 @@ def simulate_day(
                     "exit_reason": reason,
                     "hold_sec": round(ts - pos["entry_ts"], 1),
                 })
+                if lockout_on_loss and (reason == "hard_stop" or ret_r < 0):
+                    locked_out_symbols.add(sym)
                 del open_positions[sym]
                 continue
 
@@ -261,6 +287,7 @@ def simulate_day(
             # Check fill: if print <= limit price
             if px <= order["lim_px"]:
                 r_dist = px * (hard_stop_pct / 100.0)
+                entries_count[sym] += 1
                 open_positions[sym] = {
                     "symbol": sym,
                     "entry_ts": ts,
@@ -281,6 +308,11 @@ def simulate_day(
                 del pending_orders[sym]
                 continue
 
+        # Track recent print activity (anti-freeze/halt filter)
+        recent_prints[sym].append(ts)
+        while recent_prints[sym] and (ts - recent_prints[sym][0]) > 60.0:
+            recent_prints[sym].pop(0)
+
         # ── C. Seat Admission & Arming Check ──────────────────────────
         if et >= "09:20:00":
             continue  # Entry cutoff
@@ -288,15 +320,24 @@ def simulate_day(
         if len(open_positions) >= max_open:
             continue
 
+        if sym in locked_out_symbols:
+            continue
+
+        if entries_count[sym] >= max_entries:
+            continue
+
         if sym not in seated_symbols:
             if len(seated_symbols) < max_seats:
                 seated_symbols.add(sym)
 
         if sym in seated_symbols and sym not in open_positions and sym not in pending_orders:
-            if fresh:
+            if fresh and len(recent_prints[sym]) >= min_prints_window:
                 exh = get_exhaustion(sym, px)
+                bars = minute_bars[sym]
+                prev_close = bars[-2][2] if len(bars) >= 2 else px
+                is_rising = px >= prev_close
                 # Phase B Arm Criteria: Exhaustion 40-70 rising
-                if 40.0 <= exh <= 70.0:
+                if 40.0 <= exh <= 70.0 and is_rising:
                     pad = 0.0015
                     lim = round(min(px * (1.0 + pad), px + 0.05), 2)
                     pending_orders[sym] = {
@@ -357,6 +398,9 @@ def main():
             max_open=args.max_open,
             hard_stop_pct=args.hard_stop_pct,
             give_r=args.give_r,
+            max_entries=args.max_entries,
+            lockout_on_loss=args.lockout_on_loss,
+            min_prints_window=args.min_prints_window,
         )
         if summ:
             day_summaries.append(summ)
