@@ -14945,14 +14945,14 @@ def _gate_wire_fields(rec: Any, sym: str, now: float | None = None) -> dict:
         room = _f_or_none(ind.get("ob_room_pct"))
         if room is None and isinstance(rec.get("ob_room_pct"), (int, float)):
             room = _f_or_none(rec.get("ob_room_pct"))
-        out["g_ob_resist"] = ind.get("ob_resist_0.3") is True or rec.get("ob_resist_0.3") is True
+        out["g_ob_resist"] = bool((cfg or {}).get("ai_watch_ob_resist_skip")) and (ind.get("ob_resist_0.3") is True or rec.get("ob_resist_0.3") is True)
         out["g_ob_room"] = round(float(room), 3) if room is not None else None
-        out["g_ob_room_min"] = float((cfg or {}).get("ai_watch_pullback_min_ob_room_pct", 0.20) or 0.20)
+        out["g_ob_room_min"] = float((cfg or {}).get("ai_watch_pullback_min_ob_room_pct", 0.20) or 0.20) if bool((cfg or {}).get("ai_watch_ob_resist_skip")) else None
 
         # CM RSI gate wire
         cm = _f_or_none(ind.get("cm_rsi")) or _f_or_none(rec.get("cm_rsi"))
         out["g_cm_rsi"] = round(float(cm), 1) if cm is not None else None
-        out["g_cm_rsi_max"] = float((cfg or {}).get("ai_watch_presquare_max_cm_rsi", 0) or (cfg or {}).get("ai_watch_pullback_max_cm_rsi", 0) or 75.0)
+        out["g_cm_rsi_max"] = float((cfg or {}).get("ai_watch_presquare_max_cm_rsi", 0) or (cfg or {}).get("ai_watch_pullback_max_cm_rsi", 0) or 0)
 
         # Pullback Buy-Stop Trigger level
         pb_trig = _f_or_none(rec.get("pullback_trigger"))
@@ -15496,38 +15496,40 @@ def pullback_buystop_decide(
             rec.pop("pullback_buystop", None)
         return False, why_gate
 
-    # Overhead resistance check
-    try:
-        min_room = float((cfg or {}).get("ai_watch_pullback_min_ob_room_pct", 0.20) or 0.20)
-    except (TypeError, ValueError):
-        min_room = 0.20
-    _ob_fields = _ob_observe_stamp(rec, sym, ask_f, cfg, now)
-    if isinstance(_ob_fields, dict):
-        if _ob_fields.get("ob_resist_0.3") is True:
-            if isinstance(rec, dict):
-                rec.pop("pullback_buystop", None)
-            return False, "ob_resist"
-        room = _ob_fields.get("ob_room_pct")
-        if room is not None and float(room) < min_room:
-            if isinstance(rec, dict):
-                rec.pop("pullback_buystop", None)
-            return False, "tight_overhead_resist"
+    # Overhead resistance check (when ai_watch_ob_resist_skip is enabled)
+    if bool((cfg or {}).get("ai_watch_ob_resist_skip", False)):
+        try:
+            min_room = float((cfg or {}).get("ai_watch_pullback_min_ob_room_pct", 0.20) or 0.20)
+        except (TypeError, ValueError):
+            min_room = 0.20
+        _ob_fields = _ob_observe_stamp(rec, sym, ask_f, cfg, now)
+        if isinstance(_ob_fields, dict):
+            if _ob_fields.get("ob_resist_0.3") is True:
+                if isinstance(rec, dict):
+                    rec.pop("pullback_buystop", None)
+                return False, "ob_resist"
+            room = _ob_fields.get("ob_room_pct")
+            if min_room > 0 and room is not None and float(room) < min_room:
+                if isinstance(rec, dict):
+                    rec.pop("pullback_buystop", None)
+                return False, "tight_overhead_resist"
 
-    # CM RSI check (not pegged)
+    # CM RSI check (not pegged, when ai_watch_pullback_max_cm_rsi > 0)
     try:
-        max_cm = float((cfg or {}).get("ai_watch_pullback_max_cm_rsi", 75.0) or 75.0)
+        max_cm = float((cfg or {}).get("ai_watch_pullback_max_cm_rsi", 0) or 0)
     except (TypeError, ValueError):
-        max_cm = 75.0
-    ind = rec.get("indicator") if isinstance(rec, dict) and isinstance(rec.get("indicator"), dict) else {}
-    rsi_v = _f_or_none(ind.get("cm_rsi"))
-    if rsi_v is None and isinstance(rec, dict):
-        rsi_v = _f_or_none(rec.get("cm_rsi"))
-    if rsi_v is None and isinstance(sig, dict):
-        rsi_v = _f_or_none(sig.get("cm_rsi"))
-    if rsi_v is not None and float(rsi_v) > max_cm:
-        if isinstance(rec, dict):
-            rec.pop("pullback_buystop", None)
-        return False, "cm_rsi_pegged"
+        max_cm = 0.0
+    if max_cm > 0:
+        ind = rec.get("indicator") if isinstance(rec, dict) and isinstance(rec.get("indicator"), dict) else {}
+        rsi_v = _f_or_none(ind.get("cm_rsi"))
+        if rsi_v is None and isinstance(rec, dict):
+            rsi_v = _f_or_none(rec.get("cm_rsi"))
+        if rsi_v is None and isinstance(sig, dict):
+            rsi_v = _f_or_none(sig.get("cm_rsi"))
+        if rsi_v is not None and float(rsi_v) > max_cm:
+            if isinstance(rec, dict):
+                rec.pop("pullback_buystop", None)
+            return False, "cm_rsi_pegged"
 
     # Closed 1-minute bars from ob_observe
     try:

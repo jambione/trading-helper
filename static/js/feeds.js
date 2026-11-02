@@ -2029,26 +2029,30 @@ function _bookGateChecks(r) {
       title: 'Resistance barrier within 0.3%: entry refused (overhead order block ceiling)',
     });
   }
-  // Room to Resistance Gate (>= 0.20%)
-  const room = num(r.g_ob_room), roomMin = num(r.g_ob_room_min) || 0.20;
+  // Room to Resistance Gate (>= 0.20% when active)
+  const room = num(r.g_ob_room), roomMin = num(r.g_ob_room_min);
   if (room != null) {
-    const ok = room >= roomMin;
+    const ok = (roomMin != null && roomMin > 0) ? room >= roomMin : true;
     out.push({
       key: 'room',
       text: `rm ${room.toFixed(1)}%`,
       ok: ok,
-      title: `Overhead room to resistance ${room.toFixed(2)}% vs minimum ${roomMin.toFixed(2)}% (${ok ? 'PASS' : 'FAIL - tight ceiling'})`,
+      title: (roomMin != null && roomMin > 0)
+        ? `Overhead room to resistance ${room.toFixed(2)}% vs minimum ${roomMin.toFixed(2)}% (${ok ? 'PASS' : 'FAIL - tight ceiling'})`
+        : `Overhead room to resistance: ${room.toFixed(2)}%`,
     });
   }
-  // CM RSI Gate (<= 75)
-  const cm = num(r.g_cm_rsi), cmMax = num(r.g_cm_rsi_max) || 75.0;
+  // CM RSI Gate (<= cap when active)
+  const cm = num(r.g_cm_rsi), cmMax = num(r.g_cm_rsi_max);
   if (cm != null) {
-    const ok = cm <= cmMax;
+    const ok = (cmMax != null && cmMax > 0) ? cm <= cmMax : true;
     out.push({
       key: 'cm_rsi',
       text: `cm ${Math.round(cm)}`,
       ok: ok,
-      title: `CM RSI ${cm.toFixed(1)} vs cap ${cmMax.toFixed(0)} (${ok ? 'PASS - healthy' : 'FAIL - pegged overbought'})`,
+      title: (cmMax != null && cmMax > 0)
+        ? `CM RSI ${cm.toFixed(1)} vs cap ${cmMax.toFixed(0)} (${ok ? 'PASS - healthy' : 'FAIL - pegged overbought'})`
+        : `CM RSI ${cm.toFixed(1)} (live indicator)`,
     });
   }
   // Pullback Buy-Stop Trigger / Leg 3 Status
