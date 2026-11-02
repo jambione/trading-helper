@@ -503,3 +503,47 @@ def test_live_paper_entry_calls_place_when_dry_off(monkeypatch, tmp_path):
     assert out["ok"] is True
     assert out.get("broker") is True
     assert placed == [1]
+
+
+def test_book_rows_for_dashboard_during_premarket(monkeypatch, tmp_path):
+    pb.set_book_path_for_tests(tmp_path / "phase_b_book.json")
+    try:
+        book = {
+            "CHOW": {
+                "symbol": "CHOW",
+                "source": "movers",
+                "price": 4.40,
+                "score": 106.5,
+                "pct_change": 106.5,
+                "status": "watching",
+                "indicator": {"exhaustion": 50.0, "cm_rsi": 45.0},
+            },
+            "GDYN": {
+                "symbol": "GDYN",
+                "source": "movers",
+                "price": 13.36,
+                "score": 40.8,
+                "pct_change": 40.8,
+                "status": "dry_armed",
+                "indicator": {"exhaustion": 60.0, "cm_rsi": 50.0},
+            },
+        }
+        pb.save_book(book)
+        cfg = dict(CFG_ON, ai_phase_b_enabled=True)
+
+        # 1. During premarket hours: returns formatted rows
+        rows = pb.book_rows_for_dashboard(cfg=cfg, now=_ts(8, 0))
+        assert len(rows) == 2
+        sym_map = {r["symbol"]: r for r in rows}
+        assert "CHOW" in sym_map
+        assert sym_map["CHOW"]["price"] == 4.40
+        assert sym_map["CHOW"]["phase_b"] is True
+        assert sym_map["GDYN"]["ready"] is True
+        assert sym_map["GDYN"]["blocker"] == "dry armed"
+
+        # 2. Outside session (e.g. 09:30 RTH): returns empty list
+        rth_rows = pb.book_rows_for_dashboard(cfg=cfg, now=_ts(9, 31))
+        assert rth_rows == []
+    finally:
+        pb.set_book_path_for_tests(None)
+
