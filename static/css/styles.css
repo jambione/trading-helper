@@ -2493,6 +2493,10 @@ body.mobile [data-tv-toggle-btn] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.panel-ai-watch .feed-cols--ai-book > .th-state,
+.panel-ai-watch .feed-cols--ai-book > .ai-book-status {
+  display: none !important;
+}
 .panel-ai-watch .feed-cols--ai-book .cell-ticker { text-align: left; }
 .panel-ai-watch .feed-cols--ai-book .ai-book-status {
   text-align: center;

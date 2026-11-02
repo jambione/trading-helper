@@ -1785,12 +1785,8 @@ function _updateBookRow(el, r) {
   const statusLabel = _bookBlockerLabel(r);
   const crit = _bookEntryCriteria(get('config'), r);
   const statusEl = el.querySelector('.ai-book-status');
-  if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
   if (statusEl) {
-    // STATE: ready, or FRESH when the tape ages are clean (no dedicated column).
-    statusEl.className = _bookBlockerClass(r)
-      + ((crit.ready || crit.fresh === true) ? ' crit--pass' : '');
-    statusEl.title = _bookBlockerTitle(r);
+    statusEl.remove();
   }
   const trail = _fmtStopCell(r);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
