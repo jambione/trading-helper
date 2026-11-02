@@ -382,6 +382,36 @@ def min_prints_in_window(cfg: dict | None = None) -> int:
         return 5
 
 
+def phase_b_risk_pct(cfg: dict | None = None) -> float:
+    try:
+        val = _cfg(cfg).get("ai_phase_b_risk_pct")
+        if val is not None:
+            return max(0.01, float(val))
+        return 0.5
+    except (TypeError, ValueError):
+        return 0.5
+
+
+def phase_b_max_position_pct(cfg: dict | None = None) -> float:
+    try:
+        val = _cfg(cfg).get("ai_phase_b_max_position_pct")
+        if val is not None:
+            return max(0.1, float(val))
+        return 4.0
+    except (TypeError, ValueError):
+        return 4.0
+
+
+def phase_b_max_position_dollars(cfg: dict | None = None) -> float:
+    try:
+        val = _cfg(cfg).get("ai_phase_b_max_position_dollars")
+        if val is not None:
+            return max(0.0, float(val))
+        return 2000.0
+    except (TypeError, ValueError):
+        return 2000.0
+
+
 # ── Clock gates ──────────────────────────────────────────────────────────
 
 
@@ -1346,9 +1376,10 @@ def try_phase_b_entry(
             out["error"] = f"place_unavailable:{e}"
             return out
     try:
+        pb_risk = phase_b_risk_pct(c)
         result = place_fn(
             sym, decision, float(equity),
-            risk_pct=float(c.get("ai_risk_pct", 1.0) or 1.0),
+            risk_pct=pb_risk,
             current_ask=float(last),
             current_bid=None,
             duel_source=str(record.get("source") or "phase_b"),
