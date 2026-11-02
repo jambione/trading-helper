@@ -69,6 +69,11 @@ def parse_args():
         default=0.35,
         help="Peak-give R for ratchet stop trail",
     )
+    parser.add_argument(
+        "--out-json",
+        default="",
+        help="Path to write full results JSON",
+    )
     return parser.parse_args()
 
 
@@ -396,6 +401,34 @@ def main():
         print("-" * 90)
         for t in all_trades[:15]:
             print(f"{t['day']:<11} {t['symbol']:<6} {t['entry_et']:<9} ${t['entry_px']:<7.2f} {t['exit_et']:<9} ${t['exit_px']:<7.2f} {t['ret_pct']:<+6.2f}% {t['ret_r']:<+6.2f}R {t['mfe_r']:<+5.2f}R {t['exit_reason']}")
+
+    if args.out_json:
+        out_p = Path(args.out_json)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "days": days,
+            "min_price": args.min_price,
+            "max_seats": args.max_seats,
+            "max_open": args.max_open,
+            "hard_stop_pct": args.hard_stop_pct,
+            "give_r": args.give_r,
+            "summary": {
+                "tot_trades": tot_trades,
+                "tot_wins": tot_wins,
+                "tot_losses": tot_losses,
+                "win_rate": round(tot_win_rate, 1),
+                "tot_r": round(tot_r, 2),
+                "tot_pct": round(tot_pct, 2),
+                "profit_factor": round(overall_pf, 2),
+                "ratchet_exits": sum(1 for t in all_trades if t["exit_reason"] == "ratchet_stop"),
+                "hard_stops": sum(1 for t in all_trades if t["exit_reason"] == "hard_stop"),
+                "flattens": sum(1 for t in all_trades if t["exit_reason"] == "09:25_flatten"),
+            },
+            "day_summaries": day_summaries,
+            "all_trades": all_trades,
+        }
+        out_p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"\nWrote full results JSON to {out_p}")
 
 
 if __name__ == "__main__":
