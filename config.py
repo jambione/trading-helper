@@ -471,6 +471,13 @@ DEFAULT_CONFIG = {
     "ai_phase_b_no_rth_handoff":          True,
     "ai_phase_b_ledger_enabled":         True,
     "ai_phase_b_seat_stale_sec":          75.0,
+    "ai_phase_b_max_entries_per_symbol":  2,
+    "ai_phase_b_lockout_on_loss":         True,
+    "ai_phase_b_max_spread_pct":          0.75,
+    "ai_phase_b_min_prints_in_window":    5,
+    "ai_phase_b_risk_pct":                0.5,
+    "ai_phase_b_max_position_pct":        4.0,
+    "ai_phase_b_max_position_dollars":    2000.0,
     # Only this host may place/cancel/replace/liquidate. Empty = unrestricted
     # (single-box default). Both machines shared one Alpaca paper key: risk
     # caps are per-instance so real exposure could double, liquidate_all
@@ -2205,6 +2212,13 @@ SAFE_CONFIG_KEYS = [
     "ai_phase_b_no_rth_handoff",
     "ai_phase_b_ledger_enabled",
     "ai_phase_b_seat_stale_sec",
+    "ai_phase_b_max_entries_per_symbol",
+    "ai_phase_b_lockout_on_loss",
+    "ai_phase_b_max_spread_pct",
+    "ai_phase_b_min_prints_in_window",
+    "ai_phase_b_risk_pct",
+    "ai_phase_b_max_position_pct",
+    "ai_phase_b_max_position_dollars",
     "ai_structure_ttl_sec",
     "ai_watch_expire_at_close",
     "ai_watch_seed_momentum",

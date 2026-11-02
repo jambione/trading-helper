@@ -2006,6 +2006,16 @@ def place_scaled_entry(
         if max_pos_pct <= 0 or cheap_pct < max_pos_pct:
             max_pos_pct = cheap_pct
 
+    # Phase B pre-market only: apply dedicated position cap (leaves RTH logic 100% untouched)
+    if _phase_b:
+        try:
+            import phase_b as _pb
+            pb_max_pct = _pb.phase_b_max_position_pct(cfg)
+            if pb_max_pct > 0:
+                max_pos_pct = min(max_pos_pct, pb_max_pct)
+        except Exception:
+            pass
+
     size_free = cfg.get("ai_size_from_free_equity", True)
     if isinstance(size_free, str):
         size_free = size_free.strip().lower() in ("1", "true", "yes", "on")
@@ -2032,6 +2042,14 @@ def place_scaled_entry(
             raw_max_pct = float(cfg.get("ai_max_position_pct", 8.0) or 0.0)
         except (TypeError, ValueError):
             raw_max_pct = 8.0
+        if _phase_b:
+            try:
+                import phase_b as _pb
+                pb_max_pct = _pb.phase_b_max_position_pct(cfg)
+                if pb_max_pct > 0:
+                    raw_max_pct = min(raw_max_pct, pb_max_pct)
+            except Exception:
+                pass
         try:
             max_open_risk = float(
                 cfg.get("ai_max_open_risk_pct", DEFAULT_MAX_OPEN_RISK_PCT)
@@ -2056,6 +2074,16 @@ def place_scaled_entry(
         )
         risk_qty = plan.risk_qty
         total_qty = float(plan.qty)
+        if _phase_b:
+            try:
+                import phase_b as _pb
+                pb_max_dollars = _pb.phase_b_max_position_dollars(cfg)
+                if pb_max_dollars > 0 and sizing_entry > 0:
+                    max_pb_qty = float(int(pb_max_dollars / sizing_entry))
+                    if total_qty > max_pb_qty:
+                        total_qty = max(0.0, max_pb_qty)
+            except Exception:
+                pass
         log_event(
             "size_plan", symbol=ticker,
             free_equity=plan.free_equity,
@@ -2099,6 +2127,16 @@ def place_scaled_entry(
             max_position_pct=max_pos_pct,
             fractional=use_frac,
         ))
+        if _phase_b:
+            try:
+                import phase_b as _pb
+                pb_max_dollars = _pb.phase_b_max_position_dollars(cfg)
+                if pb_max_dollars > 0 and sizing_entry > 0:
+                    max_pb_qty = float(int(pb_max_dollars / sizing_entry))
+                    if total_qty > max_pb_qty:
+                        total_qty = max(0.0, max_pb_qty)
+            except Exception:
+                pass
         if total_qty != risk_qty:
             log_event(
                 "size_capped", symbol=ticker, risk_qty=risk_qty,
