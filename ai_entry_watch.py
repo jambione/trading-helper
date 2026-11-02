@@ -17746,7 +17746,11 @@ def should_arm_buy(
     if _gap_max > 0 and _gate_sym:
         _gap = open_gap_pct(_gate_sym, now=now)
         if _gap is None:
-            return False, "gap_unknown"
+            _day_pct = _f_or_none(record.get("admit_pct_change")) or _f_or_none(record.get("pct_change"))
+            if _day_pct is not None and _day_pct >= 1.0:
+                _gap = _day_pct
+            else:
+                return False, "gap_unknown"
         if _gap < -_gap_max:
             record["block_detail"] = f"gapped {_gap:+.1f}%"
             return False, "gapped_down"
