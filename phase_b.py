@@ -39,6 +39,16 @@ _BOOK: dict[str, dict[str, Any]] = {}
 _PEAK_OPENS_BY_DAY: dict[str, int] = {}
 # (symbol, prior_day) → dollar volume or None (negative cache).
 _PRIOR_DVOL_CACHE: dict[tuple[str, str], float | None] = {}
+# (day, symbol) → entries count today.
+_ENTRIES_BY_DAY_SYM: dict[tuple[str, str], int] = {}
+# day → set of symbols locked out after a loss today.
+_LOCKED_OUT_BY_DAY: dict[str, set[str]] = {}
+
+
+def clear_phase_b_entry_tracking() -> None:
+    """Clear entry count and loss-lockout tracking (useful for unit tests)."""
+    _ENTRIES_BY_DAY_SYM.clear()
+    _LOCKED_OUT_BY_DAY.clear()
 
 
 def _cfg(cfg: dict | None = None) -> dict:
@@ -345,6 +355,31 @@ def seat_stale_sec(cfg: dict | None = None) -> float:
         return max(0.0, float(_cfg(cfg).get("ai_phase_b_seat_stale_sec", 75.0) or 75.0))
     except (TypeError, ValueError):
         return 75.0
+
+
+def max_entries_per_symbol(cfg: dict | None = None) -> int:
+    try:
+        return max(1, int(_cfg(cfg).get("ai_phase_b_max_entries_per_symbol", 2) or 2))
+    except (TypeError, ValueError):
+        return 2
+
+
+def lockout_on_loss(cfg: dict | None = None) -> bool:
+    return bool(_cfg(cfg).get("ai_phase_b_lockout_on_loss", True))
+
+
+def max_spread_pct(cfg: dict | None = None) -> float:
+    try:
+        return max(0.0, float(_cfg(cfg).get("ai_phase_b_max_spread_pct", 0.75) or 0.75))
+    except (TypeError, ValueError):
+        return 0.75
+
+
+def min_prints_in_window(cfg: dict | None = None) -> int:
+    try:
+        return max(1, int(_cfg(cfg).get("ai_phase_b_min_prints_in_window", 5) or 5))
+    except (TypeError, ValueError):
+        return 5
 
 
 # ── Clock gates ──────────────────────────────────────────────────────────
@@ -809,6 +844,12 @@ def admit_candidate(
     sym = str(row.get("symbol") or "").upper().strip()
     if not sym:
         return False, "no_symbol"
+    t0 = float(now if now is not None else time.time())
+    day = datetime.fromtimestamp(t0, tz=ET).strftime("%Y-%m-%d")
+    if lockout_on_loss(c) and sym in _LOCKED_OUT_BY_DAY.get(day, set()):
+        return False, "phase_b_loss_lockout"
+    if _ENTRIES_BY_DAY_SYM.get((day, sym), 0) >= max_entries_per_symbol(c):
+        return False, "phase_b_max_entries"
     src = str(row.get("source") or "").strip().lower()
     if src in SOURCE_OFF_V1 or not source_allowed(src, c):
         return False, "phase_b_source_off"
@@ -1223,6 +1264,19 @@ def try_phase_b_entry(
     if not phase_b_allow_entries(t0, c):
         out["error"] = "phase_b_outside_entries"
         return out
+    day = datetime.fromtimestamp(t0, tz=ET).strftime("%Y-%m-%d")
+    if lockout_on_loss(c) and sym in _LOCKED_OUT_BY_DAY.get(day, set()):
+        out["error"] = "phase_b_loss_lockout"
+        return out
+    if _ENTRIES_BY_DAY_SYM.get((day, sym), 0) >= max_entries_per_symbol(c):
+        out["error"] = "phase_b_max_entries"
+        return out
+
+    spread_pct = _f(record.get("spread_pct")) or _f(record.get("g_spread"))
+    if spread_pct is not None and spread_pct > max_spread_pct(c):
+        out["error"] = "phase_b_spread_wide"
+        return out
+
     ok_open, why_open = can_open_another(open_count, c)
     if not ok_open:
         out["error"] = why_open
@@ -1278,6 +1332,7 @@ def try_phase_b_entry(
         out["ok"] = True
         out["status"] = "dry_shadow"
         out["broker"] = False
+        _ENTRIES_BY_DAY_SYM[(day, sym)] = _ENTRIES_BY_DAY_SYM.get((day, sym), 0) + 1
         return out
 
     # Live path (still gated by ai_phase_b_enabled; default remains off).
@@ -1302,6 +1357,8 @@ def try_phase_b_entry(
         out["error"] = str(e)[:200]
         return out
     out.update(result if isinstance(result, dict) else {"ok": False})
+    if out.get("ok"):
+        _ENTRIES_BY_DAY_SYM[(day, sym)] = _ENTRIES_BY_DAY_SYM.get((day, sym), 0) + 1
     out["broker"] = True
     return out
 
@@ -1680,6 +1737,8 @@ def tick(
                 pass
 
         if last is not None and entry is not None and hard_stop_hit(entry, last, cfg=c):
+            day = datetime.fromtimestamp(t0, tz=ET).strftime("%Y-%m-%d")
+            _LOCKED_OUT_BY_DAY.setdefault(day, set()).add(sym)
             events.append({
                 "kind": "hard_stop",
                 "symbol": sym,

@@ -547,3 +547,51 @@ def test_book_rows_for_dashboard_during_premarket(monkeypatch, tmp_path):
     finally:
         pb.set_book_path_for_tests(None)
 
+
+def test_phase_b_safety_rails():
+    pb.clear_phase_b_entry_tracking()
+    cfg = dict(
+        CFG_ON,
+        ai_phase_b_enabled=True,
+        ai_phase_b_max_entries_per_symbol=2,
+        ai_phase_b_lockout_on_loss=True,
+        ai_phase_b_max_spread_pct=0.75,
+    )
+    t = _ts(7, 30)
+
+    # 1. Spread gate check
+    rec_wide = {"symbol": "TEST", "spread_pct": 1.2, "source": "movers"}
+    out = pb.try_phase_b_entry(rec_wide, equity=1000.0, cfg=cfg, now=t)
+    assert out["ok"] is False
+    assert out["error"] == "phase_b_spread_wide"
+
+    # 2. Max entries per symbol check (cap = 2)
+    rec_ok = {"symbol": "TEST", "spread_pct": 0.2, "source": "movers"}
+    # Simulate 2 prior entries today
+    from phase_b import _ENTRIES_BY_DAY_SYM, _LOCKED_OUT_BY_DAY
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    day = datetime.fromtimestamp(t, tz=ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    _ENTRIES_BY_DAY_SYM[(day, "TEST")] = 2
+
+    out_cap = pb.try_phase_b_entry(rec_ok, equity=1000.0, cfg=cfg, now=t)
+    assert out_cap["ok"] is False
+    assert out_cap["error"] == "phase_b_max_entries"
+
+    # Also admit_candidate rejects on max entries
+    ok_admit, why_admit = pb.admit_candidate(rec_ok, {}, cfg=cfg, now=t)
+    assert ok_admit is False
+    assert why_admit == "phase_b_max_entries"
+
+    # 3. Loss lockout check
+    _LOCKED_OUT_BY_DAY.setdefault(day, set()).add("LOCKED")
+    rec_locked = {"symbol": "LOCKED", "source": "movers"}
+    out_lock = pb.try_phase_b_entry(rec_locked, equity=1000.0, cfg=cfg, now=t)
+    assert out_lock["ok"] is False
+    assert out_lock["error"] == "phase_b_loss_lockout"
+
+    ok_admit_lock, why_admit_lock = pb.admit_candidate(rec_locked, {}, cfg=cfg, now=t)
+    assert ok_admit_lock is False
+    assert why_admit_lock == "phase_b_loss_lockout"
+
+
