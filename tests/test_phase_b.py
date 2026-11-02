@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from unittest.mock import patch
 
 import pytest
 
@@ -593,5 +594,114 @@ def test_phase_b_safety_rails():
     ok_admit_lock, why_admit_lock = pb.admit_candidate(rec_locked, {}, cfg=cfg, now=t)
     assert ok_admit_lock is False
     assert why_admit_lock == "phase_b_loss_lockout"
+
+
+def test_phase_b_premarket_only_sizing_rails():
+    # 1. Getter defaults and config overrides
+    assert pb.phase_b_risk_pct() == 0.5
+    assert pb.phase_b_max_position_pct() == 4.0
+    assert pb.phase_b_max_position_dollars() == 2000.0
+
+    custom_cfg = {
+        "ai_phase_b_risk_pct": 0.75,
+        "ai_phase_b_max_position_pct": 3.0,
+        "ai_phase_b_max_position_dollars": 1500.0,
+    }
+    assert pb.phase_b_risk_pct(custom_cfg) == 0.75
+    assert pb.phase_b_max_position_pct(custom_cfg) == 3.0
+    assert pb.phase_b_max_position_dollars(custom_cfg) == 1500.0
+
+    # 2. Verify try_phase_b_entry passes pb_risk into place_fn
+    passed_args = {}
+    def mock_place(sym, decision, equity, **kw):
+        passed_args.update(kw)
+        passed_args["sym"] = sym
+        passed_args["decision"] = decision
+        passed_args["equity"] = equity
+        return {"ok": True, "buy_order_id": "test_pb_order"}
+
+    pb.clear_phase_b_entry_tracking()
+    cfg = dict(
+        CFG_ON,
+        ai_phase_b_enabled=True,
+        ai_phase_b_dry_run=False,
+        ai_phase_b_risk_pct=0.5,
+        ai_phase_b_require_exh_rising=False,
+    )
+    rec = {
+        "symbol": "PREM",
+        "spread_pct": 0.1,
+        "source": "movers",
+        "indicator": {"exhaustion": 55.0, "cm_rsi": 45.0},
+    }
+    t = _ts(7, 30)
+    with patch("phase_b.fresh_stream_last", return_value=(10.0, "ok")):
+        out = pb.try_phase_b_entry(rec, equity=50000.0, cfg=cfg, now=t, place_fn=mock_place)
+
+    assert out["ok"] is True
+    assert passed_args.get("risk_pct") == 0.5
+    assert passed_args.get("decision", {}).get("phase_b") is True
+
+    # 3. Test place_scaled_entry behavior: Premarket vs RTH
+    import ai_positions as cp
+
+    cfg_rth = {
+        "ai_size_from_free_equity": False,
+        "ai_max_position_pct": 8.0,
+        "ai_phase_b_max_position_pct": 4.0,
+        "ai_phase_b_max_position_dollars": 2000.0,
+    }
+    rth_decision = {
+        "phase_b": False,
+        "entry_low": 20.0,
+        "entry_high": 20.0,
+        "stop_price": 19.0,
+        "target_1": 22.0,
+        "skip_zone": True,
+    }
+    pm_decision = {
+        "phase_b": True,
+        "entry_low": 20.0,
+        "entry_high": 20.0,
+        "stop_price": 19.0,
+        "target_1": 22.0,
+        "skip_zone": True,
+    }
+
+    with patch("alpaca_trader.market_is_open", return_value=True), \
+         patch("ai_positions._buying_power", return_value=100000.0), \
+         patch("alpaca_trader.get_open_positions", return_value={}), \
+         patch("alpaca_trader.cancel_open_orders", return_value=None), \
+         patch("ai_positions._open_book_snapshot", return_value=(0.0, 0)), \
+         patch("ai_positions._entry_cfg", return_value=cfg_rth), \
+         patch("phase_b.enabled", return_value=True), \
+         patch("phase_b.dry_run", return_value=False), \
+         patch("phase_b.phase_b_allow_entries", return_value=True), \
+         patch("alpaca_trader.size_by_risk", return_value=500):
+
+        captured_orders = []
+        def mock_buy_order(ticker, qty, **kw):
+            captured_orders.append((ticker, qty))
+            return {"ok": True, "buy_order_id": "rth_order", "status": "new", "qty": qty}
+
+        def mock_buy_limit(ticker, lim, **kw):
+            qty = kw.get("qty")
+            captured_orders.append((ticker, qty))
+            return {"ok": True, "order_id": "pm_order", "status": "new", "qty": qty}
+
+        with patch("alpaca_trader.buy_limit_bracket", side_effect=mock_buy_order), \
+             patch("alpaca_trader.buy_bracket_exact", side_effect=mock_buy_order), \
+             patch("alpaca_trader.buy_limit_at_price", side_effect=mock_buy_limit):
+
+            # RTH: 8% of 50k = $4,000 / $20 = 200 shares
+            res_rth = cp.place_scaled_entry("RTHS", rth_decision, account_equity=50000.0, current_ask=20.0, risk_pct=1.0)
+            assert res_rth.get("ok") is True
+            assert captured_orders[-1] == ("RTHS", 200.0)
+
+            # Pre-market: 4% of 50k = $2,000 / $20 = 100 shares (or $2,000 dollar cap / $20 = 100 shares)
+            res_pm = cp.place_scaled_entry("PREM", pm_decision, account_equity=50000.0, current_ask=20.0, risk_pct=0.5)
+            assert res_pm.get("ok") is True
+            assert captured_orders[-1] == ("PREM", 100.0)
+
 
 
