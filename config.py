@@ -648,6 +648,13 @@ DEFAULT_CONFIG = {
     "ai_watch_wr_rand_refuse_share":    0.0,
     "ai_watch_wr_rand_salt":            "",    # salt for the wr_rand episode hash (late_gates_replay seeds); "" = original hash
     "ai_watch_wr_rsi_min_rise":         0.0,   # RSI(14) 10-bar rise gate on presquare arms (10/10 counterfactual; off)
+    "ai_watch_presquare_max_cm_rsi":    0.0,   # Block pre-square arm if CM RSI > max (e.g. 75.0); 0.0 = off
+    "ai_watch_pullback_buystop_arm":    False, # Buy-Stop above pullback candle high on confirmed uptrends
+    "ai_watch_pullback_min_leg1_gain_pct": 0.35, # Leg 1 minimum run-up % over 15 bars
+    "ai_watch_pullback_min_dip_pct":    0.10,  # Pullback minimum dip % from high
+    "ai_watch_pullback_max_dip_pct":    1.50,  # Pullback maximum dip % from high
+    "ai_watch_pullback_max_cm_rsi":     75.0,  # Max CM RSI allowed during pullback
+    "ai_watch_pullback_min_ob_room_pct": 0.20, # Min overhead room % to order block resistance
     # Range entry (operator 10/8; docs/studies/range_arm_replay_prereg.json; REPLAY/TEST until it passes): buy
     # 0-0.30% above a charted support block with >= 0.40% room to resistance and the ENGINE fast %R < -20 and
     # rising; the square / presquare / last arms do not fire while it is on.
@@ -2266,6 +2273,13 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_wr_rand_refuse_share",
     "ai_watch_wr_rand_salt",
     "ai_watch_wr_rsi_min_rise",
+    "ai_watch_presquare_max_cm_rsi",
+    "ai_watch_pullback_buystop_arm",
+    "ai_watch_pullback_min_leg1_gain_pct",
+    "ai_watch_pullback_min_dip_pct",
+    "ai_watch_pullback_max_dip_pct",
+    "ai_watch_pullback_max_cm_rsi",
+    "ai_watch_pullback_min_ob_room_pct",
     "ai_watch_range_arm",
     "ai_watch_range_sup_band_pct",
     "ai_watch_range_min_room_pct",

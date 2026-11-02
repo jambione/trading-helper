@@ -15431,6 +15431,164 @@ def range_arm_decide(rec: dict, sym: str, ask: Any, bid: Any, cfg: dict, now: fl
     return True, "range_arm"
 
 
+def pullback_buystop_decide(
+    rec: dict,
+    sym: str,
+    ask: Any,
+    bid: Any,
+    cfg: dict,
+    now: float,
+    sig: Any,
+    *,
+    stage: str = "check",
+) -> tuple[bool, str]:
+    """Pullback Buy-Stop Arm (ai_watch_pullback_buystop_arm).
+
+    1. Uptrend check: in recent closed 1-minute bars, price gained >= min_leg1_gain_pct (default 0.35%).
+    2. Pullback check: ask is 0.10% to 1.50% below Leg 1 high.
+    3. Overhead resistance check: order block room >= 0.20% and not in ob_resist_0.3.
+    4. CM RSI check: CM RSI <= 75.0 (not pegged in overbought).
+    5. Trigger: price crosses above pullback candle high (pb_high + $0.01).
+    6. Levels: structural stop under pullback candle low (pb_low - $0.01); target at ask + risk (+1R).
+    """
+    if not bool((cfg or {}).get("ai_watch_pullback_buystop_arm", False)):
+        return False, "pullback_arm_off"
+    try:
+        ask_f = float(ask)
+    except (TypeError, ValueError):
+        return False, "bad_ask"
+    if ask_f <= 0:
+        return False, "bad_ask"
+
+    # Evaluate common hard gates (stale tape, spread, gap down, late hold, etc.)
+    gate_cfg = {
+        **cfg,
+        "ai_watch_exhaustion_rules": False,
+        "ai_watch_arm_require_indicators": False,
+        "ai_watch_presquare_only": False,
+    }
+    ok_gate, why_gate = should_arm_buy(rec, ask=ask_f, bid=bid, cfg=gate_cfg, now=now)
+    if not ok_gate:
+        if isinstance(rec, dict):
+            rec.pop("pullback_buystop", None)
+        return False, why_gate
+
+    # Overhead resistance check
+    try:
+        min_room = float((cfg or {}).get("ai_watch_pullback_min_ob_room_pct", 0.20) or 0.20)
+    except (TypeError, ValueError):
+        min_room = 0.20
+    _ob_fields = _ob_observe_stamp(rec, sym, ask_f, cfg, now)
+    if isinstance(_ob_fields, dict):
+        if _ob_fields.get("ob_resist_0.3") is True:
+            if isinstance(rec, dict):
+                rec.pop("pullback_buystop", None)
+            return False, "ob_resist"
+        room = _ob_fields.get("ob_room_pct")
+        if room is not None and float(room) < min_room:
+            if isinstance(rec, dict):
+                rec.pop("pullback_buystop", None)
+            return False, "tight_overhead_resist"
+
+    # CM RSI check (not pegged)
+    try:
+        max_cm = float((cfg or {}).get("ai_watch_pullback_max_cm_rsi", 75.0) or 75.0)
+    except (TypeError, ValueError):
+        max_cm = 75.0
+    ind = rec.get("indicator") if isinstance(rec, dict) and isinstance(rec.get("indicator"), dict) else {}
+    rsi_v = _f_or_none(ind.get("cm_rsi"))
+    if rsi_v is None and isinstance(rec, dict):
+        rsi_v = _f_or_none(rec.get("cm_rsi"))
+    if rsi_v is None and isinstance(sig, dict):
+        rsi_v = _f_or_none(sig.get("cm_rsi"))
+    if rsi_v is not None and float(rsi_v) > max_cm:
+        if isinstance(rec, dict):
+            rec.pop("pullback_buystop", None)
+        return False, "cm_rsi_pegged"
+
+    # Closed 1-minute bars from ob_observe
+    try:
+        import ob_observe
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+        d_now = datetime.fromtimestamp(now, et)
+        t_open = d_now.replace(hour=9, minute=30, second=0, microsecond=0).timestamp()
+        last_done = float(int(now // 60) * 60 - 60)
+        closed_bars = [b for b in ob_observe.bars(sym) if t_open <= b[0] <= last_done]
+    except Exception:  # noqa: BLE001
+        closed_bars = []
+
+    if len(closed_bars) < 10:
+        if isinstance(rec, dict):
+            rec.pop("pullback_buystop", None)
+        return False, "insufficient_bars"
+
+    recent = closed_bars[-15:]
+    leg1_high = max(float(b[2]) for b in recent)
+    leg1_low = min(float(b[3]) for b in recent)
+
+    try:
+        min_gain = float((cfg or {}).get("ai_watch_pullback_min_leg1_gain_pct", 0.35) or 0.35) / 100.0
+    except (TypeError, ValueError):
+        min_gain = 0.0035
+    if (leg1_high / leg1_low - 1.0) < min_gain:
+        if isinstance(rec, dict):
+            rec.pop("pullback_buystop", None)
+        return False, "no_leg1_uptrend"
+
+    pullback_pct = (leg1_high - ask_f) / leg1_high
+    try:
+        min_pb = float((cfg or {}).get("ai_watch_pullback_min_dip_pct", 0.10) or 0.10) / 100.0
+        max_pb = float((cfg or {}).get("ai_watch_pullback_max_dip_pct", 1.50) or 1.50) / 100.0
+    except (TypeError, ValueError):
+        min_pb, max_pb = 0.0010, 0.0150
+    if pullback_pct < min_pb:
+        if isinstance(rec, dict):
+            rec.pop("pullback_buystop", None)
+        return False, "pullback_too_shallow"
+    if pullback_pct > max_pb:
+        if isinstance(rec, dict):
+            rec.pop("pullback_buystop", None)
+        return False, "pullback_too_deep"
+
+    # Pullback candles: recent 1-2 bars
+    cur_bar = closed_bars[-1]
+    prev_bar = closed_bars[-2]
+    pb_high = max(float(cur_bar[2]), float(prev_bar[2]))
+    pb_low = min(float(cur_bar[3]), float(prev_bar[3]))
+
+    buy_stop = round(pb_high + 0.01, 2)
+    stop_loss = round(pb_low - 0.01, 2)
+    risk = round(buy_stop - stop_loss, 2)
+    if risk < 0.02 or (risk / buy_stop) > 0.02:
+        if isinstance(rec, dict):
+            rec.pop("pullback_buystop", None)
+        return False, "bad_risk_geometry"
+
+    # Trigger condition: price reaches or crosses above pullback high
+    if ask_f < buy_stop:
+        if isinstance(rec, dict):
+            rec.pop("pullback_buystop", None)
+        return False, "wait_buystop_trigger"
+
+    # Levels
+    target_1 = round(ask_f + risk, 2)
+    target_2 = round(max(ask_f + 2.0 * risk, leg1_high), 2)
+    rr = round((target_1 - ask_f) / (ask_f - stop_loss), 2) if ask_f > stop_loss else 1.0
+
+    if isinstance(rec, dict):
+        rec["pullback_buystop"] = {
+            "stop_price": stop_loss,
+            "target_1": target_1,
+            "target_2": target_2,
+            "zone_kind": "pullback_buystop",
+            "reward_risk": rr,
+        }
+
+    return True, "pullback_buystop"
+
+
 def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:
     """Throttled bar lows for double-bottom detection. Empty on failure."""
     sym = str(symbol or "").upper().strip()
@@ -17447,6 +17605,25 @@ def wr_rsi_refusal(sym: str, now: float | None, cfg: dict) -> str | None:
     return None if rsi[-1] - rsi[-11] >= need else "wr_rsi_not_trending"
 
 
+def presquare_cm_rsi_refusal(record: dict, cfg: dict) -> str | None:
+    """Pre-square CM RSI filter (ai_watch_presquare_max_cm_rsi, default 0 = off).
+    Refuses pre-square entries when CM RSI is pegged in overbought territory (e.g. > 75.0).
+    """
+    try:
+        max_cm = float((cfg or {}).get("ai_watch_presquare_max_cm_rsi", 0) or 0)
+    except (TypeError, ValueError):
+        max_cm = 0.0
+    if max_cm <= 0:
+        return None
+    ind = record.get("indicator") if isinstance(record, dict) and isinstance(record.get("indicator"), dict) else {}
+    rsi_v = _f_or_none(ind.get("cm_rsi"))
+    if rsi_v is None and isinstance(record, dict):
+        rsi_v = _f_or_none(record.get("cm_rsi"))
+    if rsi_v is not None and float(rsi_v) > max_cm:
+        return "presquare_cm_rsi_pegged"
+    return None
+
+
 def wr_rand_refusal(sym: str, now: float | None, cfg: dict) -> str | None:
     """Matched 'trade less' control (wr_rand): refuse whole presquare arm EPISODES at random (sha256(symbol|day|episode)),
     at share ai_watch_wr_rand_refuse_share. An episode is a run of presquare-gate checks with no gap > 120 s; a refused
@@ -17891,6 +18068,7 @@ def should_arm_buy(
                 # wr_trend_entry_prereg.json (both off by default): %R trend filter and its matched random control.
                 _wr_why = (after_square_refusal(_gate_sym, float(now if now is not None else time.time()), cfg)
                            or wr_trend_refusal(_gate_sym, record, now, cfg) or wr_rsi_refusal(_gate_sym, now, cfg)
+                           or presquare_cm_rsi_refusal(record, cfg)
                            or wr_rand_refusal(_gate_sym, now, cfg))
                 if _wr_why:
                     return False, _wr_why
@@ -19791,6 +19969,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             ok_arm, why = range_arm_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="check")
         else:
             ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
+        if not ok_arm and bool((cfg or {}).get("ai_watch_pullback_buystop_arm", False)):
+            pb_ok, pb_why = pullback_buystop_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="check")
+            if pb_ok:
+                ok_arm, why = True, "pullback_buystop"
         # Order blocks (log; ai_watch_ob_resist_skip refuses on resistance).
         _ob_arm = _ob_observe_stamp(rec, sym, ask_f, cfg, t0)
         ok_arm, why = apply_breakout_arm(rec, ask_f, bid_f, cfg, t0, _ob_arm, ok_arm, why)
@@ -19811,7 +19993,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
                        "late_hold_closed", "late_hold_not_late_admit",
-                       "ob_resist", "ob_resist_ob", "no_breakout", "not_presquare"):
+                       "ob_resist", "ob_resist_ob", "no_breakout", "not_presquare",
+                       "presquare_cm_rsi_pegged", "pullback_arm_off", "wait_buystop_trigger",
+                       "pullback_too_shallow", "pullback_too_deep", "no_leg1_uptrend",
+                       "tight_overhead_resist", "cm_rsi_pegged"):
                 _skip(why)
             else:
                 set_block_reason(rec, why or "blocked", now=t0)
@@ -19834,6 +20019,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
         if range_arm_enabled(cfg):
             ok_arm, why = range_arm_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="refresh")
+        elif why == "pullback_buystop":
+            ok_arm, why = pullback_buystop_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="refresh")
         else:
             ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         if not ok_arm:
@@ -19844,7 +20031,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _arm_streak(rec, False, seq=poll_seq)
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
-                       "late_hold_closed", "late_hold_not_late_admit"):
+                       "late_hold_closed", "late_hold_not_late_admit",
+                       "presquare_cm_rsi_pegged", "pullback_arm_off", "wait_buystop_trigger",
+                       "pullback_too_shallow", "pullback_too_deep", "no_leg1_uptrend",
+                       "tight_overhead_resist", "cm_rsi_pegged"):
                 _skip(why)
             else:
                 set_block_reason(rec, why or "blocked", now=t0)
@@ -20022,6 +20212,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             bid2_f = bid_f
         if range_arm_enabled(cfg):
             ok_arm2, why2 = range_arm_decide(rec, sym, ask_f, bid2_f, cfg, t0, indicators.get(sym), stage="final")
+        elif why == "pullback_buystop":
+            ok_arm2, why2 = pullback_buystop_decide(rec, sym, ask_f, bid2_f, cfg, t0, indicators.get(sym), stage="final")
         else:
             ok_arm2, why2 = should_arm_buy(rec, ask=ask_f, bid=bid2_f, cfg=cfg, now=t0)
         if not ok_arm2:
@@ -20096,6 +20288,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if why2 == "range_arm" and isinstance(rec.get("range_arm"), dict):
             # Range rule: the levels of the pre-place check go on the decision and the position.
             place_decision.update(rec["range_arm"])
+        if why2 == "pullback_buystop" and isinstance(rec.get("pullback_buystop"), dict):
+            place_decision.update(rec["pullback_buystop"])
         # This desk runs the exhaustion gate; ai_suggest's does not. Name the
         # path on the row so the two never average together again.
         place_decision["entry_path"] = (
