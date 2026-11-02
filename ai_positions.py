@@ -5299,6 +5299,8 @@ def apply_local_trail(
             bid = _premarket_bid(ticker)
             px = round(float(bid), 2) if bid and bid > 0 else None
             if px is None:
+                px = round(float(last), 2) if last and last > 0 else (round(float(loc), 2) if loc and loc > 0 else None)
+            if px is None:
                 pos["working_sell_state"] = "held_dark"
                 log_event("working_sell_dark", symbol=ticker, last=last, stop=loc)
                 return True, False
@@ -5456,27 +5458,6 @@ def apply_local_trail(
                     last=_num(pos.get("last_seen_price")),
                     peak=pos.get("peak_price"), mfe_r=pos.get("mfe_r"),
                 )
-        if (
-            _premarket_working_sell_on(pos)
-            and str(pos.get("working_sell_state") or "") != "flatten"
-        ):
-            bid = _premarket_bid(ticker)
-            loc_now = _num(pos.get("local_stop_price"))
-            if loc_now and loc_now > 0:
-                px = round(min(float(loc_now), float(bid)), 2) if bid and bid > 0 else round(float(loc_now), 2)
-                if _rest_working_sell(ticker, pos, px, "protect"):
-                    changed = True
-    if (
-        _premarket_working_sell_on(pos)
-        and str(pos.get("working_sell_state") or "") != "flatten"
-        and not pos.get("working_sell_id")
-    ):
-        loc_now = _num(pos.get("local_stop_price"))
-        bid = _premarket_bid(ticker)
-        if loc_now and loc_now > 0:
-            px = round(min(float(loc_now), float(bid)), 2) if bid and bid > 0 else round(float(loc_now), 2)
-            if _rest_working_sell(ticker, pos, px, "protect"):
-                changed = True
     if changed_handoff:
         changed = True
     return changed, False
