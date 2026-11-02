@@ -110,6 +110,8 @@ def simulate_day(
     day_dir = snapshots_dir / day
     prints_path = day_dir / "recorder_prints.jsonl.gz"
     if not prints_path.exists():
+        prints_path = day_dir / "prints.jsonl.gz"
+    if not prints_path.exists():
         print(f"[{day}] Missing prints file: {prints_path}")
         return [], {}
 
