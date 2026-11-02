@@ -378,6 +378,18 @@ function _bookRows(book) {
       g_gap: w.g_gap != null ? w.g_gap : null,
       g_gap_block: w.g_gap_block != null ? w.g_gap_block : null,
       g_sq_wait: w.g_sq_wait != null ? w.g_sq_wait : null,
+      g_s5_veto: w.g_s5_veto != null ? w.g_s5_veto : null,
+      g_s5_ok: w.g_s5_ok != null ? w.g_s5_ok : null,
+      g_leg1_active: w.g_leg1_active != null ? w.g_leg1_active : null,
+      g_leg1_ok: w.g_leg1_ok != null ? w.g_leg1_ok : null,
+      g_leg1_label: w.g_leg1_label != null ? w.g_leg1_label : null,
+      g_ob_resist: w.g_ob_resist != null ? w.g_ob_resist : null,
+      g_ob_room: w.g_ob_room != null ? w.g_ob_room : null,
+      g_ob_room_min: w.g_ob_room_min != null ? w.g_ob_room_min : null,
+      g_cm_rsi: w.g_cm_rsi != null ? w.g_cm_rsi : null,
+      g_cm_rsi_max: w.g_cm_rsi_max != null ? w.g_cm_rsi_max : null,
+      g_pb_trigger: w.g_pb_trigger != null ? w.g_pb_trigger : null,
+      g_pb_arm: w.g_pb_arm != null ? w.g_pb_arm : null,
     };
   }
   // Live positions always win (P&L / qty).
@@ -2013,12 +2025,57 @@ function _bookGateChecks(r) {
       title: ok ? 'Leg-1 Gate: PASS (Price >= $25, Time <= 13:00, Day Chg 1-4%, Spread <= 8bp, Vol >= Req, 1st Square)' : `Leg-1 Gate: FAIL (${r.g_leg1_label || 'Refused'})`,
     });
   }
+  // Resistance Barrier (<0.3% overhead resistance block)
+  if (r.g_ob_resist === true) {
+    out.push({
+      key: 'resist',
+      text: 'resist',
+      ok: false,
+      title: 'Resistance barrier within 0.3%: entry refused (overhead order block ceiling)',
+    });
+  }
+  // Room to Resistance Gate (>= 0.20%)
+  const room = num(r.g_ob_room), roomMin = num(r.g_ob_room_min) || 0.20;
+  if (room != null) {
+    const ok = room >= roomMin;
+    out.push({
+      key: 'room',
+      text: `rm ${room.toFixed(1)}%`,
+      ok: ok,
+      title: `Overhead room to resistance ${room.toFixed(2)}% vs minimum ${roomMin.toFixed(2)}% (${ok ? 'PASS' : 'FAIL - tight ceiling'})`,
+    });
+  }
+  // CM RSI Gate (<= 75)
+  const cm = num(r.g_cm_rsi), cmMax = num(r.g_cm_rsi_max) || 75.0;
+  if (cm != null) {
+    const ok = cm <= cmMax;
+    out.push({
+      key: 'cm_rsi',
+      text: `cm ${Math.round(cm)}`,
+      ok: ok,
+      title: `CM RSI ${cm.toFixed(1)} vs cap ${cmMax.toFixed(0)} (${ok ? 'PASS - healthy' : 'FAIL - pegged overbought'})`,
+    });
+  }
+  // Pullback Buy-Stop Trigger / Leg 3 Status
+  const pbTrig = num(r.g_pb_trigger);
+  if (pbTrig != null && r.g_pb_arm) {
+    const lastPx = num(r.last_ask) || num(r.price);
+    const triggered = lastPx != null && lastPx >= pbTrig - 1e-6;
+    out.push({
+      key: 'pb_trig',
+      text: triggered ? 'L3 ✓' : `trig $${pbTrig.toFixed(2)}`,
+      ok: triggered,
+      title: triggered
+        ? `Leg 3 Trigger: REACHED (ask $${lastPx.toFixed(2)} >= trigger $${pbTrig.toFixed(2)})`
+        : `Leg 3 Trigger: WAITING (ask ${lastPx != null ? '$' + lastPx.toFixed(2) : '?'} < trigger $${pbTrig.toFixed(2)})`,
+    });
+  }
   return out;
 }
 
 function _bookGatesText(r) {
   // Failing gates first: if the cell ellipses, it cuts a passing reading, never the blocker.
-  const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : 2);
+  const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : ['resist', 'room', 'cm_rsi', 'pb_trig'].includes(x.key) ? 2 : 3);
   const c = _bookGateChecks(r).slice().sort((a, b) => rank(a) - rank(b));
   return c.length ? c.map(x => x.text).join(' · ') : '—';
 }

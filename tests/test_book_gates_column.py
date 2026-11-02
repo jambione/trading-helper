@@ -12,7 +12,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 _JS = (_ROOT / "static" / "js" / "feeds.js").read_text(encoding="utf-8")
 _HTML = (_ROOT / "dashboard.html").read_text(encoding="utf-8")
 _KEYS = ("g_rvol", "g_rvol_min", "g_spread", "g_spread_max", "g_tape_age", "g_tape_max", "g_gap", "g_gap_block",
-         "g_sq_wait")
+         "g_sq_wait", "g_ob_resist", "g_ob_room", "g_ob_room_min", "g_cm_rsi", "g_cm_rsi_max",
+         "g_pb_trigger", "g_pb_arm")
 
 
 def _row_template() -> str:

@@ -14893,7 +14893,9 @@ def _ob_narrow_refusal(ob_fields: dict, cfg: dict | None, rec: dict | None) -> b
 
 
 _GATE_WIRE_KEYS = ("g_rvol", "g_rvol_min", "g_spread", "g_spread_max", "g_tape_age", "g_tape_max",
-                   "g_gap", "g_gap_block", "g_sq_wait", "g_s5_veto", "g_s5_ok", "g_leg1_active", "g_leg1_ok", "g_leg1_label")
+                   "g_gap", "g_gap_block", "g_sq_wait", "g_s5_veto", "g_s5_ok", "g_leg1_active", "g_leg1_ok", "g_leg1_label",
+                   "g_ob_resist", "g_ob_room", "g_ob_room_min", "g_cm_rsi", "g_cm_rsi_max",
+                   "g_pb_trigger", "g_pb_arm")
 
 
 def _gate_wire_fields(rec: Any, sym: str, now: float | None = None) -> dict:
@@ -14937,6 +14939,27 @@ def _gate_wire_fields(rec: Any, sym: str, now: float | None = None) -> dict:
                 out["g_leg1_label"] = lbl.replace(" (Leg 1)", "").strip()
             else:
                 out["g_leg1_label"] = "L1 ✓"
+
+        # Resistance and room gate wire
+        ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
+        room = _f_or_none(ind.get("ob_room_pct"))
+        if room is None and isinstance(rec.get("ob_room_pct"), (int, float)):
+            room = _f_or_none(rec.get("ob_room_pct"))
+        out["g_ob_resist"] = ind.get("ob_resist_0.3") is True or rec.get("ob_resist_0.3") is True
+        out["g_ob_room"] = round(float(room), 3) if room is not None else None
+        out["g_ob_room_min"] = float((cfg or {}).get("ai_watch_pullback_min_ob_room_pct", 0.20) or 0.20)
+
+        # CM RSI gate wire
+        cm = _f_or_none(ind.get("cm_rsi")) or _f_or_none(rec.get("cm_rsi"))
+        out["g_cm_rsi"] = round(float(cm), 1) if cm is not None else None
+        out["g_cm_rsi_max"] = float((cfg or {}).get("ai_watch_presquare_max_cm_rsi", 0) or (cfg or {}).get("ai_watch_pullback_max_cm_rsi", 0) or 75.0)
+
+        # Pullback Buy-Stop Trigger level
+        pb_trig = _f_or_none(rec.get("pullback_trigger"))
+        if pb_trig is None and isinstance(rec.get("pullback_buystop"), dict):
+            pb_trig = _f_or_none(rec["pullback_buystop"].get("buy_stop"))
+        out["g_pb_trigger"] = round(float(pb_trig), 2) if pb_trig is not None else None
+        out["g_pb_arm"] = bool((cfg or {}).get("ai_watch_pullback_buystop_arm", False))
     except Exception:  # noqa: BLE001
         pass
     return out
@@ -15564,11 +15587,13 @@ def pullback_buystop_decide(
     if risk < 0.02 or (risk / buy_stop) > 0.02:
         if isinstance(rec, dict):
             rec.pop("pullback_buystop", None)
+            rec.pop("pullback_trigger", None)
         return False, "bad_risk_geometry"
 
     # Trigger condition: price reaches or crosses above pullback high
     if ask_f < buy_stop:
         if isinstance(rec, dict):
+            rec["pullback_trigger"] = buy_stop
             rec.pop("pullback_buystop", None)
         return False, "wait_buystop_trigger"
 
@@ -15578,12 +15603,14 @@ def pullback_buystop_decide(
     rr = round((target_1 - ask_f) / (ask_f - stop_loss), 2) if ask_f > stop_loss else 1.0
 
     if isinstance(rec, dict):
+        rec["pullback_trigger"] = buy_stop
         rec["pullback_buystop"] = {
             "stop_price": stop_loss,
             "target_1": target_1,
             "target_2": target_2,
             "zone_kind": "pullback_buystop",
             "reward_risk": rr,
+            "buy_stop": buy_stop,
         }
 
     return True, "pullback_buystop"
