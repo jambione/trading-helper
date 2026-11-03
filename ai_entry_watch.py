@@ -1968,12 +1968,16 @@ def _row_needs_arm_ready_gate(row: dict) -> bool:
     Continuous soft-seed was filling the book with never-armable inventory.
     Desk panel seeds (momentum/trending/movers/research) keep existing
     inclusion; never-armable eviction clears stuck seats after grace.
+    Book server ranked seats manage their own runway / closeness order
+    and must not be filtered out by the admission arm-ready gate.
     """
     if not isinstance(row, dict):
         return False
+    crit = {str(c).lower() for c in (row.get("criteria") or [])}
+    if "book_server" in crit or bool(row.get("book_server")):
+        return False
     if row.get("soft_seed") is True:
         return True
-    crit = {str(c).lower() for c in (row.get("criteria") or [])}
     return "soft_seed" in crit
 
 
@@ -3451,6 +3455,8 @@ def _is_unarmable_stale_watching(
                 "exh_not_rising", "exh_rising_required", "above_max_price",
                 "exh_not_tight", "wait_exh"):
         limit = unarmable_evict_sec(cfg)
+        if code in _WAIT_STATE_CODES and wait_state_evict_sec(cfg) > 0:
+            limit = max(limit, wait_state_evict_sec(cfg))
         if limit <= 0:
             return False
         since = _f_or_none(rec.get("unarmable_since"))
@@ -11005,6 +11011,7 @@ def sync_watch_from_source_panels(
                         _r["criteria"] = list(_r.get("criteria") or []) + [
                             "book_server"]
                         _r["soft_seed"] = True
+                        _r["book_server"] = True
         except Exception:
             pass
         if soft_fired and soft_rows:
