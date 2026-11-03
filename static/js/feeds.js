@@ -378,18 +378,6 @@ function _bookRows(book) {
       g_gap: w.g_gap != null ? w.g_gap : null,
       g_gap_block: w.g_gap_block != null ? w.g_gap_block : null,
       g_sq_wait: w.g_sq_wait != null ? w.g_sq_wait : null,
-      g_s5_veto: w.g_s5_veto != null ? w.g_s5_veto : null,
-      g_s5_ok: w.g_s5_ok != null ? w.g_s5_ok : null,
-      g_leg1_active: w.g_leg1_active != null ? w.g_leg1_active : null,
-      g_leg1_ok: w.g_leg1_ok != null ? w.g_leg1_ok : null,
-      g_leg1_label: w.g_leg1_label != null ? w.g_leg1_label : null,
-      g_ob_resist: w.g_ob_resist != null ? w.g_ob_resist : null,
-      g_ob_room: w.g_ob_room != null ? w.g_ob_room : null,
-      g_ob_room_min: w.g_ob_room_min != null ? w.g_ob_room_min : null,
-      g_cm_rsi: w.g_cm_rsi != null ? w.g_cm_rsi : null,
-      g_cm_rsi_max: w.g_cm_rsi_max != null ? w.g_cm_rsi_max : null,
-      g_pb_trigger: w.g_pb_trigger != null ? w.g_pb_trigger : null,
-      g_pb_arm: w.g_pb_arm != null ? w.g_pb_arm : null,
     };
   }
   // Live positions always win (P&L / qty).
@@ -1785,8 +1773,12 @@ function _updateBookRow(el, r) {
   const statusLabel = _bookBlockerLabel(r);
   const crit = _bookEntryCriteria(get('config'), r);
   const statusEl = el.querySelector('.ai-book-status');
+  if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
   if (statusEl) {
-    statusEl.remove();
+    // STATE: ready, or FRESH when the tape ages are clean (no dedicated column).
+    statusEl.className = _bookBlockerClass(r)
+      + ((crit.ready || crit.fresh === true) ? ' crit--pass' : '');
+    statusEl.title = _bookBlockerTitle(r);
   }
   const trail = _fmtStopCell(r);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
@@ -1877,7 +1869,8 @@ function _updateBookRow(el, r) {
   }
   const gatesEl = el.querySelector('.cell-gates');
   if (gatesEl) {
-    gatesEl.innerHTML = _bookGatesHtml(r);
+    _setText(gatesEl, _bookGatesText(r));
+    gatesEl.className = `cell-gates${_bookGatesClass(r)}`;
     gatesEl.title = _bookGatesTitle(r);
   }
   _setText(el.querySelector('.cell-qty'), qty);
@@ -1943,17 +1936,18 @@ function _bookRowHtml(r) {
       ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-ready'
       : 'ticker-row feed-row feed-row--ai-book');
   const nearCls = _bookNearArm(r) ? ' feed-row--ai-near' : '';
-  return `<div class="${rowCls}${nearCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}" title="${_esc(_bookBlockerTitle(r))}">`
+  return `<div class="${rowCls}${nearCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}">`
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}${r.bro_call
       ? `<span class="bro-badge" title="Trader Bro called this one out">BRO</span>`
       : ''}</div>`
+    + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-chg${chgMod ? ` ${chgMod}` : ''}">${_esc(chgTxt || '\u2014')}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
     + `<div class="cell-exh${_bookExhClass(r)}${crit.exh === true ? ' crit--pass' : ''}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
-    + `<div class="cell-gates" title="${_esc(_bookGatesTitle(r))}">${_bookGatesHtml(r)}</div>`
+    + `<div class="cell-gates${_bookGatesClass(r)}" title="${_esc(_bookGatesTitle(r))}">${_esc(_bookGatesText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
@@ -1984,11 +1978,10 @@ function _bookGateChecks(r) {
   }
   const age = num(r.g_tape_age), ageMax = num(r.g_tape_max);
   if (ageMax != null && ageMax > 0) {
-    const ok = age != null && age <= ageMax + 1e-9;
     out.push({
-      key: 'tape', text: '',
-      ok: ok,
-      title: `Last print ${age == null ? 'age unknown' : `${age.toFixed(1)} s old`} vs ceiling ${ageMax.toFixed(0)} s (${ok ? 'PASS - fresh' : 'FAIL - stale quote'})`,
+      key: 'tape', text: age == null ? 'tape ?' : `${Math.round(age)}s`,
+      ok: age == null ? null : age <= ageMax + 1e-9,
+      title: `Last print ${age == null ? 'age unknown' : `${age.toFixed(1)} s old`} vs ceiling ${ageMax.toFixed(0)} s`,
     });
   }
   const gap = num(r.g_gap), block = num(r.g_gap_block);
@@ -1996,23 +1989,18 @@ function _bookGateChecks(r) {
     out.push({ key: 'gap', text: `gap ${gap.toFixed(1)}%`, ok: false,
       title: `Gapped down ${gap.toFixed(2)}% at the open (block below -${block.toFixed(1)}%)` });
   }
-  const wait = num(r.g_sq_wait), sqMin = num(r.g_sq_wait_min) || 4;
+  const wait = num(r.g_sq_wait);
   if (wait != null && wait > 0) {
     out.push({ key: 'square', text: `sq ${_fmtHoldClock(wait)}`, ok: false,
-      title: `Full square in the last ${sqMin} min: pre-square arms wait ${_fmtHoldClock(wait)} more` });
-  }
-  const cdWait = num(r.g_cd_wait);
-  if (cdWait != null && cdWait > 0) {
-    out.push({ key: 'cooldown', text: `cd ${_fmtHoldClock(cdWait)}`, ok: false,
-      title: `Re-entry cooldown (60s): waits ${_fmtHoldClock(cdWait)} more after prior exit` });
+      title: `Full square in the last 10 min: pre-square arms wait ${_fmtHoldClock(wait)} more` });
   }
   if (r.g_s5_veto) {
     const ok = r.g_s5_ok === true;
     out.push({
       key: 's5',
-      text: ok ? '5m ↑' : '5m ↓',
+      text: ok ? '5m%R↑' : '5m%R↓',
       ok: ok,
-      title: ok ? '5m Momentum: RISING (clears veto)' : '5m Momentum: FALLING (vetoed)',
+      title: ok ? '5m Slow %R: Pitch is rising / positive (clears veto)' : '5m Slow %R: Pitch is falling / negative (vetoed)',
     });
   }
   if (r.g_leg1_active) {
@@ -2025,53 +2013,14 @@ function _bookGateChecks(r) {
       title: ok ? 'Leg-1 Gate: PASS (Price >= $25, Time <= 13:00, Day Chg 1-4%, Spread <= 8bp, Vol >= Req, 1st Square)' : `Leg-1 Gate: FAIL (${r.g_leg1_label || 'Refused'})`,
     });
   }
-  // Resistance Barrier (<0.3% overhead resistance block)
-  if (r.g_ob_resist === true) {
-    out.push({
-      key: 'resist',
-      text: 'resist',
-      ok: false,
-      title: 'Resistance barrier within 0.3%: entry refused (overhead order block ceiling)',
-    });
-  }
-  // Pullback Buy-Stop Trigger / Leg 3 Status
-  const pbTrig = num(r.g_pb_trigger);
-  if (pbTrig != null && r.g_pb_arm) {
-    const lastPx = num(r.last_ask) || num(r.price);
-    const triggered = lastPx != null && lastPx >= pbTrig - 1e-6;
-    out.push({
-      key: 'pb_trig',
-      text: triggered ? 'L3 ✓' : `trig $${pbTrig.toFixed(2)}`,
-      ok: triggered,
-      title: triggered
-        ? `Leg 3 Trigger: REACHED (ask $${lastPx.toFixed(2)} >= trigger $${pbTrig.toFixed(2)})`
-        : `Leg 3 Trigger: WAITING (ask ${lastPx != null ? '$' + lastPx.toFixed(2) : '?'} < trigger $${pbTrig.toFixed(2)})`,
-    });
-  }
   return out;
 }
 
 function _bookGatesText(r) {
   // Failing gates first: if the cell ellipses, it cuts a passing reading, never the blocker.
-  const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : ['resist', 'pb_trig'].includes(x.key) ? 2 : 3);
-  const c = _bookGateChecks(r).filter(x => x.key !== 'tape' && x.text).slice().sort((a, b) => rank(a) - rank(b));
+  const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : 2);
+  const c = _bookGateChecks(r).slice().sort((a, b) => rank(a) - rank(b));
   return c.length ? c.map(x => x.text).join(' · ') : '—';
-}
-
-function _bookGatesHtml(r) {
-  const checks = _bookGateChecks(r);
-  const tapeCheck = checks.find(x => x.key === 'tape');
-  const isTapeStale = _bookTapeStale(r) || (tapeCheck && tapeCheck.ok === false);
-  const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : ['resist', 'pb_trig'].includes(x.key) ? 2 : 3);
-  const c = checks.filter(x => x.key !== 'tape' && x.text).slice().sort((a, b) => rank(a) - rank(b));
-  if (!c.length) return '—';
-  const sepCls = isTapeStale ? 'gate-sep gate-sep--stale' : 'gate-sep';
-  return c.map(x => {
-    const cls = isTapeStale
-      ? 'gate-val--stale'
-      : (x.ok === true ? 'gate-val--ok' : (x.ok === false ? 'gate-val--fail' : 'gate-val--unknown'));
-    return `<span class="${cls}">${_esc(x.text)}</span>`;
-  }).join(`<span class="${sepCls}">·</span>`);
 }
 
 function _bookGatesFailCount(r) {
@@ -2234,25 +2183,20 @@ function _stopCellTitle(r) {
   const last = _lastPx(r);
   const shelf = _bookStopPx(r);
   const peak = r && r.peak_price != null ? Number(r.peak_price) : NaN;
-  const entry = r && (r.avg_entry != null ? Number(r.avg_entry) : (r.entry_price != null ? Number(r.entry_price) : NaN));
-  const cfg = get('config') || {};
-  const capPct = Number.isFinite(Number(cfg.ai_profit_capture_pct)) ? Number(cfg.ai_profit_capture_pct) : 0.20;
-  const rawBe = cfg.ai_local_trail_be_offset_px != null ? cfg.ai_local_trail_be_offset_px : cfg.ai_breakeven_offset_px;
-  const beOff = Number.isFinite(Number(rawBe)) ? Number(rawBe) : 0.02;
   const bits = [
     'Ratchet shelf (local_stop). Raises with the print, never lowers.',
-    `First-leg capture: +${capPct.toFixed(2)}%${Number.isFinite(entry) && entry > 0 ? ` ($${(entry * (1 + capPct / 100)).toFixed(2)})` : ''}; BE lock +$${beOff.toFixed(2)} at +0.15% MFE; 5m smart zombie cut.`,
+    'Sells a market order when LAST ≤ shelf — after min-hold if that is on.',
   ];
   if (last != null) bits.push(`last $${last.toFixed(2)}`);
   if (shelf != null) bits.push(`shelf $${shelf.toFixed(2)}`);
   if (Number.isFinite(peak) && peak > 0) bits.push(`peak $${peak.toFixed(2)}`);
   const left = _holdLeft(r);
   if (left != null) {
-    bits.push(`sale HELD ${Math.ceil(left)}s (min-hold). Shelf still raises.`);
+    bits.push(`sale HELD ${Math.ceil(left)}s (5m min-hold). Shelf still raises.`);
   } else if (_shelfHit(r)) {
     bits.push('LAST is through the shelf — selling.');
   } else {
-    bits.push('sale armed: next tag of the shelf or +0.20% target exits.');
+    bits.push('sale armed: next tag of the shelf exits.');
   }
   return bits.join(' · ');
 }

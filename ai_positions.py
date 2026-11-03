@@ -2006,16 +2006,6 @@ def place_scaled_entry(
         if max_pos_pct <= 0 or cheap_pct < max_pos_pct:
             max_pos_pct = cheap_pct
 
-    # Phase B pre-market only: apply dedicated position cap (leaves RTH logic 100% untouched)
-    if _phase_b:
-        try:
-            import phase_b as _pb
-            pb_max_pct = _pb.phase_b_max_position_pct(cfg)
-            if pb_max_pct > 0:
-                max_pos_pct = min(max_pos_pct, pb_max_pct)
-        except Exception:
-            pass
-
     size_free = cfg.get("ai_size_from_free_equity", True)
     if isinstance(size_free, str):
         size_free = size_free.strip().lower() in ("1", "true", "yes", "on")
@@ -2042,14 +2032,6 @@ def place_scaled_entry(
             raw_max_pct = float(cfg.get("ai_max_position_pct", 8.0) or 0.0)
         except (TypeError, ValueError):
             raw_max_pct = 8.0
-        if _phase_b:
-            try:
-                import phase_b as _pb
-                pb_max_pct = _pb.phase_b_max_position_pct(cfg)
-                if pb_max_pct > 0:
-                    raw_max_pct = min(raw_max_pct, pb_max_pct)
-            except Exception:
-                pass
         try:
             max_open_risk = float(
                 cfg.get("ai_max_open_risk_pct", DEFAULT_MAX_OPEN_RISK_PCT)
@@ -2074,16 +2056,6 @@ def place_scaled_entry(
         )
         risk_qty = plan.risk_qty
         total_qty = float(plan.qty)
-        if _phase_b:
-            try:
-                import phase_b as _pb
-                pb_max_dollars = _pb.phase_b_max_position_dollars(cfg)
-                if pb_max_dollars > 0 and sizing_entry > 0:
-                    max_pb_qty = float(int(pb_max_dollars / sizing_entry))
-                    if total_qty > max_pb_qty:
-                        total_qty = max(0.0, max_pb_qty)
-            except Exception:
-                pass
         log_event(
             "size_plan", symbol=ticker,
             free_equity=plan.free_equity,
@@ -2127,16 +2099,6 @@ def place_scaled_entry(
             max_position_pct=max_pos_pct,
             fractional=use_frac,
         ))
-        if _phase_b:
-            try:
-                import phase_b as _pb
-                pb_max_dollars = _pb.phase_b_max_position_dollars(cfg)
-                if pb_max_dollars > 0 and sizing_entry > 0:
-                    max_pb_qty = float(int(pb_max_dollars / sizing_entry))
-                    if total_qty > max_pb_qty:
-                        total_qty = max(0.0, max_pb_qty)
-            except Exception:
-                pass
         if total_qty != risk_qty:
             log_event(
                 "size_capped", symbol=ticker, risk_qty=risk_qty,
@@ -3821,82 +3783,6 @@ def no_progress_due(
     return age + 1e-9 >= t_sec
 
 
-def smart_zombie_cut_due(
-    pos: dict[str, Any] | None,
-    ticker: str,
-    indicators: dict[str, Any] | None = None,
-    now: float | None = None,
-    cfg: dict | None = None,
-) -> tuple[bool, dict[str, Any]]:
-    """True when a trade at >= ai_smart_dead_cut_sec (300s = 5m) has never gone green
-    (MFE <= +0.02%), sits underwater (ret <= -0.15%), and Williams %R is dead (<= -70).
-    Preserves all slow-grinding winners while cutting 22-minute zombie losers early.
-    """
-    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
-    try:
-        t_sec = float(cfg.get("ai_smart_dead_cut_sec", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        t_sec = 0.0
-    if t_sec <= 0 or not isinstance(pos, dict):
-        return False, {}
-    if not pos.get("entry_confirmed") or pos.get("closing_reason") or pos.get("tranche_a_filled"):
-        return False, {}
-    _loc = _num(pos.get("local_stop_price"))
-    entry = _num(pos.get("entry_price"))
-    last = _num(pos.get("last_seen_price"))
-    if not entry or entry <= 0 or last is None or last <= 0:
-        return False, {}
-    if _loc is not None and _loc > entry + 1e-9:
-        return False, {}
-    start = _num(pos.get("entry_confirmed_at")) or _num(pos.get("entry_time"))
-    if start is None:
-        return False, {}
-    t_now = float(now if now is not None else time.time())
-    age_sec = t_now - float(start)
-    if age_sec + 1e-9 < t_sec:
-        return False, {}
-    try:
-        max_mfe_pct = float(cfg.get("ai_smart_dead_cut_mfe_pct", 0.02) or 0.02)
-        min_loss_pct = float(cfg.get("ai_smart_dead_cut_loss_pct", -0.15) or -0.15)
-        max_pctr = float(cfg.get("ai_smart_dead_cut_max_pctr", -70.0) or -70.0)
-    except (TypeError, ValueError):
-        max_mfe_pct, min_loss_pct, max_pctr = 0.02, -0.15, -70.0
-
-    peak = _num(pos.get("peak_price")) or entry
-    peak = max(float(peak), float(last), float(entry))
-    mfe_pct = (peak - float(entry)) / float(entry) * 100.0
-    mfe_r = _num(pos.get("mfe_r"))
-    risk = _risk_basis(pos)
-    if mfe_r is not None and risk and risk > 0:
-        mfe_pct = max(mfe_pct, float(mfe_r) * float(risk) / float(entry) * 100.0)
-    if mfe_pct > max_mfe_pct + 1e-9:
-        return False, {}
-
-    cur_pct = (float(last) - float(entry)) / float(entry) * 100.0
-    if cur_pct > min_loss_pct + 1e-9:
-        return False, {}
-
-    pos_ind = pos.get("indicator") if isinstance(pos.get("indicator"), dict) else {}
-    eng_ind = (indicators or {}).get(ticker) if isinstance(indicators, dict) else {}
-    eng_ind = eng_ind if isinstance(eng_ind, dict) else {}
-    pctr = _num(pos_ind.get("pctr"))
-    if pctr is None:
-        pctr = _num(eng_ind.get("pctr"))
-    if pctr is None and pos.get("last_exhaustion") is not None:
-        ex = _num(pos.get("last_exhaustion"))
-        if ex is not None:
-            pctr = float(ex) - 100.0
-    if pctr is None or float(pctr) > max_pctr + 1e-9:
-        return False, {}
-
-    return True, {
-        "age_sec": round(age_sec, 1),
-        "mfe_pct": round(mfe_pct, 3),
-        "cur_pct": round(cur_pct, 3),
-        "pctr": round(float(pctr), 1),
-    }
-
-
 def trail_yields_to_triangle(
     pos: dict[str, Any] | None,
     cfg: dict[str, Any] | None = None,
@@ -4924,26 +4810,7 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: floa
         if be_k > 0 and sp is not None and sp > 0:
             if float(mfe) + 1e-9 < be_k * sp:
                 be_hit = False
-    if be_hit:
-        try:
-            _step2_pct = float(cfg.get("ai_local_trail_be_step2_pct", 0) or 0)
-        except (TypeError, ValueError):
-            _step2_pct = 0.0
-        _cur_gain_pct = (
-            float(mfe) * float(risk) / float(entry) * 100.0
-            if (entry and risk and float(risk) > 0)
-            else 0.0
-        )
-        if _step2_pct > 0 and _cur_gain_pct + 1e-9 < _step2_pct:
-            _be_cfg = cfg
-        else:
-            _be_cfg = (
-                {**cfg, "ai_breakeven_offset_px": cfg["ai_local_trail_be_offset_px"]}
-                if cfg.get("ai_local_trail_be_offset_px") is not None else cfg
-            )
-        be_floor = breakeven_floor(entry, _be_cfg) or float(entry)
-    else:
-        be_floor = None
+    be_floor = (breakeven_floor(entry, cfg) or float(entry)) if be_hit else None
     try:
         arm_need = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
     except (TypeError, ValueError):
@@ -5316,19 +5183,12 @@ def apply_local_trail(
         changed = True
     # Hard profit capture: if current print is up >= ai_profit_capture_pct or ai_profit_capture_px,
     # sell immediately to lock in gains, superseding ratchet trail stops.
-    # Applies to single-tranche local-trail positions (dual-tranche uses tranche_a target_1 + runner_stop).
-    if pos.get("phase_b"):
-        _cap_pct = float(_cfg_all().get("ai_phase_b_profit_capture_pct", 0.20) or 0.20)
-    else:
-        _cap_pct = float(_cfg_all().get("ai_profit_capture_pct", 0.0) or 0.0)
+    _cap_pct = float(_cfg_all().get("ai_profit_capture_pct", 0.0) or 0.0)
     _cap_px = float(_cfg_all().get("ai_profit_capture_px", 0.0) or 0.0)
     _entry = _num(pos.get("entry_price"))
-    _is_dual = int(pos.get("qty_a") or 0) > 0 and int(pos.get("qty_b") or 0) > 0
     _profit_hit = False
-    if not raise_only and not _is_dual and trigger is not None and _entry is not None and _entry > 0:
-        if loc is not None and trigger <= loc + 1e-9:
-            pass  # Broken stop: handle via _trail_hit below
-        elif _cap_px > 0 and (float(trigger) - _entry) + 1e-9 >= _cap_px:
+    if not raise_only and trigger is not None and _entry is not None and _entry > 0:
+        if _cap_px > 0 and (float(trigger) - _entry) + 1e-9 >= _cap_px:
             _profit_hit = True
         elif _cap_pct > 0:
             _gain_pct = (float(trigger) - _entry) / _entry * 100.0
@@ -5337,98 +5197,13 @@ def apply_local_trail(
 
     if _profit_hit:
         last = trigger
-        _target_floor = (
-            round(_entry + _cap_px, 2)
-            if _cap_px > 0
-            else round(_entry * (1.0 + _cap_pct / 100.0), 2)
-        )
-        # Optional velocity-gated runner ratchet: when price surges to target within <= 120s
-        # with strong %R >= -15.0, lock a hard +0.20% floor and trail 0.06% behind peak
-        # instead of capping 100% of the breakout immediately.
-        if bool(_cfg_all().get("ai_profit_capture_runner_ratchet", False)):
-            _t0 = _num(pos.get("entry_time")) or time.time()
-            _hold_s = max(0.0, time.time() - float(_t0))
-            _ind = pos.get("indicator") if isinstance(pos.get("indicator"), dict) else {}
-            _pctr_now = _num(_ind.get("pctr"))
-            if _pctr_now is None:
-                _pctr_now = _num(pos.get("pctr"))
-            if pos.get("runner_mode_active") or (
-                _hold_s <= 120.0 and _pctr_now is not None and float(_pctr_now) >= -15.0
-            ):
-                pos["runner_mode_active"] = True
-                _pk = max(float(last), float(_num(pos.get("peak_price")) or last))
-                try:
-                    _trail_k = float(_cfg_all().get("ai_profit_capture_runner_trail_pct", 0.40) or 0.40) / 100.0
-                except (TypeError, ValueError):
-                    _trail_k = 0.0040
-                _ratchet_stop = max(_target_floor, round(_pk * (1.0 - _trail_k), 2))
-                if float(last) >= _ratchet_stop - 1e-9:
-                    _cur_loc = _num(pos.get("local_stop_price")) or 0.0
-                    if _ratchet_stop > _cur_loc + 1e-9:
-                        pos["local_stop_price"] = _ratchet_stop
-                    _profit_hit = False
-
-    if _profit_hit:
-        last = trigger
-        _target_floor = (
-            round(_entry + _cap_px, 2)
-            if _cap_px > 0
-            else round(_entry * (1.0 + _cap_pct / 100.0), 2)
-        )
-        try:
-            _ws_on = _premarket_working_sell_on(pos)
-        except TypeError:
-            _ws_on = _premarket_working_sell_on()
-        if _ws_on:
-            bid = _premarket_bid(ticker)
-            px = round(float(bid), 2) if bid and bid > 0 else None
-            if px is not None and last and float(last) > 0 and abs(px - float(last)) / float(last) > 0.15:
-                px = round(float(last), 2)
-            if px is None:
-                px = round(float(last), 2) if last and last > 0 else (round(float(loc), 2) if loc and loc > 0 else None)
-            if px is not None and _target_floor > 0:
-                # Floor profit-capture working sell at the target price so a wide pre-market
-                # bid-ask spread never turns a +0.20% ask trigger into an underwater bid dump.
-                px = max(px, _target_floor)
-            if px is None:
-                pos["working_sell_state"] = "held_dark"
-                log_event("working_sell_dark", symbol=ticker, last=last, stop=loc)
-                return True, False
-            if _rest_working_sell(ticker, pos, px, "flatten"):
-                pos["working_sell_flatten_since"] = time.time()
-            exit_why[ticker] = "profit_capture"
-            pos["closing_reason"] = "profit_capture"
-            events.append({
-                "ticker": ticker,
-                "event": "profit_capture_working",
-                "last": last,
-                "entry": _entry,
-                "limit": px,
-                "gain": round(last - _entry, 4),
-                "gain_pct": round((last - _entry) / _entry * 100.0, 2),
-            })
-            log_event(
-                "profit_capture_working",
-                symbol=ticker,
-                last=last,
-                entry=_entry,
-                limit=px,
-                gain=round(last - _entry, 4),
-                gain_pct=round((last - _entry) / _entry * 100.0, 2),
-            )
-            return True, False
         alpaca_trader.cancel_open_orders(ticker)
         try:
             _collar = float(_cfg_all().get("ai_exit_limit_collar_pct", 0.0) or 0.0)
             _cwait = float(_cfg_all().get("ai_exit_limit_collar_wait_sec", 2.0) or 2.0)
         except (TypeError, ValueError):
             _collar, _cwait = 0.0, 2.0
-        if bool(_cfg_all().get("ai_profit_capture_passive_exit", False)) and trigger:
-            out = alpaca_trader.close_out(
-                ticker, price=max(float(trigger), _target_floor),
-                collar_pct=max(_collar, 0.02),
-                collar_wait_sec=_cwait) or {}
-        elif _collar > 0 and trigger:
+        if _collar > 0 and trigger:
             out = alpaca_trader.close_out(
                 ticker, price=float(trigger), collar_pct=_collar,
                 collar_wait_sec=_cwait) or {}
@@ -5485,17 +5260,9 @@ def apply_local_trail(
     # shelf. Once LAST ≤ shelf, cancel resting orders and sell market.
     if _trail_hit:
         last = trigger
-        try:
-            _ws_on = _premarket_working_sell_on(pos)
-        except TypeError:
-            _ws_on = _premarket_working_sell_on()
-        if _ws_on:
+        if _premarket_working_sell_on():
             bid = _premarket_bid(ticker)
             px = round(float(bid), 2) if bid and bid > 0 else None
-            if px is not None and last and float(last) > 0 and abs(px - float(last)) / float(last) > 0.15:
-                px = round(float(last), 2)
-            if px is None:
-                px = round(float(last), 2) if last and last > 0 else (round(float(loc), 2) if loc and loc > 0 else None)
             if px is None:
                 pos["working_sell_state"] = "held_dark"
                 log_event("working_sell_dark", symbol=ticker, last=last, stop=loc)
@@ -5654,6 +5421,27 @@ def apply_local_trail(
                     last=_num(pos.get("last_seen_price")),
                     peak=pos.get("peak_price"), mfe_r=pos.get("mfe_r"),
                 )
+        if (
+            _premarket_working_sell_on()
+            and str(pos.get("working_sell_state") or "") != "flatten"
+        ):
+            bid = _premarket_bid(ticker)
+            loc_now = _num(pos.get("local_stop_price"))
+            if loc_now and loc_now > 0:
+                px = round(min(float(loc_now), float(bid)), 2) if bid and bid > 0 else round(float(loc_now), 2)
+                if _rest_working_sell(ticker, pos, px, "protect"):
+                    changed = True
+    if (
+        _premarket_working_sell_on()
+        and str(pos.get("working_sell_state") or "") != "flatten"
+        and not pos.get("working_sell_id")
+    ):
+        loc_now = _num(pos.get("local_stop_price"))
+        bid = _premarket_bid(ticker)
+        if loc_now and loc_now > 0:
+            px = round(min(float(loc_now), float(bid)), 2) if bid and bid > 0 else round(float(loc_now), 2)
+            if _rest_working_sell(ticker, pos, px, "protect"):
+                changed = True
     if changed_handoff:
         changed = True
     return changed, False
@@ -6050,23 +5838,12 @@ def _tick_prints(ticker: str, live: dict | None) -> tuple[float | None, float | 
     return max(vals), min(vals)
 
 
-def _premarket_working_sell_on(now: float | dict | None = None, pos: dict | None = None) -> bool:
+def _premarket_working_sell_on(now: float | None = None) -> bool:
     """Session adapter: current shelf, DAY ext-hours sell. Default off."""
-    if isinstance(now, dict) and pos is None:
-        pos = now
-        now = None
-    ts = time.time() if now is None else float(now)
-    if _rth_now(ts):
+    if not _cfg_flag("ai_premarket_working_sell", False):
         return False
-    if isinstance(pos, dict):
-        try:
-            import phase_b as _pb
-            if _pb.is_phase_b_position(pos):
-                return _pb.working_sell_on()
-        except Exception:
-            if pos.get("phase_b"):
-                return True
-    return bool(_cfg_flag("ai_premarket_working_sell", False))
+    ts = time.time() if now is None else float(now)
+    return not _rth_now(ts)
 
 
 def _premarket_bid(symbol: str) -> float | None:
@@ -7544,7 +7321,7 @@ def manage_open_positions(
                         )
                     ):
                         alpaca_trader.cancel_open_orders(ticker)
-                        if _premarket_working_sell_on(pos):
+                        if _premarket_working_sell_on():
                             bid = _premarket_bid(ticker)
                             px = round(float(bid), 2) if bid and bid > 0 else None
                             if px is not None:
@@ -8544,51 +8321,6 @@ def manage_open_positions(
                     "ai_no_progress_mfe_r", DEFAULT_NO_PROGRESS_MFE_R),
                 timeout_sec=_cfg_float(
                     "ai_no_progress_sec", DEFAULT_NO_PROGRESS_SEC),
-            )
-            changed = True
-            continue
-
-        # Smart 5-minute zombie cut: at >= ai_smart_dead_cut_sec (300s), if the trade
-        # never went green (MFE <= +0.02%), is underwater (<= -0.15%), and %R <= -70,
-        # flatten early instead of bleeding for 22 minutes until dead_trade.
-        _sz_due, _sz_info = smart_zombie_cut_due(pos, ticker, indicators, now)
-        if _sz_due:
-            alpaca_trader.cancel_open_orders(ticker)
-            if _premarket_working_sell_on(pos):
-                bid = _premarket_bid(ticker)
-                px = round(float(bid), 2) if bid and bid > 0 else None
-                if px is None:
-                    _last = pos.get("current_price") or pos.get("last_price") or pos.get("last_seen_price")
-                    px = round(float(_last), 2) if _last and float(_last) > 0 else None
-                if px is not None:
-                    _rest_working_sell(ticker, pos, px, "flatten")
-                    pos["working_sell_flatten_since"] = now
-                pos["closing_reason"] = "smart_dead_cut"
-                exit_why[ticker] = "smart_dead_cut"
-                events.append({
-                    "ticker": ticker, "event": "smart_dead_cut_working",
-                    "limit": px,
-                    **_sz_info,
-                })
-                log_event(
-                    "smart_dead_cut_working", symbol=ticker,
-                    limit=px,
-                    **_sz_info,
-                )
-                changed = True
-                continue
-            out = alpaca_trader.close_out(ticker) or {}
-            if isinstance(out, dict) and out.get("order_id"):
-                pos["close_order_id"] = str(out["order_id"])
-            pos["closing_reason"] = "smart_dead_cut"
-            exit_why[ticker] = "smart_dead_cut"
-            events.append({
-                "ticker": ticker, "event": "smart_dead_cut",
-                **_sz_info,
-            })
-            log_event(
-                "smart_dead_cut", symbol=ticker,
-                **_sz_info,
             )
             changed = True
             continue

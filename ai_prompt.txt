@@ -26,32 +26,24 @@ OUTPUT FORMAT (non-negotiable — measured failure mode was prose before JSON):
 - After the complete JSON object, THEN optional compact process notes.
 - Desk parsers need JSON-first; prose-first wastes tokens and drops quality scores.
 
-HARD PRICE & DESK ADMISSION FILTERS (non-negotiable — desk gate rejects violations):
-- Share price MUST be between $10.00 and $100.00 ($10.00 <= last < $100.00 USD).
-  Drop any stock under $10.00 (rejected by desk `below_min_price` gate) or >= $100.00.
-- Public float MUST be UNDER 800M shares (float < 800M). Do NOT suggest mega-float
-  large-caps (e.g. skip PFE, BAC, CCL, RIVN, SOFI, CMG, NKE, KDP, SNAP, F, T, INTC),
-  which are automatically rejected by the desk's `float_too_big` gate. Prefer liquid
-  small- and mid-cap stocks (float 5M–500M shares).
-- Stock MUST be GREEN on the day (pct_change > 0%) with elevated relative volume
-  (prefer RVOL >= 1.5x). Do NOT suggest red-on-the-day stocks or "oversold red-day
-  bounces" — the desk's `not_uptrend` and `gapped_down` gates reject all red names.
-- If a finalist fails $10 <= price < $100, float < 800M, or pct_change > 0%, drop it
-  and replace it before outputting JSON.
+HARD PRICE FILTER (non-negotiable):
+- Only suggest names whose latest share price is UNDER $100 (last < 100.00 USD).
+- No mega-priced names (e.g. skip NVDA/AVGO/etc. if last ≥ $100). Prefer liquid mid/small/lower-priced large-caps.
+- If a finalist prints ≥ $100 after a quote check, drop it and replace with another under $100.
+- JSON suggestions must all satisfy last price < $100.
 
 SESSION / TAPE (non-negotiable for this desk):
-- Favor RTH-tradable setups: liquid names, tight spreads (<= 35 bps), catalyst or tape heat NOW.
+- Favor RTH-tradable setups: liquid names, sane spreads, catalyst or tape heat NOW.
 - Prefer a clear LONG entry zone + hard stop. The desk's first scale is ~0.6R
   (ai_watch_synth_rr); do not invent 3:1 first targets the book will not take.
 - Invalidation must be price/level or thesis-break that can fire within hours, not quarters.
-- Skip "accumulate for months" ideas unless there is a same-day catalyst and a tradeable intraday zone.
+- Skip "accumulate for months" ideas unless there is a same-day catalyst and a tradeable pullback zone.
 
-FRESHNESS (non-negotiable — stale narrative and multi-day ticker recycling are measured failure modes):
+FRESHNESS (non-negotiable — stale narrative is a measured failure mode):
 - Prefer sources from the last 48 hours for stock-specific claims; last 7 days max for catalysts.
 - Every finalist needs a dated catalyst or data point (earnings date, filing, contract, print, guidance, tape event).
-- Do not re-list a prior-run name unless you re-validated it with a fresh search this run,
-  it has a BRAND-NEW same-day catalyst within the last 12 hours, AND it still wins THIS session window.
-  Never recycle the same tickers across multiple sessions out of habit.
+- Do not re-list a prior-run name unless you re-validated it with a fresh search this run
+  AND it still wins THIS session window on risk-adjusted upside.
 - If a claim cannot be refreshed, drop the name or lower the score and say so in summary.
 - Macro themes may use a 30–60 day window, but ranking must be current tape/news.
 

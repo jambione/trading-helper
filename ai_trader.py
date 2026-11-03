@@ -489,30 +489,6 @@ def _positions_payload(
             positions=positions if isinstance(positions, dict) else {},
             watch_rows=entry_watch,
         )
-        try:
-            import phase_b as _pb
-            live_c = load_config()
-            if _pb.enabled(live_c) and _pb.phase_b_session_active(now, live_c):
-                pb_rows = _pb.book_rows_for_dashboard(live_c, now=now)
-                if pb_rows:
-                    open_syms = {
-                        str(r.get("symbol") or "").upper()
-                        for r in entry_book
-                        if r.get("is_position") or r.get("phase") == "open"
-                    }
-                    pb_syms = {str(r.get("symbol") or "").upper() for r in pb_rows}
-                    rth_rows = [
-                        r for r in entry_book
-                        if str(r.get("symbol") or "").upper() not in pb_syms
-                        and str(r.get("symbol") or "").upper() not in open_syms
-                    ]
-                    pos_rows = [
-                        r for r in entry_book
-                        if str(r.get("symbol") or "").upper() in open_syms
-                    ]
-                    entry_book = pos_rows + pb_rows + rth_rows
-        except Exception:
-            pass
         decision_max_age = float(ew.decision_max_age_sec(None))
     except Exception:
         entry_watch = []
@@ -1283,22 +1259,6 @@ def main() -> None:
                 flush=True,
             )
             raise SystemExit(2)
-    # Probe data feed entitlement (IEX or SIP)
-    try:
-        import alpaca_api as aa
-        from alpaca.data.enums import DataFeed
-        feed = aa.live_data_feed(cfg)
-        feed_str = "SIP" if feed == DataFeed.SIP else "IEX"
-        if feed == DataFeed.SIP:
-            ok, msg = aa.probe_feed_entitlement(cfg)
-            if ok:
-                print(f"[ai] [DATA_FEED] ✓ Alpaca real-time SIP data feed verified active ({msg})", flush=True)
-            else:
-                print(f"[ai] [DATA_FEED] ⚠️ WARNING: alpaca_bar_feed='sip' configured, but probe failed ({msg}).", flush=True)
-        else:
-            print("[ai] [DATA_FEED] Alpaca feed: IEX (free tier)", flush=True)
-    except Exception as e:
-        print(f"[ai] [DATA_FEED] probe notice: {e}", flush=True)
     # Record every external read this process makes (desk_io), so a replay
     # can serve the exact bytes the decisions saw. DESK_IO_RECORD=0 disables.
     if os.getenv("DESK_IO_RECORD", "1") != "0":

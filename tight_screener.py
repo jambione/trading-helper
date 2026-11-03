@@ -124,13 +124,6 @@ def in_scan_window(now_et: datetime, cfg: dict | None = None) -> bool:
     if now_et.weekday() >= 5:
         return False
     delay = _f(cfg or {}, "ai_movers_sip_delay_min", 15.0)
-    if delay == 15.0:
-        try:
-            import alpaca_api as _aa
-            if _aa.sip_is_realtime(cfg):
-                delay = 0.0
-        except Exception:
-            pass
     m = now_et.hour * 60 + now_et.minute
     return 570 + delay + 1 <= m < 960
 

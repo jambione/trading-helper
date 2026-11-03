@@ -190,35 +190,3 @@ def test_profit_capture_ignores_raise_only(monkeypatch):
     ch, closed = ap.apply_local_trail("TEST", pos, 30.50, [], {}, raise_only=True)
     assert closed is False
     assert pos.get("closing_reason") is None
-
-
-def test_runner_ratchet_trail_pct(monkeypatch):
-    """Runner ratchet trails peak price using ai_profit_capture_runner_trail_pct instead of closing immediately."""
-    cfg = {
-        "ai_local_trail_enabled": True,
-        "ai_profit_capture_pct": 1.0,
-        "ai_profit_capture_runner_ratchet": True,
-        "ai_profit_capture_runner_trail_pct": 0.40,
-    }
-    monkeypatch.setattr(ap, "_cfg_all", lambda: cfg)
-    monkeypatch.setattr(ap, "_cfg_flag", lambda k, d=False: bool(cfg.get(k, d)))
-    monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
-    monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
-    monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
-    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda: False)
-
-    pos = _pos(entry_price=100.00, entry_time=time.time())
-    pos["indicator"] = {"pctr": -10.0}  # strong %R >= -15
-
-    # Price hits +1.0% ($101.00), triggering profit capture threshold
-    ch, closed = ap.apply_local_trail("TEST", pos, 101.00, [], {})
-    # Since runner_ratchet is on, position is NOT closed immediately; runner mode is activated
-    assert closed is False
-    assert pos.get("runner_mode_active") is True
-    # Stop floor locked at target floor $101.00 (peak is 101.00, 101.00 * (1 - 0.004) = 100.60, max is 101.00)
-    assert pos.get("local_stop_price") == 101.00
-
-    # Price surges to $103.00: ratchet stop trails at 103.00 * (1 - 0.004) = $102.59
-    ch, closed = ap.apply_local_trail("TEST", pos, 103.00, [], {})
-    assert closed is False
-    assert pos.get("local_stop_price") == 102.59

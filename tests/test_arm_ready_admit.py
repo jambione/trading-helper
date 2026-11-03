@@ -508,21 +508,3 @@ def test_wait_state_seat_kept_until_its_own_clock(monkeypatch):
     rec = _wait_rec("rsi_extended", 120.0, now)
     assert ew._maybe_never_armable_evict(rec, sym="WAIT", cfg={**_cfg(), "ai_watch_wait_state_evict_sec": 600.0},
                                          now=now, events=[], cp=_FakeCP(), gt=_FakeGT()) is True
-
-
-def test_book_server_row_exempt_from_arm_ready_gate():
-    """Book server ranked seats manage their own runway and must not be filtered out at door."""
-    row = {"symbol": "BS1", "criteria": ["soft_seed", "book_server"], "soft_seed": True, "book_server": True}
-    assert ew._row_needs_arm_ready_gate(row) is False
-
-
-def test_unarmable_stale_watching_respects_wait_state_clock():
-    """_is_unarmable_stale_watching must not allow stealing square wait-state seats before wait clock."""
-    now = time.time()
-    cfg = {**_cfg(), "ai_watch_unarmable_evict_sec": 30.0, "ai_watch_wait_state_evict_sec": 600.0}
-    rec = _wait_rec("exh_falling", 120.0, now)
-    # At 120s: beyond 30s unarmable limit, but within 600s wait state limit -> not stealable
-    assert ew._is_unarmable_stale_watching(rec, cfg, now=now) is False
-    # At 700s: beyond 600s wait limit -> stealable
-    rec_old = _wait_rec("exh_falling", 700.0, now)
-    assert ew._is_unarmable_stale_watching(rec_old, cfg, now=now) is True

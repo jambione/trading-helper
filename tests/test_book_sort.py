@@ -26,9 +26,10 @@ _CSS = (_ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
 _JS = (_ROOT / "static" / "js" / "feeds.js").read_text(encoding="utf-8")
 
 # Every column in the book, in DOM order, with the cell class it must align
-# with. Qty is display:none and deliberately not sortable. State removed on desktop (11/02).
+# with. Qty is display:none and deliberately not sortable.
 COLUMNS = [
     ("ticker", "cell-ticker"),
+    ("state", "ai-book-status"),
     ("last", "cell-price"),
     ("chg", "cell-chg"),
     ("entry", "cell-entry"),

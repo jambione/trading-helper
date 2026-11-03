@@ -39,16 +39,6 @@ _BOOK: dict[str, dict[str, Any]] = {}
 _PEAK_OPENS_BY_DAY: dict[str, int] = {}
 # (symbol, prior_day) → dollar volume or None (negative cache).
 _PRIOR_DVOL_CACHE: dict[tuple[str, str], float | None] = {}
-# (day, symbol) → entries count today.
-_ENTRIES_BY_DAY_SYM: dict[tuple[str, str], int] = {}
-# day → set of symbols locked out after a loss today.
-_LOCKED_OUT_BY_DAY: dict[str, set[str]] = {}
-
-
-def clear_phase_b_entry_tracking() -> None:
-    """Clear entry count and loss-lockout tracking (useful for unit tests)."""
-    _ENTRIES_BY_DAY_SYM.clear()
-    _LOCKED_OUT_BY_DAY.clear()
 
 
 def _cfg(cfg: dict | None = None) -> dict:
@@ -357,61 +347,6 @@ def seat_stale_sec(cfg: dict | None = None) -> float:
         return 75.0
 
 
-def max_entries_per_symbol(cfg: dict | None = None) -> int:
-    try:
-        return max(1, int(_cfg(cfg).get("ai_phase_b_max_entries_per_symbol", 2) or 2))
-    except (TypeError, ValueError):
-        return 2
-
-
-def lockout_on_loss(cfg: dict | None = None) -> bool:
-    return bool(_cfg(cfg).get("ai_phase_b_lockout_on_loss", True))
-
-
-def max_spread_pct(cfg: dict | None = None) -> float:
-    try:
-        return max(0.0, float(_cfg(cfg).get("ai_phase_b_max_spread_pct", 0.75) or 0.75))
-    except (TypeError, ValueError):
-        return 0.75
-
-
-def min_prints_in_window(cfg: dict | None = None) -> int:
-    try:
-        return max(1, int(_cfg(cfg).get("ai_phase_b_min_prints_in_window", 5) or 5))
-    except (TypeError, ValueError):
-        return 5
-
-
-def phase_b_risk_pct(cfg: dict | None = None) -> float:
-    try:
-        val = _cfg(cfg).get("ai_phase_b_risk_pct")
-        if val is not None:
-            return max(0.01, float(val))
-        return 0.5
-    except (TypeError, ValueError):
-        return 0.5
-
-
-def phase_b_max_position_pct(cfg: dict | None = None) -> float:
-    try:
-        val = _cfg(cfg).get("ai_phase_b_max_position_pct")
-        if val is not None:
-            return max(0.1, float(val))
-        return 4.0
-    except (TypeError, ValueError):
-        return 4.0
-
-
-def phase_b_max_position_dollars(cfg: dict | None = None) -> float:
-    try:
-        val = _cfg(cfg).get("ai_phase_b_max_position_dollars")
-        if val is not None:
-            return max(0.0, float(val))
-        return 2000.0
-    except (TypeError, ValueError):
-        return 2000.0
-
-
 # ── Clock gates ──────────────────────────────────────────────────────────
 
 
@@ -494,21 +429,14 @@ def stream_last_print(
     now: float | None = None,
     cfg: dict | None = None,
 ) -> dict[str, Any] | None:
-    """Stream last trade + age. None if missing.
+    """Finnhub stream last + age. None if missing.
 
-    Resolution order:
-      1. In-process Finnhub stream (if connected/populated).
-      2. Dashboard/engine tape print via ai_entry_watch.live_print (from /api/state).
-      3. alpaca_price_poll in-memory prices.
-      4. Alpaca SDK StockLatestTradeRequest using live_data_feed (e.g. SIP).
+    Prefers ``get_latest_print`` when present; falls back to price + ts_unix.
     """
     sym = str(ticker or "").upper().strip()
     if not sym:
         return None
     t0 = float(now if now is not None else time.time())
-    c = _cfg(cfg)
-
-    # 1. In-process Finnhub stream
     try:
         import finnhub_stream as fh
         if hasattr(fh, "get_latest_print"):
@@ -523,83 +451,24 @@ def stream_last_print(
                     "trade_ts": got.get("trade_ts"),
                     "ts_unix": got.get("ts_unix"),
                     "age_sec": float(age) if age is not None else None,
-                    "src": "finnhub_stream",
                 }
         with fh.FINNHUB_STATE.lock:
             data = fh.FINNHUB_STATE.prices.get(sym)
-            if data and data.get("price"):
-                px = float(data["price"])
-                trade_ts = data.get("trade_ts")
-                ts_unix = data.get("ts_unix")
-                basis = trade_ts if trade_ts is not None else ts_unix
-                age = (t0 - float(basis)) if basis is not None else None
-                return {
-                    "price": px,
-                    "trade_ts": trade_ts,
-                    "ts_unix": ts_unix,
-                    "age_sec": age,
-                    "src": "finnhub_state",
-                }
-    except Exception:
-        pass
-
-    # 2. Dashboard / engine tape print (reads from /api/state or engine rt_* prints)
-    try:
-        import ai_entry_watch as ew
-        lp = ew.live_print(sym)
-        if lp is not None and lp[0] and float(lp[0]) > 0:
-            px = float(lp[0])
-            age = float(lp[1]) if lp[1] is not None else None
-            ts = (t0 - age) if age is not None else None
+            if not data or not data.get("price"):
+                return None
+            px = float(data["price"])
+            trade_ts = data.get("trade_ts")
+            ts_unix = data.get("ts_unix")
+            basis = trade_ts if trade_ts is not None else ts_unix
+            age = (t0 - float(basis)) if basis is not None else None
             return {
                 "price": px,
-                "trade_ts": ts,
-                "ts_unix": ts,
+                "trade_ts": trade_ts,
+                "ts_unix": ts_unix,
                 "age_sec": age,
-                "src": "live_print",
             }
     except Exception:
-        pass
-
-    # 3. alpaca_price_poll (in-memory polled trades if poller is active)
-    try:
-        import alpaca_price_poll as app
-        with app.STATE.lock:
-            data = app.STATE.prices.get(sym)
-            if data and data.get("price"):
-                px = float(data["price"])
-                ts_unix = data.get("ts_unix")
-                age = (t0 - float(ts_unix)) if ts_unix is not None else None
-                return {
-                    "price": px,
-                    "trade_ts": ts_unix,
-                    "ts_unix": ts_unix,
-                    "age_sec": age,
-                    "src": "alpaca_price_poll",
-                }
-    except Exception:
-        pass
-
-    # 4. Direct Alpaca latest trade request with configured live_data_feed
-    try:
-        import alpaca_api as aa
-        client = aa.connect_data_client(c)
-        if client is not None:
-            quotes = aa.get_latest_trade_quotes(client, [sym], cfg=c)
-            if sym in quotes and quotes[sym] and quotes[sym][0] > 0:
-                px, trade_ts = quotes[sym]
-                age = (t0 - float(trade_ts)) if trade_ts > 0 else None
-                return {
-                    "price": float(px),
-                    "trade_ts": float(trade_ts) if trade_ts > 0 else None,
-                    "ts_unix": float(trade_ts) if trade_ts > 0 else None,
-                    "age_sec": float(age) if age is not None else None,
-                    "src": "alpaca_trade_rest",
-                }
-    except Exception:
-        pass
-
-    return None
+        return None
 
 
 def fresh_stream_last(
@@ -780,38 +649,9 @@ def phase_b_arm_allows(
         except Exception as e:  # noqa: BLE001
             return False, f"phase_b_arm_unavailable:{e}"
 
-        t_now = float(now if now is not None else time.time())
-        ok_exh, why_exh = ew.exhaustion_allows_buy(record, c, now=t_now)
+        ok_exh, why_exh = ew.exhaustion_allows_buy(record, c)
         if not ok_exh:
             return False, why_exh
-
-        # Operator presquare_only gate (matches RTH should_arm_buy)
-        if bool(c.get("ai_watch_presquare_only", False)) and why_exh != "presquare":
-            return False, "not_presquare"
-
-        if why_exh == "presquare":
-            _sq_why = ew.after_square_refusal(sym, t_now, c)
-            if _sq_why:
-                return False, _sq_why
-            if sym and getattr(ew, "_WR_TREND_HISTORY", {}).get(sym):
-                _wt_why = ew.wr_trend_refusal(sym, record, t_now, c)
-                if _wt_why:
-                    return False, _wt_why
-
-        # 5m Slow %R pitch veto (ai_watch_wr_slow_5m_veto)
-        _s5_why = ew.wr_slow_5m_refusal(sym, record, t_now, c)
-        if _s5_why:
-            return False, _s5_why
-
-        # Re-entry cooldown gate (ai_reentry_cooldown_sec)
-        try:
-            cool = float(c.get("ai_reentry_cooldown_sec", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            cool = 0.0
-        if cool > 0 and sym:
-            last_exit = ew._recent_exit_ts(sym)
-            if last_exit and (t_now - float(last_exit)) < cool:
-                return False, "reentry_cooldown"
     else:
         ok_legacy, why_legacy = _legacy_arm_allows(record, c)
         if not ok_legacy:
@@ -903,12 +743,6 @@ def admit_candidate(
     sym = str(row.get("symbol") or "").upper().strip()
     if not sym:
         return False, "no_symbol"
-    t0 = float(now if now is not None else time.time())
-    day = datetime.fromtimestamp(t0, tz=ET).strftime("%Y-%m-%d")
-    if lockout_on_loss(c) and sym in _LOCKED_OUT_BY_DAY.get(day, set()):
-        return False, "phase_b_loss_lockout"
-    if _ENTRIES_BY_DAY_SYM.get((day, sym), 0) >= max_entries_per_symbol(c):
-        return False, "phase_b_max_entries"
     src = str(row.get("source") or "").strip().lower()
     if src in SOURCE_OFF_V1 or not source_allowed(src, c):
         return False, "phase_b_source_off"
@@ -988,91 +822,6 @@ def save_book(book: dict[str, dict[str, Any]]) -> None:
             )
         except Exception:
             pass
-
-
-def book_rows_for_dashboard(
-    cfg: dict | None = None,
-    now: float | None = None,
-) -> list[dict[str, Any]]:
-    """Format active Phase B seats for the unified dashboard book view during premarket."""
-    c = _cfg(cfg)
-    if not enabled(c) or not phase_b_session_active(now, c):
-        return []
-    t0 = float(now if now is not None else time.time())
-    book = load_book()
-    out: list[dict[str, Any]] = []
-    max_age = float(print_max_age_sec(c))
-    for sym, rec in book.items():
-        if not isinstance(rec, dict):
-            continue
-        st = str(rec.get("status") or "watching").lower().strip()
-        px = _f(rec.get("price"))
-        ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
-        exh = _f(ind.get("exhaustion"))
-        cm_rsi = _f(ind.get("cm_rsi"))
-        pct = _f(rec.get("pct_change"))
-        score = _f(rec.get("score"))
-
-        last_px, why_px = fresh_stream_last(sym, now=t0, cfg=c)
-        display_px = last_px if last_px is not None else px
-
-        print_info = stream_last_print(sym, now=t0, cfg=c)
-        age = (
-            float(print_info["age_sec"])
-            if (print_info and print_info.get("age_sec") is not None)
-            else None
-        )
-
-        is_ready = st in ("dry_armed", "entry_pending")
-        if is_ready:
-            b_code = None
-            b_label = "ready" if st == "entry_pending" else "dry armed"
-        elif why_px == "phase_b_stale_print":
-            b_code = "stale_quote"
-            b_label = "stale quote"
-        elif why_px == "phase_b_missing_print":
-            b_code = "missing_print"
-            b_label = "no print"
-        else:
-            b_code = "premarket"
-            b_label = "premarket"
-
-        gate_wires: dict[str, Any] = {}
-        try:
-            import ai_entry_watch as ew
-            gate_wires = ew._gate_wire_fields(rec, sym, now=t0)
-        except Exception:
-            pass
-
-        row = {
-            "symbol": sym,
-            "phase": "ready" if is_ready else "watching",
-            "status": st,
-            "ready": is_ready,
-            "in_zone": False,
-            "source": str(rec.get("source") or "movers"),
-            "score": score,
-            "price": display_px,
-            "last_ask": display_px,
-            "pct_change": pct,
-            "admit_pct_change": pct,
-            "exhaustion": exh,
-            "cm_rsi": cm_rsi,
-            "block_code": b_code,
-            "blocker": b_label,
-            "block_reason": b_label,
-            "last_ask_age_sec": age,
-            "price_age_sec": age,
-            "decision_max_age_sec": max_age,
-            **gate_wires,
-            "g_tape_age": age if age is not None else gate_wires.get("g_tape_age"),
-            "g_tape_max": max_age if max_age is not None else gate_wires.get("g_tape_max"),
-            "phase_b": True,
-            "is_position": False,
-            "reason": f"Phase B ({st})",
-        }
-        out.append(row)
-    return out
 
 
 def seat_symbol(
@@ -1187,43 +936,17 @@ def refresh_seat_indicators(
         if last is not None:
             try:
                 import ai_entry_watch as ew
-                pair = ew.live_exhaustion_pair(sym, float(last), c, t0)
-                if pair:
-                    pctr = pair.get("fast")
-                    pctr_slow = pair.get("slow")
-                    ind["pctr"] = round(float(pctr), 2) if pctr is not None else None
-                    ind["pctr_williams"] = ind["pctr"]
-                    ind["pctr_slow"] = round(float(pctr_slow), 2) if pctr_slow is not None else None
-                    ind["pctr_rising"] = bool(pair.get("fast_rising"))
-                    ind["pctr_falling"] = bool(pair.get("fast_falling"))
-                    ind["pctr_slow_rising"] = bool(pair.get("slow_rising"))
-                    ind["pctr_slow_falling"] = bool(pair.get("slow_falling"))
-                    ind["pctr_ob"] = bool(pair.get("ob"))
-                    ind["pctr_tight"] = bool(pair.get("tight"))
-                    if pair.get("gap") is not None:
-                        ind["pctr_gap"] = round(float(pair["gap"]), 2)
-                    if pctr is not None:
-                        ind["exhaustion"] = max(0.0, min(100.0, 100.0 + float(pctr)))
-
-                    # Classify seat quality & stamp gate tracking
-                    cls, gap = ew.classify_exh_seat(rec, c, ind=ind)
-                    rec["exh_seat_class"] = cls
-                    if gap is not None:
-                        rec["pctr_gap"] = round(float(gap), 2)
-                    ew.after_square_record(sym, rec, t0, c)
-                    ew.wr_slow_5m_record(sym, rec, t0, c)
-                    if hasattr(ew, "wr_trend_record"):
-                        ew.wr_trend_record(sym, rec, t0, c)
-                else:
-                    got = ew.live_exhaustion(sym, float(last), c, t0)
-                    if got:
-                        pctr_w, exh, rising, falling = got
-                        ind["pctr_williams"] = pctr_w
-                        ind["exhaustion"] = exh
-                        ind["pctr_rising"] = bool(rising)
-                        ind["pctr_falling"] = bool(falling)
-                        if exh is not None:
-                            ind["pctr"] = float(pctr_w) if pctr_w is not None else (float(exh) - 100.0)
+                got = ew.live_exhaustion(sym, float(last), c, t0)
+                if got:
+                    pctr_w, exh, rising, falling = got
+                    ind["pctr_williams"] = pctr_w
+                    ind["exhaustion"] = exh
+                    # Phase B arm band reads exhaustion; keep rising bits honest.
+                    ind["pctr_rising"] = bool(rising)
+                    ind["pctr_falling"] = bool(falling)
+                    # Also expose 0–100 on pctr for seats that only look there.
+                    if exh is not None:
+                        ind["pctr"] = float(exh)
             except Exception:
                 pass
             rec["price"] = float(last)
@@ -1232,10 +955,8 @@ def refresh_seat_indicators(
         # Normalize: if only Williams pctr present, derive exhaustion.
         if ind.get("exhaustion") is None:
             raw = _f(ind.get("pctr"))
-            if raw is not None and -100.5 <= float(raw) <= 0.5:
+            if raw is not None and float(raw) <= 0.0:
                 ind["exhaustion"] = max(0.0, min(100.0, 100.0 + float(raw)))
-            elif raw is not None and float(raw) > 0.0:
-                ind["exhaustion"] = max(0.0, min(100.0, float(raw)))
 
         rec["indicator"] = ind
         rec["indicator_ts"] = t0
@@ -1359,19 +1080,6 @@ def try_phase_b_entry(
     if not phase_b_allow_entries(t0, c):
         out["error"] = "phase_b_outside_entries"
         return out
-    day = datetime.fromtimestamp(t0, tz=ET).strftime("%Y-%m-%d")
-    if lockout_on_loss(c) and sym in _LOCKED_OUT_BY_DAY.get(day, set()):
-        out["error"] = "phase_b_loss_lockout"
-        return out
-    if _ENTRIES_BY_DAY_SYM.get((day, sym), 0) >= max_entries_per_symbol(c):
-        out["error"] = "phase_b_max_entries"
-        return out
-
-    spread_pct = _f(record.get("spread_pct")) or _f(record.get("g_spread"))
-    if spread_pct is not None and spread_pct > max_spread_pct(c):
-        out["error"] = "phase_b_spread_wide"
-        return out
-
     ok_open, why_open = can_open_another(open_count, c)
     if not ok_open:
         out["error"] = why_open
@@ -1427,7 +1135,6 @@ def try_phase_b_entry(
         out["ok"] = True
         out["status"] = "dry_shadow"
         out["broker"] = False
-        _ENTRIES_BY_DAY_SYM[(day, sym)] = _ENTRIES_BY_DAY_SYM.get((day, sym), 0) + 1
         return out
 
     # Live path (still gated by ai_phase_b_enabled; default remains off).
@@ -1441,10 +1148,9 @@ def try_phase_b_entry(
             out["error"] = f"place_unavailable:{e}"
             return out
     try:
-        pb_risk = phase_b_risk_pct(c)
         result = place_fn(
             sym, decision, float(equity),
-            risk_pct=pb_risk,
+            risk_pct=float(c.get("ai_risk_pct", 1.0) or 1.0),
             current_ask=float(last),
             current_bid=None,
             duel_source=str(record.get("source") or "phase_b"),
@@ -1453,8 +1159,6 @@ def try_phase_b_entry(
         out["error"] = str(e)[:200]
         return out
     out.update(result if isinstance(result, dict) else {"ok": False})
-    if out.get("ok"):
-        _ENTRIES_BY_DAY_SYM[(day, sym)] = _ENTRIES_BY_DAY_SYM.get((day, sym), 0) + 1
     out["broker"] = True
     return out
 
@@ -1796,103 +1500,11 @@ def tick(
                 book[sym] = rec
         save_book(book)
 
-    # Ratchet stop + hard stop + flatten hooks for open Phase B lots.
+    # Hard stop + flatten hooks for open Phase B lots.
     for sym, pos in phase_b_opens.items():
         last, _why = fresh_stream_last(sym, now=t0, cfg=c)
-        if last is None:
-            last = _f(pos.get("last_seen_price"))
         entry = _f(pos.get("entry_price"))
-
-        # Flatten window / past flat deadline takes precedence: mandatory session close.
-        if phase_b_flatten_active(t0, c) or phase_b_past_flat_deadline(t0, c):
-            events.append({"kind": "flatten", "symbol": sym, "last": last})
-            try:
-                import phase_b_ledger as pbl
-                pbl.log_event(
-                    "flatten",
-                    symbol=sym,
-                    last=last,
-                    past_deadline=phase_b_past_flat_deadline(t0, c),
-                    cfg=c,
-                    ts=t0,
-                )
-            except Exception:
-                pass
-            if not dry_run(c) and working_sell_on(c):
-                try:
-                    import ai_positions as cp
-                    px = _f(last) or _f(pos.get("last_seen_price"))
-                    if px is not None and px > 0 and hasattr(cp, "_rest_working_sell"):
-                        cp._rest_working_sell(sym, pos, float(px), "flatten")
-                except Exception:
-                    pass
-            continue
-
-        # Smart 5-minute zombie cut: early stop on stagnant losers before bleeding to cutoff.
-        try:
-            import ai_positions as cp
-            if hasattr(cp, "smart_zombie_cut_due"):
-                _sz_due, _sz_info = cp.smart_zombie_cut_due(pos, sym, now=t0, cfg=c)
-                if _sz_due:
-                    day = datetime.fromtimestamp(t0, tz=ET).strftime("%Y-%m-%d")
-                    _LOCKED_OUT_BY_DAY.setdefault(day, set()).add(sym)
-                    events.append({"kind": "smart_dead_cut", "symbol": sym, **_sz_info})
-                    try:
-                        import phase_b_ledger as pbl
-                        pbl.log_event("smart_dead_cut", symbol=sym, cfg=c, ts=t0, **_sz_info)
-                    except Exception:
-                        pass
-                    if not dry_run(c) and working_sell_on(c):
-                        try:
-                            bid = cp._premarket_bid(sym)
-                            px = round(float(bid), 2) if bid and bid > 0 else (_f(last) or _f(pos.get("last_seen_price")))
-                            if px is not None and px > 0 and hasattr(cp, "_rest_working_sell"):
-                                cp._rest_working_sell(sym, pos, float(px), "flatten")
-                                pos["working_sell_flatten_since"] = t0
-                        except Exception:
-                            pass
-                    continue
-        except Exception:
-            pass
-
-        # Ratchet stop exit logic: update excursions and evaluate local trail shelf
-        if last is not None:
-            try:
-                import ai_positions as cp
-                if hasattr(cp, "_update_excursions"):
-                    cp._update_excursions(pos, float(last))
-                trail_events: list[dict[str, Any]] = []
-                trail_why: dict[str, Any] = {}
-                _ch, _closed = cp.apply_local_trail(sym, pos, float(last), trail_events, trail_why)
-                for te in trail_events:
-                    events.append({"kind": te.get("event") or "trail_event", "symbol": sym, **te})
-                    if te.get("event") in ("local_trail_working", "local_trail") and entry is not None and float(last) < float(entry) - 1e-9:
-                        day = datetime.fromtimestamp(t0, tz=ET).strftime("%Y-%m-%d")
-                        _LOCKED_OUT_BY_DAY.setdefault(day, set()).add(sym)
-                    if te.get("event") in (
-                        "local_trail_working", "local_trail", "local_trail_raised",
-                        "profit_capture", "profit_capture_working",
-                    ):
-                        try:
-                            import phase_b_ledger as pbl
-                            pbl.log_event(
-                                te.get("event"),
-                                symbol=sym,
-                                last=last,
-                                stop=pos.get("local_stop_price"),
-                                peak=pos.get("peak_price"),
-                                mfe_r=pos.get("mfe_r"),
-                                cfg=c,
-                                ts=t0,
-                            )
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-
         if last is not None and entry is not None and hard_stop_hit(entry, last, cfg=c):
-            day = datetime.fromtimestamp(t0, tz=ET).strftime("%Y-%m-%d")
-            _LOCKED_OUT_BY_DAY.setdefault(day, set()).add(sym)
             events.append({
                 "kind": "hard_stop",
                 "symbol": sym,
@@ -1916,6 +1528,21 @@ def tick(
                 except Exception:
                     pass
 
+        if phase_b_flatten_active(t0, c) or phase_b_past_flat_deadline(t0, c):
+            events.append({"kind": "flatten", "symbol": sym, "last": last})
+            try:
+                import phase_b_ledger as pbl
+                pbl.log_event(
+                    "flatten",
+                    symbol=sym,
+                    last=last,
+                    past_deadline=phase_b_past_flat_deadline(t0, c),
+                    cfg=c,
+                    ts=t0,
+                )
+            except Exception:
+                pass
+
     if phase_b_past_flat_deadline(t0, c) and phase_b_opens:
         for sym in phase_b_opens:
             try:
@@ -1936,7 +1563,6 @@ def tick(
 __all__ = [
     "SOURCE_PRIORITY",
     "admit_candidate",
-    "book_rows_for_dashboard",
     "build_entry_decision",
     "can_open_another",
     "cancel_entry_on_ttl",

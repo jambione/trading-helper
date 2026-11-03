@@ -242,9 +242,6 @@ _BLOCKER_LABELS: dict[str, str] = {
     "gapped_down": "gapped down",
     "near_hod": "near day high",
     "hod_unknown": "day high unknown",
-    "below_vwap": "below VWAP",
-    "anti_pullback_drop": "fading drop",
-    "anti_pullback": "fading pullback",
     "gap_unknown": "gap ?",
     "rvol_pace_low": "volume pace low",
     "rvol_pace_unknown": "volume pace ?",
@@ -1968,16 +1965,12 @@ def _row_needs_arm_ready_gate(row: dict) -> bool:
     Continuous soft-seed was filling the book with never-armable inventory.
     Desk panel seeds (momentum/trending/movers/research) keep existing
     inclusion; never-armable eviction clears stuck seats after grace.
-    Book server ranked seats manage their own runway / closeness order
-    and must not be filtered out by the admission arm-ready gate.
     """
     if not isinstance(row, dict):
         return False
-    crit = {str(c).lower() for c in (row.get("criteria") or [])}
-    if "book_server" in crit or bool(row.get("book_server")):
-        return False
     if row.get("soft_seed") is True:
         return True
+    crit = {str(c).lower() for c in (row.get("criteria") or [])}
     return "soft_seed" in crit
 
 
@@ -2073,17 +2066,6 @@ def soft_seed_scout_score(
             score -= 55.0
     else:
         score += min(10.0, max(0.0, float(pct)) * 0.25)
-    crit_set = {
-        str(c).strip().lower()
-        for c in (row.get("criteria") or [])
-        if isinstance(c, str)
-    } if isinstance(row, dict) else set()
-    if "gx_agree" in crit_set or "seed_rank_gx" in crit_set or (
-        isinstance(row, dict) and bool(row.get("gx_agree"))
-    ):
-        score += 20.0
-    elif "seed_rank" in crit_set:
-        score += 10.0
     return score
 
 
@@ -2311,38 +2293,20 @@ def _soft_seed_source_rows(
                     continue
                 if is_levered_etp(s):
                     continue
-                r_crit = [
-                    str(c) for c in (r.get("criteria") or [])
-                    if isinstance(c, str) and c
-                ]
-                if s in seen:
-                    for prev in rows:
-                        if str(prev.get("symbol") or "").upper().strip() != s:
-                            continue
-                        pcrit = list(prev.get("criteria") or [])
-                        for tag in ["research", *r_crit]:
-                            if tag not in pcrit:
-                                pcrit.append(tag)
-                        prev["criteria"] = pcrit
-                        prev["ai_endorsed"] = True
-                        if "gx_agree" in pcrit or "seed_rank_gx" in pcrit or r.get("gx_agree"):
-                            prev["gx_agree"] = True
-                        break
-                    continue
                 live = desk_rows.get(s) or {}
                 tr = tr_by.get(s) or {}
                 px_src = (
                     live.get("price") if live.get("price") is not None
-                    else (tr.get("price") if tr.get("price") is not None else r.get("price"))
+                    else tr.get("price")
                 )
                 pct_src = (
                     live.get("pct_change")
                     if live.get("pct_change") is not None
-                    else (tr.get("pct_change") if tr.get("pct_change") is not None else r.get("pct_change"))
+                    else tr.get("pct_change")
                 )
                 rvol_src = (
                     live.get("rvol") if live.get("rvol") is not None
-                    else (tr.get("rvol") if tr.get("rvol") is not None else r.get("rvol"))
+                    else tr.get("rvol")
                 )
                 if not _price_under_cap(px_src, max_price):
                     continue
@@ -2366,33 +2330,21 @@ def _soft_seed_source_rows(
                         dvol = float(tr.get("vol_session"))
                     except (TypeError, ValueError):
                         dvol = None
-                if dvol is None and r.get("vol_session") is not None and px:
-                    try:
-                        dvol = float(r.get("vol_session"))
-                    except (TypeError, ValueError):
-                        dvol = None
                 src = str(r.get("source") or "research").lower().strip() or "research"
                 try:
                     sc_raw = r.get("score", r.get("trending_score"))
                     score_f = float(sc_raw) if sc_raw is not None else 0.0
                 except (TypeError, ValueError):
                     score_f = 0.0
-                merged_crit = ["soft_seed", "research"]
-                for tag in r_crit:
-                    if tag not in merged_crit:
-                        merged_crit.append(tag)
                 row = dict(r)
                 row.update({
                     "price": px,
                     "pct_change": pct_f,
                     "rvol": rvol_src,
-                    "dollar_volume": (
-                        (dvol * px) if (dvol and px)
-                        else _f_or_none(r.get("dollar_volume"))
-                    ),
+                    "dollar_volume": (dvol * px) if (dvol and px) else None,
                     "source": src,
                     "reason": f"soft_seed research {row.get('reason') or src}"[:80],
-                    "criteria": merged_crit,
+                    "criteria": ["soft_seed", "research"],
                     "score": score_f,
                 })
                 if flood:
@@ -2974,25 +2926,9 @@ def _apply_pin_roles(
             dvol = _f_or_none(rec.get("dollar_volume")) or 0.0
         if float(dvol) < min_dvol:
             continue
-        crit_set = {
-            str(c).strip().lower()
-            for c in (rec.get("admit_criteria") or rec.get("criteria") or [])
-            if isinstance(c, str)
-        }
-        gx_bonus = 1 if (
-            "gx_agree" in crit_set
-            or "seed_rank_gx" in crit_set
-            or bool(rec.get("gx_agree"))
-        ) else 0
-        ai_bonus = 1 if (
-            gx_bonus
-            or "research" in crit_set
-            or "seed_rank" in crit_set
-            or bool(rec.get("ai_endorsed"))
-        ) else 0
-        ranked.append((gx_bonus, ai_bonus, float(ready_sec), float(dvol), sym, rec))
-    ranked.sort(key=lambda t: (-t[0], -t[1], -t[2], -t[3], t[4]))
-    for _gx_b, _ai_b, ready_sec, dvol, sym, rec in ranked[:free]:
+        ranked.append((float(ready_sec), float(dvol), sym, rec))
+    ranked.sort(key=lambda t: (-t[0], -t[1], t[2]))
+    for ready_sec, dvol, sym, rec in ranked[:free]:
         rec["seat_role"] = "pin"
         rec.pop("pin_dead_since", None)
         rec["pin_stream_ready_sec"] = float(ready_sec)
@@ -3455,8 +3391,6 @@ def _is_unarmable_stale_watching(
                 "exh_not_rising", "exh_rising_required", "above_max_price",
                 "exh_not_tight", "wait_exh"):
         limit = unarmable_evict_sec(cfg)
-        if code in _WAIT_STATE_CODES and wait_state_evict_sec(cfg) > 0:
-            limit = max(limit, wait_state_evict_sec(cfg))
         if limit <= 0:
             return False
         since = _f_or_none(rec.get("unarmable_since"))
@@ -7691,68 +7625,24 @@ def desk_candidate_rows(
                     continue
                 live = desk_rows.get(s) or {}
                 tr = tr_by.get(s) or {}
-                # Prefer live desk quote; fall back to trending snapshot, then
-                # the suggestion file's own Alpaca quote enrichment.
-                px_src = (
-                    live.get("price") if live.get("price") is not None
-                    else (tr.get("price") if tr.get("price") is not None else r.get("price"))
-                )
+                # Prefer live desk quote; fall back to trending snapshot.
+                px_src = live.get("price") if live.get("price") is not None else tr.get("price")
                 pct_src = (
                     live.get("pct_change")
                     if live.get("pct_change") is not None
-                    else (tr.get("pct_change") if tr.get("pct_change") is not None else r.get("pct_change"))
+                    else tr.get("pct_change")
                 )
-                rvol_src = (
-                    live.get("rvol") if live.get("rvol") is not None
-                    else (tr.get("rvol") if tr.get("rvol") is not None else r.get("rvol"))
-                )
+                rvol_src = live.get("rvol") if live.get("rvol") is not None else tr.get("rvol")
+                if not _price_under_cap(px_src, max_price):
+                    continue
                 try:
                     px = float(px_src) if px_src is not None else None
                 except (TypeError, ValueError):
                     px = None
-                pct_f = _pct_change_value(pct_src)
-                r_crit = [
-                    str(c) for c in (r.get("criteria") or [])
-                    if isinstance(c, str) and c
-                ]
-                if s in seen:
-                    # Mom/movers/trending already own the row — do not let
-                    # research re-claim a stream-ready momentum seat, but DO
-                    # stamp AI endorsement / GX consensus criteria onto the
-                    # existing row (just like bb_live tags bro_call below) so
-                    # priority, pin promotion, and attribution see it.
-                    owner_src = None
-                    for prev in rows:
-                        if str(prev.get("symbol") or "").upper().strip() != s:
-                            continue
-                        crit = list(prev.get("criteria") or [])
-                        for tag in ["research", *r_crit]:
-                            if tag not in crit:
-                                crit.append(tag)
-                        prev["criteria"] = crit
-                        prev["ai_endorsed"] = True
-                        if "gx_agree" in crit or "seed_rank_gx" in crit or r.get("gx_agree"):
-                            prev["gx_agree"] = True
-                            prev["source_mark"] = "GX"
-                        owner_src = str(prev.get("source") or "") or None
-                        break
-                    _note_proposal_overlap(
-                        str(r.get("source") or "research"),
-                        s,
-                        row=r,
-                        owner=owner_src,
-                        extra={
-                            "price": px,
-                            "pct": pct_f,
-                            "rvol": rvol_src,
-                        },
-                    )
-                    continue
-                if not _price_under_cap(px_src, max_price):
-                    continue
                 # Morning flood: missing price fail-closed (do not seat).
                 if flood and px is None:
                     continue
+                pct_f = _pct_change_value(pct_src)
                 # Direction is decided ONCE, by ai_watch_require_uptrend in
                 # the inclusion gate — not here as well.
                 #
@@ -7780,39 +7670,43 @@ def desk_candidate_rows(
                         dvol = float(tr.get("vol_session"))
                     except (TypeError, ValueError):
                         dvol = None
-                if dvol is None and r.get("vol_session") is not None and px:
-                    try:
-                        dvol = float(r.get("vol_session"))
-                    except (TypeError, ValueError):
-                        dvol = None
                 # Known-thin tape never occupies a research slot. Unknown
                 # abstains — a thesis with no rvol yet still seeds. Hot-move
                 # waive applies so a green research name is not wiped by
                 # borderline rvol the same way movers were.
-                rv = _seed_rvol_value(rvol_src, now=now)
+                try:
+                    rv = float(rvol_src) if rvol_src is not None else None
+                except (TypeError, ValueError):
+                    rv = None
                 thin_why, seed_ind = seed_rvol_gate(
                     s, rv, pct_f, cfg, source="research",
-                    row=live or tr or r, indicators=_seed_inds)
+                    row=live or tr, indicators=_seed_inds)
                 if thin_why == "thin_rvol":
                     _note_seed_drop("research", s, "thin_rvol",
                                     pct=pct_f, rvol=rv)
                     continue
+                if s in seen:
+                    # Mom/movers already own the row — do not let research
+                    # re-claim a stream-ready momentum seat. Still attribute.
+                    _note_proposal_overlap(
+                        str(r.get("source") or "research"),
+                        s,
+                        extra={
+                            "price": px,
+                            "pct": pct_f,
+                            "rvol": rvol_src,
+                        },
+                    )
+                    continue
                 seen.add(s)
                 added += 1
-                merged_crit = ["research"]
-                for tag in r_crit:
-                    if tag not in merged_crit:
-                        merged_crit.append(tag)
                 row = dict(r)
                 row.update({
                     "price": px,
                     "pct_change": pct_f,
                     "rvol": rvol_src,
-                    "dollar_volume": (
-                        (dvol * px) if (dvol and px)
-                        else _f_or_none(r.get("dollar_volume"))
-                    ),
-                    "criteria": merged_crit,
+                    "dollar_volume": (dvol * px) if (dvol and px) else None,
+                    "criteria": ["research"],
                 })
                 if isinstance(seed_ind, dict):
                     row["indicator"] = seed_ind
@@ -9693,131 +9587,6 @@ def room_below_hod_refusal(record: dict, sym: str, ask, cfg: dict,
     return None
 
 
-_DAY_HIGH_VWAP_CACHE: dict[str, tuple[tuple[float | None, float | None], float]] = {}
-
-
-def day_high_and_vwap_iex(
-    sym: str,
-    *,
-    now: float | None = None,
-    ttl: float = 60.0,
-    fetch_bars_fn=None,
-) -> tuple[float | None, float | None]:
-    """Today's regular-session high and cumulative cash VWAP so far from 1m bars.
-
-    Returns ``(hod, vwap)``. Both are None if unknown, before 09:30, or unavailable.
-    Cached for `ttl` seconds (default 60s).
-    """
-    sym = str(sym or "").upper().strip()
-    if not sym:
-        return None, None
-    t = float(now if now is not None else time.time())
-    hit = _DAY_HIGH_VWAP_CACHE.get(sym)
-    if hit is not None and t - hit[1] < ttl:
-        return hit[0]
-    val = (None, None)
-    try:
-        from datetime import datetime as _dt
-        from zoneinfo import ZoneInfo
-        import alpaca_api as aa
-        from config import load_config
-        et = ZoneInfo("America/New_York")
-        open_t = _dt.fromtimestamp(t, et).replace(
-            hour=9, minute=30, second=0, microsecond=0
-        ).timestamp()
-        if t >= open_t:
-            bar_cfg = {**(load_config() or {}), "bar_timeframe": "1Min", "bar_count": 420}
-            fetcher = fetch_bars_fn or aa.fetch_bars
-            client = None
-            if fetch_bars_fn is None:
-                try:
-                    client = _data_client()
-                except Exception:
-                    client = None
-            if fetch_bars_fn or client is not None:
-                df = fetcher(client, sym, bar_cfg)
-                if df is not None and len(df):
-                    idx = [ts.timestamp() for ts in df.index]
-                    rth_bars = [
-                        (float(h), float(l), float(c), float(v))
-                        for h, l, c, v, ts in zip(df["high"], df["low"], df["close"], df["volume"], idx)
-                        if open_t <= ts <= t
-                    ]
-                    if rth_bars:
-                        hod = max(b[0] for b in rth_bars)
-                        tot_v = sum(b[3] for b in rth_bars)
-                        if tot_v > 0:
-                            vwap = sum(((b[0] + b[1] + b[2]) / 3.0) * b[3] for b in rth_bars) / tot_v
-                        else:
-                            vwap = rth_bars[-1][2]
-                        val = (hod, vwap)
-    except Exception:  # noqa: BLE001
-        val = (None, None)
-    _DAY_HIGH_VWAP_CACHE[sym] = (val, t)
-    _record_input("day_high_vwap", sym, val, t)
-    return val
-
-
-def anti_pullback_refusal(
-    record: dict,
-    sym: str,
-    ask,
-    cfg: dict,
-    *,
-    now: float | None = None,
-    high_vwap_fn=None,
-) -> str | None:
-    """Option 2 Anti-Pullback Gate:
-    Refuse entries when price has collapsed into a severe fading pullback
-    (Price < VWAP - 15 bp OR Drop >= 2.0% below HOD).
-
-    Controlled by knobs:
-      - ai_watch_anti_pullback_gate: bool (default False; True to activate)
-      - ai_watch_anti_pullback_max_drop_pct: float (default 2.0, 0 = off)
-      - ai_watch_anti_pullback_vwap_buffer_bp: float (default 15.0)
-      - ai_watch_anti_pullback_require_vwap: bool (default True)
-    """
-    if not bool(cfg.get("ai_watch_anti_pullback_gate", False)):
-        return None
-    if not sym:
-        return None
-    try:
-        px = float(ask or 0)
-    except (TypeError, ValueError):
-        return None
-    if px <= 0:
-        return None
-
-    try:
-        max_drop = float(cfg.get("ai_watch_anti_pullback_max_drop_pct", 2.0) or 0.0)
-    except (TypeError, ValueError):
-        max_drop = 2.0
-    try:
-        v_buf_bp = float(cfg.get("ai_watch_anti_pullback_vwap_buffer_bp", 15.0) or 0.0)
-    except (TypeError, ValueError):
-        v_buf_bp = 15.0
-    req_vwap = bool(cfg.get("ai_watch_anti_pullback_require_vwap", True))
-
-    getter = high_vwap_fn or day_high_and_vwap_iex
-    hod, vwap = getter(sym, now=now)
-
-    # 1. Check Waterfall Drop from HOD
-    if max_drop > 0 and hod is not None and hod > 0:
-        drop_pct = (hod - px) / hod * 100.0
-        if drop_pct >= max_drop:
-            record["block_detail"] = f"drop {drop_pct:.1f}% >= {max_drop:.1f}% from HOD {hod:.2f}"
-            return "anti_pullback_drop"
-
-    # 2. Check Clean Break below Cash VWAP (with buffer)
-    if req_vwap and vwap is not None and vwap > 0:
-        floor = vwap * (1.0 - v_buf_bp / 10000.0)
-        if px < floor:
-            record["block_detail"] = f"px {px:.2f} < VWAP floor {floor:.2f} ({vwap:.2f} - {v_buf_bp:g}bp)"
-            return "below_vwap"
-
-    return None
-
-
 _VOL_NOW_CACHE: dict[str, tuple[float | None, float]] = {}
 
 
@@ -10237,12 +10006,7 @@ def admit_arm_gates(row: dict, cfg: dict | None, *, now: float | None = None,
     except Exception:  # noqa: BLE001
         mins_open = 999
     delay = _f_or_none(cfg.get("ai_movers_sip_delay_min"))
-    if delay is None or delay == 15.0:
-        import alpaca_api as _aa
-        if _aa.sip_is_realtime(cfg):
-            delay = 0.0
-        elif delay is None:
-            delay = 15.0
+    delay = 15.0 if delay is None else delay
     max_sp = _spread_gate_max(row.get("source"), cfg)
     if max_sp > 0 and mins_open >= delay + 1:
         try:
@@ -10384,11 +10148,8 @@ def passes_inclusion(
             if row_age is None:
                 row_age = _f_or_none(row.get("last_ask_age_sec"))
             if row_age is None:
-                # Research theses have no stream print until admitted to the
-                # book (same deadlock avoided for no_price at line ~10322).
-                if not is_research:
-                    return False, met, "no_tape"
-            elif float(row_age) > tape_max:
+                return False, met, "no_tape"
+            if float(row_age) > tape_max:
                 return False, met, "stale_tape_admit"
         elif float(tape[1]) > tape_max:
             return False, met, "stale_tape_admit"
@@ -10778,10 +10539,9 @@ def research_candidate_rows() -> list[dict]:
     gaps and refreshes on its own schedule.
     """
     out: list[dict] = []
-    by_sym: dict[str, dict] = {}
-    # Grok last among free-research so it can merge consensus on overlap.
-    # Seed-rank boards follow so they auto-admit and tag seed_rank / gx_agree
-    # without stomping an active free-research row.
+    seen: set[str] = set()
+    # Grok last among free-research so it wins on overlap. Seed-rank boards
+    # follow so they auto-admit without stomping an active free-research row.
     for path, default_src in (
         (ROOT / "agy_suggestions.json", "agy"),
         (ROOT / "claude_suggestions.json", "agy"),  # legacy filename
@@ -10803,9 +10563,8 @@ def research_candidate_rows() -> list[dict]:
             continue
         if not isinstance(raw, dict):
             continue
-        is_seed_rank = str(raw.get("kind") or "") == "seed_rank"
         # Stale seed-rank boards must not re-seed yesterday's list.
-        if is_seed_rank:
+        if str(raw.get("kind") or "") == "seed_rank":
             if raw.get("watch_facing") is False:
                 continue
             try:
@@ -10829,8 +10588,9 @@ def research_candidate_rows() -> list[dict]:
             if not isinstance(r, dict):
                 continue
             s = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
-            if not s or not s[0].isalpha():
+            if not s or not s[0].isalpha() or s in seen:
                 continue
+            seen.add(s)
             reason = str(r.get("reason") or r.get("summary") or "research")[:80]
             # Seed-rank published rows stay watch-admissible (agreement gate
             # unchanged). Per-row source_mark / second_opinion live on the board.
@@ -10841,69 +10601,14 @@ def research_candidate_rows() -> list[dict]:
                 row_src_label = "agy" if row_src != "both" else src_label
             else:
                 row_src_label = src_label
-            mark = str(r.get("source_mark") or "").upper().strip()
-            is_gx = (
-                mark in ("GX", "AX")
-                or row_src == "both"
-                or bool(r.get("gx_agree"))
-            )
-            crit: list[str] = ["research"]
-            if is_seed_rank:
-                crit.append("seed_rank")
-                if is_gx:
-                    crit.append("seed_rank_gx")
-            if is_gx and "gx_agree" not in crit:
-                crit.append("gx_agree")
-            for c in (r.get("criteria") or []):
-                if isinstance(c, str) and c and c not in crit:
-                    crit.append(c)
-            sc = _score_from_row(r)
-            if s in by_sym:
-                prev = by_sym[s]
-                pcrit = list(prev.get("criteria") or ["research"])
-                for tag in crit:
-                    if tag not in pcrit:
-                        pcrit.append(tag)
-                if prev.get("source") != row_src_label or is_gx:
-                    if "gx_agree" not in pcrit:
-                        pcrit.append("gx_agree")
-                    if is_seed_rank and "seed_rank_gx" not in pcrit:
-                        pcrit.append("seed_rank_gx")
-                    prev["gx_agree"] = True
-                    prev["source_mark"] = "GX"
-                prev["criteria"] = pcrit
-                if sc is not None and (prev.get("score") is None or sc > prev["score"]):
-                    prev["score"] = sc
-                    prev["trending_score"] = sc
-                for k in (
-                    "price", "pct_change", "rvol", "vol_session",
-                    "avg_vol_consolidated", "dollar_volume",
-                ):
-                    if prev.get(k) is None and r.get(k) is not None:
-                        prev[k] = r.get(k)
-                continue
-            cand: dict[str, Any] = {
+            out.append({
                 "symbol": s,
-                "trending_score": sc,
-                "score": sc,
+                "trending_score": _score_from_row(r),
+                "score": _score_from_row(r),
                 "reason": reason,
                 "agreement": True,
                 "source": row_src_label,
-                "criteria": crit,
-            }
-            if is_gx:
-                cand["gx_agree"] = True
-                cand["source_mark"] = "GX"
-            elif mark:
-                cand["source_mark"] = mark
-            for k in (
-                "price", "pct_change", "rvol", "vol_session",
-                "avg_vol_consolidated", "dollar_volume",
-            ):
-                if r.get(k) is not None:
-                    cand[k] = r.get(k)
-            by_sym[s] = cand
-            out.append(cand)
+            })
     return out
 
 def research_universe_symbols() -> set[str]:
@@ -11011,7 +10716,6 @@ def sync_watch_from_source_panels(
                         _r["criteria"] = list(_r.get("criteria") or []) + [
                             "book_server"]
                         _r["soft_seed"] = True
-                        _r["book_server"] = True
         except Exception:
             pass
         if soft_fired and soft_rows:
@@ -15056,9 +14760,7 @@ def _ob_narrow_refusal(ob_fields: dict, cfg: dict | None, rec: dict | None) -> b
 
 
 _GATE_WIRE_KEYS = ("g_rvol", "g_rvol_min", "g_spread", "g_spread_max", "g_tape_age", "g_tape_max",
-                   "g_gap", "g_gap_block", "g_sq_wait", "g_sq_wait_min", "g_cd_wait", "g_s5_veto", "g_s5_ok", "g_leg1_active", "g_leg1_ok", "g_leg1_label",
-                   "g_ob_resist", "g_ob_room", "g_ob_room_min", "g_cm_rsi", "g_cm_rsi_max",
-                   "g_pb_trigger", "g_pb_arm")
+                   "g_gap", "g_gap_block", "g_sq_wait", "g_s5_veto", "g_s5_ok", "g_leg1_active", "g_leg1_ok", "g_leg1_label")
 
 
 def _gate_wire_fields(rec: Any, sym: str, now: float | None = None) -> dict:
@@ -15085,11 +14787,6 @@ def _gate_wire_fields(rec: Any, sym: str, now: float | None = None) -> dict:
         sq = _LAST_SQUARE.get(sym)
         left = (mins * 60.0 - (t - sq[0])) if (mins > 0 and sq and sq[0] is not None) else 0.0
         out["g_sq_wait"] = round(left) if left > 0 else None
-        out["g_sq_wait_min"] = round(mins, 1) if mins > 0 else None
-        cool = _f_or_none(cfg.get("ai_reentry_cooldown_sec")) or 0.0
-        last_ex = _recent_exit_ts(sym) if cool > 0 else None
-        cd_left = (cool - (t - float(last_ex))) if (cool > 0 and last_ex and (t - float(last_ex)) < cool) else 0.0
-        out["g_cd_wait"] = round(cd_left) if cd_left > 0 else None
 
         # 5m Slow %R Pitch Veto live gate wire
         if bool((cfg or {}).get("ai_watch_wr_slow_5m_veto", False)):
@@ -15107,27 +14804,6 @@ def _gate_wire_fields(rec: Any, sym: str, now: float | None = None) -> dict:
                 out["g_leg1_label"] = lbl.replace(" (Leg 1)", "").strip()
             else:
                 out["g_leg1_label"] = "L1 ✓"
-
-        # Resistance and room gate wire
-        ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
-        room = _f_or_none(ind.get("ob_room_pct"))
-        if room is None and isinstance(rec.get("ob_room_pct"), (int, float)):
-            room = _f_or_none(rec.get("ob_room_pct"))
-        out["g_ob_resist"] = bool((cfg or {}).get("ai_watch_ob_resist_skip")) and (ind.get("ob_resist_0.3") is True or rec.get("ob_resist_0.3") is True)
-        out["g_ob_room"] = round(float(room), 3) if room is not None else None
-        out["g_ob_room_min"] = float((cfg or {}).get("ai_watch_pullback_min_ob_room_pct", 0.20) or 0.20) if bool((cfg or {}).get("ai_watch_ob_resist_skip")) else None
-
-        # CM RSI gate wire
-        cm = _f_or_none(ind.get("cm_rsi")) or _f_or_none(rec.get("cm_rsi"))
-        out["g_cm_rsi"] = round(float(cm), 1) if cm is not None else None
-        out["g_cm_rsi_max"] = float((cfg or {}).get("ai_watch_presquare_max_cm_rsi", 0) or (cfg or {}).get("ai_watch_pullback_max_cm_rsi", 0) or 0)
-
-        # Pullback Buy-Stop Trigger level
-        pb_trig = _f_or_none(rec.get("pullback_trigger"))
-        if pb_trig is None and isinstance(rec.get("pullback_buystop"), dict):
-            pb_trig = _f_or_none(rec["pullback_buystop"].get("buy_stop"))
-        out["g_pb_trigger"] = round(float(pb_trig), 2) if pb_trig is not None else None
-        out["g_pb_arm"] = bool((cfg or {}).get("ai_watch_pullback_buystop_arm", False))
     except Exception:  # noqa: BLE001
         pass
     return out
@@ -15620,191 +15296,6 @@ def range_arm_decide(rec: dict, sym: str, ask: Any, bid: Any, cfg: dict, now: fl
     if stage == "final":
         _range_stat(arms=1, known_ts_after_minute=int(kt is not None and kt > minute))
     return True, "range_arm"
-
-
-def pullback_buystop_decide(
-    rec: dict,
-    sym: str,
-    ask: Any,
-    bid: Any,
-    cfg: dict,
-    now: float,
-    sig: Any,
-    *,
-    stage: str = "check",
-) -> tuple[bool, str]:
-    """Pullback Buy-Stop Arm (ai_watch_pullback_buystop_arm).
-
-    1. Uptrend check: in recent closed 1-minute bars, price gained >= min_leg1_gain_pct (default 0.35%).
-    2. Pullback check: ask is 0.10% to 1.50% below Leg 1 high.
-    3. Overhead resistance check: order block room >= 0.20% and not in ob_resist_0.3.
-    4. CM RSI check: CM RSI <= 75.0 (not pegged in overbought).
-    5. Trigger: price crosses above pullback candle high (pb_high + $0.01).
-    6. Levels: structural stop under pullback candle low (pb_low - $0.01); target at ask + risk (+1R).
-    """
-    if not bool((cfg or {}).get("ai_watch_pullback_buystop_arm", False)):
-        return False, "pullback_arm_off"
-    try:
-        ask_f = float(ask)
-    except (TypeError, ValueError):
-        return False, "bad_ask"
-    if ask_f <= 0:
-        return False, "bad_ask"
-
-    # Evaluate common hard gates (stale tape, spread, gap down, late hold, etc.)
-    gate_cfg = {
-        **cfg,
-        "ai_watch_exhaustion_rules": False,
-        "ai_watch_arm_require_indicators": False,
-        "ai_watch_presquare_only": False,
-    }
-    ok_gate, why_gate = should_arm_buy(rec, ask=ask_f, bid=bid, cfg=gate_cfg, now=now)
-    if not ok_gate:
-        if isinstance(rec, dict):
-            rec.pop("pullback_buystop", None)
-        return False, why_gate
-
-    # Enforce post-square cooldown, 5m slow %R pitch veto, and %R trend rise
-    # that were skipped inside should_arm_buy when exhaustion_rules was masked.
-    _t_now = float(now if now is not None else time.time())
-    _sq_ref = after_square_refusal(sym, _t_now, cfg)
-    if _sq_ref:
-        if isinstance(rec, dict):
-            rec.pop("pullback_buystop", None)
-        return False, _sq_ref
-    _s5_ref = wr_slow_5m_refusal(sym, rec, _t_now, cfg)
-    if _s5_ref:
-        if isinstance(rec, dict):
-            rec.pop("pullback_buystop", None)
-        return False, _s5_ref
-    _ind_d = rec.get("indicator") if isinstance(rec, dict) and isinstance(rec.get("indicator"), dict) else {}
-    if _ind_d.get("pctr") is not None or (isinstance(rec, dict) and rec.get("pctr") is not None):
-        _wt_ref = wr_trend_refusal(sym, rec, _t_now, cfg)
-        if _wt_ref:
-            if isinstance(rec, dict):
-                rec.pop("pullback_buystop", None)
-            return False, _wt_ref
-
-    # Overhead resistance check (when ai_watch_ob_resist_skip is enabled)
-    if bool((cfg or {}).get("ai_watch_ob_resist_skip", False)):
-        try:
-            min_room = float((cfg or {}).get("ai_watch_pullback_min_ob_room_pct", 0.20) or 0.20)
-        except (TypeError, ValueError):
-            min_room = 0.20
-        _ob_fields = _ob_observe_stamp(rec, sym, ask_f, cfg, now)
-        if isinstance(_ob_fields, dict):
-            if _ob_fields.get("ob_resist_0.3") is True:
-                if isinstance(rec, dict):
-                    rec.pop("pullback_buystop", None)
-                return False, "ob_resist"
-            room = _ob_fields.get("ob_room_pct")
-            if min_room > 0 and room is not None and float(room) < min_room:
-                if isinstance(rec, dict):
-                    rec.pop("pullback_buystop", None)
-                return False, "tight_overhead_resist"
-
-    # CM RSI check (not pegged, when ai_watch_pullback_max_cm_rsi > 0)
-    try:
-        max_cm = float((cfg or {}).get("ai_watch_pullback_max_cm_rsi", 0) or 0)
-    except (TypeError, ValueError):
-        max_cm = 0.0
-    if max_cm > 0:
-        ind = rec.get("indicator") if isinstance(rec, dict) and isinstance(rec.get("indicator"), dict) else {}
-        rsi_v = _f_or_none(ind.get("cm_rsi"))
-        if rsi_v is None and isinstance(rec, dict):
-            rsi_v = _f_or_none(rec.get("cm_rsi"))
-        if rsi_v is None and isinstance(sig, dict):
-            rsi_v = _f_or_none(sig.get("cm_rsi"))
-        if rsi_v is not None and float(rsi_v) > max_cm:
-            if isinstance(rec, dict):
-                rec.pop("pullback_buystop", None)
-            return False, "cm_rsi_pegged"
-
-    # Closed 1-minute bars from ob_observe
-    try:
-        import ob_observe
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        et = ZoneInfo("America/New_York")
-        d_now = datetime.fromtimestamp(now, et)
-        t_open = d_now.replace(hour=9, minute=30, second=0, microsecond=0).timestamp()
-        last_done = float(int(now // 60) * 60 - 60)
-        closed_bars = [b for b in ob_observe.bars(sym) if t_open <= b[0] <= last_done]
-    except Exception:  # noqa: BLE001
-        closed_bars = []
-
-    if len(closed_bars) < 10:
-        if isinstance(rec, dict):
-            rec.pop("pullback_buystop", None)
-        return False, "insufficient_bars"
-
-    recent = closed_bars[-15:]
-    leg1_high = max(float(b[2]) for b in recent)
-    leg1_low = min(float(b[3]) for b in recent)
-
-    try:
-        min_gain = float((cfg or {}).get("ai_watch_pullback_min_leg1_gain_pct", 0.35) or 0.35) / 100.0
-    except (TypeError, ValueError):
-        min_gain = 0.0035
-    if (leg1_high / leg1_low - 1.0) < min_gain:
-        if isinstance(rec, dict):
-            rec.pop("pullback_buystop", None)
-        return False, "no_leg1_uptrend"
-
-    pullback_pct = (leg1_high - ask_f) / leg1_high
-    try:
-        min_pb = float((cfg or {}).get("ai_watch_pullback_min_dip_pct", 0.10) or 0.10) / 100.0
-        max_pb = float((cfg or {}).get("ai_watch_pullback_max_dip_pct", 1.50) or 1.50) / 100.0
-    except (TypeError, ValueError):
-        min_pb, max_pb = 0.0010, 0.0150
-    if pullback_pct < min_pb:
-        if isinstance(rec, dict):
-            rec.pop("pullback_buystop", None)
-        return False, "pullback_too_shallow"
-    if pullback_pct > max_pb:
-        if isinstance(rec, dict):
-            rec.pop("pullback_buystop", None)
-        return False, "pullback_too_deep"
-
-    # Pullback candles: recent 1-2 bars
-    cur_bar = closed_bars[-1]
-    prev_bar = closed_bars[-2]
-    pb_high = max(float(cur_bar[2]), float(prev_bar[2]))
-    pb_low = min(float(cur_bar[3]), float(prev_bar[3]))
-
-    buy_stop = round(pb_high + 0.01, 2)
-    stop_loss = round(pb_low - 0.01, 2)
-    risk = round(buy_stop - stop_loss, 2)
-    if risk < 0.02 or (risk / buy_stop) > 0.02:
-        if isinstance(rec, dict):
-            rec.pop("pullback_buystop", None)
-            rec.pop("pullback_trigger", None)
-        return False, "bad_risk_geometry"
-
-    # Trigger condition: price reaches or crosses above pullback high
-    if ask_f < buy_stop:
-        if isinstance(rec, dict):
-            rec["pullback_trigger"] = buy_stop
-            rec.pop("pullback_buystop", None)
-        return False, "wait_buystop_trigger"
-
-    # Levels
-    target_1 = round(ask_f + risk, 2)
-    target_2 = round(max(ask_f + 2.0 * risk, leg1_high), 2)
-    rr = round((target_1 - ask_f) / (ask_f - stop_loss), 2) if ask_f > stop_loss else 1.0
-
-    if isinstance(rec, dict):
-        rec["pullback_trigger"] = buy_stop
-        rec["pullback_buystop"] = {
-            "stop_price": stop_loss,
-            "target_1": target_1,
-            "target_2": target_2,
-            "zone_kind": "pullback_buystop",
-            "reward_risk": rr,
-            "buy_stop": buy_stop,
-        }
-
-    return True, "pullback_buystop"
 
 
 def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:
@@ -17823,25 +17314,6 @@ def wr_rsi_refusal(sym: str, now: float | None, cfg: dict) -> str | None:
     return None if rsi[-1] - rsi[-11] >= need else "wr_rsi_not_trending"
 
 
-def presquare_cm_rsi_refusal(record: dict, cfg: dict) -> str | None:
-    """Pre-square CM RSI filter (ai_watch_presquare_max_cm_rsi, default 0 = off).
-    Refuses pre-square entries when CM RSI is pegged in overbought territory (e.g. > 75.0).
-    """
-    try:
-        max_cm = float((cfg or {}).get("ai_watch_presquare_max_cm_rsi", 0) or 0)
-    except (TypeError, ValueError):
-        max_cm = 0.0
-    if max_cm <= 0:
-        return None
-    ind = record.get("indicator") if isinstance(record, dict) and isinstance(record.get("indicator"), dict) else {}
-    rsi_v = _f_or_none(ind.get("cm_rsi"))
-    if rsi_v is None and isinstance(record, dict):
-        rsi_v = _f_or_none(record.get("cm_rsi"))
-    if rsi_v is not None and float(rsi_v) > max_cm:
-        return "presquare_cm_rsi_pegged"
-    return None
-
-
 def wr_rand_refusal(sym: str, now: float | None, cfg: dict) -> str | None:
     """Matched 'trade less' control (wr_rand): refuse whole presquare arm EPISODES at random (sha256(symbol|day|episode)),
     at share ai_watch_wr_rand_refuse_share. An episode is a run of presquare-gate checks with no gap > 120 s; a refused
@@ -17937,11 +17409,7 @@ def should_arm_buy(
     if _gap_max > 0 and _gate_sym:
         _gap = open_gap_pct(_gate_sym, now=now)
         if _gap is None:
-            _day_pct = _f_or_none(record.get("admit_pct_change")) or _f_or_none(record.get("pct_change"))
-            if _day_pct is not None and _day_pct >= 1.0:
-                _gap = _day_pct
-            else:
-                return False, "gap_unknown"
+            return False, "gap_unknown"
         if _gap < -_gap_max:
             record["block_detail"] = f"gapped {_gap:+.1f}%"
             return False, "gapped_down"
@@ -18225,10 +17693,6 @@ def should_arm_buy(
         _hod_why = room_below_hod_refusal(record, _gate_sym, ask, cfg, now=now)
         if _hod_why:
             return False, _hod_why
-        # Anti-Pullback Gate (Option 2): block entries below VWAP-15bp or dropped >= 2.0% from HOD.
-        _ap_why = anti_pullback_refusal(record, _gate_sym, ask, cfg, now=now)
-        if _ap_why:
-            return False, _ap_why
         # Volume now vs today's own pace (off at 0): no buys into a quiet tape.
         _vol_why = thin_volume_refusal(record, _gate_sym, cfg, now=now)
         if _vol_why:
@@ -18290,7 +17754,6 @@ def should_arm_buy(
                 # wr_trend_entry_prereg.json (both off by default): %R trend filter and its matched random control.
                 _wr_why = (after_square_refusal(_gate_sym, float(now if now is not None else time.time()), cfg)
                            or wr_trend_refusal(_gate_sym, record, now, cfg) or wr_rsi_refusal(_gate_sym, now, cfg)
-                           or presquare_cm_rsi_refusal(record, cfg)
                            or wr_rand_refusal(_gate_sym, now, cfg))
                 if _wr_why:
                     return False, _wr_why
@@ -20191,10 +19654,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             ok_arm, why = range_arm_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="check")
         else:
             ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
-        if not ok_arm and bool((cfg or {}).get("ai_watch_pullback_buystop_arm", False)):
-            pb_ok, pb_why = pullback_buystop_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="check")
-            if pb_ok:
-                ok_arm, why = True, "pullback_buystop"
         # Order blocks (log; ai_watch_ob_resist_skip refuses on resistance).
         _ob_arm = _ob_observe_stamp(rec, sym, ask_f, cfg, t0)
         ok_arm, why = apply_breakout_arm(rec, ask_f, bid_f, cfg, t0, _ob_arm, ok_arm, why)
@@ -20215,10 +19674,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
                        "late_hold_closed", "late_hold_not_late_admit",
-                       "ob_resist", "ob_resist_ob", "no_breakout", "not_presquare",
-                       "presquare_cm_rsi_pegged", "pullback_arm_off", "wait_buystop_trigger",
-                       "pullback_too_shallow", "pullback_too_deep", "no_leg1_uptrend",
-                       "tight_overhead_resist", "cm_rsi_pegged"):
+                       "ob_resist", "ob_resist_ob", "no_breakout", "not_presquare"):
                 _skip(why)
             else:
                 set_block_reason(rec, why or "blocked", now=t0)
@@ -20241,8 +19697,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
         if range_arm_enabled(cfg):
             ok_arm, why = range_arm_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="refresh")
-        elif why == "pullback_buystop":
-            ok_arm, why = pullback_buystop_decide(rec, sym, ask_f, bid_f, cfg, t0, indicators.get(sym), stage="refresh")
         else:
             ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         if not ok_arm:
@@ -20253,10 +19707,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _arm_streak(rec, False, seq=poll_seq)
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
-                       "late_hold_closed", "late_hold_not_late_admit",
-                       "presquare_cm_rsi_pegged", "pullback_arm_off", "wait_buystop_trigger",
-                       "pullback_too_shallow", "pullback_too_deep", "no_leg1_uptrend",
-                       "tight_overhead_resist", "cm_rsi_pegged"):
+                       "late_hold_closed", "late_hold_not_late_admit"):
                 _skip(why)
             else:
                 set_block_reason(rec, why or "blocked", now=t0)
@@ -20434,8 +19885,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             bid2_f = bid_f
         if range_arm_enabled(cfg):
             ok_arm2, why2 = range_arm_decide(rec, sym, ask_f, bid2_f, cfg, t0, indicators.get(sym), stage="final")
-        elif why == "pullback_buystop":
-            ok_arm2, why2 = pullback_buystop_decide(rec, sym, ask_f, bid2_f, cfg, t0, indicators.get(sym), stage="final")
         else:
             ok_arm2, why2 = should_arm_buy(rec, ask=ask_f, bid=bid2_f, cfg=cfg, now=t0)
         if not ok_arm2:
@@ -20510,8 +19959,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if why2 == "range_arm" and isinstance(rec.get("range_arm"), dict):
             # Range rule: the levels of the pre-place check go on the decision and the position.
             place_decision.update(rec["range_arm"])
-        if why2 == "pullback_buystop" and isinstance(rec.get("pullback_buystop"), dict):
-            place_decision.update(rec["pullback_buystop"])
         # This desk runs the exhaustion gate; ai_suggest's does not. Name the
         # path on the row so the two never average together again.
         place_decision["entry_path"] = (

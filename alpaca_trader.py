@@ -1332,12 +1332,8 @@ def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0
             if limit_px <= 0:
                 return {"ok": False, "order_id": None, "status": "no_price",
                         "note": "off-hours sell needs a price", "canceled": canceled}
-            sell_qty = int(qty_held)
-            if sell_qty < 1:
-                return {"ok": False, "order_id": None, "status": "qty_under_1",
-                        "note": "off-hours sell requires >= 1 whole share", "canceled": canceled}
             order = _submit_order(
-                LimitOrderRequest(symbol=ticker, qty=sell_qty, side=OrderSide.SELL,
+                LimitOrderRequest(symbol=ticker, qty=qty_held, side=OrderSide.SELL,
                                   time_in_force=TimeInForce.DAY, limit_price=limit_px,
                                   extended_hours=True))
         order_id = str(order.id)
