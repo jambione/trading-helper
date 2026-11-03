@@ -5317,7 +5317,10 @@ def apply_local_trail(
     # Hard profit capture: if current print is up >= ai_profit_capture_pct or ai_profit_capture_px,
     # sell immediately to lock in gains, superseding ratchet trail stops.
     # Applies to single-tranche local-trail positions (dual-tranche uses tranche_a target_1 + runner_stop).
-    _cap_pct = float(_cfg_all().get("ai_profit_capture_pct", 0.0) or 0.0)
+    if pos.get("phase_b"):
+        _cap_pct = float(_cfg_all().get("ai_phase_b_profit_capture_pct", 0.20) or 0.20)
+    else:
+        _cap_pct = float(_cfg_all().get("ai_profit_capture_pct", 0.0) or 0.0)
     _cap_px = float(_cfg_all().get("ai_profit_capture_px", 0.0) or 0.0)
     _entry = _num(pos.get("entry_price"))
     _is_dual = int(pos.get("qty_a") or 0) > 0 and int(pos.get("qty_b") or 0) > 0
@@ -5354,7 +5357,11 @@ def apply_local_trail(
             ):
                 pos["runner_mode_active"] = True
                 _pk = max(float(last), float(_num(pos.get("peak_price")) or last))
-                _ratchet_stop = max(_target_floor, round(_pk * (1.0 - 0.0006), 2))
+                try:
+                    _trail_k = float(_cfg_all().get("ai_profit_capture_runner_trail_pct", 0.40) or 0.40) / 100.0
+                except (TypeError, ValueError):
+                    _trail_k = 0.0040
+                _ratchet_stop = max(_target_floor, round(_pk * (1.0 - _trail_k), 2))
                 if float(last) >= _ratchet_stop - 1e-9:
                     _cur_loc = _num(pos.get("local_stop_price")) or 0.0
                     if _ratchet_stop > _cur_loc + 1e-9:
@@ -5368,7 +5375,11 @@ def apply_local_trail(
             if _cap_px > 0
             else round(_entry * (1.0 + _cap_pct / 100.0), 2)
         )
-        if _premarket_working_sell_on(pos):
+        try:
+            _ws_on = _premarket_working_sell_on(pos)
+        except TypeError:
+            _ws_on = _premarket_working_sell_on()
+        if _ws_on:
             bid = _premarket_bid(ticker)
             px = round(float(bid), 2) if bid and bid > 0 else None
             if px is not None and last and float(last) > 0 and abs(px - float(last)) / float(last) > 0.15:
@@ -5474,7 +5485,11 @@ def apply_local_trail(
     # shelf. Once LAST ≤ shelf, cancel resting orders and sell market.
     if _trail_hit:
         last = trigger
-        if _premarket_working_sell_on(pos):
+        try:
+            _ws_on = _premarket_working_sell_on(pos)
+        except TypeError:
+            _ws_on = _premarket_working_sell_on()
+        if _ws_on:
             bid = _premarket_bid(ticker)
             px = round(float(bid), 2) if bid and bid > 0 else None
             if px is not None and last and float(last) > 0 and abs(px - float(last)) / float(last) > 0.15:

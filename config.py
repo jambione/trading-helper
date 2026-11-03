@@ -1697,6 +1697,7 @@ DEFAULT_CONFIG = {
     "ai_local_trail_be_step2_pct": 0.0,
     "ai_profit_capture_passive_exit": False,
     "ai_profit_capture_runner_ratchet": False,
+    "ai_profit_capture_runner_trail_pct": 0.40,
 }
 
 def validate_ai_config(cfg: dict) -> list[str]:
@@ -2422,6 +2423,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_be_at_pct",
     "ai_profit_capture_pct",
     "ai_profit_capture_px",
+    "ai_profit_capture_runner_trail_pct",
     "ai_local_trail_give_max_pct",
     "ai_exit_macd_confirm_ticks",
     "ai_shelf_trace_sec",

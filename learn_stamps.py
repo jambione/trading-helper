@@ -276,6 +276,7 @@ _FINGERPRINT_KEYS = (
     "ai_local_trail_be_step2_pct",
     "ai_profit_capture_passive_exit",
     "ai_profit_capture_runner_ratchet",
+    "ai_profit_capture_runner_trail_pct",
     "ai_local_trail_be_offset_px",
     "ai_phase_b_lockout_on_loss",
     "ai_phase_b_max_entries_per_symbol",
