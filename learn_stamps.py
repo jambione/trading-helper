@@ -273,6 +273,9 @@ _FINGERPRINT_KEYS = (
     "ai_phase_b_entry_limit_pad_max_px",
     # A premarket lot that survives into RTH is a different trade.
     "ai_phase_b_no_rth_handoff",
+    "ai_local_trail_be_step2_pct",
+    "ai_profit_capture_passive_exit",
+    "ai_profit_capture_runner_ratchet",
 )
 
 _fp_cache: tuple[float, str] | None = None  # (mtime, hex)

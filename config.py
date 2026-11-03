@@ -1694,6 +1694,9 @@ DEFAULT_CONFIG = {
     "stocktwits_rvol_time_adjusted": True,
     "stocktwits_max_price":      35.0,    # hide names at/above this last ($)
     "trending_max_price":        35.0,    # alias used by older bot_config keys
+    "ai_local_trail_be_step2_pct": 0.0,
+    "ai_profit_capture_passive_exit": False,
+    "ai_profit_capture_runner_ratchet": False,
 }
 
 def validate_ai_config(cfg: dict) -> list[str]:
