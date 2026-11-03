@@ -25,7 +25,7 @@
   "ai_trail_exit_trend_hold_max_bar_age_sec": 300,
   "ai_no_progress_mfe_r": 0.001,
   "ai_no_progress_sec": 180.0,
-  "ai_double_check_sell_enabled": false,
+  "ai_double_check_sell_enabled": true,
   "ai_double_check_min_sec": 180.0,
   "ai_double_check_lookback_min": 10,
   "ai_double_check_under_entry_only": true,
