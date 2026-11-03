@@ -97,7 +97,7 @@
   "ai_local_trail_decay_step_r": 0.05,
   "ai_local_trail_decay_red_step_r": 0.0,
   "ai_local_trail_enabled": true,
-  "ai_local_trail_give_max_pct": 0.30,
+  "ai_local_trail_give_max_pct": 1.0,
   "ai_local_trail_give_open_r": 0.0,
   "ai_local_trail_give_px": 0.0,
   "ai_local_trail_give_r": 0.12,
