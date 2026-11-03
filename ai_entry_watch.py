@@ -14893,7 +14893,7 @@ def _ob_narrow_refusal(ob_fields: dict, cfg: dict | None, rec: dict | None) -> b
 
 
 _GATE_WIRE_KEYS = ("g_rvol", "g_rvol_min", "g_spread", "g_spread_max", "g_tape_age", "g_tape_max",
-                   "g_gap", "g_gap_block", "g_sq_wait", "g_s5_veto", "g_s5_ok", "g_leg1_active", "g_leg1_ok", "g_leg1_label",
+                   "g_gap", "g_gap_block", "g_sq_wait", "g_sq_wait_min", "g_cd_wait", "g_s5_veto", "g_s5_ok", "g_leg1_active", "g_leg1_ok", "g_leg1_label",
                    "g_ob_resist", "g_ob_room", "g_ob_room_min", "g_cm_rsi", "g_cm_rsi_max",
                    "g_pb_trigger", "g_pb_arm")
 
@@ -14922,6 +14922,11 @@ def _gate_wire_fields(rec: Any, sym: str, now: float | None = None) -> dict:
         sq = _LAST_SQUARE.get(sym)
         left = (mins * 60.0 - (t - sq[0])) if (mins > 0 and sq and sq[0] is not None) else 0.0
         out["g_sq_wait"] = round(left) if left > 0 else None
+        out["g_sq_wait_min"] = round(mins, 1) if mins > 0 else None
+        cool = _f_or_none(cfg.get("ai_reentry_cooldown_sec")) or 0.0
+        last_ex = _recent_exit_ts(sym) if cool > 0 else None
+        cd_left = (cool - (t - float(last_ex))) if (cool > 0 and last_ex and (t - float(last_ex)) < cool) else 0.0
+        out["g_cd_wait"] = round(cd_left) if cd_left > 0 else None
 
         # 5m Slow %R Pitch Veto live gate wire
         if bool((cfg or {}).get("ai_watch_wr_slow_5m_veto", False)):

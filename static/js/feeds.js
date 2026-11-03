@@ -1996,10 +1996,15 @@ function _bookGateChecks(r) {
     out.push({ key: 'gap', text: `gap ${gap.toFixed(1)}%`, ok: false,
       title: `Gapped down ${gap.toFixed(2)}% at the open (block below -${block.toFixed(1)}%)` });
   }
-  const wait = num(r.g_sq_wait);
+  const wait = num(r.g_sq_wait), sqMin = num(r.g_sq_wait_min) || 4;
   if (wait != null && wait > 0) {
     out.push({ key: 'square', text: `sq ${_fmtHoldClock(wait)}`, ok: false,
-      title: `Full square in the last 10 min: pre-square arms wait ${_fmtHoldClock(wait)} more` });
+      title: `Full square in the last ${sqMin} min: pre-square arms wait ${_fmtHoldClock(wait)} more` });
+  }
+  const cdWait = num(r.g_cd_wait);
+  if (cdWait != null && cdWait > 0) {
+    out.push({ key: 'cooldown', text: `cd ${_fmtHoldClock(cdWait)}`, ok: false,
+      title: `Re-entry cooldown (60s): waits ${_fmtHoldClock(cdWait)} more after prior exit` });
   }
   if (r.g_s5_veto) {
     const ok = r.g_s5_ok === true;
@@ -2239,20 +2244,25 @@ function _stopCellTitle(r) {
   const last = _lastPx(r);
   const shelf = _bookStopPx(r);
   const peak = r && r.peak_price != null ? Number(r.peak_price) : NaN;
+  const entry = r && (r.avg_entry != null ? Number(r.avg_entry) : (r.entry_price != null ? Number(r.entry_price) : NaN));
+  const cfg = get('config') || {};
+  const capPct = Number.isFinite(Number(cfg.ai_profit_capture_pct)) ? Number(cfg.ai_profit_capture_pct) : 0.20;
+  const rawBe = cfg.ai_local_trail_be_offset_px != null ? cfg.ai_local_trail_be_offset_px : cfg.ai_breakeven_offset_px;
+  const beOff = Number.isFinite(Number(rawBe)) ? Number(rawBe) : 0.02;
   const bits = [
     'Ratchet shelf (local_stop). Raises with the print, never lowers.',
-    'Sells a market order when LAST ≤ shelf — after min-hold if that is on.',
+    `First-leg capture: +${capPct.toFixed(2)}%${Number.isFinite(entry) && entry > 0 ? ` ($${(entry * (1 + capPct / 100)).toFixed(2)})` : ''}; BE lock +$${beOff.toFixed(2)} at +0.15% MFE; 5m smart zombie cut.`,
   ];
   if (last != null) bits.push(`last $${last.toFixed(2)}`);
   if (shelf != null) bits.push(`shelf $${shelf.toFixed(2)}`);
   if (Number.isFinite(peak) && peak > 0) bits.push(`peak $${peak.toFixed(2)}`);
   const left = _holdLeft(r);
   if (left != null) {
-    bits.push(`sale HELD ${Math.ceil(left)}s (5m min-hold). Shelf still raises.`);
+    bits.push(`sale HELD ${Math.ceil(left)}s (min-hold). Shelf still raises.`);
   } else if (_shelfHit(r)) {
     bits.push('LAST is through the shelf — selling.');
   } else {
-    bits.push('sale armed: next tag of the shelf exits.');
+    bits.push('sale armed: next tag of the shelf or +0.20% target exits.');
   }
   return bits.join(' · ');
 }

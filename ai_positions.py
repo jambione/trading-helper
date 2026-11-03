@@ -3821,6 +3821,82 @@ def no_progress_due(
     return age + 1e-9 >= t_sec
 
 
+def smart_zombie_cut_due(
+    pos: dict[str, Any] | None,
+    ticker: str,
+    indicators: dict[str, Any] | None = None,
+    now: float | None = None,
+    cfg: dict | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """True when a trade at >= ai_smart_dead_cut_sec (300s = 5m) has never gone green
+    (MFE <= +0.02%), sits underwater (ret <= -0.15%), and Williams %R is dead (<= -70).
+    Preserves all slow-grinding winners while cutting 22-minute zombie losers early.
+    """
+    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
+    try:
+        t_sec = float(cfg.get("ai_smart_dead_cut_sec", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        t_sec = 0.0
+    if t_sec <= 0 or not isinstance(pos, dict):
+        return False, {}
+    if not pos.get("entry_confirmed") or pos.get("closing_reason") or pos.get("tranche_a_filled"):
+        return False, {}
+    _loc = _num(pos.get("local_stop_price"))
+    entry = _num(pos.get("entry_price"))
+    last = _num(pos.get("last_seen_price"))
+    if not entry or entry <= 0 or last is None or last <= 0:
+        return False, {}
+    if _loc is not None and _loc > entry + 1e-9:
+        return False, {}
+    start = _num(pos.get("entry_confirmed_at")) or _num(pos.get("entry_time"))
+    if start is None:
+        return False, {}
+    t_now = float(now if now is not None else time.time())
+    age_sec = t_now - float(start)
+    if age_sec + 1e-9 < t_sec:
+        return False, {}
+    try:
+        max_mfe_pct = float(cfg.get("ai_smart_dead_cut_mfe_pct", 0.02) or 0.02)
+        min_loss_pct = float(cfg.get("ai_smart_dead_cut_loss_pct", -0.15) or -0.15)
+        max_pctr = float(cfg.get("ai_smart_dead_cut_max_pctr", -70.0) or -70.0)
+    except (TypeError, ValueError):
+        max_mfe_pct, min_loss_pct, max_pctr = 0.02, -0.15, -70.0
+
+    peak = _num(pos.get("peak_price")) or entry
+    peak = max(float(peak), float(last), float(entry))
+    mfe_pct = (peak - float(entry)) / float(entry) * 100.0
+    mfe_r = _num(pos.get("mfe_r"))
+    risk = _risk_basis(pos)
+    if mfe_r is not None and risk and risk > 0:
+        mfe_pct = max(mfe_pct, float(mfe_r) * float(risk) / float(entry) * 100.0)
+    if mfe_pct > max_mfe_pct + 1e-9:
+        return False, {}
+
+    cur_pct = (float(last) - float(entry)) / float(entry) * 100.0
+    if cur_pct > min_loss_pct + 1e-9:
+        return False, {}
+
+    pos_ind = pos.get("indicator") if isinstance(pos.get("indicator"), dict) else {}
+    eng_ind = (indicators or {}).get(ticker) if isinstance(indicators, dict) else {}
+    eng_ind = eng_ind if isinstance(eng_ind, dict) else {}
+    pctr = _num(pos_ind.get("pctr"))
+    if pctr is None:
+        pctr = _num(eng_ind.get("pctr"))
+    if pctr is None and pos.get("last_exhaustion") is not None:
+        ex = _num(pos.get("last_exhaustion"))
+        if ex is not None:
+            pctr = float(ex) - 100.0
+    if pctr is None or float(pctr) > max_pctr + 1e-9:
+        return False, {}
+
+    return True, {
+        "age_sec": round(age_sec, 1),
+        "mfe_pct": round(mfe_pct, 3),
+        "cur_pct": round(cur_pct, 3),
+        "pctr": round(float(pctr), 1),
+    }
+
+
 def trail_yields_to_triangle(
     pos: dict[str, Any] | None,
     cfg: dict[str, Any] | None = None,
@@ -4848,7 +4924,14 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: floa
         if be_k > 0 and sp is not None and sp > 0:
             if float(mfe) + 1e-9 < be_k * sp:
                 be_hit = False
-    be_floor = (breakeven_floor(entry, cfg) or float(entry)) if be_hit else None
+    if be_hit:
+        _be_cfg = (
+            {**cfg, "ai_breakeven_offset_px": cfg["ai_local_trail_be_offset_px"]}
+            if cfg.get("ai_local_trail_be_offset_px") is not None else cfg
+        )
+        be_floor = breakeven_floor(entry, _be_cfg) or float(entry)
+    else:
+        be_floor = None
     try:
         arm_need = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
     except (TypeError, ValueError):
@@ -5221,11 +5304,13 @@ def apply_local_trail(
         changed = True
     # Hard profit capture: if current print is up >= ai_profit_capture_pct or ai_profit_capture_px,
     # sell immediately to lock in gains, superseding ratchet trail stops.
+    # Applies to single-tranche local-trail positions (dual-tranche uses tranche_a target_1 + runner_stop).
     _cap_pct = float(_cfg_all().get("ai_profit_capture_pct", 0.0) or 0.0)
     _cap_px = float(_cfg_all().get("ai_profit_capture_px", 0.0) or 0.0)
     _entry = _num(pos.get("entry_price"))
+    _is_dual = int(pos.get("qty_a") or 0) > 0 and int(pos.get("qty_b") or 0) > 0
     _profit_hit = False
-    if not raise_only and trigger is not None and _entry is not None and _entry > 0:
+    if not raise_only and not _is_dual and trigger is not None and _entry is not None and _entry > 0:
         if _cap_px > 0 and (float(trigger) - _entry) + 1e-9 >= _cap_px:
             _profit_hit = True
         elif _cap_pct > 0:
@@ -8351,6 +8436,28 @@ def manage_open_positions(
                     "ai_no_progress_mfe_r", DEFAULT_NO_PROGRESS_MFE_R),
                 timeout_sec=_cfg_float(
                     "ai_no_progress_sec", DEFAULT_NO_PROGRESS_SEC),
+            )
+            changed = True
+            continue
+
+        # Smart 5-minute zombie cut: at >= ai_smart_dead_cut_sec (300s), if the trade
+        # never went green (MFE <= +0.02%), is underwater (<= -0.15%), and %R <= -70,
+        # flatten early instead of bleeding for 22 minutes until dead_trade.
+        _sz_due, _sz_info = smart_zombie_cut_due(pos, ticker, indicators, now)
+        if _sz_due:
+            alpaca_trader.cancel_open_orders(ticker)
+            out = alpaca_trader.close_out(ticker) or {}
+            if isinstance(out, dict) and out.get("order_id"):
+                pos["close_order_id"] = str(out["order_id"])
+            pos["closing_reason"] = "smart_dead_cut"
+            exit_why[ticker] = "smart_dead_cut"
+            events.append({
+                "ticker": ticker, "event": "smart_dead_cut",
+                **_sz_info,
+            })
+            log_event(
+                "smart_dead_cut", symbol=ticker,
+                **_sz_info,
             )
             changed = True
             continue

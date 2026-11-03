@@ -396,9 +396,9 @@
                         <div class="th th-last" data-book-sort-col="last">Last</div>
                         <div class="th th-chg" data-book-sort-col="chg" title="Day change % — its own column. Last and Chg are two readings; sharing one cell truncated the price on any name where both were wide.">Chg</div>
                         <div class="th th-entry" data-book-sort-col="entry" title="Average fill price. Open positions only.">Entry</div>
-                        <div class="th th-stop" data-book-sort-col="stop" title="Open longs only. Raise-only shelf; flatten if last prints through. While min-hold runs this cell shows the countdown instead — the shelf still raises, only the SALE is muzzled — and the stop price returns at 0:00.">Stop</div>
-                        <div class="th th-exh" data-book-sort-col="exh" title="%R Trend Exhaustion: how far the move is toward overbought (100 + fast %R), with its direction. OB marks the overbought band — the square arm's live reading.">EXH</div>
-                        <div class="th th-gates" data-book-sort-col="gates" title="Live gate readings: CM RSI (cm), room to overhead resistance (rm %), resistance barrier (resist), pullback trigger (trig $), SIP spread, quote print age, and 5m %R pitch. Green = every gate passes, red = one is refusing, grey = missing reading. EXH is its own column.">Gates</div>
+                        <div class="th th-stop" data-book-sort-col="stop" title="Open longs only. Raise-only shelf (+2¢ BE lock at +0.15% MFE), +0.20% first-leg profit capture, and 5m smart zombie cut. While min-hold runs this cell shows the countdown instead — the shelf still raises, only the SALE is muzzled — and the stop price returns at 0:00.">Stop</div>
+                        <div class="th th-exh" data-book-sort-col="exh" title="%R Trend Exhaustion: Presquare-only (PRE35 [-35,-20), gap <= 15, rising). OB marks the overbought band.">EXH</div>
+                        <div class="th th-gates" data-book-sort-col="gates" title="Live gate readings ($10+ min price, 20 seats, 5s poll): Pullback trigger (trig $ / L3 ✓), 5m Slow %R pitch (5m%R↑), SIP spread (<= 0.15%), quote print age (<= 15s), 4m post-square wait (sq), 60s re-entry cooldown (cd), CM RSI (cm), and overhead room (rm %). Green = every gate passes, red = one is refusing, grey = missing reading.">Gates</div>
                         <div class="th th-qty desk-col-extra">Qty</div>
                         <div class="th th-pl" data-book-sort-col="pl">P&amp;L</div>
                     </div>
@@ -855,7 +855,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=221"></script>
+        <script type="module" src="/static/js/app.js?v=222"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>
