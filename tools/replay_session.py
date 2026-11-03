@@ -1072,11 +1072,16 @@ class FakeBroker:
         # supertrend exit as live. Bars come ONLY from the point-in-time ob_observe store the replay feeds: the live
         # fallback fetch has no end time and would hand the replay the whole day (look-ahead). Added 2026-10-15
         # for the exit-cut sweep; before that this mirror never fired double_check.
+        # The 30s cadence lives on the position. The view is rebuilt every tick, so copy the next-check
+        # stamp back onto p or the replay would re-read on every print.
         if bool(cfg.get("ai_double_check_sell_enabled", False)) and not p["t1_hit"]:
             view = {"entry_confirmed": True, "entry_price": float(p["entry"]),
                     "local_stop_price": float(p["local_stop_price"]), "entry_time": float(p["entry_ts"]),
-                    "last_seen_price": px}
+                    "last_seen_price": px,
+                    "double_check_next_at": p.get("double_check_next_at")}
             due, _info = cp.double_check_sell_due(view, pos["symbol"], now, cfg)
+            if view.get("double_check_next_at") is not None:
+                p["double_check_next_at"] = view["double_check_next_at"]
             if due:
                 return "double_check"
         # Hard profit capture, as ai_positions.apply_local_trail (689dfca): checked on the

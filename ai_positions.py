@@ -3547,16 +3547,40 @@ def _symbol_bars_for_double_check(ticker: str, t_now: float) -> tuple | None:
     return None
 
 
+def _double_check_due_from_reading(mode: str, res: dict) -> bool:
+    """Whether this %R reading is a sell.
+
+    ``both`` (the old gate) sells only when evaluate_symbol says sell, which is
+    both lines down or no lookback. ``fast_only`` sells on the fast line alone.
+    ``unless_up`` sells whenever the name is not trending up. Trending up is
+    both %R lines up (trend ``up``). Down, sideways, split, and no lookback sell.
+    """
+    mode = str(mode or "both").strip().lower()
+    if mode == "fast_only":
+        return res.get("fast_trend") in ("down", "no_lookback")
+    if mode == "unless_up":
+        return str(res.get("trend") or "") != "up"
+    return res.get("sell") == "yes"
+
+
 def double_check_sell_due(
     pos: dict[str, Any] | None,
     ticker: str,
     now: float | None = None,
     cfg: dict | None = None,
 ) -> tuple[bool, dict]:
-    """Sell double-check exit: at T sec (default 180s = 3m), if under entry price and
-    both %R lines are trending down (or no lookback), cut the stagnant loser early.
+    """Loss-cut double-check.
 
-    Prevents 7-10 minute slow bleeds during chop while preserving runners.
+    Starts once the position is ``ai_double_check_min_sec`` old (60s) and last
+    is not over entry. A later read waits ``ai_double_check_interval_sec`` (30s),
+    stored on ``pos['double_check_next_at']``. A price strictly over entry does
+    not sell and does not move that clock, so a fall back to entry or under is
+    eligible on the next poll once the clock has passed. A hold (trending up)
+    schedules the next read. A sell does not, so a close that fails is retried
+    on the next poll. A shelf already above entry is left to the trail.
+
+    ``ai_double_check_mode`` ``unless_up`` sells unless both %R lines are up.
+    ``both`` keeps the older both-lines-down gate.
     """
     cfg = cfg if isinstance(cfg, dict) else _cfg_all()
     if not bool(cfg.get("ai_double_check_sell_enabled", False)):
@@ -3572,11 +3596,17 @@ def double_check_sell_due(
         return False, {}  # trail already locked green — not a stagnant open
 
     try:
-        t_sec = float(cfg.get("ai_double_check_min_sec", 180.0) or 180.0)
+        t_sec = float(cfg.get("ai_double_check_min_sec", 60.0) or 60.0)
     except (TypeError, ValueError):
-        t_sec = 180.0
+        t_sec = 60.0
     if t_sec <= 0:
         return False, {}
+    try:
+        interval = float(cfg.get("ai_double_check_interval_sec", 30.0) or 30.0)
+    except (TypeError, ValueError):
+        interval = 30.0
+    if interval < 0:
+        interval = 30.0
 
     start = _num(pos.get("entry_confirmed_at")) or _num(pos.get("entry_time"))
     if start is None:
@@ -3590,20 +3620,25 @@ def double_check_sell_due(
     if last is None or _ent is None:
         return False, {}
 
+    # Not over entry means last <= entry. Strictly above skips this poll and
+    # leaves double_check_next_at alone.
     if bool(cfg.get("ai_double_check_under_entry_only", True)):
-        if last >= _ent - 1e-9:
+        if last > _ent + 1e-9:
             return False, {}
+
+    nxt = _num(pos.get("double_check_next_at"))
+    if nxt is not None and t_now + 1e-9 < float(nxt):
+        return False, {}
 
     try:
         from tools import sell_double_check as sdc
         bars = _symbol_bars_for_double_check(ticker, t_now)
         lookback = int(cfg.get("ai_double_check_lookback_min", sdc.LOOKBACK_MIN) or sdc.LOOKBACK_MIN)
-        mode = str(cfg.get("ai_double_check_mode", "both") or "both")
+        mode = str(cfg.get("ai_double_check_mode", "unless_up") or "unless_up")
         res = sdc.evaluate_symbol(ticker, bars, last, lookback=lookback, now=t_now)
-        if mode == "fast_only":
-            due = res.get("fast_trend") in ("down", "no_lookback")
-        else:
-            due = res.get("sell") == "yes"
+        due = _double_check_due_from_reading(mode, res)
+        if not due:
+            pos["double_check_next_at"] = t_now + interval
         return bool(due), res
     except Exception as e:
         return False, {"error": str(e)[:120]}
@@ -8265,8 +8300,8 @@ def manage_open_positions(
             changed = True
             continue
 
-        # Sell double-check exit: at T sec (default 180s = 3m), if under entry price
-        # and %R lines are trending down (sell == "yes"), cut the stagnant loser early.
+        # Sell double-check: from 60s, while last is not over entry, re-read every
+        # 30s and sell unless both %R lines are trending up (mode unless_up).
         _dc_due, _dc_info = double_check_sell_due(pos, ticker, now)
         if _dc_due:
             mfe = _num(pos.get("mfe_r"))
@@ -8291,7 +8326,8 @@ def manage_open_positions(
                 fast_trend=_dc_info.get("fast_trend"),
                 slow_trend=_dc_info.get("slow_trend"),
                 reason=_dc_info.get("reason"),
-                timeout_sec=_cfg_float("ai_double_check_min_sec", 180.0),
+                timeout_sec=_cfg_float("ai_double_check_min_sec", 60.0),
+                interval_sec=_cfg_float("ai_double_check_interval_sec", 30.0),
             )
             changed = True
             continue

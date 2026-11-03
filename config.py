@@ -1462,11 +1462,15 @@ DEFAULT_CONFIG = {
     "ai_exit_supertrend":              False,
     "ai_no_progress_sec":              60.0,
     "ai_no_progress_mfe_r":            0.05,
-    "ai_double_check_sell_enabled":     False,
-    "ai_double_check_min_sec":          180.0,
+    # Loss cut: at 60s, if last is not over entry, re-read %R every 30s and
+    # sell unless both lines are trending up. A shelf already above entry
+    # stays with the trail. Mode "both" is the older both-lines-down gate.
+    "ai_double_check_sell_enabled":     True,
+    "ai_double_check_min_sec":          60.0,
+    "ai_double_check_interval_sec":     30.0,
     "ai_double_check_lookback_min":     10,
     "ai_double_check_under_entry_only": True,
-    "ai_double_check_mode":             "both",
+    "ai_double_check_mode":             "unless_up",
     # Open Plan A long + EXH/pctr falling → market flatten (pack #9).
     # Dedicated flag — does not turn on left_overbought scalp semantics.
     # Confirm ticks: consecutive falling polls before exit (2 = anti-flicker).
@@ -2454,6 +2458,7 @@ SAFE_CONFIG_KEYS = [
     "ai_no_progress_mfe_r",
     "ai_double_check_sell_enabled",
     "ai_double_check_min_sec",
+    "ai_double_check_interval_sec",
     "ai_double_check_lookback_min",
     "ai_double_check_under_entry_only",
     "ai_double_check_mode",

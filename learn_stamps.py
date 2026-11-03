@@ -228,6 +228,14 @@ _FINGERPRINT_KEYS = (
     # min-hold gate does — and the two now interact.
     "ai_dead_trade_min",
     "ai_dead_trade_mfe_r",
+    # Loss-cut double-check. On/off, the 60s start, the 30s cadence, and
+    # unless_up vs both-lines-down are different sell regimes.
+    "ai_double_check_sell_enabled",
+    "ai_double_check_min_sec",
+    "ai_double_check_interval_sec",
+    "ai_double_check_lookback_min",
+    "ai_double_check_under_entry_only",
+    "ai_double_check_mode",
     "ai_exit_rsi_dump_enabled",
     "ai_exit_rsi_dump_points",
     "ai_exit_rsi_dump_sec",
