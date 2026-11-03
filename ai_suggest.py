@@ -2080,8 +2080,9 @@ def _prior_context_snippet(max_chars: int = 1200) -> str:
         tail = text[-max_chars:].strip()
         return f"\n\nPRIOR RUN (context only — re-validate with fresh data):\n{tail}\n"
     lines = [
-        "PRIOR RUN top ideas (context only — re-validate with FRESH web/X "
-        "search this run; drop if thesis broken or data stale):"
+        "PRIOR RUN top ideas (DO NOT RE-LIST these tickers unless a brand-new "
+        "same-day catalyst broke in the last 12h and you re-validated with FRESH "
+        "web/X search this run; default to discovering fresh session names):"
     ]
     for r in rows[:7]:
         lines.append(

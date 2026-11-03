@@ -390,6 +390,20 @@ def seat_priority(
     got = inputs if inputs is not None else row_inputs(row)
     rs = runway_score(
         day_chg_pct=got["chg"], source=_source(row), rvol_pace=got["pace"], now=now)
+    crit_set = {
+        str(c).strip().lower()
+        for c in (row.get("criteria") or [])
+        if isinstance(c, str)
+    } if isinstance(row, dict) else set()
+    if (
+        "gx_agree" in crit_set
+        or "seed_rank_gx" in crit_set
+        or (isinstance(row, dict) and bool(row.get("gx_agree")))
+        or (isinstance(row, dict) and str(row.get("source_mark") or "").upper() in ("GX", "AX"))
+    ):
+        rs += 0.60
+    elif "seed_rank" in crit_set:
+        rs += 0.30
     close = zone_closeness(got, cfg, mid_rise_level=mid_rise_level)
     return rs + float(closeness_w) * close
 
