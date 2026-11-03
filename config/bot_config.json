@@ -521,7 +521,7 @@
   "ai_watch_ob_resist_skip": false,
   "ai_watch_wr_rsi_min_rise": 0.0,
   "ai_watch_presquare_max_cm_rsi": 0.0,
-  "ai_watch_pullback_buystop_arm": true,
+  "ai_watch_pullback_buystop_arm": false,
   "ai_watch_pullback_min_leg1_gain_pct": 0.35,
   "ai_watch_pullback_min_dip_pct": 0.10,
   "ai_watch_pullback_max_dip_pct": 1.50,
