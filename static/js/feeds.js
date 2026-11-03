@@ -1986,9 +1986,9 @@ function _bookGateChecks(r) {
   if (ageMax != null && ageMax > 0) {
     const ok = age != null && age <= ageMax + 1e-9;
     out.push({
-      key: 'tape', text: ok ? `${Math.round(age)}s` : 'stale',
-      ok: age != null ? age <= ageMax + 1e-9 : null,
-      title: `Last print ${age == null ? 'age unknown' : `${age.toFixed(1)} s old`} vs ceiling ${ageMax.toFixed(0)} s`,
+      key: 'tape', text: '',
+      ok: ok,
+      title: `Last print ${age == null ? 'age unknown' : `${age.toFixed(1)} s old`} vs ceiling ${ageMax.toFixed(0)} s (${ok ? 'PASS - fresh' : 'FAIL - stale quote'})`,
     });
   }
   const gap = num(r.g_gap), block = num(r.g_gap_block);
@@ -2054,18 +2054,24 @@ function _bookGateChecks(r) {
 function _bookGatesText(r) {
   // Failing gates first: if the cell ellipses, it cuts a passing reading, never the blocker.
   const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : ['resist', 'pb_trig'].includes(x.key) ? 2 : 3);
-  const c = _bookGateChecks(r).slice().sort((a, b) => rank(a) - rank(b));
+  const c = _bookGateChecks(r).filter(x => x.key !== 'tape' && x.text).slice().sort((a, b) => rank(a) - rank(b));
   return c.length ? c.map(x => x.text).join(' · ') : '—';
 }
 
 function _bookGatesHtml(r) {
+  const checks = _bookGateChecks(r);
+  const tapeCheck = checks.find(x => x.key === 'tape');
+  const isTapeStale = _bookTapeStale(r) || (tapeCheck && tapeCheck.ok === false);
   const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : ['resist', 'pb_trig'].includes(x.key) ? 2 : 3);
-  const c = _bookGateChecks(r).slice().sort((a, b) => rank(a) - rank(b));
+  const c = checks.filter(x => x.key !== 'tape' && x.text).slice().sort((a, b) => rank(a) - rank(b));
   if (!c.length) return '—';
+  const sepCls = isTapeStale ? 'gate-sep gate-sep--stale' : 'gate-sep';
   return c.map(x => {
-    const cls = x.ok === true ? 'gate-val--ok' : (x.ok === false ? 'gate-val--fail' : 'gate-val--unknown');
+    const cls = isTapeStale
+      ? 'gate-val--stale'
+      : (x.ok === true ? 'gate-val--ok' : (x.ok === false ? 'gate-val--fail' : 'gate-val--unknown'));
     return `<span class="${cls}">${_esc(x.text)}</span>`;
-  }).join('<span class="gate-sep">·</span>');
+  }).join(`<span class="${sepCls}">·</span>`);
 }
 
 function _bookGatesFailCount(r) {
