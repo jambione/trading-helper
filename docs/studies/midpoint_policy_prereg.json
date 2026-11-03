@@ -1,6 +1,6 @@
 {
   "id": "midpoint_policy",
-  "status": "AMENDED_2: skeptic round 2 NOT READY with 4 required items, all applied (33 tests). Round cap is 2: awaiting the operator's READY.",
+  "status": "READY (operator 2026-11-03 'Accept READY', after skeptic rounds 1-2 and amended_2). Not scored.",
   "registered": "2026-11-03",
   "operator": "2026-11-03 'Yes, after replays' (test the midpoint exit rules on 9/16-10/23 once the double-check replays finish)",
   "question": "Does routing desk exits through policy P1 (a sell limit at the SIP midpoint, only where it can help, with a bail-out) beat the market exits the desk actually got?",
@@ -91,5 +91,13 @@
     "calibration_locked": "The calibration result is computed once, before the held-out score, and cannot be rerun or replaced afterwards.",
     "per_reason": "The verdict output lists n and mean delta per exit reason (left_overbought among them).",
     "beside_never_headline": "tools/exit_arm_score.py (the G2 live randomized market-vs-mid A/B, 10/05-10/15) is reported beside the result: the only real-venue evidence."
+  },
+  "ready": {
+    "date": "2026-11-03",
+    "operator": "Accept READY",
+    "module_shas": {
+      "shadow_loggers_score.py": "9725e7f639e2",
+      "midpoint_policy_verdict.py": "4b95b3e50a9b"
+    }
   }
 }
