@@ -82,7 +82,7 @@
   "ai_watch_mid_rise_level": -50.0,
   "ai_watch_mid_rise_max_age_sec": 60.0,
   "ai_local_trail_ob_hold_mae_r": -1.0,
-  "ai_local_trail_be_at_pct": 0.08,
+  "ai_local_trail_be_at_pct": 0.11,
   "ai_local_trail_be_step2_pct": 0.14,
   "ai_local_trail_be_at_r": 0.15,
   "ai_local_trail_be_at_spread_k": 0.0,
@@ -96,7 +96,7 @@
   "ai_local_trail_decay_step_r": 0.05,
   "ai_local_trail_decay_red_step_r": 0.0,
   "ai_local_trail_enabled": true,
-  "ai_local_trail_give_max_pct": 0.25,
+  "ai_local_trail_give_max_pct": 0.30,
   "ai_local_trail_give_open_r": 0.0,
   "ai_local_trail_give_px": 0.0,
   "ai_local_trail_give_r": 0.12,
@@ -551,5 +551,5 @@
   "ai_smart_dead_cut_sec": 300.0,
   "ai_smart_dead_cut_mfe_pct": 0.05,
   "ai_smart_dead_cut_loss_pct": -0.15,
-  "ai_smart_dead_cut_max_pctr": -30.0
+  "ai_smart_dead_cut_max_pctr": -50.0
 }

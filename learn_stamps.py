@@ -276,6 +276,14 @@ _FINGERPRINT_KEYS = (
     "ai_local_trail_be_step2_pct",
     "ai_profit_capture_passive_exit",
     "ai_profit_capture_runner_ratchet",
+    "ai_local_trail_be_offset_px",
+    "ai_phase_b_lockout_on_loss",
+    "ai_phase_b_max_entries_per_symbol",
+    "ai_phase_b_max_position_dollars",
+    "ai_phase_b_max_position_pct",
+    "ai_phase_b_max_spread_pct",
+    "ai_phase_b_min_prints_in_window",
+    "ai_phase_b_risk_pct",
 )
 
 _fp_cache: tuple[float, str] | None = None  # (mtime, hex)

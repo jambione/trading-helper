@@ -5345,11 +5345,17 @@ def apply_local_trail(
         if bool(_cfg_all().get("ai_profit_capture_runner_ratchet", False)):
             _t0 = _num(pos.get("entry_time")) or time.time()
             _hold_s = max(0.0, time.time() - float(_t0))
-            _pctr_now = _num(pos.get("pctr"))
-            if _hold_s <= 120.0 and _pctr_now is not None and float(_pctr_now) >= -15.0:
-                _pk = max(float(last), float(_num(pos.get("max_seen_price")) or last))
+            _ind = pos.get("indicator") if isinstance(pos.get("indicator"), dict) else {}
+            _pctr_now = _num(_ind.get("pctr"))
+            if _pctr_now is None:
+                _pctr_now = _num(pos.get("pctr"))
+            if pos.get("runner_mode_active") or (
+                _hold_s <= 120.0 and _pctr_now is not None and float(_pctr_now) >= -15.0
+            ):
+                pos["runner_mode_active"] = True
+                _pk = max(float(last), float(_num(pos.get("peak_price")) or last))
                 _ratchet_stop = max(_target_floor, round(_pk * (1.0 - 0.0006), 2))
-                if float(last) > _ratchet_stop + 1e-9:
+                if float(last) >= _ratchet_stop - 1e-9:
                     _cur_loc = _num(pos.get("local_stop_price")) or 0.0
                     if _ratchet_stop > _cur_loc + 1e-9:
                         pos["local_stop_price"] = _ratchet_stop
@@ -5406,8 +5412,11 @@ def apply_local_trail(
             _cwait = float(_cfg_all().get("ai_exit_limit_collar_wait_sec", 2.0) or 2.0)
         except (TypeError, ValueError):
             _collar, _cwait = 0.0, 2.0
-        if bool(_cfg_all().get("ai_profit_capture_passive_exit", False)) and hasattr(alpaca_trader, "place_midpoint_exit"):
-            out = alpaca_trader.place_midpoint_exit(ticker, wait_sec=_cwait) or {}
+        if bool(_cfg_all().get("ai_profit_capture_passive_exit", False)) and trigger:
+            out = alpaca_trader.close_out(
+                ticker, price=max(float(trigger), _target_floor),
+                collar_pct=max(_collar, 0.02),
+                collar_wait_sec=_cwait) or {}
         elif _collar > 0 and trigger:
             out = alpaca_trader.close_out(
                 ticker, price=float(trigger), collar_pct=_collar,
