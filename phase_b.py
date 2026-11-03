@@ -793,6 +793,10 @@ def phase_b_arm_allows(
             _sq_why = ew.after_square_refusal(sym, t_now, c)
             if _sq_why:
                 return False, _sq_why
+            if sym and getattr(ew, "_WR_TREND_HISTORY", {}).get(sym):
+                _wt_why = ew.wr_trend_refusal(sym, record, t_now, c)
+                if _wt_why:
+                    return False, _wt_why
 
         # 5m Slow %R pitch veto (ai_watch_wr_slow_5m_veto)
         _s5_why = ew.wr_slow_5m_refusal(sym, record, t_now, c)
@@ -1208,6 +1212,8 @@ def refresh_seat_indicators(
                         rec["pctr_gap"] = round(float(gap), 2)
                     ew.after_square_record(sym, rec, t0, c)
                     ew.wr_slow_5m_record(sym, rec, t0, c)
+                    if hasattr(ew, "wr_trend_record"):
+                        ew.wr_trend_record(sym, rec, t0, c)
                 else:
                     got = ew.live_exhaustion(sym, float(last), c, t0)
                     if got:
@@ -1828,6 +1834,8 @@ def tick(
             if hasattr(cp, "smart_zombie_cut_due"):
                 _sz_due, _sz_info = cp.smart_zombie_cut_due(pos, sym, now=t0, cfg=c)
                 if _sz_due:
+                    day = datetime.fromtimestamp(t0, tz=ET).strftime("%Y-%m-%d")
+                    _LOCKED_OUT_BY_DAY.setdefault(day, set()).add(sym)
                     events.append({"kind": "smart_dead_cut", "symbol": sym, **_sz_info})
                     try:
                         import phase_b_ledger as pbl
@@ -1858,6 +1866,9 @@ def tick(
                 _ch, _closed = cp.apply_local_trail(sym, pos, float(last), trail_events, trail_why)
                 for te in trail_events:
                     events.append({"kind": te.get("event") or "trail_event", "symbol": sym, **te})
+                    if te.get("event") in ("local_trail_working", "local_trail") and entry is not None and float(last) < float(entry) - 1e-9:
+                        day = datetime.fromtimestamp(t0, tz=ET).strftime("%Y-%m-%d")
+                        _LOCKED_OUT_BY_DAY.setdefault(day, set()).add(sym)
                     if te.get("event") in (
                         "local_trail_working", "local_trail", "local_trail_raised",
                         "profit_capture", "profit_capture_working",

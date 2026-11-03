@@ -4925,10 +4925,22 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: floa
             if float(mfe) + 1e-9 < be_k * sp:
                 be_hit = False
     if be_hit:
-        _be_cfg = (
-            {**cfg, "ai_breakeven_offset_px": cfg["ai_local_trail_be_offset_px"]}
-            if cfg.get("ai_local_trail_be_offset_px") is not None else cfg
+        try:
+            _step2_pct = float(cfg.get("ai_local_trail_be_step2_pct", 0) or 0)
+        except (TypeError, ValueError):
+            _step2_pct = 0.0
+        _cur_gain_pct = (
+            float(mfe) * float(risk) / float(entry) * 100.0
+            if (entry and risk and float(risk) > 0)
+            else 0.0
         )
+        if _step2_pct > 0 and _cur_gain_pct + 1e-9 < _step2_pct:
+            _be_cfg = cfg
+        else:
+            _be_cfg = (
+                {**cfg, "ai_breakeven_offset_px": cfg["ai_local_trail_be_offset_px"]}
+                if cfg.get("ai_local_trail_be_offset_px") is not None else cfg
+            )
         be_floor = breakeven_floor(entry, _be_cfg) or float(entry)
     else:
         be_floor = None
@@ -5322,6 +5334,34 @@ def apply_local_trail(
 
     if _profit_hit:
         last = trigger
+        _target_floor = (
+            round(_entry + _cap_px, 2)
+            if _cap_px > 0
+            else round(_entry * (1.0 + _cap_pct / 100.0), 2)
+        )
+        # Optional velocity-gated runner ratchet: when price surges to target within <= 120s
+        # with strong %R >= -15.0, lock a hard +0.20% floor and trail 0.06% behind peak
+        # instead of capping 100% of the breakout immediately.
+        if bool(_cfg_all().get("ai_profit_capture_runner_ratchet", False)):
+            _t0 = _num(pos.get("entry_time")) or time.time()
+            _hold_s = max(0.0, time.time() - float(_t0))
+            _pctr_now = _num(pos.get("pctr"))
+            if _hold_s <= 120.0 and _pctr_now is not None and float(_pctr_now) >= -15.0:
+                _pk = max(float(last), float(_num(pos.get("max_seen_price")) or last))
+                _ratchet_stop = max(_target_floor, round(_pk * (1.0 - 0.0006), 2))
+                if float(last) > _ratchet_stop + 1e-9:
+                    _cur_loc = _num(pos.get("local_stop_price")) or 0.0
+                    if _ratchet_stop > _cur_loc + 1e-9:
+                        pos["local_stop_price"] = _ratchet_stop
+                    _profit_hit = False
+
+    if _profit_hit:
+        last = trigger
+        _target_floor = (
+            round(_entry + _cap_px, 2)
+            if _cap_px > 0
+            else round(_entry * (1.0 + _cap_pct / 100.0), 2)
+        )
         if _premarket_working_sell_on(pos):
             bid = _premarket_bid(ticker)
             px = round(float(bid), 2) if bid and bid > 0 else None
@@ -5329,6 +5369,10 @@ def apply_local_trail(
                 px = round(float(last), 2)
             if px is None:
                 px = round(float(last), 2) if last and last > 0 else (round(float(loc), 2) if loc and loc > 0 else None)
+            if px is not None and _target_floor > 0:
+                # Floor profit-capture working sell at the target price so a wide pre-market
+                # bid-ask spread never turns a +0.20% ask trigger into an underwater bid dump.
+                px = max(px, _target_floor)
             if px is None:
                 pos["working_sell_state"] = "held_dark"
                 log_event("working_sell_dark", symbol=ticker, last=last, stop=loc)
@@ -5362,7 +5406,9 @@ def apply_local_trail(
             _cwait = float(_cfg_all().get("ai_exit_limit_collar_wait_sec", 2.0) or 2.0)
         except (TypeError, ValueError):
             _collar, _cwait = 0.0, 2.0
-        if _collar > 0 and trigger:
+        if bool(_cfg_all().get("ai_profit_capture_passive_exit", False)) and hasattr(alpaca_trader, "place_midpoint_exit"):
+            out = alpaca_trader.place_midpoint_exit(ticker, wait_sec=_cwait) or {}
+        elif _collar > 0 and trigger:
             out = alpaca_trader.close_out(
                 ticker, price=float(trigger), collar_pct=_collar,
                 collar_wait_sec=_cwait) or {}

@@ -15501,6 +15501,27 @@ def pullback_buystop_decide(
             rec.pop("pullback_buystop", None)
         return False, why_gate
 
+    # Enforce post-square cooldown, 5m slow %R pitch veto, and %R trend rise
+    # that were skipped inside should_arm_buy when exhaustion_rules was masked.
+    _t_now = float(now if now is not None else time.time())
+    _sq_ref = after_square_refusal(sym, _t_now, cfg)
+    if _sq_ref:
+        if isinstance(rec, dict):
+            rec.pop("pullback_buystop", None)
+        return False, _sq_ref
+    _s5_ref = wr_slow_5m_refusal(sym, rec, _t_now, cfg)
+    if _s5_ref:
+        if isinstance(rec, dict):
+            rec.pop("pullback_buystop", None)
+        return False, _s5_ref
+    _ind_d = rec.get("indicator") if isinstance(rec, dict) and isinstance(rec.get("indicator"), dict) else {}
+    if _ind_d.get("pctr") is not None or (isinstance(rec, dict) and rec.get("pctr") is not None):
+        _wt_ref = wr_trend_refusal(sym, rec, _t_now, cfg)
+        if _wt_ref:
+            if isinstance(rec, dict):
+                rec.pop("pullback_buystop", None)
+            return False, _wt_ref
+
     # Overhead resistance check (when ai_watch_ob_resist_skip is enabled)
     if bool((cfg or {}).get("ai_watch_ob_resist_skip", False)):
         try:
