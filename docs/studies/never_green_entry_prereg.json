@@ -104,6 +104,8 @@
   "ready": {
     "date": "2026-11-03",
     "operator": "Accept READY",
-    "tool": "tools/studies/never_green_entry.py (blob sha pinned here before the first label is fetched)"
+    "tool": "tools/studies/never_green_entry.py (blob sha pinned here before the first label is fetched)",
+    "tool_blob_sha": "f9c5e786bab3",
+    "implementation_note": "scikit-learn 1.9.1 installed 2026-11-03 (operator OK); the registered LogisticRegression(C=1.0, max_iter=2000) is the model, an exact Newton solver of the same objective is a tested cross-check."
   }
 }
