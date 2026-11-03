@@ -1,6 +1,6 @@
 {
   "id": "never_green_entry",
-  "status": "AMENDED_2 (skeptic round 2: all findings applied, the reviewer has nothing further). Awaiting the operator's READY. No tool written, nothing scored.",
+  "status": "READY (operator 2026-11-03 'Accept READY', after skeptic rounds 1-2 and amended_2). No tool written, nothing scored.",
   "registered": "2026-11-03",
   "operator": "2026-11-03 'do that' (entries are the bigger lever; #3: a pre-registered never-green predictor)",
   "question": "Using only facts the desk knows at the entry instant, can a fixed model pick out the entries that will never go green, well enough that refusing its riskiest 20% raises the mean net of the trades the desk keeps?",
@@ -100,5 +100,10 @@
     "N2": "spread_bp missing when ask <= bid (133/661 train, 49/265 h1, 26/149 h2: bid can be a stale fallback, ai_entry_watch.py:20311), winsorised at train p1/p99; the missing share is ~17-20% in every period.",
     "N3": "entry_time citation corrected; window starts at submission, compared with the fill price (known limit).",
     "N4": "late_into_square is 1 on 61 train / 14 h1 / 0 h2 rows: near-inert in test (known limit)."
+  },
+  "ready": {
+    "date": "2026-11-03",
+    "operator": "Accept READY",
+    "tool": "tools/studies/never_green_entry.py (blob sha pinned here before the first label is fetched)"
   }
 }
