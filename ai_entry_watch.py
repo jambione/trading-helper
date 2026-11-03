@@ -15454,6 +15454,142 @@ def range_arm_decide(rec: dict, sym: str, ask: Any, bid: Any, cfg: dict, now: fl
     return True, "range_arm"
 
 
+# ---------------------------------------------------------------------------
+# Pullback buy-stop SHADOW (ai_watch_pullback_shadow, default OFF; operator
+# 2026-11-03 "build loggers"). The 11/02 pullback arm traded with a 15-36 bp
+# structural stop and lost; this logs where its geometry WOULD have fired so
+# the entry can be scored on its own with the desk's normal exits. It never
+# arms, refuses, delays or resizes anything: no should_arm_buy call (that has
+# side effects on the record), no REST call. It reads ob_observe's stored
+# closed 1-minute bars and the quote poll_once already holds, and appends one
+# row per trigger to ai_reports/pullback_shadow/<day>.jsonl.
+# ---------------------------------------------------------------------------
+_PULLBACK_SHADOW_LAST: dict[str, float] = {}
+_PULLBACK_SHADOW_LOCK = threading.Lock()
+
+
+def pullback_shadow_on(cfg: dict | None) -> bool:
+    return bool((cfg or {}).get("ai_watch_pullback_shadow", False))
+
+
+def pullback_geometry(bars: list, ask: float, now: float, cfg: dict | None) -> dict | None:
+    """Pure: the 11/02 arm's leg-1 / pullback / buy-stop geometry on closed
+    1-minute bars (ts, open, high, low, close, ...), oldest first. Returns the
+    levels when ask is at or above the buy stop, else None. Same thresholds and
+    defaults as the reverted pullback_buystop_decide."""
+    c = cfg or {}
+
+    def _k(name: str, dflt: float) -> float:
+        try:
+            v = c.get(name, dflt)
+            return float(dflt if v is None else v)
+        except (TypeError, ValueError):
+            return float(dflt)
+
+    try:
+        ask_f = float(ask)
+    except (TypeError, ValueError):
+        return None
+    if not (ask_f > 0):
+        return None
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        d_now = datetime.fromtimestamp(float(now), ZoneInfo("America/New_York"))
+        t_open = d_now.replace(hour=9, minute=30, second=0, microsecond=0).timestamp()
+    except Exception:  # noqa: BLE001
+        return None
+    last_done = float(int(float(now) // 60) * 60 - 60)
+    closed = [b for b in (bars or []) if t_open <= float(b[0]) <= last_done]
+    if len(closed) < 10:
+        return None
+    recent = closed[-15:]
+    leg1_high = max(float(b[2]) for b in recent)
+    leg1_low = min(float(b[3]) for b in recent)
+    if leg1_low <= 0:
+        return None
+    leg1_gain = leg1_high / leg1_low - 1.0
+    if leg1_gain < _k("ai_watch_pullback_min_leg1_gain_pct", 0.35) / 100.0:
+        return None
+    dip = (leg1_high - ask_f) / leg1_high
+    if dip < _k("ai_watch_pullback_min_dip_pct", 0.10) / 100.0:
+        return None
+    if dip > _k("ai_watch_pullback_max_dip_pct", 1.50) / 100.0:
+        return None
+    pb_high = max(float(closed[-1][2]), float(closed[-2][2]))
+    pb_low = min(float(closed[-1][3]), float(closed[-2][3]))
+    buy_stop = round(pb_high + 0.01, 2)
+    stop_loss = round(pb_low - 0.01, 2)
+    risk = round(buy_stop - stop_loss, 2)
+    if risk < 0.02 or (risk / buy_stop) > 0.02:
+        return None
+    if ask_f < buy_stop:
+        return None
+    return {
+        "buy_stop": buy_stop,
+        "struct_stop": stop_loss,
+        "struct_stop_bp": round((ask_f - stop_loss) / ask_f * 1e4, 1),
+        "leg1_high": round(leg1_high, 4),
+        "leg1_low": round(leg1_low, 4),
+        "leg1_gain_pct": round(leg1_gain * 100.0, 3),
+        "dip_pct": round(dip * 100.0, 3),
+        "last_bar_ts": float(closed[-1][0]),
+    }
+
+
+def pullback_shadow_record(rec: dict, sym: str, ask: Any, bid: Any, cfg: dict | None,
+                           now: float, ob_fields: Any, main_ok: bool, main_why: Any) -> dict | None:
+    """OBSERVE ONLY. Append a row when the pullback geometry fires; at most one
+    row per symbol per ai_watch_pullback_shadow_gap_sec (default 120 s).
+    Returns the row written (for tests) or None. Never raises."""
+    if not pullback_shadow_on(cfg):
+        return None
+    try:
+        sym_u = str(sym or "").upper().strip()
+        if not sym_u:
+            return None
+        import ob_observe
+        geo = pullback_geometry(ob_observe.bars(sym_u), ask, now, cfg)
+        if geo is None:
+            return None
+        try:
+            gap = float((cfg or {}).get("ai_watch_pullback_shadow_gap_sec", 120.0) or 120.0)
+        except (TypeError, ValueError):
+            gap = 120.0
+        with _PULLBACK_SHADOW_LOCK:
+            last = _PULLBACK_SHADOW_LAST.get(sym_u)
+            if last is not None and float(now) - last < gap:
+                return None
+            _PULLBACK_SHADOW_LAST[sym_u] = float(now)
+        ind = rec.get("indicator") if isinstance(rec, dict) and isinstance(rec.get("indicator"), dict) else {}
+        ob = ob_fields if isinstance(ob_fields, dict) else {}
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        day = datetime.fromtimestamp(float(now), ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        row = {
+            "ts": round(float(now), 3),
+            "day": day,
+            "symbol": sym_u,
+            "ask": _f_or_none(ask),
+            "bid": _f_or_none(bid),
+            **geo,
+            "main_arm_ok": bool(main_ok),
+            "main_why": str(main_why or ""),
+            "cm_rsi": _f_or_none(ind.get("cm_rsi")),
+            "pctr": _f_or_none(ind.get("pctr")) if "pctr" in ind else _f_or_none(rec.get("pctr") if isinstance(rec, dict) else None),
+            "ob_room_pct": _f_or_none(ob.get("ob_room_pct")),
+            "ob_resist_0.3": ob.get("ob_resist_0.3"),
+            "source": (rec.get("source") if isinstance(rec, dict) else None),
+        }
+        out = Path(REPORT_DIR) / "pullback_shadow"
+        out.mkdir(parents=True, exist_ok=True)
+        with open(out / f"{day}.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, default=str) + "\n")
+        return row
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:
     """Throttled bar lows for double-bottom detection. Empty on failure."""
     sym = str(symbol or "").upper().strip()
@@ -19816,6 +19952,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if _ob_resist_refusal(_ob_arm, cfg, rec) and ok_arm:
             ok_arm, why = False, ("ob_resist" if (_ob_resist_skip_on(cfg) and isinstance(_ob_arm, dict)
                                                  and _ob_arm.get("ob_resist_0.3") is True) else "ob_resist_ob")
+        # Pullback buy-stop shadow: observe only, after the decision it describes.
+        if pullback_shadow_on(cfg):
+            pullback_shadow_record(rec, sym, ask_f, bid_f, cfg, t0, _ob_arm, bool(ok_arm), why)
         # The counterfactual record. arm_ok False with in_zone True is the row
         # that pays for this whole mechanism: price was in the zone and the
         # desk declined, and nothing else on disk says what that cost.

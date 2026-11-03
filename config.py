@@ -1396,6 +1396,10 @@ DEFAULT_CONFIG = {
     # Default OFF. Operator-approved observe-only 2026-10-05; a skip gate is a
     # separate decision (pre-registered test + held-out sessions + review).
     "ai_watch_ob_observe":             False,
+    # Pullback buy-stop SHADOW (operator 2026-11-03): log where the reverted
+    # 11/02 pullback arm's geometry would fire. Observe only; never arms.
+    "ai_watch_pullback_shadow":        False,
+    "ai_watch_pullback_shadow_gap_sec": 120.0,
     # HARD SKIP (operator decision 2026-10-05, after the tradeoffs): refuse an
     # arm when ob_resist_0.3 is True (price inside, or within 0.3% under, a
     # charted resistance order block). Implies the observe computation. Fails
