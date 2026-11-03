@@ -1,0 +1,104 @@
+{
+  "id": "never_green_entry",
+  "status": "AMENDED_2 (skeptic round 2: all findings applied, the reviewer has nothing further). Awaiting the operator's READY. No tool written, nothing scored.",
+  "registered": "2026-11-03",
+  "operator": "2026-11-03 'do that' (entries are the bigger lever; #3: a pre-registered never-green predictor)",
+  "question": "Using only facts the desk knows at the entry instant, can a fixed model pick out the entries that will never go green, well enough that refusing its riskiest 20% raises the mean net of the trades the desk keeps?",
+  "why_this_target": "Never-green trades (no print at or above entry +5 bp) lose about -24 bp each and are 27-52% of fills; earlier studies predicted RETURN and found name facts lift win rate, not mean (memory name-selection-lifts-win-rate-not-mean, buying-the-top-is-not-the-loss, board-names-gates-fail). This asks the narrower question first, then requires the mean to move.",
+  "prior_evidence_against": [
+    "room/overbought-age/stall gates FAILED on 871 fills (buying-the-top-is-not-the-loss)",
+    "stacked name facts hit 63-69% win held out but net60 ~0 (name-selection-lifts-win-rate-not-mean)",
+    "board-name gates $30/early-runway/50d/$500M FAILED 10/14",
+    "RSI/MACD events <= random (rsi-and-macd-gap-add-nothing)"
+  ],
+  "population": {
+    "trades": "desk entries (outcomes.jsonl, entry_path watch), read ONLY from single-day folders ai_reports/tapes/YYYY-MM-DD/ (never the rolling window folders), de-duplicated by (symbol, round(entry_time)), entry 09:30-15:50 ET, entry price >= $20",
+    "excluded": "MagicMock/TEST/non-ticker symbols; 2026-11-02 and 2026-11-03 (the changed desk, reverted); rows without entry_price, exit_price or entry_time"
+  },
+  "label": {
+    "never_green": "the HIGH of every 1-minute SIP bar whose START time is in (entry_time, entry_time + 300 s] is below entry_price x 1.0005. entry_time is set when the position is created at order submission (ai_positions.py:2457, time.time()); entry_price is later overwritten by the broker fill (ai_positions.py:7331).",
+    "why_bars_not_peak_price": "peak_price depends on how long the desk held; a bar label is the same for every exit rule",
+    "source": "Alpaca historical SIP 1-minute bars (data key, after the close), one request per symbol-day",
+    "cross_check_report_only": "also report the peak_price label (peak below entry +5 bp) and its agreement with the bar label; it depends on hold length (12-15% of holds are under 60 s), so it is never the scored label"
+  },
+  "features_entry_known_only": {
+    "numeric": [
+      "pctr",
+      "pctr_slow",
+      "entry_exhaustion",
+      "cm_rsi",
+      "pct_change",
+      "proximity_pct",
+      "dwell_sec",
+      "entry_hour_et",
+      "log(entry_price)",
+      "spread_bp = (features.ask - features.bid) / mid x 1e4; MISSING when ask <= bid; winsorised at the TRAIN p1/p99"
+    ],
+    "categorical_one_hot": [
+      "source",
+      "arm_why"
+    ],
+    "derived": [
+      "late_into_square (1 if entry_time - square_since >= 60 s, square_since known before entry; else 0)",
+      "reentry_same_day (1 if the desk had an earlier trade on this symbol this session whose exit_time < this entry_time)",
+      "prior_exit_won (1 if that earlier trade's exit price was above its entry; else 0)"
+    ],
+    "missing": "each numeric feature gets a missing indicator; the value is the TRAIN median. A category unseen in TRAIN encodes as all zeros.",
+    "never_used": "anything stamped at or after exit: exit_*, mfe_r, mae_r, peak_price, give_r_at_exit, hold_sec, close_reason, realized_*, extension_class (computed from mfe_r: outcome-derived), exh_seat_class / exh_seat_class_fill (equal to each other in all rows and near-copies of arm_why), rvol (definition changed 10/14 by the movers-RVOL fix, inside the test window), spread_r (in R units, moves with the stop config), ob_room_pct and vol_1m_pct (train coverage 0.15 and 0.58: their missing flags would mark the era, not the trade), pctr_gap (train coverage 527/661 = 0.797, under the 0.80 rule)"
+  },
+  "model": {
+    "kind": "logistic regression, L2, C = 1.0, features standardised on TRAIN only (scikit-learn LogisticRegression(max_iter=2000))",
+    "fit_once": "fit on TRAIN; no tuning, no feature selection, no threshold search on TEST",
+    "block_rule": "refuse the entries whose predicted never-green probability is at or above the TRAIN 80th percentile (top 20% risk by the train cut)"
+  },
+  "split": {
+    "train": "2026-09-11 .. 2026-10-09",
+    "test": "2026-10-12 .. 2026-10-30",
+    "test_half_1": "2026-10-12 .. 2026-10-21",
+    "test_half_2": "2026-10-22 .. 2026-10-30",
+    "note": "The operator and Claude have looked at never-green RATES on 10/26-10/30 (27%), never at which features predict them."
+  },
+  "metrics": {
+    "M1_discrimination": "TEST AUC of the predicted probability vs the never_green label",
+    "M2_lift": "mean actual net bp of KEPT test trades minus mean of ALL test trades; net = (exit - entry)/entry x 1e4 - 3 bp round trip",
+    "M3_vs_random": "M2 against 2,000 random blocks that refuse, in each session, the SAME number of trades the model refused there (seeded 20261103)"
+  },
+  "verdict_rules": {
+    "VOID": "fewer than 400 TRAIN or 250 TEST trades, or either test half < 120, or more than 10% of trades without a bar label, or the realised test block fraction outside 10-35%",
+    "PASS": "AUC >= 0.60 with the session-bootstrap 95% lower bound > 0.55, AND M2 >= +2.0 bp with a day-clustered t >= 2.0, AND M2 > 0 in both test halves, AND M2 beats >= 95% of the random blocks",
+    "FAIL": "AUC lower bound <= 0.50, OR M2 <= 0",
+    "PROMISING": "M2 > 0 in both halves, AUC > 0.55, and M2 beats >= 80% of the random blocks, but the PASS bar is missed",
+    "otherwise": "INCONCLUSIVE",
+    "precedence": "VOID, then FAIL, then PASS, then PROMISING, else INCONCLUSIVE"
+  },
+  "known_limits": [
+    "Refusing an entry frees a seat the desk may refill; the replacement trade is not modelled (marketable_limit row 60 failed on exactly this). A PASS earns a replay A/B with the refusal live, not a ship.",
+    "Desk configs changed often over 9/11-10/30; the model sees a mixture of desks.",
+    "The SIP bar label sees prints the IEX desk could not; it is the outcome, not a decision input.",
+    "Arm mix and config shift between train and test (half 2 is one config, all last_presquare); a pass on half 2 says little about other arms.",
+    "Sizes from the round-1 probe: train 661 trades / 21 sessions, test 414 / 15 (h1 265, h2 149).",
+    "The label window starts at order submission but is compared with the FILL price; prints between submission and fill can fall inside the window.",
+    "late_into_square (square_since) exists on 219 train rows, 19 in test half 1 and 0 in half 2; it contributes almost nothing in test and overlaps the square arms."
+  ],
+  "rules": "Nothing in this file changes after the first label is fetched, except by an operator-approved amendment before scoring.",
+  "amended_1": {
+    "date": "2026-11-03",
+    "why": "result-skeptic round 1",
+    "B1": "extension_class dropped (outcome-derived via mfe_r, ai_positions._outcome_extension_class); replaced by late_into_square from square_since only.",
+    "M2_arm_mix_shift": "train arm_why 260 last_presquare / 189 last_overbought / 107 none; test half 2 is all last_presquare and essentially one config. Kept, with unseen categories all-zero. REPORT-ONLY sensitivity: the same model fit on train last_presquare + last_mid_rise rows only.",
+    "M3_era_flags": "features with train coverage < 0.80 are dropped (ob_room_pct, vol_1m_pct).",
+    "M4_block_drift": "VOID if the realised TEST block fraction is outside 10-35%. Random blocks match the realised blocked count per session. Each test half needs >= 120 trades.",
+    "M5_label": "window and entry_time defined above; peak_price label reported beside.",
+    "M6_tiers": "PROMISING also needs M2 to beat >= 80% of random blocks. Rule precedence: VOID, then FAIL, then PASS, then PROMISING, else INCONCLUSIVE.",
+    "m7": "spread from features.ask/bid in bp; rvol dropped.",
+    "m8": "single-day tape folders only; re-entry flags require the prior exit before this entry. In a live counterfactual a refusal changes later re-entry flags (noted, not modelled)."
+  },
+  "amended_2": {
+    "date": "2026-11-03",
+    "why": "result-skeptic round 2 (its last round: 'nothing further once N1, N2 are in')",
+    "N1": "pctr_gap dropped (coverage 0.797 < 0.80).",
+    "N2": "spread_bp missing when ask <= bid (133/661 train, 49/265 h1, 26/149 h2: bid can be a stale fallback, ai_entry_watch.py:20311), winsorised at train p1/p99; the missing share is ~17-20% in every period.",
+    "N3": "entry_time citation corrected; window starts at submission, compared with the fill price (known limit).",
+    "N4": "late_into_square is 1 on 61 train / 14 h1 / 0 h2 rows: near-inert in test (known limit)."
+  }
+}
