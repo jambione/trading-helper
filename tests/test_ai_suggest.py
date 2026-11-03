@@ -368,6 +368,10 @@ def test_prompt_requires_freshness_and_x_guidance():
     assert "x.com" in low or "x_search" in low
     assert "48 hour" in low or "48h" in low or "last 48" in low
     assert "do not re-list" in low or "re-validat" in low
+    # Desk floor is $20. A $10 floor keeps offering names below_min_price rejects.
+    assert "$20.00 <= last < $100.00" in text
+    assert "$10.00" not in text
+    assert "$10 <=" not in text
 
 
 def test_desk_snapshot_rs_trending_and_peer(tmp_path):

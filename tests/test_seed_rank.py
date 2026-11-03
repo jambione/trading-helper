@@ -318,3 +318,120 @@ def test_stale_seed_rank_board_is_ignored(monkeypatch, tmp_path):
     (tmp_path / "seed_rank_agy.json").write_text(json.dumps(stale))
     rows = ew.research_candidate_rows()
     assert not any(r.get("symbol") == "OLD" for r in rows)
+
+
+def test_research_candidates_preserve_quotes_and_tag_gx_consensus(monkeypatch, tmp_path):
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
+    (tmp_path / "claude_suggestions.json").write_text(json.dumps({
+        "source": "agy",
+        "rows": [
+            {"symbol": "NOVEL", "score": 8.2, "reason": "FDA approval",
+             "price": 24.5, "pct_change": 6.4, "rvol": 2.3, "vol_session": 500000},
+            {"symbol": "BOTH", "score": 8.0, "reason": "earnings beat"},
+        ],
+    }))
+    (tmp_path / "grok_suggestions.json").write_text(json.dumps({
+        "source": "xai",
+        "rows": [
+            {"symbol": "BOTH", "score": 8.8, "reason": "raised guidance",
+             "price": 31.0, "pct_change": 9.1, "rvol": 3.1},
+        ],
+    }))
+    (tmp_path / "seed_rank_gx.json").write_text(json.dumps({
+        "ts": time.time(),
+        "kind": "seed_rank",
+        "source": "gx",
+        "watch_facing": True,
+        "rows": [
+            {"symbol": "MOV", "score": 9.0, "reason": "top mover",
+             "source_mark": "GX", "primary_source": "both"},
+        ],
+    }))
+
+    rows = {r["symbol"]: r for r in ew.research_candidate_rows()}
+    assert rows["NOVEL"]["price"] == 24.5
+    assert rows["NOVEL"]["pct_change"] == 6.4
+    assert rows["NOVEL"]["rvol"] == 2.3
+    assert rows["NOVEL"]["vol_session"] == 500000
+
+    assert rows["BOTH"]["gx_agree"] is True
+    assert "gx_agree" in rows["BOTH"]["criteria"]
+    assert rows["BOTH"]["score"] == 8.8
+    assert rows["BOTH"]["price"] == 31.0
+
+    assert rows["MOV"]["gx_agree"] is True
+    assert "seed_rank" in rows["MOV"]["criteria"]
+    assert "seed_rank_gx" in rows["MOV"]["criteria"]
+    assert "gx_agree" in rows["MOV"]["criteria"]
+
+
+def test_seed_rank_overlap_tags_existing_mover_and_boosts_priority(monkeypatch, tmp_path):
+    import ai_entry_watch as ew
+    import book_server as bs
+
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
+    (tmp_path / "movers_stocks.json").write_text(json.dumps({
+        "ts": time.time(),
+        "rows": [
+            {"symbol": "AGREE", "price": 25.0, "pct_change": 15.0,
+             "rvol": 3.0, "dollar_volume": 8e6},
+            {"symbol": "PLAIN", "price": 25.0, "pct_change": 15.0,
+             "rvol": 3.0, "dollar_volume": 8e6},
+        ],
+    }))
+    (tmp_path / "seed_rank_gx.json").write_text(json.dumps({
+        "ts": time.time(),
+        "kind": "seed_rank",
+        "source": "gx",
+        "watch_facing": True,
+        "rows": [
+            {"symbol": "AGREE", "score": 9.1, "reason": "consensus mover",
+             "source_mark": "GX", "primary_source": "both"},
+        ],
+    }))
+    monkeypatch.setattr(ew, "_live_quote_map", lambda: ({}, {}))
+    monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [])
+
+    cfg = {
+        "ai_watch_seed_momentum": False,
+        "ai_watch_seed_trending": False,
+        "ai_watch_seed_movers": True,
+        "ai_watch_seed_research": True,
+        "ai_watch_seed_bb_live": False,
+        "ai_watch_min_price": 20.0,
+        "ai_max_price": 100.0,
+    }
+    cands = {r["symbol"]: r for r in ew.desk_candidate_rows(cfg)}
+    assert cands["AGREE"]["source"] == "movers"
+    assert "seed_rank_gx" in cands["AGREE"]["criteria"]
+    assert "gx_agree" in cands["AGREE"]["criteria"]
+    assert cands["AGREE"].get("gx_agree") is True
+
+    # Priority boost in both book_server and soft_seed_scout_score
+    assert bs.seat_priority(cands["AGREE"]) > bs.seat_priority(cands["PLAIN"])
+    assert ew.soft_seed_scout_score(cands["AGREE"], cfg) > ew.soft_seed_scout_score(cands["PLAIN"], cfg)
+
+
+def test_research_exempt_from_pre_admit_no_tape_deadlock(monkeypatch):
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: None)
+    monkeypatch.setattr("float_feed.float_shares", lambda s: 25.0, raising=False)
+    cfg = {
+        "ai_watch_require_uptrend": True,
+        "ai_watch_require_indicators": False,
+        "ai_watch_min_price": 20.0,
+        "ai_min_dollar_volume": 0.0,
+        "ai_watch_max_float_m": 800.0,
+        "ai_watch_min_rvol": 1.5,
+        "ai_watch_admit_max_tape_age_sec": 120.0,
+    }
+    ok, _met, why = ew.passes_inclusion(
+        {"symbol": "THESIS", "source": "agy", "price": 28.0,
+         "pct_change": 4.5, "rvol": 2.2, "criteria": ["research"]},
+        cfg,
+    )
+    assert ok is True and why == ""
+
