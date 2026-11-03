@@ -1985,9 +1985,10 @@ function _bookGateChecks(r) {
   }
   const age = num(r.g_tape_age), ageMax = num(r.g_tape_max);
   if (ageMax != null && ageMax > 0) {
+    const isStale = age == null || age > ageMax + 1e-9;
     out.push({
-      key: 'tape', text: age == null ? 'tape ?' : `${Math.round(age)}s`,
-      ok: age == null ? null : age <= ageMax + 1e-9,
+      key: 'tape', text: isStale ? 'stale' : `${Math.round(age)}s`,
+      ok: !isStale,
       title: `Last print ${age == null ? 'age unknown' : `${age.toFixed(1)} s old`} vs ceiling ${ageMax.toFixed(0)} s`,
     });
   }
@@ -2010,9 +2011,9 @@ function _bookGateChecks(r) {
     const ok = r.g_s5_ok === true;
     out.push({
       key: 's5',
-      text: ok ? '5m%R↑' : '5m%R↓',
+      text: ok ? '5m ↑' : '5m ↓',
       ok: ok,
-      title: ok ? '5m Slow %R: Pitch is rising / positive (clears veto)' : '5m Slow %R: Pitch is falling / negative (vetoed)',
+      title: ok ? '5m Momentum: RISING (clears veto)' : '5m Momentum: FALLING (vetoed)',
     });
   }
   if (r.g_leg1_active) {
@@ -2034,32 +2035,6 @@ function _bookGateChecks(r) {
       title: 'Resistance barrier within 0.3%: entry refused (overhead order block ceiling)',
     });
   }
-  // Room to Resistance Gate (>= 0.20% when active)
-  const room = num(r.g_ob_room), roomMin = num(r.g_ob_room_min);
-  if (room != null) {
-    const ok = (roomMin != null && roomMin > 0) ? room >= roomMin : true;
-    out.push({
-      key: 'room',
-      text: `rm ${room.toFixed(1)}%`,
-      ok: ok,
-      title: (roomMin != null && roomMin > 0)
-        ? `Overhead room to resistance ${room.toFixed(2)}% vs minimum ${roomMin.toFixed(2)}% (${ok ? 'PASS' : 'FAIL - tight ceiling'})`
-        : `Overhead room to resistance: ${room.toFixed(2)}%`,
-    });
-  }
-  // CM RSI Gate (<= cap when active)
-  const cm = num(r.g_cm_rsi), cmMax = num(r.g_cm_rsi_max);
-  if (cm != null) {
-    const ok = (cmMax != null && cmMax > 0) ? cm <= cmMax : true;
-    out.push({
-      key: 'cm_rsi',
-      text: `cm ${Math.round(cm)}`,
-      ok: ok,
-      title: (cmMax != null && cmMax > 0)
-        ? `CM RSI ${cm.toFixed(1)} vs cap ${cmMax.toFixed(0)} (${ok ? 'PASS - healthy' : 'FAIL - pegged overbought'})`
-        : `CM RSI ${cm.toFixed(1)} (live indicator)`,
-    });
-  }
   // Pullback Buy-Stop Trigger / Leg 3 Status
   const pbTrig = num(r.g_pb_trigger);
   if (pbTrig != null && r.g_pb_arm) {
@@ -2079,7 +2054,7 @@ function _bookGateChecks(r) {
 
 function _bookGatesText(r) {
   // Failing gates first: if the cell ellipses, it cuts a passing reading, never the blocker.
-  const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : ['resist', 'room', 'cm_rsi', 'pb_trig'].includes(x.key) ? 2 : 3);
+  const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : ['resist', 'pb_trig'].includes(x.key) ? 2 : 3);
   const c = _bookGateChecks(r).slice().sort((a, b) => rank(a) - rank(b));
   return c.length ? c.map(x => x.text).join(' · ') : '—';
 }
