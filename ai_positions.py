@@ -5311,7 +5311,9 @@ def apply_local_trail(
     _is_dual = int(pos.get("qty_a") or 0) > 0 and int(pos.get("qty_b") or 0) > 0
     _profit_hit = False
     if not raise_only and not _is_dual and trigger is not None and _entry is not None and _entry > 0:
-        if _cap_px > 0 and (float(trigger) - _entry) + 1e-9 >= _cap_px:
+        if loc is not None and trigger <= loc + 1e-9:
+            pass  # Broken stop: handle via _trail_hit below
+        elif _cap_px > 0 and (float(trigger) - _entry) + 1e-9 >= _cap_px:
             _profit_hit = True
         elif _cap_pct > 0:
             _gain_pct = (float(trigger) - _entry) / _entry * 100.0
@@ -5320,6 +5322,40 @@ def apply_local_trail(
 
     if _profit_hit:
         last = trigger
+        if _premarket_working_sell_on(pos):
+            bid = _premarket_bid(ticker)
+            px = round(float(bid), 2) if bid and bid > 0 else None
+            if px is not None and last and float(last) > 0 and abs(px - float(last)) / float(last) > 0.15:
+                px = round(float(last), 2)
+            if px is None:
+                px = round(float(last), 2) if last and last > 0 else (round(float(loc), 2) if loc and loc > 0 else None)
+            if px is None:
+                pos["working_sell_state"] = "held_dark"
+                log_event("working_sell_dark", symbol=ticker, last=last, stop=loc)
+                return True, False
+            if _rest_working_sell(ticker, pos, px, "flatten"):
+                pos["working_sell_flatten_since"] = time.time()
+            exit_why[ticker] = "profit_capture"
+            pos["closing_reason"] = "profit_capture"
+            events.append({
+                "ticker": ticker,
+                "event": "profit_capture_working",
+                "last": last,
+                "entry": _entry,
+                "limit": px,
+                "gain": round(last - _entry, 4),
+                "gain_pct": round((last - _entry) / _entry * 100.0, 2),
+            })
+            log_event(
+                "profit_capture_working",
+                symbol=ticker,
+                last=last,
+                entry=_entry,
+                limit=px,
+                gain=round(last - _entry, 4),
+                gain_pct=round((last - _entry) / _entry * 100.0, 2),
+            )
+            return True, False
         alpaca_trader.cancel_open_orders(ticker)
         try:
             _collar = float(_cfg_all().get("ai_exit_limit_collar_pct", 0.0) or 0.0)
@@ -5386,6 +5422,8 @@ def apply_local_trail(
         if _premarket_working_sell_on(pos):
             bid = _premarket_bid(ticker)
             px = round(float(bid), 2) if bid and bid > 0 else None
+            if px is not None and last and float(last) > 0 and abs(px - float(last)) / float(last) > 0.15:
+                px = round(float(last), 2)
             if px is None:
                 px = round(float(last), 2) if last and last > 0 else (round(float(loc), 2) if loc and loc > 0 else None)
             if px is None:
@@ -8446,6 +8484,29 @@ def manage_open_positions(
         _sz_due, _sz_info = smart_zombie_cut_due(pos, ticker, indicators, now)
         if _sz_due:
             alpaca_trader.cancel_open_orders(ticker)
+            if _premarket_working_sell_on(pos):
+                bid = _premarket_bid(ticker)
+                px = round(float(bid), 2) if bid and bid > 0 else None
+                if px is None:
+                    _last = pos.get("current_price") or pos.get("last_price") or pos.get("last_seen_price")
+                    px = round(float(_last), 2) if _last and float(_last) > 0 else None
+                if px is not None:
+                    _rest_working_sell(ticker, pos, px, "flatten")
+                    pos["working_sell_flatten_since"] = now
+                pos["closing_reason"] = "smart_dead_cut"
+                exit_why[ticker] = "smart_dead_cut"
+                events.append({
+                    "ticker": ticker, "event": "smart_dead_cut_working",
+                    "limit": px,
+                    **_sz_info,
+                })
+                log_event(
+                    "smart_dead_cut_working", symbol=ticker,
+                    limit=px,
+                    **_sz_info,
+                )
+                changed = True
+                continue
             out = alpaca_trader.close_out(ticker) or {}
             if isinstance(out, dict) and out.get("order_id"):
                 pos["close_order_id"] = str(out["order_id"])

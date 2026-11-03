@@ -780,9 +780,34 @@ def phase_b_arm_allows(
         except Exception as e:  # noqa: BLE001
             return False, f"phase_b_arm_unavailable:{e}"
 
-        ok_exh, why_exh = ew.exhaustion_allows_buy(record, c)
+        t_now = float(now if now is not None else time.time())
+        ok_exh, why_exh = ew.exhaustion_allows_buy(record, c, now=t_now)
         if not ok_exh:
             return False, why_exh
+
+        # Operator presquare_only gate (matches RTH should_arm_buy)
+        if bool(c.get("ai_watch_presquare_only", False)) and why_exh != "presquare":
+            return False, "not_presquare"
+
+        if why_exh == "presquare":
+            _sq_why = ew.after_square_refusal(sym, t_now, c)
+            if _sq_why:
+                return False, _sq_why
+
+        # 5m Slow %R pitch veto (ai_watch_wr_slow_5m_veto)
+        _s5_why = ew.wr_slow_5m_refusal(sym, record, t_now, c)
+        if _s5_why:
+            return False, _s5_why
+
+        # Re-entry cooldown gate (ai_reentry_cooldown_sec)
+        try:
+            cool = float(c.get("ai_reentry_cooldown_sec", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            cool = 0.0
+        if cool > 0 and sym:
+            last_exit = ew._recent_exit_ts(sym)
+            if last_exit and (t_now - float(last_exit)) < cool:
+                return False, "reentry_cooldown"
     else:
         ok_legacy, why_legacy = _legacy_arm_allows(record, c)
         if not ok_legacy:
@@ -1008,6 +1033,13 @@ def book_rows_for_dashboard(
             b_code = "premarket"
             b_label = "premarket"
 
+        gate_wires: dict[str, Any] = {}
+        try:
+            import ai_entry_watch as ew
+            gate_wires = ew._gate_wire_fields(rec, sym, now=t0)
+        except Exception:
+            pass
+
         row = {
             "symbol": sym,
             "phase": "ready" if is_ready else "watching",
@@ -1028,8 +1060,9 @@ def book_rows_for_dashboard(
             "last_ask_age_sec": age,
             "price_age_sec": age,
             "decision_max_age_sec": max_age,
-            "g_tape_age": age,
-            "g_tape_max": max_age,
+            **gate_wires,
+            "g_tape_age": age if age is not None else gate_wires.get("g_tape_age"),
+            "g_tape_max": max_age if max_age is not None else gate_wires.get("g_tape_max"),
             "phase_b": True,
             "is_position": False,
             "reason": f"Phase B ({st})",
@@ -1150,17 +1183,41 @@ def refresh_seat_indicators(
         if last is not None:
             try:
                 import ai_entry_watch as ew
-                got = ew.live_exhaustion(sym, float(last), c, t0)
-                if got:
-                    pctr_w, exh, rising, falling = got
-                    ind["pctr_williams"] = pctr_w
-                    ind["exhaustion"] = exh
-                    # Phase B arm band reads exhaustion; keep rising bits honest.
-                    ind["pctr_rising"] = bool(rising)
-                    ind["pctr_falling"] = bool(falling)
-                    # Also expose 0–100 on pctr for seats that only look there.
-                    if exh is not None:
-                        ind["pctr"] = float(exh)
+                pair = ew.live_exhaustion_pair(sym, float(last), c, t0)
+                if pair:
+                    pctr = pair.get("fast")
+                    pctr_slow = pair.get("slow")
+                    ind["pctr"] = round(float(pctr), 2) if pctr is not None else None
+                    ind["pctr_williams"] = ind["pctr"]
+                    ind["pctr_slow"] = round(float(pctr_slow), 2) if pctr_slow is not None else None
+                    ind["pctr_rising"] = bool(pair.get("fast_rising"))
+                    ind["pctr_falling"] = bool(pair.get("fast_falling"))
+                    ind["pctr_slow_rising"] = bool(pair.get("slow_rising"))
+                    ind["pctr_slow_falling"] = bool(pair.get("slow_falling"))
+                    ind["pctr_ob"] = bool(pair.get("ob"))
+                    ind["pctr_tight"] = bool(pair.get("tight"))
+                    if pair.get("gap") is not None:
+                        ind["pctr_gap"] = round(float(pair["gap"]), 2)
+                    if pctr is not None:
+                        ind["exhaustion"] = max(0.0, min(100.0, 100.0 + float(pctr)))
+
+                    # Classify seat quality & stamp gate tracking
+                    cls, gap = ew.classify_exh_seat(rec, c, ind=ind)
+                    rec["exh_seat_class"] = cls
+                    if gap is not None:
+                        rec["pctr_gap"] = round(float(gap), 2)
+                    ew.after_square_record(sym, rec, t0, c)
+                    ew.wr_slow_5m_record(sym, rec, t0, c)
+                else:
+                    got = ew.live_exhaustion(sym, float(last), c, t0)
+                    if got:
+                        pctr_w, exh, rising, falling = got
+                        ind["pctr_williams"] = pctr_w
+                        ind["exhaustion"] = exh
+                        ind["pctr_rising"] = bool(rising)
+                        ind["pctr_falling"] = bool(falling)
+                        if exh is not None:
+                            ind["pctr"] = float(pctr_w) if pctr_w is not None else (float(exh) - 100.0)
             except Exception:
                 pass
             rec["price"] = float(last)
@@ -1169,8 +1226,10 @@ def refresh_seat_indicators(
         # Normalize: if only Williams pctr present, derive exhaustion.
         if ind.get("exhaustion") is None:
             raw = _f(ind.get("pctr"))
-            if raw is not None and float(raw) <= 0.0:
+            if raw is not None and -100.5 <= float(raw) <= 0.5:
                 ind["exhaustion"] = max(0.0, min(100.0, 100.0 + float(raw)))
+            elif raw is not None and float(raw) > 0.0:
+                ind["exhaustion"] = max(0.0, min(100.0, float(raw)))
 
         rec["indicator"] = ind
         rec["indicator_ts"] = t0
@@ -1738,6 +1797,56 @@ def tick(
             last = _f(pos.get("last_seen_price"))
         entry = _f(pos.get("entry_price"))
 
+        # Flatten window / past flat deadline takes precedence: mandatory session close.
+        if phase_b_flatten_active(t0, c) or phase_b_past_flat_deadline(t0, c):
+            events.append({"kind": "flatten", "symbol": sym, "last": last})
+            try:
+                import phase_b_ledger as pbl
+                pbl.log_event(
+                    "flatten",
+                    symbol=sym,
+                    last=last,
+                    past_deadline=phase_b_past_flat_deadline(t0, c),
+                    cfg=c,
+                    ts=t0,
+                )
+            except Exception:
+                pass
+            if not dry_run(c) and working_sell_on(c):
+                try:
+                    import ai_positions as cp
+                    px = _f(last) or _f(pos.get("last_seen_price"))
+                    if px is not None and px > 0 and hasattr(cp, "_rest_working_sell"):
+                        cp._rest_working_sell(sym, pos, float(px), "flatten")
+                except Exception:
+                    pass
+            continue
+
+        # Smart 5-minute zombie cut: early stop on stagnant losers before bleeding to cutoff.
+        try:
+            import ai_positions as cp
+            if hasattr(cp, "smart_zombie_cut_due"):
+                _sz_due, _sz_info = cp.smart_zombie_cut_due(pos, sym, now=t0, cfg=c)
+                if _sz_due:
+                    events.append({"kind": "smart_dead_cut", "symbol": sym, **_sz_info})
+                    try:
+                        import phase_b_ledger as pbl
+                        pbl.log_event("smart_dead_cut", symbol=sym, cfg=c, ts=t0, **_sz_info)
+                    except Exception:
+                        pass
+                    if not dry_run(c) and working_sell_on(c):
+                        try:
+                            bid = cp._premarket_bid(sym)
+                            px = round(float(bid), 2) if bid and bid > 0 else (_f(last) or _f(pos.get("last_seen_price")))
+                            if px is not None and px > 0 and hasattr(cp, "_rest_working_sell"):
+                                cp._rest_working_sell(sym, pos, float(px), "flatten")
+                                pos["working_sell_flatten_since"] = t0
+                        except Exception:
+                            pass
+                    continue
+        except Exception:
+            pass
+
         # Ratchet stop exit logic: update excursions and evaluate local trail shelf
         if last is not None:
             try:
@@ -1749,7 +1858,10 @@ def tick(
                 _ch, _closed = cp.apply_local_trail(sym, pos, float(last), trail_events, trail_why)
                 for te in trail_events:
                     events.append({"kind": te.get("event") or "trail_event", "symbol": sym, **te})
-                    if te.get("event") in ("local_trail_working", "local_trail", "local_trail_raised"):
+                    if te.get("event") in (
+                        "local_trail_working", "local_trail", "local_trail_raised",
+                        "profit_capture", "profit_capture_working",
+                    ):
                         try:
                             import phase_b_ledger as pbl
                             pbl.log_event(
@@ -1790,29 +1902,6 @@ def tick(
                     if hasattr(cp, "_rest_working_sell"):
                         # Aggressive flatten mark — use last as sell px.
                         cp._rest_working_sell(sym, pos, float(last), "flatten")
-                except Exception:
-                    pass
-
-        if phase_b_flatten_active(t0, c) or phase_b_past_flat_deadline(t0, c):
-            events.append({"kind": "flatten", "symbol": sym, "last": last})
-            try:
-                import phase_b_ledger as pbl
-                pbl.log_event(
-                    "flatten",
-                    symbol=sym,
-                    last=last,
-                    past_deadline=phase_b_past_flat_deadline(t0, c),
-                    cfg=c,
-                    ts=t0,
-                )
-            except Exception:
-                pass
-            if not dry_run(c) and working_sell_on(c):
-                try:
-                    import ai_positions as cp
-                    px = _f(last) or _f(pos.get("last_seen_price"))
-                    if px is not None and px > 0 and hasattr(cp, "_rest_working_sell"):
-                        cp._rest_working_sell(sym, pos, float(px), "flatten")
                 except Exception:
                     pass
 
