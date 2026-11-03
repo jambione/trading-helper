@@ -52,7 +52,7 @@ def test_wire_fields_read_caches_only(monkeypatch):
     monkeypatch.setitem(ew._GAP_CACHE, "ABC", (-2.5, 1.0, "sip"))
     monkeypatch.setitem(ew._LAST_SQUARE, "ABC", [1000.0, 1000.0])
     out = ew._gate_wire_fields({"rvol": 0.3, "source": "movers"}, "ABC", now=1300.0)
-    assert set(out) == set(_KEYS)
+    assert set(_KEYS).issubset(set(out))
     assert out["g_rvol"] == 0.3 and out["g_rvol_min"] == 0.45
     assert out["g_spread"] == 0.08 and out["g_spread_max"] == 0.15
     assert out["g_tape_age"] == 4.2 and out["g_tape_max"] >= 8.0

@@ -1877,8 +1877,7 @@ function _updateBookRow(el, r) {
   }
   const gatesEl = el.querySelector('.cell-gates');
   if (gatesEl) {
-    _setText(gatesEl, _bookGatesText(r));
-    gatesEl.className = `cell-gates${_bookGatesClass(r)}`;
+    gatesEl.innerHTML = _bookGatesHtml(r);
     gatesEl.title = _bookGatesTitle(r);
   }
   _setText(el.querySelector('.cell-qty'), qty);
@@ -1954,7 +1953,7 @@ function _bookRowHtml(r) {
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
     + `<div class="cell-exh${_bookExhClass(r)}${crit.exh === true ? ' crit--pass' : ''}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
-    + `<div class="cell-gates${_bookGatesClass(r)}" title="${_esc(_bookGatesTitle(r))}">${_esc(_bookGatesText(r))}</div>`
+    + `<div class="cell-gates" title="${_esc(_bookGatesTitle(r))}">${_bookGatesHtml(r)}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
@@ -1985,10 +1984,10 @@ function _bookGateChecks(r) {
   }
   const age = num(r.g_tape_age), ageMax = num(r.g_tape_max);
   if (ageMax != null && ageMax > 0) {
-    const isStale = age == null || age > ageMax + 1e-9;
+    const ok = age != null && age <= ageMax + 1e-9;
     out.push({
-      key: 'tape', text: isStale ? 'stale' : `${Math.round(age)}s`,
-      ok: !isStale,
+      key: 'tape', text: ok ? `${Math.round(age)}s` : 'stale',
+      ok: age != null ? age <= ageMax + 1e-9 : null,
       title: `Last print ${age == null ? 'age unknown' : `${age.toFixed(1)} s old`} vs ceiling ${ageMax.toFixed(0)} s`,
     });
   }
@@ -2057,6 +2056,16 @@ function _bookGatesText(r) {
   const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : ['resist', 'pb_trig'].includes(x.key) ? 2 : 3);
   const c = _bookGateChecks(r).slice().sort((a, b) => rank(a) - rank(b));
   return c.length ? c.map(x => x.text).join(' · ') : '—';
+}
+
+function _bookGatesHtml(r) {
+  const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : ['resist', 'pb_trig'].includes(x.key) ? 2 : 3);
+  const c = _bookGateChecks(r).slice().sort((a, b) => rank(a) - rank(b));
+  if (!c.length) return '—';
+  return c.map(x => {
+    const cls = x.ok === true ? 'gate-val--ok' : (x.ok === false ? 'gate-val--fail' : 'gate-val--unknown');
+    return `<span class="${cls}">${_esc(x.text)}</span>`;
+  }).join('<span class="gate-sep">·</span>');
 }
 
 function _bookGatesFailCount(r) {
