@@ -1773,13 +1773,10 @@ function _updateBookRow(el, r) {
   const statusLabel = _bookBlockerLabel(r);
   const crit = _bookEntryCriteria(get('config'), r);
   const statusEl = el.querySelector('.ai-book-status');
-  if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
   if (statusEl) {
-    // STATE: ready, or FRESH when the tape ages are clean (no dedicated column).
-    statusEl.className = _bookBlockerClass(r)
-      + ((crit.ready || crit.fresh === true) ? ' crit--pass' : '');
-    statusEl.title = _bookBlockerTitle(r);
+    statusEl.remove();
   }
+  el.title = _bookBlockerTitle(r);
   const trail = _fmtStopCell(r);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
@@ -1869,8 +1866,7 @@ function _updateBookRow(el, r) {
   }
   const gatesEl = el.querySelector('.cell-gates');
   if (gatesEl) {
-    _setText(gatesEl, _bookGatesText(r));
-    gatesEl.className = `cell-gates${_bookGatesClass(r)}`;
+    gatesEl.innerHTML = _bookGatesHtml(r);
     gatesEl.title = _bookGatesTitle(r);
   }
   _setText(el.querySelector('.cell-qty'), qty);
@@ -1936,18 +1932,17 @@ function _bookRowHtml(r) {
       ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-ready'
       : 'ticker-row feed-row feed-row--ai-book');
   const nearCls = _bookNearArm(r) ? ' feed-row--ai-near' : '';
-  return `<div class="${rowCls}${nearCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}">`
+  return `<div class="${rowCls}${nearCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}" title="${_esc(_bookBlockerTitle(r))}">`
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}${r.bro_call
       ? `<span class="bro-badge" title="Trader Bro called this one out">BRO</span>`
       : ''}</div>`
-    + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-chg${chgMod ? ` ${chgMod}` : ''}">${_esc(chgTxt || '\u2014')}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
     + `<div class="cell-exh${_bookExhClass(r)}${crit.exh === true ? ' crit--pass' : ''}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
-    + `<div class="cell-gates${_bookGatesClass(r)}" title="${_esc(_bookGatesTitle(r))}">${_esc(_bookGatesText(r))}</div>`
+    + `<div class="cell-gates" title="${_esc(_bookGatesTitle(r))}">${_bookGatesHtml(r)}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
@@ -1978,10 +1973,11 @@ function _bookGateChecks(r) {
   }
   const age = num(r.g_tape_age), ageMax = num(r.g_tape_max);
   if (ageMax != null && ageMax > 0) {
+    const ok = age == null ? null : age <= ageMax + 1e-9;
     out.push({
-      key: 'tape', text: age == null ? 'tape ?' : `${Math.round(age)}s`,
-      ok: age == null ? null : age <= ageMax + 1e-9,
-      title: `Last print ${age == null ? 'age unknown' : `${age.toFixed(1)} s old`} vs ceiling ${ageMax.toFixed(0)} s`,
+      key: 'tape', text: '',
+      ok: ok,
+      title: `Last print ${age == null ? 'age unknown' : `${age.toFixed(1)} s old`} vs ceiling ${ageMax.toFixed(0)} s${ok === true ? ' (fresh)' : ok === false ? ' (stale)' : ''}`,
     });
   }
   const gap = num(r.g_gap), block = num(r.g_gap_block);
@@ -2019,8 +2015,25 @@ function _bookGateChecks(r) {
 function _bookGatesText(r) {
   // Failing gates first: if the cell ellipses, it cuts a passing reading, never the blocker.
   const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : 2);
-  const c = _bookGateChecks(r).slice().sort((a, b) => rank(a) - rank(b));
+  const c = _bookGateChecks(r).filter(x => x.key !== 'tape' && x.text).slice().sort((a, b) => rank(a) - rank(b));
   return c.length ? c.map(x => x.text).join(' · ') : '—';
+}
+
+function _bookGatesHtml(r) {
+  // Same readings as _bookGatesText, each coloured by its own pass/fail. A stale tape
+  // greys every value: a reading on an old print is not a pass.
+  const checks = _bookGateChecks(r);
+  const tape = checks.find(x => x.key === 'tape');
+  const stale = _bookTapeStale(r) || (tape && tape.ok === false);
+  const rank = (x) => (x.ok === false ? 0 : x.ok == null ? 1 : 2);
+  const c = checks.filter(x => x.key !== 'tape' && x.text).slice().sort((a, b) => rank(a) - rank(b));
+  if (!c.length) return stale ? '<span class="gate-val--stale">stale</span>' : '—';
+  const sep = stale ? 'gate-sep gate-sep--stale' : 'gate-sep';
+  return c.map(x => {
+    const cls = stale ? 'gate-val--stale'
+      : (x.ok === true ? 'gate-val--ok' : (x.ok === false ? 'gate-val--fail' : 'gate-val--unknown'));
+    return `<span class="${cls}">${_esc(x.text)}</span>`;
+  }).join(`<span class="${sep}">·</span>`);
 }
 
 function _bookGatesFailCount(r) {

@@ -1389,6 +1389,13 @@ DEFAULT_CONFIG = {
     # observe: stamp + log at the arm pass, never refuse. min > 0 enforces.
     "ai_watch_admit_arm_gates":         False,  # run the arm's hard gates at admission + evict
     "ai_movers_sip_delay_min":          15.0,   # SIP served >= this many minutes late (free plan)
+    # Anti-pullback gate, Option 2 (branch 10/31, ported OFF 11/03 for a replay test):
+    # refuse an arm below VWAP - buffer or >= max_drop below the day high. Its +1,290 bp
+    # October figure is in-sample; never on without a held-out test and the operator.
+    "ai_watch_anti_pullback_gate":            False,
+    "ai_watch_anti_pullback_max_drop_pct":    2.0,
+    "ai_watch_anti_pullback_vwap_buffer_bp":  15.0,
+    "ai_watch_anti_pullback_require_vwap":    True,
     "ai_watch_rvol_pace_observe":      False,
     "ai_watch_rvol_pace_observe_min":  1.64,
     # Order blocks at the arm decision (ob_observe.py): LOG ONLY, never gates.
@@ -1999,6 +2006,7 @@ _EFFECTIVE_KEYS = (
     "ai_entry_test_arms",
     "ai_exit_test_arms",
     "ai_entry_earliest_time",
+    "ai_watch_anti_pullback_gate",
     "ai_entry_confirm_max_slip_pct",
     "ai_entry_confirm_max_slip_px",
 )

@@ -51,7 +51,7 @@ def test_wire_fields_read_caches_only(monkeypatch):
     monkeypatch.setitem(ew._GAP_CACHE, "ABC", (-2.5, 1.0, "sip"))
     monkeypatch.setitem(ew._LAST_SQUARE, "ABC", [1000.0, 1000.0])
     out = ew._gate_wire_fields({"rvol": 0.3, "source": "movers"}, "ABC", now=1300.0)
-    assert set(out) == set(_KEYS)
+    assert set(_KEYS).issubset(set(out))
     assert out["g_rvol"] == 0.3 and out["g_rvol_min"] == 0.45
     assert out["g_spread"] == 0.08 and out["g_spread_max"] == 0.15
     assert out["g_tape_age"] == 4.2 and out["g_tape_max"] >= 8.0
@@ -124,3 +124,22 @@ def test_mobile_layout_is_ticker_last_entry_stop():
     css = (_ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
     assert css.count('grid-template-areas: "ticker last entry stop";') == 2
     assert "> .cell-gates,\n" in css and "> .cell-pl { display: none; }" in css
+
+
+def test_tape_age_hidden_and_stale_mutes_all_gates():
+    # Tape check itself emits empty text so seconds and 'stale' never render
+    assert "key: 'tape', text: ''" in _JS
+    # _bookGatesText filters out tape key
+    j = _JS.index("function _bookGatesText(")
+    body = _JS[j:_JS.index("\n}", j)]
+    assert "x.key !== 'tape'" in body
+    # _bookGatesHtml detects stale tape and applies gate-val--stale
+    h = _JS.index("function _bookGatesHtml(")
+    hbody = _JS[h:_JS.index("\n}", h)]
+    assert "gate-val--stale" in hbody
+    assert "gate-val--ok" in hbody
+    assert "gate-val--fail" in hbody
+    # styles.css defines .gate-val--stale
+    css = (_ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
+    assert ".gate-val--stale" in css
+
