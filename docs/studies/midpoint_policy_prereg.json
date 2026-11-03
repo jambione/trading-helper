@@ -1,0 +1,95 @@
+{
+  "id": "midpoint_policy",
+  "status": "AMENDED_2: skeptic round 2 NOT READY with 4 required items, all applied (33 tests). Round cap is 2: awaiting the operator's READY.",
+  "registered": "2026-11-03",
+  "operator": "2026-11-03 'Yes, after replays' (test the midpoint exit rules on 9/16-10/23 once the double-check replays finish)",
+  "question": "Does routing desk exits through policy P1 (a sell limit at the SIP midpoint, only where it can help, with a bail-out) beat the market exits the desk actually got?",
+  "discovery": {
+    "sessions": "2026-10-26 .. 2026-11-03 (7 sessions, 196 exits)",
+    "what_was_seen": "Plain midpoint at a 10 s collar: +2.0 bp/exit (t 7.0). By spread: >=8 bp +6.4, 4-8 bp +1.7, 2-4 bp +0.5, <2 bp -0.2. One-cent books 65% fill, +0.5. Unfilled exits -2..-7 bp; dead_trade unfilled -5.4.",
+    "note": "Every P1 threshold below was chosen on these sessions. They are excluded from scoring."
+  },
+  "held_out": {
+    "sessions": "sessions with paired RTH market exits in ai_reports/fills/ from 2026-09-16 through 2026-10-23 (26 sessions; 9/16 and 9/17 have none)",
+    "half_1": "2026-09-16 .. 2026-10-02",
+    "half_2": "2026-10-05 .. 2026-10-23",
+    "never_looked_at": "CORRECTED again (round 2): neither half is clean. passive_exit_sim.py scored a mid exit on 250 sells 9/29-10/02 (+3.7 bp at 10 s, t 4.9; docs/IDEAS_TO_ADD_2026-10-03.md, config.py); AGY audited 110 October trades (running-list row 69); the G2 live exit A/B ran 10/05-10/15 (passive fills ~25%, adverse: running-list row 7). The only block no midpoint study has scored is 2026-09-18 .. 2026-09-28 (7 sessions)."
+  },
+  "data": {
+    "exits": "SELL submit + fill joined by order_id from ai_reports/fills/<day>.jsonl, submit between 09:30 and 16:00 ET",
+    "quotes_trades": "Alpaca historical SIP quotes and trades from t0-30 s to t0+collar+2 s (data key, after the close)",
+    "reason": "close_reason of the desk outcome (ai_reports/tapes/<day>/outcomes.jsonl) whose exit_time is nearest the submit, within 20 s; none -> unknown"
+  },
+  "policy_P1": {
+    "market_routes": [
+      "reason unknown",
+      "reason urgent: dead_trade, no_progress, double_check, fill_through_stop, exh_falling_flatten, stale_data",
+      "reason eod_liquidate",
+      "no IEX quote <= 15 s old at t0",
+      "IEX book one cent wide (ask - bid <= $0.0105)",
+      "IEX spread < 4.0 bp of the IEX mid"
+    ],
+    "market_route_scoring": "delta 0: the fill the desk actually got",
+    "passive_route": "sell limit at the IEX mid rounded UP to the cent at t0 = submitted_at",
+    "fill_rule": "chosen by calibration (amended_1 B2): trade_through or bid_cross, both on SIP",
+    "bail_rule": "if, before a fill, an IEX quote shows the bid at or below the starting IEX bid minus $0.01, sell at the SIP bid 3 s later",
+    "timeout_rule": "unfilled and not bailed at t0+collar (capped 16:00:00): sell at the SIP bid 3 s later (capped 16:00:00)",
+    "collar_primary_sec": 10,
+    "collar_secondary_sec": 5,
+    "delta_bp": "(simulated price - actual fill) / actual fill x 1e4; positive = P1 better"
+  },
+  "metric": "mean delta_bp per eligible exit (market-routed = 0), calibrated fill rule, 10 s collar; t day-clustered",
+  "verdict_rules": {
+    "VOID": "calibration fails (no rule within 10 points with kappa >= 0.30); or < 300 scored eligible exits; or > 10% of eligible exits unscored; or < 50 passive; or either half < 100 scored or < 25 passive",
+    "PASS": "pooled mean > 0 with day-clustered t >= 2.0, AND each half mean > 0 with day-clustered t >= 1.0, AND per-session means positive on >= 60% of sessions, AND the 2026-09-18..09-28 block mean >= 0",
+    "FAIL": "pooled mean <= 0, OR either half mean < 0 with |day-clustered t| >= 1",
+    "PROMISING": "pooled mean > 0 and both halves > 0 but the PASS bar is missed",
+    "otherwise": "INCONCLUSIVE"
+  },
+  "reported_beside_never_headline": [
+    "plain midpoint (no policy) at 10 s",
+    "P1 at 5 s",
+    "lenient fill (print at the limit)",
+    "per-passive-exit delta and fill / bail / timeout counts",
+    "per exit reason and per spread band"
+  ],
+  "known_limits": [
+    "Actual fills are Alpaca PAPER fills; a real book may fill market exits worse and limits less often.",
+    "Strict trade-through is the only queue model; desk size is 1-30 shares, so it is a fair proxy here, not at real size.",
+    "Held-out sessions ran other desk configs; P1 only routes the exit the desk chose, so the comparison is per exit.",
+    "Reason join by time can mislabel when one name exits twice within 20 s."
+  ],
+  "rules": "No threshold, collar or reason list changes after scoring starts. Amendments only before the first held-out score, each with the operator's yes.",
+  "tool": [
+    "tools/studies/shadow_loggers_score.py calib --since 2026-10-05 --until 2026-10-15 --sleep 0.8 --tag calib",
+    "tools/studies/shadow_loggers_score.py exits --since 2026-09-16 --until 2026-10-23 --policy --policy-collars 5 --sleep 0.8 --tag heldout",
+    "tools/studies/midpoint_policy_verdict.py <calib json> <heldout json>",
+    "tools/exit_arm_score.py --from 2026-10-05 --detail  (beside, never the headline)"
+  ],
+  "amended_1": {
+    "date": "2026-11-03",
+    "why": "result-skeptic round 1",
+    "B1_decisions_on_iex": "Route, limit and bail are decided from historical IEX quotes (what the desk sees live, alpaca_bar_feed=iex), no older than 15 s; no fresh IEX quote -> market. SIP is used only for the outcome (prints, bids at execution).",
+    "B2_fill_model_calibration": "Before the held-out score, the desk's 74 real SELL_LIMIT mid orders (10/05-10/15, 25 filled = 34%) are scored under two fill rules: trade_through (a SIP print above the limit) and bid_cross (the SIP bid at or above the limit). The PRIMARY rule is the one whose predicted fill rate is closest to the actual rate; if neither is within 10 points, the study is VOID. Calibration uses only those limit orders and their windows (submit to the fallback market sell, else 10 s); it never sees a P1 delta.",
+    "M3_exclusions": "Market sells sent within 30 s after a SELL_LIMIT on the same name are excluded (selected on adverse moves).",
+    "M4_day_clustered_t": "All t-statistics are over per-session mean deltas, not trades.",
+    "M5_latency": "t0 = the broker's submitted_at. Bail and timeout execute at the SIP bid 3 s (one book tick) after the trigger.",
+    "M6_paper_delay": "Exits whose paper fill took more than 10 s after submit are excluded. delta2 (vs the SIP bid at t0) is reported beside the primary.",
+    "m7_eod": "eod_liquidate routes to market; no wait runs past 16:00:00 ET.",
+    "m8_halves": "VOID unless each half has >= 100 scored and >= 25 passive exits.",
+    "m9_left_overbought": "left_overbought (0 discovery exits, ~89 held out) routes passive by the rules; reported as its own group.",
+    "m10_rounding": "The limit is the IEX mid rounded UP to the cent (Decimal).",
+    "m11": "5 s collar and the non-primary fill rule are printed as SECONDARY, never a verdict. Junk symbols (TEST, non-ticker) are dropped."
+  },
+  "run_after": "the double-check replays finish (Alpaca budget; 6 parallel fetches hit 429 on 11/03)",
+  "amended_2": {
+    "date": "2026-11-03",
+    "why": "result-skeptic round 2",
+    "untouched_sub_bar": "PASS also requires the 2026-09-18..09-28 block's mean delta >= 0.",
+    "marketable_limit": "A limit at or under the SIP bid at t0 fills at once at the SIP bid; a fill on a print or a bid cross books max(limit, SIP bid at that instant).",
+    "calibration_agreement": "The chosen rule must also have Cohen's kappa >= 0.30 against the real fills, else VOID. Window for an order with no fallback: 12 s (cross_sec 10 + one book tick).",
+    "calibration_locked": "The calibration result is computed once, before the held-out score, and cannot be rerun or replaced afterwards.",
+    "per_reason": "The verdict output lists n and mean delta per exit reason (left_overbought among them).",
+    "beside_never_headline": "tools/exit_arm_score.py (the G2 live randomized market-vs-mid A/B, 10/05-10/15) is reported beside the result: the only real-venue evidence."
+  }
+}
