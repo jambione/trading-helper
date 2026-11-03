@@ -1,0 +1,29 @@
+{
+ "study": "never_green_cut",
+ "question": "On the current desk's real paper trades, would selling any position whose price has not gone above the entry within 3 minutes (at the close of the 3rd minute) have improved the book after costs, consistently, by cutting mostly losers?",
+ "operator_sentence": "Operator 2026-10-30 ~14:45 ET, after today's red day: 'If we used to have a three minute sell if the position didn't go over the entry price. Would that have helped?', 'Five minutes?', then 'maybe we can have the simulation to see if that would be beneficial to cut the losers'.",
+ "registered_at": "2026-10-30 ~14:55 ET, before any trade outside 10/26-10/30 is scored with this rule.",
+ "registered_before_results": true,
+ "seen_before": "Claude replayed N = 3 and N = 5 on the 130 trades of 10/26-10/30 (scratchpad never_green3.py / never_green5.py): N = 3 +0.65 bp/trade (+2.3 / +1.5 / +1.8 / -4.2 / +2.1 by day, 12 of 39 cut trades were eventual winners); N = 5 +0.02. N = 3 is chosen from that look, so 10/26-10/30 is EXCLUDED from the primary and reported separately. September tests of never-green cuts (9/23, 9/25) on the older desk moved results by +-2 bp in random directions.",
+ "prior": "Low (~15-20%). For: it helped on 4 of 5 days this week and caps the long dead-trade holds of a down day. Against: earlier tests ~0; exits move the win rate, not the mean ([[exits-cannot-move-the-mean]] is from an older desk); it cut 6 eventual winners on the best day.",
+ "confidence": "~15-20% PASS (Claude, before scoring).",
+ "trades": "Closed live paper day trades, cleaned as marketable_limit_hist.rows_from (clean_rows filters, G2 non-ask arms out), entry_time in 2026-10-14 .. 2026-10-23 (period P1) and 2026-11-02 .. the last session before scoring, at least 2026-11-13 (period P2, forward: the standard desk and any later config, stratified by config_fp). 10/26-10/30 is excluded (seen). Actual net = (exit_price / entry_price - 1) x 1e4 from the outcome row (fill-matched information line: the same with Alpaca FILL averages where matched).",
+ "rule": "N = 3 minutes. Entry minute m0 = the minute of entry_time. If the trade's hold is <= 180 s, the rule changes nothing. Else, if no IEX 1-minute bar in m0+1 .. m0+3 has a high above the entry price (and, when the entry was in the first 30 s of m0, m0's high is not above it either), the trade is CUT: rule net = (IEX close of m0+3 / entry price - 1) x 1e4 - 1 bp (half of a ~2 bp spread for the extra market sell). Otherwise rule net = actual net.",
+ "statistic": "Per session: lift = mean rule net - mean actual net (bp per trade). Sessions equal-weighted, day-clustered (std_scorer.day_stat), t at n-1 df.",
+ "control": "Random cut: per session, cut the same number of trades chosen at random among trades held > 180 s (1,000 draws, seed 'NGC'), each at its own m0+3 close - 1 bp. The rule's lift must beat the random cut's lift in >= 90% of draws (it must pick the losers, not just shorten holds).",
+ "pass": "PASS (worth a paper forward test) only if ALL: (1) lift > 0 in BOTH periods P1 and P2 (point); (2) pooled lift >= +1 bp with t >= 2.0; (3) beats the random cut in >= 90% of draws; (4) the operator's rule: the cut trades' actual mean net < the kept trades' actual mean net, and the cut trades that were eventual winners give back less than the losses saved (sum of (actual - rule) over cut winners < sum of (rule - actual) over cut losers); (5) >= 60 cut trades in all and >= 10 sessions per period, else UNDERPOWERED. FAIL otherwise with power met.",
+ "information_only": [
+  "N = 2, 4, 5 (no other N promotable without its own prereg).",
+  "10/26-10/30 (the seen week) with the same rule.",
+  "By source (tight vs movers) and by SPY day sign (up vs down days).",
+  "Fill-matched version."
+ ],
+ "if_pass": "Paper forward test as a live exit knob (default off), switched on by the operator after the close, with a switch-off rule: stop if after 5 sessions the cut trades' later 10-minute move averages > +10 bp (it is cutting runners).",
+ "data": "outcomes.jsonl (local) and IEX 1-minute bars via move_to_cost_holdout.Data (data-only key, cached); about 2 requests per trade-day; after the close.",
+ "script": "tools/studies/never_green_cut.py (reuse the replay in scratchpad never_green3.py and marketable_limit_hist.rows_from), written after a result-skeptic READY. P2 needs sessions through at least 11/13, so the earliest score is 11/13 after the close.",
+ "withdrawn": {
+  "when": "2026-10-30 ~15:10 ET, before any skeptic review or score",
+  "by": "operator in chat: 'Close it'",
+  "why": "Exploration sweep on the seen week 10/26-10/30 (130 trades, 1 bp extra-sale cost): 'below entry at minute N' and 'never green by minute N' at N = 1,2,3,4,5,7,10 all within -1.2..+0.5 bp/trade; each cut saves about what it gives up on eventual winners (e.g. N=3 below entry: 431 bp saved vs 508 given up); hurts on the up day (Thu -2..-9 bp/trade at every N). Consistent with the September never-green tests. 10/14-10/23 was not touched."
+ }
+}
