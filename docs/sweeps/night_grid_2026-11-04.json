@@ -1,6 +1,6 @@
 {
  "name": "night_grid_2026-11-04",
- "purpose": "Operator 11/04 'lets do that': ~20 single-setting variants in one night instead of 7 mostly repeated arms. Entry: spread cap 0.10/0.08/0.05 (live 0.15), price floor $30/$40 (live $20). Exit: trail give x give-cap pair grid (they block each other one at a time), breakeven 0.10/0.20 (live 0.15), re-entry cooldown 60/300 (live 120), decay leash 10/25 s (live 15), trail arm 0.03/0.12 R (live 0.06). --live-book: floor/spread arms can only refuse names already seated, never add. Baseline = the desk as it runs at the 16:15 start (incl. anything shipped this morning). ADDED (operator 11/04 'do that'): no_trending - the trending source may not open buys (ai_watch_arm_sources allow-list of every other source seen 10/20-11/03: movers, tight, agy, xai, plus momentum, research). Trending was the weakest source still trading ($20+: -17.1 bp/trade since 9/11, -12.8 since 10/14). AGY/consensus seat priority is a seating change the --live-book replay cannot test: it goes to a live coin-flip arm instead. ADDED (operator 11/04 'sure'): hold_broken - bar-age limit 1 s, so the trail trend hold always fails safe exactly as it did live before 51a84442 (37 of 37 in-band exits sold). Baseline = the working hold. The verdict reads as the fix's value: a DROP for hold_broken means the fix helps. CHANGED 11/04 ~12:00 (operator 'how do we fix this nevergreen loss'): floor_30/floor_40 REMOVED, ceil_70/ceil_50 ADDED. Desk trades since 10/14 at $20+ (364): never-green 23% at $20-40 (n 133, -4.8 bp) vs 42% at $40-70, 42% at $70-100 (-14.5 bp), 45% at $100+; a floor would drop the best bucket, a ceiling the worst. Never-green dollars -108 of total -67. The ceiling arms also set ai_tight_max_price (default 400; the tight source has its own ceiling, and the $100+ bucket is mostly tight names).",
+ "purpose": "Operator 11/04 'lets do that': ~20 single-setting variants in one night instead of 7 mostly repeated arms. Entry: spread cap 0.10/0.08/0.05 (live 0.15), price floor $30/$40 (live $20). Exit: trail give x give-cap pair grid (they block each other one at a time), breakeven 0.10/0.20 (live 0.15), re-entry cooldown 60/300 (live 120), decay leash 10/25 s (live 15), trail arm 0.03/0.12 R (live 0.06). --live-book: floor/spread arms can only refuse names already seated, never add. Baseline = the desk as it runs at the 16:15 start (incl. anything shipped this morning). ADDED (operator 11/04 'do that'): no_trending - the trending source may not open buys (ai_watch_arm_sources allow-list of every other source seen 10/20-11/03: movers, tight, agy, xai, plus momentum, research). Trending was the weakest source still trading ($20+: -17.1 bp/trade since 9/11, -12.8 since 10/14). AGY/consensus seat priority is a seating change the --live-book replay cannot test: it goes to a live coin-flip arm instead. ADDED (operator 11/04 'sure'): hold_broken - bar-age limit 1 s, so the trail trend hold always fails safe exactly as it did live before 51a84442 (37 of 37 in-band exits sold). Baseline = the working hold. The verdict reads as the fix's value: a DROP for hold_broken means the fix helps. CHANGED 11/04 ~12:00 (operator 'how do we fix this nevergreen loss'): floor_30/floor_40 REMOVED, ceil_70/ceil_50 ADDED. Desk trades since 10/14 at $20+ (364): never-green 23% at $20-40 (n 133, -4.8 bp) vs 42% at $40-70, 42% at $70-100 (-14.5 bp), 45% at $100+; a floor would drop the best bucket, a ceiling the worst. Never-green dollars -108 of total -67. The ceiling arms also set ai_tight_max_price (default 400; the tight source has its own ceiling, and the $100+ bucket is mostly tight names). CONFIRM DAYS EXTENDED 11/04 ~12:15 to 20 days (10/14-10/23 plus 9/28-10/13): the price pattern REVERSED 9/11-9/30 (never-green $70+ 25% vs <$40 33%, z -1.1) before +2.0 (10/1-10/13) and +3.4 (10/14-11/03), and 13:30-14:30 flips sign by period, which is why the pre-registered predictor failed (AUC 0.55). A kept variant must hold in both halves of a period that includes the reversal.",
  "sha": "HEAD",
  "start": "09:30",
  "end": "15:50",
@@ -149,6 +149,18 @@
   "2026-10-19",
   "2026-10-16",
   "2026-10-15",
-  "2026-10-14"
+  "2026-10-14",
+  "2026-10-13",
+  "2026-10-12",
+  "2026-10-09",
+  "2026-10-08",
+  "2026-10-07",
+  "2026-10-06",
+  "2026-10-05",
+  "2026-10-02",
+  "2026-10-01",
+  "2026-09-30",
+  "2026-09-29",
+  "2026-09-28"
  ]
 }
