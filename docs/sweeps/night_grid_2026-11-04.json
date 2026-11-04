@@ -1,6 +1,6 @@
 {
  "name": "night_grid_2026-11-04",
- "purpose": "Operator 11/04 'lets do that': ~20 single-setting variants in one night instead of 7 mostly repeated arms. Entry: spread cap 0.10/0.08/0.05 (live 0.15), price floor $30/$40 (live $20). Exit: trail give x give-cap pair grid (they block each other one at a time), breakeven 0.10/0.20 (live 0.15), re-entry cooldown 60/300 (live 120), decay leash 10/25 s (live 15), trail arm 0.03/0.12 R (live 0.06). --live-book: floor/spread arms can only refuse names already seated, never add. Baseline = the desk as it runs at the 16:15 start (incl. anything shipped this morning). ADDED (operator 11/04 'do that'): no_trending - the trending source may not open buys (ai_watch_arm_sources allow-list of every other source seen 10/20-11/03: movers, tight, agy, xai, plus momentum, research). Trending was the weakest source still trading ($20+: -17.1 bp/trade since 9/11, -12.8 since 10/14). AGY/consensus seat priority is a seating change the --live-book replay cannot test: it goes to a live coin-flip arm instead.",
+ "purpose": "Operator 11/04 'lets do that': ~20 single-setting variants in one night instead of 7 mostly repeated arms. Entry: spread cap 0.10/0.08/0.05 (live 0.15), price floor $30/$40 (live $20). Exit: trail give x give-cap pair grid (they block each other one at a time), breakeven 0.10/0.20 (live 0.15), re-entry cooldown 60/300 (live 120), decay leash 10/25 s (live 15), trail arm 0.03/0.12 R (live 0.06). --live-book: floor/spread arms can only refuse names already seated, never add. Baseline = the desk as it runs at the 16:15 start (incl. anything shipped this morning). ADDED (operator 11/04 'do that'): no_trending - the trending source may not open buys (ai_watch_arm_sources allow-list of every other source seen 10/20-11/03: movers, tight, agy, xai, plus momentum, research). Trending was the weakest source still trading ($20+: -17.1 bp/trade since 9/11, -12.8 since 10/14). AGY/consensus seat priority is a seating change the --live-book replay cannot test: it goes to a live coin-flip arm instead. ADDED (operator 11/04 'sure'): hold_broken - bar-age limit 1 s, so the trail trend hold always fails safe exactly as it did live before 51a84442 (37 of 37 in-band exits sold). Baseline = the working hold. The verdict reads as the fix's value: a DROP for hold_broken means the fix helps.",
  "sha": "HEAD",
  "start": "09:30",
  "end": "15:50",
@@ -129,6 +129,12 @@
    "live_book": true,
    "set": {
     "ai_watch_arm_sources": "movers,tight,agy,xai,momentum,research"
+   }
+  },
+  "hold_broken": {
+   "live_book": true,
+   "set": {
+    "ai_trail_exit_trend_hold_max_bar_age_sec": 1
    }
   }
  },
