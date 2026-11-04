@@ -1,6 +1,6 @@
 {
  "name": "night_grid_2026-11-04",
- "purpose": "Operator 11/04 'lets do that': ~20 single-setting variants in one night instead of 7 mostly repeated arms. Entry: spread cap 0.10/0.08/0.05 (live 0.15), price floor $30/$40 (live $20). Exit: trail give x give-cap pair grid (they block each other one at a time), breakeven 0.10/0.20 (live 0.15), re-entry cooldown 60/300 (live 120), decay leash 10/25 s (live 15), trail arm 0.03/0.12 R (live 0.06). --live-book: floor/spread arms can only refuse names already seated, never add. Baseline = the desk as it runs at the 16:15 start (incl. anything shipped this morning). ADDED (operator 11/04 'do that'): no_trending - the trending source may not open buys (ai_watch_arm_sources allow-list of every other source seen 10/20-11/03: movers, tight, agy, xai, plus momentum, research). Trending was the weakest source still trading ($20+: -17.1 bp/trade since 9/11, -12.8 since 10/14). AGY/consensus seat priority is a seating change the --live-book replay cannot test: it goes to a live coin-flip arm instead. ADDED (operator 11/04 'sure'): hold_broken - bar-age limit 1 s, so the trail trend hold always fails safe exactly as it did live before 51a84442 (37 of 37 in-band exits sold). Baseline = the working hold. The verdict reads as the fix's value: a DROP for hold_broken means the fix helps.",
+ "purpose": "Operator 11/04 'lets do that': ~20 single-setting variants in one night instead of 7 mostly repeated arms. Entry: spread cap 0.10/0.08/0.05 (live 0.15), price floor $30/$40 (live $20). Exit: trail give x give-cap pair grid (they block each other one at a time), breakeven 0.10/0.20 (live 0.15), re-entry cooldown 60/300 (live 120), decay leash 10/25 s (live 15), trail arm 0.03/0.12 R (live 0.06). --live-book: floor/spread arms can only refuse names already seated, never add. Baseline = the desk as it runs at the 16:15 start (incl. anything shipped this morning). ADDED (operator 11/04 'do that'): no_trending - the trending source may not open buys (ai_watch_arm_sources allow-list of every other source seen 10/20-11/03: movers, tight, agy, xai, plus momentum, research). Trending was the weakest source still trading ($20+: -17.1 bp/trade since 9/11, -12.8 since 10/14). AGY/consensus seat priority is a seating change the --live-book replay cannot test: it goes to a live coin-flip arm instead. ADDED (operator 11/04 'sure'): hold_broken - bar-age limit 1 s, so the trail trend hold always fails safe exactly as it did live before 51a84442 (37 of 37 in-band exits sold). Baseline = the working hold. The verdict reads as the fix's value: a DROP for hold_broken means the fix helps. CHANGED 11/04 ~12:00 (operator 'how do we fix this nevergreen loss'): floor_30/floor_40 REMOVED, ceil_70/ceil_50 ADDED. Desk trades since 10/14 at $20+ (364): never-green 23% at $20-40 (n 133, -4.8 bp) vs 42% at $40-70, 42% at $70-100 (-14.5 bp), 45% at $100+; a floor would drop the best bucket, a ceiling the worst. Never-green dollars -108 of total -67.",
  "sha": "HEAD",
  "start": "09:30",
  "end": "15:50",
@@ -24,26 +24,6 @@
   "spread_05": {
    "set": {
     "ai_watch_max_sip_spread_pct": 0.05
-   },
-   "live_book": true
-  },
-  "floor_30": {
-   "set": {
-    "ai_watch_min_price": 30.0,
-    "ai_watch_movers_min_price": 30.0,
-    "ai_movers_min_price": 30.0,
-    "ai_watch_momentum_min_price": 30.0,
-    "ai_tight_min_price": 30.0
-   },
-   "live_book": true
-  },
-  "floor_40": {
-   "set": {
-    "ai_watch_min_price": 40.0,
-    "ai_watch_movers_min_price": 40.0,
-    "ai_movers_min_price": 40.0,
-    "ai_watch_momentum_min_price": 40.0,
-    "ai_tight_min_price": 40.0
    },
    "live_book": true
   },
@@ -135,6 +115,20 @@
    "live_book": true,
    "set": {
     "ai_trail_exit_trend_hold_max_bar_age_sec": 1
+   }
+  },
+  "ceil_70": {
+   "live_book": true,
+   "set": {
+    "ai_max_price": 70.0,
+    "ai_movers_max_price": 70.0
+   }
+  },
+  "ceil_50": {
+   "live_book": true,
+   "set": {
+    "ai_max_price": 50.0,
+    "ai_movers_max_price": 50.0
    }
   }
  },
