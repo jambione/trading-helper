@@ -1,0 +1,13 @@
+{
+ "name": "hold_band_2026-11-04",
+ "purpose": "Operator 11/04 ~10:55 'do all now' (no restart): trail trend hold band 0.05% (live) vs 0.10/0.15/0.25. Audit: 118 trail exits near entry 10/26-11/04, double-check says HOLD on 98; 37 inside the 0.05% band were all sold live (hold failing safe), 61 just outside (CNC-type). Replay feeds bars on time, so it shows the band's value with a WORKING hold; live needs the after-close code fix to realise it. Baselines copied from morning_2026-11-04 (same sha 2f8e9da2, same config).",
+ "sha": "2f8e9da2", "start": "09:30", "end": "15:50",
+ "baseline": {"live_book": true, "set": {}},
+ "variants": {
+  "band10": {"live_book": true, "set": {"ai_trail_exit_trend_hold_band_pct": 0.10}},
+  "band15": {"live_book": true, "set": {"ai_trail_exit_trend_hold_band_pct": 0.15}},
+  "band25": {"live_book": true, "set": {"ai_trail_exit_trend_hold_band_pct": 0.25}}
+ },
+ "screen_days": ["2026-10-30", "2026-10-29", "2026-10-28", "2026-10-27", "2026-10-26"],
+ "confirm_days": []
+}
