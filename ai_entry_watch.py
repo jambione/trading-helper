@@ -9697,8 +9697,9 @@ def open_gap_pct(sym: str, *, now: float | None = None, fetch=None) -> float | N
                 src = "iex"
                 from alpaca.data.enums import DataFeed
                 from alpaca.data.requests import StockSnapshotRequest
+                import alpaca_api as _aa_feed
                 snap = _data_client().get_stock_snapshot(StockSnapshotRequest(
-                    symbol_or_symbols=sym, feed=DataFeed.IEX)).get(sym)
+                    symbol_or_symbols=sym, feed=_aa_feed.live_data_feed())).get(sym)   # S1: alpaca_bar_feed
                 day_open = float(snap.daily_bar.open)
                 prev_close = float(snap.previous_daily_bar.close)
         if day_open and prev_close:
@@ -10319,6 +10320,11 @@ def admit_arm_gates(row: dict, cfg: dict | None, *, now: float | None = None,
         mins_open = 999
     delay = _f_or_none(cfg.get("ai_movers_sip_delay_min"))
     delay = 15.0 if delay is None else delay
+    try:
+        import alpaca_api as _aa_delay
+        delay = _aa_delay.sip_delay_min(delay, cfg)   # S1: 0 on live SIP
+    except Exception:  # noqa: BLE001
+        pass
     max_sp = _spread_gate_max(row.get("source"), cfg)
     if max_sp > 0 and mins_open >= delay + 1:
         try:

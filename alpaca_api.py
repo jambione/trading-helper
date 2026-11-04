@@ -278,6 +278,13 @@ def live_data_feed(cfg: dict | None = None):
     return _DF.SIP if name == "sip" else _DF.IEX
 
 
+def sip_delay_min(configured: float, cfg: dict | None = None) -> float:
+    """The minutes a SIP read must wait before it is usable. The free plan serves SIP 15-16 minutes late, so the
+    caller's configured delay stands; with live SIP (``ai_sip_realtime``) it is 0. One place for every pacing term
+    (SIP month plan S1, 2026-10-15; wired 2026-11-04)."""
+    return 0.0 if sip_is_realtime(cfg) else float(configured)
+
+
 def sip_is_realtime(cfg: dict | None = None) -> bool:
     """S1: ``ai_sip_realtime`` true only while the account has live SIP; then the 15-16 min SIP delay terms are 0."""
     if cfg is None:

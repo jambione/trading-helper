@@ -79,6 +79,9 @@ DEFAULT_CONFIG = {
     # Live bar tape. iex is the free Alpaca feed. sip needs Algo Trader Plus
     # and is what matches TradingView highs/lows on thin names.
     "alpaca_bar_feed": "iex",
+    # SIP month plan S1: true only while the account has real-time SIP. Every SIP delay term (ai_movers_sip_delay_min
+    # pacing, the 16-minute spread/gap reads) becomes 0 through alpaca_api.sip_delay_min. Pair with alpaca_bar_feed "sip".
+    "ai_sip_realtime": False,
 
     # ── Signal: OBV Oscillator ──────────────────────────────
     "obv_length": 20,
@@ -2014,6 +2017,8 @@ _EFFECTIVE_KEYS = (
     "ai_entry_test_arms",
     "ai_exit_test_arms",
     "ai_entry_earliest_time",
+    "alpaca_bar_feed",
+    "ai_sip_realtime",
     "ai_watch_anti_pullback_gate",
     "ai_entry_confirm_max_slip_pct",
     "ai_entry_confirm_max_slip_px",

@@ -66,10 +66,13 @@ def test_ensure_watch_stream_subscribes_one_letter_only_when_on(monkeypatch):
     assert got["sub"] == ["T", "AAPL"]
 
 
-def test_switches_default_off_everywhere():
+def test_switches_default_off_in_code_and_on_in_the_live_config():
+    # Defaults stay off so replays of older shas and tests are unchanged. The live desk turned all three on at the
+    # 11/04 after-close restart (d282898b): one-letter tickers, the stream pre-gate, a shortlist cap of 45.
     import json
     import config
     live = json.loads((Path(__file__).resolve().parent.parent / "config" / "bot_config.json").read_text())
     for k in ("ai_watch_allow_one_letter", "ai_watch_stream_pregate"):
-        assert config.DEFAULT_CONFIG[k] is False and not live.get(k, False)
-    assert config.DEFAULT_CONFIG["ai_watch_stream_shortlist_max"] == 0
+        assert config.DEFAULT_CONFIG[k] is False
+        assert live[k] is True
+    assert config.DEFAULT_CONFIG["ai_watch_stream_shortlist_max"] == 0 and live["ai_watch_stream_shortlist_max"] == 45

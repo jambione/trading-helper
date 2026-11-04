@@ -273,7 +273,7 @@ class Mirror:
             from alpaca.data.requests import StockLatestTradeRequest
             d = json.loads(KEYS_FILE.read_text())
             dc = StockHistoricalDataClient(d["api_key"], d["secret_key"])
-            t = dc.get_stock_latest_trade(StockLatestTradeRequest(symbol_or_symbols=sym, feed=DataFeed.IEX))
+            t = dc.get_stock_latest_trade(StockLatestTradeRequest(symbol_or_symbols=sym, feed=__import__("alpaca_api").live_data_feed()))
             return float(t[sym].price)
         except Exception as e:  # noqa: BLE001
             log(f"price {sym}: {e!s:.100}")

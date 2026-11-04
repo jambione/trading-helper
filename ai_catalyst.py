@@ -357,7 +357,7 @@ def fetch_snapshots(
         batch = syms[i:i + chunk]
         try:
             got = cl.get_stock_snapshot(StockSnapshotRequest(
-                symbol_or_symbols=batch, feed=DataFeed.IEX,
+                symbol_or_symbols=batch, feed=__import__("alpaca_api").live_data_feed(),
             ))
         except Exception:
             continue

@@ -297,8 +297,8 @@ def _feed_arg() -> dict:
     numerator and denominator are only comparable while it is the same for
     both requests."""
     try:
-        from alpaca.data.enums import DataFeed
-        return {"feed": DataFeed.IEX}
+        import alpaca_api
+        return {"feed": alpaca_api.live_data_feed()}   # S1: one knob, same feed for numerator and denominator
     except Exception:
         return {}
 

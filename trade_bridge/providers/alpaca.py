@@ -71,8 +71,9 @@ def feed_kw(cfg: dict | None = None) -> dict:
 def _feed_kw(cfg: dict) -> dict:
     try:
         from alpaca.data.enums import DataFeed
-        # Free accounts only get IEX real-time. Do not request SIP.
-        return {"feed": DataFeed.IEX}
+        # S1: the one live feed knob (alpaca_bar_feed, "iex" by default: free accounts only get IEX real-time).
+        import alpaca_api
+        return {"feed": alpaca_api.live_data_feed(cfg)}
     except Exception:
         return {}
 
