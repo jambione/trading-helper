@@ -284,8 +284,11 @@ def test_desk_config_is_the_one_minute_loss_cut():
     import json
     import config
     live = json.loads((_ROOT / "config" / "bot_config.json").read_text(encoding="utf-8"))
+    # Operator 11/03 after the close (6be13747): the cut is OFF live; the 7-session replay A/B (running list
+    # row 75) found every version worse than no cut. The rest of the knobs keep their shape for a re-test.
+    assert config.DEFAULT_CONFIG["ai_double_check_sell_enabled"] is True
+    assert live["ai_double_check_sell_enabled"] is False
     for src in (config.DEFAULT_CONFIG, live):
-        assert src["ai_double_check_sell_enabled"] is True
         assert src["ai_double_check_min_sec"] == 60.0
         assert src["ai_double_check_interval_sec"] == 30.0
         assert src["ai_double_check_under_entry_only"] is True

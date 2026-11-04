@@ -3653,6 +3653,33 @@ def _dc_note(key: str) -> None:
     DC_STATS[key] = DC_STATS.get(key, 0) + 1
 
 
+def _trail_hold_declined(ticker: str, reason: str, px: Any, entry: Any, bars: tuple | None = None,
+                         now: float | None = None) -> None:
+    """Log why the trail trend hold let an at-entry trail exit sell (operator 11/04: the hold sold 37 of 37
+    recent in-band exits that the double check said to hold, and DC_STATS is in memory only). One row per
+    declined exit; never raises."""
+    try:
+        t_now = float(now if now is not None else time.time())
+        n = len(bars[0]) if bars else 0
+        age = (t_now - float(bars[0][-1])) if bars and bars[0] else None
+        log_event("trail_hold_declined", symbol=ticker, reason=reason, px=px, entry=entry,
+                  bars=n, last_bar_age_sec=None if age is None else round(age, 1))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def keep_held_bars_fresh(ticker: str) -> bool:
+    """Ask the watch's background bar refresh to keep a HELD name's 1-minute store current (operator 11/04).
+    The store is refreshed only from the watch's arm check, which stops once a name is bought, so the trail
+    trend hold read bars older than ai_trail_exit_trend_hold_max_bar_age_sec within minutes of entry and sold.
+    Enqueue only (throttled to one 30-bar request per name per OB_WARM_REFRESH_SEC); never blocks, never raises."""
+    try:
+        import ai_entry_watch as ew
+        return bool(ew._ob_warm_request(ticker))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _double_check_store_bars(ticker: str) -> tuple | None:
     """Session 1m bars from the in-memory ob_observe store only (never fetches): the trail-hold check runs inside
     an exit and must not wait on the network. None under 20 bars."""
@@ -3713,6 +3740,7 @@ def trail_exit_trend_hold(pos: dict | None, ticker: str, px: float, now: float |
         bars = _double_check_store_bars(ticker)
         if bars is None:
             _dc_note("trail:no_bars")
+            _trail_hold_declined(ticker, "no_bars", px, entry, None, t_now)
             return False                       # no bars in memory: sell (never fetch inside an exit)
         # Skeptic 10/16: live refreshes the store only while the watch poll stamps the name; a held name that
         # left the watch would read frozen pre-entry bars and hold forever. Stale store -> sell. 300 s clears the
@@ -3720,13 +3748,18 @@ def trail_exit_trend_hold(pos: dict | None, ticker: str, px: float, now: float |
         max_age = float(cfg.get("ai_trail_exit_trend_hold_max_bar_age_sec", 300) or 0)
         if max_age > 0 and t_now - float(bars[0][-1]) > max_age:
             _dc_note("trail:stale_bars")
+            _trail_hold_declined(ticker, "stale_bars", px, entry, bars, t_now)
             return False
         lookback = int(cfg.get("ai_double_check_lookback_min", sdc.LOOKBACK_MIN) or sdc.LOOKBACK_MIN)
         res = sdc.evaluate_symbol(ticker, bars, float(px), lookback=lookback, now=t_now)
         _dc_note(f"trail:{res.get('sell')}:{res.get('reason') or res.get('trend') or ''}"[:60])
+        if res.get("sell") != "no":
+            _trail_hold_declined(ticker, f"double_check:{res.get('reason') or res.get('trend') or ''}"[:60],
+                                 px, entry, bars, t_now)
         return res.get("sell") == "no"
     except Exception as e:  # noqa: BLE001
         _dc_note(f"trail:error:{type(e).__name__}")
+        _trail_hold_declined(ticker, f"error:{type(e).__name__}", px, None)
         return False
 
 
@@ -7709,6 +7742,9 @@ def manage_open_positions(
         # ai_position_shadow_enabled — the runner's stop must not depend on
         # whether logging happens to be on.
         _update_excursions(pos, _num(pos.get("last_seen_price")))
+        # Keep the trail trend hold's bar store current while the name is held (11/04 fix).
+        if bool(_cfg_all().get("ai_trail_exit_trend_hold", False)):
+            keep_held_bars_fresh(ticker)
 
         # Local-stop desk: a confirmed live long with no shelf is naked.
         # Flatten if we cannot recover a shelf; otherwise the trail stamps it.
