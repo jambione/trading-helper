@@ -889,30 +889,97 @@ def build_dashboard_state(rec: Recording, now: float, synth: SynthEngine | None 
             "ai_positions": pos or {}}
 
 
+OFFLINE = os.getenv("REPLAY_OFFLINE", "").strip().lower() in ("1", "true", "yes")
+OFFLINE_STATS = {"cache_misses": 0, "blocked_connects": 0}
+
+
+def _offline_socket_guard() -> None:
+    """REPLAY_OFFLINE: refuse every outbound connection that is not loopback, and count it.
+    The desk code catches network errors and treats the value as unknown, so a run on a
+    warm cache finishes; the count says how much of it was not warm."""
+    import socket
+    if getattr(socket.socket.connect, "_offline_guard", False):
+        return
+    orig = socket.socket.connect
+
+    def connect(self, addr, *a, **kw):
+        host = addr[0] if isinstance(addr, tuple) and addr else addr
+        if isinstance(host, str) and host not in ("127.0.0.1", "::1", "localhost"):
+            OFFLINE_STATS["blocked_connects"] += 1
+            raise ConnectionRefusedError(f"REPLAY_OFFLINE: {host}")
+        return orig(self, addr, *a, **kw)
+    connect._offline_guard = True
+    socket.socket.connect = connect
+
+
 class JsonCache:
+    """On-disk value cache shared by every replay on this machine.
+
+    Concurrent replays share it: a miss first rereads the file if another run has
+    written it since, and a save merges with what is on disk and replaces it
+    atomically (no run erases another's values). REPLAY_OFFLINE: a miss returns None
+    (unknown) and is counted instead of fetching."""
+
     def __init__(self, name: str):
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self.path = CACHE_DIR / f"{name}.json"
-        try:
-            self.d = json.loads(self.path.read_text())
-        except (OSError, ValueError):
-            self.d = {}
+        self.d = {}
+        self._mtime = None
+        self._reload()
         self.dirty = 0
+        self.new: dict = {}
+
+    def _reload(self):
+        try:
+            mt = self.path.stat().st_mtime
+        except OSError:
+            return
+        if mt == self._mtime:
+            return
+        try:
+            disk = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return
+        disk.update(self.d)
+        self.d = disk
+        self._mtime = mt
 
     def get(self, key, fn):
         if key in self.d:
             return self.d[key]
+        self._reload()
+        if key in self.d:
+            return self.d[key]
+        if OFFLINE:
+            OFFLINE_STATS["cache_misses"] += 1
+            return None
         val = fn()
         self.d[key] = val
+        self.new[key] = val
         self.dirty += 1
         if self.dirty >= 50:
             self.save()
         return val
 
     def save(self):
-        if self.dirty:
-            self.path.write_text(json.dumps(self.d))
-            self.dirty = 0
+        if not self.dirty:
+            return
+        try:
+            disk = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            disk = {}
+        disk.update(self.new)
+        tmp = self.path.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(disk))
+        os.replace(tmp, self.path)
+        disk.update(self.d)
+        self.d = disk
+        try:
+            self._mtime = self.path.stat().st_mtime
+        except OSError:
+            pass
+        self.new = {}
+        self.dirty = 0
 
 
 class FakeBroker:
@@ -1317,6 +1384,9 @@ def day_bars(day: str, syms: set[str], client) -> dict:
         except Exception:  # noqa: BLE001
             have = {}
     need = sorted(s for s in syms if s not in have)
+    if need and OFFLINE:
+        raise SystemExit(f"REPLAY_OFFLINE: {len(need)} symbols' bars for {day} are not cached "
+                         f"({CACHE_DIR / f'bars_v2_{day}.pkl'}); run this day online once first")
     if need:
         # SIP is served once 15 min old; a 16:05 nightly launch asked for bars
         # to 16:00 and died ("subscription does not permit querying recent
@@ -1980,6 +2050,8 @@ def at(day: str, hhmm: str) -> float:
 
 
 def run_inside(args) -> int:
+    if OFFLINE:
+        _offline_socket_guard()
     # The background order-block warm fetch is a live network thread. A replay fills
     # that store synchronously (ObStoreFeeder) when a variant needs bars. Leaving the
     # thread on burned a calibration day (2026-10-08 base, 78 min of warm fetches).
@@ -2226,15 +2298,23 @@ def run_inside(args) -> int:
         return spread_cache.get(f"{str(sym).upper()}|{int(t // 180)}",
                                 lambda: _sip(sym, now=t, ttl=0))
 
+    pace_cache, gap_cache = JsonCache("rvol_pace"), JsonCache("open_gap")
+
     def pace(sym, *, now=None, **kw):
         t = float(now if now is not None else clock.t)
         v = recorded.at("rvol_pace", sym, t, 120.0)
-        return _pace(sym, now=t, **kw) if v is recorded.MISSING else v
+        if v is not recorded.MISSING:
+            return v
+        # Exact-second key: every arm polls on the same clock grid, so arms share the value
+        # and none is served one computed later than its own decision.
+        return pace_cache.get(f"{args.day}|{str(sym).upper()}|{int(t)}", lambda: _pace(sym, now=t, **kw))
 
     def gap(sym, *, now=None, **kw):
         t = float(now if now is not None else clock.t)
         v = recorded.at("open_gap", sym, t, 6.5 * 3600)
-        return _gap(sym, now=t, **kw) if v is recorded.MISSING else v
+        if v is not recorded.MISSING:
+            return v
+        return gap_cache.get(f"{args.day}|{str(sym).upper()}|{int(t)}", lambda: _gap(sym, now=t, **kw))
 
     ew.sip_spread_pct, ew.rvol_pace_sip, ew.open_gap_pct = sip_spread, pace, gap
     # open_spread_replay: actual-spread reads (quotes <= the check second) are never recorded inputs; cache them on
@@ -2365,6 +2445,13 @@ def run_inside(args) -> int:
         t += args.step
 
     spread_cache.save()
+    pace_cache.save()
+    gap_cache.save()
+    if hasattr(ew, "sip_spread_at") and "rt_cache" in locals():
+        rt_cache.save()
+    if OFFLINE:
+        print(f"[replay] OFFLINE: {OFFLINE_STATS['cache_misses']} cache misses served as unknown, "
+              f"{OFFLINE_STATS['blocked_connects']} connections blocked", flush=True)
     print(f"[replay] recorded inputs used {recorded.hits}, fetched/derived {recorded.misses}; "
           f"synthetic names served {len(synth.used)}")
     if args.range_blind:
@@ -2373,6 +2460,8 @@ def run_inside(args) -> int:
     args.result_extra = {"vacuity": {
         **tally.summary(), "double_check_stats": dict(getattr(cp, "DC_STATS", {}) or {}), "place_calls": vac["place_calls"],
         "trades": len(broker.closed) + len(broker.open), "ob_feeds": ob_feed.feeds,
+        "offline": OFFLINE, "offline_cache_misses": OFFLINE_STATS["cache_misses"],
+        "offline_blocked_connects": OFFLINE_STATS["blocked_connects"],
         "synthetic_names_served": len(synth.used) if not synthetic else len(rec.served)}}
     if synthetic:
         d = sorted(vac["entry_fill_delay_sec"])
