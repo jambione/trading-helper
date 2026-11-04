@@ -44,7 +44,7 @@ def test_profit_capture_triggers_on_pct(monkeypatch):
     monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
     monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
     monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
-    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda: False)
+    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda *a, **k: False)
 
     closed_calls = []
 
@@ -83,7 +83,7 @@ def test_profit_capture_triggers_on_px(monkeypatch):
     monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
     monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
     monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
-    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda: False)
+    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda *a, **k: False)
 
     closed_calls = []
 
@@ -123,7 +123,7 @@ def test_profit_capture_does_not_fire_below_threshold(monkeypatch):
     monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
     monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
     monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
-    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda: False)
+    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda *a, **k: False)
 
     class _Alp:
         def cancel_open_orders(self, t):
@@ -157,7 +157,7 @@ def test_profit_capture_disabled_when_zero(monkeypatch):
     monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
     monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
     monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
-    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda: False)
+    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda *a, **k: False)
 
     class _Alp:
         def cancel_open_orders(self, t):

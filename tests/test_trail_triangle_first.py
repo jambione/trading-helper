@@ -171,7 +171,7 @@ def test_apply_local_trail_sells_raised_shelf_before_arm_r(monkeypatch):
     monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
     monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
     monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
-    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda: False)
+    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda *a, **k: False)
     import ai_entry_watch as ew
     monkeypatch.setattr(ew, "apply_live_exhaustion", lambda *a, **k: False)
 
@@ -274,7 +274,7 @@ def test_apply_local_trail_sells_market_when_dual_blank(monkeypatch):
     monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
     monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
     monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
-    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda: False)
+    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda *a, **k: False)
     import ai_entry_watch as ew
     monkeypatch.setattr(ew, "apply_live_exhaustion", lambda *a, **k: False)
 
@@ -329,7 +329,7 @@ def test_shelf_hit_market_sells_while_still_overbought(monkeypatch):
     monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
     monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
     monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
-    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda: False)
+    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda *a, **k: False)
     import ai_entry_watch as ew
     monkeypatch.setattr(ew, "apply_live_exhaustion", lambda *a, **k: False)
 
@@ -406,7 +406,7 @@ def test_apply_local_trail_fires_when_square_mode_off(monkeypatch):
     monkeypatch.setattr(ap, "handoff_working_sell_to_rth", lambda *a, **k: False)
     monkeypatch.setattr(ap, "soft_exit_held_back", lambda *a, **k: False)
     monkeypatch.setattr(ap, "log_event", lambda *a, **k: None)
-    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda: False)
+    monkeypatch.setattr(ap, "_premarket_working_sell_on", lambda *a, **k: False)
 
     closed_calls = []
 

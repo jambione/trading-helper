@@ -70,17 +70,11 @@ def feed_kw(cfg: dict | None = None) -> dict:
 
 def _feed_kw(cfg: dict) -> dict:
     try:
-        from alpaca.data.enums import DataFeed
         # S1: the one live feed knob (alpaca_bar_feed, "iex" by default: free accounts only get IEX real-time).
         import alpaca_api
         return {"feed": alpaca_api.live_data_feed(cfg)}
     except Exception:
-        try:
-            from alpaca.data.enums import DataFeed
-            feed = str(cfg.get("alpaca_data_feed") or cfg.get("alpaca_bar_feed") or "iex").strip().lower()
-            return {"feed": DataFeed.SIP if feed == "sip" else DataFeed.IEX}
-        except Exception:
-            return {}
+        return {}
 
 
 def quote_to_book(quote, ts: float | None = None) -> Optional[L2Book]:

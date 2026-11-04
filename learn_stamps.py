@@ -22,6 +22,15 @@ _BOT_CONFIG = ROOT / "config" / "bot_config.json"
 # Knobs that change *what* the desk buys/sells/sizes — not credentials, not UI.
 _FINGERPRINT_KEYS = (
     "ai_edge_mode",
+    # Phase B premarket rails (11/04 readiness merge): they decide what the premarket lane may buy and how big,
+    # so two different settings must not stamp the same config_fp.
+    "ai_phase_b_lockout_on_loss",
+    "ai_phase_b_max_entries_per_symbol",
+    "ai_phase_b_max_position_dollars",
+    "ai_phase_b_max_position_pct",
+    "ai_phase_b_max_spread_pct",
+    "ai_phase_b_min_prints_in_window",
+    "ai_phase_b_risk_pct",
     "desk_product",
     "ai_h4_paper",
     "ai_h3_paper",
