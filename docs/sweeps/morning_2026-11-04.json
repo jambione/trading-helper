@@ -1,0 +1,16 @@
+{
+  "name": "morning_2026-11-04",
+  "purpose": "Operator 11/04 04:30 'run the tests now': screen the never-green exit arms and the two entry arms before the open. Seat churn (needs admission replayed) stays in tonight's queue (running list row 79).",
+  "sha": "2f8e9da2",
+  "start": "09:30",
+  "end": "15:50",
+  "baseline": {"live_book": true, "set": {}},
+  "variants": {
+    "gate_on":  {"live_book": true, "set": {"ai_watch_anti_pullback_gate": true}},
+    "hold_off": {"live_book": true, "set": {"ai_trail_exit_trend_hold": false}},
+    "dead10":   {"live_book": true, "set": {"ai_dead_trade_min": 10}},
+    "early935": {"live_book": true, "set": {"ai_entry_earliest_time": "09:35"}}
+  },
+  "screen_days": ["2026-10-30", "2026-10-29", "2026-10-28", "2026-10-27", "2026-10-26"],
+  "confirm_days": ["2026-10-23", "2026-10-22", "2026-10-21", "2026-10-20", "2026-10-19", "2026-10-16", "2026-10-15", "2026-10-14"]
+}
