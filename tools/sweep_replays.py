@@ -242,8 +242,8 @@ class Sweep:
                  "Net = trade bp - 3 bp. Day delta = variant net - baseline net, summed per day.",
                  f"SCREEN keep: mean day delta > 0 and >= {SCREEN_MIN_SHARE:.0%} of days better. "
                  f"CONFIRM: mean > 0, day-t >= {CONFIRM_MIN_T}, both halves > 0.", "",
-                 "| variant | stage | verdict | days | mean day delta bp | day-t | days better | net/trade base -> arm | never-green change (n) | offline misses |",
-                 "|---|---|---|---|---|---|---|---|---|---|"]
+                 "| variant | stage | verdict | days | mean day delta bp | day-t | days better | trades base -> arm | net/trade base -> arm | never-green change (n) | offline misses |",
+                 "|---|---|---|---|---|---|---|---|---|---|---|"]
 
         def f(x, p=1):
             return "-" if x is None else f"{x:+.{p}f}"
@@ -251,7 +251,7 @@ class Sweep:
             for stage, c in stg.items():
                 better = "-" if c["share_days_better"] is None else f"{c['share_days_better']:.0%}"
                 lines.append(f"| {arm} | {stage} | **{c['verdict']}** | {c['days']} | {f(c['mean_day_delta'], 0)} | "
-                             f"{f(c['day_t'], 2)} | {better} | "
+                             f"{f(c['day_t'], 2)} | {better} | {c['base_n']} -> {c['arm_n']} | "
                              f"{f(c['base_net_per_trade'])} -> {f(c['arm_net_per_trade'])} | "
                              f"{f(c['never_green_change_bp'])} ({c['never_green_n']}) | {c['offline_misses']} |")
         (self.out / "REPORT.md").write_text("\n".join(lines) + "\n")

@@ -58,4 +58,5 @@ def test_cmd_and_report(tmp_path):
         sw.path("2026-10-01", arm).write_text(json.dumps({"closed": [t("A", 1, r)], "vacuity": {}}))
     rep = sw.report()
     assert rep["variants"]["v"]["screen"]["verdict"] == "KEEP"
-    assert "| v | screen | **KEEP**" in (sw.out / "REPORT.md").read_text()
+    md = (sw.out / "REPORT.md").read_text()
+    assert "| v | screen | **KEEP**" in md and "| 1 -> 1 |" in md
