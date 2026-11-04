@@ -13,8 +13,11 @@ Plan of record: docs/SIP_MONTH_PLAN_2026-10-15.md (one month, keep only if it pa
   The premarket code lives in tag `archive/premarket-2026-11` (9 commits, code only; README inside lists its 6 extra test failures).
 
 ## Before the first SIP morning (all free, none needs SIP)
-1. Premarket branch: recreate from the tag, make the RTH exit change premarket-only, register its config knobs in the fingerprint lists,
-   so the full suite shows no new failures; merge to master-mac with Phase B still dry. (Next step, not done.)
+1. Premarket branch: DONE 11/04 (63dd1050). The nine premarket commits are on master-mac, Phase B still dry. The six extra failures are
+   fixed (the Phase B rail settings are fingerprinted; the leftover IEX copy is gone; test stubs take the position) and
+   tests/test_premarket_rth_untouched.py proves the working-sell helper is False in the regular session. Full suite: the same 7 known
+   failures. Live only at the next planned restart; no restart was done for it. The 7fed2972 'RTH parity' package stays in the
+   archive tag archive/desk-2026-11-03 (it re-adds day-desk exit changes), take pieces only after a replay.
 2. T2-T6 simulations from the month plan; T1 (premarket economics, premarket_t1_sim_prereg.json READY 10/29) is a large build with a
    LOW prior (expected lift 0 +- 10 bp); run it only if the premarket decision depends on it.
 3. Rebuild cache/avg_session_volume.json on SIP daily bars at the flip (RVOL needs one feed on both sides).
