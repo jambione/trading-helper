@@ -1,0 +1,146 @@
+{
+ "name": "night_grid_2026-11-04",
+ "purpose": "Operator 11/04 'lets do that': ~20 single-setting variants in one night instead of 7 mostly repeated arms. Entry: spread cap 0.10/0.08/0.05 (live 0.15), price floor $30/$40 (live $20). Exit: trail give x give-cap pair grid (they block each other one at a time), breakeven 0.10/0.20 (live 0.15), re-entry cooldown 60/300 (live 120), decay leash 10/25 s (live 15), trail arm 0.03/0.12 R (live 0.06). --live-book: floor/spread arms can only refuse names already seated, never add. Baseline = the desk as it runs at the 16:15 start (incl. anything shipped this morning).",
+ "sha": "HEAD",
+ "start": "09:30",
+ "end": "15:50",
+ "baseline": {
+  "live_book": true,
+  "set": {}
+ },
+ "variants": {
+  "spread_10": {
+   "set": {
+    "ai_watch_max_sip_spread_pct": 0.1
+   },
+   "live_book": true
+  },
+  "spread_08": {
+   "set": {
+    "ai_watch_max_sip_spread_pct": 0.08
+   },
+   "live_book": true
+  },
+  "spread_05": {
+   "set": {
+    "ai_watch_max_sip_spread_pct": 0.05
+   },
+   "live_book": true
+  },
+  "floor_30": {
+   "set": {
+    "ai_watch_min_price": 30.0,
+    "ai_watch_movers_min_price": 30.0,
+    "ai_movers_min_price": 30.0,
+    "ai_watch_momentum_min_price": 30.0,
+    "ai_tight_min_price": 30.0
+   },
+   "live_book": true
+  },
+  "floor_40": {
+   "set": {
+    "ai_watch_min_price": 40.0,
+    "ai_watch_movers_min_price": 40.0,
+    "ai_movers_min_price": 40.0,
+    "ai_watch_momentum_min_price": 40.0,
+    "ai_tight_min_price": 40.0
+   },
+   "live_book": true
+  },
+  "give25_cap05": {
+   "set": {
+    "ai_local_trail_peak_give_pct": 0.25,
+    "ai_local_trail_give_max_pct": 0.5
+   },
+   "live_book": true
+  },
+  "give25_cap15": {
+   "set": {
+    "ai_local_trail_peak_give_pct": 0.25,
+    "ai_local_trail_give_max_pct": 1.5
+   },
+   "live_book": true
+  },
+  "give50_cap05": {
+   "set": {
+    "ai_local_trail_peak_give_pct": 0.5,
+    "ai_local_trail_give_max_pct": 0.5
+   },
+   "live_book": true
+  },
+  "give50_cap15": {
+   "set": {
+    "ai_local_trail_peak_give_pct": 0.5,
+    "ai_local_trail_give_max_pct": 1.5
+   },
+   "live_book": true
+  },
+  "be10": {
+   "set": {
+    "ai_local_trail_be_at_pct": 0.1,
+    "ai_local_trail_be_at_r": 0.1
+   },
+   "live_book": true
+  },
+  "be20": {
+   "set": {
+    "ai_local_trail_be_at_pct": 0.2,
+    "ai_local_trail_be_at_r": 0.2
+   },
+   "live_book": true
+  },
+  "cool60": {
+   "set": {
+    "ai_reentry_cooldown_sec": 60.0
+   },
+   "live_book": true
+  },
+  "cool300": {
+   "set": {
+    "ai_reentry_cooldown_sec": 300.0
+   },
+   "live_book": true
+  },
+  "leash10": {
+   "set": {
+    "ai_local_trail_decay_idle_sec": 10.0
+   },
+   "live_book": true
+  },
+  "leash25": {
+   "set": {
+    "ai_local_trail_decay_idle_sec": 25.0
+   },
+   "live_book": true
+  },
+  "arm03": {
+   "set": {
+    "ai_local_trail_arm_r": 0.03
+   },
+   "live_book": true
+  },
+  "arm12": {
+   "set": {
+    "ai_local_trail_arm_r": 0.12
+   },
+   "live_book": true
+  }
+ },
+ "screen_days": [
+  "2026-10-30",
+  "2026-10-29",
+  "2026-10-28",
+  "2026-10-27",
+  "2026-10-26"
+ ],
+ "confirm_days": [
+  "2026-10-23",
+  "2026-10-22",
+  "2026-10-21",
+  "2026-10-20",
+  "2026-10-19",
+  "2026-10-16",
+  "2026-10-15",
+  "2026-10-14"
+ ]
+}
