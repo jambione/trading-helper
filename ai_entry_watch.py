@@ -1508,6 +1508,93 @@ def maybe_prewarm_panel_streams(
     return out
 
 
+_STREAM_PREGATE_LOGGED_AT = 0.0
+
+
+def _note_stream_pregate(counts: dict, now: float) -> None:
+    """One line a minute with the shortlist's stream pre-gate counts, so the next day can read what it dropped."""
+    global _STREAM_PREGATE_LOGGED_AT
+    try:
+        if now - _STREAM_PREGATE_LOGGED_AT < 60.0:
+            return
+        _STREAM_PREGATE_LOGGED_AT = now
+        print("[stream] pregate " + " ".join(f"{k}={v}" for k, v in counts.items()), flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+
+def _watch_symbol_ok(t: str, cfg: dict | None = None) -> bool:
+    """Shape check for a symbol that may take a stream slot or an engine push.
+
+    Letters only, 2-5 long. ai_watch_allow_one_letter (default off) admits 1-letter tickers (T, D, F, B, U): they
+    reached admission every day and were refused no_tape ~1,000 times each, because this check never let them
+    subscribe (2026-11-04). Discord-noise shapes ("A", "I") never reach here: only desk candidate rows do."""
+    t = str(t or "").upper().strip()
+    if not t or not t.isalpha() or len(t) > 5:
+        return False
+    if len(t) >= 2:
+        return True
+    try:
+        c = cfg if isinstance(cfg, dict) else _push_cfg()
+    except Exception:  # noqa: BLE001
+        c = {}
+    return bool((c or {}).get("ai_watch_allow_one_letter", False))
+
+
+def stream_pregate(rows: list, cfg: dict | None, *, now: float | None = None) -> tuple[list[str], dict]:
+    """Which shortlist names may ask for a stream slot BEFORE inclusion (ai_watch_stream_pregate, default off).
+
+    The shortlist (~95 names a minute) asked for slots for every name and marked every one a priority, so the 50 slots
+    filled with names the door would refuse anyway (BAC, PFE, CCL float; out-of-band prices) while admissible names
+    (LQDA +17%, rvol 1.6, $49) had no tape and were refused no_tape (3% -> 28% of admission refusals 10/28 -> 11/04).
+    Drops a name only on a KNOWN reason, the same numbers the door uses: price outside its source's band, a cached
+    gap-down or SIP spread the door would refuse, a known float over ai_watch_max_float_m. Unknown never drops.
+    Keeps caller order (best-ranked first) and caps at ai_watch_stream_shortlist_max (0 = no cap).
+    Returns (symbols, counts)."""
+    c = cfg if isinstance(cfg, dict) else {}
+    t = float(now if now is not None else time.time())
+    max_float = _f_or_none(c.get("ai_watch_max_float_m")) or 0.0
+    hi = _f_or_none(c.get("ai_max_price")) or 0.0
+    counts = {"in": 0, "price": 0, "gate": 0, "float": 0, "badshape": 0, "cap": 0, "out": 0}
+    keep: list[str] = []
+    seen: set[str] = set()
+    for r in rows or []:
+        row = r if isinstance(r, dict) else {"symbol": r}
+        sym = str(row.get("symbol") or "").upper().strip()
+        if not sym or sym in seen:
+            continue
+        seen.add(sym)
+        counts["in"] += 1
+        if not _watch_symbol_ok(sym, c):
+            counts["badshape"] += 1
+            continue
+        px = _f_or_none(row.get("price"))
+        lo = _min_price_for(row.get("source"), c, default=0.0)
+        hi_s = _max_price_for(str(row.get("source") or ""), c, hi) or 0.0
+        if px is not None and ((lo and px + 1e-12 < lo) or (hi_s and px >= hi_s)):
+            counts["price"] += 1
+            continue
+        try:
+            if _slot_unseatable(sym, c, now=t):
+                counts["gate"] += 1
+                continue
+        except Exception:  # noqa: BLE001
+            pass
+        fl = _f_or_none(row.get("float_m"))
+        if max_float > 0 and fl is not None and fl >= max_float:
+            counts["float"] += 1
+            continue
+        keep.append(sym)
+    cap = int(c.get("ai_watch_stream_shortlist_max", 0) or 0)
+    if cap > 0 and len(keep) > cap:
+        counts["cap"] = len(keep) - cap
+        keep = keep[:cap]
+    counts["out"] = len(keep)
+    return keep, counts
+
+
+
 def ensure_watch_stream(symbols, *, cfg: dict | None = None) -> dict:
     """Force Finnhub priority + subscribe and engine book push for watch names.
 
@@ -1522,7 +1609,7 @@ def ensure_watch_stream(symbols, *, cfg: dict | None = None) -> dict:
     seen: set[str] = set()
     for raw in symbols or []:
         t = str(raw or "").upper().strip()
-        if not t or not t.isalpha() or not (2 <= len(t) <= 5) or t in seen:
+        if not _watch_symbol_ok(t, cfg) or t in seen:
             continue
         seen.add(t)
         wanted.append(t)
@@ -8568,7 +8655,7 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
     wanted: list[str] = []
     for s in symbols:
         t = str(s or "").upper().strip()
-        if not t.isalpha() or not (2 <= len(t) <= 5) or t in seen:
+        if not _watch_symbol_ok(t) or t in seen:
             continue
         seen.add(t)
         wanted.append(t)
@@ -11040,7 +11127,11 @@ def sync_watch_from_source_panels(
     # ensure_watch_stream below still runs. Dead seats still drop via
     # no_stream_trade / stale_timeout after grace.
     try:
-        ensure_watch_stream([r.get("symbol") for r in candidates])
+        _stream_syms = [r.get("symbol") for r in candidates]
+        if bool(cfg.get("ai_watch_stream_pregate", False)):
+            _stream_syms, _pg = stream_pregate(candidates, cfg, now=t0)
+            _note_stream_pregate(_pg, t0)
+        ensure_watch_stream(_stream_syms)
     except Exception:
         pass
     try:

@@ -1406,6 +1406,12 @@ DEFAULT_CONFIG = {
     # Pullback buy-stop SHADOW (operator 2026-11-03): log where the reverted
     # 11/02 pullback arm's geometry would fire. Observe only; never arms.
     "ai_watch_pullback_shadow":        False,
+    # No-tape fix (operator 11/04, ships with the after-close restart; all default off):
+    # one-letter tickers may take a stream slot, and the shortlist drops names with a KNOWN door-refusal
+    # reason before asking for slots, best-ranked first, capped at ai_watch_stream_shortlist_max.
+    "ai_watch_allow_one_letter":       False,
+    "ai_watch_stream_pregate":         False,
+    "ai_watch_stream_shortlist_max":   0,
     "ai_watch_pullback_shadow_gap_sec": 120.0,
     # HARD SKIP (operator decision 2026-10-05, after the tradeoffs): refuse an
     # arm when ob_resist_0.3 is True (price inside, or within 0.3% under, a
