@@ -16653,6 +16653,43 @@ def _entry_features(rec: dict, *, ask: float | None = None,
     }
 
 
+def _wr_slope_fields(sym: str, price: Any, now: float | None = None, cfg: dict | None = None) -> dict:
+    """OBSERVE ONLY (operator 11/04 'log the slope'): how far each %R line moved over the last 2 / 5 / 10 closed
+    minutes at the moment of entry, so the sideways-entry hypothesis can be tested forward on days it has never seen.
+    The desk's own pitch fields were None on 94% of entries. Same lines, bars and live-price fold as
+    tools/sell_double_check (fast 21/EWM7, slow 112/EWM3) on the in-memory ob_observe store (3,000-bar warm,
+    prior days included). Called once per entry; nothing reads these keys; {} when off, short of bars, or on error.
+    Keys: wr_fast_now, wr_slow_now, wr_d{2,5,10}_{fast,slow} (now minus N closed minutes earlier), wr_bar_age_sec."""
+    try:
+        c = cfg if isinstance(cfg, dict) else _push_cfg()
+        if not bool((c or {}).get("ai_watch_wr_slope_log", True)):
+            return {}
+        px = _f_or_none(price)
+        sym = str(sym or "").upper().strip()
+        if not sym or not px or px <= 0:
+            return {}
+        import ob_observe
+        from tools import sell_double_check as sdc
+        b = ob_observe.bars(sym)
+        if not b or len(b) < sdc.SLOW_LENGTH + 20:
+            return {}
+        t = float(now if now is not None else time.time())
+        rows = sdc.closed_rows([float(x[0]) for x in b], [float(x[2]) for x in b],
+                               [float(x[3]) for x in b], [float(x[4]) for x in b], t)
+        fw = sdc.line_window(rows, px, sdc.FAST_LENGTH, sdc.FAST_SPAN, 11)
+        sw = sdc.line_window(rows, px, sdc.SLOW_LENGTH, sdc.SLOW_SPAN, 11)
+        if not fw or not sw:
+            return {}
+        out = {"wr_fast_now": round(fw[-1], 2), "wr_slow_now": round(sw[-1], 2),
+               "wr_bar_age_sec": round(t - float(b[-1][0]), 1)}
+        for n in (2, 5, 10):
+            out[f"wr_d{n}_fast"] = round(fw[-1] - fw[-1 - n], 2)
+            out[f"wr_d{n}_slow"] = round(sw[-1] - sw[-1 - n], 2)
+        return out
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _vol_1m_pct(sym: str, now: float, n: int = 15,
                 max_age: float = 180.0, window: int = 20) -> float | None:
     """Stdev of one-minute close-to-close returns, %, from the cached IEX bars
@@ -20496,6 +20533,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 place_decision["features"]["sticky_used"] = False
                 for _obk, _obv in _ob_fields.items():
                     place_decision["features"][_obk] = _obv
+                # Observe-only %R slope at entry (ai_watch_wr_slope_log); nothing reads it.
+                place_decision["features"].update(_wr_slope_fields(sym, ask_f, t0, cfg))
         rec["status"] = "armed"
         set_block_reason(rec, "placing", now=t0)
         try:
