@@ -35,3 +35,14 @@ The same two knobs back to iex / false, plus ALPACA_BAR_FEED=iex, and a restart.
 
 ## Keep or cancel
 One number: measured improvement in net $/day on paper versus the plan's cost, per SIP_MONTH_PLAN section 6.
+
+## Buy-to-Monday sequence (operator 11/05: "set up a Sunday-night checklist")
+Run on the MINI (the Alpaca keys live there). The tool: `.venv/bin/python tools/sip_sunday_check.py` (tests/test_sip_sunday_check.py).
+1. **Friday (or any weekday), after buying, market OPEN:** `tools/sip_sunday_check.py --entitlement`. PASS = the newest SIP SPY trade is <= 30 s old.
+   It writes ai_reports/sip_entitlement.json. FAIL = stop; the plan is not live SIP (do not flip anything).
+   Why not on the weekend: a delayed-only plan also passes the latest-trade call on days-old trades, so a weekend probe proves nothing.
+2. **Friday after the close:** set `alpaca_bar_feed` "sip" and `ai_sip_realtime` true in config/bot_config.json, `ALPACA_BAR_FEED=sip` in
+   signal_engine.env, rebuild cache/avg_session_volume.json on SIP daily bars, keep `ai_phase_b_dry_run` true, restart through the LaunchAgent.
+3. **Sunday night:** `tools/sip_sunday_check.py` (no flag). GO needs all nine lines OK: stamp passed within 5 days, both knobs and the env var read sip,
+   live_data_feed()/delay terms read sip/0, volume cache fresh, Phase B dry, no open positions, no traceback. Any [NO] = the desk stays on IEX.
+4. **Monday:** first hour watch for 429s, then re-read stale-tape ceilings, spread cap and RVOL floors (tools/sip_readiness.py lists them).

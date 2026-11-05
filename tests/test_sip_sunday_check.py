@@ -1,0 +1,38 @@
+"""SIP go/no-go decision logic: a closed-market probe must never count as proof of live SIP."""
+from __future__ import annotations
+
+import sys
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tools import sip_sunday_check as sc  # noqa: E402
+
+ET = ZoneInfo("America/New_York")
+
+
+def test_closed_market_probe_never_passes():
+    ok, why = sc.entitlement_passes(3.0, False, None)
+    assert not ok and "proves nothing" in why
+
+
+def test_open_market_needs_a_fresh_print():
+    assert sc.entitlement_passes(4.0, True, None)[0]
+    assert not sc.entitlement_passes(900.0, True, None)[0]      # delayed plan
+    assert not sc.entitlement_passes(None, True, None)[0]
+    assert not sc.entitlement_passes(2.0, True, "subscription does not permit querying recent SIP data")[0]
+
+
+def test_market_open_window_and_weekend():
+    assert sc.market_open(datetime(2026, 11, 6, 10, 0, tzinfo=ET))      # Friday
+    assert not sc.market_open(datetime(2026, 11, 6, 16, 0, tzinfo=ET))
+    assert not sc.market_open(datetime(2026, 11, 8, 20, 0, tzinfo=ET))  # Sunday night
+
+
+def test_stamp_must_be_a_recent_pass():
+    now = 1_800_000_000.0
+    assert not sc.stamp_ok(None, now)[0]
+    assert not sc.stamp_ok({"passed": False, "ts": now}, now)[0]
+    assert sc.stamp_ok({"passed": True, "ts": now - 86400}, now)[0]
+    assert not sc.stamp_ok({"passed": True, "ts": now - 6 * 86400}, now)[0]
