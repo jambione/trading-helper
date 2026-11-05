@@ -33,3 +33,8 @@ Current live shape: 3 slots x 33% of equity (`ai_max_positions` 3, `ai_max_posit
 
 ## Where things are
 `ai_entry_watch.py` arm/seat/admission gates; `ai_positions.py` sizing, trail, exits; `config.py` defaults; `tools/watchdog.py` process supervision; `tools/replay_session.py` replays; `tools/studies/` one-off studies; `docs/LAST_MONTH_PLAN_2026-11-04.md` the plan this handoff closes; Claude memory notes in `~/.claude/projects/-Users-jonathanbrasfield-repo-trading-helper/memory/` (index `MEMORY.md`).
+
+## Is the project regressing? (added 11/05)
+- `docs/SCOREBOARD.md` ends with a GROWING / FLAT / REGRESSING line: last 10 sessions vs the 10 before, day-level Welch t. Thresholds are fixed (+-2 bp, |t| >= 1.5); do not retune them after a bad week.
+- `docs/ship_log.json` lists every shipped change with its effective date; the board shows net bp/trade before vs after each, and says NOT ENOUGH DATA under 10 sessions. `tools/ship_winners.py --apply` appends to it. Add an entry by hand for any manual config or code change.
+- `scripts/regression_check.sh` (nightly, also by hand, about 4 minutes) runs the full suite in a throwaway worktree and fails on any test not in `tests/known_failures.txt`. It prints FIXED when a known failure starts passing; remove it from the file then.
