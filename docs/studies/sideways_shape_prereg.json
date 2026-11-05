@@ -1,7 +1,7 @@
 {
  "id": "sideways_shape",
  "registered": "2026-11-05",
- "status": "amended_1 after result-skeptic round 1 (NOT READY, 8 findings); awaiting round 2; nothing scored",
+ "status": "READY (result-skeptic round 2, 11/05, with three doc fixes applied); nothing scored",
  "operator": "2026-11-05 'yes - we're trying to eliminate the Nevergreens ... identify flat sideways movement and not open on it'",
  "question": "Do any of six price/tape shape measures over the 15 closed minutes before entry mark desk entries that go never-green more often, and does refusing that flat quarter raise the mean of the kept trades?",
  "prior_evidence_against": [
@@ -10,15 +10,14 @@
   "sideways %R test 11/04: z +1.5, 58 of 75 cases in one period",
   "quiet-tape gate works only on real-time SIP volume; IEX volume flat (tape5 is IEX)"
  ],
- "population": "desk watch-path entries >= $20, 2026-09-24..2026-11-03, outcomes.jsonl from single-day tape folders, de-duplicated by (symbol, round(entry_time)); needs >= 80 IEX bars in ~/replay_cache and a last closed bar within 240 s of entry",
+ "population": "desk watch-path entries >= $20, 2026-09-24..2026-10-30; last closed bar within 180 s of the entry minute (code: cut-180) and 15 bars spanning <= 18 min; >= 80 IEX bars cached",
  "label": "never_green = peak_price < entry_price x 1.0005 (hold-length dependent; stated limitation). net = (exit-entry)/entry bp - 3 bp.",
  "measures_fixed": {
-  "er15": "|close[-1]-close[0]| / sum|diff| over the last 15 closed bars + entry price; SIDEWAYS = low",
-  "rng15": "(max high - min low of last 15 closed bars) / entry px in bp; SIDEWAYS = low",
-  "r2_15": "R^2 of a straight-line fit to those 16 closes; SIDEWAYS = low",
-  "vwapx15": "count of close-vs-running-VWAP side changes inside the 15 bars; SIDEWAYS = high",
-  "bbw20": "4 x population stdev of last 20 closes / mean, bp; SIDEWAYS = low",
-  "tape5": "IEX volume of last 5 bars / median of the prior 5-bar blocks over 60 min; SIDEWAYS = low"
+  "er15": "|close[-1]-close[0]| / sum|diff| over the last 15 CLOSED bars (15 closes, the last closed bar close is the final close); SIDEWAYS = low",
+  "rng15": "(max high - min low of those 15 bars) / last closed close in bp; SIDEWAYS = low",
+  "r2_15": "R^2 of a straight-line fit to those 15 closes; SIDEWAYS = low",
+  "vwap15_crossings": "count of close-vs-running-VWAP (VWAP over the 15 bars) side changes; SIDEWAYS = high",
+  "bbw20": "4 x population stdev of last 20 closed closes / mean, bp; SIDEWAYS = low"
  },
  "flat_group": "worst quarter in the declared direction; cut = pooled 25th (or 75th) percentile of the measure over all scored entries (label-free)",
  "pass": {
@@ -37,6 +36,7 @@
   "volatility_confound": "never-green must also be higher for flat inside rng15 terciles (>= 2 of 3 positive) - rng15 itself is exempt.",
   "pass": "NG: pooled z >= 2.33, flat > rest in A and B, day-clustered bootstrap 5th pct of (flat - rest) NG rate > 0. PAYOFF: day-clustered bootstrap 5th pct of (kept - all) net > 0 AND its median beats a random same-count-per-day skip. PASS_NG_AND_PAYOFF needs both.",
   "power": "~700 entries expected, flat ~90 per half: minimum detectable NG lift ~10 points per half; true effect likely smaller (scalar-fact AUC was 0.55). A half with < 80 flat entries gives UNDERPOWERED.",
-  "diagnostics": "drop counts by reason printed; abort below 300 scored entries."
+  "diagnostics": "drop counts by reason printed; abort below 300 scored entries.",
+  "known_limits": "IEX sparsity: thin names print fewer bars, which lowers rng15/er15/bbw20 and also the chance a +5 bp high prints, so rng15 has no tercile protection. Bootstrap control may skip slightly more than the flat count on duplicated days (noise only). Expected ~88 flat per half, so UNDERPOWERED is a likely verdict; the 80 floor is not changed."
  }
 }
