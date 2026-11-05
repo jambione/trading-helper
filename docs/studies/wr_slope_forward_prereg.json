@@ -1,0 +1,24 @@
+{
+ "id": "wr_slope_forward",
+ "registered": "2026-11-05, before any confirmatory data: only entries from 2026-11-06 on count; the 11 entries of 11/05 that suggested H2 are EXCLUDED (the hypothesis came from them)",
+ "operator": "2026-11-05 'pre-register fast %R rise of 30 or more over 5 minutes' (after VMRK; 4 of 5 never-greens today had a fast rise >= 30)",
+ "supersedes_partly": "running list row 85 item (5): the flat-entry rule (H1) keeps its fixed definition but now shares the corrected bar with H2",
+ "question": "Which, if either, of two %R slope reads at entry marks never-green desk entries?",
+ "hypotheses": {
+  "H1_flat": "flat = max(|wr_d5_fast|, |wr_d5_slow|) <= 10.7 marks never-green (fixed 11/04 before data; origin: sideways test 11/04, z +1.5, exploratory)",
+  "H2_steep": "steep = wr_d5_fast >= 30.0 (fast %R line rose 30 or more points over the last 5 closed minutes) marks never-green (origin: 11/05, 5 never-greens vs 6 others, 4/5 vs 1/6 above 30; exploratory, n=11, post hoc; the closed 10/30 pitch study on 230,128 events found steep slow-pitch bands no worse than others, which argues against)"
+ },
+ "data": "desk entries from 2026-11-06, features.wr_d5_fast / wr_d5_slow from ai_reports/outcomes.jsonl (ai_watch_wr_slope_log, live since 11/04 16:00); never-green = peak_price < entry +5 bp (hold-length dependent, stated limitation); net = (exit-entry)/entry bp - 3 bp",
+ "read_when": "150 forward entries with the slope fields; tools/studies/wr_slope_forward.py prints NOT DUE before that",
+ "multiple_comparisons": "two hypotheses -> each needs pooled one-sided z >= 1.96 (p < 0.025)",
+ "pass_each": {
+  "never_green": "flagged-group never-green rate above the rest in BOTH halves (split by date at the median) and pooled z >= 1.96",
+  "payoff": "mean net of the unflagged group above the mean of all in both halves and the day-clustered bootstrap 5th percentile of (unflagged - all) > 0",
+  "power": "each half needs >= 40 flagged entries and >= 8 days, else UNDERPOWERED for that hypothesis",
+  "confound": "if rs_rng15_bp is present (range-position logger), the never-green gap must be positive in >= 2 of 3 range terciles"
+ },
+ "if_pass": "skeptic review of the positive, then an observe-only flag in the Gates column, then a gate only through the sweep and ship-log rules; never straight to live",
+ "if_fail": "close; no retuning of 10.7, 30.0, the 5-minute window or the label; record in the running list and memory",
+ "tool": "tools/studies/wr_slope_forward.py",
+ "status": "READY to log (already logging); awaiting result-skeptic"
+}
