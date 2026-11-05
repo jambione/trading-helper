@@ -16710,6 +16710,50 @@ def _wr_slope_fields(sym: str, price: Any, now: float | None = None, cfg: dict |
         return {}
 
 
+def _range_shape_fields(sym: str, price: Any, now: float | None = None, cfg: dict | None = None) -> dict:
+    """OBSERVE ONLY (operator 11/05, MOS/EQNR/CVS all bought at 0.82-0.95 of their 15-minute range after a run-up, then
+    stalled or fell): where the entry sits in the last 15 / 30 closed one-minute bars and how far it had risen, so the
+    'bought the top of a run-up' read can be tested forward (docs/studies/range_position_forward_prereg.json).
+    Same in-memory ob_observe store as the %R slope log; closed bars only (start before the entry minute), the entry
+    ask is the price whose position is read. Keys: rs_pos15, rs_pos30 (0 = at the low, 1 = at the high, >1 = above it),
+    rs_rng15_bp, rs_rise15_bp (entry vs the close 15 bars back), rs_er15 (net move / path), rs_bars. Nothing reads these;
+    {} when off, short of bars, gappy, or on any error."""
+    try:
+        c = cfg if isinstance(cfg, dict) else _push_cfg()
+        if not bool((c or {}).get("ai_watch_range_shape_log", True)):
+            return {}
+        px = _f_or_none(price)
+        sym = str(sym or "").upper().strip()
+        if not sym or not px or px <= 0:
+            return {}
+        import ob_observe
+        b = ob_observe.bars(sym)
+        if not b or len(b) < 40:
+            return {}
+        t = float(now if now is not None else time.time())
+        cut = t - (t % 60)
+        bars = [x for x in b if float(x[0]) < cut]
+        if len(bars) < 30 or float(bars[-1][0]) < cut - 180:
+            return {}
+        out: dict = {"rs_bars": len(bars)}
+        for n in (15, 30):
+            w = bars[-n:]
+            if float(w[-1][0]) - float(w[0][0]) > 60 * (n + 3):
+                continue
+            hi = max(float(x[2]) for x in w); lo = min(float(x[3]) for x in w)
+            hi, lo = max(hi, px), min(lo, px)
+            out[f"rs_pos{n}"] = round((px - lo) / (hi - lo), 3) if hi > lo else None
+            if n == 15:
+                cl = [float(x[4]) for x in w]
+                out["rs_rng15_bp"] = round((hi - lo) / px * 1e4, 1)
+                out["rs_rise15_bp"] = round((px / cl[0] - 1) * 1e4, 1)
+                path = sum(abs(cl[i] - cl[i - 1]) for i in range(1, len(cl)))
+                out["rs_er15"] = round(abs(cl[-1] - cl[0]) / path, 3) if path > 0 else 0.0
+        return out
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _vol_1m_pct(sym: str, now: float, n: int = 15,
                 max_age: float = 180.0, window: int = 20) -> float | None:
     """Stdev of one-minute close-to-close returns, %, from the cached IEX bars
@@ -20555,6 +20599,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                     place_decision["features"][_obk] = _obv
                 # Observe-only %R slope at entry (ai_watch_wr_slope_log); nothing reads it.
                 place_decision["features"].update(_wr_slope_fields(sym, ask_f, t0, cfg))
+                place_decision["features"].update(_range_shape_fields(sym, ask_f, t0, cfg))
         rec["status"] = "armed"
         set_block_reason(rec, "placing", now=t0)
         try:

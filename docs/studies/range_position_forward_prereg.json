@@ -1,0 +1,21 @@
+{
+ "id": "range_position_forward",
+ "registered": "2026-11-05 (before any forward data: the logger is not yet deployed)",
+ "operator": "2026-11-05 'yes' after MOS (0.84), EQNR (0.82), CVS (0.95) were all bought in the top fifth of their 15-minute range after a run-up and stalled or fell; CVS never green, -65 bp.",
+ "question": "Do desk entries made in the top of their recent range go never-green more often, and does refusing them raise the mean of the kept trades?",
+ "origin_evidence": "EXPLORATORY 11/05 on 891 desk entries 9/24-10/30, 30-minute range, bins chosen after seeing the data: position >= 0.8 (576 entries) never-green about 47% vs 37% below, net about -10 vs -7.4 bp. The 8/4-9/23 study (buying-the-top-is-not-the-loss, 871 fills, realized %, HOD-based) found the opposite. So this is a lead that disagrees with an earlier result.",
+ "primary_hypothesis": "rs_pos30 >= 0.80 (position of the entry ask in the last 30 closed one-minute bars, 0 = low, 1 = high) marks never-green entries. ONE hypothesis, ONE threshold, fixed now.",
+ "information_only": ["rs_pos15 >= 0.80", "rs_rise15_bp", "rs_er15", "rs_rng15_bp"],
+ "data": "desk entries from the first session after the logger deploys (expected 2026-11-06), features rs_* stamped at entry from the in-memory IEX bar store (closed bars only). Never-green = peak_price < entry +5 bp (hold-length dependent; stated limitation). Net = (exit-entry)/entry bp - 3 bp.",
+ "read_when": "150 forward entries with rs_pos30 present",
+ "pass": {
+  "never_green": "top group (rs_pos30 >= 0.80) never-green rate above the rest in BOTH halves (split by date at the median) and pooled one-sided z >= 1.64 (single hypothesis)",
+  "payoff": "mean net of the kept group (rs_pos30 < 0.80) above the mean net of all entries in BOTH halves, and the day-clustered bootstrap 5th percentile of (kept - all) > 0",
+  "volatility_confound": "never-green must still be higher for the top group inside rs_rng15_bp terciles (>= 2 of 3 positive)"
+ },
+ "if_pass": "skeptic review of the positive, then a one-line config gate (refuse arms with rs_pos30 >= 0.80), shipped through the sweep and ship_log rules; never straight to live",
+ "if_fail_or_underpowered": "close; do not retune the threshold or window; record in the running list and memory",
+ "caveats": ["the earlier 8/4-9/23 result disagrees", "refusing the top 65% of entries (about 576 of 891) would also cut most trades; the payoff test is the one that matters", "IEX bars; spreads and volumes are IEX-limited"],
+ "tool": "tools/studies/range_position_forward.py",
+ "status": "READY to log; read not before 150 forward entries; skeptic review due before the read"
+}

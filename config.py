@@ -1421,6 +1421,7 @@ DEFAULT_CONFIG = {
     # reason before asking for slots, best-ranked first, capped at ai_watch_stream_shortlist_max.
     # Observe-only %R slope stamped on every entry's features (operator 11/04): see _wr_slope_fields.
     "ai_watch_wr_slope_log":           True,
+    "ai_watch_range_shape_log":        True,   # observe-only entry range position / rise (11/05)
     "ai_watch_allow_one_letter":       False,
     "ai_watch_stream_pregate":         False,
     "ai_watch_stream_shortlist_max":   0,
