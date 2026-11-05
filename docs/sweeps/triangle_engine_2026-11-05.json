@@ -1,0 +1,54 @@
+{
+ "sha": "HEAD",
+ "start": "09:30",
+ "end": "15:50",
+ "baseline": {
+  "live_book": true,
+  "set": {}
+ },
+ "screen_days": [
+  "2026-10-30",
+  "2026-10-29",
+  "2026-10-28",
+  "2026-10-27",
+  "2026-10-26"
+ ],
+ "confirm_days": [
+  "2026-10-23",
+  "2026-10-22",
+  "2026-10-21",
+  "2026-10-20",
+  "2026-10-19",
+  "2026-10-16",
+  "2026-10-15",
+  "2026-10-14",
+  "2026-10-13",
+  "2026-10-12",
+  "2026-10-09",
+  "2026-10-08",
+  "2026-10-07",
+  "2026-10-06",
+  "2026-10-05",
+  "2026-10-02",
+  "2026-10-01",
+  "2026-09-30",
+  "2026-09-29",
+  "2026-09-28"
+ ],
+ "base_set": {
+  "ai_max_positions": 3,
+  "ai_max_position_pct": 33.0,
+  "ai_risk_pct": 1.65
+ },
+ "name": "triangle_engine_2026-11-05",
+ "purpose": "Operator 11/05 'add it': does the leave-overbought triangle exit pay when it reads the engine's smoothed lines (ai_exit_triangle_engine_only, commit 5479bd8)? Live has ai_exit_left_overbought false since 10/8 10:30 (raw %R bug). Baseline = desk as it runs (triangle off). Variant tri_engine = both switches on. Same ship rule as running list row 82: KEEP needs mean day delta > 0 and >= 60% days better; CONFIRM needs day-t >= 1.5 and both halves positive. Prior: engine-only triangle +2.7 bp/day on the 10/16 sweep (not a keep), exits rarely move the mean. Runs after the 11/05 close on the mini's current checkout (no pull), 3x33% base set.",
+ "variants": {
+  "tri_engine": {
+   "live_book": true,
+   "set": {
+    "ai_exit_left_overbought": true,
+    "ai_exit_triangle_engine_only": true
+   }
+  }
+ }
+}
