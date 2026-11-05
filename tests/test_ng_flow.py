@@ -25,6 +25,14 @@ def test_hold_label_uses_the_hold_not_300s():
     assert N.ng_from_forward(fwd, t, e, horizon=450) is False
 
 
+def test_short_holds_get_the_300s_floor():
+    t, e = 1000.0, 50.0
+    fwd = [(1200.0, 50.2, [" "])]                       # a print 200 s in, long after a 40 s stop-out
+    en = {"t": t, "xt": t + 40}
+    assert N.fwd_end(en) == t + 300
+    assert N.ng_from_forward(fwd, t, e, horizon=min(N.FWD_MAX_S, max(N.FWD_S, 40))) is False
+
+
 def test_forward_window_covers_the_hold():
     assert N.fwd_end({"t": 1000.0, "xt": 1060.0}) == 1000.0 + 300
     assert N.fwd_end({"t": 1000.0, "xt": 1700.0}) == 1700.0

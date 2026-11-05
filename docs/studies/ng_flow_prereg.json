@@ -1,20 +1,20 @@
 {
  "id": "ng_flow",
  "registered": "2026-11-05",
- "status": "amended_1 after result-skeptic round 1 (NOT READY, 8 findings); awaiting round 2; nothing fetched or scored",
+ "status": "READY (result-skeptic round 2: NOT READY on one label-floor bug + thin-tercile and stale-text items, all fixed 11/05; the skeptic said READY once those were fixed; max two rounds reached); nothing fetched or scored",
  "operator": "2026-11-05 'write the never-green flow test and queue it for tonight after the leash run'",
  "question": "Does SIP trade-flow imbalance in the 60 s before a desk entry mark entries that go never-green, and does refusing the weak-flow third raise the mean of the kept trades?",
  "prior": "order_flow_pilot 10/21: OFI60 beat its control by +1.9/+1.5 bp (t 3.5/3.4) on the NEXT-3-MINUTE RETURN of pilot PRE onsets, but gated entries still netted -11 to -16 bp after the spread. That target was return, not never-green, and the population was historical PRE onsets, not the desk's own entries. Expected pass probability ~15%.",
  "population": "desk watch-path entries >= $20, 2026-09-24..2026-10-30 (11/02-11/03 excluded as in never_green_entry), de-duplicated by (symbol, round(entry_time)). T = entry_time (order submission).",
  "feature": "ofi60 = order_flow_pilot.features(tick, T)['ofi60']: Lee-Ready signed SIP trade volume over [T-60 s, T) (amended_3 keep-list of condition codes, quotes <= 60 s old for signing), needs >= 5 signed trades. qi and micro are information only.",
- "label": "never_green = no kept SIP trade in (T, T+300 s] prints at or above entry_price x 1.0005 (entry_price = broker fill). Entries with no kept post-entry trade are dropped and counted. The desk's peak_price label is a cross-check only.",
+ "label": "never_green = no kept SIP trade in (T, T+hold] reaches entry_price x 1.0005, hold = exit_time - T floored at 300 s, capped 1800 s. The fixed 300 s label and the desk's peak_price label are cross-checks only.",
  "primary_hypothesis": "weak flow = ofi60 <= the 1/3 quantile of half A (A = entries before 2026-10-14; the cut is fit on A only and applied to B) marks never-green entries. ONE hypothesis, ONE group definition, fixed now.",
  "pass": {
   "never_green": "weak-flow never-green rate above the rest in pooled, half A and half B; pooled one-sided z >= 1.64 (single hypothesis); day-clustered bootstrap 5th percentile of (weak - rest) never-green rate > 0",
   "payoff": "mean net (exit vs entry - 3 bp) of the kept (not weak) group above the mean of all entries in pooled, A and B, and the day-clustered bootstrap 5th percentile of (kept - all) > 0"
  },
- "verdicts": "PASS_NG_AND_PAYOFF, PASS_NG_ONLY (information), FAIL, UNDERPOWERED (a half with < 80 weak entries), NO_DATA",
- "abort": "fewer than 300 scored entries, or > 5% fetch failures",
+ "verdicts": "PASS_NG_AND_PAYOFF, PASS_NG_ONLY (information), FAIL, UNDERPOWERED (a half with < 80 weak entries or < 12 days, or a spread/range tercile with < 15 weak or rest), ABORT_SHARE (weak share outside 25-42% in ALL, A or B), UNPROVEN_DROPS (> 10% of entries dropped), NO_DATA",
+ "abort": "fewer than 300 scored entries; the fetch aborts if more than 20 entries fail and failures exceed 5%",
  "no_retuning": "no change to the window, the quantile, the horizon or the label after scoring",
  "if_pass": "skeptic review of the positive; then a live observe-only OFI60 stamp on entries and a forward read at 150 entries; real-time SIP needed to use it live (SIP_DAY1_RUNBOOK); never straight to a gate",
  "if_fail": "close; record in the running list and memory; flow does not separate never-greens",
@@ -32,6 +32,7 @@
   "drops": "dropped entries (no file, < 5 signed trades, no post-entry tape) are counted by half; if total drops exceed 10% the verdict is UNPROVEN_DROPS.",
   "confounds": "never-green gap (weak - rest) must be positive in >= 2 of 3 terciles of BOTH spread_bp at T (last clean SIP quote) and the 60 s pre-entry trade range, as well as pooled and in each half; a pooled gap of at least 5 points is also required.",
   "payoff": "payoff and never-green are one test of the same grouping; payoff is reported at 3 bp (the scoreboard convention, a round-trip allowance; fills already include the touch spread) and at 0 bp.",
-  "power": "each half needs >= 12 days and >= 80 weak entries, else UNDERPOWERED."
+  "power": "each half needs >= 12 days and >= 80 weak entries, else UNDERPOWERED.",
+  "strata": "all three terciles of BOTH spread_bp and the 60 s range must be evaluated (>= 15 weak and >= 15 rest each) and >= 2 of 3 positive, else UNDERPOWERED; entries missing a spread or range are counted in strata_missing"
  }
 }

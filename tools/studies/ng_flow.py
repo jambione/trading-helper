@@ -152,8 +152,8 @@ def build_rows():
         f = P.features(d["tick"], en["t"])
         if f["ofi60"] is None:
             drops["no_ofi"] += 1; dropped[half] += 1; continue
-        hold = max(1.0, en["xt"] - en["t"]) if en["xt"] > en["t"] else FWD_S
-        ng_hold = ng_from_forward(d["fwd"], en["t"], en["e"], horizon=min(FWD_MAX_S, hold))
+        hold = (en["xt"] - en["t"]) if en["xt"] > en["t"] else FWD_S
+        ng_hold = ng_from_forward(d["fwd"], en["t"], en["e"], horizon=min(FWD_MAX_S, max(FWD_S, hold)))   # floor 300 s (prereg)
         ng_300 = ng_from_forward(d["fwd"], en["t"], en["e"], horizon=FWD_S)
         if ng_hold is None:
             drops["no_label"] += 1; dropped[half] += 1; continue
@@ -203,6 +203,7 @@ def score(rows, drops=None):
     strata = {}
     for name in ("spread_bp", "rng60"):
         vals = sorted(r[name] for r in rows if r[name] is not None)
+        res.setdefault("strata_missing", {})[name] = sum(1 for r in rows if r[name] is None)
         if len(vals) < 90:
             strata[name] = None; continue
         t1, t2 = vals[len(vals) // 3], vals[2 * len(vals) // 3]
@@ -212,7 +213,9 @@ def score(rows, drops=None):
             w = [r for r in g if weak(r)]; k = [r for r in g if not weak(r)]
             if len(w) >= 15 and len(k) >= 15:
                 diffs.append(sum(r["ng"] for r in w) / len(w) - sum(r["ng"] for r in k) / len(k))
-        strata[name] = [round(x, 3) for x in diffs]
+            else:
+                diffs.append(None)                                  # a thin tercile is flagged, never skipped
+        strata[name] = [None if x is None else round(x, 3) for x in diffs]
     res["strata_ng_diff"] = strata
     days = {}
     for r in rows:
@@ -233,13 +236,15 @@ def score(rows, drops=None):
         res["verdict"] = "NO_DATA"
     elif share_bad:
         res["verdict"] = "ABORT_SHARE"
-    elif under or len(days_a) < MIN_DAYS_HALF or len(days_b) < MIN_DAYS_HALF:
+    elif under or len(days_a) < MIN_DAYS_HALF or len(days_b) < MIN_DAYS_HALF \
+            or any(v is None or any(x is None for x in v) for v in strata.values()):
         res["verdict"] = "UNDERPOWERED"
     else:
         gap_ok = al["ng_weak"] - al["ng_rest"] >= 0.05
         ng_ok = (gap_ok and al["z"] >= Z_BAR and ha["ng_weak"] > ha["ng_rest"] and hb["ng_weak"] > hb["ng_rest"]
                  and res["boot"]["ng_diff_lo5"] > 0
-                 and all(v is not None and sum(x > 0 for x in v) >= 2 for v in strata.values()))
+                 and all(v is not None and len(v) == 3 and all(x is not None for x in v) and sum(x > 0 for x in v) >= 2
+                         for v in strata.values()))
         pay_ok = all(x["net_kept"] > x["net_all"] for x in (al, ha, hb)) and res["boot"]["payoff_lo5"] > 0
         res["verdict"] = "PASS_NG_AND_PAYOFF" if ng_ok and pay_ok else "PASS_NG_ONLY" if ng_ok else "FAIL"
     return res
