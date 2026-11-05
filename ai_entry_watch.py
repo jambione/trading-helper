@@ -279,6 +279,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "wait_exh": "wait EXH",
     "wait_rsi": "wait RSI",
     "exh_not_tight": "EXH wide",
+    "wr_steep": "%R spike",
     "stale_square": "stale ■",
     "exh_rsi": "ready",
     "last_exh_rsi": "ready",
@@ -16710,6 +16711,22 @@ def _wr_slope_fields(sym: str, price: Any, now: float | None = None, cfg: dict |
         return {}
 
 
+def wr_steep_refusal(features: Any, cfg: dict | None) -> str | None:
+    """ai_watch_wr_steep_block_pts (operator 11/05, default 0 = OFF; replay test only until it passes): refuse the arm when
+    the fast %R line rose >= that many points over the last 5 closed minutes (wr_d5_fast, stamped at the arm). Missing slope
+    reading (no bars) never refuses. Returns the refusal detail, else None."""
+    try:
+        pts = float((cfg or {}).get("ai_watch_wr_steep_block_pts", 0.0) or 0.0)
+        if pts <= 0 or not isinstance(features, dict):
+            return None
+        d5 = features.get("wr_d5_fast")
+        if d5 is None:
+            return None
+        return f"d5 {float(d5):.0f}>={pts:g}" if float(d5) >= pts else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _range_shape_fields(sym: str, price: Any, now: float | None = None, cfg: dict | None = None) -> dict:
     """OBSERVE ONLY (operator 11/05, MOS/EQNR/CVS all bought at 0.82-0.95 of their 15-minute range after a run-up, then
     stalled or fell): where the entry sits in the last 15 / 30 closed one-minute bars and how far it had risen, so the
@@ -20600,6 +20617,15 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 # Observe-only %R slope at entry (ai_watch_wr_slope_log); nothing reads it.
                 place_decision["features"].update(_wr_slope_fields(sym, ask_f, t0, cfg))
                 place_decision["features"].update(_range_shape_fields(sym, ask_f, t0, cfg))
+        _steep_why = wr_steep_refusal(place_decision.get("features") if isinstance(place_decision, dict) else None, cfg)
+        if _steep_why:
+            set_block_reason(rec, "wr_steep", now=t0, detail=_steep_why)
+            try:
+                events.append(cp.log_event("wr_steep_refuse", symbol=sym, detail=_steep_why))
+            except Exception:  # noqa: BLE001
+                events.append({"kind": "wr_steep_refuse", "symbol": sym, "detail": _steep_why})
+            touched[sym] = rec
+            continue
         rec["status"] = "armed"
         set_block_reason(rec, "placing", now=t0)
         try:

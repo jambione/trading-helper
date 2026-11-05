@@ -71,3 +71,14 @@ def test_nothing_reads_the_slope_keys():
 def test_defaults_on_in_config_and_off_switch_exists():
     import config
     assert config.DEFAULT_CONFIG["ai_watch_wr_slope_log"] is True
+
+
+def test_wr_steep_refusal_is_off_by_default_and_fails_open():
+    import ai_entry_watch as ew
+    f = {"wr_d5_fast": 42.0}
+    assert ew.wr_steep_refusal(f, {}) is None                                   # default 0 = off
+    assert ew.wr_steep_refusal(f, {"ai_watch_wr_steep_block_pts": 30.0}) == "d5 42>=30"
+    assert ew.wr_steep_refusal({"wr_d5_fast": 29.9}, {"ai_watch_wr_steep_block_pts": 30.0}) is None
+    assert ew.wr_steep_refusal({}, {"ai_watch_wr_steep_block_pts": 30.0}) is None   # no reading never refuses
+    assert ew.wr_steep_refusal(None, {"ai_watch_wr_steep_block_pts": 30.0}) is None
+    assert ew.wr_steep_refusal({"wr_d5_fast": "x"}, {"ai_watch_wr_steep_block_pts": 30.0}) is None

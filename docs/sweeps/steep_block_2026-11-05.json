@@ -1,0 +1,49 @@
+{
+ "sha": "HEAD",
+ "start": "09:30",
+ "end": "15:50",
+ "baseline": {
+  "live_book": true,
+  "set": {}
+ },
+ "base_set": {
+  "ai_max_positions": 3,
+  "ai_max_position_pct": 33.0,
+  "ai_risk_pct": 1.65
+ },
+ "name": "steep_block_2026-11-05",
+ "purpose": "Operator 11/05 'can we not open an entry after a sharp rise in the fast %R': 4 of today's 5 never-greens (VMRK +42, CVS +37/+34, EQNR +31) had wr_d5_fast >= 30 at entry vs 1 of 6 others (n=11, post hoc). This replays the question on days the idea never saw. Gate: ai_watch_wr_steep_block_pts (code default 0 = off) refuses an arm whose fast %R rose >= N points over the last 5 closed minutes. PRIMARY steep30 (the H2 threshold, fixed 11/05); steep40 is a dose-response check, not a second chance. Same SCREEN/CONFIRM bars as every sweep (SCREEN: mean day delta > 0 and >= 60% of days better; CONFIRM: mean > 0, day-t >= 1.5, both halves > 0). VACUITY CHECK: the gate must refuse >= 10 arms in the screen days (events wr_steep_refuse in each replay log); otherwise the result is VACUOUS and says nothing. Independent of the forward prereg (wr_slope_forward_prereg.json), which stays the confirmatory test; a replay PASS here earns a skeptic review and a live observe-flag, never a gate straight to live.",
+ "variants": {
+  "steep30": {
+   "live_book": true,
+   "set": {
+    "ai_watch_wr_steep_block_pts": 30.0
+   }
+  },
+  "steep40": {
+   "live_book": true,
+   "set": {
+    "ai_watch_wr_steep_block_pts": 40.0
+   }
+  }
+ },
+ "screen_days": [
+  "2026-10-30",
+  "2026-10-29",
+  "2026-10-28",
+  "2026-10-27",
+  "2026-10-26"
+ ],
+ "confirm_days": [
+  "2026-10-23",
+  "2026-10-22",
+  "2026-10-21",
+  "2026-10-20",
+  "2026-10-19",
+  "2026-10-16",
+  "2026-10-15",
+  "2026-10-14",
+  "2026-10-13",
+  "2026-10-12"
+ ]
+}
