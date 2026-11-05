@@ -15169,6 +15169,20 @@ def _gate_wire_fields(rec: Any, sym: str, now: float | None = None) -> dict:
         left = (mins * 60.0 - (t - sq[0])) if (mins > 0 and sq and sq[0] is not None) else 0.0
         out["g_sq_wait"] = round(left) if left > 0 else None
 
+        # EXH tightness (operator 11/05; BMNR 10:02 looked ready and was refused exh_not_tight). Same numbers the arm
+        # uses (dual_r_ob_tight): gap = |fast %R - slow %R|, limit rte_confluence_max, and it only decides anything
+        # once BOTH lines are overbought (below that the refusal is wait_exh, not exh_not_tight), so it is shown only then.
+        try:
+            ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
+            f_, s_ = _f_or_none(ind.get("pctr")), _f_or_none(ind.get("pctr_slow"))
+            if bool(cfg.get("rte_require_tight", True)) and f_ is not None and s_ is not None:
+                thr_ = _rte_threshold(cfg)
+                if f_ >= -thr_ and s_ >= -thr_:
+                    out["g_tight"] = round(abs(f_ - s_), 1)
+                    out["g_tight_max"] = _rte_confluence_max(cfg)
+        except Exception:  # noqa: BLE001
+            pass
+
         # 5m Slow %R Pitch Veto live gate wire
         if bool((cfg or {}).get("ai_watch_wr_slow_5m_veto", False)):
             out["g_s5_veto"] = True

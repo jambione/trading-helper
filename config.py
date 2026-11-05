@@ -1613,6 +1613,8 @@ DEFAULT_CONFIG = {
     # Google AGY + Grok; recommend only; never places. Default publish is union
     # of per-model top-N with peer second_opinion; set publish_mode=agreement
     # (or require_agreement=True) to restore intersection-only.
+    # AI pick pre-check (pick_precheck.py): observe-only ledger of picks the door would refuse. Never removes a pick.
+    "ai_pick_precheck_log": True,
     "ai_seed_rank_enabled": False,
     "ai_seed_rank_times": [
         "09:25", "12:00", "15:00",

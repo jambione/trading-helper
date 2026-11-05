@@ -378,6 +378,8 @@ function _bookRows(book) {
       g_gap: w.g_gap != null ? w.g_gap : null,
       g_gap_block: w.g_gap_block != null ? w.g_gap_block : null,
       g_sq_wait: w.g_sq_wait != null ? w.g_sq_wait : null,
+      g_tight: w.g_tight != null ? w.g_tight : null,
+      g_tight_max: w.g_tight_max != null ? w.g_tight_max : null,
     };
   }
   // Live positions always win (P&L / qty).
@@ -1989,6 +1991,15 @@ function _bookGateChecks(r) {
   if (wait != null && wait > 0) {
     out.push({ key: 'square', text: `sq ${_fmtHoldClock(wait)}`, ok: false,
       title: `Full square in the last 10 min: pre-square arms wait ${_fmtHoldClock(wait)} more` });
+  }
+  // EXH tightness: shown only once both %R lines are overbought, where a wide gap is what refuses (exh_not_tight).
+  const tg = num(r.g_tight), tgMax = num(r.g_tight_max);
+  if (tg != null && tgMax != null && tgMax > 0) {
+    const okT = tg <= tgMax + 1e-9;
+    out.push({
+      key: 'tight', text: okT ? `gap ${tg.toFixed(0)}` : `gap ${tg.toFixed(0)}>${tgMax.toFixed(0)}`, ok: okT,
+      title: `Fast and slow %R are ${tg.toFixed(1)} points apart vs a limit of ${tgMax.toFixed(0)}${okT ? '' : ' (the arm refuses: exh_not_tight)'}. Shown only while both lines are overbought.`,
+    });
   }
   if (r.g_s5_veto) {
     const ok = r.g_s5_ok === true;

@@ -1799,6 +1799,13 @@ def main() -> None:
         _tick_source(gs_a, CLAUDE_SUGGESTIONS_FILE, SOURCE_ANTHROPIC, t0, "A")
         _tick_source(gs_x, GROK_SUGGESTIONS_FILE, SOURCE_XAI, t0, "X")
 
+        # AI pick pre-check (observe only, operator 11/05): which picks the desk's door would refuse, and why.
+        try:
+            import pick_precheck
+            pick_precheck.tick(cfg, t0)
+        except Exception as e:  # noqa: BLE001
+            print(f"[ai] pick_precheck failed: {e}", flush=True)
+
         # Seed-rank: freeze desk seeds → both AIs rank ≤5 → watchlist only.
         # Never places; sync_watch picks up seed_rank_*.json.
         try:

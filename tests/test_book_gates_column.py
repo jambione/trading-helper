@@ -36,7 +36,7 @@ def test_gates_cell_replaces_sr_after_exh_in_row_and_header():
 
 
 def test_gate_fields_survive_the_client_row_whitelist_and_are_patched_in_place():
-    for k in _KEYS:
+    for k in _KEYS + ("g_tight", "g_tight_max"):
         assert f"{k}: w.{k} != null" in _JS, k
     assert "const gatesEl = el.querySelector('.cell-gates');" in _JS
 
@@ -143,3 +143,16 @@ def test_tape_age_hidden_and_stale_mutes_all_gates():
     css = (_ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
     assert ".gate-val--stale" in css
 
+
+
+def test_tight_reading_is_wired_and_only_decides_when_both_lines_are_overbought():
+    assert "key: 'tight'" in _JS and "g_tight_max" in _JS
+    import ai_entry_watch as ew
+    rec = {"symbol": "ABC", "indicator": {"pctr": -5.0, "pctr_slow": -25.0}}
+    out = ew._gate_wire_fields(rec, "ABC", 1.0)
+    assert "g_tight" not in out                       # slow line not overbought: the refusal would be wait_exh
+    rec = {"symbol": "ABC", "indicator": {"pctr": -5.0, "pctr_slow": -9.0}}
+    out = ew._gate_wire_fields(rec, "ABC", 1.0)
+    assert out["g_tight"] == 4.0 and out["g_tight_max"] == 15.0
+    rec = {"symbol": "ABC", "indicator": {"pctr": -2.0, "pctr_slow": -19.0}}
+    assert ew._gate_wire_fields(rec, "ABC", 1.0)["g_tight"] == 17.0
