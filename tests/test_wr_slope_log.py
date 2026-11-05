@@ -64,8 +64,14 @@ def test_empty_when_short_off_or_broken(monkeypatch):
 def test_nothing_reads_the_slope_keys():
     import re
     src = Path(ew.__file__).read_text() + Path(ew.__file__).with_name("ai_positions.py").read_text()
-    # observe-only: no gate looks one up (they are only written, into the entry features)
-    assert not re.search(r'(\.get\(|\[)\s*["\']wr_(d\d+_(fast|slow)|fast_now|slow_now|bar_age_sec)', src)
+    # observe-only: no gate looks one up (they are only written, into the entry features) - EXCEPT the single, default-OFF
+    # wr_steep_refusal (ai_watch_wr_steep_block_pts, 11/05), which is allowed to read wr_d5_fast and nothing else.
+    a = src.index("def wr_steep_refusal(")
+    b = src.index("\ndef ", a + 10)
+    stripped = src[:a] + src[b:]
+    assert not re.search(r'(\.get\(|\[)\s*["\']wr_(d\d+_(fast|slow)|fast_now|slow_now|bar_age_sec)', stripped)
+    gate = src[a:b]
+    assert 'wr_d5_fast' in gate and not re.search(r'wr_(d\d+_slow|d(2|10)_fast|fast_now|slow_now|bar_age_sec)', gate)
 
 
 def test_defaults_on_in_config_and_off_switch_exists():
