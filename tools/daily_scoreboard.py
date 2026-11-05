@@ -42,6 +42,28 @@ def load_day(path):
     return rows
 
 
+def payoff_block(allr):
+    """Operator 11/05: profit = win rate x avg win - loss rate x avg loss. Shows how far the desk is from breakeven."""
+    w = [x["bp"] for x in allr if x["bp"] > 0]
+    l = [x["bp"] for x in allr if x["bp"] <= 0]
+    if not w or not l:
+        return []
+    aw, al = sum(w) / len(w), abs(sum(l) / len(l))
+    wr = len(w) / len(allr)
+    be_win = al / (al + aw)
+    be_loss = wr * aw / (1 - wr) if wr < 1 else float("inf")
+    ng = [x for x in allr if x["ng"]]
+    loss_total = sum(x["bp"] for x in allr if x["bp"] < 0)
+    ng_share = sum(x["bp"] for x in ng if x["bp"] < 0) / loss_total if loss_total else 0.0
+    rest = [x["bp"] for x in allr if not x["ng"]]
+    return ["## Profit arithmetic (profit needs a high win rate AND small losses)", "",
+            f"- win rate **{wr:.0%}**, average win **{aw:+.1f} bp**, average loss **{-al:+.1f} bp**",
+            f"- breakeven win rate at this payoff: **{be_win:.0%}** (gap {100*(be_win-wr):+.0f} points)",
+            f"- breakeven average loss at this win rate: **-{be_loss:.1f} bp** (losses are {al/be_loss:.1f}x too big)",
+            f"- never-green trades: {len(ng)} of {len(allr)}, average {sum(x['bp'] for x in ng)/max(1,len(ng)):+.1f} bp, "
+            f"**{ng_share:.0%} of all loss**; the other trades average {sum(rest)/max(1,len(rest)):+.1f} bp", ""]
+
+
 def _day_means(chunk):
     return [sum(x["bp"] for x in r) / len(r) for _, r in chunk]
 
@@ -112,6 +134,7 @@ def main():
             f"win {100*sum(x['bp']>0 for x in allr)/len(allr):.0f}%, never-green {100*sum(x['ng'] for x in allr)/len(allr):.0f}%, "
             f"${sum(x['usd'] for x in allr):+.2f}; last 5 sessions net {sum(x['bp'] for x in last5)/max(1,len(last5)):+.1f} bp/trade")
     out += ["", f"**{line}**", ""]
+    out += payoff_block(allr)
     out += trend_and_ships(days_all)
     open(os.path.join(ROOT, "docs/SCOREBOARD.md"), "w").write("\n".join(out))
     print(line)
