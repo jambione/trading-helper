@@ -1,0 +1,4 @@
+[
+ {"date": "2026-11-05", "change": "3 slots x 33% sizing on $10K, 3R brake, no_tape/one-letter fixes, trend-hold fresh-bars fix, slope log", "expect": "no edge change; larger dollar swings; fewer no_tape refusals; fewer at-entry sells that the double check said to hold", "keys": ["ai_max_positions", "ai_max_position_pct", "ai_risk_pct", "ai_watch_stream_pregate", "ai_trail_exit_trend_hold"]},
+ {"date": "2026-11-05", "change": "daily loss brake 3R -> 1R", "expect": "caps a bad day; no effect on average bp per trade", "keys": ["ai_daily_loss_limit_r"]}
+]

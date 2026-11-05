@@ -2,6 +2,10 @@
 """Daily scoreboard (operator 11/05): one line per session and a rolling-20 summary from the desk's own outcomes.
 Reads ai_reports/tapes/<day>/outcomes.jsonl (single-day folders), de-duplicated by (symbol, round(entry_time)).
 Net bp/trade = (exit-entry)/entry - 3 bp cost. Never-green = peak_price < entry +5 bp. Writes docs/SCOREBOARD.md.
+Regression guard (thresholds fixed 2026-11-05, do not retune after a bad week): compares the last 10 sessions with the 10
+before them on day-level mean net bp/trade (Welch t). GROWING: diff >= +2 bp and t >= 1.5. REGRESSING: diff <= -2 bp and t <= -1.5.
+Otherwise FLAT. docs/ship_log.json lists each shipped change with its date; the board shows net bp/trade before vs after each ship
+(NOT ENOUGH DATA under 10 sessions after).
 usage: tools/daily_scoreboard.py [--days 20]"""
 from __future__ import annotations
 
@@ -38,6 +42,46 @@ def load_day(path):
     return rows
 
 
+def _day_means(chunk):
+    return [sum(x["bp"] for x in r) / len(r) for _, r in chunk]
+
+
+def _welch(a, b):
+    if len(a) < 3 or len(b) < 3:
+        return float("nan"), float("nan")
+    ma, mb = sum(a) / len(a), sum(b) / len(b)
+    va, vb = st.variance(a) / len(a), st.variance(b) / len(b)
+    se = math.sqrt(va + vb)
+    return ma - mb, ((ma - mb) / se if se else float("nan"))
+
+
+def trend_and_ships(days_all):
+    out = ["## Is the project growing or regressing?", ""]
+    if len(days_all) >= 20:
+        diff, t = _welch(_day_means(days_all[-10:]), _day_means(days_all[-20:-10]))
+        verdict = "GROWING" if diff >= 2 and t >= 1.5 else "REGRESSING" if diff <= -2 and t <= -1.5 else "FLAT"
+        out.append(f"**{verdict}**: last 10 sessions vs the 10 before: {diff:+.1f} bp/trade (t {t:+.2f}). "
+                   "Rule: GROWING needs >= +2 bp and t >= 1.5; REGRESSING <= -2 bp and t <= -1.5; anything else FLAT.")
+    else:
+        out.append("Fewer than 20 sessions: no verdict.")
+    out.append("")
+    try:
+        ships = json.load(open(os.path.join(ROOT, "docs/ship_log.json")))
+    except (OSError, ValueError):
+        ships = []
+    if ships:
+        out += ["| shipped | change | sessions after | net bp before (10) | net bp after | read |", "|---|---|---:|---:|---:|---|"]
+        for sh in ships:
+            before = [d for d in days_all if d[0] < sh["date"]][-10:]
+            after = [d for d in days_all if d[0] >= sh["date"]]
+            nb = f"{sum(_day_means(before))/len(before):+.1f}" if before else "-"
+            na = f"{sum(_day_means(after))/len(after):+.1f}" if after else "-"
+            read = "NOT ENOUGH DATA" if len(after) < 10 else ("BETTER" if after and before and sum(_day_means(after))/len(after) > sum(_day_means(before))/len(before) + 2 else "WORSE" if after and before and sum(_day_means(after))/len(after) < sum(_day_means(before))/len(before) - 2 else "NO CHANGE")
+            out.append(f"| {sh['date']} | {sh['change'][:70]} | {len(after)} | {nb} | {na} | {read} |")
+        out.append("")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--days", type=int, default=20)
     n = ap.parse_args().days
@@ -48,6 +92,7 @@ def main():
             r = load_day(f)
             if r:
                 days.append((d, r))
+    days_all = list(days)
     days = days[-n:]
     if not days:
         print("no sessions"); return 1
@@ -67,6 +112,7 @@ def main():
             f"win {100*sum(x['bp']>0 for x in allr)/len(allr):.0f}%, never-green {100*sum(x['ng'] for x in allr)/len(allr):.0f}%, "
             f"${sum(x['usd'] for x in allr):+.2f}; last 5 sessions net {sum(x['bp'] for x in last5)/max(1,len(last5)):+.1f} bp/trade")
     out += ["", f"**{line}**", ""]
+    out += trend_and_ships(days_all)
     open(os.path.join(ROOT, "docs/SCOREBOARD.md"), "w").write("\n".join(out))
     print(line)
     return 0

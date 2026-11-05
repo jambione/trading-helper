@@ -1,0 +1,3 @@
+tests/test_ai_trading.py::test_effective_max_positions_scales_with_equity
+tests/test_arm_path_state.py::test_no_new_state_is_written_on_the_arm_path
+tests/test_stale_age_knobs.py::test_arm_ceiling_releases_a_20s_print_but_not_a_40s_one

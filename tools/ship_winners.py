@@ -41,7 +41,16 @@ def main(argv):
         for k, (val, *_rest) in best.items():
             cfg[k] = val
         json.dump(cfg, open(f, "w"), indent=2); open(f, "a").write("\n")
-        print("applied to config/bot_config.json - review the diff, then commit")
+        import datetime
+        lf = os.path.join(ROOT, "docs/ship_log.json")
+        try:
+            log = json.load(open(lf))
+        except (OSError, ValueError):
+            log = []
+        log.append({"date": datetime.date.today().isoformat(), "change": "sweep ship: " + ", ".join(f"{k}={v[0]} ({v[1]})" for k, v in best.items()),
+                    "expect": "per sweep report; judge on the scoreboard after 10 sessions", "keys": list(best)})
+        json.dump(log, open(lf, "w"), indent=1)
+        print("applied to config/bot_config.json and appended docs/ship_log.json - review the diff, then commit")
     return 0
 
 
