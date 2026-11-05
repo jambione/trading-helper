@@ -24,9 +24,9 @@
   and returns, so without it launchd reaps the whole process group the moment
   the script exits and the desk dies with it.
 
-  RunAtLoad is false on purpose. This agent is a restart mechanism, not a
-  boot policy — bringing the desk up at login is what session.command does,
-  and quietly changing that is not this file's job.
+  RunAtLoad is TRUE since 2026-11-05 (operator): two macOS-update reboots on 11/04 left the desk off
+  until someone kickstarted it. It now runs `./trading restart` when the agent loads (login or
+  bootstrap). Kickstart still works. A bootstrap during market hours restarts the desk.
 
   Install: scripts/install_desk_agent.sh (idempotent, safe over ssh).
 -->
@@ -43,7 +43,7 @@
   </array>
 
   <key>RunAtLoad</key>
-  <false/>
+  <true/>
 
   <key>AbandonProcessGroup</key>
   <true/>

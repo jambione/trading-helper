@@ -33,4 +33,5 @@ fi
 # scripts/tight_trail_replay.sh $d > /tmp/nightly/tt_replay-$d.log 2>&1
 # .venv/bin/python tools/studies/replay_costing.py /tmp/tt_run/$d-*.json > /tmp/nightly/tt_costing-$d.txt 2>&1
 .venv/bin/python tools/studies/day_review.py $d > /tmp/nightly/day_review-$d.log 2>&1
+.venv/bin/python tools/daily_scoreboard.py > /tmp/nightly/scoreboard-$d.log 2>&1   # docs/SCOREBOARD.md, rolling 20 sessions (operator 11/05)
 echo DONE > /tmp/nightly/done-$d
