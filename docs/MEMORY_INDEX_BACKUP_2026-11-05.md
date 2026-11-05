@@ -1,0 +1,189 @@
+- [No calculations on bad data](no-calculations-on-bad-data.md) — standing edict: fix the source or drop the calculation; absence beats a plausible wrong number.
+- [Monitor roadmap spec errors](monitor-roadmap-spec-errors.md) — MONITOR_ROADMAP.md misdescribes the code in several tickets; verify each against source before building.
+- [Watchlist churns daily](watchlist-churns-daily.md) — symbols are different every day; never assume cross-session symbol continuity in analysis, caches, or state.
+- [Volume ratios need one feed](volume-ratios-need-one-feed.md) — RVOL sides must match on feed AND bar granularity; IEX daily bars ≠ sum of IEX minute bars, and exclude pre-market.
+- [Stocktwits trending has no quotes](stocktwits-trending-has-no-quotes.md) — the trending API carries no price/%chg at all; quotes come from Alpaca, and the site's pre-market %Change is the last…
+- [Alpaca creds differ per box](alpaca-creds-only-in-engine-env.md) — secrets.json on the mini, dead keys in the MacBook's signal_engine.env; only the mini can reach the broker.
+- [Claude slot is AGY now](claude-slot-is-agy-now.md) — the claude_* prefix configures Gemini; the desk's last real Anthropic call was 2026-08-28.
+- [Claude-slot knobs bind at startup](claude-slot-knobs-bind-at-startup.md) — model/cli_bin/backend/effort need a restart; deploy_mini.sh's "config-only" note is wrong for them.
+- [Claude CLI research cost shape](claude-cli-research-cost-shape.md) — HISTORICAL; ~half the cost was web-search fees, not tokens; cut polls, not effort.
+- [Claude risk-sized entries architecture](claude-risk-sized-entries-architecture.md) — mechanical stop/scale-out/trailing/time-stop via real Alpaca orders; only entry + thesis-break use Claude.
+- [Claude desk runs server-side](claude-desk-runs-server-side.md) — research/trading/trending live at repo root and reach the monitor via /api/state; monitor renders, never originates.
+- [Desk lives on the mini](desk-lives-on-the-mini.md) — live state is on the Mac mini via `ssh mac-mini-away` (Tailscale), fall back to `mac-mini` (.local) if it times out; the MacBook's state files…
+- ["Ship it" means deploy and restart](ship-it-means-deploy-and-restart.md) — commit, push, pull on the mini, AND bounce the stack; a pushed commit is not deployed until the processes restart.
+- [SSH restart kills Claude auth](ssh-restart-kills-claude-auth.md) — deploy_mini.sh does it too; fix is a Terminal restart on the mini, never `claude /login`, never an API key.
+- [SSH orphan blocks the LaunchAgent](ssh-orphan-blocks-the-launchagent.md) — a process started over ssh holds the port so the agent dies at exit 3; `ps eww` SSH_ vars are the proof, and killing it…
+- [Ratchet must hug price in percent](ratchet-must-hug-price-in-percent.md) — 1R is ~5% of price here, so every R trail knob needs a percent-of-price sibling; never park the stop at entry from the…
+- [Mini cannot git push](mini-cannot-git-push.md) — commit on the mini, then fetch its branch from the MacBook and push from there.
+- [Live tunables live in bot_config.json](live-tunables-live-in-bot-config-json.md) — load_config() never reads signal_engine.env; a knob set there is silently dead.
+- [Replay verdicts were vacuous](replay-verdicts-were-vacuous.md) — optimize_rstop placed zero trades until 2026-08-20; check n>0 before believing "do not change config", and note replay_ab is a…
+- [Admission timing is negatively predictive](admission-timing-is-negatively-predictive.md) — refined: desk entries flat vs same-instant controls (~0σ); the 4.4σ was hindsight in the WITHIN control…
+- [SIP is delayed only](sip-is-delayed-only-do-not-switch-the-live-feed.md) — keep alpaca_bar_feed=iex; historical --feed sip works and proves nothing about live entitlement.
+- [IEX spreads overstate the book](iex-spreads-overstate-the-book.md) — logged spread_r is 1.5x/3.3x/200x too wide; premarket costs what RTH costs.
+- [Premarket shelved until SIP](premarket-shelved-until-sip.md) — economics and order plumbing are fine, the feed is blind; do not rebuild it.
+- [price_age_sec is None, guards fail open](price-age-sec-is-none-guards-fail-open.md) — one dead field disables the ratchet, arm and blind-book staleness checks.
+- [Indicator whitelist replaces the map](indicator-whitelist-replaces-the-map.md) — a new gate field must be copied into the poll's indicator dict or the gate reads nothing.
+- [A price and its clock must be one event](a-price-and-its-clock-must-be-one-event.md) — desk `price` is fed back from the dashboard; a static value with a moving age is the tell.
+- [Trail give knobs block each other](trail-give-knobs-block-each-other.md) — give_r and give_max_pct are the same number at shipped values; sweep them as a pair or the table is flat.
+- [Daily loss brake off for paper](brakes-are-set-above-a-bad-day.md) — 1000R since 9/25 per user; restore 3.0R before live money; 0 would block all entries.
+- [Shadow price inflates backtests](shadow-price-inflates-backtests.md) — entering at shadow `price` books ~0.7%/trade of stale quote as profit; use the 1m bar close.
+- [Exits cannot move the mean](exits-cannot-move-the-mean.md) — 42 stop/target/trail/ladder shapes all score zero gross; exits own the win rate, never the mean.
+- [Strength entry FALSIFIED](strength-entry-beats-dip-entry.md) — the +0.86% EXH+RSI entry was look-ahead and warm-up; jitter shows no peak at the signal.
+- [Entry setups are noise-equivalent](entry-setups-are-noise-equivalent.md) — EXH/MACD/breakout states all match "no setup"; with exits, both sides of the trade are now closed.
+- [The universe fades at every horizon](the-universe-fades-at-every-horizon.md) — 30m to 5 days negative at every liquidity level; the screen has negative selection value, megacaps off it are flat.
+- [Admission range position predicts the fade](admission-range-position-predicts-the-fade.md) — capping at ~90 cut the bleed in-sample; 10/4 OOS: cap only delays names ~1 min, inert (keep 90).
+- [Premarket burst is not the answer](premarket-burst-is-not-the-answer.md) — 63% of bursts fire premarket, but premarket spikes and fades exactly like RTH; SIP buys the same problem earlier.
+- [Live config churns faster than evidence](live-config-churns-faster-than-evidence.md) — ~3.5 config ships/session vs ~12 fills/session; every lever dies underpowered.
+- [The book cannot see its refusals](the-book-cannot-see-its-refusals.md) — dropped names write no shadow row, so every admission gate is unfalsifiable until the refused population is logged.
+- [Loss concentrates in the momentum source](loss-concentrates-in-the-momentum-source.md) — momentum ~-0.066R (t=-4.3) lifetime = cheap names + 6 gap-through stops; fixed by the $10 floor (1 trade…
+- [Trade log is submissions, not fills](trade-log-is-submissions-not-fills.md) — every row is PENDING_NEW and 18 are MagicMock test junk; positions state is the only truth.
+- [Watchlist bleeds out mid-morning](watchlist-bleeds-out-midmorning.md) — seats go stream-silent, drop, and are refused re-entry; supply is fine, retention is not.
+- [Phase B dry lane is mute](phase-b-dry-lane-is-mute.md) — live-enabled but 100% of arms refuse on phase_b_missing_print (IEX premarket); the ledger logs admits/refusals, which the user wants kept.
+- [Alpaca account is margin, not cash](alpaca-account-is-margin-not-cash.md) — multiplier=4, so T+1/GFV never applied; PDT confirmed dead, T+1 confirmed current.
+- [The tool probably already exists](the-tool-probably-already-exists.md) — I overwrote a working 740-line tool by not running one `ls`; "updated successfully" is the tell.
+- [A tight ratchet cannot ensure profit](a-tight-ratchet-cannot-ensure-profit.md) — last−1¢ locks only excursion above the fill; 2026-09-23 was 12 trades, 0 winners, 5 never green.
+- [Market hours is test time](market-hours-is-test-time.md) — no deploy freezes, but ask before any mid-session trading change and default to after the close; read-only tools are fine.
+- [Cheap names carry the loss](cheap-names-carry-the-loss.md) — <$10 fills = 28% of trades, 81% of lifetime loss; refused thin_rvol names are flat; every trail shape ~0 gross.
+- [Four-pillar scorecard](four-pillar-scorecard.md) — user judges by opportunities, entry quality, runway, capture; wants proof of headway before the open.
+- [Trading cost is the spread](trading-cost-is-the-spread.md) — fills at the touch; 9/23-9/29: loss = half cost (~10 bp steady), half negative move; 9/29 cost was 89%.
+- [Daily context picks names, not timing](daily-context-picks-names-not-timing.md) — gap-down >1% fades all day (z -3.7, gate shipped); above-50ma+news drifts up; no daily/news split improves one-arm…
+- [Runway is findable, profit is not yet](runway-is-findable-profit-is-not-yet.md) — vol pace runway replicated on 60 days but it is movement not direction; S7 nets -14 bp after spread; gate dead.
+- [Finnhub 50-sub hangs were a deadlock](finnhub-50-subs-hangs-the-dashboard.md) — fixed by RLock; cap back at 50 (40 starved book names); never lower the cap to cure a hang.
+- [No spend until proven](no-spend-until-proven.md) — one approved SIP month; alert keep-bar is SIP only (~$4.70/session) until the prepaid Discord year ends early 2027, then $200/mo.
+- [Alpaca budget: replays, not the L2 panel](l2-panel-eats-half-the-alpaca-budget.md) — SUPERSEDED 10/14: auto_watch is dead code; 9 replays exhausted the 200/min budget; never run replays/backfills…
+- [Concurrency is opens x hold](concurrency-is-opens-times-hold.md) — 9/24: 0.057 opens/min x 10.9-min hold = 0.62 open; targets need ~1.7, so exits (hold time) are half the lever.
+- [Full book gives the opens, not the profit](full-book-gives-the-opens-not-the-profit.md) — every supply cross = user's max-opens picture at ~-1 bp gross/7-min trade; no name filter beats a 10 bp…
+- [Replay runs the live code](replay-session-runs-live-code.md) — replay_session.py (mini, after hours) + daily fidelity.json; 9/24 recall 0.54, 9/25 recall 0.08 (paint bug) → 0.62 with --no-paint…
+- [Arm can fire without a cross](arm-can-fire-without-a-cross.md) — DHT 13:19 + CLF 13:53 on 9/24 armed with engine %R never below -50; suspected source-switch false cross; confirm with --trace.
+- [Live setup 2026-09-25](live-setup-2026-09-25.md) — RSI off, roster + slot priority on, 30 slots, brake off, momentum from $1; score momentum trades separately tonight.
+- [Book open standard](book-open-standard.md) — pass bar ≥1 open/10m; goal ~5 opens/10m, 2-3 open, 3-8m holds, stack to 5; report against both.
+- [IEX trade gaps are not staleness](iex-trade-gaps-are-not-staleness.md) — 15 s last-trade rule on IEX-only prints marks liquid names stale 16-63% of the time; SIP shows trades every 2-9 s.
+- [Book paint consumed mid-rise crosses](book-paint-consumed-mid-rise-crosses.md) — paint ate ~2/3 of arms (fix 24cc6bf); recurred 10/2 as paint RESETTING square streaks — peek must guard resets too.
+- [Short the fade has no edge](short-the-fade-has-no-edge.md) — shorting admitted names is a coin flip (fails held-out) with a p99 +90% squeeze tail; both sides ~50/50 on free data.; 10/2 shorting…
+- [Name selection lifts win rate, not mean](name-selection-lifts-win-rate-not-mean.md) — stacked name facts hit 63-69% win held out but net60 ~0; only room below HOD lifts the mean.
+- [Momentum spread exemption leaks](momentum-spread-exempt-leaks-wide-names.md) — exempt=True admits 80-100 bp names; 9/25 replay net 0 -> +4.4 bp with it off + 0.05% cap; 0.25R arm -7.9 bp.
+- [desk_io wire boundary](desk-io-wire-boundary.md) — step 1 of replay-foundation plan (aa60bde); records alpaca/dash/file reads live, replay serves only those; steps 2-5 + Monday acceptance pending.
+- [Momentum under optimal conditions](momentum-optimal-conditions.md) — perfect data still nets -15 bp (9/25); refused names ~-2 bp over 8 days; plumbing buys opens, not profit.
+- [%R triggers see no runway](wr-triggers-see-no-runway.md) — %R ≈ random; SIP volume breakout's +9 bp (9/16-25) FAILED held-out 10/3 (+0.9/+0.2 gross): closed, not a SIP reason.
+- [Needle study: names, not timing](needle-study-names-not-timing.md) — 15 features on one sample: best success ~35-40%, not 80%; day-change/premarket range/morning hold; 2 cells survive held-out…
+- [Combined score failed out of period](combined-score-positive-held-out.md) — +6.6 bp on 8 recorded days but FAILED on 60 earlier days (picks -11.2 vs random -10.4 bp).
+- [Code work goes to cloud sessions](code-work-goes-to-cloud-sessions.md) — SUPERSEDED 10/28: no cloud usage left; do code work locally.
+- [Weekend handoff 2026-09-26](weekend-handoff-2026-09-26.md) — stop point; docs/HANDOFF_2026-09-26.md; Tuesday: nightly verdict → barebones A/B → strategy talk; suite rewrites bot_config.json.
+- [Square arms show no runway](square-arms-show-no-runway.md) — 9/29: full ■ below random minutes (bought the box top), empty ▢ = random; nothing reached +2%.
+- [Max runway is volatility](max-runway-is-volatility.md) — 58% of name-days offer a 2% stop-surviving run; pm_range/vol/day_chg find it but raise the 2% fall equally.
+- [Steady runway definition](steady-runway-definition.md) — user: runway = steady climb fill→+5%; 60-day check: $50+ and trending FAILED; "up >2.35% + first 76 min" holds (4.5% vs 3.0%), untested for…
+- [Holding longer loses more](holding-longer-loses-more.md) — 9/23-29 fills drift -9/-28/-43 bp at 5/15/30m; every wider trail worse; the 8 s decay leash caps the fade.
+- [Volume is predictable, not directional](volume-is-predictable-not-directional.md) — rho 0.66 persistence but surges 50/50; best cell +8.8 gross/-7.9 net; leash replay: every loosening worse than…
+- [Replay gap was old config](replay-gap-was-old-config.md) — the 8 bp live-vs-replay gap was give_r 0.35 before 9/29; execution is +0.8 bp vs bid; replay each day with its own config.
+- [Overnight momentum (NOT an edge)](overnight-momentum-is-the-one-edge.md) — CORRECTED 10/15: mostly beta (hedged alpha unproven), paper -82 bp/night over 10 nights; never cite as the benchmark edge.
+- [RSI and MACD gap add nothing](rsi-and-macd-gap-add-nothing.md) — 60 days: every RSI/MACD event <= random minute; inside the late-morning lean each one hurts; MACD gap worst.
+- [Grok scalp recipe fails](grok-scalp-recipe-fails.md) — RVOL/VWAP/EMA pullback/RSI7 recipe: -7.6 bp gross, 22.5 bp spread, -36.5 net; worst in Grok's own 09:40-11:00 window.
+- [Buying the top is not the loss](buying-the-top-is-not-the-loss.md) — room/overbought-age/stall gates fail on 871 fills; fills AT the high did best; only px>=$10 separates.
+- [Stale stream carry fakes squares](stale-stream-carry-fakes-squares.md) — FLY 9/30 fake square came from the ENGINE (stale rt seed spliced after drop/re-add), fixed 681c933; replay --engine rt now…
+- [Quiet tape needs real-time volume](quiet-tape-needs-realtime-volume.md) — last-5m vol <0.25x works only on real-time SIP; delayed SIP flat (skipped 10/1); live IEX gate never fired on 9/30.
+- [Overnight: intraday winners continue](overnight-intraday-winners-continue.md) — open->close predicts overnight, holds at 15:55 (t 5.3); drop < -1% +5 bp at 61% names; -2.8% adds ~0.
+- [Secret scan: keyword detector on docs](secret-scan-keyword-detector-on-docs.md) — recurring CI failure was KeywordDetector on credential NAMES in .md; fixed 10/1 by scanning .md without it.
+- [Falling entries & RSI2 extremes](falling-entries-and-rsi2-extremes.md) — RSI2>95 no filter (noise); falling square/pre-square ~0.25-0.30% worse but n=26, re-test ~10/15.
+- [Overnight live test setup](overnight-live-test-setup.md) — STOPPED 10/7 by the operator (buys disarmed; agent still sells held shares); fills were 0.0 bp vs the cross; paper continues.
+- [Re-entry and time of day](reentry-and-time-of-day.md) — loss cooldown + 10:15-11:00 window unproven (10/1); re-entry after a WIN beats avg t +2.9; afternoon least bad.
+- [Spread gate avoids losers](spread-gate-avoids-losers.md) — keep 0.2% SIP gate + unknown refusal (10/1); refused squares lost -0.93/-0.81% vs -0.15% armed.
+- [rvol_pace gate graded 10/1](rvol-pace-gate-graded-2026-10-01.md) — OOS S7 +6 bp (t~0.8) but live >=1.64 fills worse; keep observe; study tools silently drop names on Alpaca 429s.
+- [Month-end rebalancing flow](month-end-rebalancing-flow.md) — 10/1: prereg k=3 failed validate; k=1 last-session SPY +20.6 bp t 3.7 over 289 months, month-end specific; pilot agent live score-only…
+- [Option selling has no alpha since 2007](option-selling-has-no-alpha-since-2007.md) — 10/2 VRP FAILED: premium exists (VIX>RV 84%) but PUT/WPUT/BXM/CNDR ~0 or negative alpha vs SPX-TR since 2007…
+- [Index flows priced at announcement](index-flows-priced-at-announcement.md) — 10/2 S&P add/delete FAILED: drift/reversal/rebound flip sign; the gain is the after-hours announcement jump (+428 bp…
+- [Monthly momentum is mania beta](monthly-momentum-is-mania-beta.md) — 10/2 fair-universe 12-1 FAILED: survivorship +11 bp/mo only; top-5 = 3 mania months + beta 1.8; momentum only works as the…
+- [Exact replay was vacuous](exact-replay-was-vacuous.md) — 0 decisions every night 9/26-10/1 (trader never armed); fixed 0dc6853; check checks>0 before trusting a verdict.
+- [Late-day index momentum is noise](late-day-index-momentum-is-noise.md) — Gao SPY/QQQ rule: round 2 +4..9 bp but round 3 5.2 yrs -0.8 bp t -1.7; never pilot it; read study docs to the end.
+- [Live account time-share plan](live-account-time-share-plan.md) — SHELVED 10/2 (user chose overnight-only live); was: mirror 09:45-15:20 + overnight auctions
+- [Levels partly tested](levels-partly-tested.md) — S/R, VWAP, PMH, squeeze, MTF had prior studies; grep docs/studies before saying "untested"; plan in INDICATOR_TEST_PLAN_2026-10-02.md
+- [S/R levels do not rescue the arm](sr-levels-do-not-rescue-the-arm.md) — 10/2: 7 S/R indicators, none beats random; breaking resistance worst, near support least bad; the "-21 bp vs random" was a…
+- [Overnight is the main book](overnight-is-the-main-book.md) — SUPERSEDED 10/9 by focus-is-day-trading; 10/2 user chose option 2: overnight auctions are the strategy; day desk frozen on paper with…
+- [Overnight config already optimal](overnight-config-already-optimal.md) — 10/2: 17 variants on 10 yrs, none beats live OOS; shorter momentum worse; tune execution only
+- [Zone entry buys the fade](zone-entry-buys-the-fade.md) — 10/2: original book zone loses 60-114 bp/trade; zone+square no better than squares
+- [Result skeptic checkpoints](result-skeptic-checkpoints.md) — skeptic on preregs/positives (and on request anything); review-fixer fixes, skeptic verifies, max 2 rounds.
+- [Skeptic review 10/2-10/3](skeptic-review-2026-10-02.md) — overnight edge mostly beta (hedged +0.8 IS / +5.4 OOS bp); -1% filter OFF (deploy pending, user); live stays $100; desk -6 bp/trade, gap…
+- [Decisions 2026-10-03](decisions-2026-10-03.md) — spread cap 0.05%, live rebuy off, desktop-banner alerts, market fallbacks, no plumbing label; sector cap + pmset still open.
+- [Overnight restart throttle](overnight-restart-throttle.md) — 10/1 loop was deploy churn + ThrottleInterval 300; no overnight deploys 09:10-09:45 / 15:30-16:00.
+- [Entry-edge tests 10/3](entry-edge-tests-2026-10-03.md) — market temperature, wider stop, halt reopens, SIP breakout (paid-data stage 1) all FAILED; new day config ≈ −3.5 bp/trade; depth (10/4)…
+- [Overnight pre-2016: ranking replicates](overnight-pre2016-ranking-replicates.md) — 10/4: S2 ranking +8.6 bp t 9.7 on 2000-15 CONFIRMED; SPY-hedged alpha UNPROVEN (cost eats it); keep $100.
+- [Order-block tests 10/5](order-block-tests-2026-10-05.md) — LuxAlgo port + skip/range-trade preregs; Grok ran night batch; held-out ob_fills_daily decides; freeze to ~10/15.
+- [Exits np180+lob on 10/8](exits-np-lob-on-2026-10-08.md) — np cut OFF 10/15 11:25; triangle (lob) OFF since 10/8 10:30 (raw %R bug), engine-only fix 5479bd8 never switched on.
+- [RSP hedge fails on every measure](rsp-hedge-fails-on-every-measure.md) — 10/8: official UNPROVEN (SPY source corr 0.9899), but RSP worse than SPY on all criteria; hedged overnight ~0, edge is…
+- [Live mirror is conditional](live-mirror-conditional.md) — DISARMED; runs only after a pre-registered day-desk test reads positive (~10/22) and the operator re-arms.
+- [Name history + round numbers null](name-history-and-round-numbers-null.md) — 10/9: trendiness/HTF uptrend/round numbers add ~0; new-high entries lose ~-11 bp net30 in every group; S2 needs…
+- [Day-hold pilot 10/9](day-hold-pilot-2026-10-09.md) — hold 2-3 morning picks all day: pilot +17 bp/day vs random -30 (t 1.5, 14 days); 10-yr skeleton FAIL; forward nightly, read at 40 SCORED…
+- [Focus is day trading](focus-is-day-trading.md) — 10/9 user: day trading only, overnight parked; G2 order-cost arms already run (read 10/15, ~3 bp max); spread is ~3 bp RT now, not 10-20.
+- [Day queue 2026-10-09](day-queue-2026-10-09.md) — active: day_hold 11/13 earliest, G2 10/15, needle C2 + room-HOD OOS; frozen: range arm, G4, exit reads (live config left as is).
+- [Indicator usage audit 10/9](indicator-usage-audit-2026-10-09.md) — %R tick-only direction (10-min trend in test), RSI-2 daily rule on 1-min bars, uptrend = green day; check design before "tested".
+- [AI hold-check shadow](ai-hold-check-shadow.md) — starts Mon 10/12 10:35; news from Alpaca feed because agy has no web access and invented a headline.
+- [Room-HOD OOS was an artifact](room-hod-oos-artifact.md) — name-day-first averaging leaks hindsight (equal-weight -1.6 bp); raw re-score 10/10: SIP brk still FAIL, SR hist unaffected, needle C2 ~0…
+- [%R+RSI confluence is SIP-only](wr-rsi-confluence-iex-null.md) — 10/10: +4 bp over %R alone on SIP, ~+0.5 on IEX (live); skipped; revisit only if the %R trend test passes.
+- [Grok handoff 10/10](grok-handoff-2026-10-10.md) — Grok runs hist simulator + cf batches to Tue 10/13; on return verify fidelity-before-held-out order and prereg untouched.
+- [Early-entry sim is hindsight](early-entry-sim-is-hindsight.md) — AGY "+$294 if 5m earlier" is look-ahead; honest tests FAILED 10/13 for all 4 AGY arms (pre-square, ignition, mid-rise, RSI-2 turn)…
+- [Board-name gates fail](board-names-gates-fail.md) — 10/14: $30/early-runway/50d/$500M all FAIL; board fades −8.6 bp/10m, refused names fade 5.4 bp less; only $30 is a consistent lead.
+- [Profit over a busy book](busy-book-is-the-goal.md) — operator 10/27: profitable beats busy, fewer trades OK if it cuts losers; the goal is getting in early.
+- [Seat drops are dead-seat thrash](seat-drops-are-dead-seat-thrash.md) — 10/14: 30 s dead_unknown evictions (exh_falling etc.) cycle the same names all day; may cause late entries; test on --engine…
+- [Movers RVOL was inflated](movers-rvol-was-inflated.md) — real-time daily bar paced as 15-min-old since 9/25 (~2x early); fix 36a85b1 pinned off; operator chose option A (lag 1 + floors…
+- [Dips after a signal are the fall](dips-after-signal-are-the-fall.md) — limit-below FAIL 10/14; the inverse (wait, buy only if held) FAILED 10/16 too: waiting costs -14 to -36 bp vs buying at once.
+- [Exit delay is loop starvation](exit-delay-is-loop-starvation.md) — root cause 10/15: trading-API 429s (3 s retry) at 1 s book tick; fixed with 3 s tick (stop gap 3.4 s -> 0.5 s); G2 mid-limit…
+- [Connors green entry fails](connors-green-entry-fails.md) — 10/14: RSI-2 green 1-min entry FAIL both halves; brief 5-min bounce, no net.
+- [Simulate before live tests](simulate-before-live-tests.md) — 10/14: G2 took 10 days on paper (= Alpaca's sim anyway); simulate overnight first, read live direction after ~3 days.
+- [Ratchet: patience beats room](ratchet-patience-beats-room.md) — 10/14: 15 s idle leash +58 bp/day (t 2.1); cushions/leash-off worse; RSI-2 red exit FAIL.
+- [Day edge may be untested](day-edge-may-be-untested.md) — 10/15: say 'the tested approach has none', not 'no edge'.
+- [News and sector fail](news-and-sector-fail.md) — 10/15: both FAIL; 1-second SIP news entry only +4 bp gross.
+- [Right tail is real but unpaid](right-tail-is-real-but-unpaid.md) — 10/15: runner catches +2% winners; losers outweigh.
+- [Arm-to-fill delays](arm-to-fill-delays.md) — 10/15 AAL 70 s; confirm/vol gate/G2 cut live 12:45; slow watch poll (13-40 s) still to fix.
+- [Keep a running list](keep-a-running-list.md) — docs/running_list.md, updated through every session: concerns, requests, status, shipped, incidents.
+- [Oversold ▲ entry fails](oversold-leave-entry-fails.md) — 10/15: leave-oversold FAIL both halves (lift -4/+1 bp); ▲ arm stays off; harness slow line was cold before ~11:20.
+- [Replay work dirs fill the disk](replay-work-dirs-fill-the-disk.md) — 10/16 66 GB of replay temp dirs killed the desk; fixed fe2df1b; check df before big batches.
+- [Calendar flows FAIL](calendar-flows-fail.md) — 10/16 TOM/QE/pre-holiday/tax-Jan/OPEX on SPY+IWM: 0 of 9 cells pass; closed, month-end stays the only calendar lead.
+- [Directional progress is success](directional-progress-is-success.md) — operator 10/16: PROMISING tier below PASS; attack the 6 ranked bottlenecks in docs/PLAN_2026-10-16_bottlenecks.md.
+- [Trail double-check hold live](trail-dc-hold-live.md) — shipped 10/16 09:32, CONFIRMED by the 8-day rerun (+40.8 bp/day t 2.29, both halves); no other exit/opens arm beat it.
+- [Two-week push to 10/30](two-week-push-2026-10-30.md) — operator wants profit in 2 weeks; baseline -7.7 bp/trade, 15/15 red; verdict 10/30, midpoint 10/23; SIP declined "not now" 10/16.
+- [Sideways filter fails](sideways-filter-fails.md) — 10/16 slow-%R-rising skip: right direction pooled, halves reverse, kept arms still -6.8 bp net; closed.
+- [Grok handoff 10/16](grok-handoff-2026-10-16.md) — Claude out of usage ~13:00; brief docs/HANDOFF_2026-10-16_GROK.md; on return verify prereg order and what shipped.
+- [Gap-down short fails](gapdown-short-fails.md) — 10/16 10-yr test FAIL both halves; official-open signal+fill is a +47.6 bp look-ahead mirage.
+- [Pre-screen turn fails](prescreen-turn-fails.md) — 10/17 %R turns on unscreened liquid names = random minute (n 283k); the intraday %R family has no edge anywhere.
+- [Confirmation indicators fail](confirmation-indicators-fail.md) — 10/21: ADX/OBV/A-D/confluence filters + video S3-S7 FAIL on 110 sessions; H1, S4 underpowered.
+- [Three-minute runs are symmetric](three-minute-runs-are-symmetric.md) — 10/21: 17/18 rules/setups/filters FAIL at 3 min; MFE/MAE ~±10-12 bp; held-out 60 sessions unread.
+- [No waiting for the close](no-waiting-for-the-close.md) — operator 10/21: run studies/fetches now at nice 19; stopping the desk is allowed; config changes still need asking.
+- [Exits keep a fast edge](exits-keep-a-fast-edge.md) — 10/21: live exits keep 70-78% of a 3-min injected edge; break-even entry edge ~+11 bp (5-15); leak slow runs.
+- [Price floor $20](price-floor-twenty.md) — 10/21 ~19:40 ET: three ai_watch_*_min_price knobs 10 -> 20 (hot-reloaded); fills before 10/22 used $10.
+- [Order flow is real but small](order-flow-is-real-but-small.md) — 10/21: SIP trade flow +1.5-2 bp at 3 min (t ~3.5 both halves) but FAILS 5 bp; free-feed entry search closed.
+- [Flow-resting entry fails](flow-resting-entry-fails.md) — 10/22: resting bid on strong buy flow FAILS (per fill -8.6/-1.3 bp); flow does not cut adverse selection.
+- [Fair-value trigger fails](fair-value-trigger-fails.md) — 10/22 cheap-vs-peers trigger FAIL (<=+0.4 bp); same-name later-minute control flatters entries ~1 bp, placebo must avoid all onsets.
+- [Databento refuses paid requests](databento-refuses-paid-requests.md) — 402 on every paid call (10/4, 10/22 x2) even after the operator's fix; closing-auction study parked, resume with --probe.
+- [L2 walls need forward depth](l2-walls-need-forward-depth.md) — operator's Webull L2 walls idea UNDERPOWERED on 10/4 books (MDE 17-27 bp); needs every-minute forward depth recording (~$3/mo).
+- [Resistance overhead costs nothing](resistance-overhead-costs-nothing.md) — 10/22 forward test, 613 desk fills: resistance within 0.3% above = +0.1 bp (t 0.06); breakouts too rare.
+- [Floor-20 forward window](floor20-forward-window.md) — from 10/23, read ~early Dec; config/code changes end it; floor alone worth ~0.6 bp; run --log after each close.
+- [Sweeps and blocks fail](sweeps-and-blocks-fail.md) — 10/22: ISO sweeps ~0 beyond flow, dark-pool blocks +1 bp, combos none pass; free tape/book entry sources closed.
+- [Gates do not cost good trades](gates-do-not-cost-good-trades.md) — 10/23 screen: float cap no evidence, price/gap-down refused names did worse; thin book = avoiding worse trades.
+- [Short squeeze underpowered](short-squeeze-underpowered.md) — 10/23: FINRA DTC breakouts, MDE 102-119 bp vs 50 bp bar, not scored; untested not failed.
+- [Fibonacci pullback not an edge](fibonacci-pullback-not-an-edge.md) — 10/23: +31/+36 bp vs random bracket but nets -7.6/-3.7 bp; ties the 70-78.6% depth, not Fibonacci-specific.
+- [EOD reversal absent in liquid names](eod-reversal-absent-in-liquid-names.md) — 10/23: +5.4/+0.0 bp lift, losers -7.8 bp net in half B; effect lives in small caps.
+- [YouTube opening setups fail](youtube-opening-setups-fail.md) — 10/23: fence bar + 20-SMA power bar FAIL on 10 yrs SPY/QQQ; premarket power bar too rare.
+- [Harnesses pass planted edge](harnesses-pass-planted-edge.md) — 10/23 canary: +10 bp planted is recovered (9.0/10.0); few-bp failures are real, not a bug.
+- [%R trend trade fails](wr-trend-trade-fails.md) — 10/24: operator's full rule (rise out of oversold, sell on turn-down) FAIL on 485k trades; lift ~-0.5 bp.
+- [Arm waits 14 min after the %R turn](arm-waits-14-min-after-turn.md) — 10/24 lag audit: arm +14 min/+24 bp after the turn; buy-stop entry real +2 bp vs random, under cost.
+- [Grok handoff 10/24](grok-handoff-2026-10-24.md) — brief docs/HANDOFF_2026-10-24_GROK.md; buystop_flow fixes pending; verify Grok's work on return.
+- [YouTube channel Rebooted](youtube-channel-rebooted.md) — 10/24 pivot: personal channel 'Rebooted'; trading tests = one series; user is a 30-year programmer.
+- [Pitch entries fail](pitch-entries-fail.md) — 10/27: both 1m %R lines turning up = random minute (open/trail/trough FAIL, ~0 lift); don't re-propose %R timing for early entry.
+- [FIRST_PRESQ is SIP-only](first-presq-is-sip-only.md) — 10/27: Argon's Leg 1 has no edge on IEX (best of 96 configs -2.9 bp); SIP version mostly market drift; held-out stopped.
+- [Operator chart vs desk lines](operator-chart-uses-eth-warmup.md) — same %R settings; desk ALSO includes premarket (clock window); morning gaps are feed/live-price, check logged pctr not rebuilds.
+- [Early entry is top priority](early-entry-is-top-priority.md) — operator 10/27: capture Leg 1; High Octane reverted (49821811) on that condition; verify config_fp at 10/28 open.
+- [Leg-1 minutes are lost on the board](leg1-minutes-are-lost-on-the-board.md) — 10/27: 95% listed before the turn; the 15 min goes to square wait, stale quotes, re-entry cooldown on the board.
+- [Plumbing before strategy](plumbing-before-strategy.md) — operator 10/28: optimize everything outside the strategy first, then the strategy.
+- [Slope-now CLOSED](slope-now-off-until-winners-split.md) — 10/30 pitch bands ~random on 230k events; logging kept; 10/28: gate OFF (45c4b937) until data separates its winners/losers; operator wants us to come back to it.
+- [Overnight book retired](overnight-book-retired.md) — 10/29 agents disabled on the mini, code and accounts kept; don't propose overnight work.
+- [Move-to-cost is just the spread](move-to-cost-is-just-the-spread.md) — 10/30 hist NOT SUPPORTED (MDE 3 bp): LOW same mid-to-mid; widest-spread cut beats it.
+- [Standard desk 10/30](standard-desk-2026-10-30.md) — operator named week 10/26-29 the baseline (59% win, -0.6 bp); tag standard-2026-10-30; judge every change against it.
+- [Operator goal and horizon](operator-goal-and-horizon.md) — income from a trusted day-trading system; go until out of ideas; never recommend quitting; no hours-long holds.
+- [Pullback family closed](pullback-family-closed.md) — 10/30 trend_dip + uptrend_pullback FAIL (powered); pullback worse than a random uptrend minute; first-leg arm keeps only buy-stop + flow.
+- [Late breakeven broke 11/03](late-breakeven-broke-the-1103-morning.md) — BE 0.15→0.45% turned +5..15 bp peaks into -16 bp exits; never-green trades are the loss.
+- [Never-green cut fails every version](never-green-cut-fails-every-version.md) — 7-day replay: all three cut modes lose vs off; keep it off.
+- [Never-green entry predictor fails](never-green-entry-predictor-fails.md) — prereg AUC 0.55; extension_class is outcome-labeled (leak).
+- [Paper limit fills need the bid](paper-limit-fills-need-the-bid.md) — sell limits fill when the SIP bid reaches them; midpoint exits only +0.27 bp.
+- [Desk does not start at boot](desk-does-not-start-at-boot.md) — RunAtLoad false: kickstart the agent after every mini reboot; /tmp is wiped.
+- [Ship winners same morning](ship-winners-same-morning.md) — parallel arms, rule written first, ship KEEPs together before the open, revert on failed confirm.
+- [Last month with Claude](last-month-cost-aware.md) — cost is the constraint: short replies, automate the loop, hand off; plan in docs/LAST_MONTH_PLAN_2026-11-04.md.
+- [Sideways shape fails](sideways-shape-fails.md) — 11/05: 5 shape measures on 807 entries; tight-range = more never-green but smaller losses; refusing them cannot help.
