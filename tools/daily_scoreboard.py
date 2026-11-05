@@ -10,7 +10,9 @@ usage: tools/daily_scoreboard.py [--days 20]"""
 from __future__ import annotations
 
 import argparse
+import datetime
 import glob
+from zoneinfo import ZoneInfo
 import json
 import math
 import os
@@ -19,6 +21,7 @@ import statistics as st
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COST_BP = 3.0
+ET = ZoneInfo("America/New_York")
 
 
 def load_day(path):
@@ -37,8 +40,13 @@ def load_day(path):
             continue
         seen.add(k)
         pk = o.get("peak_price") or e
+        risk = abs(e - float(o.get("stop_price") or 0.0))      # 1R in dollars per share (the synthetic stop distance)
+        mfe_r, mae_r = o.get("mfe_r"), o.get("mae_r")
+        hr = datetime.datetime.fromtimestamp(t, ET).hour
         rows.append({"bp": (x - e) / e * 1e4 - COST_BP, "usd": float(o.get("realized_pl_usd") or 0.0),
-                     "ng": (pk - e) / e * 1e4 < 5})
+                     "ng": (pk - e) / e * 1e4 < 5, "hr": hr,
+                     "mfe_bp": (max(0.0, float(mfe_r)) * risk / e * 1e4) if (mfe_r is not None and risk > 0) else None,
+                     "mae_bp": (abs(min(0.0, float(mae_r))) * risk / e * 1e4) if (mae_r is not None and risk > 0) else None})
     return rows
 
 
@@ -62,6 +70,32 @@ def payoff_block(allr):
             f"- breakeven average loss at this win rate: **-{be_loss:.1f} bp** (losses are {al/be_loss:.1f}x too big)",
             f"- never-green trades: {len(ng)} of {len(allr)}, average {sum(x['bp'] for x in ng)/max(1,len(ng)):+.1f} bp, "
             f"**{ng_share:.0%} of all loss**; the other trades average {sum(rest)/max(1,len(rest)):+.1f} bp", ""]
+
+
+def edge_block(allr):
+    """MFE / MAE edge ratio by ENTRY hour (ET), over the rolling window. Mean best excursion over mean worst excursion
+    during the hold, in bp of the entry price. Above 1 = trades move our way before they move against us on average;
+    ~1 = coin flip; the sources suggest > 2.0 is a strong entry edge (vendor rule of thumb, unvalidated). Hold-length
+    dependent (a longer hold sees a bigger MFE and MAE); this is the whole hold, not fixed horizons."""
+    by = {}
+    for x in allr:
+        if x.get("mfe_bp") is not None and x.get("mae_bp") is not None:
+            by.setdefault(x["hr"], []).append(x)
+    if not by:
+        return []
+    out = ["## Entry quality by hour (MFE / MAE edge ratio)", "",
+           "| entry hour (ET) | trades | mean MFE bp | mean MAE bp | edge ratio | win % | net bp |", "|---|---:|---:|---:|---:|---:|---:|"]
+    tot = []
+    for hr in sorted(by):
+        v = by[hr]; tot += v
+        mf = sum(x["mfe_bp"] for x in v) / len(v); ma = sum(x["mae_bp"] for x in v) / len(v)
+        out.append(f"| {hr:02d}:00 | {len(v)} | {mf:.1f} | {ma:.1f} | {mf/ma if ma > 0 else float('nan'):.2f} | "
+                   f"{100*sum(x['bp']>0 for x in v)/len(v):.0f} | {sum(x['bp'] for x in v)/len(v):+.1f} |")
+    mf = sum(x["mfe_bp"] for x in tot) / len(tot); ma = sum(x["mae_bp"] for x in tot) / len(tot)
+    out += [f"| **all** | {len(tot)} | {mf:.1f} | {ma:.1f} | **{mf/ma if ma > 0 else float('nan'):.2f}** | "
+            f"{100*sum(x['bp']>0 for x in tot)/len(tot):.0f} | {sum(x['bp'] for x in tot)/len(tot):+.1f} |", "",
+            "Hours with fewer than ~30 trades are noise. Read the trend over weeks, not one night.", ""]
+    return out
 
 
 def _day_means(chunk):
@@ -135,6 +169,7 @@ def main():
             f"${sum(x['usd'] for x in allr):+.2f}; last 5 sessions net {sum(x['bp'] for x in last5)/max(1,len(last5)):+.1f} bp/trade")
     out += ["", f"**{line}**", ""]
     out += payoff_block(allr)
+    out += edge_block(allr)
     out += trend_and_ships(days_all)
     open(os.path.join(ROOT, "docs/SCOREBOARD.md"), "w").write("\n".join(out))
     print(line)
