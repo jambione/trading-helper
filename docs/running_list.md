@@ -164,3 +164,4 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 - JEV model (park until a timing edge exists)
 - Why the Finnhub write side keeps dying (auto-reconnect makes it harmless for now)
 - Re-score PRE/SQ with warmed %R lines (same cold start the ▲ test had)
+| 89 | SIDEWAYS SHAPE TEST CLOSED 11/05 (operator: eliminate never-greens by not opening on flat moves) | prereg READY after 2 skeptic rounds; 807 entries 9/24-10/30; er15/r2/vwap-crossings no signal; tight range (rng15, bbw20) never-green 55% vs 37% (z 4+, both halves) but net -7.0 vs -9.2 bp, so refusing it lowers the kept mean (5th pct -1.1 bp). UNDERPOWERED by floor, FAIL on payoff. No retuning. Only the forward %R slope log (150 entries) remains. | docs/studies/sideways_shape_prereg.json, tools/studies/sideways_shape.py |
