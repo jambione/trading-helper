@@ -20,5 +20,15 @@
  "if_pass": "skeptic review of the positive, then an observe-only flag in the Gates column, then a gate only through the sweep and ship-log rules; never straight to live",
  "if_fail": "close; no retuning of 10.7, 30.0, the 5-minute window or the label; record in the running list and memory",
  "tool": "tools/studies/wr_slope_forward.py",
- "status": "READY to log (already logging); awaiting result-skeptic"
+ "status": "amended_1 after result-skeptic round 1 (NOT READY, 6 items); awaiting round 2; nothing scored",
+ "amended_1": {
+  "threshold_origin": "30.0 is a POST HOC cutoff taken from the split of the 11 entries on 2026-11-05, not a pre-chosen round number; it is fixed now and will not be moved.",
+  "start_pinned": "confirmatory entries start 2026-11-06; 11/04 (logging began 16:00, sideways-test day) and 11/05 are excluded; the scorer ignores an earlier --since.",
+  "no_peeking": "the scorer may not be read for a verdict before the due date; the pre-due output is counts only.",
+  "clustering": "never-green inference is day-clustered: pass needs the day-bootstrap 2.5th percentile of (flagged - rest) never-green rate > 0 (one-sided 0.025, Bonferroni for two hypotheses) in addition to the pooled trade-level z >= 1.96 (shown for reference).",
+  "label": "rows with no peak_price are dropped and counted (a missing peak is not never-green). Because peak_price depends on hold length, the median hold by group is printed and the gap must also be positive among entries held >= 120 s; a fixed-horizon bar label is not available from outcomes and is listed as a limitation.",
+  "power_and_extension": "read when >= 150 entries AND the hypothesis has >= 60 flagged entries in total and >= 30 per half; otherwise UNDERPOWERED and re-read at every +50 entries until 400 entries, then close as UNDERPOWERED. At ~80 flagged vs ~70 rest, a pooled z of 1.96 needs a gap of about 20 percentage points; modest true effects will be missed.",
+  "halves": "split at the median ENTRY (by entry time), not the median day; each half needs >= 8 days.",
+  "confound": "if the range logger is absent or a tercile has < 5 flagged or rest entries, the verdict says 'range confound NOT TESTABLE' instead of passing silently; NaN z is UNDERPOWERED."
+ }
 }
