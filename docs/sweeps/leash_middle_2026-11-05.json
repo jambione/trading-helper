@@ -1,0 +1,40 @@
+{
+ "sha": "HEAD",
+ "start": "09:30",
+ "end": "15:50",
+ "baseline": {
+  "live_book": true,
+  "set": {}
+ },
+ "base_set": {
+  "ai_max_positions": 3,
+  "ai_max_position_pct": 33.0,
+  "ai_risk_pct": 1.65
+ },
+ "name": "leash_middle_2026-11-05",
+ "purpose": "Operator 11/05 'hold it then and run a middle path': leash10 (ai_local_trail_decay_idle_sec 8 -> 10) screened +25 bp/day on 5 days, then +6.2 bp/day, day-t 0.65, on 15 confirm days (NOT_CONFIRMED). Held, not shipped. This run gives it days it has never seen: the 5 unfinished confirm days (9/28-10/2) plus 11/03 and 11/04, against a same-code baseline, with a dose-response arm (leash12) so one lucky value cannot carry it. BAR FIXED NOW: pool leash10's 7 new days with its 15 grid confirm days (22 days, grid dir ~/sweeps/night_grid_2026-11-04); ship only if the pooled mean day delta > 0, pooled day-t >= 1.5 and both halves > 0 (the CONFIRM bar). leash12 is read for direction only: if leash10 passes but leash12 is negative on the 7 days, treat the pass as a lucky value and hold. Runs after the triangle sweep, on the mini's checkout.",
+ "variants": {
+  "leash10": {
+   "live_book": true,
+   "set": {
+    "ai_local_trail_decay_idle_sec": 10.0
+   }
+  },
+  "leash12": {
+   "live_book": true,
+   "set": {
+    "ai_local_trail_decay_idle_sec": 12.0
+   }
+  }
+ },
+ "screen_days": [
+  "2026-11-04",
+  "2026-11-03",
+  "2026-10-02",
+  "2026-10-01",
+  "2026-09-30",
+  "2026-09-29",
+  "2026-09-28"
+ ],
+ "confirm_days": []
+}
