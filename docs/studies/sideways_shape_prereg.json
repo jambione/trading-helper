@@ -1,0 +1,32 @@
+{
+ "id": "sideways_shape",
+ "registered": "2026-11-05",
+ "status": "DRAFT - awaiting result-skeptic; nothing scored",
+ "operator": "2026-11-05 'yes - we're trying to eliminate the Nevergreens ... identify flat sideways movement and not open on it'",
+ "question": "Do any of six price/tape shape measures over the 15 closed minutes before entry mark desk entries that go never-green more often, and does refusing that flat quarter raise the mean of the kept trades?",
+ "prior_evidence_against": [
+  "sideways_filter 10/16: 30-bar signed efficiency ratio (TRER) and CHOP on PRE onsets UNDERPOWERED / not promising (different target: forward return at signals, not never-green on desk fills)",
+  "never_green_entry 11/04: scalar entry facts AUC 0.55 (no price-shape features were in it)",
+  "sideways %R test 11/04: z +1.5, 58 of 75 cases in one period",
+  "quiet-tape gate works only on real-time SIP volume; IEX volume flat (tape5 is IEX)"
+ ],
+ "population": "desk watch-path entries >= $20, 2026-09-24..2026-11-03, outcomes.jsonl from single-day tape folders, de-duplicated by (symbol, round(entry_time)); needs >= 80 IEX bars in ~/replay_cache and a last closed bar within 240 s of entry",
+ "label": "never_green = peak_price < entry_price x 1.0005 (hold-length dependent; stated limitation). net = (exit-entry)/entry bp - 3 bp.",
+ "measures_fixed": {
+  "er15": "|close[-1]-close[0]| / sum|diff| over the last 15 closed bars + entry price; SIDEWAYS = low",
+  "rng15": "(max high - min low of last 15 closed bars) / entry px in bp; SIDEWAYS = low",
+  "r2_15": "R^2 of a straight-line fit to those 16 closes; SIDEWAYS = low",
+  "vwapx15": "count of close-vs-running-VWAP side changes inside the 15 bars; SIDEWAYS = high",
+  "bbw20": "4 x population stdev of last 20 closes / mean, bp; SIDEWAYS = low",
+  "tape5": "IEX volume of last 5 bars / median of the prior 5-bar blocks over 60 min; SIDEWAYS = low"
+ },
+ "flat_group": "worst quarter in the declared direction; cut = pooled 25th (or 75th) percentile of the measure over all scored entries (label-free)",
+ "pass": {
+  "never_green": "flat quarter never-green rate higher than the rest in pooled, half A (< 2026-10-14) and half B (>= 2026-10-14), pooled one-sided z >= 2.40 (p < 0.05/6)",
+  "payoff": "mean net of the three kept quarters > mean net of all entries in pooled, A and B"
+ },
+ "verdicts": "PASS_NG_AND_PAYOFF (live-log it forward, no block until 150 forward entries), PASS_NG_ONLY (information), FAIL",
+ "no_retuning": "no thresholds, windows, or measure definitions changed after scoring; a failure closes this study",
+ "if_pass": "stamp the passing measure on live entries (observe only), read at 150 forward entries with the same bar; block nothing before that",
+ "if_fail": "close; record in running list and memory; the shape of the last 15 minutes does not separate never-greens"
+}
