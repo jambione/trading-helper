@@ -1,7 +1,7 @@
 {
  "id": "sideways_shape",
  "registered": "2026-11-05",
- "status": "DRAFT - awaiting result-skeptic; nothing scored",
+ "status": "amended_1 after result-skeptic round 1 (NOT READY, 8 findings); awaiting round 2; nothing scored",
  "operator": "2026-11-05 'yes - we're trying to eliminate the Nevergreens ... identify flat sideways movement and not open on it'",
  "question": "Do any of six price/tape shape measures over the 15 closed minutes before entry mark desk entries that go never-green more often, and does refusing that flat quarter raise the mean of the kept trades?",
  "prior_evidence_against": [
@@ -28,5 +28,15 @@
  "verdicts": "PASS_NG_AND_PAYOFF (live-log it forward, no block until 150 forward entries), PASS_NG_ONLY (information), FAIL",
  "no_retuning": "no thresholds, windows, or measure definitions changed after scoring; a failure closes this study",
  "if_pass": "stamp the passing measure on live entries (observe only), read at 150 forward entries with the same bar; block nothing before that",
- "if_fail": "close; record in running list and memory; the shape of the last 15 minutes does not separate never-greens"
+ "if_fail": "close; record in running list and memory; the shape of the last 15 minutes does not separate never-greens",
+ "amended_1": {
+  "label": "never_green = no IEX 1-min bar starting in (entry_time, +300 s] has high >= entry_price x 1.0005 (fixed horizon). peak_price label reported as cross-check only.",
+  "measures": "tape5 dropped (IEX volume known flat); 5 measures, Bonferroni z >= 2.33. vwapx15 renamed vwap15_crossings (VWAP over the 15 bars, not session). Final close = last CLOSED bar close, not the broker fill. bbw20 gets a contiguity check.",
+  "population": "2026-09-24..2026-10-30 (11/02, 11/03 excluded as in never_green_entry; 10/26-10/30 rates were seen by the operator). Halves A <2026-10-14, B >=.",
+  "cut": "fit on half A only, applied to B. Ties: flat = value <= cut (low) or >= cut (high); flat share must be 20-30% in ALL, A and B or the verdict is ABORT_SHARE.",
+  "volatility_confound": "never-green must also be higher for flat inside rng15 terciles (>= 2 of 3 positive) - rng15 itself is exempt.",
+  "pass": "NG: pooled z >= 2.33, flat > rest in A and B, day-clustered bootstrap 5th pct of (flat - rest) NG rate > 0. PAYOFF: day-clustered bootstrap 5th pct of (kept - all) net > 0 AND its median beats a random same-count-per-day skip. PASS_NG_AND_PAYOFF needs both.",
+  "power": "~700 entries expected, flat ~90 per half: minimum detectable NG lift ~10 points per half; true effect likely smaller (scalar-fact AUC was 0.55). A half with < 80 flat entries gives UNDERPOWERED.",
+  "diagnostics": "drop counts by reason printed; abort below 300 scored entries."
+ }
 }
