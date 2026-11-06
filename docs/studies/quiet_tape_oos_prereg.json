@@ -1,0 +1,16 @@
+{
+ "id": "quiet_tape_oos",
+ "registered": "2026-11-06 ~16:45 ET, before any number of this study was computed (the bars are not yet fetched).",
+ "operator": "Weekend agenda item 1 (docs/WEEKEND_AGENDA_2026-11-07.md), operator 'continue on the other agenda items' 11/06.",
+ "question": "Does the 9/30 finding hold out of sample: do desk fills made when the last five minutes of volume was under a quarter of the session's pace lose more than the other fills?",
+ "origin": "9/30 scratch study on 1,016 fills 8/4-9/30 with SIP 1-minute bars: last 5 closed minutes < 0.25x session per-minute pace, 75 skipped fills averaged -0.39% vs -0.18% kept, t +2.3, same sign in both halves (memory: quiet-tape-needs-realtime-volume). The original script was not saved in the repo; this study REBUILDS the rule from that description and fixes it here. Any difference from the original script is a limitation, stated in the result.",
+ "rule": "ratio = (mean volume per minute of the last 5 closed SIP 1-minute bars before the fill minute) / (mean volume per minute from 09:30 through the last closed bar). A fill is QUIET if ratio < 0.25. Fills with fewer than 10 closed session minutes (before 09:40) are excluded. SIP bars only (dense); the IEX version is information only.",
+ "sample": "Every desk buy fill 2026-10-01 through 2026-11-05 with SIP bars and a matched outcome (tools/studies/early_path.trades_since). Strictly after the 9/30 study's window, so it is a true held-out sample. Net bp = (exit - entry)/entry bp - 3 bp.",
+ "statistic": "Per day: mean net of QUIET fills minus mean net of the other fills, for days with at least one of each. Mean over days, day-clustered t (n-1 df, one-sided).",
+ "pass": "ALL of: (1) mean day difference (quiet minus rest) < 0 with one-sided t <= -1.65; (2) the same sign in both halves (split by date at the median day); (3) at least 30 QUIET fills in total; (4) payoff: the mean net of the non-quiet fills exceeds the mean net of all fills by at least +1.0 bp per trade.",
+ "fail": "Any condition missing. A fail closes the idea; no other cutoff, window or normalisation is scored as primary.",
+ "information_only": ["cutoffs 0.15, 0.35, 0.50", "never-green share of QUIET vs rest", "the same rule on IEX bars (what the live gate reads)", "share of fills that are QUIET (the cost of the gate in trades)"],
+ "if_pass": "result-skeptic review, then a replay of the default-off gate (ai_watch_min_vol_now_ratio already exists, set on IEX volume at 0.25 since 9/30 and never fired). It can only go live with REAL-TIME SIP volume (delayed SIP was flat in the 9/30 study), so a pass is shelved until SIP is available.",
+ "tool": "tools/studies/quiet_tape_oos.py (reads the cache built by tools/studies/sip_features.py fetch)",
+ "status": "READY; run on the mini after the bars are cached"
+}

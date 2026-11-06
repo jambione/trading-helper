@@ -62,9 +62,10 @@ def shape(bars, px, t):
         return {}
 
 
-def load_trades():
+def load_trades(since="2026-10-01"):
+    """Desk entries since 10/01 (weekend item 1 needs 10/01+; item 2 reports 10/15+ via build_rows(since=...))."""
     from early_path import trades_since
-    tr, _ = trades_since()
+    tr, _ = trades_since(since)
     return tr
 
 
@@ -112,8 +113,8 @@ def fetch():
     return 0
 
 
-def build_rows():
-    tr = load_trades()
+def build_rows(since="2026-10-15"):
+    tr = [t for t in load_trades() if t["day"] >= since]
     cache = {}
     rows = []
     for t in tr:
