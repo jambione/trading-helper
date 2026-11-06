@@ -77,7 +77,8 @@ def fetch():
     from config import load_config_ro
     client = aa.connect_data_client(dict(load_config_ro() or {}))
     CACHE.mkdir(parents=True, exist_ok=True)
-    tr = load_trades()
+    since = sys.argv[sys.argv.index('--since') + 1] if '--since' in sys.argv else '2026-10-01'
+    tr = load_trades(since)
     by_day = {}
     for t in tr:
         by_day.setdefault(t["day"], set()).add(t["sym"])
