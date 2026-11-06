@@ -5,7 +5,12 @@
  "question": "Do desk entries made in the top of their recent range go never-green more often, and does refusing them raise the mean of the kept trades?",
  "origin_evidence": "EXPLORATORY 11/05 on 891 desk entries 9/24-10/30, 30-minute range, bins chosen after seeing the data: position >= 0.8 (576 entries) never-green about 47% vs 37% below, net about -10 vs -7.4 bp. The 8/4-9/23 study (buying-the-top-is-not-the-loss, 871 fills, realized %, HOD-based) found the opposite. So this is a lead that disagrees with an earlier result.",
  "primary_hypothesis": "rs_pos30 >= 0.80 (position of the entry ask in the last 30 closed one-minute bars, 0 = low, 1 = high) marks never-green entries. ONE hypothesis, ONE threshold, fixed now.",
- "information_only": ["rs_pos15 >= 0.80", "rs_rise15_bp", "rs_er15", "rs_rng15_bp"],
+ "information_only": [
+  "rs_pos15 >= 0.80",
+  "rs_rise15_bp",
+  "rs_er15",
+  "rs_rng15_bp"
+ ],
  "data": "desk entries from the first session after the logger deploys (expected 2026-11-06), features rs_* stamped at entry from the in-memory IEX bar store (closed bars only). Never-green = peak_price < entry +5 bp (hold-length dependent; stated limitation). Net = (exit-entry)/entry bp - 3 bp.",
  "read_when": "150 forward entries with rs_pos30 present",
  "pass": {
@@ -15,7 +20,18 @@
  },
  "if_pass": "skeptic review of the positive, then a one-line config gate (refuse arms with rs_pos30 >= 0.80), shipped through the sweep and ship_log rules; never straight to live",
  "if_fail_or_underpowered": "close; do not retune the threshold or window; record in the running list and memory",
- "caveats": ["the earlier 8/4-9/23 result disagrees", "refusing the top 65% of entries (about 576 of 891) would also cut most trades; the payoff test is the one that matters", "IEX bars; spreads and volumes are IEX-limited"],
+ "caveats": [
+  "the earlier 8/4-9/23 result disagrees",
+  "refusing the top 65% of entries (about 576 of 891) would also cut most trades; the payoff test is the one that matters",
+  "IEX bars; spreads and volumes are IEX-limited"
+ ],
  "tool": "tools/studies/range_position_forward.py",
- "status": "READY to log; read not before 150 forward entries; skeptic review due before the read"
+ "status": "READY to log; read not before 150 forward entries; skeptic review due before the read",
+ "amended_feed": {
+  "when": "2026-11-06 ~12:40 ET, before any SIP-period entry exists and before any of these tests was read (operator 'yes' to the SIP amendment).",
+  "why": "The logged range, efficiency, run-size and slope measures come from the in-memory 1-minute bar store: IEX bars until the SIP flip (planned for the first SIP regular session, Tuesday 2026-11-10), SIP bars after. Denser SIP bars change what 'choppy' or 'top of range' reads as, so the two periods are not comparable.",
+  "rule": "Entries are assigned to the IEX sample (entry time before docs/studies/feed_regime.json sip_from_et, or all entries while it is null) or the SIP sample (at or after it). The two samples are NEVER pooled. The test is read ONCE, on the first sample whose entry count reaches this prereg's minimum (ordered by entry time); the other sample is information only and does not change the verdict. All other rules (hypothesis, cuts computed on the read sample, bars, family size, extension rule) apply unchanged to the read sample.",
+  "flip_time": "sip_from_et is set in the same step that flips alpaca_bar_feed to sip (docs/SIP_DAY1_RUNBOOK.md); tools/sip_sunday_check.py refuses GO while the feed is sip and it is null. If SIP is not bought or the flip slips, every entry stays in the IEX sample and the read is on IEX as originally written.",
+  "tool": "tools/studies/feed_regime.py (shared), counts printed per sample nightly; tests/test_feed_regime.py."
+ }
 }

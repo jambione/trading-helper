@@ -12,6 +12,9 @@ import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import feed_regime as fr  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ET = ZoneInfo("America/New_York")
 START, MIN_N, COST, Z_BAR, SEED = "2026-11-06", 150, 3.0, 1.96, 1106
@@ -36,7 +39,7 @@ def load(path=None, since=START):
             missing += 1
             continue
         pk = o.get("peak_price") or e
-        rows.append({"d": d, "rise": float(f["rs_rise15_bp"]), "rng": f.get("rs_rng15_bp"), "pos": f.get("rs_pos30"),
+        rows.append({"d": d, "t": float(t), "rise": float(f["rs_rise15_bp"]), "rng": f.get("rs_rng15_bp"), "pos": f.get("rs_pos30"),
                      "ng": (pk - e) / e * 1e4 < 5, "bp": (x - e) / e * 1e4 - COST})
     return rows, missing
 
@@ -109,10 +112,13 @@ def verdict(rows):
 def main(argv=None):
     rows, missing = load()
     print(f"entries since {START} with rs_rise15_bp: {len(rows)} over {len({r['d'] for r in rows})} days (missing field: {missing})")
-    if len(rows) < MIN_N:
-        print(f"NOT DUE: needs {MIN_N} entries ({MIN_N - len(rows)} more). Counts only before the read (prereg).")
+    label, sample, info = fr.pick(rows, MIN_N)
+    print("\n".join(info))
+    if sample is None:
+        biggest = max(len(x) for x in fr.split(rows).values())
+        print(f"NOT DUE: needs {MIN_N} entries in one feed sample ({MIN_N - biggest} more). Counts only before the read (prereg).")
         return 0
-    print("\n".join(verdict(rows)[1]))
+    print("\n".join(verdict(sample)[1]))
     return 0
 
 

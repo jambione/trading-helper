@@ -130,6 +130,13 @@ def run_checklist() -> int:
     else:
         add(False, "6 cache/avg_session_volume.json rebuilt on SIP daily bars", "file missing")
 
+    try:  # the forward tests split by feed at this time (docs/studies/feed_regime.json); unset while on SIP would pool IEX and SIP entries
+        reg = json.loads((ROOT / "docs" / "studies" / "feed_regime.json").read_text()).get("sip_from_et")
+    except (OSError, ValueError):
+        reg = None
+    sip_on = str(cfg.get("alpaca_bar_feed", "")).lower() == "sip"
+    add((not sip_on) or bool(reg), "7a forward-test feed regime: docs/studies/feed_regime.json sip_from_et set to the first SIP session (required once the feed is sip)",
+        f"sip_from_et = {reg!r}; feed is {'sip' if sip_on else 'iex'}")
     add(cfg.get("ai_phase_b_dry_run") is True, "7 Phase B (premarket) stays DRY RUN for the first SIP morning", f"ai_phase_b_dry_run is {cfg.get('ai_phase_b_dry_run')!r}")
 
     try:

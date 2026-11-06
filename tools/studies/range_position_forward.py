@@ -6,11 +6,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import math
 import os
 import random
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import feed_regime as fr  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ET = ZoneInfo("America/New_York")
@@ -33,7 +37,7 @@ def load(since):
         if since and d < since:
             continue
         pk = o.get("peak_price") or e
-        rows.append({"d": d, "pos": float(f["rs_pos30"]), "rng": f.get("rs_rng15_bp"), "ng": (pk - e) / e * 1e4 < 5,
+        rows.append({"d": d, "t": float(t), "pos": float(f["rs_pos30"]), "rng": f.get("rs_rng15_bp"), "ng": (pk - e) / e * 1e4 < 5,
                      "bp": (x - e) / e * 1e4 - COST})
     return rows
 
@@ -54,8 +58,13 @@ def main():
     rows = load(ap.parse_args().since)
     top, rest = split(rows)
     print(f"entries with rs_pos30: {len(rows)} over {len({r['d'] for r in rows})} days; top (>= {TH}) {len(top)}, rest {len(rest)}")
-    if len(rows) < MIN_N:  # counts only before the read (prereg: no peeking); 11/06 moved the means below this line
-        print(f"NOT DUE: needs {MIN_N} entries ({MIN_N - len(rows)} more)"); return 0
+    label, sample, info = fr.pick(rows, MIN_N)
+    print("\n".join(info))
+    if sample is None:  # counts only before the read (prereg: no peeking); 11/06 moved the means below this line
+        biggest = max(len(x) for x in fr.split(rows).values())
+        print(f"NOT DUE: needs {MIN_N} entries in one feed sample ({MIN_N - biggest} more)"); return 0
+    rows = sample
+    top, rest = split(rows)
     if top:
         print(f"  top  never-green {sum(r['ng'] for r in top)/len(top):.0%}  net {sum(r['bp'] for r in top)/len(top):+.1f} bp")
     if rest:

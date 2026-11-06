@@ -1,0 +1,4 @@
+{
+ "sip_from_et": null,
+ "note": "Set to the first SIP regular-session open (ISO, ET, e.g. 2026-11-10T09:30:00) in the same commit/step that flips alpaca_bar_feed to sip (docs/SIP_DAY1_RUNBOOK.md). null = every entry is the IEX sample. Used by the forward readers (tools/studies/feed_regime.py); tools/sip_sunday_check.py refuses GO while the feed is sip and this is null."
+}

@@ -30,5 +30,12 @@
   "power_and_extension": "read when >= 150 entries AND the hypothesis has >= 60 flagged entries in total and >= 30 per half; otherwise UNDERPOWERED and re-read at every +50 entries until 400 entries, then close as UNDERPOWERED. At ~80 flagged vs ~70 rest, a pooled z of 1.96 needs a gap of about 20 percentage points; modest true effects will be missed.",
   "halves": "split at the median ENTRY (by entry time), not the median day; each half needs >= 8 days.",
   "confound": "if the range logger is absent or a tercile has < 5 flagged or rest entries, the verdict says 'range confound NOT TESTABLE' instead of passing silently; NaN z is UNDERPOWERED."
+ },
+ "amended_feed": {
+  "when": "2026-11-06 ~12:40 ET, before any SIP-period entry exists and before any of these tests was read (operator 'yes' to the SIP amendment).",
+  "why": "The logged range, efficiency, run-size and slope measures come from the in-memory 1-minute bar store: IEX bars until the SIP flip (planned for the first SIP regular session, Tuesday 2026-11-10), SIP bars after. Denser SIP bars change what 'choppy' or 'top of range' reads as, so the two periods are not comparable.",
+  "rule": "Entries are assigned to the IEX sample (entry time before docs/studies/feed_regime.json sip_from_et, or all entries while it is null) or the SIP sample (at or after it). The two samples are NEVER pooled. The test is read ONCE, on the first sample whose entry count reaches this prereg's minimum (ordered by entry time); the other sample is information only and does not change the verdict. All other rules (hypothesis, cuts computed on the read sample, bars, family size, extension rule) apply unchanged to the read sample.",
+  "flip_time": "sip_from_et is set in the same step that flips alpaca_bar_feed to sip (docs/SIP_DAY1_RUNBOOK.md); tools/sip_sunday_check.py refuses GO while the feed is sip and it is null. If SIP is not bought or the flip slips, every entry stays in the IEX sample and the read is on IEX as originally written.",
+  "tool": "tools/studies/feed_regime.py (shared), counts printed per sample nightly; tests/test_feed_regime.py."
  }
 }

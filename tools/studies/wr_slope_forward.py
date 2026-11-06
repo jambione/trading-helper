@@ -8,8 +8,12 @@ import json
 import math
 import os
 import random
+import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import feed_regime as fr  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ET = ZoneInfo("America/New_York")
@@ -120,8 +124,12 @@ def main():
     for n, fn in HYP.items():
         fl = [r for r in rows if fn(r["f"])]
         print(f"{n}: flagged {len(fl)} ({len(fl)/max(1,len(rows)):.0%})")
-    if len(rows) < MIN_N:
-        print(f"NOT DUE: needs {MIN_N} entries ({MIN_N - len(rows)} more). Do not peek before the due date (prereg)."); return 0
+    label, sample, info = fr.pick(rows, MIN_N)
+    print("\n".join(info))
+    if sample is None:
+        biggest = max(len(x) for x in fr.split(rows).values())
+        print(f"NOT DUE: needs {MIN_N} entries in one feed sample ({MIN_N - biggest} more). Do not peek before the due date (prereg)."); return 0
+    rows = sample
     for n, fn in HYP.items():
         print(n); read(rows, n, fn)
     return 0
