@@ -74,3 +74,19 @@ def test_strong_bar_needs_both_halves_and_every_condition():
     assert not [r for r in ep.strong_rules(good, weak_test) if r[0] == 20 and r[1] == 10]   # 75% false alarms in TEST: not strong
     rare = [mk(slide, True, -50.0, "2026-10-20") for _ in range(5)] + [mk(rise, False, 12.0, "2026-10-20") for _ in range(95)]
     assert not ep.strong_rules(rare, rare)                                     # fires on 5% of trades and under 30 trades: not strong
+
+
+def test_cut_gain_math_and_pays_tier():
+    def mk(path, ng, net, day):
+        return {"day": day, "sym": "X", "fill_ts": T0, "entry": E, "net_bp": net, "never_green": ng, "prints": path,
+                "feat": ep.path_features(path, E, T0)}
+    slide = [(T0 + 2, _bp(-3)), (T0 + 12, _bp(-12)), (T0 + 25, _bp(-18)), (T0 + 90, _bp(-55))]
+    rows = [mk(slide, True, -58.0, "2026-10-20") for _ in range(35)]
+    c = ep.cut_gain(rows, 20, 10)
+    # the last print within 20 s is -12 bp (the -18 print comes at 25 s); cut net = -12 - 6 - 3 = -21; held net -58; gain +37 bp per flagged trade
+    assert c["n"] == 35 and abs(c["gain"] - 37.0) < 1e-6
+    test = [mk(slide, True, -58.0, "2026-11-03") for _ in range(35)]
+    assert any(r[0] == 20 and r[1] == 10 for r in ep.pays_rules(rows, test))
+    recover = [(T0 + 2, _bp(-3)), (T0 + 12, _bp(-12)), (T0 + 25, _bp(-18)), (T0 + 60, _bp(+9))]
+    bad = [mk(recover, False, 4.0, "2026-11-03") for _ in range(35)]
+    assert not ep.pays_rules(rows, bad)                                      # cutting recoverable trades loses money in TEST

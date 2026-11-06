@@ -41,6 +41,10 @@ STRONG_MIN_SHARE = 0.08      # flagged share of all trades per half (a rule that
 STRONG_MAX_FALSE = 0.25      # at most 25% of flagged trades later turn green
 STRONG_MAX_HELD = -35.0      # held net of the flagged group at most -35 bp (the saving a cut can bank)
 STRONG_MIN_NG = 0.75         # at least 75% of flagged trades end never-green
+# PAYS-ON-PAPER tier (second list, NOT the strong bar): what cutting at the checkpoint would have earned, from the prints, with an exit haircut.
+CUT_HAIRCUT_BP = 6.0         # assumed cost of selling at the checkpoint: ~2.3 bp half-spread plus ~4 bp slippage (observed 5-19 bp on trail sells)
+PAYS_MIN_GAIN = 10.0         # mean gain per flagged trade, bp, in BOTH halves
+PAYS_MIN_N = 30
 
 
 def trades_since(since=SINCE):
@@ -195,6 +199,25 @@ def rule_stats(rows, T, X):
             "held": sum(r["net_bp"] for r in g) / len(g), "ng": sum(r["never_green"] for r in g) / len(g)}
 
 
+def cut_gain(rows, T, X, haircut=CUT_HAIRCUT_BP):
+    """Mean paper gain per flagged trade of selling at the checkpoint instead of holding: (price at T - haircut - 3) - held net, in bp. Pure."""
+    g = _grp(rows, T, X)
+    if not g:
+        return None
+    gains = [(r["feat"][T]["px_bp"] - haircut - 3.0) - r["net_bp"] for r in g]
+    return {"n": len(g), "gain": sum(gains) / len(gains), "total": sum(gains)}
+
+
+def pays_rules(train, test):
+    out = []
+    for T in CHECK:
+        for X in (None,) + XS:
+            a, b = cut_gain(train, T, X), cut_gain(test, T, X)
+            if a and b and a["n"] >= PAYS_MIN_N and b["n"] >= PAYS_MIN_N and a["gain"] >= PAYS_MIN_GAIN and b["gain"] >= PAYS_MIN_GAIN:
+                out.append((T, X, a, b))
+    return out
+
+
 def is_strong(st):
     return bool(st) and st["n"] >= STRONG_MIN_N and st["share"] >= STRONG_MIN_SHARE and st["false"] <= STRONG_MAX_FALSE \
         and st["held"] <= STRONG_MAX_HELD and st["ng"] >= STRONG_MIN_NG
@@ -268,6 +291,17 @@ def report():
             out.append(f"| T={T}s{'' if X is None else f', down {X} bp'} | {a['n']} / {100 * a['false']:.0f}% / {a['held']:+.0f} | {b['n']} / {100 * b['false']:.0f}% / {b['held']:+.0f} |")
     else:
         out.append("**None.** No rule clears the strong bar in both halves. Everything below is weak and is not a basis for an exit change.")
+    out += [""]
+    pr = pays_rules(train, test)
+    out += ["## Pays on paper (second list: cutting at the checkpoint instead of holding)", "",
+            f"Assumes the cut sells at the checkpoint print less {CUT_HAIRCUT_BP:.0f} bp (spread + slippage). A rule is listed only if the mean gain per flagged trade is "
+            f">= {PAYS_MIN_GAIN:.0f} bp in BOTH halves on >= {PAYS_MIN_N} flagged trades each. This is NOT the strong bar: it says a rule is worth a real replay, not that it is proven.", ""]
+    if pr:
+        out += ["| rule | train: n / gain per trade / total bp | test: n / gain per trade / total bp |", "|---|---|---|"]
+        for T, X, a, b in pr:
+            out.append(f"| T={T}s{'' if X is None else f', down {X} bp'} | {a['n']} / {a['gain']:+.0f} / {a['total']:+.0f} | {b['n']} / {b['gain']:+.0f} / {b['total']:+.0f} |")
+    else:
+        out.append("**None.** No rule would have paid in both halves at this haircut.")
     out += [""]
     out += table(train, "TRAIN") + [""] + flow_table(train, "TRAIN") + [""] + table(test, "TEST (do not tune on this)") + [""] + flow_table(test, "TEST (do not tune on this)")
     (ROOT / "docs").mkdir(exist_ok=True)
