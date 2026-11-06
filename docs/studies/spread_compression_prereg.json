@@ -9,8 +9,19 @@
  "statistic": "Per day: mean net of COMPRESSED entries minus mean net of the other measurable entries, for days with both. Mean over days, day-clustered t.",
  "pass": "STRONG, ALL of: (1) mean day difference > 0 with t >= 2.0; (2) > 0 in BOTH halves; (3) COMPRESSED entries have mean net > 0 in BOTH halves (a gate that only keeps them must make money); (4) at least 60 COMPRESSED entries in each half.",
  "fail": "Any condition missing = FAIL. No other ratio cutoff or window is scored as primary.",
- "information_only": ["ratio cutoffs 0.5 and 0.85", "never-green share by group", "share of entries COMPRESSED", "the same measure 5 minutes AFTER the fill (is a widening spread an early warning?)"],
+ "information_only": [
+  "ratio cutoffs 0.5 and 0.85",
+  "never-green share by group",
+  "share of entries COMPRESSED",
+  "the same measure 5 minutes AFTER the fill (is a widening spread an early warning?)"
+ ],
  "if_pass": "result-skeptic review; live use needs REAL-TIME quotes (the paid SIP plan), so a pass is shelved until SIP; replay through sweep_replays first.",
  "tool": "tools/studies/spread_compression.py (built after this file is committed)",
- "status": "READY, skeptic review pending"
+ "status": "READY, skeptic review pending",
+ "amended": {
+  "when": "2026-11-06 ~17:40 ET, after result-skeptic round 1 FIX FIRST, before any code or data pull.",
+  "6_dropped_data": "Added to sample: report the outcomes that did not match a fill and the entries with missing SIP quotes, by name. If either is more than 10% of entries, the study is VOID and is not scored.",
+  "7_timing_and_open": "Replaces the measure windows: t_dec = min(entry_time from outcomes, fill second). Windows [t_dec-60 s, t_dec) and [t_dec-300 s, t_dec-60 s). Regular-session quotes only. Entries with t_dec before 09:36 ET are excluded. Time-weighted median spread. Replaces the statistic: COMPRESSED minus other, within the same day AND the same clock hour; mean over those day-hour cells weighted equally per day, day-clustered t.",
+  "8_outcome_and_power": "Replaces outcome: net bp = the sell fill price from ai_reports/fills vs the buy fill price, less 3 bp; if more than 5% of exits have no sell fill, report it and score the matched trades only. Replaces fail: fewer than 60 COMPRESSED entries in either half = UNDERPOWERED, not FAIL; any other missing condition = FAIL."
+ }
 }

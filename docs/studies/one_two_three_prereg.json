@@ -20,9 +20,24 @@
  "statistic": "Per session: P&L_123 = sum of net bp over the 1-2-3 trades taken that day (arms without a point 3 contribute 0, no trade); P&L_ctrl = sum of net bp over all arms bought at point 1. Day difference = P&L_123 - P&L_ctrl. Mean over days, day-clustered t (n-1 df).",
  "pass": "STRONG, ALL of: (1) mean day difference > 0 with t >= 2.0 over all sessions; (2) mean day difference > 0 in BOTH halves; (3) mean net per 1-2-3 trade taken > 0 in BOTH halves (it must make money, not only lose less); (4) at least 150 1-2-3 trades in total and at least 60 in each half.",
  "fail": "Any condition missing = FAIL (not shown). If (1)-(2) pass but (3) fails, report 'loses less, does not make money' - not a pass.",
- "information_only": ["share of arms that reach point 3", "share of never-green arms (desk label) that reach point 3", "the fixed-hold exits", "how far above point 1's price point 3 fills (the cost of waiting)", "time from t0 to point 3"],
+ "information_only": [
+  "share of arms that reach point 3",
+  "share of never-green arms (desk label) that reach point 3",
+  "the fixed-hold exits",
+  "how far above point 1's price point 3 fills (the cost of waiting)",
+  "time from t0 to point 3"
+ ],
  "no_retuning": "No other pullback depth, window, stop, trail or definition is scored as primary.",
  "if_pass": "result-skeptic review, then a default-off arm built into the live code and replayed through tools/sweep_replays.py screen + confirm and the ship rule. Never straight to live.",
  "tool": "tools/studies/one_two_three.py (built after this file is committed; may not change anything above)",
- "status": "READY, skeptic review pending"
+ "status": "READY, skeptic review pending",
+ "amended": {
+  "when": "2026-11-06 ~17:40 ET, after result-skeptic round 1 FIX FIRST, before any code or data pull. Items replace or add to the named sections.",
+  "1_bar_timing": "Added to definitions: Bars are labelled by start time. Tracking of H starts with the first bar that opens at or after t0. The pullback is confirmed when the confirming bar closes. H1 = the highest high from t0 through the confirming bar. The point 3 search starts at the next bar. If one bar has low <= L0 and also reaches the trigger, it counts as cancelled. Stops are checked from the bar after entry, except on the entry bar: if its low <= the initial stop, the trade is stopped at stop - 2 bp. The trail level uses the highs of earlier closed bars only. The control's simulated exit starts at the first bar opening after t0.",
+  "2_cost": "Replaces the point_3 fill: fill = max(H1 + $0.01, bar open) + max(2 bp, half the median SIP quoted spread (bp of mid) over the 60 s before the trigger minute). Added to exits: every simulated exit (both arms) also pays half the median SIP quoted spread over the 60 s before the exit minute, with a 2 bp minimum.",
+  "3_iex_transfer": "Added pass condition (5): the same rule run on IEX 1-minute bars has mean day difference > 0 in BOTH halves (the live arm runs on IEX; FIRST_PRESQ and the %R+RSI confluence worked on SIP and were null on IEX).",
+  "4_makes_money": "Replaces pass (3): the mean day sum of 1-2-3 net bp is > 0 in BOTH halves, AND > 0 over all sessions with day-clustered t >= 2.0. Added to information_only: the 1-2-3 net minus SPY's return over the same window; the same detector started at a random minute in the same name, day and clock hour.",
+  "5_held_out": "Replaces the start of if_pass: a historical pass is PROMISING only (the same-evening rough look used these days). STRONG needs the same rule, unchanged, to pass (1), (3) and (5) on desk entries from 2026-11-09 on, over at least 15 sessions, before any live-code work.",
+  "6_dropped_data": "Added to sample: report the outcomes that did not match a fill and the arms with missing SIP bars or quotes, by name. If either is more than 10% of arms, the study is VOID and is not scored."
+ }
 }
