@@ -25,6 +25,7 @@ from collections import Counter, defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COST, MIN_N, NG_BP = 3.0, 150, 5.0
+CLEAN_SINCE = "2026-10-15"   # rvol was paced ~2x too high until the 10/14 after-close lag fix (movers-rvol-was-inflated) and the floors were re-matched
 SKIP = {"ask", "bid", "bars_age_sec", "wr_bar_age_sec", "ob_bars", "rs_bars", "criteria", "extension_class", "git_version",
         "square_since", "last_bar_age_sec"}
 
@@ -128,15 +129,15 @@ def table(res, top=10):
     return lines
 
 
-def brief(top=10):
+def brief(top=10, since=CLEAN_SINCE):
     try:
-        rows = load()
+        rows = load(since=since)
     except OSError as e:
         return ["## Never-green profile", "", f"(unavailable: {e})"]
     res = profile(rows)
     src = sources(rows)
     out = ["## Never-green profile (exploratory: which entry features go with never-green, and do they go with profit?)", "",
-           f"{len(rows)} entries with logged features since {min(r['d'] for r in rows) if rows else '-'}. AUC < 0.5 = never-greens have LOWER values. "
+           f"{len(rows)} entries with logged features since {min(r['d'] for r in rows) if rows else '-'} (clean era: volume ratios were paced ~2x high before 10/15, so older rows mix two scales; use --all for lifetime). AUC < 0.5 = never-greens have LOWER values. "
            "A link that predicts the label but not net bp is a label artifact, not a lever. Hypotheses only; nothing here is a gate.", ""]
     out += table(res, top)
     if src:
@@ -148,8 +149,9 @@ def brief(top=10):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--brief", action="store_true")
+    ap.add_argument("--all", action="store_true", help="lifetime (mixes the inflated-rvol era)")
     a = ap.parse_args(argv)
-    print("\n".join(brief()))
+    print("\n".join(brief(since="2000-01-01" if a.all else CLEAN_SINCE)))
     return 0
 
 
