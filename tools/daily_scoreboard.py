@@ -171,6 +171,11 @@ def main():
     out += payoff_block(allr)
     out += edge_block(allr)
     out += trend_and_ships(days_all)
+    try:  # disk + per-day capture size (operator 11/06: will SIP be more voluminous?)
+        from tools import disk_check
+        out += [""] + disk_check.brief()
+    except Exception as e:  # noqa: BLE001
+        out += ["", f"(disk check failed: {type(e).__name__}: {e})"]
     try:  # never-green profile: which entry features go with never-green AND with profit (operator 11/06; exploratory)
         from tools import ng_profile
         out += [""] + ng_profile.brief()
