@@ -57,3 +57,20 @@ def test_flow_table_splits_sell_dominated_from_the_rest():
     calm = [mk([(T0 + 1, 100.0, 10.0), (T0 + 3, 100.0, 90.0), (T0 + 6, 100.05, 90.0), (T0 + 40, 100.1, 50.0)], False, 5.0) for _ in range(12)]
     text = "\n".join(ep.flow_table(sell + calm, "TRAIN"))
     assert "| 20s | 12 | 0% | 100% | -40.0 | 12 | 100% | +5.0 |" in text      # calm prints are flat at 5 s (no flow), so the first row with both groups is later
+
+
+def test_strong_bar_needs_both_halves_and_every_condition():
+    def mk(path, ng, net, day):
+        return {"day": day, "sym": "X", "fill_ts": T0, "entry": E, "net_bp": net, "never_green": ng, "prints": path,
+                "feat": ep.path_features(path, E, T0)}
+    slide = [(T0 + 2, _bp(-3)), (T0 + 12, _bp(-12)), (T0 + 25, _bp(-18)), (T0 + 90, _bp(-40))]
+    rise = [(T0 + 2, _bp(2)), (T0 + 6, _bp(8)), (T0 + 60, _bp(15))]
+    recover = [(T0 + 2, _bp(-3)), (T0 + 12, _bp(-12)), (T0 + 25, _bp(-18)), (T0 + 60, _bp(+9))]   # a false alarm: flagged, then green
+    good = [mk(slide, True, -50.0, "2026-10-20") for _ in range(40)] + [mk(rise, False, 12.0, "2026-10-20") for _ in range(60)]
+    test_good = [mk(slide, True, -50.0, "2026-11-03") for _ in range(40)] + [mk(rise, False, 12.0, "2026-11-03") for _ in range(60)]
+    assert ep.strong_rules(good, test_good)                                    # clean in both halves
+    weak_test = [mk(recover, False, 2.0, "2026-11-03") for _ in range(30)] + [mk(slide, True, -50.0, "2026-11-03") for _ in range(10)] + \
+                [mk(rise, False, 12.0, "2026-11-03") for _ in range(60)]
+    assert not [r for r in ep.strong_rules(good, weak_test) if r[0] == 20 and r[1] == 10]   # 75% false alarms in TEST: not strong
+    rare = [mk(slide, True, -50.0, "2026-10-20") for _ in range(5)] + [mk(rise, False, 12.0, "2026-10-20") for _ in range(95)]
+    assert not ep.strong_rules(rare, rare)                                     # fires on 5% of trades and under 30 trades: not strong

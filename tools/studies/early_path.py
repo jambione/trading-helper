@@ -34,6 +34,13 @@ CHECK = (5, 10, 15, 20, 30, 45, 60, 90, 120)
 XS = (5, 10, 15, 20)
 GREEN_BP = 5.0
 WINDOW = 300.0
+# STRONG-SIGNAL BAR (operator 11/06: 'I'm looking for a strong signal - nothing weak'). Fixed BEFORE the first run (16:37 11/06) and not tunable.
+# A rule is STRONG only if it clears ALL of these in BOTH the TRAIN half and the TEST half, on at least STRONG_MIN_N flagged trades each:
+STRONG_MIN_N = 30            # flagged trades per half
+STRONG_MIN_SHARE = 0.08      # flagged share of all trades per half (a rule that almost never fires cannot matter)
+STRONG_MAX_FALSE = 0.25      # at most 25% of flagged trades later turn green
+STRONG_MAX_HELD = -35.0      # held net of the flagged group at most -35 bp (the saving a cut can bank)
+STRONG_MIN_NG = 0.75         # at least 75% of flagged trades end never-green
 
 
 def trades_since(since=SINCE):
@@ -180,6 +187,30 @@ def _grp(rows, T, X=None):
     return out
 
 
+def rule_stats(rows, T, X):
+    g = _grp(rows, T, X)
+    if not rows or not g:
+        return None
+    return {"n": len(g), "share": len(g) / len(rows), "false": sum(later_green(r["prints"], r["entry"], r["fill_ts"], T) for r in g) / len(g),
+            "held": sum(r["net_bp"] for r in g) / len(g), "ng": sum(r["never_green"] for r in g) / len(g)}
+
+
+def is_strong(st):
+    return bool(st) and st["n"] >= STRONG_MIN_N and st["share"] >= STRONG_MIN_SHARE and st["false"] <= STRONG_MAX_FALSE \
+        and st["held"] <= STRONG_MAX_HELD and st["ng"] >= STRONG_MIN_NG
+
+
+def strong_rules(train, test):
+    """Rules (T, X) that clear the strong bar in BOTH halves. Pure."""
+    out = []
+    for T in CHECK:
+        for X in (None,) + XS:
+            a, b = rule_stats(train, T, X), rule_stats(test, T, X)
+            if is_strong(a) and is_strong(b):
+                out.append((T, X, a, b))
+    return out
+
+
 def table(rows, label):
     lines = [f"### {label}: {len(rows)} trades, never-green {100 * sum(r['never_green'] for r in rows) / max(1, len(rows)):.0f}%, "
              f"held net {sum(r['net_bp'] for r in rows) / max(1, len(rows)):+.1f} bp/trade", "",
@@ -227,6 +258,17 @@ def report():
            f"{len(rows)} desk buys with SIP prints ({len(train)} train 10/15-10/29, {len(test)} test 10/30 on); {unmatched} outcomes had no matching fill row. "
            "A useful early-cut rule needs a LOW false-alarm share (flagged trades that later turn green) and a clearly NEGATIVE held net. "
            "No exit is simulated; the rule is frozen from TRAIN only and TEST is read once.", ""]
+    sr = strong_rules(train, test)
+    out += ["## STRONG signals (bar fixed before the first run; ALL of these in BOTH halves)", "",
+            f"At least {STRONG_MIN_N} flagged trades and {100 * STRONG_MIN_SHARE:.0f}% of trades per half, false alarms <= {100 * STRONG_MAX_FALSE:.0f}%, "
+            f"held net of flagged <= {STRONG_MAX_HELD:.0f} bp, never-green >= {100 * STRONG_MIN_NG:.0f}% of flagged.", ""]
+    if sr:
+        out += ["| rule | train: n / false alarm / held bp | test: n / false alarm / held bp |", "|---|---|---|"]
+        for T, X, a, b in sr:
+            out.append(f"| T={T}s{'' if X is None else f', down {X} bp'} | {a['n']} / {100 * a['false']:.0f}% / {a['held']:+.0f} | {b['n']} / {100 * b['false']:.0f}% / {b['held']:+.0f} |")
+    else:
+        out.append("**None.** No rule clears the strong bar in both halves. Everything below is weak and is not a basis for an exit change.")
+    out += [""]
     out += table(train, "TRAIN") + [""] + flow_table(train, "TRAIN") + [""] + table(test, "TEST (do not tune on this)") + [""] + flow_table(test, "TEST (do not tune on this)")
     (ROOT / "docs").mkdir(exist_ok=True)
     (ROOT / "docs" / "EARLY_PATH.md").write_text("\n".join(out) + "\n")
