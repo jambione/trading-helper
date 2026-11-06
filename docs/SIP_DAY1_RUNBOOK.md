@@ -67,3 +67,15 @@ The entitlement test cannot pass on a weekend, so the timeline is:
 4. **Monday night:** `tools/sip_sunday_check.py` (no flag) must read GO.
 5. **Tuesday 11/10:** first SIP session. Premarket (04:00-09:25) runs DRY on live SIP prints; the day desk trades on SIP from 09:45.
 6. One-month test: cancel at the end unless the plan's keep-bar is met (SIP_MONTH_PLAN section 6). The momentum-names premarket test (docs/studies/momentum_premarket_prereg.json) and the IEX-vs-SIP entry-cost read (section above) are the two registered reads.
+
+
+## If SIP is bought at the end of the day on a weekday (operator 11/06: "buying SIP EOD today - keep the flag off until ready")
+The feed knobs stay OFF (iex) until the entitlement test passes; nothing is flipped on a purchase alone.
+1. **After you buy (any time 16:00-19:00 ET on a weekday):** `tools/sip_sunday_check.py --entitlement` on the mini. PASS = the newest SIP SPY trade
+   is <= 30 s old (SPY prints through the after-hours session, so this works the same evening). FAIL = not live SIP yet (Alpaca can take a few
+   minutes to activate) - retry in 5-10 minutes; if still FAIL, repeat Monday from 07:00 ET.
+2. **On PASS, flip the same evening only with the operator's yes:** `alpaca_bar_feed` sip + `ai_sip_realtime` true in config/bot_config.json,
+   `ALPACA_BAR_FEED=sip` in signal_engine.env, `sip_from_et` in docs/studies/feed_regime.json = the next regular-session open (e.g.
+   2026-11-09T09:30:00), rebuild cache/avg_session_volume.json on SIP daily bars, keep `ai_phase_b_dry_run` true, restart through the LaunchAgent
+   (after the 16:09 restart for the stall-timing fields, so a second restart). First SIP session = the next weekday; premarket runs DRY from 04:00.
+3. **Then** `tools/sip_sunday_check.py` (no flag) must read GO before the open. Rollback = the same knobs back to iex / false + restart.
