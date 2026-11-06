@@ -36,4 +36,5 @@ fi
 .venv/bin/python tools/daily_scoreboard.py > /tmp/nightly/scoreboard-$d.log 2>&1   # docs/SCOREBOARD.md, rolling 20 sessions (operator 11/05)
 scripts/regression_check.sh > /tmp/nightly/regression-$d.log 2>&1   # new failing tests vs tests/known_failures.txt (operator 11/05)
 .venv/bin/python tools/hold_scorecard.py > /tmp/nightly/hold_scorecard-$d.log 2>&1   # did holding an at-entry trail sale pay? (operator 11/05)
+.venv/bin/python tools/premarket_report.py > /tmp/nightly/premarket-$d.log 2>&1   # docs/PREMARKET.md, funnel + frozen Hybrid C verdict (operator 11/06)
 echo DONE > /tmp/nightly/done-$d

@@ -171,6 +171,11 @@ def main():
     out += payoff_block(allr)
     out += edge_block(allr)
     out += trend_and_ships(days_all)
+    try:  # premarket is first-class (operator 11/06): its own section, never mixed into the day-desk numbers above
+        from tools import premarket_report
+        out += [""] + premarket_report.brief()
+    except Exception as e:  # noqa: BLE001 - a report section must never break the scoreboard
+        out += ["", f"## Premarket", "", f"(premarket section failed: {type(e).__name__}: {e})"]
     open(os.path.join(ROOT, "docs/SCOREBOARD.md"), "w").write("\n".join(out))
     print(line)
     return 0

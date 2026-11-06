@@ -143,7 +143,14 @@ def run_checklist() -> int:
     except OSError:
         add(False, "9 ai_trader log readable", "missing")
 
+    try:  # informational, not a GO line: what premarket saw on the last logged morning (operator 11/06)
+        from tools import premarket_report as pr
+        days = pr.days_available(1)
+        pm_info = pr.ping_text(days[-1]) if days else "no premarket ledger yet"
+    except Exception as e:  # noqa: BLE001
+        pm_info = f"premarket report failed: {type(e).__name__}: {e}"
     print(f"SIP go/no-go  {datetime.now(ET):%a %Y-%m-%d %H:%M ET}")
+    print(f"  (info) last premarket morning: {pm_info}")
     for ok, name, detail in rows:
         print(f"  [{'OK' if ok else 'NO'}] {name}\n        {detail}")
     go = all(r[0] for r in rows)
