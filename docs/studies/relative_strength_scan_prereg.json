@@ -34,5 +34,16 @@
   "The period (spring-autumn 2026) had one market regime; a pass is not proof it holds in another."
  ],
  "tool": "tools/studies/relative_strength_scan.py (built after this file is committed and a result-skeptic READY; may not change anything above)",
- "status": "READY, skeptic review pending"
+ "status": "READY, skeptic review pending",
+ "amended": {
+  "when": "2026-11-06 ~19:20 ET, after result-skeptic round 1 FIX FIRST (8 findings), before any code or data pull. Verified on the mini first: minute = minutes since midnight ET (570 = 09:30, 959 = 15:59); SPY has 390 bars on all 120 files (2026-04-27 .. 2026-10-15).",
+  "1_data_clock": "Replaces data: clock convention verified before scoring: SPY must show 390 bars per full day, first bar at 09:30 ET. Block membership = the session dates present in the file list (count printed), split 72/24/24 by that list. Any day whose SPY bar count is not 390 (early closes) is dropped and counted.",
+  "2_missing_bars": "Added to trade: Entry = open of the first bar at or after 10:00 (or 10:01 in the entry-lag cell); exit = open of the first bar at or after 11:30 (11:31). If no exit bar by 11:35, exit at the last available close, flagged as halt/illiquid exit. No name is dropped for a missing exit bar. If no entry bar by 10:05, drop the name. Counts and exit-flag rate reported.",
+  "3_entry_lag_and_cost": "Added cell: ENTRY-LAG = entry at the 10:01 bar open, exit at the 11:31 open. Added to pass: (7) pooled net mean > 0 under the 10:01 entry and a 10 bp round-trip cost (replaces the information-only 10 bp check).",
+  "4_rs_base": "Replaces the signal formula: RS = close of the 09:59 bar / close of the 09:30 bar - 1 for the stock minus the same for SPY (the 09:30 close, not the opening print). The open-based version is an information cell. Report the leaders' mean gap and stratify by gap tercile (information).",
+  "5_universe": "Prior session must be the immediately preceding NYSE trading day in the file list, otherwise the day is excluded and counted. Exclude ALL ETFs and ETNs via a fixed symbol list committed with the tool (not only levered/inverse). Also drop a name if its 09:30-09:59 return exceeds +/-15% or if its prior-session close in the file does not reconcile with its prior-session last bar. Report the leaders' dollar-volume rank distribution.",
+  "6_beta_neutral": "Replaces pass (3): lift vs universe > 0 in each block, AND the beta-adjusted lift (stock return minus beta x SPY return over the signal window, beta from the previous 20 sessions' 1-minute returns) > 0 pooled with t >= 2.0. Added: leaders minus the seeded random decile, pooled t >= 1.65.",
+  "7_inference": "Replaces statistic: day-clustered t plus a block bootstrap over contiguous 5-day blocks (2,000 resamples, seed 1106); pooled t >= 2.0 must hold under both. Replaces pass (1): mean net > 0 in each block AND at least two of three blocks with one-sided t >= 1.0. Extends pass (5): the pooled net stays > 0 after dropping the best 5 days AND, separately, the 5 names contributing the most. Multiplicity stated: primary tests = 3 (net, lift, beta-adjusted lift), all conjunctive; information cells are never promoted.",
+  "8_feed_transfer": "Added to caveats: the result is on SIP and is not assumed to transfer to the IEX live feed; the forward re-run must also report the same rule computed on IEX bars, and a paper test ranks on live-feed data. Added to if_pass: an effect present only on days SPY rose over the signal window is reported as beta, not edge."
+ }
 }
