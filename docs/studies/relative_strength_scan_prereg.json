@@ -1,0 +1,38 @@
+{
+ "id": "relative_strength_scan",
+ "registered": "2026-11-06 ~19:00 ET, before any data pull or code for this study.",
+ "operator": "2026-11-06: 'I'm trying to get out of this project finding a real edge' then 'do that' to the offer to pre-register the one new free-data cross-sectional test from docs/EDGE_SEARCH_MAP_2026-11-06.md (idea 3).",
+ "question": "Do liquid stocks that held up best against the index in the first 30 minutes of the session keep outperforming, enough to beat a 6 bp round-trip cost over a fixed 90-minute hold, in a cross-section the desk has never traded by rank?",
+ "why_different": "Every earlier test looked at one name's own path (indicator turns, breakouts, pullbacks). This ranks ALL liquid names against each other and against SPY at a fixed clock time, then holds a fixed time. It cannot be fooled by the desk's own arm, and it uses no indicator.",
+ "data": "ai_reports/warehouse/sip/DAY.npz: SIP regular-session 1-minute bars for about 1,900 symbols per day, 120 sessions 2026-04-27 through 2026-10-15 (free, already on the mini). SPY is in the files. No new fetch.",
+ "blocks": "By date, fixed now: DISCOVERY = first 72 sessions, CONFIRM = next 24, HELD-OUT = last 24. The primary cell is fixed below BEFORE any block is scored, so the blocks are three independent replications, not a tuning ladder.",
+ "universe_per_day": "Names with prior-session dollar volume (sum of close x volume) in the top 400 of that day's file, price between $10 and $500 at the 09:30 open, a bar at 09:30 and at 09:59, not on the desk's levered/inverse ETP list, and |open / prior close - 1| <= 30% (drops splits). SPY is the benchmark and is not traded. A day is excluded (counted) if SPY lacks a 09:30 or 09:59 bar or more than 10% of the day's universe lacks them.",
+ "signal": "RS = (close of the 09:59 bar / open of the 09:30 bar - 1) for the stock minus the same for SPY. LEADERS = the top decile of RS among that day's universe (at least 30 names, rounded up).",
+ "trade": "Buy at the open of the 10:00 bar. Sell at the open of the 11:30 bar. Net bp = (sell / buy - 1) x 1e4 - 6 (round-trip cost; the desk's measured cost is 4-5 bp, 6 is conservative). No stops, no scaling.",
+ "controls": {
+  "universe": "Equal-weight mean of the same trade over the whole universe that day (the market/benchmark move over the same window). lift = mean(leaders) - mean(universe), a market-neutral read.",
+  "random_decile": "A seeded random decile of the same day's universe (seed sha256(day|'RS-rand')), same trade."
+ },
+ "statistic": "Per day: mean net bp over the leaders; lift vs the universe. Day-clustered t (n-1 df, one-sided) over the days in a block, and pooled over all 120.",
+ "pass": "STRONG, ALL of: (1) mean net per day > 0 in EACH of the three blocks; (2) pooled mean net > 0 with t >= 2.0; (3) lift vs the universe > 0 in EACH block and pooled t >= 2.0; (4) both halves of the DISCOVERY block positive on net; (5) the pooled net stays > 0 after dropping the best 5 days; (6) an average of at least 30 leaders traded per day.",
+ "power": "Reported before any mean: sessions per block, leaders per day, and the MDE per block = 3.08 x sd_day(net) / sqrt(days). A block with MDE > 25 bp is flagged: a pass there is weak evidence.",
+ "fail": "Any condition missing = FAIL (not shown). No other time, decile, hold or benchmark is scored as primary.",
+ "information_only": [
+  "top quintile instead of decile",
+  "holds to 11:00, 12:00, 13:00 and 15:55",
+  "signal windows 09:30-10:30 and 09:30-11:00",
+  "the LAGGARDS (bottom decile): what a short would have done; shorting is NOT part of the plan, this only says whether the effect is two-sided",
+  "leaders only on days SPY fell over the signal window, and only on days it rose",
+  "beta-adjusted RS (beta from the previous 20 sessions' 1-minute returns)",
+  "average gross vs net; share of days positive"
+ ],
+ "no_retuning": "Nothing above is changed after any block is scored. A FAIL closes the idea; the information cells are never promoted.",
+ "if_pass": "result-skeptic review of the positive, then a FORWARD re-run on the free historical bars every night from 2026-11-09 (the same rule, unchanged, via tools/studies/relative_strength_scan.py forward) for at least 20 sessions with the strong bar again, then a paper-trade test of the real order path. Never straight to live; day trading only (flat by 11:30).",
+ "caveats": [
+  "Survivorship: the universe is whatever is in each day's file, which is built from that day's data, not from a later list.",
+  "Open/10:00 fills are modelled at the bar open: a real order pays the spread and may not fill at the open; the 6 bp cost is meant to cover it, and a pass must survive a 10 bp cost check reported as information.",
+  "The period (spring-autumn 2026) had one market regime; a pass is not proof it holds in another."
+ ],
+ "tool": "tools/studies/relative_strength_scan.py (built after this file is committed and a result-skeptic READY; may not change anything above)",
+ "status": "READY, skeptic review pending"
+}
