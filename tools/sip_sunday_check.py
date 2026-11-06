@@ -125,10 +125,22 @@ def run_checklist() -> int:
 
     vc = ROOT / "cache" / "avg_session_volume.json"
     if vc.exists():
-        age_d = (time.time() - vc.stat().st_mtime) / 86400
-        add(age_d <= VOL_CACHE_MAX_AGE_DAYS, "6 cache/avg_session_volume.json rebuilt on SIP daily bars (RVOL needs one feed)", f"file is {age_d:.1f} days old; rebuild at the flip if older than {VOL_CACHE_MAX_AGE_DAYS}")
+        try:
+            vdate = str(json.loads(vc.read_text()).get("date") or "")
+        except (OSError, ValueError):
+            vdate = ""
+        try:
+            reg_s = json.loads((ROOT / "docs" / "studies" / "feed_regime.json").read_text()).get("sip_from_et") or ""
+        except (OSError, ValueError):
+            reg_s = ""
+        first_sip_day = str(reg_s)[:10]
+        # An existing file stamped before the first SIP session was built on IEX minute bars (the cache is keyed by ET day and rebuilt
+        # from the configured feed): it must be moved aside at the flip. A file dated on/after the first SIP session is SIP-built.
+        stale_iex = bool(first_sip_day) and bool(vdate) and vdate < first_sip_day
+        add(not stale_iex, "6 cache/avg_session_volume.json is not an IEX-era file (RVOL needs one feed; it is rebuilt from the configured feed each ET day)",
+            f"file dated {vdate or '?'}; first SIP session {first_sip_day or '(unset)'}" + ("; MOVE IT ASIDE" if stale_iex else ""))
     else:
-        add(False, "6 cache/avg_session_volume.json rebuilt on SIP daily bars", "file missing")
+        add(True, "6 cache/avg_session_volume.json absent: it rebuilds from the configured (SIP) feed at first use", "file not present (moved aside at the flip)")
 
     try:  # the forward tests split by feed at this time (docs/studies/feed_regime.json); unset while on SIP would pool IEX and SIP entries
         reg = json.loads((ROOT / "docs" / "studies" / "feed_regime.json").read_text()).get("sip_from_et")

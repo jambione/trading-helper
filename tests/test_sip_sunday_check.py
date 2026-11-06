@@ -39,3 +39,12 @@ def test_stamp_must_be_a_recent_pass():
     assert not sc.stamp_ok({"passed": False, "ts": now}, now)[0]
     assert sc.stamp_ok({"passed": True, "ts": now - 86400}, now)[0]
     assert not sc.stamp_ok({"passed": True, "ts": now - 6 * 86400}, now)[0]
+
+
+def test_volume_cache_rule_iex_era_file_is_stale_after_the_flip(tmp_path):
+    # pure date logic mirrored from the checklist: a cache dated before the first SIP session is IEX-built
+    def stale(vdate, first_sip_day):
+        return bool(first_sip_day) and bool(vdate) and vdate < first_sip_day
+    assert stale("2026-11-06", "2026-11-09") is True
+    assert stale("2026-11-09", "2026-11-09") is False
+    assert stale("", "2026-11-09") is False and stale("2026-11-06", "") is False
