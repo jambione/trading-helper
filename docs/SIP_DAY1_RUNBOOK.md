@@ -46,3 +46,14 @@ Run on the MINI (the Alpaca keys live there). The tool: `.venv/bin/python tools/
 3. **Sunday night:** `tools/sip_sunday_check.py` (no flag). GO needs all nine lines OK: stamp passed within 5 days, both knobs and the env var read sip,
    live_data_feed()/delay terms read sip/0, volume cache fresh, Phase B dry, no open positions, no traceback. Any [NO] = the desk stays on IEX.
 4. **Monday:** first hour watch for 429s, then re-read stale-tape ceilings, spread cap and RVOL floors (tools/sip_readiness.py lists them).
+
+## IEX vs SIP entry cost (operator 11/06: "stop adding filters, do something new"; registered before the flip)
+Hypothesis: the never-green share is partly entry cost. On SIP the desk sees real prices (IEX spreads read 1.5x-200x wide),
+so fills should cost less against the SIP midpoint and fewer entries should end never-green.
+- Tool: tools/entry_cost_daily.py (nightly) - every fill vs the SIP NBBO midpoint at the fill second, plus the day's never-green share.
+- Baseline: the last 10 IEX sessions before the flip. Test: the first 10 SIP sessions (no config change other than the two knobs and
+  the RTH re-reads the runbook lists; any other change restarts the count).
+- One read at 10 SIP sessions, day-clustered: (1) median buy cost vs mid lower on SIP; (2) never-green share lower on SIP;
+  (3) net bp/trade higher on SIP. Supported = all three in the predicted direction, (2) by >= 5 points.
+- Confound, stated now: different days and markets. The read reports SPY open->close per session for both windows; a large
+  regime gap between the windows makes the read information only.

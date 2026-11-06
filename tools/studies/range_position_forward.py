@@ -54,12 +54,12 @@ def main():
     rows = load(ap.parse_args().since)
     top, rest = split(rows)
     print(f"entries with rs_pos30: {len(rows)} over {len({r['d'] for r in rows})} days; top (>= {TH}) {len(top)}, rest {len(rest)}")
+    if len(rows) < MIN_N:  # counts only before the read (prereg: no peeking); 11/06 moved the means below this line
+        print(f"NOT DUE: needs {MIN_N} entries ({MIN_N - len(rows)} more)"); return 0
     if top:
         print(f"  top  never-green {sum(r['ng'] for r in top)/len(top):.0%}  net {sum(r['bp'] for r in top)/len(top):+.1f} bp")
     if rest:
         print(f"  rest never-green {sum(r['ng'] for r in rest)/len(rest):.0%}  net {sum(r['bp'] for r in rest)/len(rest):+.1f} bp")
-    if len(rows) < MIN_N:
-        print(f"NOT DUE: needs {MIN_N} entries ({MIN_N - len(rows)} more)"); return 0
     days = sorted({r["d"] for r in rows}); mid = days[len(days) // 2]
     ok = True
     for lab, sub in (("A", [r for r in rows if r["d"] < mid]), ("B", [r for r in rows if r["d"] >= mid])):

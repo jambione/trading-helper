@@ -171,6 +171,11 @@ def main():
     out += payoff_block(allr)
     out += edge_block(allr)
     out += trend_and_ships(days_all)
+    try:  # entry cost vs SIP mid + never-green share per day (operator 11/06: IEX baseline for the SIP month)
+        from tools import entry_cost_daily
+        out += [""] + entry_cost_daily.brief()
+    except Exception as e:  # noqa: BLE001
+        out += ["", f"(entry-cost section failed: {type(e).__name__}: {e})"]
     try:  # premarket is first-class (operator 11/06): its own section, never mixed into the day-desk numbers above
         from tools import premarket_report
         out += [""] + premarket_report.brief()

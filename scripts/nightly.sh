@@ -33,8 +33,11 @@ fi
 # scripts/tight_trail_replay.sh $d > /tmp/nightly/tt_replay-$d.log 2>&1
 # .venv/bin/python tools/studies/replay_costing.py /tmp/tt_run/$d-*.json > /tmp/nightly/tt_costing-$d.txt 2>&1
 .venv/bin/python tools/studies/day_review.py $d > /tmp/nightly/day_review-$d.log 2>&1
-.venv/bin/python tools/daily_scoreboard.py > /tmp/nightly/scoreboard-$d.log 2>&1   # docs/SCOREBOARD.md, rolling 20 sessions (operator 11/05)
 scripts/regression_check.sh > /tmp/nightly/regression-$d.log 2>&1   # new failing tests vs tests/known_failures.txt (operator 11/05)
 .venv/bin/python tools/hold_scorecard.py > /tmp/nightly/hold_scorecard-$d.log 2>&1   # did holding an at-entry trail sale pay? (operator 11/05)
+.venv/bin/python tools/entry_cost_daily.py > /tmp/nightly/entry_cost-$d.log 2>&1   # fill vs SIP mid per fill, never-green share (operator 11/06)
+.venv/bin/python tools/studies/range_position_forward.py > /tmp/nightly/range_fwd-$d.log 2>&1   # counts only until 150 entries (prereg)
+.venv/bin/python tools/studies/wr_slope_forward.py > /tmp/nightly/slope_fwd-$d.log 2>&1   # counts only until due (prereg)
 .venv/bin/python tools/premarket_report.py > /tmp/nightly/premarket-$d.log 2>&1   # docs/PREMARKET.md, funnel + frozen Hybrid C verdict (operator 11/06)
+.venv/bin/python tools/daily_scoreboard.py > /tmp/nightly/scoreboard-$d.log 2>&1   # docs/SCOREBOARD.md, rolling 20 sessions (operator 11/05)
 echo DONE > /tmp/nightly/done-$d
