@@ -1,0 +1,37 @@
+{
+ "id": "stall_score_forward",
+ "registered": "2026-11-06 ~11:25 ET, before any forward data for this study (entries before 12:00 ET are excluded; the first qualifying entry is after this file is committed).",
+ "operator": "2026-11-06: 'I think we need other criteria along with the apex to determine if we're buying into a stall.'",
+ "question": "Is a COMBINATION of the three apex-style measures a better marker of 'bought into a stall' than any one of them: do entries that show at least two of three signs go never-green more often, and does refusing them raise the mean of the kept trades?",
+ "components": {
+  "A_big_run": "rs_rise15_bp in the top third of the read sample (the 2/3 rank value, outcome-blind)",
+  "B_choppy_run": "rs_er15 in the bottom third of the read sample (the 1/3 rank value, outcome-blind; low = choppy or stalled)",
+  "C_top_of_range": "rs_pos30 >= 0.80 (the fixed value from range_position_forward_prereg.json, 11/05)"
+ },
+ "primary_hypothesis": "STALL = at least TWO of A, B, C present (a field that is missing counts as 'sign absent' and is tallied separately). ONE hypothesis, ONE rule, fixed now. Single components are information only.",
+ "origin_evidence": "EXPLORATORY, 3 trades on 11/06: SMCI (rise 139, er 0.28, pos 0.60) and IREN (rise 215, er 0.20, pos 0.46) vs CRWV (rise 273, er 0.46, pos none). The winner had the largest run, so run size alone did not separate them; the idea is that a stall needs a run AND chop AND/OR a top position together. Not evidence: n = 3.",
+ "data": "Desk regular-session entries from 2026-11-06 12:00 ET with rs_rise15_bp, rs_er15 present (rs_pos30 may be missing). SMCI, IREN, CRWV, ELAN and every earlier entry are excluded. Never-green = peak_price < entry + 5 bp. Net = (exit - entry)/entry bp - 3 bp. Same de-duplication as the other forward readers.",
+ "read_when": "Once, at the first nightly run with >= 150 such entries; counts only before that. If fewer than 30 entries carry STALL at that point, the read is UNDERPOWERED and the sample extends to 300 entries (one extension only).",
+ "multiplicity": "Four 'why do these fail' hypotheses now read the same forward entries (rs_pos30 >= 0.80, rs_rise15_bp top third, rs_er15 bottom third, and this composite). The family is four, so this one uses one-sided z >= 2.24 (alpha 0.0125). The earlier bars are not changed after the fact. A result that clears its own bar but not the family bar is reported as 'single-test pass, family fail'.",
+ "pass": {
+  "never_green": "STALL never-green rate above the rest in BOTH halves (split by date at the median session) and pooled one-sided z >= 2.24",
+  "payoff": "mean net of the kept group (not STALL) above the mean net of all entries in BOTH halves, and the day-clustered bootstrap (2,000 resamples of sessions, seed 1106) 5th percentile of (kept - all) > 0",
+  "volatility_confound": "STALL's never-green rate still above the rest inside rs_rng15_bp terciles (>= 2 of 3 positive)",
+  "better_than_parts": "the composite's never-green gap (STALL minus rest) must be larger than the gap of each single component run alone at its own cut (A, B, C); if it is not larger than the best single component, the composite adds nothing and a pass is reported as 'no better than its best part'"
+ },
+ "information_only": [
+  "Never-green rate and mean net by number of signs present (0, 1, 2, 3).",
+  "Each component alone and every pair.",
+  "Share of entries flagged STALL (the cost: how many trades the gate would refuse)."
+ ],
+ "if_pass": "result-skeptic review of the positive, then a default-off gate (refuse arms showing at least two signs, with the printed cuts) tested through tools/sweep_replays.py screen + confirm and the ship rule; never straight to live.",
+ "if_fail": "Close; no other combination, count threshold (1 of 3, 3 of 3), cut or weighting is tried as a primary afterwards. Record in the running list and memory.",
+ "caveats": [
+  "Never-green depends on hold length; exits are unchanged during the read.",
+  "IEX bars: efficiency and range from sparse IEX minute closes can read as chop on thin names for feed reasons alone.",
+  "Components are correlated (a big run in a narrow band is also choppy), so the effective number of independent signs is less than three.",
+  "Refusing STALL entries cuts trades; the payoff test is the one that matters (operator: profit over win rate)."
+ ],
+ "tool": "tools/studies/stall_score_forward.py (nightly via scripts/nightly.sh, counts only until due)",
+ "status": "READY to log; read not before 150 forward entries"
+}
