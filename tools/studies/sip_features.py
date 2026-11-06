@@ -134,7 +134,7 @@ def build_rows(since="2026-10-15"):
 
 
 def report():
-    from ng_profile import auc
+    from tools.ng_profile import auc
     rows = build_rows()
     if not rows:
         print("no cached bars: run 'fetch' first")
