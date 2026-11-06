@@ -1,0 +1,28 @@
+{
+ "id": "one_two_three",
+ "registered": "2026-11-06 ~17:20 ET, before any data pull for this study. A rough look earlier the same evening (enter only after price rises X bp above the arm price, keeping the desk's real exit prices; biased; 483 trades; train worse, test slightly better) is disclosed and is NOT this rule.",
+ "operator": "2026-11-06: 'our gate arms are point 1, the stall or dip is point 2 and point 3 is the entry on leg-2 profit run', 'point 3 is the real open', 'we just need to get in a start of profit run not the apex', then 'yes' to pre-registering it as weekend item 9.",
+ "question": "Instead of buying at the desk's arm (point 1), does waiting for a pullback that holds a higher low (point 2) and buying only when price breaks back above point 1's high (point 3) make more money per day than buying at the arm, under the same simulated exits?",
+ "sample": "Every desk entry (the arm = point 1) 2026-09-16 through 2026-11-05 with a fill row in ai_reports/fills (the fill second is the arm time t0), split by date at the median day into EARLY and LATE halves. SIP 1-minute bars (free historical) from 30 minutes before t0 to 15:50 ET.",
+ "definitions": {
+  "L0": "lowest low of the 15 closed SIP 1-minute bars before t0 (where leg 1 started)",
+  "point_1": "from t0 on, track the running high H; a PULLBACK starts at the first bar whose close is at least max(30% of (H - L0), 10 bp of price) below H; point 1 = H at that moment",
+  "point_2": "the lowest low after the pullback starts; it must stay ABOVE L0 (a higher low). Any bar with low <= L0 before point 3 cancels the setup (no trade)",
+  "point_3": "the first bar after the pullback started whose high reaches H1 + $0.01; buy-stop fill at H1 + $0.01, or at the bar's open if it opened above, plus 2 bp slippage",
+  "window": "point 3 must happen within 30 minutes of t0 and before 15:45 ET; otherwise no trade"
+ },
+ "exits": {
+  "primary": "the same simulated exit for BOTH arms of the comparison, measured from each arm's own entry: initial stop at entry - 0.6% (about the desk's 0.12R give at ~5% risk), trailing stop = running high - 0.6% checked on 1-minute lows, filled at the stop price less 2 bp (or the bar open if it gapped below); flat at 15:50.",
+  "information": "fixed 3-, 5- and 10-minute exits at the bar close."
+ },
+ "control": "point 1 entry: buy at the desk's actual fill price at t0, same simulated exit. Paired by arm.",
+ "costing": "3 bp per trade (the scoreboard's cost) on every trade taken, on top of the slippage above.",
+ "statistic": "Per session: P&L_123 = sum of net bp over the 1-2-3 trades taken that day (arms without a point 3 contribute 0, no trade); P&L_ctrl = sum of net bp over all arms bought at point 1. Day difference = P&L_123 - P&L_ctrl. Mean over days, day-clustered t (n-1 df).",
+ "pass": "STRONG, ALL of: (1) mean day difference > 0 with t >= 2.0 over all sessions; (2) mean day difference > 0 in BOTH halves; (3) mean net per 1-2-3 trade taken > 0 in BOTH halves (it must make money, not only lose less); (4) at least 150 1-2-3 trades in total and at least 60 in each half.",
+ "fail": "Any condition missing = FAIL (not shown). If (1)-(2) pass but (3) fails, report 'loses less, does not make money' - not a pass.",
+ "information_only": ["share of arms that reach point 3", "share of never-green arms (desk label) that reach point 3", "the fixed-hold exits", "how far above point 1's price point 3 fills (the cost of waiting)", "time from t0 to point 3"],
+ "no_retuning": "No other pullback depth, window, stop, trail or definition is scored as primary.",
+ "if_pass": "result-skeptic review, then a default-off arm built into the live code and replayed through tools/sweep_replays.py screen + confirm and the ship rule. Never straight to live.",
+ "tool": "tools/studies/one_two_three.py (built after this file is committed; may not change anything above)",
+ "status": "READY, skeptic review pending"
+}

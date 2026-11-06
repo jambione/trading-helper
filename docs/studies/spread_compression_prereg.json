@@ -1,0 +1,16 @@
+{
+ "id": "spread_compression",
+ "registered": "2026-11-06 ~17:20 ET, before any data pull for this study.",
+ "operator": "2026-11-06 'yes' to weekend item 8 (backlog row 58a, from the 10/30 review): does a sudden tightening of the real spread mark the start of a run?",
+ "question": "At the desk's arm, is the entry better when the real (SIP) spread tightened in the last minute than when it did not?",
+ "sample": "Every desk entry (arm time t0 = the fill second) 2026-09-16 through 2026-11-05 with a fill row, split by date at the median day into EARLY and LATE halves. SIP quotes from t0 - 5 minutes to t0 (free historical).",
+ "measure": "From SIP quotes with bid > 0 and ask > bid: s_recent = median quoted spread (bp of mid) over [t0 - 60 s, t0); s_before = median over [t0 - 300 s, t0 - 60 s). ratio = s_recent / s_before. COMPRESSED = ratio <= 0.70 with at least 20 quotes in each window; fewer quotes = not measurable (counted, excluded).",
+ "outcome": "The desk's actual net bp per trade (exit vs entry, less 3 bp) and the never-green label, from outcomes.jsonl.",
+ "statistic": "Per day: mean net of COMPRESSED entries minus mean net of the other measurable entries, for days with both. Mean over days, day-clustered t.",
+ "pass": "STRONG, ALL of: (1) mean day difference > 0 with t >= 2.0; (2) > 0 in BOTH halves; (3) COMPRESSED entries have mean net > 0 in BOTH halves (a gate that only keeps them must make money); (4) at least 60 COMPRESSED entries in each half.",
+ "fail": "Any condition missing = FAIL. No other ratio cutoff or window is scored as primary.",
+ "information_only": ["ratio cutoffs 0.5 and 0.85", "never-green share by group", "share of entries COMPRESSED", "the same measure 5 minutes AFTER the fill (is a widening spread an early warning?)"],
+ "if_pass": "result-skeptic review; live use needs REAL-TIME quotes (the paid SIP plan), so a pass is shelved until SIP; replay through sweep_replays first.",
+ "tool": "tools/studies/spread_compression.py (built after this file is committed)",
+ "status": "READY, skeptic review pending"
+}
