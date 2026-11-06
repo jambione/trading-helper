@@ -1,0 +1,27 @@
+{
+ "id": "run_before_entry_forward",
+ "registered": "2026-11-06 ~05:45 ET, before any forward data: outcomes.jsonl has 0 rows with rs_rise15_bp (the logger went live with the 11/05 16:09 restart; the first regular-session entry is 11/06 after 09:45).",
+ "operator": "2026-11-06: 'I think most nevergreens are caused by getting in at the Apex of a sharp profit run, and they stall out. The name had a profit run before we got in, but it's exhausted once we got in the position.' then 'Do it' to the offer to pre-register 'the run before entry was already large' as a forward hypothesis.",
+ "question": "Do desk entries that come after a large run in the previous 15 minutes go never-green more often, and does refusing them raise the mean of the kept trades?",
+ "relation_to_other_studies": "rs_rise15_bp was listed information-only in docs/studies/range_position_forward_prereg.json (11/05); this file promotes it to its own hypothesis before any forward row exists. Same entries are also read by range_position_forward (rs_pos30) and wr_slope_forward (H1 flat, H2 steep wr_d5_fast >= 30). Earlier, on old data: 'buying the top is not the loss' (room/overbought-age/stall, 871 fills, 8/4-9/23) and the steep-rise replay gate (11/06, NOT CONFIRMED) both failed; this is a forward test of a different measure (size of the run, not position or %R slope).",
+ "measure": "rs_rise15_bp = (entry ask / close of the closed 1-minute bar 15 bars back - 1) x 1e4, stamped at entry by ai_entry_watch._range_shape_fields from the in-memory IEX bar store (closed bars only). Missing = row not counted (counted separately).",
+ "primary_hypothesis": "TOP = entries in the top third of rs_rise15_bp on the read sample (cut = the 2/3 rank value of the read sample, computed without outcomes and printed; that number becomes the gate value if it passes). ONE hypothesis.",
+ "data": "Desk regular-session entries from 2026-11-06 with rs_rise15_bp present. Never-green = peak_price < entry + 5 bp. Net = (exit - entry)/entry bp - 3 bp. Same row de-duplication as range_position_forward (symbol, rounded entry time).",
+ "read_when": "Once, at the first nightly run with >= 150 such entries. Before that the reader prints counts only (no rates, no means).",
+ "multiplicity": "Two 'apex' hypotheses read the same entries (this one and range_position_forward's rs_pos30 >= 0.80). This one uses one-sided z >= 1.96 (alpha 0.025) instead of 1.64.",
+ "pass": {
+  "never_green": "TOP never-green rate above the rest in BOTH halves (split by date at the median session) and pooled one-sided z >= 1.96",
+  "payoff": "mean net of the kept group (not TOP) above the mean net of all entries in BOTH halves, and the day-clustered bootstrap (2,000 resamples of sessions, seed 1106) 5th percentile of (kept - all) > 0",
+  "volatility_confound": "TOP's never-green rate still above the rest inside rs_rng15_bp terciles (>= 2 of 3 positive): a big rise on a wide-ranging name is not the same as a big rise on a quiet one",
+  "not_just_position": "reported (information, no pass): the same split inside rs_pos30 >= 0.80 and < 0.80, so the read can say whether run size adds anything to range position"
+ },
+ "if_pass": "result-skeptic review of the positive, then a default-off gate (refuse arms with rs_rise15_bp >= the printed cut) tested through tools/sweep_replays.py screen + confirm and the ship rule; never straight to live.",
+ "if_fail": "Close; no other window (5, 10, 30 bars), cut, or normalisation is tried as a primary afterwards. Record in the running list and memory.",
+ "caveats": [
+  "Never-green depends on hold length; exits are unchanged during the read (any exit config change is logged and named in the read).",
+  "IEX bars: the 15-bars-back close can be stale on thin names.",
+  "Refusing a third of entries also cuts a third of trades; the payoff test is the one that matters (operator: profit over win rate)."
+ ],
+ "tool": "tools/studies/run_before_entry_forward.py (nightly via scripts/nightly.sh, counts only until due)",
+ "status": "READY to log; read not before 150 forward entries"
+}

@@ -38,6 +38,7 @@ scripts/regression_check.sh > /tmp/nightly/regression-$d.log 2>&1   # new failin
 .venv/bin/python tools/entry_cost_daily.py > /tmp/nightly/entry_cost-$d.log 2>&1   # fill vs SIP mid per fill, never-green share (operator 11/06)
 .venv/bin/python tools/studies/range_position_forward.py > /tmp/nightly/range_fwd-$d.log 2>&1   # counts only until 150 entries (prereg)
 .venv/bin/python tools/studies/wr_slope_forward.py > /tmp/nightly/slope_fwd-$d.log 2>&1   # counts only until due (prereg)
+.venv/bin/python tools/studies/run_before_entry_forward.py > /tmp/nightly/run_fwd-$d.log 2>&1   # operator's apex hypothesis, counts only until 150 (prereg)
 .venv/bin/python tools/premarket_report.py > /tmp/nightly/premarket-$d.log 2>&1   # docs/PREMARKET.md, funnel + frozen Hybrid C verdict (operator 11/06)
 .venv/bin/python tools/daily_scoreboard.py > /tmp/nightly/scoreboard-$d.log 2>&1   # docs/SCOREBOARD.md, rolling 20 sessions (operator 11/05)
 echo DONE > /tmp/nightly/done-$d
