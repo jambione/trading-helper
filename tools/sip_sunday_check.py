@@ -6,7 +6,7 @@
 
 Why two runs: a delayed-only plan answers "subscription does not permit querying recent SIP data" ONLY for trades newer than
 ~15 minutes. On a weekend the newest SPY trade is days old, so the same call passes on a plan that does NOT have live SIP.
-So the entitlement test counts only when the market is open and the newest SIP trade is seconds old; it writes
+So the entitlement test counts only on a weekday from 07:00 ET (SPY prints every few seconds by then) and only when the newest SIP trade is seconds old; it writes
 ai_reports/sip_entitlement.json, and the Sunday run requires that stamp (a pass within 5 days). No stamp = NO-GO.
 """
 from __future__ import annotations
@@ -31,9 +31,11 @@ VOL_CACHE_MAX_AGE_DAYS = 3
 
 
 def market_open(now: datetime) -> bool:
-    """Weekday 09:30-16:00 ET (holidays are not modelled: a holiday just looks like a stale trade and fails safe)."""
+    """Weekday 07:00-16:00 ET: SPY prints every few seconds from the early premarket (operator 11/06: a Saturday purchase means
+    the first test is Monday morning, before the open). A day with sparse prints just reads as a stale trade and fails safe;
+    holidays are not modelled for the same reason."""
     n = now.astimezone(ET)
-    return n.weekday() < 5 and (9, 30) <= (n.hour, n.minute) < (16, 0)
+    return n.weekday() < 5 and (7, 0) <= (n.hour, n.minute) < (16, 0)
 
 
 def entitlement_passes(trade_age_sec: float | None, is_open: bool, error: str | None) -> tuple[bool, str]:
@@ -41,12 +43,12 @@ def entitlement_passes(trade_age_sec: float | None, is_open: bool, error: str | 
     if error:
         return False, f"SIP latest-trade call failed: {error[:120]}"
     if not is_open:
-        return False, "market closed: a delayed-only plan also passes this call on old trades, so it proves nothing"
+        return False, "outside weekday 07:00-16:00 ET: a delayed-only plan also passes this call on old trades, so it proves nothing"
     if trade_age_sec is None:
         return False, "no trade timestamp returned"
     if trade_age_sec > MAX_TRADE_AGE_SEC:
         return False, f"newest SIP SPY trade is {trade_age_sec:.0f}s old (delayed data is ~900s); need <= {MAX_TRADE_AGE_SEC:.0f}s"
-    return True, f"newest SIP SPY trade is {trade_age_sec:.1f}s old with the market open"
+    return True, f"newest SIP SPY trade is {trade_age_sec:.1f}s old on a weekday after 07:00 ET"
 
 
 def stamp_ok(stamp: dict | None, now_ts: float) -> tuple[bool, str]:

@@ -57,3 +57,13 @@ so fills should cost less against the SIP midpoint and fewer entries should end 
   (3) net bp/trade higher on SIP. Supported = all three in the predicted direction, (2) by >= 5 points.
 - Confound, stated now: different days and markets. The read reports SPY open->close per session for both windows; a large
   regime gap between the windows makes the read information only.
+
+
+## If SIP is bought on a Saturday (operator 11/06: "I plan buying SIP access tomorrow ... just for the month for testing")
+The entitlement test cannot pass on a weekend, so the timeline is:
+1. **Saturday:** buy. Do NOT flip anything. Sunday night `tools/sip_sunday_check.py` will read NO-GO on line 1 (no stamp): that is correct, not a fault.
+2. **Monday from 07:00 ET (before the open):** `tools/sip_sunday_check.py --entitlement`. PASS = newest SIP SPY trade <= 30 s old. FAIL = the plan is not live SIP; stop and tell Claude.
+3. **Monday after the 16:00 close:** flip the two knobs and the env var, rebuild cache/avg_session_volume.json on SIP daily bars, keep `ai_phase_b_dry_run` true, restart through the LaunchAgent.
+4. **Monday night:** `tools/sip_sunday_check.py` (no flag) must read GO.
+5. **Tuesday 11/10:** first SIP session. Premarket (04:00-09:25) runs DRY on live SIP prints; the day desk trades on SIP from 09:45.
+6. One-month test: cancel at the end unless the plan's keep-bar is met (SIP_MONTH_PLAN section 6). The momentum-names premarket test (docs/studies/momentum_premarket_prereg.json) and the IEX-vs-SIP entry-cost read (section above) are the two registered reads.

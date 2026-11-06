@@ -16733,7 +16733,7 @@ def _range_shape_fields(sym: str, price: Any, now: float | None = None, cfg: dic
     'bought the top of a run-up' read can be tested forward (docs/studies/range_position_forward_prereg.json).
     Same in-memory ob_observe store as the %R slope log; closed bars only (start before the entry minute), the entry
     ask is the price whose position is read. Keys: rs_pos15, rs_pos30 (0 = at the low, 1 = at the high, >1 = above it),
-    rs_rng15_bp, rs_rise15_bp (entry vs the close 15 bars back), rs_er15 (net move / path), rs_bars. Nothing reads these;
+    rs_rng15_bp, rs_rise15_bp (entry vs the close 15 bars back), rs_er15 (net move / path), rs_since_hi15 / rs_near_hi15 (11/06: bars since the highest of the 15 closes was first reached, closes within 10 bp of it), rs_bars. Nothing reads these;
     {} when off, short of bars, gappy, or on any error."""
     try:
         c = cfg if isinstance(cfg, dict) else _push_cfg()
@@ -16766,6 +16766,11 @@ def _range_shape_fields(sym: str, price: Any, now: float | None = None, cfg: dic
                 out["rs_rise15_bp"] = round((px / cl[0] - 1) * 1e4, 1)
                 path = sum(abs(cl[i] - cl[i - 1]) for i in range(1, len(cl)))
                 out["rs_er15"] = round(abs(cl[-1] - cl[0]) / path, 3) if path > 0 else 0.0
+                # stall timing (operator 11/06, SMCI sat ~10 min at the top before the buy): bars since the highest of the
+                # 15 closes was FIRST reached (0 = the last closed bar set it; 14 = it has sat there the whole window) and how many of the 15 closes sit within 10 bp of it.
+                cmax = max(cl)
+                out["rs_since_hi15"] = len(cl) - 1 - cl.index(cmax)
+                out["rs_near_hi15"] = sum(1 for c_ in cl if c_ >= cmax * 0.999)
         return out
     except Exception:  # noqa: BLE001
         return {}

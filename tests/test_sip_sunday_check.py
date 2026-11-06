@@ -27,6 +27,8 @@ def test_open_market_needs_a_fresh_print():
 def test_market_open_window_and_weekend():
     assert sc.market_open(datetime(2026, 11, 6, 10, 0, tzinfo=ET))      # Friday
     assert not sc.market_open(datetime(2026, 11, 6, 16, 0, tzinfo=ET))
+    assert sc.market_open(datetime(2026, 11, 9, 8, 0, tzinfo=ET))       # Monday premarket counts (Saturday purchase)
+    assert not sc.market_open(datetime(2026, 11, 9, 6, 30, tzinfo=ET))  # too early: prints are sparse
     assert not sc.market_open(datetime(2026, 11, 8, 20, 0, tzinfo=ET))  # Sunday night
 
 

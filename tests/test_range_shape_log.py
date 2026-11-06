@@ -50,3 +50,14 @@ def test_off_short_and_error_return_empty(monkeypatch):
     monkeypatch.setattr(ob_observe, "bars", lambda s: (_ for _ in ()).throw(RuntimeError("x")))
     assert ew._range_shape_fields("ABC", 10.0, T + 20, {}) == {}
     assert ew._range_shape_fields("", 10.0, T, {}) == {}
+
+
+def test_stall_timing_flat_at_the_top_vs_fresh_high(monkeypatch):
+    plateau = [10.0 + 0.01 * i for i in range(45)] + [10.45] * 15        # ran up, then sat flat at the high
+    monkeypatch.setattr(ob_observe, "bars", lambda s: _bars(plateau))
+    out = ew._range_shape_fields("ABC", 10.45, T + 20, {})
+    assert out["rs_near_hi15"] >= 14 and out["rs_since_hi15"] >= 10
+    fresh = [10.0 + 0.01 * i for i in range(60)]                          # still making new highs every bar
+    monkeypatch.setattr(ob_observe, "bars", lambda s: _bars(fresh))
+    out2 = ew._range_shape_fields("ABC", fresh[-1] + 0.01, T + 20, {})
+    assert out2["rs_since_hi15"] == 0 and out2["rs_near_hi15"] < out["rs_near_hi15"]
