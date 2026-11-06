@@ -1,0 +1,27 @@
+{
+ "id": "run_efficiency_forward",
+ "registered": "2026-11-06 ~11:05 ET, before any forward data: outcomes.jsonl has only 3 closed rows with rs_* fields (CRWV 09:48, SMCI 10:21, IREN 10:22) and they are EXCLUDED from the read (they suggested the hypothesis).",
+ "operator": "2026-11-06: 'Is there any other criteria that we can identify these and distinguish them from CRMV', then 'yes' to pre-registering run efficiency as a hypothesis.",
+ "question": "Do desk entries that follow a choppy, stalled run (low efficiency over the previous 15 minutes) go never-green more often than entries that follow a clean run, and does refusing them raise the mean of the kept trades?",
+ "origin_evidence": "EXPLORATORY, 3 trades, 11/06: CRWV (won +57 bp) rs_er15 0.46; SMCI (-62 bp, never green) 0.28 after ~10 minutes at 28.9-29.1; IREN (-83 bp, never green) 0.20, drifting 21.3-21.7. Run SIZE (rs_rise15_bp) did not separate them (CRWV was the largest). Not evidence: n = 3 and chosen after seeing them.",
+ "measure": "rs_er15 = |close[-1] - close[0]| / sum |close[i] - close[i-1]| over the last 15 closed one-minute bars (1 = straight line, 0 = pure chop), stamped at entry by ai_entry_watch._range_shape_fields from the in-memory IEX bar store. Missing = not counted (counted separately).",
+ "primary_hypothesis": "FLAG = entries in the BOTTOM third of rs_er15 on the read sample (cut = the 1/3 rank value of the read sample, computed without outcomes and printed; it becomes the gate value if it passes). ONE hypothesis.",
+ "data": "Desk regular-session entries from 2026-11-06 12:00 ET onward with rs_er15 present (the three suggesting trades are before the start). Never-green = peak_price < entry + 5 bp. Net = (exit - entry)/entry bp - 3 bp. Same de-duplication as the other forward readers.",
+ "read_when": "Once, at the first nightly run with >= 150 such entries. Counts only before that.",
+ "multiplicity": "Three 'why do these fail' hypotheses read the same forward entries: rs_pos30 >= 0.80 (z bar 1.64, registered 11/05), rs_rise15_bp top third (z bar 1.96, registered 11/06 05:45), and this one. The family is three, so this one uses one-sided z >= 2.13 (alpha 0.0167). The two earlier bars are NOT changed after the fact; the read prints all three with the family count, and a result that only clears its own bar while failing the family bar is reported as 'single-test pass, family fail'.",
+ "pass": {
+  "never_green": "FLAG never-green rate above the rest in BOTH halves (split by date at the median session) and pooled one-sided z >= 2.13",
+  "payoff": "mean net of the kept group (not FLAG) above the mean net of all entries in BOTH halves, and the day-clustered bootstrap (2,000 resamples of sessions, seed 1106) 5th percentile of (kept - all) > 0",
+  "volatility_confound": "FLAG's never-green rate still above the rest inside rs_rng15_bp terciles (>= 2 of 3 positive)",
+  "not_just_size": "reported (information, no pass): the same split inside rs_rise15_bp top third and rest, and inside dwell_sec < 60 s vs >= 60 s, so the read says whether efficiency adds anything beyond run size or time on the board"
+ },
+ "if_pass": "result-skeptic review of the positive, then a default-off gate (refuse arms with rs_er15 <= the printed cut) tested through tools/sweep_replays.py screen + confirm and the ship rule; never straight to live.",
+ "if_fail": "Close; no other window, cut or normalisation of the efficiency measure is tried as a primary afterwards. Record in the running list and memory.",
+ "caveats": [
+  "Never-green depends on hold length; exits are unchanged during the read (any exit config change is named in the read).",
+  "IEX bars: efficiency from sparse IEX minute closes can read as chop on thin names for feed reasons alone; the rng15 terciles partly control this.",
+  "Refusing a third of entries also cuts a third of trades; the payoff test is the one that matters (operator: profit over win rate)."
+ ],
+ "tool": "tools/studies/run_efficiency_forward.py (nightly via scripts/nightly.sh, counts only until due)",
+ "status": "READY to log; read not before 150 forward entries"
+}
