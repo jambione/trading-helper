@@ -234,16 +234,24 @@ def verdict(res, stress=None):
             "c": (c1, c2, c3, c4, c5, c6, c7), "pass": all((c1, c2, c3, c4, c5, c6, c7)), "avg_leaders": avg_leaders, "mean": sum(allnet) / len(allnet)}
 
 
+EXCLUDED_LAST: set = set()
+
+
 def run():
     files = sorted(WH.glob("20??-??-??.npz"))
     excluded = set()
-    try:
-        from ticker_filters import is_not_stock
-        from day_hold import asset_names
-        names = asset_names()
-        top = set()
-    except Exception:  # noqa: BLE001
-        is_not_stock, names, top = None, {}, set()
+    from ticker_filters import is_not_stock
+    from day_hold import asset_names
+    import time as _t
+    names = {}
+    for _ in range(4):                       # prereg item 5: ALL ETFs/ETNs excluded; an empty name list must abort, never silently score with ETFs in
+        names = asset_names() or {}
+        if sum(1 for k in names if k != "__cached__") >= 1000:
+            break
+        _t.sleep(5)
+    if sum(1 for k in names if k != "__cached__") < 1000:
+        raise SystemExit("asset names unavailable (< 1000): refusing to score without the ETF/ETN exclusion list")
+    top = set()
     dayrecs = {}
     hist = deque(maxlen=20)
     prev, prev_date = None, None
@@ -263,15 +271,14 @@ def run():
             prev, prev_date = day, d
             hist.append(day)
             continue
-        if is_not_stock is not None:
-            for s in prev["syms"][:6000]:
-                if s not in top:
-                    top.add(s)
-                    try:
-                        if is_not_stock(s, names.get(s, "") or ""):
-                            excluded.add(s)
-                    except Exception:  # noqa: BLE001
-                        pass
+        for s in prev["syms"]:
+            if s not in top:
+                top.add(s)
+                try:
+                    if is_not_stock(s, names.get(s, "") or ""):
+                        excluded.add(s)
+                except Exception:  # noqa: BLE001
+                    pass
         r = score_day(day, prev, list(hist), excluded, ds)
         r2 = score_day(day, prev, list(hist), excluded, ds, entry_off=1, exit_off=1, cost_bp=COST_STRESS_BP)
         if r is None or r2 is None:
@@ -280,12 +287,14 @@ def run():
             res[ds], res_stress[ds] = r, r2
         prev, prev_date = day, d
         hist.append(day)
+    EXCLUDED_LAST.update(excluded)
     return res, res_stress, dropped, len(files), len(excluded)
 
 
 def report():
     res, stress, dropped, nfiles, nex = run()
     OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / "excluded_symbols.json").write_text(json.dumps(sorted(EXCLUDED_LAST)))
     stress_mean = sum(x["net_leaders"] for x in stress.values()) / max(1, len(stress))
     v = verdict(res, stress_mean)
     lines = [f"# Relative-strength scan (prereg docs/studies/relative_strength_scan_prereg.json)", "",
