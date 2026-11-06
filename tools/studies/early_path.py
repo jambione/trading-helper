@@ -6,7 +6,7 @@ For each desk buy since 2026-10-15 (the clean volume-ratio era): the fill second
 the fill to 5 minutes later (or the exit, whichever is first). At checkpoints T = 5, 10, 15, 20, 30, 45, 60, 90, 120 s it measures
     green_by_T       a print >= fill + 5 bp (the never-green definition) happened within T seconds
     down_X_by_T      price at T is <= fill - X bp and no print was green by T   (X = 5, 10, 15, 20)
-and for the group that is NOT green by T (or 'down X and not green'):
+and the tick-rule signed trade flow since the fill (second post-open signal), and for the group that is NOT green by T (or 'down X and not green'):
     later_green      share that still became green after T   (the false-alarm rate of an early cut)
     final net bp     mean outcome of those trades if simply held (what the desk actually got)
 A rule is only interesting if the flagged group has a LOW later_green share and a clearly negative held net.
@@ -77,21 +77,42 @@ def trades_since(since=SINCE):
     return out, unmatched
 
 
+def signed_flow(w):
+    """Tick-rule signed volume imbalance in [-1, 1] over prints w = [(ts, px, size)]: + when price ticks up, - when down, equal ticks keep
+    the last sign. None when there is no volume information. Pure."""
+    sign, prev, buy, sell = 0, None, 0.0, 0.0
+    for r in w:
+        p, sz = r[1], (r[2] if len(r) > 2 else 0.0)
+        if prev is not None:
+            if p > prev:
+                sign = 1
+            elif p < prev:
+                sign = -1
+        prev = p
+        if sign > 0:
+            buy += sz
+        elif sign < 0:
+            sell += sz
+    tot = buy + sell
+    return None if tot <= 0 else (buy - sell) / tot
+
+
 def path_features(prints, entry, fill_ts):
-    """prints: [(ts, px)] sorted, from the fill on. Returns {T: {green, px, minpx}} measured within T seconds of the fill. Pure."""
+    """prints: [(ts, px[, size])] sorted, from the fill on. Returns {T: {green, px_bp, min_bp, n, flow}} measured within T seconds. Pure."""
     res = {}
     for T in CHECK:
-        w = [(t, p) for t, p in prints if fill_ts <= t <= fill_ts + T]
+        w = [r for r in prints if fill_ts <= r[0] <= fill_ts + T]
         if not w:
             res[T] = None
             continue
-        green = any((p / entry - 1) * 1e4 >= GREEN_BP for _, p in w)
-        res[T] = {"green": green, "px_bp": (w[-1][1] / entry - 1) * 1e4, "min_bp": (min(p for _, p in w) / entry - 1) * 1e4, "n": len(w)}
+        px = [r[1] for r in w]
+        res[T] = {"green": any((p / entry - 1) * 1e4 >= GREEN_BP for p in px), "px_bp": (px[-1] / entry - 1) * 1e4,
+                  "min_bp": (min(px) / entry - 1) * 1e4, "n": len(w), "flow": signed_flow(w)}
     return res
 
 
 def later_green(prints, entry, fill_ts, T):
-    return any((p / entry - 1) * 1e4 >= GREEN_BP for t, p in prints if fill_ts + T < t <= fill_ts + WINDOW)
+    return any((r[1] / entry - 1) * 1e4 >= GREEN_BP for r in prints if fill_ts + T < r[0] <= fill_ts + WINDOW)
 
 
 def blocked_now():
@@ -120,7 +141,7 @@ def fetch():
         try:
             got = client.get_stock_trades(StockTradesRequest(symbol_or_symbols=t["sym"], start=datetime.fromtimestamp(a, timezone.utc),
                                                              end=datetime.fromtimestamp(b, timezone.utc), feed=DataFeed.SIP, limit=10000))
-            rows = [(x.timestamp.timestamp(), float(x.price)) for x in (got.data or {}).get(t["sym"], [])]
+            rows = [(x.timestamp.timestamp(), float(x.price), float(x.size or 0)) for x in (got.data or {}).get(t["sym"], [])]
         except Exception as e:  # noqa: BLE001
             bad += 1
             print("ERR", t["day"], t["sym"], str(e)[:80])
@@ -139,7 +160,7 @@ def load_all():
         f = CACHE / f"{t['day']}_{t['sym']}_{int(t['fill_ts'])}.pkl"
         if not f.exists():
             continue
-        pr = [(a, b) for a, b in pickle.load(open(f, "rb"))]
+        pr = [(r[0], r[1], (r[2] if len(r) > 2 else 0.0)) for r in pickle.load(open(f, "rb"))]
         if len(pr) < 3:
             continue
         rows.append({**t, "prints": pr, "feat": path_features(pr, t["entry"], t["fill_ts"])})
@@ -178,6 +199,23 @@ def table(rows, label):
     return lines
 
 
+def flow_table(rows, label):
+    """Second post-open signal: among trades with no green print by T, does sell-dominated flow since the fill (signed volume <= 0 by the
+    tick rule) pick out the ones that never turn green? Same columns as the price table."""
+    lines = [f"### {label}: trade flow after the fill (no green print by T seconds)", "",
+             "| T | sell-dominated flow (<= -0.2): flagged | later turns green | never-green in flagged | held net | balanced or buy flow: n | later turns green | held net |", "|---|---|---|---|---|---|---|---|"]
+    for T in CHECK:
+        base = _grp(rows, T)
+        sell = [r for r in base if r["feat"][T].get("flow") is not None and r["feat"][T]["flow"] <= -0.2]
+        oth = [r for r in base if r["feat"][T].get("flow") is not None and r["feat"][T]["flow"] > -0.2]
+        if len(sell) < 10 or len(oth) < 10:
+            continue
+        g = lambda gr: sum(later_green(r["prints"], r["entry"], r["fill_ts"], T) for r in gr) / len(gr)  # noqa: E731
+        lines.append(f"| {T}s | {len(sell)} | {100 * g(sell):.0f}% | {100 * sum(r['never_green'] for r in sell) / len(sell):.0f}% | "
+                     f"{sum(r['net_bp'] for r in sell) / len(sell):+.1f} | {len(oth)} | {100 * g(oth):.0f}% | {sum(r['net_bp'] for r in oth) / len(oth):+.1f} |")
+    return lines
+
+
 def report():
     rows, unmatched = load_all()
     if not rows:
@@ -189,7 +227,7 @@ def report():
            f"{len(rows)} desk buys with SIP prints ({len(train)} train 10/15-10/29, {len(test)} test 10/30 on); {unmatched} outcomes had no matching fill row. "
            "A useful early-cut rule needs a LOW false-alarm share (flagged trades that later turn green) and a clearly NEGATIVE held net. "
            "No exit is simulated; the rule is frozen from TRAIN only and TEST is read once.", ""]
-    out += table(train, "TRAIN") + [""] + table(test, "TEST (do not tune on this)")
+    out += table(train, "TRAIN") + [""] + flow_table(train, "TRAIN") + [""] + table(test, "TEST (do not tune on this)") + [""] + flow_table(test, "TEST (do not tune on this)")
     (ROOT / "docs").mkdir(exist_ok=True)
     (ROOT / "docs" / "EARLY_PATH.md").write_text("\n".join(out) + "\n")
     print("\n".join(out))

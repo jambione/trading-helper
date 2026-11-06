@@ -36,3 +36,24 @@ def test_group_rules_and_table():
     assert len(ep._grp(rows, 20, X=None)) == 12                            # not green by 20 s
     text = "\n".join(ep.table(rows, "TRAIN"))
     assert "T=20s, down 10 bp | 12 |" in text and "| 0% | 100% |" in text   # no flagged trade later turns green; all flagged never-green
+
+
+def test_signed_flow_tick_rule_and_three_tuples():
+    down = [(T0 + 1, 100.0, 10.0), (T0 + 2, 99.9, 50.0), (T0 + 3, 99.9, 40.0), (T0 + 4, 99.8, 100.0)]
+    up = [(T0 + 1, 100.0, 10.0), (T0 + 2, 100.1, 50.0), (T0 + 3, 100.1, 40.0), (T0 + 4, 100.2, 100.0)]
+    assert ep.signed_flow(down) < -0.9 and ep.signed_flow(up) > 0.9
+    assert ep.signed_flow([(T0, 100.0, 0.0), (T0 + 1, 100.1, 0.0)]) is None            # no volume info: no flow
+    f = ep.path_features(down, E, T0)
+    assert f[5]["flow"] < -0.9 and f[5]["green"] is False
+    f2 = ep.path_features([(T0 + 1, 100.0), (T0 + 2, 99.9)], E, T0)                      # old 2-tuples still work
+    assert f2[5]["flow"] is None
+
+
+def test_flow_table_splits_sell_dominated_from_the_rest():
+    def mk(path, ng, net):
+        return {"day": "2026-10-20", "sym": "X", "fill_ts": T0, "entry": E, "net_bp": net, "never_green": ng, "prints": path,
+                "feat": ep.path_features(path, E, T0)}
+    sell = [mk([(T0 + 1, 100.0, 10.0), (T0 + 3, 99.9, 90.0), (T0 + 6, 99.8, 90.0)], True, -40.0) for _ in range(12)]
+    calm = [mk([(T0 + 1, 100.0, 10.0), (T0 + 3, 100.0, 90.0), (T0 + 6, 100.05, 90.0), (T0 + 40, 100.1, 50.0)], False, 5.0) for _ in range(12)]
+    text = "\n".join(ep.flow_table(sell + calm, "TRAIN"))
+    assert "| 20s | 12 | 0% | 100% | -40.0 | 12 | 100% | +5.0 |" in text      # calm prints are flat at 5 s (no flow), so the first row with both groups is later
