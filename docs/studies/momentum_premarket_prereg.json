@@ -65,5 +65,12 @@
   "9_canary": "Replaces the second half of canary: the canary reruns the quick look's exact rule (buy the minute after the first alert, 30-minute hold, GROSS, $2+, 10/23-11/05) and must land within +-50 bp of -366 bp; the planted +50 bp edge test stays.",
   "10_power_feed": "Replaces the MDE limit in power: MDE > 15 bp in either half = UNDERPOWERED (as T1). Added: the result is on SIP only. The live lane on IEX (alpaca_bar_feed = iex) is untested by this study; a pass requires the SIP-fed stream (docs/SIP_DAY1_RUNBOOK.md) before any live use.",
   "round2": "result-skeptic round 2 (2026-11-06 ~05:35 ET): FIX FIRST with three text-only fixes (A no_source_row admission + forward floor, B offline isolation, C broker stubs), applied verbatim above; the reviewer said READY with those in, no round 3."
+ },
+ "amended_scope": {
+  "when": "2026-11-06 ~12:40 ET, before any return was read and before any SIP-month forward data exists.",
+  "change": "The HISTORICAL scored sample is replaced by COUNT-ONLY information. Reason: a faithful offline replay of the live arm needs the signal engine's indicator map (cm_rsi, pctr_slow, pctr_gap, macd, square/presquare state), which the live path reads from a separate process; reimplementing it would be a second, unvalidated arm and the skeptic's rounds 1-2 explicitly ruled that out. The pre-registered scored sample is the FORWARD sample only: the lane's own real arms recorded in the premarket ledger (entry_limit rows, dry_run true) during the SIP month, with fills and exits judged offline by the prereg's tick rules and SIP quotes. All entry, fill, exit, cost, control, pass, power and feed rules above apply unchanged to that sample.",
+  "count_mode": "tools/studies/momentum_premarket.py count (built, tests/test_momentum_premarket_count.py): name-days per session and price band, liquidity before and after the alert, sessions excluded for a late recorder. No price change after the alert is computed. It sets the ceiling for the forward sample and informs the power rule.",
+  "not_built": "canary and score modes of the historical replay are NOT built and will not be; the quick look in running list row 94 remains the only historical return read and is labelled as exploratory buy-at-alert.",
+  "forward_scorer": "A forward scorer (reads the premarket ledger's dry-run arms, fetches SIP trades and quotes for each, applies fill, exit, cost and control rules) is built during the first SIP week, before the 150-fill read, and may not change anything above."
  }
 }
