@@ -171,6 +171,11 @@ def main():
     out += payoff_block(allr)
     out += edge_block(allr)
     out += trend_and_ships(days_all)
+    try:  # never-green profile: which entry features go with never-green AND with profit (operator 11/06; exploratory)
+        from tools import ng_profile
+        out += [""] + ng_profile.brief()
+    except Exception as e:  # noqa: BLE001
+        out += ["", f"(never-green profile failed: {type(e).__name__}: {e})"]
     try:  # entry cost vs SIP mid + never-green share per day (operator 11/06: IEX baseline for the SIP month)
         from tools import entry_cost_daily
         out += [""] + entry_cost_daily.brief()
