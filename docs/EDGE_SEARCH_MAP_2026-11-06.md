@@ -23,7 +23,7 @@ and failed its own bar; "NULL" = no effect; "UNDERPOWERED" = could not be read. 
 |---|---|---|---|---|
 | 1 | **Premarket on momentum names, real arms, SIP** | only place with big moves; every other test was RTH | real-time SIP for a FULL month (dry run first) | 10-15% |
 | 2 | **Real-time quiet-tape / spread gates on SIP** | worked only in real time in the 9/30 study; the 11/06 held-out used delayed-safe historical bars and failed, so this is a low prior now | SIP real-time | 5% |
-| 3 | **Intraday relative strength vs SPY/QQQ at a fixed time (e.g. 10:00)** for liquid names, held to a fixed time | cross-sectional, not time-series; the desk only looks at the name itself | free historical SIP bars, ~400 names x 119 sessions | 8-10% |
+| 3 | **Intraday relative strength vs SPY/QQQ at a fixed time (e.g. 10:00)** for liquid names, held to a fixed time | cross-sectional, not time-series; the desk only looks at the name itself | free historical SIP bars, ~400 names x 119 sessions | **TESTED 11/06: FAIL** (pooled -5.5 bp, t -0.53; blocks -6.6 / +11.8 / -23.6; running list row 106) |
 | 4 | **Closing-auction / last-30-minute drift conditioned on the day's move** | structural flows, not a pattern in the name | free historical SIP + auction prints | 5-8% (EOD reversal and late-day index momentum already null) |
 | 5 | **Leveraged/inverse ETF rebalancing flow into the close** | documented mechanical flow, strongest on big index days | SIP bars of the ETFs + underlying | 5-8% |
 | 6 | **Spread compression at the arm** (queued, item 8) | direct tell of buyers stepping in | free historical SIP quotes | 10-15% |
