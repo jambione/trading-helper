@@ -1,0 +1,62 @@
+{
+ "sha": "HEAD",
+ "start": "09:30",
+ "end": "15:50",
+ "baseline": {
+  "live_book": true,
+  "set": {}
+ },
+ "base_set": {
+  "ai_max_positions": 3,
+  "ai_max_position_pct": 33.0,
+  "ai_risk_pct": 1.65
+ },
+ "name": "trend_hold_fix_2026-11-07",
+ "purpose": "Operator 11/07 (Argon's audit, verified in code and outcomes): trail_exit_trend_hold holds ANY trail exit between entry+5 bp and the 5% hard stop while the %R lines are not both falling, so it (a) holds the initial working stop (~0.12R below entry) down toward the hard stop and (b) holds breakeven exits on trades that already ran up. Since 10/08: 194 of 777 trades (25%) went green and ended a loss (mean -11.9 bp); the worst 10% of trades are 75% of the loss and are held longer (393 s vs 175 s). Baseline = the live desk (hold ON). PRIMARY both = ai_trail_exit_trend_hold_floor_initial true AND ai_trail_exit_trend_hold_off_after_peak_bp 15. floor_only and afterpeak_only show which part matters; hold_off (ai_trail_exit_trend_hold false) is the reference. Same SCREEN/CONFIRM bars as every sweep (SCREEN: mean day delta > 0 and >= 60% of days better; CONFIRM: mean > 0, day-t >= 1.5, both halves > 0). VACUITY: the primary must change the exit of at least 10 trades in the screen days (trail:initial_floor / trail:after_peak notes in the replay logs), otherwise VACUOUS. A pass earns a skeptic review and the operator's say, never a live change by itself.",
+ "variants": {
+  "both": {
+   "live_book": true,
+   "set": {
+    "ai_trail_exit_trend_hold_floor_initial": true,
+    "ai_trail_exit_trend_hold_off_after_peak_bp": 15.0
+   }
+  },
+  "floor_only": {
+   "live_book": true,
+   "set": {
+    "ai_trail_exit_trend_hold_floor_initial": true
+   }
+  },
+  "afterpeak_only": {
+   "live_book": true,
+   "set": {
+    "ai_trail_exit_trend_hold_off_after_peak_bp": 15.0
+   }
+  },
+  "hold_off": {
+   "live_book": true,
+   "set": {
+    "ai_trail_exit_trend_hold": false
+   }
+  }
+ },
+ "screen_days": [
+  "2026-11-05",
+  "2026-11-04",
+  "2026-11-03",
+  "2026-11-02",
+  "2026-10-30"
+ ],
+ "confirm_days": [
+  "2026-10-29",
+  "2026-10-28",
+  "2026-10-27",
+  "2026-10-26",
+  "2026-10-23",
+  "2026-10-22",
+  "2026-10-21",
+  "2026-10-20",
+  "2026-10-19",
+  "2026-10-16"
+ ]
+}

@@ -2483,6 +2483,7 @@ def place_scaled_entry(
         # Disaster floor — never overwritten when stop_price ratchets.
         "entry_stop_price": stop_price,
         "local_stop_price": local_stop_px,
+        "local_stop_initial": local_stop_px,   # the working stop at entry; never ratcheted (trend-hold floor, 11/07)
         "protection_mode": protection_mode,
         "late_hold": late_hold,
         "h4_swing": h4_swing,
@@ -2641,6 +2642,7 @@ def place_scaled_entry(
         "stop_price": stop_price,
         "target_1": target_1,
         "local_stop_price": local_stop_px,
+        "local_stop_initial": local_stop_px,
         "protection_mode": protection_mode,
         "order_type": entry_order_type,
         "tranche_a": result_a,
@@ -3773,6 +3775,20 @@ def trail_exit_trend_hold(pos: dict | None, ticker: str, px: float, now: float |
         if hard is not None and px <= hard + 1e-9:
             _dc_note("trail:hard_stop")
             return False                       # the hard stop is absolute
+        # 11/07 (Argon's audit, both default OFF; replay first): the hold was meant for exits near entry, but as written
+        # it also holds the initial working stop (~0.12R below entry) all the way down to the 5% hard stop, and holds a
+        # breakeven exit on a trade that already ran up. Two switches narrow it.
+        if bool(cfg.get("ai_trail_exit_trend_hold_floor_initial", False)):
+            init = _num(pos.get("local_stop_initial"))
+            if init is not None and px <= init + 1e-9:
+                _dc_note("trail:initial_floor")
+                return False                   # never hold at or below the working stop the trade was opened with
+        peak_bp = float(cfg.get("ai_trail_exit_trend_hold_off_after_peak_bp", 0.0) or 0.0)
+        if peak_bp > 0:
+            pk = _num(pos.get("peak_price"))
+            if pk is not None and pk >= entry * (1 + peak_bp / 1e4) - 1e-9:
+                _dc_note("trail:after_peak")
+                return False                   # the trade already ran up: take the breakeven/trail exit
         from tools import sell_double_check as sdc
         t_now = float(now if now is not None else time.time())
         bars = _double_check_store_bars(ticker)
