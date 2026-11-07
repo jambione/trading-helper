@@ -16,7 +16,7 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 | verdict_fail | 13 |
 | underpowered | 2 |
 | void | 1 |
-| done | 8 |
+| done | 10 |
 | parked | 3 |
 
 ## Needs attention
@@ -74,8 +74,8 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 
 | forecaster | made | resolved | correct | hit rate |
 |---|---|---|---|---|
-| Argon | 3 | 0 | 0 | - |
-| Claude | 7 | 1 | 1 | 100% |
+| Argon | 4 | 1 | 0 | 0% |
+| Claude | 8 | 2 | 2 | 100% |
 
 - **PR1** (Claude) X3 trend-hold 'both' (floor at opening stop + off after +15 bp peak), session replay screen: expects screen DROP or a delta within +-10 bp/day; does not reach confirm (open)
 - **PR2** (Claude) X1 floor_only, session replay screen: expects small positive day delta (cuts the -70..-80 bp tail) but fewer than 60% of days better (open)
@@ -87,6 +87,8 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 - **PR8** (Argon) exit_confirm: 'both' on 10/16-10/29: expects +0.4 to +1.0 bp/trade (+8 to +20 bp/day); solidly positive on event days, near zero otherwise (open)
 - **PR9** (Argon) exit_confirm: both vs both_lock50 on 10/16-10/29: expects lock50 adds 0 to +0.3 bp/trade; 'both' alone may beat both_lock50 (open)
 - **PR10** (Claude) exit_confirm: both vs both_lock50 on 10/16-10/29: expects both_lock50 within +-0.3 bp/trade of 'both' (the lock adds nothing measurable) (open)
+- **PR11** (Claude) never-green bleed: underwater leash and resting scratch in the trade simulator: expects both lose or come out flat; the scratch has the better chance -> RIGHT: 2026-11-07: all six variants negative (-0.11 to -1.33 bp/trade); the scratch at 300 s and 540 s was nearest to flat (-0.16, -0.11). Correct on 'lose or flat'; the scratch did not do better than the leash on average (leash -0.5 to -1.0).
+- **PR12** (Argon) never-green bleed: underwater leash and resting scratch in the trade simulator: expects offered as the places 'a fix could still live' (not an explicit numeric forecast) -> WRONG: 2026-11-07: none improves. Scored as WRONG only if read as a prediction of improvement; recorded as 'untested ideas now tested', hit rate unaffected.
 
 ## Not started
 
@@ -130,6 +132,8 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 | X14 | grace period after entry before the tight stop applies (entry clock 21-112 min vs exit leash 15-120 s) | Argon (logic audit 11/07) | idea | Config corrected: idle leash is 15 s (not 120 s). Prior: 42 stop/target/trail/ladder shapes all scored zero gross; wider stop LOST; 60% of cuts end better if held (payoff asymmetry). |
 | L6 | tranche-A gain depends on selling at the exact target print (vanishes with a 1 s delay) | S4 stress 11/07 | open | t15_60 +2.31 bp at zero delay, -0.59 bp with a 1 s delay; live sale latency median 0.67 s. A resting limit at the target would remove the delay but brings the adverse-selection problem (fills mostly when price is about to fall). |
 | X15 | informational confirm of floor_only, both, fixed lock50 and both_lock50 on 10/16-10/29 (decided after the screen) | Claude 11/07 | queued | Why: the screen's 60%-of-days rule drops arms that fire rarely; the cited tail trades fall on 10/8-10/29. Bars fixed before results (see spec). Does not override the screen DROPs, which stand. Per-day screen deltas (bp): both +15.1, 0, +26.4, 0, 0 - never worse on any day, 2 of 5 strictly better, so the strict 'x > 0' share (sweep_replays.py:117) counts three tie days against it; the pre-registered bar stands and the DROP is logged as-is. Old lock50: +60.8, +15.5, +23.6, -7.2, -14.1: negative on 11/04 and 11/05 where 'both' did nothing, so the lock part alone is mixed, not a steady +8. hold_off: -36.8, -26.5, -59.6, -62.2, +49.9 (t -1.33): the live hold helped on 4 of 5 days; suggestive, not established. Read the confirm by days where a rule actually fired, in addition to the all-days mean. both_lock50 added 15:05. |
+| X16 | underwater leash (ai_local_trail_decay_red_step_r 0.005 / 0.01 / 0.02) for the never-green bleed | Argon 11/07 | done | Trade simulator (776 trades, 0.5 s exit latency, corrected model): -0.60 / -0.50 / -1.00 bp per trade vs baseline, day-t -0.7 / -0.5 / -0.9, the 0.01 and 0.005 steps help the second half (+0.2 to +0.65) and hurt the first (-1.4 to -1.7). Not an improvement. Run as a simulator variant without a separate prereg (exploratory); the cells are in docs/TRADE_SIM_red_scratch.md. |
+| X17 | resting scratch at entry after 120 / 300 / 540 s of never-green (-60 bp shelf kept as backstop) | Argon 11/07 | done | Trade simulator (776 trades, 0.5 s latency; the scratch fills when a print reaches entry +2 bp, no spread paid): -1.33 / -0.16 / -0.11 bp per trade, day-t -2.7 / -0.7 / -0.8. The 2-minute scratch is clearly harmful (265 trades changed, both halves negative); 5 and 9 minutes are flat to slightly negative on 133 and 71 trades. A scratch caps the recoverers at zero and the churners it saves are too few to pay for it. Exploratory (no prereg). |
 
 ### entry
 
@@ -176,7 +180,7 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 | S2 | per-name daily attempt cap | Argon | verdict_fail | Later attempts not worse (4th -1.9, 5th 0.0 bp) |
 | S4 | scale initial stop, breakeven trigger and trail arm by vol_1m_pct | Argon (logic audit 11/07) | idea | ai_local_trail_give_vol_k is absent from live config (knob exists in code per Argon, unverified). All three thresholds are fixed bp today (-60/+15/+30). Data: vol_1m_pct <=0.07 = 47% never-green, >0.15 = 17%, net -9.8/-8.1/-7.4 bp (10/15+, n 445). Code check: ai_local_trail_give_vol_k is read at ai_positions.py:4260 (local_trail_give), default 0 = off. |
 | B3 | cost-aware gate using real SIP quotes instead of logged IEX spreads | Plan B (operator: be optimistic, find new ideas) 11/07 | idea | Logged spread_r is unreliable (IEX overstates the book); desk entries are gross-negative in every spread bucket (-2.5 to -7 bp, n 270, 10/21+), so a gate alone will not flip the sign. Could still reduce losses on the widest-spread fills. |
-| L7 | position size rose ~10x on 11/05 (median ~$350 -> ~$3,280 per trade) | broker autopsy 11/07 | done | Broker round trips 10/26-11/06 (276): median position $315-$375 per trade through 11/04, $3,280/$3,269 on 11/05/11/06 (new Alpaca account created 11/04, $10K, 3 x 33%). Dollar P&L before and after is not comparable; the earlier claim that the worst 13 trades were 68% of losing dollars is mostly this size jump (11 of those 13 are 11/05-11/06). Size-neutral (bp): the worst 27 trades (10%) are 55% of losing bp, avg -58 bp, ALL 27 never-green (peak < +5 bp) vs 22% of the rest, held 556 s vs 182 s median, 21 local_trail + 6 dead_trade exits, 13 slipped past -60 bp (4.7% of all trades). Capping every loss at -60 bp would be worth only +0.28 bp/trade; at -40 bp +1.8 bp (but cuts recoveries; 60% of early cuts end better if held). OPERATOR CONFIRMED 11/07: the ~$3,300 per trade (3 x 33% of $10K) on the new account is intended. Compare weeks in bp per trip; dollars scale with size. |
+| L7 | position size rose ~10x on 11/05 (median ~$350 -> ~$3,280 per trade) | broker autopsy 11/07 | done | Broker round trips 10/26-11/06 (276): median position $315-$375 per trade through 11/04, $3,280/$3,269 on 11/05/11/06 (new Alpaca account created 11/04, $10K, 3 x 33%). Dollar P&L before and after is not comparable; the earlier claim that the worst 13 trades were 68% of losing dollars is mostly this size jump (11 of those 13 are 11/05-11/06). Size-neutral (bp): the worst 27 trades (10%) are 55% of losing bp, avg -58 bp, ALL 27 never-green (peak < +5 bp) vs 22% of the rest, held 556 s vs 182 s median, 21 local_trail + 6 dead_trade exits, 13 slipped past -60 bp (4.7% of all trades). Capping every loss at -60 bp would be worth only +0.28 bp/trade; at -40 bp +1.8 bp (but cuts recoveries; 60% of early cuts end better if held). OPERATOR CONFIRMED 11/07: the ~$3,300 per trade (3 x 33% of $10K) on the new account is intended. Compare weeks in bp per trip; dollars scale with size. FOLLOW-UP 11/07: the two never-green-bleed ideas (underwater leash, resting scratch) were run in the corrected simulator: none improves (X16, X17). |
 
 ### live-code
 

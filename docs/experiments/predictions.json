@@ -90,6 +90,24 @@
    "expect": "both_lock50 within +-0.3 bp/trade of 'both' (the lock adds nothing measurable)",
    "resolved": null,
    "correct": null
+  },
+  {
+   "id": "PR11",
+   "test": "never-green bleed: underwater leash and resting scratch in the trade simulator",
+   "who": "Claude",
+   "made": "2026-11-07 (stated in chat when the run was launched, before it finished; ledger entry written after)",
+   "expect": "both lose or come out flat; the scratch has the better chance",
+   "resolved": "2026-11-07: all six variants negative (-0.11 to -1.33 bp/trade); the scratch at 300 s and 540 s was nearest to flat (-0.16, -0.11). Correct on 'lose or flat'; the scratch did not do better than the leash on average (leash -0.5 to -1.0).",
+   "correct": true
+  },
+  {
+   "id": "PR12",
+   "test": "never-green bleed: underwater leash and resting scratch in the trade simulator",
+   "who": "Argon",
+   "made": "2026-11-07 (relayed)",
+   "expect": "offered as the places 'a fix could still live' (not an explicit numeric forecast)",
+   "resolved": "2026-11-07: none improves. Scored as WRONG only if read as a prediction of improvement; recorded as 'untested ideas now tested', hit rate unaffected.",
+   "correct": null
   }
  ]
 }
