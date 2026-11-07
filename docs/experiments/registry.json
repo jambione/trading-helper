@@ -215,9 +215,9 @@
    "layer": "entry",
    "source": "Argon",
    "status": "blocked",
-   "evidence": "Run says FAIL (-4.5 bp, lifts very negative) but the random-minute controls average ~+9 bp net, which is implausible.",
-   "next": "Diagnose the control calculation, rerun if it is a bug.",
-   "blocked_on": "control sanity check",
+   "evidence": "First run's same-name controls were biased (one-sided exclusion; controls +11..+28 bp vs -7.5 bp for random minutes). Fixed in 8a-fix commit and rerun started; the first FAILs are void.",
+   "next": "Read the rerun (~/bsf_run2.log); run a second sanity check on the control means before any verdict.",
+   "blocked_on": "rerun with fixed controls",
    "gates": {
     "prereg": true,
     "skeptic": true,
@@ -251,9 +251,9 @@
    "layer": "entry",
    "source": "Argon",
    "status": "blocked",
-   "evidence": "Run says FAIL (-12.3 bp) but shares the same control code as N1.",
-   "next": "Same control sanity check.",
-   "blocked_on": "control sanity check",
+   "evidence": "First run's same-name controls were biased (one-sided exclusion; controls +11..+28 bp vs -7.5 bp for random minutes). Fixed in 8a-fix commit and rerun started; the first FAILs are void.",
+   "next": "Read the rerun (~/bsf_run2.log); run a second sanity check on the control means before any verdict.",
+   "blocked_on": "rerun with fixed controls",
    "gates": {
     "prereg": true,
     "skeptic": true,
@@ -269,9 +269,9 @@
    "layer": "entry",
    "source": "Argon",
    "status": "blocked",
-   "evidence": "Run says FAIL (-6.1 bp, lift vs first-try breakout -3.3) but shares the control code.",
-   "next": "Same control sanity check.",
-   "blocked_on": "control sanity check",
+   "evidence": "First run's same-name controls were biased (one-sided exclusion; controls +11..+28 bp vs -7.5 bp for random minutes). Fixed in 8a-fix commit and rerun started; the first FAILs are void.",
+   "next": "Read the rerun (~/bsf_run2.log); run a second sanity check on the control means before any verdict.",
+   "blocked_on": "rerun with fixed controls",
    "gates": {
     "prereg": true,
     "skeptic": true,
@@ -694,6 +694,144 @@
    "status": "parked",
    "evidence": "Operator: skip for now. Alpaca refunded the charge.",
    "next": "Revisit if a study needs SIP.",
+   "blocked_on": "",
+   "gates": {},
+   "ref": ""
+  },
+  {
+   "id": "N16",
+   "title": "queue ranking by freshness (pre_square before square, lowest rs_pos15) instead of max RVOL / move",
+   "layer": "entry",
+   "source": "Argon (logic audit 11/07)",
+   "status": "idea",
+   "evidence": "Config reading corrected: live rank_rvol_band is 0.5 (not 0.0) and move_band 2.0, so ties do get broken by _signal_rank; max positions 3 (not 2). Mechanism (extended names win the seat) is plausible, untested. Prior: gates on extension FAILED (room/overbought/stall).",
+   "next": "Check what the rank actually picks vs what the book holds; prereg on the logged candidate sets.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": false,
+    "skeptic": false,
+    "tool": false,
+    "smoke": false,
+    "data_check": false
+   },
+   "ref": ""
+  },
+  {
+   "id": "N17",
+   "title": "pre-square must also require slow %R rising",
+   "layer": "entry",
+   "source": "Argon (logic audit 11/07)",
+   "status": "idea",
+   "evidence": "Config corrected: ai_watch_presquare_after_square_min is already 10 (not off). Whether _presquare_exh_allows_buy ignores pctr_slow_rising is NOT yet verified in code. Prior: %R states are ~random and RSI/MACD add nothing.",
+   "next": "Read the function; if true, replay variant with the extra condition.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": false,
+    "skeptic": false,
+    "tool": false,
+    "smoke": false,
+    "data_check": false
+   },
+   "ref": ""
+  },
+  {
+   "id": "X12",
+   "title": "debounced sell trigger: breach by the damped print (or 2 prints) before flattening, hard stop excepted",
+   "layer": "exit",
+   "source": "Argon (logic audit 11/07)",
+   "status": "idea",
+   "evidence": "Code check: flatten_px is set from the raw minimum print (ai_positions.py:7585) while the shelf raises off a 2-print median (ring 2) - asymmetric as described. Direction of the bias is plausible; size untested. Prior: 'exit delay is loop starvation' and tight stops lose 11-24 bp.",
+   "next": "Replay arm; needs a new knob for the debounce.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": false,
+    "skeptic": false,
+    "tool": false,
+    "smoke": false,
+    "data_check": false
+   },
+   "ref": ""
+  },
+  {
+   "id": "X13",
+   "title": "smooth breakeven ramp (stop -15 bp at +15, 0 at +25, +15 at +35) instead of snapping to 0 at +15",
+   "layer": "exit",
+   "source": "Argon (logic audit 11/07)",
+   "status": "idea",
+   "evidence": "Overlaps X5 (lock50) and X6; the dead zone itself is verified (X1-X8). The specific ramp is new.",
+   "next": "Add as a trend_hold_fix-style arm after X1-X8 report, so one change is read at a time.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": false,
+    "skeptic": false,
+    "tool": false,
+    "smoke": false,
+    "data_check": false
+   },
+   "ref": ""
+  },
+  {
+   "id": "S4",
+   "title": "scale initial stop, breakeven trigger and trail arm by vol_1m_pct",
+   "layer": "sizing",
+   "source": "Argon (logic audit 11/07)",
+   "status": "idea",
+   "evidence": "ai_local_trail_give_vol_k is absent from live config (knob exists in code per Argon, unverified). All three thresholds are fixed bp today (-60/+15/+30). Data: vol_1m_pct <=0.07 = 47% never-green, >0.15 = 17%, net -9.8/-8.1/-7.4 bp (10/15+, n 445).",
+   "next": "Counterfactual on outcomes: per-volatility-tercile stop/BE/arm, then a replay arm.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": false,
+    "skeptic": false,
+    "tool": false,
+    "smoke": false,
+    "data_check": false
+   },
+   "ref": ""
+  },
+  {
+   "id": "N18",
+   "title": "same-wave re-entry reset: fast %R must cycle below -50 (or block re-entry after a never-green exit)",
+   "layer": "entry",
+   "source": "Argon (logic audit 11/07)",
+   "status": "idea",
+   "evidence": "Config corrected: reentry cooldown is 120 s (not 60) and max entries per symbol per day is 0 = unlimited (not 2). Prior: per-name attempt cap FAIL (4th/5th attempts were the best); loss cooldown unproven. A %R reset rule is different from a count cap.",
+   "next": "Counterfactual on logged re-entries, then prereg.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": false,
+    "skeptic": false,
+    "tool": false,
+    "smoke": false,
+    "data_check": false
+   },
+   "ref": ""
+  },
+  {
+   "id": "X14",
+   "title": "grace period after entry before the tight stop applies (entry clock 21-112 min vs exit leash 15-120 s)",
+   "layer": "exit",
+   "source": "Argon (logic audit 11/07)",
+   "status": "idea",
+   "evidence": "Config corrected: idle leash is 15 s (not 120 s). Prior: 42 stop/target/trail/ladder shapes all scored zero gross; wider stop LOST; 60% of cuts end better if held (payoff asymmetry).",
+   "next": "Low prior; test last, as one arm of the sweep.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": false,
+    "skeptic": false,
+    "tool": false,
+    "smoke": false,
+    "data_check": false
+   },
+   "ref": ""
+  },
+  {
+   "id": "A1",
+   "title": "Argon 1R accounting point: R is 500 bp but the working stop is 60 bp",
+   "layer": "process",
+   "source": "Argon (logic audit 11/07)",
+   "status": "done",
+   "evidence": "True (1R = 5% stop, working stop 0.12R) and already known (ratchet-must-hug-price-in-percent). The cited consequences are mostly moot: ai_dead_reentry_block is False and ai_reentry_min_mfe_r is 0.1R (not 0.5R).",
+   "next": "",
    "blocked_on": "",
    "gates": {},
    "ref": ""
