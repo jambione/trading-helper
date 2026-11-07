@@ -4852,7 +4852,44 @@ def _cap_shelf_under_entry_until_be(out, pos, cfg, be_hit):
     return cap
 
 
+def _peak_lock_stop(pos: dict[str, Any], cfg: dict) -> float | None:
+    """Proportional peak lock (default OFF; Argon's +15..+35 bp dead zone, 11/07).
+
+    Once the high-water mark is at least ``ai_local_trail_peak_lock_from_bp``
+    over the fill, the shelf never sits under entry + frac x (peak - entry),
+    frac = ``ai_local_trail_peak_lock_frac``. Below the +35 bp peak the live
+    trail sits at breakeven (arm 0.06R = +30 bp, peak give 0.35% = 35 bp), so a
+    +28 bp spike can hand back all of it. 0 disables. None when inactive.
+    """
+    try:
+        frac = float(cfg.get("ai_local_trail_peak_lock_frac", 0) or 0)
+        from_bp = float(cfg.get("ai_local_trail_peak_lock_from_bp", 15.0) or 15.0)
+    except (TypeError, ValueError):
+        return None
+    if frac <= 0:
+        return None
+    entry = _num(pos.get("entry_price"))
+    peak = _num(pos.get("peak_price"))
+    last = _trail_last_for_stop(pos)
+    if last is not None and peak is not None:
+        peak = max(float(peak), float(last))
+    if not entry or entry <= 0 or not peak or peak < entry * (1 + from_bp / 1e4) - 1e-9:
+        return None
+    lock = float(entry) + min(1.0, frac) * (float(peak) - float(entry))
+    return math.floor(round(lock * 100.0, 4)) / 100.0
+
+
 def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: float | None = None) -> float | None:
+    """Live shelf plus the optional proportional peak lock (raise-only)."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    out = _local_profit_stop_core(pos, cfg, now=now)
+    lock = _peak_lock_stop(pos, cfg) if bool(cfg.get("ai_local_trail_enabled", True)) else None
+    if lock is None:
+        return out
+    return round(lock, 2) if out is None else max(float(out), round(lock, 2))
+
+
+def _local_profit_stop_core(pos: dict[str, Any], cfg: dict | None = None, *, now: float | None = None) -> float | None:
     """Trail just under the damped last: rises as price grows, never lowers.
 
     ``local_stop = max(prev, last − give, plan floor)``.

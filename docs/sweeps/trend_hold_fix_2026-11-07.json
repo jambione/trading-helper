@@ -12,7 +12,7 @@
   "ai_risk_pct": 1.65
  },
  "name": "trend_hold_fix_2026-11-07",
- "purpose": "Operator 11/07 (Argon's audit, verified in code and outcomes): trail_exit_trend_hold holds ANY trail exit between entry+5 bp and the 5% hard stop while the %R lines are not both falling, so it (a) holds the initial working stop (~0.12R below entry) down toward the hard stop and (b) holds breakeven exits on trades that already ran up. Since 10/08: 194 of 777 trades (25%) went green and ended a loss (mean -11.9 bp); the worst 10% of trades are 75% of the loss and are held longer (393 s vs 175 s). Baseline = the live desk (hold ON). PRIMARY both = ai_trail_exit_trend_hold_floor_initial true AND ai_trail_exit_trend_hold_off_after_peak_bp 15. floor_only and afterpeak_only show which part matters; hold_off (ai_trail_exit_trend_hold false) is the reference. Same SCREEN/CONFIRM bars as every sweep (SCREEN: mean day delta > 0 and >= 60% of days better; CONFIRM: mean > 0, day-t >= 1.5, both halves > 0). VACUITY: the primary must change the exit of at least 10 trades in the screen days (trail:initial_floor / trail:after_peak notes in the replay logs), otherwise VACUOUS. A pass earns a skeptic review and the operator's say, never a live change by itself.",
+ "purpose": "Operator 11/07 (Argon's audit, verified in code and outcomes): trail_exit_trend_hold holds ANY trail exit between entry+5 bp and the 5% hard stop while the %R lines are not both falling, so it (a) holds the initial working stop (~0.12R below entry) down toward the hard stop and (b) holds breakeven exits on trades that already ran up. Since 10/08: 194 of 777 trades (25%) went green and ended a loss (mean -11.9 bp); the worst 10% of trades are 75% of the loss and are held longer (393 s vs 175 s). Baseline = the live desk (hold ON). PRIMARY both = ai_trail_exit_trend_hold_floor_initial true AND ai_trail_exit_trend_hold_off_after_peak_bp 15. floor_only and afterpeak_only show which part matters; hold_off (ai_trail_exit_trend_hold false) is the reference. Same SCREEN/CONFIRM bars as every sweep (SCREEN: mean day delta > 0 and >= 60% of days better; CONFIRM: mean > 0, day-t >= 1.5, both halves > 0). VACUITY: the primary must change the exit of at least 10 trades in the screen days (trail:initial_floor / trail:after_peak notes in the replay logs), otherwise VACUOUS. A pass earns a skeptic review and the operator's say, never a live change by itself. ADDED 11/07 (Argon's +15..+35 bp dead zone, verified in code: be 0.15% = +15 bp, arm 0.06R = +30 bp, peak give 0.35% = 35 bp, idle step 0.05R = +25 bp so one 15 s pause from breakeven overtakes to last; since 10/08 151 trades peaked +15..+35 bp, mean peak +21.5, exit +9.6 gross, 22 ended net losers at -16.8): lock50 = shelf never under entry + 50% of (peak - entry) once peak >= +15 bp; step01 = idle step 0.01R (+5 bp); overtake_off = park at last-1c instead of selling at last; argon_exits = lock50 + step01 + both. Same bars. Slice afterwards (descriptive only): vol_1m_pct > 0.15 trades per variant (Argon's item D).",
  "variants": {
   "both": {
    "live_book": true,
@@ -37,6 +37,35 @@
    "live_book": true,
    "set": {
     "ai_trail_exit_trend_hold": false
+   }
+  },
+  "lock50": {
+   "live_book": true,
+   "set": {
+    "ai_local_trail_peak_lock_frac": 0.5,
+    "ai_local_trail_peak_lock_from_bp": 15.0
+   }
+  },
+  "step01": {
+   "live_book": true,
+   "set": {
+    "ai_local_trail_decay_step_r": 0.01
+   }
+  },
+  "overtake_off": {
+   "live_book": true,
+   "set": {
+    "ai_local_trail_decay_overtake": false
+   }
+  },
+  "argon_exits": {
+   "live_book": true,
+   "set": {
+    "ai_local_trail_peak_lock_frac": 0.5,
+    "ai_local_trail_peak_lock_from_bp": 15.0,
+    "ai_local_trail_decay_step_r": 0.01,
+    "ai_trail_exit_trend_hold_floor_initial": true,
+    "ai_trail_exit_trend_hold_off_after_peak_bp": 15.0
    }
   }
  },
