@@ -11,7 +11,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 | running | 9 |
 | collecting | 5 |
 | blocked | 3 |
-| open | 4 |
+| open | 5 |
 | verdict_fail | 10 |
 | underpowered | 2 |
 | void | 1 |
@@ -27,6 +27,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 - **L2** [open] pre-entry prints can set the peak and arm breakeven - Plausible; '64 prints on tick 1' not confirmed in code. Next: Check against logged peaks before touching anything.
 - **L3** [open] live clamps ai_watch_synth_rr at max(0.25) - Verified: targets under +125 bp cannot be set live. Next: Needed only if X9 passes.
 - **L4** [open] vacuity guard for sweeps - Replay arms can silently not run (X1/X3 floor was a no-op). Next: Add one-day smoke check to sweep_replays.py.
+- **P1** [open] audit control construction in every random-minute study tool; add control-sanity data gate - bar_signal_family's one-sided exclusion inflated same-name controls (+11.6/+27.9 bp vs -7.5 bp for random minutes). board_structure_family (H1/H2) is symmetric (verified). ~20 other tools use random-minute controls and are unaudited: analyst_upgrade, book_walls, clock_windows, daily_filter_screen, early_entry_honest, first_presq_adversarial_argon, five_pillars_study, gate_counterfactual, momentum_alert_markouts, limit_below_study, momentum_runway_study, range_arm_control, runway_target_study, sector_study, sip_breakout_study and others. Next: Read each control builder; list those with one-sided or look-ahead-contaminated exclusion; rerun those with a fixed control; add 'control mean vs plain random-minute mean' as a required data_check output.
 
 ### Gate warnings (pending evidence)
 
@@ -138,6 +139,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 |---|---|---|---|---|
 | L4 | vacuity guard for sweeps | Claude | open | Replay arms can silently not run (X1/X3 floor was a no-op). |
 | A1 | Argon 1R accounting point: R is 500 bp but the working stop is 60 bp | Argon (logic audit 11/07) | done | True (1R = 5% stop, working stop 0.12R) and already known (ratchet-must-hug-price-in-percent). The cited consequences are mostly moot: ai_dead_reentry_block is False and ai_reentry_min_mfe_r is 0.1R (not 0.5R). |
+| P1 | audit control construction in every random-minute study tool; add control-sanity data gate | operator question 11/07 | open | bar_signal_family's one-sided exclusion inflated same-name controls (+11.6/+27.9 bp vs -7.5 bp for random minutes). board_structure_family (H1/H2) is symmetric (verified). ~20 other tools use random-minute controls and are unaudited: analyst_upgrade, book_walls, clock_windows, daily_filter_screen, early_entry_honest, first_presq_adversarial_argon, five_pillars_study, gate_counterfactual, momentum_alert_markouts, limit_below_study, momentum_runway_study, range_arm_control, runway_target_study, sector_study, sip_breakout_study and others. |
 
 ### forward
 
