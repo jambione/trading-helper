@@ -20,6 +20,9 @@ import re
 import statistics as st
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import sys as _sys
+if ROOT not in _sys.path:
+    _sys.path.insert(0, ROOT)   # the new report sections import `tools.*`; this file runs as a script, so tools/ was the only path entry (11/06 fix)
 COST_BP = 3.0
 ET = ZoneInfo("America/New_York")
 
