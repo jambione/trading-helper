@@ -21,8 +21,8 @@ def cfg(**o):
     c = ts.base_cfg(); c.update(o); return c
 
 
-def run(over=None, delay=0.0, prints=None):
-    return ts.sim_trade("T", 100.0, T0, prints or path(), cfg(**(over or {})), delay)
+def run(over=None, delay=0.0, prints=None, t1_delay=0.0):
+    return ts.sim_trade("T", 100.0, T0, prints or path(), cfg(**(over or {})), delay, t1_delay)
 
 
 def test_baseline_exits_and_reports_fields():
@@ -95,9 +95,9 @@ def test_delay_moves_the_market_tranche_sale_but_not_a_resting_limit():
     pr = [(T0 + i, 100.0 + 0.01 * i, 1) for i in range(60)]          # steady climb, never stops out
     mkt = {"ai_watch_synth_rr": 0.003, "ai_watch_synth_scale_out_pct": 50.0}
     lim = {**mkt, "sim_t1_limit": True}
-    a, b = run(mkt, 0.0, pr), run(mkt, 5.0, pr)
+    a, b = run(mkt, 0.0, pr), run(mkt, 0.0, pr, t1_delay=5.0)
     assert a["t1"] and b["t1"]
-    c, d = run(lim, 0.0, pr), run(lim, 5.0, pr)
+    c, d = run(lim, 0.0, pr), run(lim, 0.0, pr, t1_delay=5.0)
     # the market sale happens 5 s later at a HIGHER price on a rising path; the limit sale is the same price either way
     assert b["gross_bp"] > a["gross_bp"] - 1e-9
     t1_gain = lambda r: r["gross_bp"]  # noqa: E731

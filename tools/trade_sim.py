@@ -74,7 +74,7 @@ def clean_prints(pr, bp=BAD_TICK_BP, k=BAD_TICK_SIDE):
 
 
 # ---------------- simulation core (pure given prints + cfg) ----------------
-def sim_trade(sym: str, entry: float, fill_ts: float, prints, cfg: dict, delay: float = 0.0) -> dict | None:
+def sim_trade(sym: str, entry: float, fill_ts: float, prints, cfg: dict, delay: float = 0.0, t1_delay: float = 0.0) -> dict | None:
     """-> {gross_bp, why, hold_s, t1} for one trade. prints: [(ts, px, size)] sorted, from the fill on."""
     import ai_positions as cp
     import replay_session as rs
@@ -114,7 +114,7 @@ def sim_trade(sym: str, entry: float, fill_ts: float, prints, cfg: dict, delay: 
                 p["t1_px"] = float(p["target_1"])                       # resting limit: sells at its price, no latency
             else:                                                       # market sale: the first print `delay` s after the trigger
                 j1 = i
-                while delay > 0 and j1 < n - 1 and pr[j1][0] < ts + delay:
+                while t1_delay > 0 and j1 < n - 1 and pr[j1][0] < ts + t1_delay:
                     j1 += 1
                 p["t1_px"] = float(pr[j1][1])
             p["local_stop_price"] = max(float(p["local_stop_price"]), float(p["entry"]))   # tranche B to breakeven, as live
@@ -180,7 +180,7 @@ def verdict(s, s_delay):
     if s["changed"] < max(10, 0.05 * s["n"]):
         return "VACUOUS", [f"only {s['changed']} of {s['n']} trades changed"]
     c = {"both halves > 0": s["h1"] > 0 and s["h2"] > 0, "day-t >= 2.0": s["t"] >= 2.0, "drop best5 days+top5 names > 0": s["drop"] > 0,
-         "bootstrap p5 > 0": s["p5"] > 0, "1 s delay still > 0": bool(s_delay.get("n")) and s_delay["mean_day"] > 0}
+         "bootstrap p5 > 0": s["p5"] > 0, "1 s tranche-sale delay still > 0": bool(s_delay.get("n")) and s_delay["mean_day"] > 0}
     bad = [k for k, v in c.items() if not v]
     return ("PASS" if not bad else "FAIL"), bad
 
@@ -238,8 +238,10 @@ def run():
         print("no cached prints: run 'fetch' first")
         return 1
 
-    def net(t, pr, over, delay=0.0):
-        r = sim_trade(t["sym"], t["entry"], t["fill_ts"], pr, {**cfg0, **over}, delay)
+    def net(t, pr, over, t1_delay=0.0):
+        # S4 delay stress: only the NEW execution step (the market tranche sale) is delayed. Delaying stop exits in both arms
+        # rewards whichever arm holds more at the stop-out (a later print is usually better than the wick that triggered it).
+        r = sim_trade(t["sym"], t["entry"], t["fill_ts"], pr, {**cfg0, **over}, 0.0, t1_delay)
         return None if r is None else r["gross_bp"] - COST
 
     base = {i: net(t, pr, {}) for i, (t, pr) in enumerate(trades)}
@@ -251,7 +253,7 @@ def run():
              f"{len(trades)} desk entries since {SINCE} with cached post-fill SIP prints (max {HOLD_MAX:.0f} s). Price-only: trend hold OFF in every arm. "
              f"Sim baseline mean net {sum(v for v in base.values() if v is not None) / max(1, sum(1 for v in base.values() if v is not None)):+.2f} bp vs "
              f"logged desk net {sum(live) / len(live):+.2f} bp (the gap is the trend hold, fills and the window). Bad-tick filter dropped {ndrop} of {nall} prints ({100 * ndrop / max(1, nall):.3f}%).", "",
-             "| variant | verdict | n | changed | base -> var net bp | mean day delta | t | halves | drop5 | boot p5 | 1 s delay delta | failed |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| variant | verdict | n | changed | base -> var net bp | mean day delta | t | halves | drop5 | boot p5 | 1 s T1-delay delta | failed |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for name, over in VARIANTS.items():
         rows, rows_d = [], []
         for i, (t, pr) in enumerate(trades):
