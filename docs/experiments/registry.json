@@ -94,7 +94,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): lock50 PASS but marginal: +0.91 bp/trade (t 2.03, halves +1.04/+0.78, drop-5 +0.09, bootstrap p5 +0.29, 1 s delay +0.01). 105 of 776 trades changed (~+8 bp on those). 11/07 CONFOUND (Argon, verified): the peak-lock hold bypass fires for any stop >= entry+1c, which includes the plain breakeven floor, so lock50/argon_exits also switch the trend hold off after breakeven - mixed with X2. Replay results for these two arms are void until the bypass is narrowed and they are rerun.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): lock50 PASS but marginal: +0.91 bp/trade (t 2.03, halves +1.04/+0.78, drop-5 +0.09, bootstrap p5 +0.29, 1 s delay +0.01). 105 of 776 trades changed (~+8 bp on those). 11/07 CONFOUND (Argon, verified): the peak-lock hold bypass fires for any stop >= entry+1c, which includes the plain breakeven floor, so lock50/argon_exits also switch the trend hold off after breakeven - mixed with X2. Replay results for these two arms are void until the bypass is narrowed and they are rerun. 11/07 code review: under a realistic 0.5 s exit latency in both arms the simulated gains vanish (lock50 +0.02, t15_60 -0.07, lim15 th4 -0.35 bp).",
    "next": "Rerun queued on the fixed bypass: docs/sweeps/peak_lock_rerun_2026-11-07.json (starts after the tranche-A replay). Read that, not the trend_hold_fix rows.",
    "blocked_on": "",
    "gates": {
@@ -166,7 +166,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "queued",
-   "evidence": "Replay fixed (tranche B breakeven). Optimistic fill model. Live gaps: rr clamp, market sell, 1R runner trail. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): tranche A: t15_60 +2.31 bp (t 6.05), t20_60 +1.38 (t 4.95), t25_60 +1.01 (t 3.57), positive in both halves, drop-5 and bootstrap p5 positive - but ALL three turn NEGATIVE with the exit delayed 1 s (-0.59/-0.31/-0.09), so the gain depends on selling at the exact target print. Live market sale latency median 0.67 s. S4 FAIL. t20_40 not shown positive.",
+   "evidence": "Replay fixed (tranche B breakeven). Optimistic fill model. Live gaps: rr clamp, market sell, 1R runner trail. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): tranche A: t15_60 +2.31 bp (t 6.05), t20_60 +1.38 (t 4.95), t25_60 +1.01 (t 3.57), positive in both halves, drop-5 and bootstrap p5 positive - but ALL three turn NEGATIVE with the exit delayed 1 s (-0.59/-0.31/-0.09), so the gain depends on selling at the exact target print. Live market sale latency median 0.67 s. S4 FAIL. t20_40 not shown positive. 11/07 code review: under a realistic 0.5 s exit latency in both arms the simulated gains vanish (lock50 +0.02, t15_60 -0.07, lim15 th4 -0.35 bp).",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Runs after X1-X8. A pass means build a live path, not flip a switch.",
    "blocked_on": "",
    "gates": {
@@ -1087,8 +1087,8 @@
    "layer": "process",
    "source": "operator 11/07 (are the tests reliable?)",
    "status": "open",
-   "evidence": "Added after Argon's audit found 5 fidelity bugs in tools/trade_sim.py and a confound in the peak-lock bypass, all in code written and reported the same day. First subject: tools/trade_sim.py.",
-   "next": "Run the skeptic code review on trade_sim.py; fix findings; then rerun S3/S4.",
+   "evidence": "Added after Argon's audit found 5 fidelity bugs in tools/trade_sim.py and a confound in the peak-lock bypass, all in code written and reported the same day. First subject: tools/trade_sim.py. FIRST REVIEW 11/07 (trade_sim.py): NOT YET. Blocking: (1) every positive delta depends on stops filling at the triggering print - with stops delayed 0.5 s in both arms lock50 +0.51 -> +0.02, t15_60 +2.55 -> -0.07, lim15_60_th4 +1.12 -> -0.35 bp; (2) S4 was rewritten after results (bc217e1d: delay only the new step) - a post-hoc pass-bar change; (3) the t*/lim* variants are not settable live (rr clamp max(0.25)) and live T1 is normally a RESTING limit attached at the first 3 s book tick, not a market sale. Major: live re-feeds the last print every 0.25 s (<=15 s old) and uses shelf ring 8; pending tranche sale lost when a stop hits first (25 trades); sim baseline != live (trend hold, dead_trade 52, no_progress 57, double_check 11, left_overbought 7, EOD 7, broker-mark low). Plumbing canary passed exactly (+4.45 vs +4.45 bp on 776 trades).",
+   "next": "Apply every finding, restore the original S4 (all exits 1 s late, both arms), add the three canaries, rerun; then a second review.",
    "blocked_on": "",
    "gates": {},
    "ref": "docs/SIM_STAGE.md"
@@ -1206,6 +1206,18 @@
    },
    "ref": "docs/TEST_SCORECARD_2026-10-23.md",
    "component": true
+  },
+  {
+   "id": "P5",
+   "title": "post-hoc change to a pass bar (S4 delay rule rewritten after results)",
+   "layer": "process",
+   "source": "code review 11/07",
+   "status": "done",
+   "evidence": "SIM_STAGE.md (21656b2b, 08:25, before results) said apply the rule 1 s late; bc217e1d rewrote it to delay only the new execution step after TRADE_SIM.md showed the tranche variants failing only that test. Reverted: S4 = all exits 1 s late in both arms. Rule from now on: a pass-bar change after results is logged here and never applied to the run that prompted it.",
+   "next": "",
+   "blocked_on": "",
+   "gates": {},
+   "ref": "docs/SIM_STAGE.md"
   }
  ]
 }
