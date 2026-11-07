@@ -3775,11 +3775,24 @@ def trail_exit_trend_hold(pos: dict | None, ticker: str, px: float, now: float |
         if hard is not None and px <= hard + 1e-9:
             _dc_note("trail:hard_stop")
             return False                       # the hard stop is absolute
+        # Peak lock (default off): a stop above the fill is a profit lock the trade earned; the hold must not override it
+        # (at +5 bp the lock sits exactly on the band edge and the hold would block it).
+        if float(cfg.get("ai_local_trail_peak_lock_frac", 0) or 0) > 0:
+            lsp = _num(pos.get("local_stop_price"))
+            if lsp is not None and lsp >= entry + 0.01 - 1e-9:
+                _dc_note("trail:peak_lock")
+                return False
         # 11/07 (Argon's audit, both default OFF; replay first): the hold was meant for exits near entry, but as written
         # it also holds the initial working stop (~0.12R below entry) all the way down to the 5% hard stop, and holds a
         # breakeven exit on a trade that already ran up. Two switches narrow it.
         if bool(cfg.get("ai_trail_exit_trend_hold_floor_initial", False)):
             init = _num(pos.get("local_stop_initial"))
+            if init is None:
+                # Positions built outside place_scaled_entry (replay, old state): rebuild the opening working stop.
+                try:
+                    init = _num(initial_local_stop(entry, _risk_basis(pos), cfg, spread_r=_pos_spread_r(pos)))
+                except Exception:  # noqa: BLE001
+                    init = None
             if init is not None and px <= init + 1e-9:
                 _dc_note("trail:initial_floor")
                 return False                   # never hold at or below the working stop the trade was opened with

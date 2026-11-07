@@ -1168,6 +1168,8 @@ class FakeBroker:
         t1_rr = max(0.0, float(cfg.get("ai_watch_synth_rr", 0.6) or 0.0))
         if t1_rr > 0 and float(p["scale"]) > 0 and not p["t1_hit"] and px >= float(p["target_1"]):
             p["t1_hit"], p["t1_r"] = True, t1_rr
+            # Live moves tranche B's stop to breakeven or better when A banks (_runner_stop_level); the replay did not (Argon audit 11/07).
+            p["local_stop_price"] = max(float(p["local_stop_price"]), entry)
         p["peak_price"] = max(float(p.get("peak_price") or entry), px)
         p["mfe_r"] = max(float(p["mfe_r"]), (p["peak_price"] - entry) / risk)
         p["mae_r"] = min(float(p["mae_r"]), (px - entry) / risk)
@@ -2022,7 +2024,7 @@ def open_position(cp, cfg: dict, entry: float, ts: float, stop) -> dict | None:
     t1_rr = max(0.0, float(cfg.get("ai_watch_synth_rr", 0.6) or 0.0))
     scale = max(0.0, min(100.0, float(cfg.get("ai_watch_synth_scale_out_pct", 50.0) or 50.0))) / 100
     return {"entry": entry, "entry_ts": ts, "entry_price": entry, "entry_stop_price": entry - risk,
-            "risk_per_share": risk, "local_stop_price": loc,
+            "risk_per_share": risk, "local_stop_price": loc, "local_stop_initial": loc,
             "target_1": entry + t1_rr * risk if t1_rr > 0 else 0.0, "scale": scale,
             "why_arm": "replay", "peak_price": entry, "mfe_r": 0.0, "mae_r": 0.0,
             "t1_hit": False, "t1_r": None, "trail_prints": [entry], "trail_last": None,
