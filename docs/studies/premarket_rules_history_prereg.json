@@ -19,9 +19,31 @@
  "pass": "STRONG for a rule only if ALL: (1) mean per-day net > 0 with t >= 2.24 (family of two rules, alpha 0.0125); (2) mean per-day net > 0 in BOTH halves; (3) lift vs the random minute > 0 in BOTH halves; (4) at least 100 trades in total and at least 40 per half, else UNDERPOWERED (no verdict; the forward SIP month decides); (5) the pooled net stays > 0 after dropping the best 3 days and, separately, the 3 names with the largest total P&L; (6) under 1.5x the quoted-spread costs the pooled net stays > 0.",
  "void": "More than 25% of name-days dropped for missing bars/quotes (premarket is sparse), or fewer than 20 sessions usable: the study is VOID and is not scored.",
  "fail": "Any other missing condition = FAIL. No other threshold, window, stop or rule is scored as primary.",
- "information_only": ["R3 buy the minute after the alert with a 5-minute hold (the 11/06 rule, net of real spreads)", "holds of 5 and 20 minutes", "share of name-days reaching the entry", "price bands $2-5 / $5-20 / $20+", "never-green share of the entries (peak < fill + 5 bp)", "rules on name-days under $2 (no pass; spreads are huge)"],
+ "information_only": [
+  "R3 buy the minute after the alert with a 5-minute hold (the 11/06 rule, net of real spreads)",
+  "holds of 5 and 20 minutes",
+  "share of name-days reaching the entry",
+  "price bands $2-5 / $5-20 / $20+",
+  "never-green share of the entries (peak < fill + 5 bp)",
+  "rules on name-days under $2 (no pass; spreads are huge)"
+ ],
  "if_pass": "result-skeptic review; then it earns the paid SIP month as a FORWARD DRY-RUN of the same rule on live prints (never live money without a separate approval). A fail closes premarket-on-history and the SIP month is not justified by this study.",
- "caveats": ["The alert timestamps are OCR capture times; t0 can lag the true alert.", "Historical prints are consolidated SIP; a live order needs real-time SIP, which is why a pass only earns a forward test.", "One regime (mid-Sept to early Nov 2026)."],
+ "caveats": [
+  "The alert timestamps are OCR capture times; t0 can lag the true alert.",
+  "Historical prints are consolidated SIP; a live order needs real-time SIP, which is why a pass only earns a forward test.",
+  "One regime (mid-Sept to early Nov 2026)."
+ ],
  "tool": "tools/studies/premarket_rules_history.py (built after this file is committed and a result-skeptic READY; may not change anything above)",
- "status": "READY, skeptic review pending"
+ "status": "READY, skeptic review pending",
+ "amended": {
+  "when": "2026-11-07 ~04:30 ET, after result-skeptic round 1 FIX FIRST (8 findings), before any code or data pull.",
+  "1_timing_dst": "Replaces the price-at-t0 line: price at t0 = the close of the last bar whose start + 60 s <= t0 (at most 5 minutes old). All clock times are converted with America/New_York per timestamp (the sample spans the 11/01 DST change); the tool asserts that each alert line's `et` field equals the converted `ts`. R1/R2 may use only bars with start + 60 s <= the decision instant.",
+  "2_alert_definition": "Replaces the name-day definition: t0 is the first alert for a symbol in the session, dropped (and counted) if it falls within 10 minutes of that session's first capture line, or if the same symbol appeared in the previous session's last 30 minutes of captures. t0 must be >= 05:00 ET so the 60-minute lookback is real, and <= 09:15. The `burst` field is not used for selection. Information cell: lag proxy = minutes from t0 back to the first bar with volume >= 5x its prior-15-bar median.",
+  "3_fills": "The stop fills at min(stop, that bar's open); the fill bar's own low counts as a stop trigger if it is <= the stop. If the trigger bar's low <= L0 (R1) or <= range low x 0.995 (R2), the setup is cancelled (same-bar ties cancel). The exit is at the close of the bar starting at fill + 10 minutes, capped so the exit bar starts no later than 09:24; if that bar is absent, the exit is the open of the next existing bar; a stale close is never used. A fill requires the fill bar's volume >= 200 shares and >= $2,000, else the trade is dropped and counted.",
+  "4_cost": "A trade is dropped only for ENTRY-quote sparsity (< 20 usable quotes in the 60 s before the fill minute; known at decision time). A sparse EXIT uses an exit half-spread of max(entry half-spread, 50 bp) (a 100 bp quoted spread). The 1.5x test applies to all spread components including the 5 bp floor; a 2x cell is information only.",
+  "5_control": "Replaces the control: 20 random minutes per name-day, each drawn uniformly from [t0 + 5 min, t0 + 60 min], before 09:15 and within +-30 minutes of the rule's own fill clock time, entry at the next bar open, same exit and costs; the 20 are averaged per name-day. Lift is computed on name-days where the rule traded. Seed: sha256(symbol|day|'PM-rand'|k).",
+  "6_statistics": "Replaces the 2.24 bar: pass needs t >= the Student-t critical value at one-sided 0.0125 with df = (days with a trade) - 1. Order of evaluation: VOID, then UNDERPOWERED (n < 100 trades total or < 40 in either half; no verdict), then FAIL, then STRONG. Before scoring the tool reports the per-trade SD and MDE = 2.4 x SD / sqrt(n_days).",
+  "7_clustering_and_multiplicity": "One position per name-day per rule. Pooled and per-half tests also report a name-clustered t (cluster by symbol) and a pass needs BOTH clusterings to meet the bar. Information cells (R3, 5/20-minute holds, price bands, sub-$2) can never promote a pass or justify the SIP spend. Disclosed: the long side was chosen after the 11/06 look at this same sample showed a fade.",
+  "8_void_denominator": "Denominator = all first-alert name-days that are stocks, >= $2, with 05:00 <= t0 <= 09:15. Every exclusion (ETF, < 15 bars, stale t0, no quotes, no fill bar, no exit) is reported in a drop table. The study is VOID if bar or quote drops exceed 25% of that denominator. The count of dropped trades is reported per rule."
+ }
 }
