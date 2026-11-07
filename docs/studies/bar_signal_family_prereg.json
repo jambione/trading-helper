@@ -5,10 +5,10 @@
  "family": "4 hypotheses, alpha 0.05/4 = 0.0125 per hypothesis; critical t from scipy t.ppf(1-0.0125, df) one-sided on per-day means",
  "data": "ai_reports/warehouse/sip/DAY.npz, 120 sessions 2026-04-27..2026-10-15, regular-session 1-minute SIP bars. Universe per day = top 400 by prior-session dollar volume, $10-$500 at the 09:30 open (as in board_structure_family). Halves by date at the median scored session. Trades: buy at the open of the bar after the trigger bar, sell at the close of the 10th bar after entry, 6 bp round trip, one trigger per name per 30 minutes, entries 09:45-15:30 unless stated.",
  "V1_volume_clock_pctR": {
-  "definition": "Volume bars per name-day: size = median daily volume of the previous 20 sessions / 100; a minute is assigned whole to the volume bar in which cumulative volume crosses a multiple of the size (declared approximation). %R(21) smoothed with ewm span 7 on volume-bar closes (the live formulas, signals.py), versus the same %R on 1-minute bars (time clock).",
-  "trigger": "Smoothed %R was <= -80 at some point in the last 5 clock units and is now >= -50 (leaving oversold). Evaluated at each minute close using the latest completed volume bar.",
-  "controls": "(a) same name, a random minute in the same clock hour (+-30), more than 15 min from any trigger, 5 draws averaged; (b) the TIME-clock trigger with the identical rule, same trade.",
-  "pass": "ALL: net > 0 with day-clustered t >= critical; > 0 in both halves; lift vs control (a) > 0 in both halves, pooled t >= 1.65; lift vs the time-clock trigger > 0 in both halves; pooled net > 0 after dropping best 5 days and the 5 largest-P&L names; > 0 at 10 bp; >= 300 triggers and 100 per half else UNDERPOWERED.",
+  "definition": "Cumulative volume restarts at 09:30 each day (RTH only, no pre-market, no overnight carry). Size = median daily volume of the previous 20 sessions (strictly earlier) / 100. A volume bar closes at the first minute whose cumulative volume reaches the next multiple of size; its O/H/L/C are taken over its minutes up to and including that crossing minute. At minute t only bars whose crossing minute is <= t are used. %R(21), ewm span 7 (live formulas, signals.py) on volume-bar closes/highs/lows; the time-clock version is the same on 1-minute bars. The %R state is carried forward to every minute (one value per minute). No trigger before 21 volume bars (21 minutes for the time clock) have completed in the session.",
+  "trigger": "Smoothed %R was <= -80 at some point in the last 5 units of that clock (5 volume bars for the volume clock, 5 one-minute bars for the time clock) and is now >= -50. Evaluated at the close of minute t; entry is the open of t+1.",
+  "controls": "(a) same name, random minute in the same clock hour (+-30), 5 draws; (b) the time-clock trigger, matched: for each volume-clock trigger the time-clock comparison uses the same name, same day, time-clock triggers within +-30 minutes, and the lift is also reported on non-overlapping triggers only; information cells: triggers in the volume clock only and in the time clock only; (c) condition-matched: a random minute, same name-day, same hour, where smoothed %R (volume clock) was <= -80 within the last 5 units but the rest of the trigger is absent.",
+  "pass": "ALL: net > 0 with t >= critical; > 0 in both halves; lift vs (a) and vs (c) > 0 in both halves with pooled t >= critical; lift vs the time-clock trigger (b) > 0 in both halves; pooled net > 0 after dropping the best 5 days and the 5 largest-P&L names; the binding 10 bp case; count rules in common.",
   "information": [
    "volume bar size /50 and /200",
    "oversold level -90 and -70",
@@ -16,9 +16,9 @@
   ]
  },
  "K_absorption_bar": {
-  "trigger": "Bar t: volume >= 3x the median of the previous 20 bars; range (high-low) <= 0.5x the median range of the previous 20 bars; low is the lowest low of the last 15 bars; close in the upper half of the bar; 15-bar return before the bar <= -30 bp.",
-  "controls": "(a) same-name random minute same hour (5 draws); (b) same minute, a random universe stock with a 15-bar return <= -30 bp and no volume/range condition, same trade.",
-  "pass": "same six conditions as V1 (lift tested against both controls)",
+  "trigger": "Measured at the close of bar t (no look-ahead): median volume and median range are over bars t-20..t-1 (20 bars required, so no trigger before 09:50; median volume > 0 and median range > 0 required). Volume(t) >= 3x median volume; range(t) <= 0.5x median range; low(t) is the lowest low of bars t-14..t; close in the upper half of bar t; the 15-bar return before the bar, close(t-1)/close(t-16) - 1, <= -30 bp.",
+  "controls": "(a) same-name random minute same hour, 5 draws; (b) same minute, a random universe stock with close(t-1)/close(t-16)-1 <= -30 bp and no volume/range condition; (c) same name-day, same hour, a minute with the -30 bp prior drop and a 15-bar low but not the volume/range condition.",
+  "pass": "as V1 with lifts vs (a), (b), (c) all > 0 in both halves and pooled t >= critical",
   "information": [
    "volume multiple 2x and 4x",
    "range multiple 0.35 and 0.7",
@@ -26,18 +26,18 @@
   ]
  },
  "W_opening_washout": {
-  "trigger": "Between 09:30 and 09:44 the stock trades at least 100 bp below its 09:30 open at some point (washout). The first bar from 09:45 to 10:30 that closes back above the 09:30 open is the trigger. One per name per day.",
-  "controls": "(a) same name, a random minute 09:45-10:30 on the same day that is not a trigger (5 draws); (b) a random universe stock at the same minute that did not wash out, same trade.",
-  "pass": "same six conditions as V1; exits at 10 bars",
+  "trigger": "Open = the open of the first 09:30 bar. Washout = the LOW of some bar from 09:30 to 09:44 is >= 100 bp below that open, AND the close of the 09:44 bar is still below the open (still under water at the end of the washout window). Trigger = the first bar from 09:45 to 10:30 that closes back above the open; entry at the next open (last possible entry 10:31). One per name per day. Exit at 10 bars, as in the common trade statement.",
+  "controls": "(a) same name-day (a name that washed out), a random minute after the 09:44 bar and before 10:30 that is not the trigger and not inside the hold window, 5 draws; (b) same minute as the trigger, a random universe stock that did NOT wash out (never 100 bp below its open in 09:30-09:44) and is below its open at 09:44; both lifts required.",
+  "pass": "as V1 with lifts vs (a) and (b) > 0 in both halves",
   "information": [
    "washout depth 50 and 150 bp",
    "exit at 3 and 30 bars"
   ]
  },
  "D_dwell_knock": {
-  "trigger": "Level = highest high of bars t-30..t-3. Knocks = distinct bars among t-30..t-3 whose high is within 5 bp of the level, counted only if separated from the previous knock by >= 2 bars and a pullback of >= 10 bp in between. Trigger at the close of bar t when close > level and knocks >= 3.",
-  "controls": "(a) same-name random minute same hour (5 draws); (b) matched breakouts of the same level with knocks <= 1, same trade (isolates the knock count).",
-  "pass": "same six conditions as V1, with control (b) lift mandatory in both halves",
+  "trigger": "Level = highest high of bars t-30..t-3 (earliest trigger 10:00; 28 bars required). The bar that set the level counts as knock 1. A later knock is a bar in t-30..t-3 whose high is within 5 bp of the level, >= 2 bars after the previous knock, with the lowest low between the two knock bars at least 10 bp below the level. Trigger at the close of bar t when close(t) > level and knocks >= 3; entry at the next open.",
+  "controls": "(a) same-name random minute same hour, 5 draws; (b) same name, same day, any breakout bar (close > highest high of t-30..t-3) with knocks <= 1, within +-30 minutes of the trigger hour, dedupe applied, 5 draws averaged; (b) needs >= 100 control events overall or the lift is NOT TESTED (not a pass).",
+  "pass": "as V1; lift vs (b) mandatory in both halves",
   "information": [
    "knocks >= 2 and >= 4",
    "tolerance 3 and 8 bp",
@@ -46,5 +46,21 @@
  },
  "if_pass": "A pass earns a result-skeptic review and a forward test on IEX, never a live change.",
  "tool": "tools/studies/bar_signal_family.py (to be built; one read, no retuning); report docs/BAR_SIGNAL_FAMILY.md",
- "status": "registered, awaiting skeptic round 1"
+ "status": "registered, awaiting skeptic round 2",
+ "original_v1_registered": "2026-11-07 (first draft kept in git history, commit 'bar_signal_family prereg')",
+ "common": {
+  "universe": "As data line, plus: exclude ETFs/levered products (is_not_stock rule used in board_structure_family); prior session = the preceding weekday in the warehouse file list; a name-day needs 20 prior sessions in the warehouse; bars are RTH SIP 1-minute from the same file for every measure.",
+  "dedupe": "Applied BEFORE controls are drawn. The first trigger per name is kept; the 30-minute clock restarts only from a kept trigger. Suppressed trigger bars and all bars inside any kept trade's 10-bar hold window are ineligible as control draws for that name-day.",
+  "seeds": "Control draws use a seed = sha256(sym|day|label|k) (as in board_structure_family). A name-day with no eligible control minute contributes no control and no trigger to the lift. Lifts are computed on days that have both triggers and controls.",
+  "day_rules": "Per-day means exclude days with no trigger (not counted as zero). Need >= 60 scored days with at least one trigger and >= 25 per half, plus >= 300 triggers and >= 100 per half, else UNDERPOWERED.",
+  "void": "VOID if > 10% of triggers cannot get a control draw, or if the volume-bar size is undefined for > 10% of name-days, or if a unit test of the trigger on a planted series fails.",
+  "verdict_order": "VOID, UNDERPOWERED, FAIL, PASS.",
+  "critical": "Primary net-bp test uses t >= scipy t.ppf(1-0.05/4, days-1) (one-sided, family of 4). Lifts use the SAME family critical value, not 1.65.",
+  "information_cells": "Descriptive only. They never promote a pass or change a verdict. A pass at an information cell and not at the primary cell is a FAIL. The primary cell is the value written in the trigger, not the best variant. Family size stays 4; information cells do not reduce the bar.",
+  "sip_only": "A PASS is SIP-only until it replicates on warehouse/iex and in a forward IEX test; neither is a live change.",
+  "binding_cost": "The 10 bp case is binding: net > 0 and lift > 0 at 10 bp, both halves."
+ },
+ "amended": {
+  "2026-11-07": "Skeptic round 1 (14 findings, 6 blocking) applied: volume-bar closing rule and clock units (1,2), warm-up and 20-session requirement (3), matched-hour clock control and condition-matched controls (4,5), seeds and empty-draw handling (5), family critical value for lifts and information-cell rule (6,14), K/D/W definitions pinned (7,9,10), dedupe before controls (8), day-count rules (11), common block with VOID, verdict order, SIP-only caveat (12)."
+ }
 }
