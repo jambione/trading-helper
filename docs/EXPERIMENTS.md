@@ -70,6 +70,18 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 - **C5** [blocked] flow compression (spread squeezed to 1 cent + buyer flow) - Gross +4.8 bp; lift +13.38 bp vs uncompressed control (t >15) but that lift is mostly cost saved, not direction. Net -2.68 bp.
 - **C6** [verdict_edge] overnight S2 ranking (2000-2015) - EDGE gross: +8.6 bp, t 9.7 (10/4). Hedged alpha unproven (mostly beta), and the overnight book is retired (10/29). Kept on the list for completeness.
 
+## Prediction ledger (docs/experiments/predictions.json)
+
+| forecaster | made | resolved | correct | hit rate |
+|---|---|---|---|---|
+| Claude | 5 | 0 | 0 | - |
+
+- **PR1** (Claude) X3 trend-hold 'both' (floor at opening stop + off after +15 bp peak), session replay screen: expects screen DROP or a delta within +-10 bp/day; does not reach confirm (open)
+- **PR2** (Claude) X1 floor_only, session replay screen: expects small positive day delta (cuts the -70..-80 bp tail) but fewer than 60% of days better (open)
+- **PR3** (Claude) X5 lock50 rerun on the fixed bypass, session replay: expects DROP at the screen (the trade sim showed +0.11 bp at realistic latency) (open)
+- **PR4** (Claude) H1 peer lead-lag rerun with later-only controls: expects still FAIL on absolute net; lift vs same-name control moves toward zero (open)
+- **PR5** (Claude) broker truth: week of 2026-11-09 net bp per round trip: expects between -8 and 0 bp (same range as the last five weeks) (open)
+
 ## Not started
 
 - **N5** sector-ETF lead-lag (SMH, IBIT, IGV, XBI, URA) (Argon) - ETF bars fetched (12 ETFs, 120 days). No prereg yet. Next: Write prereg, skeptic review, build.

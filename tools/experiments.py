@@ -94,6 +94,16 @@ def board(data):
     lines += ["", "## Components (real edges, not profitable alone - kept for combining; docs/TEST_STANDARD.md)", ""]
     for r in comp:
         lines.append(f"- **{r['id']}** [{r['status']}] {r['title']} - {r['evidence']}")
+    pf = REG.parent / "predictions.json"
+    if pf.exists():
+        pr = json.loads(pf.read_text()).get("items", [])
+        lines += ["", "## Prediction ledger (docs/experiments/predictions.json)", "", "| forecaster | made | resolved | correct | hit rate |", "|---|---|---|---|---|"]
+        for who in sorted({x["who"] for x in pr}):
+            mine = [x for x in pr if x["who"] == who]
+            res = [x for x in mine if x.get("resolved")]
+            ok_n = sum(1 for x in res if x.get("correct"))
+            lines.append(f"| {who} | {len(mine)} | {len(res)} | {ok_n} | {'-' if not res else f'{100 * ok_n / len(res):.0f}%'} |")
+        lines += [""] + [f"- **{x['id']}** ({x['who']}) {x['test']}: expects {x['expect']}" + (f" -> {'RIGHT' if x.get('correct') else 'WRONG'}: {x['resolved']}" if x.get("resolved") else " (open)") for x in pr]
     pend = [r for r in items if r["status"] == "idea"]
     lines += ["", "## Not started", ""]
     for r in pend:
