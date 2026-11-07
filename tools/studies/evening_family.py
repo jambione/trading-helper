@@ -85,6 +85,12 @@ def later_minutes(t, H, trig):
     return [m for m in range(max(FIRST, t + H + 2), min(LAST, t + H + 62) + 1) if all(not (x <= m <= x + H + 1) for x in trig if x <= m)]
 
 
+def primary_pool(candidates, trig, t, me, exclude=()):
+    """Same-minute control pool: other instruments that did NOT trigger in [t-15, t] (known at the decision minute). Triggers after t are
+    future information and are never used (round-2 look-ahead fix)."""
+    return [m for m in candidates if m != me and m not in exclude and not any(t - 15 <= x <= t for x in trig.get(m, []))]
+
+
 def betas_and_residuals(hist, names):
     """beta vs SPY over the previous sessions (09:35 on) and the residual return matrix rows, keyed by name. hist days must carry SPY."""
     R, S = {n: [] for n in names}, []
@@ -242,7 +248,7 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
                 if net is None:
                     stats["skipped"] += 1
                     continue
-                pool = [m for m in names if m != n and not any(t - 15 <= x <= t for x in trig[m])]
+                pool = primary_pool(names, trig, t, n)
                 xs = [trade(A[m]["o"], A[m]["c"], t, 5, COST) for m in _draw_xs(seeded(n, d, "S-a", t), pool)]
                 xs = [x for x in xs if x is not None]
                 lm = later_minutes(t, 5, trig[n])
@@ -274,7 +280,7 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
                     if net is None:
                         stats["skipped"] += 1
                         continue
-                    pool = [m for m in trig[L] if m != n and not any(t - 15 <= x <= t for x in trig[L][m])]
+                    pool = primary_pool(list(trig[L]), trig[L], t, n)
                     xs = [trade(A[m]["o"], A[m]["c"], t, 10, COST) for m in _draw_xs(seeded(n, d, f"{key}-a", t), pool)]
                     xs = [x for x in xs if x is not None]
                     lm = later_minutes(t, 10, ts)
@@ -313,7 +319,7 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
                         stats["skipped"] += 1
                         continue
                     dup = {'SMH': 'SOXX', 'SOXX': 'SMH'}.get(x)
-                    pool = [y for y in E if y != x and y != dup and not any(t - 15 <= z <= t for z in trig.get(y, []))]
+                    pool = primary_pool(list(E), trig, t, x, exclude=(dup,))
                     xs = [trade(E[y]["o"], E[y]["c"], t, 5, (costs or {}).get(y, {}).get("rt_bp") or 2.0) for y in _draw_xs(seeded(x, d, "E-a", t), pool)]
                     xs = [z for z in xs if z is not None]
                     lm = later_minutes(t, 5, ts)
