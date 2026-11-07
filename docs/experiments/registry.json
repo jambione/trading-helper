@@ -218,16 +218,16 @@
    "title": "V1 volume-clock %R",
    "layer": "entry",
    "source": "Argon",
-   "status": "blocked",
-   "evidence": "Corrected-controls run 08:2x: V1 net -4.52 bp (t -4.12, both halves negative), so it fails on absolute net regardless of controls. Lifts vs same-name later-only ca +1.85 (t 1.69) and cross-name cd +1.20 (t 1.49), both below the 2.28 bar. Lift vs cb (-24.8) is void: cb contaminated (Argon found it; the control-sanity line showed +22.4 bp). Verdict expected to stay FAIL; waiting for the clean cb.",
-   "next": "Read the rerun; confirm cb mean is near -6 bp, then close as verdict_fail.",
-   "blocked_on": "V1 control cb (time-clock trigger, +-30 min) was contaminated: mean +22.4 bp vs -6.2 bp baseline; patched to later-only, rerun started",
+   "status": "verdict_fail",
+   "evidence": "Clean-control rerun 09:00: all control means sane (ca -6.01, cd -4.81, cb -6.49 vs baseline -6.21). V1 net -4.52 bp (t -4.12, both halves negative); lifts vs ca +1.85 (t 1.69), cd +1.20 (t 1.49), both under the 2.28 bar; vs cb -7.72 (t -2.36). FAIL.",
+   "next": "",
+   "blocked_on": "",
    "gates": {
     "prereg": true,
     "skeptic": true,
     "tool": true,
     "smoke": "planted-series tests only",
-    "data_check": false
+    "data_check": true
    },
    "ref": "docs/studies/bar_signal_family_prereg.json"
   },

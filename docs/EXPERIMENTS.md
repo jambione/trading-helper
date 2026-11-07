@@ -10,9 +10,9 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 | queued | 1 |
 | running | 8 |
 | collecting | 5 |
-| blocked | 2 |
+| blocked | 1 |
 | open | 6 |
-| verdict_fail | 12 |
+| verdict_fail | 13 |
 | underpowered | 2 |
 | void | 1 |
 | done | 4 |
@@ -21,7 +21,6 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 ## Needs attention
 
 - **X10** [blocked] %R fast length 10 and half smoothing (rte_len, 2 arms) - Finished 05:20 but VACUOUS: len10 and half_both are identical to baseline (5 screen days, 133 -> 133 trades, net +0.3 -> +0.3, day delta +0). A different %R length cannot change nothing. The knob is read by live code (ai_entry_watch _rte_fast_length), so the replay probably serves %R from recorded dashboard/engine state instead of recomputing from bars (unproven). Next: Find out why the override has no effect; if the replay cannot recompute %R, test %R length on the SIP warehouse instead. (blocked on: vacuous sweep: need a replay path that recomputes %R from bars, or a historical %R study on the warehouse)
-- **N1** [blocked] V1 volume-clock %R - Corrected-controls run 08:2x: V1 net -4.52 bp (t -4.12, both halves negative), so it fails on absolute net regardless of controls. Lifts vs same-name later-only ca +1.85 (t 1.69) and cross-name cd +1.20 (t 1.49), both below the 2.28 bar. Lift vs cb (-24.8) is void: cb contaminated (Argon found it; the control-sanity line showed +22.4 bp). Verdict expected to stay FAIL; waiting for the clean cb. Next: Read the rerun; confirm cb mean is near -6 bp, then close as verdict_fail. (blocked on: V1 control cb (time-clock trigger, +-30 min) was contaminated: mean +22.4 bp vs -6.2 bp baseline; patched to later-only, rerun started)
 - **L1** [open] stop built from planned entry, not the fill - Slippage since 10/26: mean +4.5 bp, median +2.3, 30% beyond 5 bp (n 1747) on a ~60 bp stop. Next: Candidate live change; needs the operator's say.
 - **L2** [open] pre-entry prints can set the peak and arm breakeven - Plausible; '64 prints on tick 1' not confirmed in code. Next: Check against logged peaks before touching anything.
 - **L3** [open] live clamps ai_watch_synth_rr at max(0.25) - Verified: targets under +125 bp cannot be set live. Next: Needed only if X9 passes.
@@ -93,7 +92,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 
 | id | idea | source | status | evidence |
 |---|---|---|---|---|
-| N1 | V1 volume-clock %R | Argon | blocked | Corrected-controls run 08:2x: V1 net -4.52 bp (t -4.12, both halves negative), so it fails on absolute net regardless of controls. Lifts vs same-name later-only ca +1.85 (t 1.69) and cross-name cd +1.20 (t 1.49), both below the 2.28 bar. Lift vs cb (-24.8) is void: cb contaminated (Argon found it; the control-sanity line showed +22.4 bp). Verdict expected to stay FAIL; waiting for the clean cb. |
+| N1 | V1 volume-clock %R | Argon | verdict_fail | Clean-control rerun 09:00: all control means sane (ca -6.01, cd -4.81, cb -6.49 vs baseline -6.21). V1 net -4.52 bp (t -4.12, both halves negative); lifts vs ca +1.85 (t 1.69), cd +1.20 (t 1.49), both under the 2.28 bar; vs cb -7.72 (t -2.36). FAIL. |
 | N2 | K absorption bar | Argon | underpowered | 101 triggers, needs 300. Not a verdict on the idea. Corrected-controls rerun: still 101 triggers; net -15.6 bp. Not a verdict on the idea. |
 | N3 | W opening washout | Argon | verdict_fail | Corrected controls (later-only ca -7.75, cross-name cb -4.48; baseline -6.21): net -12.28 bp (t -3.96, both halves negative), lifts vs ca -4.0 (t -1.14) and vs cb -5.7 (t -1.63). FAIL. |
 | N4 | D dwell/knock | Argon | verdict_fail | Corrected controls (ca -6.60, cb first-try breakouts -6.09, cd cross-name -5.99; baseline -6.21): net -6.12 bp (t -22), lifts vs all three about zero (+0.58 t 2.09, +0.51 t 1.02, +0.05 t 0.19). Multi-knock breakouts are indistinguishable from random minutes and from first-try breakouts. FAIL. |
