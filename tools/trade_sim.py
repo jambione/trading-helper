@@ -41,12 +41,38 @@ VARIANTS = {
 }
 
 
+# ---------------- print hygiene ----------------
+BAD_TICK_BP = 50.0
+BAD_TICK_SIDE = 5
+
+
+def clean_prints(pr, bp=BAD_TICK_BP, k=BAD_TICK_SIDE):
+    """Drop ISOLATED bad ticks: a print more than `bp` from the median of the k prints before AND the median of the k after,
+    on the same side. A real gap (prints before at the old level, prints after at the new one) is kept. -> (clean, dropped)."""
+    import statistics
+    n = len(pr)
+    if n < 2 * k + 1:
+        return list(pr), 0
+    px = [float(x[1]) for x in pr]
+    keep, dropped = [], 0
+    for i in range(n):
+        lo, hi = px[max(0, i - k):i], px[i + 1:i + 1 + k]
+        if len(lo) >= 3 and len(hi) >= 3:
+            ml, mh = statistics.median(lo), statistics.median(hi)
+            dl, dh = (px[i] / ml - 1) * 1e4, (px[i] / mh - 1) * 1e4
+            if (dl > bp and dh > bp) or (dl < -bp and dh < -bp):
+                dropped += 1
+                continue
+        keep.append(pr[i])
+    return keep, dropped
+
+
 # ---------------- simulation core (pure given prints + cfg) ----------------
 def sim_trade(sym: str, entry: float, fill_ts: float, prints, cfg: dict, delay: float = 0.0) -> dict | None:
     """-> {gross_bp, why, hold_s, t1} for one trade. prints: [(ts, px, size)] sorted, from the fill on."""
     import ai_positions as cp
     import replay_session as rs
-    pr = [x for x in prints if x[0] >= fill_ts - 1e-9]
+    pr, _drop = clean_prints([x for x in prints if x[0] >= fill_ts - 1e-9])
     if len(pr) < 2 or entry <= 0:
         return None
     p = rs.open_position(cp, cfg, float(entry), float(fill_ts), None)
@@ -204,10 +230,12 @@ def run():
     base = {i: net(t, pr, {}) for i, (t, pr) in enumerate(trades)}
     base_d = {i: net(t, pr, {}, 1.0) for i, (t, pr) in enumerate(trades)}
     live = [x["net_bp"] - COST for x, _ in trades]
+    ndrop = sum(clean_prints([x for x in pr if x[0] >= t["fill_ts"] - 1e-9])[1] for t, pr in trades)
+    nall = sum(len(pr) for _, pr in trades)
     lines = [f"# S3/S4 trade simulation (tools/trade_sim.py), {datetime.now(ET):%Y-%m-%d %H:%M} ET", "",
              f"{len(trades)} desk entries since {SINCE} with cached post-fill SIP prints (max {HOLD_MAX:.0f} s). Price-only: trend hold OFF in every arm. "
              f"Sim baseline mean net {sum(v for v in base.values() if v is not None) / max(1, sum(1 for v in base.values() if v is not None)):+.2f} bp vs "
-             f"logged desk net {sum(live) / len(live):+.2f} bp (the gap is the trend hold, fills and the window).", "",
+             f"logged desk net {sum(live) / len(live):+.2f} bp (the gap is the trend hold, fills and the window). Bad-tick filter dropped {ndrop} of {nall} prints ({100 * ndrop / max(1, nall):.3f}%).", "",
              "| variant | verdict | n | changed | base -> var net bp | mean day delta | t | halves | drop5 | boot p5 | 1 s delay delta | failed |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for name, over in VARIANTS.items():
         rows, rows_d = [], []

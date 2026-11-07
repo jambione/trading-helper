@@ -64,3 +64,20 @@ def test_vacuous_when_nothing_changes():
     rows = [{"day": f"2026-10-{10 + i // 6:02d}", "sym": "S", "base": 1.0, "var": 1.0} for i in range(120)]
     s = ts.compare(rows, boots=200)
     assert ts.verdict(s, s)[0] == "VACUOUS"
+
+
+def test_isolated_bad_tick_is_dropped_but_a_real_gap_is_kept():
+    base = [(T0 + i, 100.0, 1) for i in range(20)]
+    bad = list(base); bad[10] = (T0 + 10, 90.0, 1)                 # -1000 bp for one print
+    cleaned, n = ts.clean_prints(bad)
+    assert n == 1 and all(p[1] == 100.0 for p in cleaned)
+    gap = [(T0 + i, 100.0 if i < 10 else 98.0, 1) for i in range(20)]   # real gap down, stays down
+    cleaned, n = ts.clean_prints(gap)
+    assert n == 0 and len(cleaned) == 20
+
+
+def test_bad_tick_no_longer_stops_the_trade_out():
+    pr = [(T0 + i, 100.0, 1) for i in range(30)]
+    pr[15] = (T0 + 15, 91.0, 1)
+    r = run(prints=pr)
+    assert r["why"] == "window_end" and abs(r["gross_bp"]) < 1.0
