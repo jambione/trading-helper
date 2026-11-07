@@ -52,25 +52,35 @@ BAD_TICK_BP = 50.0
 BAD_TICK_SIDE = 5
 
 
-def clean_prints(pr, bp=BAD_TICK_BP, k=BAD_TICK_SIDE):
-    """Drop ISOLATED bad ticks: a print more than `bp` from the median of the k prints before AND the median of the k after,
-    on the same side. A real gap (prints before at the old level, prints after at the new one) is kept. -> (clean, dropped)."""
+def clean_prints(pr, bp=300.0, k=BAD_TICK_SIDE):
+    """Drop impossible prints using ONLY the past: a print more than `bp` (default 300 bp) from the median of the previous
+    k prints. Backward-looking (11/07 audit: the two-sided version used future prints). Real 50-150 bp spikes are kept;
+    the 900 bp erroneous prints that faked stop-outs are dropped. -> (clean, dropped)."""
     import statistics
-    n = len(pr)
-    if n < 2 * k + 1:
-        return list(pr), 0
-    px = [float(x[1]) for x in pr]
     keep, dropped = [], 0
-    for i in range(n):
-        lo, hi = px[max(0, i - k):i], px[i + 1:i + 1 + k]
-        if len(lo) >= 3 and len(hi) >= 3:
-            ml, mh = statistics.median(lo), statistics.median(hi)
-            dl, dh = (px[i] / ml - 1) * 1e4, (px[i] / mh - 1) * 1e4
-            if (dl > bp and dh > bp) or (dl < -bp and dh < -bp):
+    raw = [float(y[1]) for y in pr]
+    for i, x in enumerate(pr):
+        prev = raw[max(0, i - k):i]       # previous RAW prints: a genuine gap is accepted once it is the majority
+        if len(prev) >= 3:
+            m = statistics.median(prev)
+            if abs(float(x[1]) / m - 1) * 1e4 > bp:
                 dropped += 1
                 continue
-        keep.append(pr[i])
+        keep.append(x)
     return keep, dropped
+
+
+def tick_series(pr, tick=0.25):
+    """The desk acts on the LAST print at each shelf tick (ai_shelf_tick_sec 0.25 s), not on every SIP print: keep the last
+    print of each `tick`-second bucket."""
+    out = []
+    for x in pr:
+        b = int(float(x[0]) // tick)
+        if out and int(float(out[-1][0]) // tick) == b:
+            out[-1] = x
+        else:
+            out.append(x)
+    return out
 
 
 # ---------------- simulation core (pure given prints + cfg) ----------------
@@ -79,6 +89,7 @@ def sim_trade(sym: str, entry: float, fill_ts: float, prints, cfg: dict, delay: 
     import ai_positions as cp
     import replay_session as rs
     pr, _drop = clean_prints([x for x in prints if x[0] >= fill_ts - 1e-9])
+    pr = tick_series(pr, float(cfg.get("ai_shelf_tick_sec", 0.25) or 0.25))
     if len(pr) < 2 or entry <= 0:
         return None
     p = rs.open_position(cp, cfg, float(entry), float(fill_ts), None)
@@ -108,16 +119,21 @@ def sim_trade(sym: str, entry: float, fill_ts: float, prints, cfg: dict, delay: 
             return finish(i, "local_trail")
         t1_rr = max(0.0, float(cfg.get("ai_watch_synth_rr", 0.6) or 0.0))
         through = float(cfg.get("sim_t1_through_bp", 0.0) or 0.0)      # resting limit: fills only after price trades THROUGH the target
-        if t1_rr > 0 and float(p["scale"]) > 0 and not p["t1_hit"] and px >= float(p["target_1"]) * (1 + through / 1e4):
-            p["t1_hit"], p["t1_r"] = True, t1_rr
+        if p.get("t1_pending_until") is not None and ts >= p["t1_pending_until"] - 1e-9:
+            p["t1_px"], p["t1_pending_until"] = px, None                # delayed market sale fills on this print
+            p["t1_hit"] = True
+            p["local_stop_price"] = max(float(p["local_stop_price"]), float(cp.breakeven_floor(float(p["entry"]), cfg) or p["entry"]))
+        if t1_rr > 0 and float(p["scale"]) > 0 and not p["t1_hit"] and p.get("t1_pending_until") is None \
+                and px >= float(p["target_1"]) * (1 + through / 1e4):
+            p["t1_r"] = t1_rr
             if cfg.get("sim_t1_limit"):
-                p["t1_px"] = float(p["target_1"])                       # resting limit: sells at its price, no latency
-            else:                                                       # market sale: the first print `delay` s after the trigger
-                j1 = i
-                while t1_delay > 0 and j1 < n - 1 and pr[j1][0] < ts + t1_delay:
-                    j1 += 1
-                p["t1_px"] = float(pr[j1][1])
-            p["local_stop_price"] = max(float(p["local_stop_price"]), float(p["entry"]))   # tranche B to breakeven, as live
+                p["t1_px"], p["t1_hit"] = float(p["target_1"]), True       # resting limit: sells at its price, no latency
+            elif t1_delay > 0:
+                p["t1_pending_until"] = ts + t1_delay                     # market sale goes out now, fills t1_delay later
+            else:
+                p["t1_px"], p["t1_hit"] = px, True                        # market sale on the crossing print
+            if p["t1_hit"]:   # runner floor as live: _runner_stop_level >= breakeven_floor (entry + 1c)
+                p["local_stop_price"] = max(float(p["local_stop_price"]), float(cp.breakeven_floor(float(p["entry"]), cfg) or p["entry"]))
         e, risk = float(p["entry"]), float(p["risk_per_share"])
         p["peak_price"] = max(float(p.get("peak_price") or e), px)
         p["mfe_r"] = max(float(p["mfe_r"]), (p["peak_price"] - e) / risk)
@@ -182,7 +198,8 @@ def verdict(s, s_delay):
     c = {"both halves > 0": s["h1"] > 0 and s["h2"] > 0, "day-t >= 2.0": s["t"] >= 2.0, "drop best5 days+top5 names > 0": s["drop"] > 0,
          "bootstrap p5 > 0": s["p5"] > 0, "1 s tranche-sale delay still > 0": bool(s_delay.get("n")) and s_delay["mean_day"] > 0}
     bad = [k for k, v in c.items() if not v]
-    return ("PASS" if not bad else "FAIL"), bad
+    # 11/07 audit: "PASS" read as "profitable". Name it for what it is; profitability is a separate flag in the table.
+    return ("IMPROVES" if not bad else "NO"), bad
 
 
 # ---------------- data ----------------
@@ -253,7 +270,8 @@ def run():
              f"{len(trades)} desk entries since {SINCE} with cached post-fill SIP prints (max {HOLD_MAX:.0f} s). Price-only: trend hold OFF in every arm. "
              f"Sim baseline mean net {sum(v for v in base.values() if v is not None) / max(1, sum(1 for v in base.values() if v is not None)):+.2f} bp vs "
              f"logged desk net {sum(live) / len(live):+.2f} bp (the gap is the trend hold, fills and the window). Bad-tick filter dropped {ndrop} of {nall} prints ({100 * ndrop / max(1, nall):.3f}%).", "",
-             "| variant | verdict | n | changed | base -> var net bp | mean day delta | t | halves | drop5 | boot p5 | 1 s T1-delay delta | failed |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "Verdict IMPROVES = beats the sim baseline on every S3/S4 condition. It does NOT mean profitable: see the last column (variant mean net at 3 bp / at 10 bp cost).", "",
+             "| variant | verdict | n | changed | base -> var net bp | mean day delta | t | halves | drop5 | boot p5 | 1 s T1-delay delta | failed | profitable @3 / @10 bp |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for name, over in VARIANTS.items():
         rows, rows_d = [], []
         for i, (t, pr) in enumerate(trades):
@@ -265,10 +283,11 @@ def run():
         s, sd = compare(rows), compare(rows_d, boots=1)
         st, bad = verdict(s, sd)
         if not s.get("n"):
-            lines.append(f"| {name} | {st} | 0 | | | | | | | | | |")
+            lines.append(f"| {name} | {st} | 0 | | | | | | | | | | |")
             continue
         lines.append(f"| {name} | **{st}** | {s['n']} | {s['changed']} | {s['base_mean']:+.1f} -> {s['var_mean']:+.1f} | {s['mean_day']:+.2f} | {s['t']:.2f} | "
-                     f"{s['h1']:+.2f}/{s['h2']:+.2f} | {s['drop']:+.2f} | {s['p5']:+.2f} | {sd.get('mean_day', float('nan')):+.2f} | {'; '.join(bad)} |")
+                     f"{s['h1']:+.2f}/{s['h2']:+.2f} | {s['drop']:+.2f} | {s['p5']:+.2f} | {sd.get('mean_day', float('nan')):+.2f} | {'; '.join(bad)} | "
+                     f"{'yes' if s['var_mean'] > 0 else 'no'} / {'yes' if s['var_mean'] - 7.0 > 0 else 'no'} |")
     out = "\n".join(lines) + "\n"
     (ROOT / "docs" / "TRADE_SIM.md").write_text(out)
     print(out)

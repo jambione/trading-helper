@@ -57,7 +57,7 @@ def test_compare_and_verdict_on_planted_rows():
     rows = [{"day": f"2026-10-{10 + i // 6:02d}", "sym": f"S{i % 30}", "base": 0.0, "var": 2.0 + (i % 3)} for i in range(120)]
     s = ts.compare(rows, boots=500)
     assert s["h1"] > 0 and s["h2"] > 0 and s["p5"] > 0 and s["changed"] == 120
-    assert ts.verdict(s, {"n": 1, "mean_day": 1.0})[0] in ("PASS", "FAIL")
+    assert ts.verdict(s, {"n": 1, "mean_day": 1.0})[0] in ("IMPROVES", "NO")
 
 
 def test_vacuous_when_nothing_changes():
@@ -102,3 +102,25 @@ def test_delay_moves_the_market_tranche_sale_but_not_a_resting_limit():
     assert b["gross_bp"] > a["gross_bp"] - 1e-9
     t1_gain = lambda r: r["gross_bp"]  # noqa: E731
     assert abs(t1_gain(c) - t1_gain(d)) < 30.0
+
+
+def test_tick_series_keeps_last_print_per_bucket():
+    pr = [(T0 + 0.01, 100.0, 1), (T0 + 0.10, 99.0, 1), (T0 + 0.30, 101.0, 1)]
+    assert [x[1] for x in ts.tick_series(pr, 0.25)] == [99.0, 101.0]
+
+
+def test_causal_filter_drops_an_isolated_bad_tick_but_accepts_a_real_gap():
+    bad = [(T0 + i, 100.0, 1) for i in range(20)]
+    bad[10] = (T0 + 10, 91.0, 1)
+    cleaned, n = ts.clean_prints(bad)
+    assert n == 1
+    gap = [(T0 + i, 100.0, 1) for i in range(10)] + [(T0 + 10 + i, 95.0, 1) for i in range(10)]
+    cleaned, n = ts.clean_prints(gap)
+    assert n <= 3 and sum(1 for x in cleaned if x[1] == 95.0) >= 7     # first 1-3 prints of a real 5% gap dropped, then accepted
+
+
+def test_filter_is_causal():
+    base = [(T0 + i, 100.0, 1) for i in range(10)]
+    a, _ = ts.clean_prints(base + [(T0 + 10, 91.0, 1)])
+    b, _ = ts.clean_prints(base + [(T0 + 10, 91.0, 1)] + [(T0 + 11 + i, 91.0, 1) for i in range(10)])
+    assert (a[-1][1] == 91.0) == any(x[0] == T0 + 10 for x in b)       # the decision on print 10 ignores what comes after

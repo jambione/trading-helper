@@ -1,6 +1,6 @@
 # Experiment board (generated from docs/experiments/registry.json, 2026-11-07)
 
-Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running -> S1 screen -> S2 confirm -> S3 held-out trade sim -> S4 stress -> operator decision. Edit the registry, not this file; run `tools/experiments.py board`.
+Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs live path + planted canary) -> smoke -> data_check -> running -> S1 screen -> S2 confirm -> S3 held-out trade sim -> S4 stress -> operator decision. Edit the registry, not this file; run `tools/experiments.py board`.
 
 ## Counts
 
@@ -11,7 +11,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 | running | 8 |
 | collecting | 5 |
 | blocked | 2 |
-| open | 8 |
+| open | 9 |
 | verdict_fail | 13 |
 | underpowered | 2 |
 | void | 1 |
@@ -30,6 +30,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 - **N23** [open] live %R smoothing has no EWM history: filled_clock_rows returns exactly `length` bars, so _live_percent_r_line builds a 1-element series and the EWM(7) loop never runs - VERIFIED in code (ai_entry_watch.py:11823-11850 with stream_bars.filled_clock_rows returning exactly length bars): live smoothed %R = one blend of the live raw value with the raw %R of the last closed window, not the 7-bar EWM the chart and signals.py use. Not in running_list or the docs I searched. Consequence unmeasured: rising/falling flags (exh_falling) may be noisier than the chart line. 11/07 narrowing (Argon, verified): this local path only runs when the engine reading is not fresh (non-realtime or >8 s old) and in trail_yields_to_triangle. The ledger does not record which path produced each poll (pctr_px_src absent), so the fraction affected is unknown. Next: Add pctr_px_src to the decision ledger (small, safe logging change) to measure the fraction of polls on the local path; fix only if that fraction is material.
 - **N25** [open] universe_scan ranks by cumulative px*vol instead of the last 2 minutes of change - VERIFIED in code (movers_screener.py:214). Contradicted by earlier measurement: lag_breakdown on 555 buys (10/28) found ~95% of names are listed BEFORE the %R turn and the ~15 min from turn to fill is spent on the board (square wait, stale quotes, re-entry cooldown), not in discovery. Next: Low priority; only if the ledger shows names first nominated after the turn.
 - **L6** [open] tranche-A gain depends on selling at the exact target print (vanishes with a 1 s delay) - t15_60 +2.31 bp at zero delay, -0.59 bp with a 1 s delay; live sale latency median 0.67 s. A resting limit at the target would remove the delay but brings the adverse-selection problem (fills mostly when price is about to fall). Next: Only worth building if a resting-limit fill model (bid-through) in S3 keeps the gain.
+- **P4** [open] code-review gate: before a tool's first result counts, the skeptic reads the tool against the live code path and a planted-edge canary must be recovered - Added after Argon's audit found 5 fidelity bugs in tools/trade_sim.py and a confound in the peak-lock bypass, all in code written and reported the same day. First subject: tools/trade_sim.py. Next: Run the skeptic code review on trade_sim.py; fix findings; then rerun S3/S4.
 
 ### Gate warnings (pending evidence)
 
@@ -157,6 +158,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 | P2 | control standard: same-name controls strictly AFTER the trade (t+hold+2 .. +62); plus a same-minute cross-name control; report control means beside the unconditional random-minute mean | early_entry_honest 10/13 calibration; Argon 11/07 | done | Implemented in bar_signal_family (rerun bsf_run3 in progress). Not yet applied to the older tools. |
 | L5 | sweep_replays no-start window (07:30-16:00) also applied on weekends and stopped the run | Claude | done | Stopped both exit replays at 07:33 Saturday with 2 of 5 screen days. Fixed: the window now applies Mon-Fri only (tools/sweep_replays.py). |
 | P3 | build S3 held-out trade simulation (776+ logged entries, post-fill SIP prints, real position code) and S4 stress | operator 11/07 (no time for forward tests) | blocked | Built and run 11/07. tools/trade_sim.py + 9 tests; fetch cache ai_reports/trade_sim_prints_v2 (776 trades, last-sale-eligible prints, isolated bad ticks dropped: 1,070 of 7.0M). Two data bugs found on the way: non-last-sale prints, then 900 bp bad ticks that made fake stop-outs (baseline went -23.7 -> -20.5 -> -11.85 bp vs logged -7.84). Remaining 4 bp gap = no trend hold + SIP wicks the IEX-fed desk never saw. |
+| P4 | code-review gate: before a tool's first result counts, the skeptic reads the tool against the live code path and a planted-edge canary must be recovered | operator 11/07 (are the tests reliable?) | open | Added after Argon's audit found 5 fidelity bugs in tools/trade_sim.py and a confound in the peak-lock bypass, all in code written and reported the same day. First subject: tools/trade_sim.py. |
 
 ### forward
 

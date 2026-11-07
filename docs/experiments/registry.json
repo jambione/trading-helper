@@ -3,8 +3,9 @@
  "pipeline": [
   "idea",
   "prereg",
-  "skeptic",
+  "skeptic (prereg)",
   "tool",
+  "code review (tool vs live path + planted canary)",
   "smoke",
   "data_check",
   "running",
@@ -1079,6 +1080,18 @@
    "blocked_on": "",
    "gates": {},
    "ref": "docs/TRADE_SIM.md"
+  },
+  {
+   "id": "P4",
+   "title": "code-review gate: before a tool's first result counts, the skeptic reads the tool against the live code path and a planted-edge canary must be recovered",
+   "layer": "process",
+   "source": "operator 11/07 (are the tests reliable?)",
+   "status": "open",
+   "evidence": "Added after Argon's audit found 5 fidelity bugs in tools/trade_sim.py and a confound in the peak-lock bypass, all in code written and reported the same day. First subject: tools/trade_sim.py.",
+   "next": "Run the skeptic code review on trade_sim.py; fix findings; then rerun S3/S4.",
+   "blocked_on": "",
+   "gates": {},
+   "ref": "docs/SIM_STAGE.md"
   }
  ]
 }
