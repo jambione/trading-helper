@@ -194,3 +194,7 @@ data/databento/
 # Yahoo pre-2016 bars (overnight_pre2016.py; third-party data, never commit)
 data/yahoo_pre2016/
 asset_names.json
+
+# generated reports rewritten on the mini (tracked copies blocked git pull there)
+docs/BROKER_TRUTH.md
+docs/TRADE_SIM.md

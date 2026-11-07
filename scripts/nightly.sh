@@ -43,4 +43,6 @@ scripts/regression_check.sh > /tmp/nightly/regression-$d.log 2>&1   # new failin
 .venv/bin/python tools/studies/stall_score_forward.py > /tmp/nightly/stall_fwd-$d.log 2>&1   # composite stall score (>= 2 of 3 signs), counts only until 150 (prereg)
 .venv/bin/python tools/premarket_report.py > /tmp/nightly/premarket-$d.log 2>&1   # docs/PREMARKET.md, funnel + frozen Hybrid C verdict (operator 11/06)
 .venv/bin/python tools/daily_scoreboard.py > /tmp/nightly/scoreboard-$d.log 2>&1   # docs/SCOREBOARD.md, rolling 20 sessions (operator 11/05)
+.venv/bin/python tools/broker_truth.py fetch > /tmp/nightly/broker_truth-$d.log 2>&1   # Alpaca fills + equity, read-only (operator 11/07)
+.venv/bin/python tools/broker_truth.py report >> /tmp/nightly/broker_truth-$d.log 2>&1  # docs/BROKER_TRUTH.md (untracked; generated)
 echo DONE > /tmp/nightly/done-$d
