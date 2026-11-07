@@ -42,3 +42,9 @@ def test_pending_smoke_is_a_warning_not_an_error():
     g = {"prereg": True, "tool": True, "smoke": "pending"}
     items = [rec(status="running", gates=g)]
     assert ex.validate(items) == [] and len(ex.warnings(items)) == 1
+
+
+def test_edge_verdict_is_a_verdict_and_component_rules():
+    g = {"prereg": True, "tool": True, "smoke": "legacy", "data_check": "legacy"}
+    assert ex.validate([rec(status="verdict_edge", gates=g, next="", component=True)]) == []
+    assert any("component" in e for e in ex.validate([rec(status="idea", component=True)]))

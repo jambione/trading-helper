@@ -10,8 +10,9 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 | queued | 1 |
 | running | 8 |
 | collecting | 5 |
-| blocked | 2 |
+| blocked | 6 |
 | open | 9 |
+| verdict_edge | 2 |
 | verdict_fail | 13 |
 | underpowered | 2 |
 | void | 1 |
@@ -31,6 +32,10 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 - **N25** [open] universe_scan ranks by cumulative px*vol instead of the last 2 minutes of change - VERIFIED in code (movers_screener.py:214). Contradicted by earlier measurement: lag_breakdown on 555 buys (10/28) found ~95% of names are listed BEFORE the %R turn and the ~15 min from turn to fill is spent on the board (square wait, stale quotes, re-entry cooldown), not in discovery. Next: Low priority; only if the ledger shows names first nominated after the turn.
 - **L6** [open] tranche-A gain depends on selling at the exact target print (vanishes with a 1 s delay) - t15_60 +2.31 bp at zero delay, -0.59 bp with a 1 s delay; live sale latency median 0.67 s. A resting limit at the target would remove the delay but brings the adverse-selection problem (fills mostly when price is about to fall). Next: Only worth building if a resting-limit fill model (bid-through) in S3 keeps the gain.
 - **P4** [open] code-review gate: before a tool's first result counts, the skeptic reads the tool against the live code path and a planted-edge canary must be recovered - Added after Argon's audit found 5 fidelity bugs in tools/trade_sim.py and a confound in the peak-lock bypass, all in code written and reported the same day. First subject: tools/trade_sim.py. Next: Run the skeptic code review on trade_sim.py; fix findings; then rerun S3/S4.
+- **C2** [blocked] surge continuation (morning/afternoon surge minutes) - Looked like EDGE: about +2 bp vs random minutes, t +5.4 (R5 information cell, 11/07). But it was an information cell, and that study's same-name control could reach back to t-30..t-16 (pre-trigger). Next: Pre-register as its own hypothesis with P2 controls. (blocked on: P2-control rerun)
+- **C3** [blocked] %R latch / RSI fire - Looked like EDGE: lift bar met in both halves, 15-min markout +3.8 / +11.2 bp (t 2.9 / 4.0), 10/12. Flat before the spread. Control construction not yet audited. Next: Audit its control; rerun with P2 controls if needed. (blocked on: control audit (P1))
+- **C4** [blocked] Fibonacci golden pocket - Looked like EDGE: +31 / +36 bp vs random (t 8-9), 10/23; but its own report says the lift mostly measures how badly the control loses, and the control exclusion (15 min) is shorter than the 30-min hold (P1 audit). Next: Rerun with P2 controls (later-only + same-minute cross-name). (blocked on: P2-control rerun)
+- **C5** [blocked] flow compression (spread squeezed to 1 cent + buyer flow) - Gross +4.8 bp; lift +13.38 bp vs uncompressed control (t >15) but that lift is mostly cost saved, not direction. Net -2.68 bp. Next: Compare gross to a fair random minute on the same names; with N20 (structurally 1-cent names). (blocked on: fair random-minute comparison)
 
 ### Gate warnings (pending evidence)
 
@@ -56,6 +61,15 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 - **F3** [collecting] forward: run efficiency - Logging live on IEX, counts only until 150 entries. Next: Read about 11/13-11/17.
 - **F4** [collecting] forward: stall score - Logging live on IEX, counts only until 150 entries. Next: Read about 11/13-11/17.
 - **F5** [collecting] forward: slope H1/H2 - Logging live on IEX, counts only until 150 entries. Next: Read about 11/13-11/17.
+
+## Components (real edges, not profitable alone - kept for combining; docs/TEST_STANDARD.md)
+
+- **C1** [verdict_edge] SIP order flow (trade-flow imbalance), 3-minute horizon - EDGE: +1.5 to +1.9 bp vs random, t ~3.5, both halves (10/21 pilot). Control was same-name LATER-only (meets P2). Not PROFITABLE alone: net -11 to -16 bp at desk cost.
+- **C2** [blocked] surge continuation (morning/afternoon surge minutes) - Looked like EDGE: about +2 bp vs random minutes, t +5.4 (R5 information cell, 11/07). But it was an information cell, and that study's same-name control could reach back to t-30..t-16 (pre-trigger).
+- **C3** [blocked] %R latch / RSI fire - Looked like EDGE: lift bar met in both halves, 15-min markout +3.8 / +11.2 bp (t 2.9 / 4.0), 10/12. Flat before the spread. Control construction not yet audited.
+- **C4** [blocked] Fibonacci golden pocket - Looked like EDGE: +31 / +36 bp vs random (t 8-9), 10/23; but its own report says the lift mostly measures how badly the control loses, and the control exclusion (15 min) is shorter than the 30-min hold (P1 audit).
+- **C5** [blocked] flow compression (spread squeezed to 1 cent + buyer flow) - Gross +4.8 bp; lift +13.38 bp vs uncompressed control (t >15) but that lift is mostly cost saved, not direction. Net -2.68 bp.
+- **C6** [verdict_edge] overnight S2 ranking (2000-2015) - EDGE gross: +8.6 bp, t 9.7 (10/4). Hedged alpha unproven (mostly beta), and the overnight book is retired (10/29). Kept on the list for completeness.
 
 ## Not started
 
@@ -103,10 +117,10 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 
 | id | idea | source | status | evidence |
 |---|---|---|---|---|
-| N1 | V1 volume-clock %R | Argon | verdict_fail | Clean-control rerun 09:00: all control means sane (ca -6.01, cd -4.81, cb -6.49 vs baseline -6.21). V1 net -4.52 bp (t -4.12, both halves negative); lifts vs ca +1.85 (t 1.69), cd +1.20 (t 1.49), both under the 2.28 bar; vs cb -7.72 (t -2.36). FAIL. |
+| N1 | V1 volume-clock %R | Argon | verdict_fail | Clean-control rerun 09:00: all control means sane (ca -6.01, cd -4.81, cb -6.49 vs baseline -6.21). V1 net -4.52 bp (t -4.12, both halves negative); lifts vs ca +1.85 (t 1.69), cd +1.20 (t 1.49), both under the 2.28 bar; vs cb -7.72 (t -2.36). FAIL. Under TEST_STANDARD: not an EDGE either (primary-control lift t 1.69 < 2.28). |
 | N2 | K absorption bar | Argon | underpowered | 101 triggers, needs 300. Not a verdict on the idea. Corrected-controls rerun: still 101 triggers; net -15.6 bp. Not a verdict on the idea. |
-| N3 | W opening washout | Argon | verdict_fail | Corrected controls (later-only ca -7.75, cross-name cb -4.48; baseline -6.21): net -12.28 bp (t -3.96, both halves negative), lifts vs ca -4.0 (t -1.14) and vs cb -5.7 (t -1.63). FAIL. |
-| N4 | D dwell/knock | Argon | verdict_fail | Corrected controls (ca -6.60, cb first-try breakouts -6.09, cd cross-name -5.99; baseline -6.21): net -6.12 bp (t -22), lifts vs all three about zero (+0.58 t 2.09, +0.51 t 1.02, +0.05 t 0.19). Multi-knock breakouts are indistinguishable from random minutes and from first-try breakouts. FAIL. |
+| N3 | W opening washout | Argon | verdict_fail | Corrected controls (later-only ca -7.75, cross-name cb -4.48; baseline -6.21): net -12.28 bp (t -3.96, both halves negative), lifts vs ca -4.0 (t -1.14) and vs cb -5.7 (t -1.63). FAIL. Under TEST_STANDARD: no EDGE (lifts about zero or negative). |
+| N4 | D dwell/knock | Argon | verdict_fail | Corrected controls (ca -6.60, cb first-try breakouts -6.09, cd cross-name -5.99; baseline -6.21): net -6.12 bp (t -22), lifts vs all three about zero (+0.58 t 2.09, +0.51 t 1.02, +0.05 t 0.19). Multi-knock breakouts are indistinguishable from random minutes and from first-try breakouts. FAIL. Under TEST_STANDARD: no EDGE (lifts about zero or negative). |
 | N5 | sector-ETF lead-lag (SMH, IBIT, IGV, XBI, URA) | Argon | idea | ETF bars fetched (12 ETFs, 120 days). No prereg yet. |
 | N6 | H3 board breadth (simultaneous names turning up) | Argon | idea | Specified in the amended board_structure_family prereg; tool not built. |
 | N7 | double arm (skip arm 1, buy arm 2 above its base) | operator/Argon | idea | Not specified or built. |
@@ -129,6 +143,12 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 | N25 | universe_scan ranks by cumulative px*vol instead of the last 2 minutes of change | Argon (live-code read 11/07) | open | VERIFIED in code (movers_screener.py:214). Contradicted by earlier measurement: lag_breakdown on 555 buys (10/28) found ~95% of names are listed BEFORE the %R turn and the ~15 min from turn to fill is spent on the board (square wait, stale quotes, re-entry cooldown), not in discovery. |
 | B1 | small real edges on low-cost instruments: surge continuation / order flow / flow-compression on ETFs and penny-spread mega-caps | Plan B (operator: be optimistic, find new ideas) 11/07 | idea | Real but sub-cost edges already measured: surge continuation +2 bp vs random (t 5.4), SIP flow +1.5-2 bp at 3 min, flow-compression +4.8 bp gross. They die at a 6 bp cost. On SPY/QQQ-class ETFs the round trip is ~1-3 bp, so they could net positive. ETF minute bars for 12 ETFs are already fetched (D1). Scale caveat: +3 bp net on ~$10k deployed is ~$1 per round trip; ~30 round trips a day is ~$30/day, so this is proof-of-edge first, income second. |
 | B2 | stack of weak real edges at low-cost names (surge + flow + compression), evaluated out of period | Plan B (operator: be optimistic, find new ideas) 11/07 | idea | Prior caution: a combined score was positive in-sample (+6.6 bp on 8 recorded days) but FAILED out of period. A stack needs a pre-registered weighting and a held-out half chosen before looking. |
+| C1 | SIP order flow (trade-flow imbalance), 3-minute horizon | re-label under TEST_STANDARD 11/07 | verdict_edge | EDGE: +1.5 to +1.9 bp vs random, t ~3.5, both halves (10/21 pilot). Control was same-name LATER-only (meets P2). Not PROFITABLE alone: net -11 to -16 bp at desk cost. |
+| C2 | surge continuation (morning/afternoon surge minutes) | re-label under TEST_STANDARD 11/07 | blocked | Looked like EDGE: about +2 bp vs random minutes, t +5.4 (R5 information cell, 11/07). But it was an information cell, and that study's same-name control could reach back to t-30..t-16 (pre-trigger). |
+| C3 | %R latch / RSI fire | re-label under TEST_STANDARD 11/07 | blocked | Looked like EDGE: lift bar met in both halves, 15-min markout +3.8 / +11.2 bp (t 2.9 / 4.0), 10/12. Flat before the spread. Control construction not yet audited. |
+| C4 | Fibonacci golden pocket | re-label under TEST_STANDARD 11/07 | blocked | Looked like EDGE: +31 / +36 bp vs random (t 8-9), 10/23; but its own report says the lift mostly measures how badly the control loses, and the control exclusion (15 min) is shorter than the 30-min hold (P1 audit). |
+| C5 | flow compression (spread squeezed to 1 cent + buyer flow) | re-label under TEST_STANDARD 11/07 | blocked | Gross +4.8 bp; lift +13.38 bp vs uncompressed control (t >15) but that lift is mostly cost saved, not direction. Net -2.68 bp. |
+| C6 | overnight S2 ranking (2000-2015) | re-label under TEST_STANDARD 11/07 | verdict_edge | EDGE gross: +8.6 bp, t 9.7 (10/4). Hedged alpha unproven (mostly beta), and the overnight book is retired (10/29). Kept on the list for completeness. |
 
 ### sizing
 

@@ -18,8 +18,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REG = ROOT / "docs" / "experiments" / "registry.json"
 OUT = ROOT / "docs" / "EXPERIMENTS.md"
-STATUSES = ("idea", "queued", "running", "collecting", "blocked", "open", "verdict_pass", "verdict_fail", "underpowered", "void", "done", "parked")
-VERDICTS = {"verdict_pass", "verdict_fail", "underpowered", "void"}
+STATUSES = ("idea", "queued", "running", "collecting", "blocked", "open", "verdict_pass", "verdict_edge", "verdict_fail", "underpowered", "void", "done", "parked")
+# verdict_edge: beats a fair random minute but is not profitable alone (docs/TEST_STANDARD.md) - a COMPONENT, not a failure.
+VERDICTS = {"verdict_pass", "verdict_edge", "verdict_fail", "underpowered", "void"}
 CLOSED = VERDICTS | {"done", "parked"}
 LAYERS = ("exit", "entry", "sizing", "live-code", "process", "forward", "data")
 OK = (True, "legacy", "n/a")
@@ -60,6 +61,8 @@ def validate(items):
             errs.append(f"{i}: blocked without blocked_on")
         if st not in CLOSED and not r.get("next"):
             errs.append(f"{i}: open item without a next action")
+        if r.get("component") and st not in ("verdict_edge", "verdict_pass", "blocked", "open"):
+            errs.append(f"{i}: component must be verdict_edge/verdict_pass (or blocked/open pending a rerun)")
         if not r.get("title") or not r.get("evidence"):
             errs.append(f"{i}: missing title or evidence")
     return errs
@@ -87,6 +90,10 @@ def board(data):
     lines += ["", "## In flight", ""]
     for r in live:
         lines.append(f"- **{r['id']}** [{r['status']}] {r['title']} - {r['evidence']} Next: {r['next']}")
+    comp = [r for r in items if r.get("component")]
+    lines += ["", "## Components (real edges, not profitable alone - kept for combining; docs/TEST_STANDARD.md)", ""]
+    for r in comp:
+        lines.append(f"- **{r['id']}** [{r['status']}] {r['title']} - {r['evidence']}")
     pend = [r for r in items if r["status"] == "idea"]
     lines += ["", "## Not started", ""]
     for r in pend:

@@ -31,8 +31,12 @@ Read the prereg JSON and the study script. Report on:
    net-negative is the most common outcome here.
 4. **Price source.** Entering at the desk's shadow `price` books stale quote
    as profit (~0.7%/trade). Must use the 1m bar close/next open.
-5. **Control.** Is there a same-name, same-day, same-clock-hour random-minute
-   control? "Beats zero" is not enough; the universe fades at every horizon.
+5. **Control (P2 standard, docs/TEST_STANDARD.md).** Same-name controls must be
+   drawn STRICTLY AFTER the trade (t+hold+2 .. t+hold+62), never before the
+   trigger (a pre-trigger minute sits on the path that made the stock fire), plus
+   a same-minute control on other universe stocks. The report must print each
+   control's mean beside the unconditional random-minute mean; a control far from
+   it blocks the verdict. "Beats zero" is not enough; the universe fades.
 6. **Held-out split and pass bar.** Defined BEFORE results? Both halves must
    pass? n minimum per half? Day-clustered t, not trade-level t?
 7. **Survivorship / universe.** Watchlist churns daily; a universe built from
