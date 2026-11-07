@@ -22,7 +22,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. SCREEN 11/07 (5 days, 134 trades): floor_only DROP, delta +0 (fired once, changed no exit). Rare-event arm; the tail cases fall on older days.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -40,7 +40,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. trail:after_peak not yet seen firing in the 2 finished days. 08:40: still 0 after_peak sightings in 11/04 and 11/05 (afterpeak_only, both). Argon's explanation (names under $20) does not apply: the desk price floor is $20 since 10/21, so entry+1c is inside the 5 bp band; it simply needs a trade that peaked >=15 bp and then fell back to breakeven while held, which these two days did not have.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. trail:after_peak not yet seen firing in the 2 finished days. 08:40: still 0 after_peak sightings in 11/04 and 11/05 (afterpeak_only, both). Argon's explanation (names under $20) does not apply: the desk price floor is $20 since 10/21, so entry+1c is inside the 5 bp band; it simply needs a trade that peaked >=15 bp and then fell back to breakeven while held, which these two days did not have. SCREEN 11/07: DROP, +8 bp/day (t 1.54, 40% of days better), net/trade -3.6 -> -3.2 on 134 trades.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -58,7 +58,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. SCREEN 11/07: DROP, +8 bp/day (t 1.54, 40% of days better), net/trade -3.6 -> -3.2 on 134 trades.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -76,7 +76,7 @@
    "layer": "exit",
    "source": "operator/Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. SCREEN 11/07: hold_off DROP, -27 bp/day (t -1.33), net -3.6 -> -4.1.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -94,7 +94,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): lock50 PASS but marginal: +0.91 bp/trade (t 2.03, halves +1.04/+0.78, drop-5 +0.09, bootstrap p5 +0.29, 1 s delay +0.01). 105 of 776 trades changed (~+8 bp on those). 11/07 CONFOUND (Argon, verified): the peak-lock hold bypass fires for any stop >= entry+1c, which includes the plain breakeven floor, so lock50/argon_exits also switch the trend hold off after breakeven - mixed with X2. Replay results for these two arms are void until the bypass is narrowed and they are rerun. 11/07 code review: under a realistic 0.5 s exit latency in both arms the simulated gains vanish (lock50 +0.02, t15_60 -0.07, lim15 th4 -0.35 bp). S3/S4 after code review (docs/TRADE_SIM.md, 776 trades, exit latency 0.5 s both arms, 0.25 s ticks, live tranche path): lock50 NO: +0.11 bp/trade (t 1.13), p5 -0.04. Replay rerun on the fixed bypass still queued.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): lock50 PASS but marginal: +0.91 bp/trade (t 2.03, halves +1.04/+0.78, drop-5 +0.09, bootstrap p5 +0.29, 1 s delay +0.01). 105 of 776 trades changed (~+8 bp on those). 11/07 CONFOUND (Argon, verified): the peak-lock hold bypass fires for any stop >= entry+1c, which includes the plain breakeven floor, so lock50/argon_exits also switch the trend hold off after breakeven - mixed with X2. Replay results for these two arms are void until the bypass is narrowed and they are rerun. 11/07 code review: under a realistic 0.5 s exit latency in both arms the simulated gains vanish (lock50 +0.02, t15_60 -0.07, lim15 th4 -0.35 bp). S3/S4 after code review (docs/TRADE_SIM.md, 776 trades, exit latency 0.5 s both arms, 0.25 s ticks, live tranche path): lock50 NO: +0.11 bp/trade (t 1.13), p5 -0.04. Replay rerun on the fixed bypass still queued. SCREEN 11/07 was 'KEEP' (+16 bp/day, t 1.19, 60% days) but on the CONFOUNDED bypass - void. Rerun on the fixed bypass: docs/sweeps/exit_confirm_2026-11-07.json.",
    "next": "Rerun queued on the fixed bypass: docs/sweeps/peak_lock_rerun_2026-11-07.json (starts after the tranche-A replay). Read that, not the trend_hold_fix rows.",
    "blocked_on": "",
    "gates": {
@@ -112,7 +112,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): step01 FAIL: -1.62 bp/trade (t -3.9), negative in both halves. S3/S4 after code review (docs/TRADE_SIM.md, 776 trades, exit latency 0.5 s both arms, 0.25 s ticks, live tranche path): step01 NO: -0.21 bp (both halves <= 0).",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): step01 FAIL: -1.62 bp/trade (t -3.9), negative in both halves. S3/S4 after code review (docs/TRADE_SIM.md, 776 trades, exit latency 0.5 s both arms, 0.25 s ticks, live tranche path): step01 NO: -0.21 bp (both halves <= 0). SCREEN 11/07: DROP, -42 bp/day (t -1.39).",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -130,7 +130,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): overtake_off FAIL: -1.33 bp/trade (t -6.5), negative in both halves. S3/S4 after code review (docs/TRADE_SIM.md, 776 trades, exit latency 0.5 s both arms, 0.25 s ticks, live tranche path): overtake_off NO: +0.10 bp (t 0.53), second half negative.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): overtake_off FAIL: -1.33 bp/trade (t -6.5), negative in both halves. S3/S4 after code review (docs/TRADE_SIM.md, 776 trades, exit latency 0.5 s both arms, 0.25 s ticks, live tranche path): overtake_off NO: +0.10 bp (t 0.53), second half negative. SCREEN 11/07: DROP, -1 bp/day.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -148,7 +148,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): argon_exits FAIL: +0.38 bp (t 0.49); drop-5 -1.19, bootstrap p5 -0.76. 11/07 CONFOUND (Argon, verified): the peak-lock hold bypass fires for any stop >= entry+1c, which includes the plain breakeven floor, so lock50/argon_exits also switch the trend hold off after breakeven - mixed with X2. Replay results for these two arms are void until the bypass is narrowed and they are rerun. S3/S4 after code review (docs/TRADE_SIM.md, 776 trades, exit latency 0.5 s both arms, 0.25 s ticks, live tranche path): argon_exits NO: -0.50 bp (t -1.0).",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): argon_exits FAIL: +0.38 bp (t 0.49); drop-5 -1.19, bootstrap p5 -0.76. 11/07 CONFOUND (Argon, verified): the peak-lock hold bypass fires for any stop >= entry+1c, which includes the plain breakeven floor, so lock50/argon_exits also switch the trend hold off after breakeven - mixed with X2. Replay results for these two arms are void until the bypass is narrowed and they are rerun. S3/S4 after code review (docs/TRADE_SIM.md, 776 trades, exit latency 0.5 s both arms, 0.25 s ticks, live tranche path): argon_exits NO: -0.50 bp (t -1.0). SCREEN 11/07: DROP, -18 bp/day (t -0.78), net -3.6 -> -5.0.",
    "next": "Rerun queued on the fixed bypass: docs/sweeps/peak_lock_rerun_2026-11-07.json (starts after the tranche-A replay). Read that, not the trend_hold_fix rows.",
    "blocked_on": "",
    "gates": {
@@ -165,9 +165,9 @@
    "title": "tranche A: bank 40-60% at +15/+20/+25 bp, rest runs (4 arms)",
    "layer": "exit",
    "source": "Argon",
-   "status": "queued",
-   "evidence": "Replay fixed (tranche B breakeven). Optimistic fill model. Live gaps: rr clamp, market sell, 1R runner trail. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): tranche A: t15_60 +2.31 bp (t 6.05), t20_60 +1.38 (t 4.95), t25_60 +1.01 (t 3.57), positive in both halves, drop-5 and bootstrap p5 positive - but ALL three turn NEGATIVE with the exit delayed 1 s (-0.59/-0.31/-0.09), so the gain depends on selling at the exact target print. Live market sale latency median 0.67 s. S4 FAIL. t20_40 not shown positive. 11/07 code review: under a realistic 0.5 s exit latency in both arms the simulated gains vanish (lock50 +0.02, t15_60 -0.07, lim15 th4 -0.35 bp). S3/S4 after code review (docs/TRADE_SIM.md, 776 trades, exit latency 0.5 s both arms, 0.25 s ticks, live tranche path): tranche A NO in every form: market t15/t20/t25/t20_40 -0.50/-0.16/-0.02/-0.11 bp; resting-limit grid -0.27 to +0.19 bp, none significant. The earlier +1 to +2.6 bp gains came from stops filling at the triggering print (zero latency); they vanish under any realistic latency.",
-   "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Runs after X1-X8. A pass means build a live path, not flip a switch.",
+   "status": "parked",
+   "evidence": "Replay fixed (tranche B breakeven). Optimistic fill model. Live gaps: rr clamp, market sell, 1R runner trail. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): tranche A: t15_60 +2.31 bp (t 6.05), t20_60 +1.38 (t 4.95), t25_60 +1.01 (t 3.57), positive in both halves, drop-5 and bootstrap p5 positive - but ALL three turn NEGATIVE with the exit delayed 1 s (-0.59/-0.31/-0.09), so the gain depends on selling at the exact target print. Live market sale latency median 0.67 s. S4 FAIL. t20_40 not shown positive. 11/07 code review: under a realistic 0.5 s exit latency in both arms the simulated gains vanish (lock50 +0.02, t15_60 -0.07, lim15 th4 -0.35 bp). S3/S4 after code review (docs/TRADE_SIM.md, 776 trades, exit latency 0.5 s both arms, 0.25 s ticks, live tranche path): tranche A NO in every form: market t15/t20/t25/t20_40 -0.50/-0.16/-0.02/-0.11 bp; resting-limit grid -0.27 to +0.19 bp, none significant. The earlier +1 to +2.6 bp gains came from stops filling at the triggering print (zero latency); they vanish under any realistic latency. 11/07 14:50: replay NOT run: the corrected trade simulator found no tranche-A gain at realistic latency and the replay's fill model is more optimistic. Parked; reopen only with a live-path fill model.",
+   "next": "",
    "blocked_on": "",
    "gates": {
     "prereg": true,
@@ -1218,6 +1218,24 @@
    "blocked_on": "",
    "gates": {},
    "ref": "docs/SIM_STAGE.md"
+  },
+  {
+   "id": "X15",
+   "title": "informational confirm of floor_only, both and fixed lock50 on 10/16-10/29 (decided after the screen)",
+   "layer": "exit",
+   "source": "Claude 11/07",
+   "status": "queued",
+   "evidence": "Why: the screen's 60%-of-days rule drops arms that fire rarely; the cited tail trades fall on 10/8-10/29. Bars fixed before results (see spec). Does not override the screen DROPs, which stand.",
+   "next": "Read REPORT.md day deltas manually vs the fixed bars; skeptic review on any pass.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": "n/a",
+    "tool": true,
+    "smoke": "pending",
+    "data_check": true
+   },
+   "ref": "docs/sweeps/exit_confirm_2026-11-07.json"
   }
  ]
 }
