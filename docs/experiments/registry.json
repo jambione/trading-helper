@@ -93,7 +93,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): lock50 PASS but marginal: +0.91 bp/trade (t 2.03, halves +1.04/+0.78, drop-5 +0.09, bootstrap p5 +0.29, 1 s delay +0.01). 105 of 776 trades changed (~+8 bp on those).",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -111,7 +111,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): step01 FAIL: -1.62 bp/trade (t -3.9), negative in both halves.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -129,7 +129,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): overtake_off FAIL: -1.33 bp/trade (t -6.5), negative in both halves.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -147,7 +147,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): argon_exits FAIL: +0.38 bp (t 0.49); drop-5 -1.19, bootstrap p5 -0.76.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -165,7 +165,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "queued",
-   "evidence": "Replay fixed (tranche B breakeven). Optimistic fill model. Live gaps: rr clamp, market sell, 1R runner trail.",
+   "evidence": "Replay fixed (tranche B breakeven). Optimistic fill model. Live gaps: rr clamp, market sell, 1R runner trail. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): tranche A: t15_60 +2.31 bp (t 6.05), t20_60 +1.38 (t 4.95), t25_60 +1.01 (t 3.57), positive in both halves, drop-5 and bootstrap p5 positive - but ALL three turn NEGATIVE with the exit delayed 1 s (-0.59/-0.31/-0.09), so the gain depends on selling at the exact target print. Live market sale latency median 0.67 s. S4 FAIL. t20_40 not shown positive.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Runs after X1-X8. A pass means build a live path, not flip a switch.",
    "blocked_on": "",
    "gates": {
@@ -881,9 +881,9 @@
    "title": "build S3 held-out trade simulation (776+ logged entries, post-fill SIP prints, real position code) and S4 stress",
    "layer": "process",
    "source": "operator 11/07 (no time for forward tests)",
-   "status": "open",
-   "evidence": "Spec in docs/SIM_STAGE.md. Pieces exist: tools/studies/early_path.py (trades_since, post-fill SIP prints), ai_positions.local_profit_stop, tools/sim_rstop_path.py. Not built.",
-   "next": "Build tools/trade_sim.py: per-trade price-path loop over the real exit code for baseline vs variant; day-clustered stats, halves, drop rule, 10 bp, bootstrap, 1 s delay. Tests with planted paths.",
+   "status": "done",
+   "evidence": "Built and run 11/07. tools/trade_sim.py + 9 tests; fetch cache ai_reports/trade_sim_prints_v2 (776 trades, last-sale-eligible prints, isolated bad ticks dropped: 1,070 of 7.0M). Two data bugs found on the way: non-last-sale prints, then 900 bp bad ticks that made fake stop-outs (baseline went -23.7 -> -20.5 -> -11.85 bp vs logged -7.84). Remaining 4 bp gap = no trend hold + SIP wicks the IEX-fed desk never saw.",
+   "next": "",
    "blocked_on": "",
    "gates": {},
    "ref": "docs/SIM_STAGE.md"
@@ -1067,6 +1067,18 @@
     "data_check": false
    },
    "ref": ""
+  },
+  {
+   "id": "L6",
+   "title": "tranche-A gain depends on selling at the exact target print (vanishes with a 1 s delay)",
+   "layer": "exit",
+   "source": "S4 stress 11/07",
+   "status": "open",
+   "evidence": "t15_60 +2.31 bp at zero delay, -0.59 bp with a 1 s delay; live sale latency median 0.67 s. A resting limit at the target would remove the delay but brings the adverse-selection problem (fills mostly when price is about to fall).",
+   "next": "Only worth building if a resting-limit fill model (bid-through) in S3 keeps the gain.",
+   "blocked_on": "",
+   "gates": {},
+   "ref": "docs/TRADE_SIM.md"
   }
  ]
 }
