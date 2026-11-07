@@ -42,7 +42,7 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 - X4: gate 'smoke' pending (trend hold off entirely (hold_off, reference))
 - X6: gate 'smoke' pending (idle step 0.01R instead of 0.05R (step01))
 - X7: gate 'smoke' pending (park the stop at last-1c instead of selling at last (overtake_off))
-- X15: gate 'smoke' pending (informational confirm of floor_only, both and fixed lock50 on 10/16-10/29 (decided after the screen))
+- X15: gate 'smoke' pending (informational confirm of floor_only, both, fixed lock50 and both_lock50 on 10/16-10/29 (decided after the screen))
 
 ## In flight
 
@@ -59,7 +59,7 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 - **F3** [collecting] forward: run efficiency - Logging live on IEX, counts only until 150 entries. Next: Read about 11/13-11/17.
 - **F4** [collecting] forward: stall score - Logging live on IEX, counts only until 150 entries. Next: Read about 11/13-11/17.
 - **F5** [collecting] forward: slope H1/H2 - Logging live on IEX, counts only until 150 entries. Next: Read about 11/13-11/17.
-- **X15** [queued] informational confirm of floor_only, both and fixed lock50 on 10/16-10/29 (decided after the screen) - Why: the screen's 60%-of-days rule drops arms that fire rarely; the cited tail trades fall on 10/8-10/29. Bars fixed before results (see spec). Does not override the screen DROPs, which stand. Next: Read REPORT.md day deltas manually vs the fixed bars; skeptic review on any pass.
+- **X15** [queued] informational confirm of floor_only, both, fixed lock50 and both_lock50 on 10/16-10/29 (decided after the screen) - Why: the screen's 60%-of-days rule drops arms that fire rarely; the cited tail trades fall on 10/8-10/29. Bars fixed before results (see spec). Does not override the screen DROPs, which stand. Per-day screen deltas (bp): both +15.1, 0, +26.4, 0, 0 - never worse on any day, 2 of 5 strictly better, so the strict 'x > 0' share (sweep_replays.py:117) counts three tie days against it; the pre-registered bar stands and the DROP is logged as-is. Old lock50: +60.8, +15.5, +23.6, -7.2, -14.1: negative on 11/04 and 11/05 where 'both' did nothing, so the lock part alone is mixed, not a steady +8. hold_off: -36.8, -26.5, -59.6, -62.2, +49.9 (t -1.33): the live hold helped on 4 of 5 days; suggestive, not established. Read the confirm by days where a rule actually fired, in addition to the all-days mean. both_lock50 added 15:05. Next: Read REPORT.md day deltas manually vs the fixed bars; skeptic review on any pass.
 
 ## Components (real edges, not profitable alone - kept for combining; docs/TEST_STANDARD.md)
 
@@ -74,13 +74,16 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 
 | forecaster | made | resolved | correct | hit rate |
 |---|---|---|---|---|
-| Claude | 5 | 1 | 1 | 100% |
+| Argon | 1 | 0 | 0 | - |
+| Claude | 6 | 1 | 1 | 100% |
 
 - **PR1** (Claude) X3 trend-hold 'both' (floor at opening stop + off after +15 bp peak), session replay screen: expects screen DROP or a delta within +-10 bp/day; does not reach confirm (open)
 - **PR2** (Claude) X1 floor_only, session replay screen: expects small positive day delta (cuts the -70..-80 bp tail) but fewer than 60% of days better (open)
 - **PR3** (Claude) X5 lock50 rerun on the fixed bypass, session replay: expects DROP at the screen (the trade sim showed +0.11 bp at realistic latency) (open)
 - **PR4** (Claude) H1 peer lead-lag rerun with later-only controls: expects still FAIL on absolute net; lift vs same-name control moves toward zero -> RIGHT: 2026-11-07 11:31: FAIL on absolute net (-9.4 bp, t -2.11); lifts -0.5 vs both controls (about zero). The earlier lift value was not recorded, so 'moves toward zero' is only half checkable.
 - **PR5** (Claude) broker truth: week of 2026-11-09 net bp per round trip: expects between -8 and 0 bp (same range as the last five weeks) (open)
+- **PR6** (Argon) exit_confirm: 'both' on the 10 older days (10/16-10/29): expects positive: the logical candidate to ship is both + lock50 without step01 (Argon, relayed by the operator) (open)
+- **PR7** (Claude) exit_confirm: 'both' on the 10 older days (10/16-10/29): expects mean day delta positive (it never lost a day on the screen) but small: day-t below 2.0; the gain concentrated on a few days where the tail event happened (open)
 
 ## Not started
 
@@ -123,7 +126,7 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 | X13 | smooth breakeven ramp (stop -15 bp at +15, 0 at +25, +15 at +35) instead of snapping to 0 at +15 | Argon (logic audit 11/07) | idea | Overlaps X5 (lock50) and X6; the dead zone itself is verified (X1-X8). The specific ramp is new. |
 | X14 | grace period after entry before the tight stop applies (entry clock 21-112 min vs exit leash 15-120 s) | Argon (logic audit 11/07) | idea | Config corrected: idle leash is 15 s (not 120 s). Prior: 42 stop/target/trail/ladder shapes all scored zero gross; wider stop LOST; 60% of cuts end better if held (payoff asymmetry). |
 | L6 | tranche-A gain depends on selling at the exact target print (vanishes with a 1 s delay) | S4 stress 11/07 | open | t15_60 +2.31 bp at zero delay, -0.59 bp with a 1 s delay; live sale latency median 0.67 s. A resting limit at the target would remove the delay but brings the adverse-selection problem (fills mostly when price is about to fall). |
-| X15 | informational confirm of floor_only, both and fixed lock50 on 10/16-10/29 (decided after the screen) | Claude 11/07 | queued | Why: the screen's 60%-of-days rule drops arms that fire rarely; the cited tail trades fall on 10/8-10/29. Bars fixed before results (see spec). Does not override the screen DROPs, which stand. |
+| X15 | informational confirm of floor_only, both, fixed lock50 and both_lock50 on 10/16-10/29 (decided after the screen) | Claude 11/07 | queued | Why: the screen's 60%-of-days rule drops arms that fire rarely; the cited tail trades fall on 10/8-10/29. Bars fixed before results (see spec). Does not override the screen DROPs, which stand. Per-day screen deltas (bp): both +15.1, 0, +26.4, 0, 0 - never worse on any day, 2 of 5 strictly better, so the strict 'x > 0' share (sweep_replays.py:117) counts three tie days against it; the pre-registered bar stands and the DROP is logged as-is. Old lock50: +60.8, +15.5, +23.6, -7.2, -14.1: negative on 11/04 and 11/05 where 'both' did nothing, so the lock part alone is mixed, not a steady +8. hold_off: -36.8, -26.5, -59.6, -62.2, +49.9 (t -1.33): the live hold helped on 4 of 5 days; suggestive, not established. Read the confirm by days where a rule actually fired, in addition to the all-days mean. both_lock50 added 15:05. |
 
 ### entry
 

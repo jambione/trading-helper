@@ -45,6 +45,24 @@
    "expect": "between -8 and 0 bp (same range as the last five weeks)",
    "resolved": null,
    "correct": null
+  },
+  {
+   "id": "PR6",
+   "test": "exit_confirm: 'both' on the 10 older days (10/16-10/29)",
+   "who": "Argon",
+   "made": "2026-11-07 15:05",
+   "expect": "positive: the logical candidate to ship is both + lock50 without step01 (Argon, relayed by the operator)",
+   "resolved": null,
+   "correct": null
+  },
+  {
+   "id": "PR7",
+   "test": "exit_confirm: 'both' on the 10 older days (10/16-10/29)",
+   "who": "Claude",
+   "made": "2026-11-07 15:05",
+   "expect": "mean day delta positive (it never lost a day on the screen) but small: day-t below 2.0; the gain concentrated on a few days where the tail event happened",
+   "resolved": null,
+   "correct": null
   }
  ]
 }

@@ -12,7 +12,7 @@
   "ai_risk_pct": 1.65
  },
  "name": "exit_confirm_2026-11-07",
- "purpose": "INFORMATIONAL confirm run, decided 11/07 14:50 after seeing the trend_hold_fix SCREEN (5 days, 134 trades): floor_only changed nothing (+0, 0% days better: the tail cases Argon cited - WULF 10/21, PTIR 10/8 - fall outside the screen days), both/afterpeak_only +8 bp/day (t 1.54, 40% days better, net/trade -3.6 -> -3.2), lock50 'KEEP' +16 bp/day but on the CONFOUNDED bypass (void). The screen rule drops arms that fire rarely, so these three run on the 10 older days (10/16-10/29, which include 10/21) on the FIXED code (sha at launch). Bars fixed now, before results: read the day deltas manually - mean day delta > 0, day-t >= 1.5, both halves (by date) > 0, then a skeptic review before any live consideration. The sweep's 'screen' label here is just the stage name; its KEEP/DROP is not the verdict. This is NOT a pass-bar change: the pre-registered screen verdicts above stand as DROP for floor_only/both/afterpeak and are logged as-is.",
+ "purpose": "INFORMATIONAL confirm run, decided 11/07 14:50 after seeing the trend_hold_fix SCREEN (5 days, 134 trades): floor_only changed nothing (+0, 0% days better: the tail cases Argon cited - WULF 10/21, PTIR 10/8 - fall outside the screen days), both/afterpeak_only +8 bp/day (t 1.54, 40% days better, net/trade -3.6 -> -3.2), lock50 'KEEP' +16 bp/day but on the CONFOUNDED bypass (void). The screen rule drops arms that fire rarely, so these three run on the 10 older days (10/16-10/29, which include 10/21) on the FIXED code (sha at launch). Bars fixed now, before results: read the day deltas manually - mean day delta > 0, day-t >= 1.5, both halves (by date) > 0, then a skeptic review before any live consideration. The sweep's 'screen' label here is just the stage name; its KEEP/DROP is not the verdict. This is NOT a pass-bar change: the pre-registered screen verdicts above stand as DROP for floor_only/both/afterpeak and are logged as-is. ADDED 11/07 15:05 (Argon's point, verified): arm both_lock50 = both fixes + fixed lock50, no step01. It is the closest fixed-code equivalent of the old confounded lock50 that passed the screen (old bypass fired at any stop >= entry+1c, which is the afterpeak case). Added AFTER seeing the screen and logged as such; the bars above are unchanged. Runs as a resume of the same sweep once the first pass ends (baselines are reused).",
  "variants": {
   "both": {
    "live_book": true,
@@ -30,6 +30,15 @@
   "lock50": {
    "live_book": true,
    "set": {
+    "ai_local_trail_peak_lock_frac": 0.5,
+    "ai_local_trail_peak_lock_from_bp": 15.0
+   }
+  },
+  "both_lock50": {
+   "live_book": true,
+   "set": {
+    "ai_trail_exit_trend_hold_floor_initial": true,
+    "ai_trail_exit_trend_hold_off_after_peak_bp": 15.0,
     "ai_local_trail_peak_lock_frac": 0.5,
     "ai_local_trail_peak_lock_from_bp": 15.0
    }

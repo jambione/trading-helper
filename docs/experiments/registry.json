@@ -1221,11 +1221,11 @@
   },
   {
    "id": "X15",
-   "title": "informational confirm of floor_only, both and fixed lock50 on 10/16-10/29 (decided after the screen)",
+   "title": "informational confirm of floor_only, both, fixed lock50 and both_lock50 on 10/16-10/29 (decided after the screen)",
    "layer": "exit",
    "source": "Claude 11/07",
    "status": "queued",
-   "evidence": "Why: the screen's 60%-of-days rule drops arms that fire rarely; the cited tail trades fall on 10/8-10/29. Bars fixed before results (see spec). Does not override the screen DROPs, which stand.",
+   "evidence": "Why: the screen's 60%-of-days rule drops arms that fire rarely; the cited tail trades fall on 10/8-10/29. Bars fixed before results (see spec). Does not override the screen DROPs, which stand. Per-day screen deltas (bp): both +15.1, 0, +26.4, 0, 0 - never worse on any day, 2 of 5 strictly better, so the strict 'x > 0' share (sweep_replays.py:117) counts three tie days against it; the pre-registered bar stands and the DROP is logged as-is. Old lock50: +60.8, +15.5, +23.6, -7.2, -14.1: negative on 11/04 and 11/05 where 'both' did nothing, so the lock part alone is mixed, not a steady +8. hold_off: -36.8, -26.5, -59.6, -62.2, +49.9 (t -1.33): the live hold helped on 4 of 5 days; suggestive, not established. Read the confirm by days where a rule actually fired, in addition to the all-days mean. both_lock50 added 15:05.",
    "next": "Read REPORT.md day deltas manually vs the fixed bars; skeptic review on any pass.",
    "blocked_on": "",
    "gates": {
