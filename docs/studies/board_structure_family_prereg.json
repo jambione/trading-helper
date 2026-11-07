@@ -15,13 +15,21 @@
   "peers": "For each universe stock on day D: residual 1-minute returns r - beta x r_SPY over the previous 20 sessions (beta from the same window); peers = the up-to-5 other universe stocks with the highest residual correlation, rho >= 0.35. A stock with fewer than 2 such peers has no cluster that day.",
   "trigger": "At the close of bar t: at least 2 peers each have a residual 2-minute return (bar t close vs bar t-2 close, SPY-beta-adjusted) >= +40 bp AND bar-t volume >= 2x their mean volume of bars t-15..t-1; and the target stock is 'not yet moving and not falling': its residual 2-minute return is between 0 and +15 bp, its close is above the lowest low of bars t-15..t-1, and its slow %R (112 bars, EMA 3, the desk's formula, computed with the previous session's bars for warm-up) is below -20.",
   "controls": "(a) same name, a random minute the same day more than 15 minutes from any of its triggers, same trade and costs (seed sha256(sym|day|'H1-a'|k), 5 draws averaged); (b) same minute, a random universe stock that is NOT in the target's cluster, same trade (seed sha256(sym|day|t|'H1-b')).",
-  "information": ["exit at 3 and 30 minutes", "the peers' own next-10-minute return (does the move continue in the leaders?)", "trigger counts by hour"]
+  "information": [
+   "exit at 3 and 30 minutes",
+   "the peers' own next-10-minute return (does the move continue in the leaders?)",
+   "trigger counts by hour"
+  ]
  },
  "H2_stop_run_reclaim": {
   "precondition": "At the trigger bar the stock is green on the day (close > prior-session close) and above the session VWAP (sum close x volume / sum volume since 09:30).",
   "trigger": "Bar t-1's low undercuts the lowest low of bars t-16..t-2 by 5 to 20 bp, with bar t-1 volume >= 2x the mean volume of bars t-16..t-2; bar t closes back ABOVE that prior 15-bar low (one-bar reclaim). Triggers 09:50-15:30.",
   "controls": "(a) same name, a random minute the same day that meets the precondition and is more than 15 minutes from any trigger (5 draws averaged); (b) same minute, a random universe stock that meets the precondition.",
-  "information": ["undercut depth buckets 5-10 / 10-20 bp", "exit at 3 and 30 minutes", "the same trigger without the precondition"]
+  "information": [
+   "undercut depth buckets 5-10 / 10-20 bp",
+   "exit at 3 and 30 minutes",
+   "the same trigger without the precondition"
+  ]
  },
  "H3_board_breadth": {
   "sample": "Every desk entry 2026-09-16..2026-11-05 with a fill row (tools/studies/early_path.trades_since); halves 9/16-10/14 and 10/15-11/05 (the clean RVOL era), as set by the operator.",
@@ -31,9 +39,24 @@
   "outcome": "The desk's actual net: sell fill vs buy fill less 3 bp (from ai_reports/fills), never-green from outcomes.",
   "pass": "(1) per day, mean net of kept (SYNC) minus mean net of refused entries > 0, day-clustered t >= the family critical value, on days with both groups; (2) > 0 in BOTH halves; (3) the kept entries make money: mean net of SYNC entries > 0 in BOTH halves; (4) at least 100 SYNC entries and 40 per half, else UNDERPOWERED; (5) net bp/trade of all entries if the gate were on (= kept only) exceeds the actual all-entries net in both halves. Never-green reduction alone does not pass.",
   "void": "More than 10% of entries without a measurable B = VOID.",
-  "information": ["cutoffs 0.50 and 0.70", "breadth from fast %R rising (wr_d2_fast > +10) instead of 2-minute returns", "never-green share by B tercile"]
+  "information": [
+   "cutoffs 0.50 and 0.70",
+   "breadth from fast %R rising (wr_d2_fast > +10) instead of 2-minute returns",
+   "never-green share by B tercile"
+  ]
  },
  "if_pass": "result-skeptic review of the positive, then a forward/paper test of that one hypothesis (H1/H2 need a new live arm, H3 a default-off gate replayed with tools/sweep_replays.py first). Never straight to live.",
  "tools": "tools/studies/board_structure_family.py (h1 / h2 / h3 modes), built after this file is committed and a result-skeptic READY; may not change anything above.",
- "status": "READY, skeptic review pending"
+ "status": "READY, skeptic review pending",
+ "amended": {
+  "when": "2026-11-07 ~05:30 ET, after result-skeptic round 1 FIX FIRST (8 findings), before any code or data pull.",
+  "1_H3_sample": "Replaces H3 sample: every desk entry 2026-09-25..2026-11-05 with a sources.jsonl.gz for its session and a fill row; halves 9/25-10/14 and 10/15-11/05. 9/16-9/24 have no sources log and are excluded (counted, not VOID).",
+  "2_H3_board": "Replaces H3 board: BOARD = names with at least one source in the entered state (union over sources; a repeat enter on the same source is a no-op), excluding the entry name. At each pool_note the rebuilt count is compared with pool_n; an entry whose last pool_note before it differs from the rebuild by more than 2 names counts as unmeasurable for VOID. Before any outcome is read, the share of entries that pass this check is reported per day.",
+  "3_H3_timing_feed": "Replaces in H3 breadth: the 2-minute return ends at the last bar that closed at or before the BUY submit ts (fills event=submit), not the fill ts. Primary bars are IEX historical (what the live desk sees); SIP is an information cell only.",
+  "4_H3_beta_control": "Added H3 pass (6): the SYNC lift exceeds the lift of a SPY gate (SPY 2-minute return above the quantile that keeps the same share of entries as SYNC) in both halves.",
+  "5_H3_outcome": "Replaces H3 outcome: net = (quantity-weighted mean sell fill / buy fill - 1) x 1e4 - 3 bp from ai_reports/fills. Trades whose sell fills do not cover the buy quantity count toward VOID, and so do trades_since unmatched rows.",
+  "6_H1_H2_control": "Replaces controls (a) for H1 and H2: a random minute in the same clock hour (+-30 min), within 09:45-15:30, more than 15 minutes from any trigger (5 draws averaged). Information exits that pass 15:59 are truncated at the 15:59 close.",
+  "7_H1_data_rules": "Added to H1: beta and correlation use only minutes where both names and SPY have bars, need at least 15 of the 20 prior sessions in the warehouse, and exclude 09:30-09:34. The %R warm-up is RTH-only (the desk's own includes premarket; noted). A PASS is SIP-only; before any live arm it must replicate on warehouse/iex with the same cells.",
+  "8_critical_and_prior": "Replaces 'about 2.13-2.20': the critical value is computed exactly with scipy t.ppf(1 - 0.05/3, days - 1) (2.23 at df 29). Added to why_new: the closest prior is FAIR_VALUE_TRIGGER 10/22 (cheap vs 10 peers + SPY), which FAILED at about +0.3 bp gross; H1 is the volume-confirmed, peer-led version of that."
+ }
 }
