@@ -124,7 +124,10 @@ def eligible_mask(kept, supp, lo=FIRST, hi=LAST):
 
 
 def draw(rng, mask, t, k=NDRAW, extra=None):
-    cand = [m for m in range(max(FIRST, t - 30), min(LAST, t + 30) + 1) if mask[m] and (extra is None or extra[m])]
+    """Same-name control minutes: strictly AFTER the trade is over (t+HOLD+2 .. t+HOLD+62). A minute before the trigger sits on
+    the path that made the stock fire (Argon/operator 11/07, early_entry_honest 10/13 calibration: pre-trigger windows score
+    momentum triggers ~20 bp below random on noise alone). Cross-name same-minute controls are the other leg."""
+    cand = [m for m in range(max(FIRST, t + HOLD + 2), min(LAST, t + HOLD + 62) + 1) if mask[m] and (extra is None or extra[m])]
     return [rng.choice(cand) for _ in range(k)] if cand else []
 
 
@@ -205,6 +208,16 @@ def trade(day, i, sym, d, t, **ctrl):
     return row
 
 
+def xs_control(day, idx, sym, t, rng, pool=None, k=NDRAW):
+    """Same-minute control: k random OTHER universe stocks (optionally from `pool`) bought at the same minute t, same trade."""
+    cand = [x for x in (pool if pool is not None else idx) if x != sym]
+    if not cand:
+        return None
+    vals = [ret(day, idx[x], t) for x in (rng.choice(cand) for _ in range(k))]
+    vals = [x for x in vals if x is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
 def mean_ret(day, i, ts):
     r = [x for x in (ret(day, i, m) for m in ts) if x is not None]
     return sum(r) / len(r) if r else None
@@ -254,7 +267,7 @@ def evaluate(trades, lift_keys, mandatory_b=None):
 
 # ---------------- scoring per day ----------------
 def score_day(day, prev, hist, names, d, counts_only=False):
-    out = {"V1": [], "K": [], "W": [], "D": []}
+    out = {"V1": [], "K": [], "W": [], "D": [], "RND": []}
     if len(hist) < 20:
         return out
     dv = {}
@@ -269,6 +282,11 @@ def score_day(day, prev, hist, names, d, counts_only=False):
         if sums:
             dv[s] = float(np.median(sums))
     idx = {s: day["idx"][s] for s in names if s in dv and s in day["idx"]}
+    for s in list(idx)[:60]:          # control sanity baseline: unconditional random minutes (every 10th), same trade
+        for t in range(20, 360, 10):
+            x = ret(day, idx[s], t)
+            if x is not None:
+                out["RND"].append(x)
     # per-name flags
     k_full, k_part, w_inf, d_ev, v1 = {}, {}, {}, {}, {}
     for s, i in idx.items():
@@ -295,7 +313,8 @@ def score_day(day, prev, hist, names, d, counts_only=False):
             cc = mean_ret(day, i, draw(seeded(s, d, "V1c", t), mask, t, extra=vover))
             near = [x for x in tk if abs(x - t) <= 30]
             cb = mean_ret(day, i, near) if near else None
-            r = trade(day, i, s, d, t, ca=ca, cb=cb, cc=cc)
+            cd = xs_control(day, idx, s, t, seeded(s, d, "V1d", t))
+            r = trade(day, i, s, d, t, ca=ca, cb=cb, cc=cc, cd=cd)
             if r:
                 out["V1"].append(r)
     # --- K
@@ -340,9 +359,7 @@ def score_day(day, prev, hist, names, d, counts_only=False):
         if counts_only:
             out["W"].append({"d": d, "sym": s, "t": t})
             continue
-        mask = np.zeros(390, dtype=bool)
-        mask[15:61] = True
-        mask[max(0, t - 15):t + HOLD + 2] = False
+        mask = eligible_mask([t], [])
         ca = mean_ret(day, i, draw(seeded(s, d, "Wa", t), mask, t))
         pool = [x for x in cross_pool.get(t, []) if x != s]
         cb = None
@@ -367,12 +384,13 @@ def score_day(day, prev, hist, names, d, counts_only=False):
                 out["D"].append({"d": d, "sym": s, "t": t})
                 continue
             ca = mean_ret(day, i, draw(seeded(s, d, "Da", t), mask, t))
-            near = [x for x in bk if abs(x - t) <= 30 and mask[x]]
+            near = [x for x in bk if t + HOLD + 2 <= x <= t + HOLD + 62 and mask[x]]
             cb = None
             if near:
                 rr = seeded(s, d, "Db", t)
                 cb = mean_ret(day, i, [rr.choice(near) for _ in range(NDRAW)])
-            r = trade(day, i, s, d, t, ca=ca, cb=cb)
+            cd = xs_control(day, idx, s, t, seeded(s, d, "Dd", t))
+            r = trade(day, i, s, d, t, ca=ca, cb=cb, cd=cd)
             if r:
                 out["D"].append(r)
     return out
@@ -386,7 +404,7 @@ def run(counts_only=False):
         raise SystemExit("asset names unavailable: refusing to run without the ETF/ETN exclusion")
     excluded, files = set(), sorted(WH.glob("20??-??-??.npz"))
     hist, prev, prev_date = deque(maxlen=20), None, None
-    allt = {"V1": [], "K": [], "W": [], "D": []}
+    allt = {"V1": [], "K": [], "W": [], "D": [], "RND": []}
     for f in files:
         d = date.fromisoformat(f.stem)
         day = load_day(f)
@@ -408,10 +426,16 @@ def run(counts_only=False):
 
 
 def report(allt, nfiles):
-    spec = {"V1": (["ca", "cc", "cb"], "cb"), "K": (["ca", "cb", "cc"], "cb"), "W": (["ca", "cb"], "cb"), "D": (["ca", "cb"], "cb")}
+    spec = {"V1": (["ca", "cc", "cd", "cb"], "cb"), "K": (["ca", "cb", "cc"], "cb"), "W": (["ca", "cb"], "cb"), "D": (["ca", "cb", "cd"], "cb")}
     lines = ["# bar_signal_family (prereg bar_signal_family_prereg.json)", "", f"{nfiles} warehouse files. Primary t at 6 bp; 10 bp binding for net. Information cells (hold 3/30 bars) are descriptive only.", ""]
+    rnd = allt.get("RND") or []
+    base = sum(rnd) / len(rnd) if rnd else float("nan")
+    lines.append(f"CONTROL SANITY: unconditional random-minute net {base:+.2f} bp (n {len(rnd)}). Every control mean below is shown next to it; a same-name or cross-name control far from this needs an explanation before any verdict.")
+    lines.append("")
     for k, (keys, mand) in spec.items():
         r = evaluate(allt[k], keys, mand)
+        cm = {c: [x[c] for x in allt[k] if x.get(c) is not None] for c in keys}
+        lines.append(f"### {k} control means: " + ", ".join(f"{c} {sum(v) / len(v):+.2f} (n {len(v)})" for c, v in cm.items() if v))
         lines.append(f"## {k}: {r['status']}")
         if r.get("n"):
             lines.append(f"- n {r['n']} (halves {r['n_h']}), days {r['days']} (halves {r['day_h']}), mean per-day net {r['mean']:+.2f} bp, t {r['t']:.2f} vs crit {r['crit']:.2f}, halves {r['halves'][0]:+.2f}/{r['halves'][1]:+.2f}")
@@ -432,7 +456,8 @@ def main(argv=None):
         for k, v in allt.items():
             days = sorted({x["d"] for x in v})
             mid = days[len(days) // 2] if days else ""
-            print(k, "triggers", len(v), "days", len(days), "halves", sum(1 for x in v if x["d"] < mid), sum(1 for x in v if x["d"] >= mid))
+            if k != "RND":
+                print(k, "triggers", len(v), "days", len(days), "halves", sum(1 for x in v if x["d"] < mid), sum(1 for x in v if x["d"] >= mid))
         return 0
     allt, n = run()
     report(allt, n)
