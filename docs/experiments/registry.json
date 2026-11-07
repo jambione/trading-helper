@@ -178,16 +178,16 @@
    "title": "%R fast length 10 and half smoothing (rte_len, 2 arms)",
    "layer": "exit",
    "source": "Gemini",
-   "status": "running",
-   "evidence": "About 9+ of 45 files done at 04:25; first run crashed and was relaunched.",
-   "next": "Read REPORT.md when done.",
-   "blocked_on": "",
+   "status": "blocked",
+   "evidence": "Finished 05:20 but VACUOUS: len10 and half_both are identical to baseline (5 screen days, 133 -> 133 trades, net +0.3 -> +0.3, day delta +0). A different %R length cannot change nothing. The knob is read by live code (ai_entry_watch _rte_fast_length), so the replay probably serves %R from recorded dashboard/engine state instead of recomputing from bars (unproven).",
+   "next": "Find out why the override has no effect; if the replay cannot recompute %R, test %R length on the SIP warehouse instead.",
+   "blocked_on": "vacuous sweep: need a replay path that recomputes %R from bars, or a historical %R study on the warehouse",
    "gates": {
     "prereg": true,
     "skeptic": true,
     "tool": true,
-    "smoke": true,
-    "data_check": true
+    "smoke": false,
+    "data_check": false
    },
    "ref": "docs/sweeps/rte_len_2026-11-06.json"
   },

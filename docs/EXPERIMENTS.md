@@ -8,9 +8,9 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 |---|---|
 | idea | 10 |
 | queued | 1 |
-| running | 9 |
+| running | 8 |
 | collecting | 5 |
-| blocked | 3 |
+| blocked | 4 |
 | open | 5 |
 | verdict_fail | 10 |
 | underpowered | 2 |
@@ -20,6 +20,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 
 ## Needs attention
 
+- **X10** [blocked] %R fast length 10 and half smoothing (rte_len, 2 arms) - Finished 05:20 but VACUOUS: len10 and half_both are identical to baseline (5 screen days, 133 -> 133 trades, net +0.3 -> +0.3, day delta +0). A different %R length cannot change nothing. The knob is read by live code (ai_entry_watch _rte_fast_length), so the replay probably serves %R from recorded dashboard/engine state instead of recomputing from bars (unproven). Next: Find out why the override has no effect; if the replay cannot recompute %R, test %R length on the SIP warehouse instead. (blocked on: vacuous sweep: need a replay path that recomputes %R from bars, or a historical %R study on the warehouse)
 - **N1** [blocked] V1 volume-clock %R - First run's same-name controls were biased (one-sided exclusion; controls +11..+28 bp vs -7.5 bp for random minutes). Fixed in 8a-fix commit and rerun started; the first FAILs are void. Next: Read the rerun (~/bsf_run2.log); run a second sanity check on the control means before any verdict. (blocked on: rerun with fixed controls)
 - **N3** [blocked] W opening washout - First run's same-name controls were biased (one-sided exclusion; controls +11..+28 bp vs -7.5 bp for random minutes). Fixed in 8a-fix commit and rerun started; the first FAILs are void. Next: Read the rerun (~/bsf_run2.log); run a second sanity check on the control means before any verdict. (blocked on: rerun with fixed controls)
 - **N4** [blocked] D dwell/knock - First run's same-name controls were biased (one-sided exclusion; controls +11..+28 bp vs -7.5 bp for random minutes). Fixed in 8a-fix commit and rerun started; the first FAILs are void. Next: Read the rerun (~/bsf_run2.log); run a second sanity check on the control means before any verdict. (blocked on: rerun with fixed controls)
@@ -48,7 +49,6 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 - **X7** [running] park the stop at last-1c instead of selling at last (overtake_off) - Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. Next: Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.
 - **X8** [running] all Argon exit fixes together (argon_exits) - Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. Next: Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.
 - **X9** [queued] tranche A: bank 40-60% at +15/+20/+25 bp, rest runs (4 arms) - Replay fixed (tranche B breakeven). Optimistic fill model. Live gaps: rr clamp, market sell, 1R runner trail. Next: Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Runs after X1-X8. A pass means build a live path, not flip a switch.
-- **X10** [running] %R fast length 10 and half smoothing (rte_len, 2 arms) - About 9+ of 45 files done at 04:25; first run crashed and was relaunched. Next: Read REPORT.md when done.
 - **F1** [collecting] forward: range position - Logging live on IEX, counts only until 150 entries. Next: Read about 11/13-11/17.
 - **F2** [collecting] forward: run size (apex) - Logging live on IEX, counts only until 150 entries. Next: Read about 11/13-11/17.
 - **F3** [collecting] forward: run efficiency - Logging live on IEX, counts only until 150 entries. Next: Read about 11/13-11/17.
@@ -83,7 +83,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 | X7 | park the stop at last-1c instead of selling at last (overtake_off) | Argon | running | Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. |
 | X8 | all Argon exit fixes together (argon_exits) | Argon | running | Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. |
 | X9 | tranche A: bank 40-60% at +15/+20/+25 bp, rest runs (4 arms) | Argon | queued | Replay fixed (tranche B breakeven). Optimistic fill model. Live gaps: rr clamp, market sell, 1R runner trail. |
-| X10 | %R fast length 10 and half smoothing (rte_len, 2 arms) | Gemini | running | About 9+ of 45 files done at 04:25; first run crashed and was relaunched. |
+| X10 | %R fast length 10 and half smoothing (rte_len, 2 arms) | Gemini | blocked | Finished 05:20 but VACUOUS: len10 and half_both are identical to baseline (5 screen days, 133 -> 133 trades, net +0.3 -> +0.3, day delta +0). A different %R length cannot change nothing. The knob is read by live code (ai_entry_watch _rte_fast_length), so the replay probably serves %R from recorded dashboard/engine state instead of recomputing from bars (unproven). |
 | X11 | triangle exit, leash 10/12, steep30 gate | operator | verdict_fail | Closed earlier (steep30 screen passed, confirm t 1.15). |
 | S3 | payoff asymmetry fixes (hold winners longer / time-stop never-greens) | Argon | verdict_fail | Real asymmetry; both fixes lose (60% of cuts end better if held). |
 | X12 | debounced sell trigger: breach by the damped print (or 2 prints) before flattening, hard stop excepted | Argon (logic audit 11/07) | idea | Code check: flatten_px is set from the raw minimum print (ai_positions.py:7585) while the shelf raises off a 2-print median (ring 2) - asymmetric as described. Direction of the bias is plausible; size untested. Prior: 'exit delay is loop starvation' and tight stops lose 11-24 bp. |
