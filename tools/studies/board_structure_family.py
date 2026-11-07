@@ -160,7 +160,10 @@ def refract(ts):
 
 
 def control_minutes(rng, trig_ts, allowed_mask, t, k=5):
-    cand = [m for m in range(max(H1_FIRST, t - 30), min(LAST, t + 30) + 1) if allowed_mask[m] and all(abs(m - x) > 15 for x in trig_ts)]
+    """Same-name control minutes STRICTLY AFTER the trade (t+HOLD+2 .. t+HOLD+62), clear of every trigger's hold window.
+    11/07 (P2 control standard): the earlier +-30 window drew minutes from t-30..t-16, on the path that made the stock fire."""
+    cand = [m for m in range(max(H1_FIRST, t + HOLD + 2), min(LAST, t + HOLD + 62) + 1)
+            if allowed_mask[m] and all(m < x - 15 or m > x + HOLD + 1 for x in trig_ts)]
     if not cand:
         return []
     return [rng.choice(cand) for _ in range(k)]
@@ -380,9 +383,12 @@ def report_h1h2():
         if ev.get("status") == "NO_TRIGGERS":
             out += ["no triggers", ""]
             continue
-        out += [f"- triggers {ev['n']} over {ev['days']} days, by half {ev['n_h']}",
+        ca_v = [x["ca"] for x in tr if x.get("ca") is not None]
+        cb_v = [x["cb"] for x in tr if x.get("cb") is not None]
+        out += [f"- CONTROL SANITY: same-name later-only control mean {sum(ca_v) / max(1, len(ca_v)):+.2f} bp (n {len(ca_v)}), same-minute other-stock control mean {sum(cb_v) / max(1, len(cb_v)):+.2f} bp (n {len(cb_v)}); unconditional random minute on this warehouse ~ -6.2 bp (bar_signal_family 11/07)",
+                f"- triggers {ev['n']} over {ev['days']} days, by half {ev['n_h']}",
                 f"- mean per-day net {ev['mean']:+.1f} bp, t {ev['t']:+.2f} (family critical {ev['crit']:.2f}); halves {ev['halves'][0]:+.1f} / {ev['halves'][1]:+.1f}",
-                f"- lift vs same-name same-hour random minutes {ev['lift_a']['mean']:+.1f} (t {ev['lift_a']['t']:+.2f}, halves {ev['lift_a']['h'][0]:+.1f} / {ev['lift_a']['h'][1]:+.1f})",
+                f"- lift vs same-name later-only random minutes {ev['lift_a']['mean']:+.1f} (t {ev['lift_a']['t']:+.2f}, halves {ev['lift_a']['h'][0]:+.1f} / {ev['lift_a']['h'][1]:+.1f})",
                 f"- lift vs same-minute random stock {ev['lift_b']['mean']:+.1f} (t {ev['lift_b']['t']:+.2f}, halves {ev['lift_b']['h'][0]:+.1f} / {ev['lift_b']['h'][1]:+.1f})",
                 f"- drop best 5 days {ev['drop_days']:+.1f}; drop top 5 names {ev['drop_names']:+.1f}; at 10 bp cost {ev['net10']:+.1f}; conditions {ev['c']}",
                 f"**VERDICT: {ev['status']}**", ""]
