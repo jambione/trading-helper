@@ -17,14 +17,14 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
     "prereg": true,
     "skeptic": "n/a",
     "tool": true,
-    "smoke": "pending",
+    "smoke": true,
     "data_check": true
    },
    "ref": "docs/sweeps/trend_hold_fix_2026-11-07.json"
@@ -35,7 +35,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. trail:after_peak not yet seen firing in the 2 finished days.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -53,14 +53,14 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
     "prereg": true,
     "skeptic": "n/a",
     "tool": true,
-    "smoke": "pending",
+    "smoke": true,
     "data_check": true
    },
    "ref": "docs/sweeps/trend_hold_fix_2026-11-07.json"
@@ -71,7 +71,7 @@
    "layer": "exit",
    "source": "operator/Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -89,14 +89,14 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
     "prereg": true,
     "skeptic": "n/a",
     "tool": true,
-    "smoke": "pending",
+    "smoke": true,
     "data_check": true
    },
    "ref": "docs/sweeps/trend_hold_fix_2026-11-07.json"
@@ -107,7 +107,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -125,7 +125,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -143,14 +143,14 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
     "prereg": true,
     "skeptic": "n/a",
     "tool": true,
-    "smoke": "pending",
+    "smoke": true,
     "data_check": true
    },
    "ref": "docs/sweeps/trend_hold_fix_2026-11-07.json"
@@ -859,6 +859,18 @@
    "blocked_on": "",
    "gates": {},
    "ref": "tools/studies/bar_signal_family.py"
+  },
+  {
+   "id": "L5",
+   "title": "sweep_replays no-start window (07:30-16:00) also applied on weekends and stopped the run",
+   "layer": "process",
+   "source": "Claude",
+   "status": "done",
+   "evidence": "Stopped both exit replays at 07:33 Saturday with 2 of 5 screen days. Fixed: the window now applies Mon-Fri only (tools/sweep_replays.py).",
+   "next": "",
+   "blocked_on": "",
+   "gates": {},
+   "ref": "tools/sweep_replays.py"
   }
  ]
 }

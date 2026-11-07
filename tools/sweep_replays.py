@@ -197,7 +197,8 @@ class Sweep:
             if not pending and not running:
                 break
             hm = int(datetime.now(ET).strftime("%H%M"))
-            blocked = no_start is not None and no_start[0] <= hm < no_start[1] and not offline
+            weekday = datetime.now(ET).weekday() < 5          # the desk's API budget is only in use Mon-Fri
+            blocked = no_start is not None and weekday and no_start[0] <= hm < no_start[1] and not offline
             baseline_busy = any(a == "baseline" for _, a in running)
             started = False
             for k in pending:
