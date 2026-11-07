@@ -39,6 +39,12 @@ VARIANTS = {
     "t25_60": {"ai_watch_synth_rr": 0.05, "ai_watch_synth_scale_out_pct": 60.0},
     "t20_40": {"ai_watch_synth_rr": 0.04, "ai_watch_synth_scale_out_pct": 40.0},
 }
+# Resting-limit tranche A (operator 11/07: is it a strategy success but an execution failure?): sell at the target, no spread crossed,
+# but only once price has traded THROUGH the target by th bp (stand-in for "the bid has reached it" on the paper account).
+for _rr, _lab in ((0.03, 15), (0.04, 20), (0.05, 25)):
+    for _th in (2, 4, 6):
+        VARIANTS[f"lim{_lab}_60_th{_th}"] = {"ai_watch_synth_rr": _rr, "ai_watch_synth_scale_out_pct": 60.0,
+                                            "sim_t1_limit": True, "sim_t1_through_bp": float(_th)}
 
 
 # ---------------- print hygiene ----------------
@@ -91,7 +97,8 @@ def sim_trade(sym: str, entry: float, fill_ts: float, prints, cfg: dict, delay: 
         if p["t1_hit"]:
             tgt = (float(p["target_1"]) / entry - 1) * 1e4
             sc = float(p["scale"])
-            return {"gross_bp": sc * tgt + (1 - sc) * run - (sc * SELL_EXTRA if t1_cost else 0.0), "why": why,
+            extra = 0.0 if cfg.get("sim_t1_limit") else SELL_EXTRA        # a resting limit sells at its price, no spread crossed
+            return {"gross_bp": sc * tgt + (1 - sc) * run - (sc * extra if t1_cost else 0.0), "why": why,
                     "hold_s": pr[j][0] - fill_ts, "t1": True}
         return {"gross_bp": run, "why": why, "hold_s": pr[j][0] - fill_ts, "t1": False}
 
@@ -100,7 +107,8 @@ def sim_trade(sym: str, entry: float, fill_ts: float, prints, cfg: dict, delay: 
         if px <= float(p["local_stop_price"]) + 1e-9:
             return finish(i, "local_trail")
         t1_rr = max(0.0, float(cfg.get("ai_watch_synth_rr", 0.6) or 0.0))
-        if t1_rr > 0 and float(p["scale"]) > 0 and not p["t1_hit"] and px >= float(p["target_1"]):
+        through = float(cfg.get("sim_t1_through_bp", 0.0) or 0.0)      # resting limit: fills only after price trades THROUGH the target
+        if t1_rr > 0 and float(p["scale"]) > 0 and not p["t1_hit"] and px >= float(p["target_1"]) * (1 + through / 1e4):
             p["t1_hit"], p["t1_r"] = True, t1_rr
             p["local_stop_price"] = max(float(p["local_stop_price"]), float(p["entry"]))   # tranche B to breakeven, as live
         e, risk = float(p["entry"]), float(p["risk_per_share"])

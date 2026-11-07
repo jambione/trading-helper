@@ -81,3 +81,11 @@ def test_bad_tick_no_longer_stops_the_trade_out():
     pr[15] = (T0 + 15, 91.0, 1)
     r = run(prints=pr)
     assert r["why"] == "window_end" and abs(r["gross_bp"]) < 1.0
+
+
+def test_resting_limit_needs_the_through_distance_and_pays_no_spread():
+    tight = run({"ai_watch_synth_rr": 0.04, "ai_watch_synth_scale_out_pct": 60.0, "sim_t1_limit": True, "sim_t1_through_bp": 0.0})
+    far = run({"ai_watch_synth_rr": 0.04, "ai_watch_synth_scale_out_pct": 60.0, "sim_t1_limit": True, "sim_t1_through_bp": 15.0})
+    mkt = run({"ai_watch_synth_rr": 0.04, "ai_watch_synth_scale_out_pct": 60.0})
+    assert tight["t1"] is True and far["t1"] is False        # +30 bp path never trades 15 bp through a +20 bp target... but 35 bp is not reached
+    assert tight["gross_bp"] > mkt["gross_bp"]               # no extra sale cost
