@@ -1,0 +1,45 @@
+{
+ "id": "evening_family_2026-11-07",
+ "registered": "2026-11-07 17:00 ET",
+ "operator": "Operator 11/07: build the remaining preregs and run them without per-step approval (read-only studies, no live change, no spend). Standard: docs/TEST_STANDARD.md (EDGE vs PROFITABLE, P2 controls with the 11/07 amendment: PRIMARY control = same-minute other-instrument).",
+ "family": "4 hypotheses (S, E, R, L); one-sided alpha 0.05/4 = 0.0125 per hypothesis; critical t = scipy t.ppf(1 - 0.0125, days - 1) on per-day means. The Fibonacci rerun is NOT in this family (its own prereg + amendment).",
+ "data": "ai_reports/warehouse/sip/DAY.npz (120 sessions 2026-04-27..2026-10-15, RTH 1-minute SIP bars) and ai_reports/warehouse/etf/DAY.npz (same days; SMH SOXX IBIT IGV XBI URA XLE XLF ARKK QQQ IWM SPY). Stock universe per day = top 400 by prior-session dollar volume, $10-$500 at the 09:30 open, ETFs/levered products excluded (is_not_stock), prior session = preceding weekday in the file list, 20 prior sessions required for betas/volume baselines. Halves by date at the median scored session.",
+ "common": {
+  "trade": "Buy the open of bar t+1, sell the close of bar t+H (hold H bars including the entry bar). Entries 09:45-15:30 (bars 15-360). One trigger per instrument per 30 minutes (first kept; the clock restarts only at a kept trigger). A trigger fires only on the first bar its condition becomes true.",
+  "cost": "Stocks: 6 bp round trip for the primary t, 10 bp stress (binding for PROFITABLE). ETFs (E only): per-ETF round trip = median quoted NBBO spread (bp of mid) from a fixed quote sample + 1 bp, stress = 2x that. Quote sample, fixed now: for each ETF, 10 sessions chosen by seed sha256('etf-cost'|ETF) from the 120, 20 minutes per session chosen the same way between 09:45 and 15:30, the NBBO in force at the start of each minute from Alpaca historical SIP quotes; median over the 200 readings.",
+  "controls": "PRIMARY: same-minute other-instrument control - the same trade on 5 seeded (sha256(sym|day|label|k)) other instruments of the same kind (stocks for S/R/L, other ETFs for E) at the trigger minute, excluding instruments that themselves trigger within +-15 minutes. SECONDARY: same-instrument later-only control - 5 seeded minutes in t+H+2 .. t+H+62 (inside 09:45-15:30), clear of every trigger's [t-15, t+H+1] window. Each control's mean is printed beside the unconditional random-minute mean (every 10th bar of 60 universe names / all ETFs, same trade and cost); a primary control more than 3 bp from it blocks the verdict (VOID) unless explained in the report.",
+  "verdict": "EDGE = lift vs the PRIMARY control > 0 in both halves with day-clustered t >= the family critical value, lift vs the SECONDARY control > 0 pooled, and the winsorized check (clip the top 1% of per-trade lifts) > 0 in both halves. PROFITABLE = EDGE and net > 0 in both halves and net > 0 at the stress cost. Counts: >= 300 triggers, >= 100 per half, >= 60 scored days and >= 25 per half, else UNDERPOWERED. Order: VOID, UNDERPOWERED, FAIL (no EDGE), EDGE, PROFITABLE. Information cells are descriptive and never promote a verdict.",
+  "canary": "Before the read, the tool must recover a planted edge: add +8 bp to the exit price of every primary trigger of one hypothesis in a COPY of the rows and show the lift rises by 8 bp (+-0.5) with the controls unchanged; and a null knob (a trigger rule that selects minutes at random with the same counts) must come out with lift within 2 standard errors of 0."
+ },
+ "S_surge_continuation_stocks": {
+  "claim": "C2 component: a stock's 1-minute surge (SPY-residual 1-bar return >= +20 bp, bar volume >= 2x its prior-20-bar median, at least 10 prior bars) continues over the next 5 minutes beyond what a fair random minute does.",
+  "trigger": "As regime_beta_family surge_events: residual return of bar t = r_stock(t) - beta x r_SPY(t), beta from the previous 20 sessions' 1-minute returns (09:35-15:59), >= 0.0020; volume(t) >= 2 x median(volume t-20..t-1); bars 15-360.",
+  "H": 5,
+  "information": ["H = 10 and 30", "residual threshold 15 and 30 bp", "SPY-hedged net"]
+ },
+ "E_surge_continuation_etfs": {
+  "claim": "B1: the same surge rule on the 12 thematic/broad ETFs, where costs are small, is PROFITABLE.",
+  "trigger": "Same as S on each ETF; for SPY itself the raw 1-bar return is used (no residual). ETF volume baseline as S.",
+  "H": 5,
+  "controls_note": "PRIMARY = same minute, 5 seeded OTHER ETFs (same trade); SECONDARY = same ETF later-only.",
+  "information": ["H = 10 and 30", "per-ETF net"]
+ },
+ "R_pctr_length_10_vs_21": {
+  "claim": "X10 (replay could not test it): the live pre-square arm computed with a fast %R length of 10 instead of 21 finds better entries.",
+  "trigger_L": "fast = %R(L) EWM span 7 and slow = %R(112) EWM span 3 on 1-minute bars of the session (signals.py formulas; no prior-day bars); pre-square when both fast and slow are in [-35, -20], |fast - slow| <= 15 and fast(t) > fast(t-1) + 0.05; warm-up 112 bars, so bars 112-360 (11:22-15:30).",
+  "H": 10,
+  "test": "Two triggers, L=21 (live) and L=10. Each gets an EDGE/PROFITABLE verdict on its own. HEAD-TO-HEAD (the actual question): per day, mean net of L=10 trades minus mean net of L=21 trades on days with both; L=10 is BETTER only if > 0 in both halves with day-t >= the family critical value.",
+  "information": ["H = 5 and 30", "L = 14"]
+ },
+ "L_sector_etf_lead_lag": {
+  "claim": "N5: when a stock's sector ETF jumps and the stock has not moved yet, the stock catches up.",
+  "mapping": "Each universe stock is mapped (per day, from the previous 20 sessions only) to the ETF among SMH SOXX IBIT IGV XBI URA XLE XLF ARKK whose SPY-residual 1-minute returns have the highest correlation with the stock's, if that correlation >= 0.30; otherwise unmapped.",
+  "trigger": "At bar t the mapped ETF's 2-bar SPY-residual return (t-1..t) >= +15 bp and its volume(t) >= 2 x median(volume t-20..t-1), and the stock's own 2-bar return <= +2 bp. Buy the stock.",
+  "H": 10,
+  "controls_note": "PRIMARY = same minute, 5 seeded universe stocks NOT mapped to that ETF (same trade); SECONDARY = same-stock later-only.",
+  "information": ["H = 5 and 30", "ETF jump 10 and 25 bp", "per-ETF counts"]
+ },
+ "if_pass": "EDGE -> component list; PROFITABLE -> result-skeptic Mode 2 review, then the operator's decision. Never a live change by itself.",
+ "tool": "tools/studies/evening_family.py (one read after the code-review gate and canaries; no retuning); report docs/EVENING_FAMILY.md",
+ "status": "registered; awaiting skeptic round 1"
+}
