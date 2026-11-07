@@ -8,7 +8,11 @@
   "smoke",
   "data_check",
   "running",
-  "verdict"
+  "S1 screen",
+  "S2 confirm",
+  "S3 held-out trade sim",
+  "S4 stress",
+  "operator decision"
  ],
  "items": [
   {
@@ -871,6 +875,18 @@
    "blocked_on": "",
    "gates": {},
    "ref": "tools/sweep_replays.py"
+  },
+  {
+   "id": "P3",
+   "title": "build S3 held-out trade simulation (776+ logged entries, post-fill SIP prints, real position code) and S4 stress",
+   "layer": "process",
+   "source": "operator 11/07 (no time for forward tests)",
+   "status": "open",
+   "evidence": "Spec in docs/SIM_STAGE.md. Pieces exist: tools/studies/early_path.py (trades_since, post-fill SIP prints), ai_positions.local_profit_stop, tools/sim_rstop_path.py. Not built.",
+   "next": "Build tools/trade_sim.py: per-trade price-path loop over the real exit code for baseline vs variant; day-clustered stats, halves, drop rule, 10 bp, bootstrap, 1 s delay. Tests with planted paths.",
+   "blocked_on": "",
+   "gates": {},
+   "ref": "docs/SIM_STAGE.md"
   }
  ]
 }

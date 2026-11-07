@@ -1,6 +1,6 @@
 # Experiment board (generated from docs/experiments/registry.json, 2026-11-07)
 
-Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running -> verdict. Edit the registry, not this file; run `tools/experiments.py board`.
+Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running -> S1 screen -> S2 confirm -> S3 held-out trade sim -> S4 stress -> operator decision. Edit the registry, not this file; run `tools/experiments.py board`.
 
 ## Counts
 
@@ -11,7 +11,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 | running | 8 |
 | collecting | 5 |
 | blocked | 4 |
-| open | 5 |
+| open | 6 |
 | verdict_fail | 10 |
 | underpowered | 2 |
 | void | 1 |
@@ -29,6 +29,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 - **L3** [open] live clamps ai_watch_synth_rr at max(0.25) - Verified: targets under +125 bp cannot be set live. Next: Needed only if X9 passes.
 - **L4** [open] vacuity guard for sweeps - Replay arms can silently not run (X1/X3 floor was a no-op). Next: Add one-day smoke check to sweep_replays.py.
 - **P1** [open] audit control construction in every random-minute study tool; add control-sanity data gate - bar_signal_family's one-sided exclusion inflated same-name controls (+11.6/+27.9 bp vs -7.5 bp for random minutes). board_structure_family (H1/H2) is symmetric (verified). ~20 other tools use random-minute controls and are unaudited: analyst_upgrade, book_walls, clock_windows, daily_filter_screen, early_entry_honest, first_presq_adversarial_argon, five_pillars_study, gate_counterfactual, momentum_alert_markouts, limit_below_study, momentum_runway_study, range_arm_control, runway_target_study, sector_study, sip_breakout_study and others. AUDIT RESULT (subagent + Argon, 11/07): none has the exact one-sided bug, but the stricter point holds - any same-name control drawn BEFORE the trigger sits on the path that made the stock fire. Flagged: sr_* family (5 tools, same-hour pool excluding only the trigger minute), range_arm_control (600 s exclusion vs 1800 s hold), premarket_depth_probe, sip_breakout_study, fib_pullback, structure_pullback, book_walls (300 s vs 600 s horizon), desk_vs_random/five_pillars/momentum_runway (full-day same-name), and board_structure_family H1/H2 (controls reach t-30..t-16). Clean: strictly-later or same-minute cross-name controls (early_entry_honest, limit_below, wr_trend_trade, etf_bars, first_presq_adversarial, analyst_upgrade, regime_beta_family B2 horizons). Next: Standard (P2). Rerun in this order: board_structure_family H1/H2, range_arm_control (only one where a pass is plausible), sr_* family, premarket_depth_probe, then the rest. Recorded FAILs that also fail on absolute net stay FAIL.
+- **P3** [open] build S3 held-out trade simulation (776+ logged entries, post-fill SIP prints, real position code) and S4 stress - Spec in docs/SIM_STAGE.md. Pieces exist: tools/studies/early_path.py (trades_since, post-fill SIP prints), ai_positions.local_profit_stop, tools/sim_rstop_path.py. Not built. Next: Build tools/trade_sim.py: per-trade price-path loop over the real exit code for baseline vs variant; day-clustered stats, halves, drop rule, 10 bp, bootstrap, 1 s delay. Tests with planted paths.
 
 ### Gate warnings (pending evidence)
 
@@ -138,6 +139,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 | P1 | audit control construction in every random-minute study tool; add control-sanity data gate | operator question 11/07 | open | bar_signal_family's one-sided exclusion inflated same-name controls (+11.6/+27.9 bp vs -7.5 bp for random minutes). board_structure_family (H1/H2) is symmetric (verified). ~20 other tools use random-minute controls and are unaudited: analyst_upgrade, book_walls, clock_windows, daily_filter_screen, early_entry_honest, first_presq_adversarial_argon, five_pillars_study, gate_counterfactual, momentum_alert_markouts, limit_below_study, momentum_runway_study, range_arm_control, runway_target_study, sector_study, sip_breakout_study and others. AUDIT RESULT (subagent + Argon, 11/07): none has the exact one-sided bug, but the stricter point holds - any same-name control drawn BEFORE the trigger sits on the path that made the stock fire. Flagged: sr_* family (5 tools, same-hour pool excluding only the trigger minute), range_arm_control (600 s exclusion vs 1800 s hold), premarket_depth_probe, sip_breakout_study, fib_pullback, structure_pullback, book_walls (300 s vs 600 s horizon), desk_vs_random/five_pillars/momentum_runway (full-day same-name), and board_structure_family H1/H2 (controls reach t-30..t-16). Clean: strictly-later or same-minute cross-name controls (early_entry_honest, limit_below, wr_trend_trade, etf_bars, first_presq_adversarial, analyst_upgrade, regime_beta_family B2 horizons). |
 | P2 | control standard: same-name controls strictly AFTER the trade (t+hold+2 .. +62); plus a same-minute cross-name control; report control means beside the unconditional random-minute mean | early_entry_honest 10/13 calibration; Argon 11/07 | done | Implemented in bar_signal_family (rerun bsf_run3 in progress). Not yet applied to the older tools. |
 | L5 | sweep_replays no-start window (07:30-16:00) also applied on weekends and stopped the run | Claude | done | Stopped both exit replays at 07:33 Saturday with 2 of 5 screen days. Fixed: the window now applies Mon-Fri only (tools/sweep_replays.py). |
+| P3 | build S3 held-out trade simulation (776+ logged entries, post-fill SIP prints, real position code) and S4 stress | operator 11/07 (no time for forward tests) | open | Spec in docs/SIM_STAGE.md. Pieces exist: tools/studies/early_path.py (trades_since, post-fill SIP prints), ai_positions.local_profit_stop, tools/sim_rstop_path.py. Not built. |
 
 ### forward
 
