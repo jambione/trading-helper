@@ -6,7 +6,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 
 | status | n |
 |---|---|
-| idea | 10 |
+| idea | 13 |
 | queued | 1 |
 | running | 8 |
 | collecting | 5 |
@@ -16,7 +16,7 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 | underpowered | 2 |
 | void | 1 |
 | done | 4 |
-| parked | 1 |
+| parked | 2 |
 
 ## Needs attention
 
@@ -65,6 +65,9 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 - **S4** scale initial stop, breakeven trigger and trail arm by vol_1m_pct (Argon (logic audit 11/07)) - ai_local_trail_give_vol_k is absent from live config (knob exists in code per Argon, unverified). All three thresholds are fixed bp today (-60/+15/+30). Data: vol_1m_pct <=0.07 = 47% never-green, >0.15 = 17%, net -9.8/-8.1/-7.4 bp (10/15+, n 445). Code check: ai_local_trail_give_vol_k is read at ai_positions.py:4260 (local_trail_give), default 0 = off. Next: Counterfactual on outcomes: per-volatility-tercile stop/BE/arm, then a replay arm.
 - **N18** same-wave re-entry reset: fast %R must cycle below -50 (or block re-entry after a never-green exit) (Argon (logic audit 11/07)) - Config corrected: reentry cooldown is 120 s (not 60) and max entries per symbol per day is 0 = unlimited (not 2). Prior: per-name attempt cap FAIL (4th/5th attempts were the best); loss cooldown unproven. A %R reset rule is different from a count cap. Next: Counterfactual on logged re-entries, then prereg.
 - **X14** grace period after entry before the tight stop applies (entry clock 21-112 min vs exit leash 15-120 s) (Argon (logic audit 11/07)) - Config corrected: idle leash is 15 s (not 120 s). Prior: 42 stop/target/trail/ladder shapes all scored zero gross; wider stop LOST; 60% of cuts end better if held (payoff asymmetry). Next: Low prior; test last, as one arm of the sweep.
+- **N19** marketable limit +5 bp with cancel and 15-minute cooldown (no re-buy at market) (Argon (fresh look 11/07)) - Row 60: skipping fills >5 bp above the decision price = +82 bp/session (t 3.0, both periods), but 150 blocked trades / 28 sessions = ~5/session, i.e. ~+15 bp per avoided trade. Row 63: true broker slip is ~0; 94% of the logged slip is reference staleness (decision price = last print, often at/below the bid), so the skipped fills are largely wide-spread or stale-reference names - overlapping the spread gate already live (0.05% cap). The cooldown variant itself was never scored. Next: Re-score on the existing 626-trade quote data with a 15-minute cooldown instead of a 1-minute re-entry; check overlap with the spread gate first.
+- **N20** flow-compression breakout restricted to structurally 1-cent names (15-minute median spread <= 2 bp) (Argon (fresh look 11/07)) - Row 67: lift vs control +13.38 bp (t >15) but net -2.68 bp (both halves negative): entry pays 1.4 bp, exit pays 4-6 bp half-spread, +4.8 bp gross. The fix is a clean reading of the report. Risk: names with a persistent 1c spread at $35+ are mega-caps with small moves, so the +4.8 bp gross may shrink; earlier note: flow edge is real but ~+1.5-2 bp at 3 min. Next: Prereg on the stored warehouse tape; filter by rolling median spread; hold the same cost model.
+- **N21** relax the slow-%R level requirement in exh_tight (require slow rising mid-band instead of near -20) (Argon (fresh look 11/07)) - Mechanism is right (slow %R(112) near -20 means price near the top of its 2-hour range). But Row 46 itself reads: 3-min gross at the signal -0.2 bp, delay cost ~0, 'speed on the empty square buys no move'; earlier-entry sims were hindsight. Replay risk: the %R-length sweep (X10) showed %R overrides can be no-ops in the replay. Next: Only after X10 is diagnosed: confirm the replay recomputes %R, then run as a sweep arm.
 
 ## By layer
 
@@ -110,6 +113,10 @@ Pipeline: idea -> prereg -> skeptic -> tool -> smoke -> data_check -> running ->
 | N16 | queue ranking by freshness (pre_square before square, lowest rs_pos15) instead of max RVOL / move | Argon (logic audit 11/07) | idea | Config reading corrected: live rank_rvol_band is 0.5 (not 0.0) and move_band 2.0, so ties do get broken by _signal_rank; max positions 3 (not 2). Mechanism (extended names win the seat) is plausible, untested. Prior: gates on extension FAILED (room/overbought/stall). |
 | N17 | pre-square must also require slow %R rising | Argon (logic audit 11/07) | idea | Config corrected: ai_watch_presquare_after_square_min is already 10 (not off). Whether _presquare_exh_allows_buy ignores pctr_slow_rising is NOT yet verified in code. Prior: %R states are ~random and RSI/MACD add nothing. Code check 11/07: function is at ai_entry_watch.py:13087 (Argon cited 5538, wrong). In the first ~90 lines it reads pctr_slow (value) and pctr_rising, never pctr_slow_rising. Confirmed by reading; still untested. |
 | N18 | same-wave re-entry reset: fast %R must cycle below -50 (or block re-entry after a never-green exit) | Argon (logic audit 11/07) | idea | Config corrected: reentry cooldown is 120 s (not 60) and max entries per symbol per day is 0 = unlimited (not 2). Prior: per-name attempt cap FAIL (4th/5th attempts were the best); loss cooldown unproven. A %R reset rule is different from a count cap. |
+| N19 | marketable limit +5 bp with cancel and 15-minute cooldown (no re-buy at market) | Argon (fresh look 11/07) | idea | Row 60: skipping fills >5 bp above the decision price = +82 bp/session (t 3.0, both periods), but 150 blocked trades / 28 sessions = ~5/session, i.e. ~+15 bp per avoided trade. Row 63: true broker slip is ~0; 94% of the logged slip is reference staleness (decision price = last print, often at/below the bid), so the skipped fills are largely wide-spread or stale-reference names - overlapping the spread gate already live (0.05% cap). The cooldown variant itself was never scored. |
+| N20 | flow-compression breakout restricted to structurally 1-cent names (15-minute median spread <= 2 bp) | Argon (fresh look 11/07) | idea | Row 67: lift vs control +13.38 bp (t >15) but net -2.68 bp (both halves negative): entry pays 1.4 bp, exit pays 4-6 bp half-spread, +4.8 bp gross. The fix is a clean reading of the report. Risk: names with a persistent 1c spread at $35+ are mega-caps with small moves, so the +4.8 bp gross may shrink; earlier note: flow edge is real but ~+1.5-2 bp at 3 min. |
+| N21 | relax the slow-%R level requirement in exh_tight (require slow rising mid-band instead of near -20) | Argon (fresh look 11/07) | idea | Mechanism is right (slow %R(112) near -20 means price near the top of its 2-hour range). But Row 46 itself reads: 3-min gross at the signal -0.2 bp, delay cost ~0, 'speed on the empty square buys no move'; earlier-entry sims were hindsight. Replay risk: the %R-length sweep (X10) showed %R overrides can be no-ops in the replay. |
+| N22 | short the failed first pullback on $20+ gappers (mirror of Row 66) | Argon (fresh look 11/07) | parked | Operator declined shorting work earlier ('I only like 1 - not 2 or 3'). Prior: short the fade has no edge (coin flip, failed held-out); gap-down short failed on 10 years. Row 66 long net -31 bp includes ~6 bp cost, so the mirror gross is ~25 bp before borrow and locates - never tested on the short side with real borrow. |
 
 ### sizing
 
