@@ -39,6 +39,14 @@ VARIANTS = {
     "t25_60": {"ai_watch_synth_rr": 0.05, "ai_watch_synth_scale_out_pct": 60.0},
     "t20_40": {"ai_watch_synth_rr": 0.04, "ai_watch_synth_scale_out_pct": 40.0},
 }
+# Never-green bleed (operator + Argon 11/07): (a) the existing underwater leash ai_local_trail_decay_red_step_r (live 0 = off),
+# (b) a resting SCRATCH: once a trade has been never-green (peak < entry + 5 bp) for T s, rest a sell limit at the entry price; it fills
+# when a print reaches entry x (1 + 2 bp) (bid-reach proxy); the -60 bp shelf stays as the backstop.
+for _st in (0.005, 0.01, 0.02):
+    VARIANTS[f"red{_st:g}"] = {"ai_local_trail_decay_red_step_r": _st}
+for _T in (120, 300, 540):
+    VARIANTS[f"scratch{_T}"] = {"sim_scratch_after_sec": float(_T), "sim_scratch_through_bp": 2.0}
+
 # Live-path tranche A (code review 11/07): at the first 3 s book tick market-scale if already through T1, else rest a limit
 # that fills once a print reaches target x (1 + th) - th 2 / 4 bp stand in for "the bid reached it". These need a code change
 # live (ai_watch_synth_rr is clamped at max(0.25) in ai_entry_watch), so a result here is a code-change candidate only.
@@ -129,6 +137,10 @@ def sim_trade(sym: str, entry: float, fill_ts: float, prints, cfg: dict, lat: fl
     tgt_px = float(p["target_1"]) if t1_on else None
     lim_hit = None
     pend = None                  # market tranche: decision time
+    scratch_T = float(cfg.get("sim_scratch_after_sec", 0) or 0)
+    scratch_th = float(cfg.get("sim_scratch_through_bp", 2.0) or 0.0)
+    scratch_at = None            # attach time of the resting scratch at entry
+    rk = 0                       # pointer into raw prints for the scratch fill check
     if t1_on and limit:          # live path: at the first book tick, market-scale if already through T1, else rest a limit
         attach = fill_ts + BOOK_TICK
         before = [x for x in raw if float(x[0]) <= attach + 1e-9]
@@ -165,8 +177,19 @@ def sim_trade(sym: str, entry: float, fill_ts: float, prints, cfg: dict, lat: fl
         return {"gross_bp": run, "why": why, "hold_s": ft - fill_ts, "t1": False}
 
     for ts, px, _ in ticks:
+        if scratch_at is not None:
+            while rk < len(raw) and float(raw[rk][0]) <= ts + 1e-9:
+                if float(raw[rk][0]) >= scratch_at - 1e-9 and float(raw[rk][1]) >= entry * (1 + scratch_th / 1e4):
+                    return {"gross_bp": 0.0, "why": "scratch", "hold_s": float(raw[rk][0]) - fill_ts, "t1": False}
+                rk += 1
         if px <= float(p["local_stop_price"]) + 1e-9:
             return finish(ts, "local_trail")
+        if scratch_T > 0 and scratch_at is None and ts >= fill_ts + scratch_T \
+                and float(p.get("peak_price") or entry) < entry * (1 + 5 / 1e4):
+            scratch_at = ts
+            rk = 0
+            while rk < len(raw) and float(raw[rk][0]) < ts - 1e-9:
+                rk += 1
         if t1_on and not p["t1_hit"]:
             if pend is not None and ts >= pend:
                 p["t1_hit"] = True
@@ -305,7 +328,7 @@ def fetch():
 LATENCIES = (0.0, 0.5, 1.0)   # 0 = reference only; 0.5 = primary; 1.0 = S4
 
 
-def run():
+def run(only=None):
     cfg0 = base_cfg()
     all_tr = load_trades()
     trades, skipped = [], 0
@@ -335,6 +358,8 @@ def run():
              "| variant | verdict | changed | base -> var net (0.5 s) | delta @0 / @0.5 / @1.0 s | t | halves | winsorized halves | drop5 (reported) | boot p5 | failed | profitable @3 / @10 bp |",
              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for name, over in VARIANTS.items():
+        if only and not any(name.startswith(o) for o in only):
+            continue
         st_by = {}
         for L in LATENCIES:
             rows = []
@@ -353,14 +378,18 @@ def run():
                      f"{s['win_h1']:+.2f}/{s['win_h2']:+.2f} | {s['drop']:+.2f} | {s['p5']:+.2f} | {'; '.join(bad)} | "
                      f"{'yes' if s['var_mean'] > 0 else 'no'} / {'yes' if s['var_mean'] - 7.0 > 0 else 'no'} |")
     out = "\n".join(lines) + "\n"
-    (ROOT / "docs" / "TRADE_SIM.md").write_text(out)
+    name = "TRADE_SIM.md" if not only else f"TRADE_SIM_{'_'.join(only)}.md"
+    (ROOT / "docs" / name).write_text(out)
     print(out)
     return 0
 
 
 def main(argv=None):
     a = (argv if argv is not None else sys.argv[1:]) or ["run"]
-    return fetch() if a[0] == "fetch" else run()
+    if a[0] == "fetch":
+        return fetch()
+    only = a[a.index("--only") + 1].split(",") if "--only" in a else None
+    return run(only)
 
 
 if __name__ == "__main__":

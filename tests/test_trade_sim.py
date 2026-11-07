@@ -110,3 +110,39 @@ def test_compare_reports_winsorized_halves_and_verdict_labels():
     s_bad = dict(s, h2=-1.0)
     st, bad = ts.verdict(s_bad, s)
     assert st == "NO" and "both halves > 0" in bad
+
+
+# ---------------- never-green bleed variants (11/07) ----------------
+def _bleed_then_back(back_at=400.0):
+    """Never green: drifts to -30 bp by t=200, flat, then back to +5 bp from `back_at`."""
+    pr, t = [], T0
+    while t <= T0 + 200:
+        pr.append((t, round(100.0 - 0.30 * (t - T0) / 200, 4), 1)); t += 1
+    while t < T0 + back_at:
+        pr.append((t, 99.70, 1)); t += 1
+    while t <= T0 + back_at + 120:
+        pr.append((t, 100.05, 1)); t += 1
+    return pr
+
+
+def test_scratch_canary_exits_flat_once_price_returns_to_entry():
+    pr = _bleed_then_back()
+    r = run({"sim_scratch_after_sec": 300.0, "sim_scratch_through_bp": 2.0}, lat=0.5, prints=pr)
+    assert r["why"] == "scratch" and r["gross_bp"] == 0.0
+    exp = next(t for t, px, _ in pr if t >= T0 + 300 and px >= 100.0 * 1.0002) - T0     # computed straight from the prints
+    assert abs(r["hold_s"] - exp) < 1e-6
+
+
+def test_scratch_not_attached_on_a_trade_that_went_green():
+    pr = [(T0 + i, 100.0 + (0.10 if 10 <= i <= 20 else -0.20), 1) for i in range(600)]   # +10 bp early, then -20 bp
+    r = run({"sim_scratch_after_sec": 300.0, "sim_scratch_through_bp": 2.0}, lat=0.5, prints=pr)
+    assert r["why"] != "scratch"
+
+
+def test_underwater_leash_exits_a_flat_red_trade_earlier():
+    # sits around -20 bp with 1-2 cent wiggles (the leash parks 1c under the price, so a flat tape never trips it), never near -60
+    pr = [(T0, 100.0, 1)] + [(T0 + i, 99.78 if i % 7 == 0 else 99.80, 1) for i in range(1, 900)]
+    b = run(lat=0.5, prints=pr)
+    v = run({"ai_local_trail_decay_red_step_r": 0.01}, lat=0.5, prints=pr)
+    assert b["why"] == "window_end"
+    assert v["why"] == "local_trail" and v["hold_s"] < b["hold_s"]
