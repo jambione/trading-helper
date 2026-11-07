@@ -1,10 +1,50 @@
 {
  "about": "Prediction ledger (operator 11/07): before a result lands, each forecaster writes a concrete expected outcome. Scored after. Over time this shows, with numbers, whether Claude is too pessimistic and Argon too optimistic, and on which kinds of question each is reliable. Add Argon's forecasts verbatim as the operator relays them.",
  "items": [
-  {"id": "PR1", "test": "X3 trend-hold 'both' (floor at opening stop + off after +15 bp peak), session replay screen", "who": "Claude", "made": "2026-11-07 12:20", "expect": "screen DROP or a delta within +-10 bp/day; does not reach confirm", "resolved": null, "correct": null},
-  {"id": "PR2", "test": "X1 floor_only, session replay screen", "who": "Claude", "made": "2026-11-07 12:20", "expect": "small positive day delta (cuts the -70..-80 bp tail) but fewer than 60% of days better", "resolved": null, "correct": null},
-  {"id": "PR3", "test": "X5 lock50 rerun on the fixed bypass, session replay", "who": "Claude", "made": "2026-11-07 12:20", "expect": "DROP at the screen (the trade sim showed +0.11 bp at realistic latency)", "resolved": null, "correct": null},
-  {"id": "PR4", "test": "H1 peer lead-lag rerun with later-only controls", "who": "Claude", "made": "2026-11-07 12:20", "expect": "still FAIL on absolute net; lift vs same-name control moves toward zero", "resolved": null, "correct": null},
-  {"id": "PR5", "test": "broker truth: week of 2026-11-09 net bp per round trip", "who": "Claude", "made": "2026-11-07 12:20", "expect": "between -8 and 0 bp (same range as the last five weeks)", "resolved": null, "correct": null}
+  {
+   "id": "PR1",
+   "test": "X3 trend-hold 'both' (floor at opening stop + off after +15 bp peak), session replay screen",
+   "who": "Claude",
+   "made": "2026-11-07 12:20",
+   "expect": "screen DROP or a delta within +-10 bp/day; does not reach confirm",
+   "resolved": null,
+   "correct": null
+  },
+  {
+   "id": "PR2",
+   "test": "X1 floor_only, session replay screen",
+   "who": "Claude",
+   "made": "2026-11-07 12:20",
+   "expect": "small positive day delta (cuts the -70..-80 bp tail) but fewer than 60% of days better",
+   "resolved": null,
+   "correct": null
+  },
+  {
+   "id": "PR3",
+   "test": "X5 lock50 rerun on the fixed bypass, session replay",
+   "who": "Claude",
+   "made": "2026-11-07 12:20",
+   "expect": "DROP at the screen (the trade sim showed +0.11 bp at realistic latency)",
+   "resolved": null,
+   "correct": null
+  },
+  {
+   "id": "PR4",
+   "test": "H1 peer lead-lag rerun with later-only controls",
+   "who": "Claude",
+   "made": "2026-11-07 12:20",
+   "expect": "still FAIL on absolute net; lift vs same-name control moves toward zero",
+   "resolved": "2026-11-07 11:31: FAIL on absolute net (-9.4 bp, t -2.11); lifts -0.5 vs both controls (about zero). The earlier lift value was not recorded, so 'moves toward zero' is only half checkable.",
+   "correct": true
+  },
+  {
+   "id": "PR5",
+   "test": "broker truth: week of 2026-11-09 net bp per round trip",
+   "who": "Claude",
+   "made": "2026-11-07 12:20",
+   "expect": "between -8 and 0 bp (same range as the last five weeks)",
+   "resolved": null,
+   "correct": null
+  }
  ]
 }

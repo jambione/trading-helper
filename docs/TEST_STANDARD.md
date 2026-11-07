@@ -41,3 +41,7 @@ tested first where cost is low (registry B1/B2).
 
 Exit studies are judged on IMPROVES (variant beats baseline: both halves, day-t >= 2.0, winsorized check, bootstrap p5 > 0,
 1 s delay on the new execution step) and separately on whether the book becomes profitable. See docs/SIM_STAGE.md.
+
+## Amendment 11/07 12:30 (after the H2 rerun; applies to FUTURE runs only, logged as registry P5-style change)
+
+The same-name later-only control is biased when the trigger itself predicts drift (after a stop-run the name keeps fading: H2's later-only control sat 3.6 bp below the random-minute baseline). So the PRIMARY control for EDGE is now the same-minute control on other universe stocks; the same-name later-only control is secondary (must point the same way), and its mean is still printed beside the baseline. No past verdict changes: H2 shows no EDGE against either reading of the rule (same-minute lift -0.2).

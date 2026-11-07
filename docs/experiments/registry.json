@@ -346,7 +346,7 @@
    "layer": "entry",
    "source": "Argon/Claude",
    "status": "verdict_fail",
-   "evidence": "FAIL -9.4 bp, t -2.11 NOTE 11/07: controls reach t-30..t-16 (pre-trigger drift); the FAIL also rests on negative absolute net, but the lift numbers need a rerun with the P2 controls.",
+   "evidence": "FAIL -9.4 bp, t -2.11 NOTE 11/07: controls reach t-30..t-16 (pre-trigger drift); the FAIL also rests on negative absolute net, but the lift numbers need a rerun with the P2 controls. RERUN 11/07 with P2 controls: controls sane (same-name later-only -7.17, same-minute other-stock -6.62 vs -6.2 baseline). Net -9.4 bp (t -2.11), lifts -0.5 / -0.5 (t -0.1). FAIL and no EDGE.",
    "next": "none",
    "blocked_on": "",
    "gates": {
@@ -364,7 +364,7 @@
    "layer": "entry",
    "source": "Argon/Claude",
    "status": "verdict_fail",
-   "evidence": "FAIL -5.9 bp, lift 0 vs controls NOTE 11/07: controls reach t-30..t-16 (pre-trigger drift); the FAIL also rests on negative absolute net, but the lift numbers need a rerun with the P2 controls.",
+   "evidence": "FAIL -5.9 bp, lift 0 vs controls NOTE 11/07: controls reach t-30..t-16 (pre-trigger drift); the FAIL also rests on negative absolute net, but the lift numbers need a rerun with the P2 controls. RERUN 11/07 with P2 controls: net -5.9 bp (t -11.1). Lift vs same-name LATER-only control +6.9 (t 11.6) but that control sits at -9.77 bp, 3.6 bp below the -6.2 baseline: after a stop-run the same name keeps fading, so a later-only control is biased DOWN. Lift vs the same-minute other-stock control (sane, -5.46) is -0.2 (t -0.26). No EDGE.",
    "next": "none",
    "blocked_on": "",
    "gates": {

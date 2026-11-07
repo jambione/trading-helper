@@ -74,12 +74,12 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 
 | forecaster | made | resolved | correct | hit rate |
 |---|---|---|---|---|
-| Claude | 5 | 0 | 0 | - |
+| Claude | 5 | 1 | 1 | 100% |
 
 - **PR1** (Claude) X3 trend-hold 'both' (floor at opening stop + off after +15 bp peak), session replay screen: expects screen DROP or a delta within +-10 bp/day; does not reach confirm (open)
 - **PR2** (Claude) X1 floor_only, session replay screen: expects small positive day delta (cuts the -70..-80 bp tail) but fewer than 60% of days better (open)
 - **PR3** (Claude) X5 lock50 rerun on the fixed bypass, session replay: expects DROP at the screen (the trade sim showed +0.11 bp at realistic latency) (open)
-- **PR4** (Claude) H1 peer lead-lag rerun with later-only controls: expects still FAIL on absolute net; lift vs same-name control moves toward zero (open)
+- **PR4** (Claude) H1 peer lead-lag rerun with later-only controls: expects still FAIL on absolute net; lift vs same-name control moves toward zero -> RIGHT: 2026-11-07 11:31: FAIL on absolute net (-9.4 bp, t -2.11); lifts -0.5 vs both controls (about zero). The earlier lift value was not recorded, so 'moves toward zero' is only half checkable.
 - **PR5** (Claude) broker truth: week of 2026-11-09 net bp per round trip: expects between -8 and 0 bp (same range as the last five weeks) (open)
 
 ## Not started
@@ -135,8 +135,8 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 | N5 | sector-ETF lead-lag (SMH, IBIT, IGV, XBI, URA) | Argon | idea | ETF bars fetched (12 ETFs, 120 days). No prereg yet. |
 | N6 | H3 board breadth (simultaneous names turning up) | Argon | idea | Specified in the amended board_structure_family prereg; tool not built. |
 | N7 | double arm (skip arm 1, buy arm 2 above its base) | operator/Argon | idea | Not specified or built. |
-| N8 | H1 peer lead-lag | Argon/Claude | verdict_fail | FAIL -9.4 bp, t -2.11 NOTE 11/07: controls reach t-30..t-16 (pre-trigger drift); the FAIL also rests on negative absolute net, but the lift numbers need a rerun with the P2 controls. |
-| N9 | H2 stop-run reclaim | Argon/Claude | verdict_fail | FAIL -5.9 bp, lift 0 vs controls NOTE 11/07: controls reach t-30..t-16 (pre-trigger drift); the FAIL also rests on negative absolute net, but the lift numbers need a rerun with the P2 controls. |
+| N8 | H1 peer lead-lag | Argon/Claude | verdict_fail | FAIL -9.4 bp, t -2.11 NOTE 11/07: controls reach t-30..t-16 (pre-trigger drift); the FAIL also rests on negative absolute net, but the lift numbers need a rerun with the P2 controls. RERUN 11/07 with P2 controls: controls sane (same-name later-only -7.17, same-minute other-stock -6.62 vs -6.2 baseline). Net -9.4 bp (t -2.11), lifts -0.5 / -0.5 (t -0.1). FAIL and no EDGE. |
+| N9 | H2 stop-run reclaim | Argon/Claude | verdict_fail | FAIL -5.9 bp, lift 0 vs controls NOTE 11/07: controls reach t-30..t-16 (pre-trigger drift); the FAIL also rests on negative absolute net, but the lift numbers need a rerun with the P2 controls. RERUN 11/07 with P2 controls: net -5.9 bp (t -11.1). Lift vs same-name LATER-only control +6.9 (t 11.6) but that control sits at -9.77 bp, 3.6 bp below the -6.2 baseline: after a stop-run the same name keeps fading, so a later-only control is biased DOWN. Lift vs the same-minute other-stock control (sane, -5.46) is -0.2 (t -0.26). No EDGE. |
 | N10 | R5 regime follow-through gate | Argon/Claude | verdict_fail | FAIL +1.0 bp, t 1.16 |
 | N11 | B2 beta decoupling | Argon/Claude | verdict_fail | FAIL: pure SPY exposure (+29 / -40 bp) |
 | N12 | 1-2-3 pattern | Argon/Claude | verdict_fail | FAIL -13.7 bp/trade |
