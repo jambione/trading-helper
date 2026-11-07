@@ -115,10 +115,11 @@ def eligible_mask(kept, supp, lo=FIRST, hi=LAST):
     m = np.ones(390, dtype=bool)
     m[:lo] = False
     m[hi + 1:] = False
-    for x in kept:
-        m[x:x + HOLD + 2] = False
-    for x in supp:
-        m[x] = False
+    # Symmetric: a control minute's 10-bar forward return must not contain the move that fired a trigger, so exclude
+    # 15 bars BEFORE as well as the hold window after (prereg: "more than 15 minutes from any trigger"). 11/07 sanity
+    # check found the one-sided version inflated same-name controls to +11..+28 bp against -7.5 bp for random minutes.
+    for x in list(kept) + list(supp):
+        m[max(0, x - 15):x + HOLD + 2] = False
     return m
 
 
@@ -341,7 +342,7 @@ def score_day(day, prev, hist, names, d, counts_only=False):
             continue
         mask = np.zeros(390, dtype=bool)
         mask[15:61] = True
-        mask[t:t + HOLD + 2] = False
+        mask[max(0, t - 15):t + HOLD + 2] = False
         ca = mean_ret(day, i, draw(seeded(s, d, "Wa", t), mask, t))
         pool = [x for x in cross_pool.get(t, []) if x != s]
         cb = None

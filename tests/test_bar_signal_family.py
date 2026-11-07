@@ -85,3 +85,9 @@ def test_evaluate_not_tested_makes_underpowered():
     tr = [{"d": f"2026-0{1 + i % 9}-1{i % 9}", "sym": f"S{i % 50}", "t": 100, "net": 1.0, "net10": 0.5, "h3": 0.0, "h30": 0.0, "cb": None, "ca": 0.0} for i in range(400)]
     r = b.evaluate(tr, ["ca", "cb"], "cb")
     assert r["status"] == "UNDERPOWERED" and r["not_tested"] == ["cb"]
+
+
+def test_controls_exclude_minutes_before_a_trigger():
+    m = b.eligible_mask([100], [])
+    assert not m[85] and not m[99] and not m[100] and not m[111]
+    assert m[84] and m[113]
