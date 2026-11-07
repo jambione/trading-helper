@@ -40,7 +40,7 @@ tested first where cost is low (registry B1/B2).
 ## Exit changes
 
 Exit studies are judged on IMPROVES (variant beats baseline: both halves, day-t >= 2.0, winsorized check, bootstrap p5 > 0,
-1 s delay on the new execution step) and separately on whether the book becomes profitable. See docs/SIM_STAGE.md.
+read at a 0.5 s exit latency in both arms, and S4 = every exit 1 s late in both arms) and separately on whether the book becomes profitable. See docs/SIM_STAGE.md.
 
 ## Amendment 11/07 12:30 (after the H2 rerun; applies to FUTURE runs only, logged as registry P5-style change)
 
