@@ -39,7 +39,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. trail:after_peak not yet seen firing in the 2 finished days.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. trail:after_peak not yet seen firing in the 2 finished days. 08:40: still 0 after_peak sightings in 11/04 and 11/05 (afterpeak_only, both). Argon's explanation (names under $20) does not apply: the desk price floor is $20 since 10/21, so entry+1c is inside the 5 bp band; it simply needs a trade that peaked >=15 bp and then fell back to breakeven while held, which these two days did not have.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -219,9 +219,9 @@
    "layer": "entry",
    "source": "Argon",
    "status": "blocked",
-   "evidence": "First run's same-name controls were biased (one-sided exclusion; controls +11..+28 bp vs -7.5 bp for random minutes). Fixed in 8a-fix commit and rerun started; the first FAILs are void.",
-   "next": "Read the rerun (~/bsf_run2.log); run a second sanity check on the control means before any verdict.",
-   "blocked_on": "rerun with fixed controls",
+   "evidence": "Corrected-controls run 08:2x: V1 net -4.52 bp (t -4.12, both halves negative), so it fails on absolute net regardless of controls. Lifts vs same-name later-only ca +1.85 (t 1.69) and cross-name cd +1.20 (t 1.49), both below the 2.28 bar. Lift vs cb (-24.8) is void: cb contaminated (Argon found it; the control-sanity line showed +22.4 bp). Verdict expected to stay FAIL; waiting for the clean cb.",
+   "next": "Read the rerun; confirm cb mean is near -6 bp, then close as verdict_fail.",
+   "blocked_on": "V1 control cb (time-clock trigger, +-30 min) was contaminated: mean +22.4 bp vs -6.2 bp baseline; patched to later-only, rerun started",
    "gates": {
     "prereg": true,
     "skeptic": true,
@@ -237,7 +237,7 @@
    "layer": "entry",
    "source": "Argon",
    "status": "underpowered",
-   "evidence": "101 triggers, needs 300. Not a verdict on the idea.",
+   "evidence": "101 triggers, needs 300. Not a verdict on the idea. Corrected-controls rerun: still 101 triggers; net -15.6 bp. Not a verdict on the idea.",
    "next": "Loosening thresholds would be a new prereg.",
    "blocked_on": "",
    "gates": {
@@ -254,16 +254,16 @@
    "title": "W opening washout",
    "layer": "entry",
    "source": "Argon",
-   "status": "blocked",
-   "evidence": "First run's same-name controls were biased (one-sided exclusion; controls +11..+28 bp vs -7.5 bp for random minutes). Fixed in 8a-fix commit and rerun started; the first FAILs are void.",
-   "next": "Read the rerun (~/bsf_run2.log); run a second sanity check on the control means before any verdict.",
-   "blocked_on": "rerun with fixed controls",
+   "status": "verdict_fail",
+   "evidence": "Corrected controls (later-only ca -7.75, cross-name cb -4.48; baseline -6.21): net -12.28 bp (t -3.96, both halves negative), lifts vs ca -4.0 (t -1.14) and vs cb -5.7 (t -1.63). FAIL.",
+   "next": "",
+   "blocked_on": "",
    "gates": {
     "prereg": true,
     "skeptic": true,
     "tool": true,
     "smoke": "planted-series tests only",
-    "data_check": false
+    "data_check": true
    },
    "ref": "docs/studies/bar_signal_family_prereg.json"
   },
@@ -272,16 +272,16 @@
    "title": "D dwell/knock",
    "layer": "entry",
    "source": "Argon",
-   "status": "blocked",
-   "evidence": "First run's same-name controls were biased (one-sided exclusion; controls +11..+28 bp vs -7.5 bp for random minutes). Fixed in 8a-fix commit and rerun started; the first FAILs are void.",
-   "next": "Read the rerun (~/bsf_run2.log); run a second sanity check on the control means before any verdict.",
-   "blocked_on": "rerun with fixed controls",
+   "status": "verdict_fail",
+   "evidence": "Corrected controls (ca -6.60, cb first-try breakouts -6.09, cd cross-name -5.99; baseline -6.21): net -6.12 bp (t -22), lifts vs all three about zero (+0.58 t 2.09, +0.51 t 1.02, +0.05 t 0.19). Multi-knock breakouts are indistinguishable from random minutes and from first-try breakouts. FAIL.",
+   "next": "",
+   "blocked_on": "",
    "gates": {
     "prereg": true,
     "skeptic": true,
     "tool": true,
     "smoke": "planted-series tests only",
-    "data_check": false
+    "data_check": true
    },
    "ref": "docs/studies/bar_signal_family_prereg.json"
   },
@@ -726,7 +726,7 @@
    "layer": "entry",
    "source": "Argon (logic audit 11/07)",
    "status": "idea",
-   "evidence": "Config corrected: ai_watch_presquare_after_square_min is already 10 (not off). Whether _presquare_exh_allows_buy ignores pctr_slow_rising is NOT yet verified in code. Prior: %R states are ~random and RSI/MACD add nothing.",
+   "evidence": "Config corrected: ai_watch_presquare_after_square_min is already 10 (not off). Whether _presquare_exh_allows_buy ignores pctr_slow_rising is NOT yet verified in code. Prior: %R states are ~random and RSI/MACD add nothing. Code check 11/07: function is at ai_entry_watch.py:13087 (Argon cited 5538, wrong). In the first ~90 lines it reads pctr_slow (value) and pctr_rising, never pctr_slow_rising. Confirmed by reading; still untested.",
    "next": "Read the function; if true, replay variant with the extra condition.",
    "blocked_on": "",
    "gates": {
@@ -780,7 +780,7 @@
    "layer": "sizing",
    "source": "Argon (logic audit 11/07)",
    "status": "idea",
-   "evidence": "ai_local_trail_give_vol_k is absent from live config (knob exists in code per Argon, unverified). All three thresholds are fixed bp today (-60/+15/+30). Data: vol_1m_pct <=0.07 = 47% never-green, >0.15 = 17%, net -9.8/-8.1/-7.4 bp (10/15+, n 445).",
+   "evidence": "ai_local_trail_give_vol_k is absent from live config (knob exists in code per Argon, unverified). All three thresholds are fixed bp today (-60/+15/+30). Data: vol_1m_pct <=0.07 = 47% never-green, >0.15 = 17%, net -9.8/-8.1/-7.4 bp (10/15+, n 445). Code check: ai_local_trail_give_vol_k is read at ai_positions.py:4260 (local_trail_give), default 0 = off.",
    "next": "Counterfactual on outcomes: per-volatility-tercile stop/BE/arm, then a replay arm.",
    "blocked_on": "",
    "gates": {

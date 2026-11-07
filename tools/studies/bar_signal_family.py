@@ -311,7 +311,7 @@ def score_day(day, prev, hist, names, d, counts_only=False):
             rng = seeded(s, d, "V1a", t)
             ca = mean_ret(day, i, draw(rng, mask, t))
             cc = mean_ret(day, i, draw(seeded(s, d, "V1c", t), mask, t, extra=vover))
-            near = [x for x in tk if abs(x - t) <= 30]
+            near = [x for x in tk if t + HOLD + 2 <= x <= t + HOLD + 62 and mask[x]]   # later-only, like every other control (P2)
             cb = mean_ret(day, i, near) if near else None
             cd = xs_control(day, idx, s, t, seeded(s, d, "V1d", t))
             r = trade(day, i, s, d, t, ca=ca, cb=cb, cc=cc, cd=cd)
