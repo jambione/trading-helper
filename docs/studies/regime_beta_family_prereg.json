@@ -1,0 +1,26 @@
+{
+ "id": "regime_beta_family",
+ "registered": "2026-11-07 ~06:10 ET, before any code or data pull for these two hypotheses.",
+ "operator": "2026-11-07: 'pre-register the second (regime plus beta decoupling)' - Argon's ideas 5 (market follow-through regime) and 2 (beta decoupling on SPY dips), picked as the two genuinely new ones in the review of his six.",
+ "family": "Two hypotheses, one primary cell each. Family bar: one-sided alpha 0.05/2 = 0.025, critical t = scipy t.ppf(1 - 0.025, days - 1). This family is separate from board_structure_family (its own 0.05); both are reported together so the reader sees all five hypotheses run this weekend.",
+ "data": "ai_reports/warehouse/sip/DAY.npz (SIP regular-session 1-minute bars, ~1,900 names/day, 120 sessions 2026-04-27..2026-10-15; minute = minutes since midnight ET; SPY 390 bars every day; no ETFs except SPY). Universe per day = top 400 by prior-session dollar volume, $10-$500 at the 09:30 open, prior session = the preceding weekday in the file list (as in relative_strength_scan / board_structure_family). Betas from the previous 20 sessions' 1-minute returns vs SPY, 09:30-09:34 excluded, >= 15 sessions present. Halves by date at the median scored session.",
+ "R5_regime_gate": {
+  "surge_event": "A universe bar t (09:35-15:30) whose close is >= +20 bp above the previous bar's close (beta-adjusted: stock return minus beta x SPY return over the same bar) on volume >= 2x the stock's mean volume of bars t-15..t-1. Follow-through FT = close of bar t+5 / close of bar t - 1, minus beta x SPY's same-window return, in bp (gross).",
+  "morning_score": "M_d = mean FT of surge events 09:35-10:29 that day; a day with fewer than 30 morning events is unscored (counted).",
+  "regime": "HIGH day = M_d above the median of M over the PREVIOUS scored days (expanding, at least 10 prior days; no look-ahead).",
+  "trade": "Afternoon continuation: on each surge event 10:30-15:30, buy at the open of bar t+1, sell at the close of bar t+6 (5 bars later); one per name per 30 minutes; 6 bp round trip.",
+  "primary": "Per day: mean net of the afternoon continuation trades. Difference HIGH-day mean minus other-day mean (day-level Welch t).",
+  "pass": "ALL: (1) HIGH minus other > 0 with t >= the family critical value; (2) > 0 in BOTH halves; (3) the continuation trades MAKE MONEY on HIGH days: mean per-day net > 0 in BOTH halves (a gate that only loses less does not pass); (4) at least 30 HIGH days and 30 other days scored; (5) still > 0 at 10 bp cost on HIGH days.",
+  "information": ["correlation of M_d with the afternoon mean FT (persistence)", "the desk's own daily net vs M_d on the 20 overlapping sessions 9/16-10/15 (too few to score)", "thresholds +15 and +30 bp for the surge", "never-green-like share: afternoon trades that never print +5 bp"]
+ },
+ "B2_beta_decoupling": {
+  "trigger": "At the close of bar t (09:45-15:30): SPY's 3-bar return (close t / close t-3 - 1) <= -15 bp; the stock has beta >= 1.2; its own 3-bar return is >= -2 bp (it held up) and its residual 3-bar return (stock - beta x SPY) >= +15 bp. One trigger per name per 30 minutes.",
+  "trade": "Buy at the open of bar t+1, sell at the close of the bar 10 bars after the entry bar (as in board_structure_family H1/H2); 6 bp round trip.",
+  "controls": "(a) same name, a random minute in the same clock hour (+-30), within 09:45-15:30, more than 15 minutes from any trigger (5 draws averaged); (b) the matched non-decoupler: at the same minute, a random universe stock with beta >= 1.2 whose residual 3-bar return is within +-5 bp (it fell with SPY), same trade.",
+  "pass": "ALL: (1) mean per-day net > 0 with t >= the family critical value; (2) > 0 in BOTH halves; (3) lift vs EACH control > 0 in both halves and pooled lift t >= 1.65 for each; (4) pooled net > 0 after dropping the best 5 days and, separately, the 5 names with the largest P&L; (5) pooled net > 0 at 10 bp cost; (6) at least 300 triggers and 100 per half, else UNDERPOWERED. Order: VOID, UNDERPOWERED, FAIL, PASS.",
+  "information": ["SPY drop thresholds -10 and -25 bp", "beta >= 1.0 and >= 1.5", "exits at 3 and 30 bars", "what the stock does while SPY recovers (SPY's next 10-bar return > 0 vs <= 0)"]
+ },
+ "if_pass": "result-skeptic review of the positive; a pass is SIP-only and must replicate on ai_reports/warehouse/iex with the same cells before any live arm or gate; then a forward/paper test. Never straight to live.",
+ "tool": "tools/studies/regime_beta_family.py (built after this file is committed and a result-skeptic READY; may not change anything above).",
+ "status": "READY, skeptic review pending"
+}
