@@ -2,15 +2,15 @@
  "sha": "HEAD",
  "start": "09:30",
  "end": "15:50",
- "baseline": [
-  "live_book",
-  "set"
- ],
- "base_set": [
-  "ai_max_positions",
-  "ai_max_position_pct",
-  "ai_risk_pct"
- ],
+ "baseline": {
+  "live_book": true,
+  "set": {}
+ },
+ "base_set": {
+  "ai_max_positions": 3,
+  "ai_max_position_pct": 33.0,
+  "ai_risk_pct": 1.65
+ },
  "name": "rte_len_2026-11-06",
  "purpose": "Operator 11/06 (Gemini's idea): halve the %R lookback so the desk sees the profit run sooner. The fast line is %R(rte_fast_length 21) smoothed with an EWM of rte_fast_ewm_span 7; the slow line (112/3) is untouched. PRIMARY len10 = the literal idea: rte_fast_length 10, span unchanged. half_both = rte_fast_length 10 AND rte_fast_ewm_span 4 (both halved) is a dose-response check, not a second chance. Replays the desk's real arm and exit code on recorded days. Same SCREEN/CONFIRM bars as every sweep (SCREEN: mean day delta > 0 and >= 60% of days better; CONFIRM: mean > 0, day-t >= 1.5, both halves > 0, on unseen days). VACUITY CHECK: the variant must change the number of trades vs baseline on at least 3 of the 5 screen days (a faster line that changes nothing says nothing). Prior: low (about 8%): entering a few minutes sooner showed no gain (first_leg_delay_hist 10/30: signal gross -0.2 bp, 2/5 min delay cost about 0) and %R turn/pitch/trough entries were random (rows 46, 54). A PASS earns a skeptic review, never a live change.",
  "variants": {
