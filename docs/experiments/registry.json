@@ -1242,9 +1242,9 @@
    "title": "position size rose ~10x on 11/05 (median ~$350 -> ~$3,280 per trade)",
    "layer": "sizing",
    "source": "broker autopsy 11/07",
-   "status": "open",
-   "evidence": "Broker round trips 10/26-11/06 (276): median position $315-$375 per trade through 11/04, $3,280/$3,269 on 11/05/11/06 (new Alpaca account created 11/04, $10K, 3 x 33%). Dollar P&L before and after is not comparable; the earlier claim that the worst 13 trades were 68% of losing dollars is mostly this size jump (11 of those 13 are 11/05-11/06). Size-neutral (bp): the worst 27 trades (10%) are 55% of losing bp, avg -58 bp, ALL 27 never-green (peak < +5 bp) vs 22% of the rest, held 556 s vs 182 s median, 21 local_trail + 6 dead_trade exits, 13 slipped past -60 bp (4.7% of all trades). Capping every loss at -60 bp would be worth only +0.28 bp/trade; at -40 bp +1.8 bp (but cuts recoveries; 60% of early cuts end better if held).",
-   "next": "Confirm with the operator whether the size increase on 11/05 was intended. Judge changes by bp per trade; dollars scale with size.",
+   "status": "done",
+   "evidence": "Broker round trips 10/26-11/06 (276): median position $315-$375 per trade through 11/04, $3,280/$3,269 on 11/05/11/06 (new Alpaca account created 11/04, $10K, 3 x 33%). Dollar P&L before and after is not comparable; the earlier claim that the worst 13 trades were 68% of losing dollars is mostly this size jump (11 of those 13 are 11/05-11/06). Size-neutral (bp): the worst 27 trades (10%) are 55% of losing bp, avg -58 bp, ALL 27 never-green (peak < +5 bp) vs 22% of the rest, held 556 s vs 182 s median, 21 local_trail + 6 dead_trade exits, 13 slipped past -60 bp (4.7% of all trades). Capping every loss at -60 bp would be worth only +0.28 bp/trade; at -40 bp +1.8 bp (but cuts recoveries; 60% of early cuts end better if held). OPERATOR CONFIRMED 11/07: the ~$3,300 per trade (3 x 33% of $10K) on the new account is intended. Compare weeks in bp per trip; dollars scale with size.",
+   "next": "",
    "blocked_on": "",
    "gates": {},
    "ref": "docs/BROKER_TRUTH.md"

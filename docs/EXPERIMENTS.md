@@ -11,12 +11,12 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 | running | 8 |
 | collecting | 5 |
 | blocked | 5 |
-| open | 10 |
+| open | 9 |
 | verdict_edge | 2 |
 | verdict_fail | 13 |
 | underpowered | 2 |
 | void | 1 |
-| done | 7 |
+| done | 8 |
 | parked | 3 |
 
 ## Needs attention
@@ -35,7 +35,6 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 - **C3** [blocked] %R latch / RSI fire - Looked like EDGE: lift bar met in both halves, 15-min markout +3.8 / +11.2 bp (t 2.9 / 4.0), 10/12. Flat before the spread. Control construction not yet audited. Next: Audit its control; rerun with P2 controls if needed. (blocked on: control audit (P1))
 - **C4** [blocked] Fibonacci golden pocket - Looked like EDGE: +31 / +36 bp vs random (t 8-9), 10/23; but its own report says the lift mostly measures how badly the control loses, and the control exclusion (15 min) is shorter than the 30-min hold (P1 audit). Next: Rerun with P2 controls (later-only + same-minute cross-name). (blocked on: P2-control rerun)
 - **C5** [blocked] flow compression (spread squeezed to 1 cent + buyer flow) - Gross +4.8 bp; lift +13.38 bp vs uncompressed control (t >15) but that lift is mostly cost saved, not direction. Net -2.68 bp. Next: Compare gross to a fair random minute on the same names; with N20 (structurally 1-cent names). (blocked on: fair random-minute comparison)
-- **L7** [open] position size rose ~10x on 11/05 (median ~$350 -> ~$3,280 per trade) - Broker round trips 10/26-11/06 (276): median position $315-$375 per trade through 11/04, $3,280/$3,269 on 11/05/11/06 (new Alpaca account created 11/04, $10K, 3 x 33%). Dollar P&L before and after is not comparable; the earlier claim that the worst 13 trades were 68% of losing dollars is mostly this size jump (11 of those 13 are 11/05-11/06). Size-neutral (bp): the worst 27 trades (10%) are 55% of losing bp, avg -58 bp, ALL 27 never-green (peak < +5 bp) vs 22% of the rest, held 556 s vs 182 s median, 21 local_trail + 6 dead_trade exits, 13 slipped past -60 bp (4.7% of all trades). Capping every loss at -60 bp would be worth only +0.28 bp/trade; at -40 bp +1.8 bp (but cuts recoveries; 60% of early cuts end better if held). Next: Confirm with the operator whether the size increase on 11/05 was intended. Judge changes by bp per trade; dollars scale with size.
 
 ### Gate warnings (pending evidence)
 
@@ -177,7 +176,7 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 | S2 | per-name daily attempt cap | Argon | verdict_fail | Later attempts not worse (4th -1.9, 5th 0.0 bp) |
 | S4 | scale initial stop, breakeven trigger and trail arm by vol_1m_pct | Argon (logic audit 11/07) | idea | ai_local_trail_give_vol_k is absent from live config (knob exists in code per Argon, unverified). All three thresholds are fixed bp today (-60/+15/+30). Data: vol_1m_pct <=0.07 = 47% never-green, >0.15 = 17%, net -9.8/-8.1/-7.4 bp (10/15+, n 445). Code check: ai_local_trail_give_vol_k is read at ai_positions.py:4260 (local_trail_give), default 0 = off. |
 | B3 | cost-aware gate using real SIP quotes instead of logged IEX spreads | Plan B (operator: be optimistic, find new ideas) 11/07 | idea | Logged spread_r is unreliable (IEX overstates the book); desk entries are gross-negative in every spread bucket (-2.5 to -7 bp, n 270, 10/21+), so a gate alone will not flip the sign. Could still reduce losses on the widest-spread fills. |
-| L7 | position size rose ~10x on 11/05 (median ~$350 -> ~$3,280 per trade) | broker autopsy 11/07 | open | Broker round trips 10/26-11/06 (276): median position $315-$375 per trade through 11/04, $3,280/$3,269 on 11/05/11/06 (new Alpaca account created 11/04, $10K, 3 x 33%). Dollar P&L before and after is not comparable; the earlier claim that the worst 13 trades were 68% of losing dollars is mostly this size jump (11 of those 13 are 11/05-11/06). Size-neutral (bp): the worst 27 trades (10%) are 55% of losing bp, avg -58 bp, ALL 27 never-green (peak < +5 bp) vs 22% of the rest, held 556 s vs 182 s median, 21 local_trail + 6 dead_trade exits, 13 slipped past -60 bp (4.7% of all trades). Capping every loss at -60 bp would be worth only +0.28 bp/trade; at -40 bp +1.8 bp (but cuts recoveries; 60% of early cuts end better if held). |
+| L7 | position size rose ~10x on 11/05 (median ~$350 -> ~$3,280 per trade) | broker autopsy 11/07 | done | Broker round trips 10/26-11/06 (276): median position $315-$375 per trade through 11/04, $3,280/$3,269 on 11/05/11/06 (new Alpaca account created 11/04, $10K, 3 x 33%). Dollar P&L before and after is not comparable; the earlier claim that the worst 13 trades were 68% of losing dollars is mostly this size jump (11 of those 13 are 11/05-11/06). Size-neutral (bp): the worst 27 trades (10%) are 55% of losing bp, avg -58 bp, ALL 27 never-green (peak < +5 bp) vs 22% of the rest, held 556 s vs 182 s median, 21 local_trail + 6 dead_trade exits, 13 slipped past -60 bp (4.7% of all trades). Capping every loss at -60 bp would be worth only +0.28 bp/trade; at -40 bp +1.8 bp (but cuts recoveries; 60% of early cuts end better if held). OPERATOR CONFIRMED 11/07: the ~$3,300 per trade (3 x 33% of $10K) on the new account is intended. Compare weeks in bp per trip; dollars scale with size. |
 
 ### live-code
 
