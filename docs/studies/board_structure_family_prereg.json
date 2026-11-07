@@ -1,0 +1,39 @@
+{
+ "id": "board_structure_family",
+ "registered": "2026-11-07 ~05:00 ET, before any code or data pull for these three hypotheses.",
+ "operator": "2026-11-07 'yes' to running a pre-registered three-hypothesis family from Argon's review (peer lead-lag, stop-run reclaim, board breadth), with Argon's four requirements baked in: SPY-beta residuals and two controls for H1; green-on-day and above VWAP for H2; H3 scored on desk entries 9/16-11/05 with halves 9/16-10/14 and 10/15-11/05 and a net bp lift required; a three-test family t bar.",
+ "why_new": "Every earlier entry test (docs/EDGE_SEARCH_MAP_2026-11-06.md) used one stock's own path and needed several minutes of upward movement to fire, so it bought late in the leg. H1 and H3 use other stocks (peers, the board) to time the entry; H2 enters on the first bar of a turn (a failed breakdown), not the fourteenth.",
+ "family": "Three hypotheses, each with ONE primary cell. Family bar: one-sided alpha 0.05/3 = 0.0167, so a pass needs t >= the Student-t critical value at 0.0167 with df = days - 1 (about 2.13-2.20 for these day counts). Information cells never promote a pass.",
+ "common": {
+  "data_H1_H2": "ai_reports/warehouse/sip/DAY.npz (SIP regular-session 1-minute bars, ~1,900 names/day, 120 sessions 2026-04-27..2026-10-15; minute = minutes since midnight ET; SPY 390 bars every day).",
+  "universe_H1_H2": "Per day: top 400 by prior-session dollar volume, $10-$500 at the 09:30 open, no ETFs/ETNs/levered products (ticker_filters.is_not_stock with Alpaca asset names; the tool aborts if the name list is unavailable), prior session must be the preceding weekday in the file list.",
+  "halves_H1_H2": "By date at the median scored session.",
+  "trade_H1_H2": "Entry = open of the bar after the trigger bar closes; exit = close of the bar starting 10 minutes after the entry bar (primary); one trigger per name per 30 minutes; triggers 09:45-15:30 ET. Round-trip cost 6 bp; a 10 bp cell is a pass condition (see pass_common).",
+  "pass_common": "For H1 and H2: (1) mean per-day net > 0 with t >= the family critical value; (2) mean net > 0 in BOTH halves; (3) lift vs EACH control > 0 in both halves, and pooled lift t >= 1.65 for each; (4) pooled net > 0 after dropping the best 5 days and, separately, the 5 names with the largest P&L; (5) pooled net > 0 at 10 bp round-trip cost; (6) at least 300 triggers and 100 per half, else UNDERPOWERED (no verdict). Order: VOID, UNDERPOWERED, FAIL, PASS."
+ },
+ "H1_peer_lead_lag": {
+  "peers": "For each universe stock on day D: residual 1-minute returns r - beta x r_SPY over the previous 20 sessions (beta from the same window); peers = the up-to-5 other universe stocks with the highest residual correlation, rho >= 0.35. A stock with fewer than 2 such peers has no cluster that day.",
+  "trigger": "At the close of bar t: at least 2 peers each have a residual 2-minute return (bar t close vs bar t-2 close, SPY-beta-adjusted) >= +40 bp AND bar-t volume >= 2x their mean volume of bars t-15..t-1; and the target stock is 'not yet moving and not falling': its residual 2-minute return is between 0 and +15 bp, its close is above the lowest low of bars t-15..t-1, and its slow %R (112 bars, EMA 3, the desk's formula, computed with the previous session's bars for warm-up) is below -20.",
+  "controls": "(a) same name, a random minute the same day more than 15 minutes from any of its triggers, same trade and costs (seed sha256(sym|day|'H1-a'|k), 5 draws averaged); (b) same minute, a random universe stock that is NOT in the target's cluster, same trade (seed sha256(sym|day|t|'H1-b')).",
+  "information": ["exit at 3 and 30 minutes", "the peers' own next-10-minute return (does the move continue in the leaders?)", "trigger counts by hour"]
+ },
+ "H2_stop_run_reclaim": {
+  "precondition": "At the trigger bar the stock is green on the day (close > prior-session close) and above the session VWAP (sum close x volume / sum volume since 09:30).",
+  "trigger": "Bar t-1's low undercuts the lowest low of bars t-16..t-2 by 5 to 20 bp, with bar t-1 volume >= 2x the mean volume of bars t-16..t-2; bar t closes back ABOVE that prior 15-bar low (one-bar reclaim). Triggers 09:50-15:30.",
+  "controls": "(a) same name, a random minute the same day that meets the precondition and is more than 15 minutes from any trigger (5 draws averaged); (b) same minute, a random universe stock that meets the precondition.",
+  "information": ["undercut depth buckets 5-10 / 10-20 bp", "exit at 3 and 30 minutes", "the same trigger without the precondition"]
+ },
+ "H3_board_breadth": {
+  "sample": "Every desk entry 2026-09-16..2026-11-05 with a fill row (tools/studies/early_path.trades_since); halves 9/16-10/14 and 10/15-11/05 (the clean RVOL era), as set by the operator.",
+  "board": "At the entry minute, the BOARD = the names on the desk's source lists at that moment, rebuilt from that session's ai_reports/sessions/DAY/sources.jsonl.gz enter/leave events, excluding the entry name. SIP 1-minute bars for those names (free historical) are fetched and cached.",
+  "breadth": "B = the share of board names with a positive 2-minute return ending at the last closed bar before the entry (close of bar t-1 vs close of bar t-3). Measurable only with >= 10 board names that have both bars; otherwise dropped and counted.",
+  "gate": "SYNC = B >= 0.60 (fixed now). The gate keeps SYNC entries and refuses the rest.",
+  "outcome": "The desk's actual net: sell fill vs buy fill less 3 bp (from ai_reports/fills), never-green from outcomes.",
+  "pass": "(1) per day, mean net of kept (SYNC) minus mean net of refused entries > 0, day-clustered t >= the family critical value, on days with both groups; (2) > 0 in BOTH halves; (3) the kept entries make money: mean net of SYNC entries > 0 in BOTH halves; (4) at least 100 SYNC entries and 40 per half, else UNDERPOWERED; (5) net bp/trade of all entries if the gate were on (= kept only) exceeds the actual all-entries net in both halves. Never-green reduction alone does not pass.",
+  "void": "More than 10% of entries without a measurable B = VOID.",
+  "information": ["cutoffs 0.50 and 0.70", "breadth from fast %R rising (wr_d2_fast > +10) instead of 2-minute returns", "never-green share by B tercile"]
+ },
+ "if_pass": "result-skeptic review of the positive, then a forward/paper test of that one hypothesis (H1/H2 need a new live arm, H3 a default-off gate replayed with tools/sweep_replays.py first). Never straight to live.",
+ "tools": "tools/studies/board_structure_family.py (h1 / h2 / h3 modes), built after this file is committed and a result-skeptic READY; may not change anything above.",
+ "status": "READY, skeptic review pending"
+}
