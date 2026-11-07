@@ -103,7 +103,7 @@ def weekly(rts):
         losses = [r["bp"] for r in rs if r["pnl"] <= 0]
         rows.append((wk, mon, {"n": len(rs), "win": len(wins) / len(rs), "avg_win": sum(wins) / len(wins) if wins else 0.0,
                                "avg_loss": sum(losses) / len(losses) if losses else 0.0, "bp": sum(r["bp"] for r in rs) / len(rs),
-                               "pnl": sum(r["pnl"] for r in rs), "overnight": sum(1 for r in rs if iso_day(r["t_in"]) != iso_day(r["t_out"]))}))
+                               "pnl": sum(r["pnl"] for r in rs), "med_pos": sorted(r["qty"] * r["entry"] for r in rs)[len(rs) // 2], "overnight": sum(1 for r in rs if iso_day(r["t_in"]) != iso_day(r["t_out"]))}))
     return rows
 
 
@@ -213,8 +213,8 @@ def report():
              "(fills already include the spread). Round trips = buys and sells paired first-in-first-out per symbol.", "",
              f"Fills {len(fills)} (short-sale fills {sells_short}); round trips {len(rts)}; sell quantity with no open buy {unmatched:.0f} shares; "
              f"positions still open {len(still_open)}.", "",
-             "| week (Mon) | round trips | win rate | avg win bp | avg loss bp | net bp / trip | realized $ | cumulative $ | Alpaca equity, week end | equity change | overnight trips |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| week (Mon) | round trips | win rate | avg win bp | avg loss bp | net bp / trip | realized $ | cumulative $ | median position $ | Alpaca equity, week end | equity change | overnight trips |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     cum, prev_eq = 0.0, None
     for w, mon, s in wk:
         cum += s["pnl"]
@@ -224,7 +224,7 @@ def report():
             e = eq[cands[-1]] if cands else None
         chg = f"{e - prev_eq:+,.2f}" if (e is not None and prev_eq is not None) else ""
         lines.append(f"| {mon} | {s['n']} | {100 * s['win']:.0f}% | {s['avg_win']:+.1f} | {s['avg_loss']:+.1f} | {s['bp']:+.1f} | "
-                     f"{s['pnl']:+,.2f} | {cum:+,.2f} | {'' if e is None else f'{e:,.2f}'} | {chg} | {s['overnight']} |")
+                     f"{s['pnl']:+,.2f} | {cum:+,.2f} | {s['med_pos']:,.0f} | {'' if e is None else f'{e:,.2f}'} | {chg} | {s['overnight']} |")
         prev_eq = e if e is not None else prev_eq
     arch = archive_fills()
     if arch:
@@ -239,16 +239,16 @@ def report():
         aop = {(o[0], o[1]): o[2] for o in aorph if o[1] != "*"}
         lines += [f"Archived fills {len(arch)} orders, {iso_day(min(f['t'] for f in arch))} to {iso_day(max(f['t'] for f in arch))}; round trips {len(art)}; "
                   f"sell quantity with no open buy {aun:.0f} shares; open-buy orphans at a day end {len(aop)}. Pairing resets each trading day (intraday desk); orphans are listed, never carried forward.", "",
-                  "| week (Mon) | round trips | win rate | avg win bp | avg loss bp | net bp / trip | realized $ | cumulative $ | overnight trips |",
-                  "|---|---|---|---|---|---|---|---|---|"]
+                  "| week (Mon) | round trips | win rate | avg win bp | avg loss bp | net bp / trip | realized $ | cumulative $ | median position $ | overnight trips |",
+                  "|---|---|---|---|---|---|---|---|---|---|"]
         cum = 0.0
         for w, mon, st in weekly(art):
             cum += st["pnl"]
             lines.append(f"| {mon} | {st['n']} | {100 * st['win']:.0f}% | {st['avg_win']:+.1f} | {st['avg_loss']:+.1f} | {st['bp']:+.1f} | "
-                         f"{st['pnl']:+,.2f} | {cum:+,.2f} | {st['overnight']} |")
+                         f"{st['pnl']:+,.2f} | {cum:+,.2f} | {st['med_pos']:,.0f} | {st['overnight']} |")
     if arch and aorph:
         lines += ["", "Orphans in the archive (mid-stream paper-account resets or partial lots): " + "; ".join(f"{d} {sym} {q:g} ({k})" for d, sym, q, k in aorph[:30])]
-    lines += ["", "Cross-check: realized $ per week should track the equity change, apart from open positions at week end,",
+    lines += ["", "Compare weeks by bp per trip, not dollars: position size changed between weeks (see the median position column).", "", "Cross-check: realized $ per week should track the equity change, apart from open positions at week end,",
               "deposits/resets and fees. A large gap in a week means one of the two sources is wrong for that week; look before trusting it."]
     out = "\n".join(lines) + "\n"
     (ROOT / "docs" / "BROKER_TRUTH.md").write_text(out)
