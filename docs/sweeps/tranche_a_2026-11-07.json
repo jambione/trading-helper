@@ -1,0 +1,65 @@
+{
+ "sha": "HEAD",
+ "start": "09:30",
+ "end": "15:50",
+ "baseline": {
+  "live_book": true,
+  "set": {}
+ },
+ "base_set": {
+  "ai_max_positions": 3,
+  "ai_max_position_pct": 33.0,
+  "ai_risk_pct": 1.65
+ },
+ "name": "tranche_a_2026-11-07",
+ "purpose": "Operator/Argon 11/07 idea C: bank part of the position at a fixed profit target and let the rest run on the live trail. Uses the replay's existing T1 scale-out (target_1 = entry + ai_watch_synth_rr x risk, risk = 5% of price, so rr 0.03/0.04/0.05 = +15/+20/+25 bp; scale_out_pct = share sold). OPTIMISTIC: the replay books the fill at the target as soon as a print reaches it; a paper resting limit needs the bid to reach it, so read +25 bp as the conservative end. Baseline = live desk (rr 1.0, target never hit). Not tested here: turning the 15 s idle leash off for the runner after T1 (no knob). Same SCREEN/CONFIRM bars; a pass needs a skeptic review and the operator's say.",
+ "variants": {
+  "t15_60": {
+   "live_book": true,
+   "set": {
+    "ai_watch_synth_rr": 0.03,
+    "ai_watch_synth_scale_out_pct": 60
+   }
+  },
+  "t20_60": {
+   "live_book": true,
+   "set": {
+    "ai_watch_synth_rr": 0.04,
+    "ai_watch_synth_scale_out_pct": 60
+   }
+  },
+  "t25_60": {
+   "live_book": true,
+   "set": {
+    "ai_watch_synth_rr": 0.05,
+    "ai_watch_synth_scale_out_pct": 60
+   }
+  },
+  "t20_40": {
+   "live_book": true,
+   "set": {
+    "ai_watch_synth_rr": 0.04,
+    "ai_watch_synth_scale_out_pct": 40
+   }
+  }
+ },
+ "screen_days": [
+  "2026-11-05",
+  "2026-11-04",
+  "2026-11-03",
+  "2026-11-02",
+  "2026-10-30"
+ ],
+ "confirm_days": [
+  "2026-10-29",
+  "2026-10-28",
+  "2026-10-27",
+  "2026-10-26",
+  "2026-10-23",
+  "2026-10-22",
+  "2026-10-21",
+  "2026-10-20",
+  "2026-10-19",
+  "2026-10-16"
+ ]
+}
