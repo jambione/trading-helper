@@ -74,8 +74,8 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 
 | forecaster | made | resolved | correct | hit rate |
 |---|---|---|---|---|
-| Argon | 1 | 0 | 0 | - |
-| Claude | 6 | 1 | 1 | 100% |
+| Argon | 3 | 0 | 0 | - |
+| Claude | 7 | 1 | 1 | 100% |
 
 - **PR1** (Claude) X3 trend-hold 'both' (floor at opening stop + off after +15 bp peak), session replay screen: expects screen DROP or a delta within +-10 bp/day; does not reach confirm (open)
 - **PR2** (Claude) X1 floor_only, session replay screen: expects small positive day delta (cuts the -70..-80 bp tail) but fewer than 60% of days better (open)
@@ -84,6 +84,9 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 - **PR5** (Claude) broker truth: week of 2026-11-09 net bp per round trip: expects between -8 and 0 bp (same range as the last five weeks) (open)
 - **PR6** (Argon) exit_confirm: 'both' on the 10 older days (10/16-10/29): expects positive: the logical candidate to ship is both + lock50 without step01 (Argon, relayed by the operator) (open)
 - **PR7** (Claude) exit_confirm: 'both' on the 10 older days (10/16-10/29): expects mean day delta positive (it never lost a day on the screen) but small: day-t below 2.0; the gain concentrated on a few days where the tail event happened (open)
+- **PR8** (Argon) exit_confirm: 'both' on 10/16-10/29: expects +0.4 to +1.0 bp/trade (+8 to +20 bp/day); solidly positive on event days, near zero otherwise (open)
+- **PR9** (Argon) exit_confirm: both vs both_lock50 on 10/16-10/29: expects lock50 adds 0 to +0.3 bp/trade; 'both' alone may beat both_lock50 (open)
+- **PR10** (Claude) exit_confirm: both vs both_lock50 on 10/16-10/29: expects both_lock50 within +-0.3 bp/trade of 'both' (the lock adds nothing measurable) (open)
 
 ## Not started
 

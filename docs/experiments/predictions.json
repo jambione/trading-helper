@@ -63,6 +63,33 @@
    "expect": "mean day delta positive (it never lost a day on the screen) but small: day-t below 2.0; the gain concentrated on a few days where the tail event happened",
    "resolved": null,
    "correct": null
+  },
+  {
+   "id": "PR8",
+   "test": "exit_confirm: 'both' on 10/16-10/29",
+   "who": "Argon",
+   "made": "2026-11-07 (relayed)",
+   "expect": "+0.4 to +1.0 bp/trade (+8 to +20 bp/day); solidly positive on event days, near zero otherwise",
+   "resolved": null,
+   "correct": null
+  },
+  {
+   "id": "PR9",
+   "test": "exit_confirm: both vs both_lock50 on 10/16-10/29",
+   "who": "Argon",
+   "made": "2026-11-07 (relayed)",
+   "expect": "lock50 adds 0 to +0.3 bp/trade; 'both' alone may beat both_lock50",
+   "resolved": null,
+   "correct": null
+  },
+  {
+   "id": "PR10",
+   "test": "exit_confirm: both vs both_lock50 on 10/16-10/29",
+   "who": "Claude",
+   "made": "2026-11-07 16:00",
+   "expect": "both_lock50 within +-0.3 bp/trade of 'both' (the lock adds nothing measurable)",
+   "resolved": null,
+   "correct": null
   }
  ]
 }
