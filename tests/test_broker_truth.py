@@ -36,3 +36,10 @@ def test_weekly_stats():
                                 f("B", "buy", 1, 100.0, 20), f("B", "sell", 1, 99.5, 30)])
     (wk, mon, s), = bt.weekly(rts)
     assert s["n"] == 2 and s["win"] == 0.5 and abs(s["pnl"] - 0.5) < 1e-9 and abs(s["bp"] - 25.0) < 1e-9
+
+
+def test_cross_check_matches_order_level_totals():
+    alp = [{"order_id": "o1", "symbol": "A", "side": "buy", "qty": 4, "price": 100.0, "t": T}, {"order_id": "o1", "symbol": "A", "side": "buy", "qty": 6, "price": 101.0, "t": T + 1}]
+    arc = [{"order_id": "o1", "symbol": "A", "side": "buy", "qty": 10, "price": 100.6, "t": T}]
+    cc = bt.cross_check(alp, arc)
+    assert cc["matched"] == 1 and cc["qty_mismatch"] == 0 and cc["max_px_diff_bp"] < 1e-6

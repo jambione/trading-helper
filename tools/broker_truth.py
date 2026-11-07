@@ -111,7 +111,7 @@ def fetch():
         rows = tc.get("/account/activities/FILL", params) or []
         for a in rows:
             ts = dt.datetime.fromisoformat(str(a["transaction_time"]).replace("Z", "+00:00")).timestamp()
-            out.append({"id": a.get("id"), "symbol": str(a["symbol"]), "side": str(a["side"]).lower(),
+            out.append({"id": a.get("id"), "order_id": a.get("order_id"), "symbol": str(a["symbol"]), "side": str(a["side"]).lower(),
                         "qty": float(a["qty"]), "price": float(a["price"]), "t": ts})
         n += 1
         if len(rows) < 100:
@@ -124,6 +124,45 @@ def fetch():
     EQUITY.write_text(json.dumps(hist))
     print(f"fills {len(out)} ({n} pages); equity points {len(hist.get('equity') or [])}")
     return 0
+
+
+def archive_fills():
+    """Broker order fills the desk saved each day (ai_reports/fills/DAY.jsonl, event=fill, status=filled): order-level
+    filled_qty and filled_avg_price as Alpaca reported them at the time. Covers the earlier paper account(s)."""
+    out = []
+    for f in sorted((ROOT / "ai_reports" / "fills").glob("20??-??-??.jsonl")):
+        for line in f.read_text().splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if r.get("event") != "fill" or r.get("status") != "filled" or not r.get("filled_at") or not r.get("filled_avg_price"):
+                continue
+            try:
+                ts = dt.datetime.fromisoformat(str(r["filled_at"]).replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                continue
+            out.append({"order_id": r.get("order_id"), "symbol": str(r["symbol"]), "side": str(r.get("side") or "").lower(),
+                        "qty": float(r.get("filled_qty") or r.get("qty") or 0), "price": float(r["filled_avg_price"]), "t": ts})
+    return out
+
+
+def cross_check(alpaca, archive):
+    """Order-level agreement on the days both sources cover. -> dict of counts and worst differences."""
+    days = {iso_day(f["t"]) for f in alpaca}
+    agg = {}
+    for f in alpaca:
+        k = f.get("order_id")
+        a = agg.setdefault(k, {"qty": 0.0, "cash": 0.0, "symbol": f["symbol"], "side": f["side"]})
+        a["qty"] += f["qty"]
+        a["cash"] += f["qty"] * f["price"]
+    arch = {f["order_id"]: f for f in archive if iso_day(f["t"]) in days}
+    both = [k for k in agg if k in arch]
+    qty_bad = [k for k in both if abs(agg[k]["qty"] - arch[k]["qty"]) > 1e-6]
+    px_diff = [abs(agg[k]["cash"] / agg[k]["qty"] - arch[k]["price"]) / arch[k]["price"] * 1e4 for k in both if agg[k]["qty"] > 0]
+    return {"days": sorted(days), "alpaca_orders": len(agg), "archive_orders": len(arch), "matched": len(both),
+            "only_alpaca": len([k for k in agg if k not in arch]), "only_archive": len([k for k in arch if k not in agg]),
+            "qty_mismatch": len(qty_bad), "max_px_diff_bp": max(px_diff) if px_diff else None}
 
 
 def equity_by_week():
@@ -166,6 +205,24 @@ def report():
         lines.append(f"| {mon} | {s['n']} | {100 * s['win']:.0f}% | {s['avg_win']:+.1f} | {s['avg_loss']:+.1f} | {s['bp']:+.1f} | "
                      f"{s['pnl']:+,.2f} | {cum:+,.2f} | {'' if e is None else f'{e:,.2f}'} | {chg} | {s['overnight']} |")
         prev_eq = e if e is not None else prev_eq
+    arch = archive_fills()
+    if arch:
+        cc = cross_check(fills, arch)
+        lines += ["", "## Earlier weeks: broker fills archived by the desk (the account above was created 2026-11-04)", "",
+                  f"Validation on the days both sources cover ({', '.join(cc['days'])}): Alpaca orders {cc['alpaca_orders']}, archived orders "
+                  f"{cc['archive_orders']}, matched {cc['matched']}, only in Alpaca {cc['only_alpaca']}, only in archive {cc['only_archive']}, "
+                  f"quantity mismatches {cc['qty_mismatch']}, worst average-price difference "
+                  f"{'n/a' if cc['max_px_diff_bp'] is None else f'{cc["max_px_diff_bp"]:.2f} bp'}. If these agree, the archive below is trustworthy.", ""]
+        art, aun, aop = round_trips([{**f, "side": "sell" if f["side"].startswith("sell") else "buy"} for f in arch])
+        lines += [f"Archived fills {len(arch)} orders, {iso_day(min(f['t'] for f in arch))} to {iso_day(max(f['t'] for f in arch))}; round trips {len(art)}; "
+                  f"sell quantity with no open buy {aun:.0f}; still open {len(aop)}.", "",
+                  "| week (Mon) | round trips | win rate | avg win bp | avg loss bp | net bp / trip | realized $ | cumulative $ | overnight trips |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+        cum = 0.0
+        for w, mon, st in weekly(art):
+            cum += st["pnl"]
+            lines.append(f"| {mon} | {st['n']} | {100 * st['win']:.0f}% | {st['avg_win']:+.1f} | {st['avg_loss']:+.1f} | {st['bp']:+.1f} | "
+                         f"{st['pnl']:+,.2f} | {cum:+,.2f} | {st['overnight']} |")
     lines += ["", "Cross-check: realized $ per week should track the equity change, apart from open positions at week end,",
               "deposits/resets and fees. A large gap in a week means one of the two sources is wrong for that week; look before trusting it."]
     out = "\n".join(lines) + "\n"
