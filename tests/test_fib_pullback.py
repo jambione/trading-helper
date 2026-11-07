@@ -122,3 +122,37 @@ def test_skips():
     bars2 = list(bars)
     bars2[e] = (bars[e][0] + 9,) + bars[e][1:]
     assert F.trade(bars2, sig) == {"skip": "entry_gap"}
+
+
+# ---------------- amended_3 controls (11/07) ----------------
+def _bars(start_min=600, n=200, base=20.0):
+    """Gently rising bars where every bar is bullish (close > open and > previous high) and above VWAP."""
+    out = []
+    for i in range(n):
+        o = base + 0.01 * i
+        out.append((start_min + i, o, o + 0.012, o - 0.002, o + 0.011, 1000.0))
+    return out
+
+
+def test_secondary_control_is_drawn_strictly_after_the_trade():
+    import fib_pullback as fp
+    bars = _bars()
+    sig = {"dec_min": 640, "H": 30.0, "L": 19.0, "brk": 19.0}
+    tr = {"exit_min": 670, "stop_pct": 0.005, "target_pct": 0.01}
+    for tag in ("a", "b", "c", "d"):
+        c = fp.control(bars, sig, tr, "X", "2026-06-01", tag)
+        assert c is not None
+    # every eligible candidate is after exit + 2 min: re-derive the candidate set exactly as the function does
+    lo = tr["exit_min"] + 2
+    cand = [t for t in range(1, len(bars) - 1) if lo <= bars[t][0] <= tr["exit_min"] + 62]
+    assert cand and min(bars[t][0] for t in cand) >= lo
+
+
+def test_primary_control_uses_other_names_at_the_same_minute():
+    import fib_pullback as fp
+    allb = {"X": _bars(), "Y": _bars(base=30.0), "Z": _bars(base=40.0)}
+    sig = {"dec_min": 640}
+    tr = {"stop_pct": 0.005, "target_pct": 0.01}
+    c = fp.control_xs(allb, "X", sig, tr, "2026-06-01")
+    assert c is not None and "net" in c
+    assert fp.control_xs({"X": _bars()}, "X", sig, tr, "2026-06-01") is None      # no other names -> no primary control

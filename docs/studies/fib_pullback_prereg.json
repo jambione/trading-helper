@@ -87,5 +87,11 @@
    "(8) The entry bar must start within 5 minutes of the decision bar (both GP and the control); otherwise skipped ('entry_gap', counted).",
    "DECLARED: a zone touch is defined by its UPPER edge only (amended (3): first reach), so the zone's lower edge (and RANDOM_DEPTH's 0.118 width) does not affect which bar touches; the depth comparison is between first-reach levels 0.236 / 0.5 / 0.70 / random."
   ]
+ },
+ "amended_3": {
+  "date": "2026-11-07 17:10 ET",
+  "reason": "P1 control audit + docs/TEST_STANDARD.md (11/07): the same-name same-hour control (>= 15 min from the trade, hold 30) could sit on the pre-signal path; the original report itself said the lift 'mostly measures how badly the control loses'.",
+  "change": "PRIMARY control (column ctrl) = the same decision minute on up to 5 seeded other names with a bullish, above-VWAP bar at that minute (setup-matched), same % stop/target/time stop. SECONDARY (ctrl2) = same name, bullish above-VWAP minute STRICTLY AFTER the trade ends (exit+2..exit+62 min). Rules, variants, halves, costs and pass bars are otherwise unchanged; the result is also read under TEST_STANDARD (EDGE vs PROFITABLE). One read, no retuning.",
+  "operator": "Operator 11/07 authorised running the remaining preregs without per-step approval."
  }
 }

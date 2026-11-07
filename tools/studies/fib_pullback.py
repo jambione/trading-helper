@@ -160,8 +160,11 @@ def control(bars: list, sig: dict, tr: dict, sym: str, day: str, tag: str) -> di
     decision window with 30 minutes of room; the SAME % stop and % target and time stop."""
     vw = vwaps(bars)
     hr = sig["dec_min"] // 60
+    # amended_3 (11/07, docs/TEST_STANDARD.md P2): same-name control STRICTLY AFTER the trade has ended (exit + 2 .. exit + 62 min),
+    # never before the signal (a pre-signal minute sits on the path that made the setup). Setup-matching (bullish, above VWAP) kept.
+    lo, hi = tr["exit_min"] + 2, tr["exit_min"] + 62
     cand = [t for t in range(1, len(bars) - 1)
-            if bars[t][0] // 60 == hr and abs(bars[t][0] - sig["dec_min"]) >= CTRL_SEP and DEC_LO <= bars[t][0] <= DEC_HI
+            if lo <= bars[t][0] <= hi and DEC_LO <= bars[t][0] <= DEC_HI
             and bullish(bars, t) and bars[t][4] > vw[t] and bars[t + 1][0] + TIME_STOP - 1 <= 15 * 60 + 59
             and bars[t + 1][0] - bars[t][0] <= GAP_MAX
             and bars[t + 1][1] >= MIN_PX]
@@ -174,6 +177,33 @@ def control(bars: list, sig: dict, tr: dict, sym: str, day: str, tag: str) -> di
     return {"gross": g, "net": g - COST, "why": r["why"]}
 
 
+def control_xs(all_bars: dict, sym: str, sig: dict, tr: dict, day: str, k: int = 5) -> dict | None:
+    """amended_3 PRIMARY control: the same decision minute on up to k seeded OTHER names whose bar at that minute is bullish and
+    above VWAP (setup-matched), entered at their next open with the SAME % stop, % target and time stop. Mean over the draws."""
+    pool = []
+    for o in sorted(all_bars):
+        if o == sym:
+            continue
+        b = all_bars[o]
+        idx = next((i for i in range(1, len(b) - 1) if b[i][0] == sig["dec_min"]), None)
+        if idx is None or b[idx + 1][0] - b[idx][0] > GAP_MAX or b[idx + 1][1] < MIN_PX:
+            continue
+        if not bullish(b, idx) or b[idx][4] <= vwaps(b)[idx]:
+            continue
+        pool.append((o, idx))
+    if not pool:
+        return None
+    rng = random.Random(int(hashlib.sha256(f"{sym}|{day}|{sig['dec_min']}|fib-xs".encode()).hexdigest()[:16], 16))
+    vals = []
+    for o, idx in (rng.choice(pool) for _ in range(k)):
+        b = all_bars[o]
+        op = b[idx + 1][1]
+        r = simulate(b, idx + 1, op * (1 - tr["stop_pct"]), op * (1 + tr["target_pct"]))
+        vals.append(r["exit"] / op - 1)
+    g = sum(vals) / len(vals)
+    return {"gross": g, "net": g - COST}
+
+
 # ── day task (warehouse) ─────────────────────────────────────────────────────
 
 def day_task(args) -> dict:
@@ -183,9 +213,12 @@ def day_task(args) -> dict:
     p_iex = H_.load_raw("iex", days[days.index(day) - 1])
     names = H_.sample_names(day, [s for s in H_.load_raw("iex", day) if s in raw and s in p_iex])
     rows, st = [], Counter()
+    all_bars = {}
     for sym in names:
-        bars = [tuple(float(x) for x in r) for r in raw[sym]]
-        bars = [(int(b[0]),) + b[1:] for b in bars]
+        bb = [tuple(float(x) for x in r) for r in raw[sym]]
+        all_bars[sym] = [(int(x[0]),) + x[1:] for x in bb]
+    for sym in names:
+        bars = all_bars[sym]
         for v in VARIANTS:
             dl = None
             if v == "RANDOM_DEPTH":
@@ -201,8 +234,8 @@ def day_task(args) -> dict:
                 if tr is None or "skip" in tr:
                     st[f"{v}_skip_{(tr or {}).get('skip')}"] += 1
                     continue
-                c1 = control(bars, sig, tr, sym, day, "fib-gp-ctrl")
-                c2 = control(bars, sig, tr, sym, day, "fib-gp-ctrl2")
+                c1 = control_xs(all_bars, sym, sig, tr, day)                     # amended_3 PRIMARY: same minute, other names
+                c2 = control(bars, sig, tr, sym, day, "fib-gp-ctrl")             # amended_3 SECONDARY: same name, after the trade
                 if c1 is None:
                     st[f"{v}_no_control"] += 1
                 taken += 1
