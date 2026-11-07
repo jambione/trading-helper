@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools" / "studies"))
 ET = ZoneInfo("America/New_York")
-CACHE = ROOT / "ai_reports" / "trade_sim_prints"
+CACHE = ROOT / "ai_reports" / "trade_sim_prints_v2"        # v2: last-sale-eligible prints only (v1 kept odd-lot/out-of-sequence prints)
 SINCE = "2026-10-08"
 HOLD_MAX = 1500.0            # seconds of prints kept after the fill
 COST = 3.0                   # bp per round trip charged to the sim (as the sweeps: net = bp - 3)
@@ -172,7 +172,9 @@ def fetch():
         try:
             got = client.get_stock_trades(StockTradesRequest(symbol_or_symbols=t["sym"], start=datetime.fromtimestamp(a, timezone.utc),
                                                              end=datetime.fromtimestamp(b, timezone.utc), feed=DataFeed.SIP))
-            rows = [(x.timestamp.timestamp(), float(x.price), float(x.size or 0)) for x in (got.data or {}).get(t["sym"], [])]
+            import replay_session as rs
+            rows = [(x.timestamp.timestamp(), float(x.price), float(x.size or 0)) for x in (got.data or {}).get(t["sym"], [])
+                    if not rs.NON_LAST_SALE.intersection(getattr(x, "conditions", None) or ())]
         except Exception as e:  # noqa: BLE001
             bad += 1
             print("ERR", t["day"], t["sym"], str(e)[:80])
