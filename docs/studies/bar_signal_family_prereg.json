@@ -1,0 +1,50 @@
+{
+ "id": "bar_signal_family",
+ "registered": "2026-11-07",
+ "operator": "Argon ideas I (volume-clock %R), K (absorption bar), opening washout, dwell/knock count; operator 11/07: test everything regardless of odds",
+ "family": "4 hypotheses, alpha 0.05/4 = 0.0125 per hypothesis; critical t from scipy t.ppf(1-0.0125, df) one-sided on per-day means",
+ "data": "ai_reports/warehouse/sip/DAY.npz, 120 sessions 2026-04-27..2026-10-15, regular-session 1-minute SIP bars. Universe per day = top 400 by prior-session dollar volume, $10-$500 at the 09:30 open (as in board_structure_family). Halves by date at the median scored session. Trades: buy at the open of the bar after the trigger bar, sell at the close of the 10th bar after entry, 6 bp round trip, one trigger per name per 30 minutes, entries 09:45-15:30 unless stated.",
+ "V1_volume_clock_pctR": {
+  "definition": "Volume bars per name-day: size = median daily volume of the previous 20 sessions / 100; a minute is assigned whole to the volume bar in which cumulative volume crosses a multiple of the size (declared approximation). %R(21) smoothed with ewm span 7 on volume-bar closes (the live formulas, signals.py), versus the same %R on 1-minute bars (time clock).",
+  "trigger": "Smoothed %R was <= -80 at some point in the last 5 clock units and is now >= -50 (leaving oversold). Evaluated at each minute close using the latest completed volume bar.",
+  "controls": "(a) same name, a random minute in the same clock hour (+-30), more than 15 min from any trigger, 5 draws averaged; (b) the TIME-clock trigger with the identical rule, same trade.",
+  "pass": "ALL: net > 0 with day-clustered t >= critical; > 0 in both halves; lift vs control (a) > 0 in both halves, pooled t >= 1.65; lift vs the time-clock trigger > 0 in both halves; pooled net > 0 after dropping best 5 days and the 5 largest-P&L names; > 0 at 10 bp; >= 300 triggers and 100 per half else UNDERPOWERED.",
+  "information": [
+   "volume bar size /50 and /200",
+   "oversold level -90 and -70",
+   "exit at 3 and 30 bars"
+  ]
+ },
+ "K_absorption_bar": {
+  "trigger": "Bar t: volume >= 3x the median of the previous 20 bars; range (high-low) <= 0.5x the median range of the previous 20 bars; low is the lowest low of the last 15 bars; close in the upper half of the bar; 15-bar return before the bar <= -30 bp.",
+  "controls": "(a) same-name random minute same hour (5 draws); (b) same minute, a random universe stock with a 15-bar return <= -30 bp and no volume/range condition, same trade.",
+  "pass": "same six conditions as V1 (lift tested against both controls)",
+  "information": [
+   "volume multiple 2x and 4x",
+   "range multiple 0.35 and 0.7",
+   "exit at 3 and 30 bars"
+  ]
+ },
+ "W_opening_washout": {
+  "trigger": "Between 09:30 and 09:44 the stock trades at least 100 bp below its 09:30 open at some point (washout). The first bar from 09:45 to 10:30 that closes back above the 09:30 open is the trigger. One per name per day.",
+  "controls": "(a) same name, a random minute 09:45-10:30 on the same day that is not a trigger (5 draws); (b) a random universe stock at the same minute that did not wash out, same trade.",
+  "pass": "same six conditions as V1; exits at 10 bars",
+  "information": [
+   "washout depth 50 and 150 bp",
+   "exit at 3 and 30 bars"
+  ]
+ },
+ "D_dwell_knock": {
+  "trigger": "Level = highest high of bars t-30..t-3. Knocks = distinct bars among t-30..t-3 whose high is within 5 bp of the level, counted only if separated from the previous knock by >= 2 bars and a pullback of >= 10 bp in between. Trigger at the close of bar t when close > level and knocks >= 3.",
+  "controls": "(a) same-name random minute same hour (5 draws); (b) matched breakouts of the same level with knocks <= 1, same trade (isolates the knock count).",
+  "pass": "same six conditions as V1, with control (b) lift mandatory in both halves",
+  "information": [
+   "knocks >= 2 and >= 4",
+   "tolerance 3 and 8 bp",
+   "exit at 3 and 30 bars"
+  ]
+ },
+ "if_pass": "A pass earns a result-skeptic review and a forward test on IEX, never a live change.",
+ "tool": "tools/studies/bar_signal_family.py (to be built; one read, no retuning); report docs/BAR_SIGNAL_FAMILY.md",
+ "status": "registered, awaiting skeptic round 1"
+}
