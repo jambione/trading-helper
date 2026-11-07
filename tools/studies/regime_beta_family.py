@@ -85,12 +85,12 @@ def surge_events(st, s, lo, hi):
     return refract(ts)
 
 
-def ft5(day, st, s, t, beta):
+def ft5(day, st, s, t, b):
     c = day["c"][st[s]["i"]]
     if t + 5 >= 390 or np.isnan(c[t + 5]) or np.isnan(c[t]):
         return None
     sp = spy_ret(day, t, t + 5)
-    return ((c[t + 5] / c[t] - 1) - beta[s] * (sp or 0.0)) * 1e4
+    return ((c[t + 5] / c[t] - 1) - b * (sp or 0.0)) * 1e4
 
 
 def score_day_r5(day, prev, hist, names, d):
