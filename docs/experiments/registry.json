@@ -1,0 +1,702 @@
+{
+ "updated": "2026-11-07",
+ "pipeline": [
+  "idea",
+  "prereg",
+  "skeptic",
+  "tool",
+  "smoke",
+  "data_check",
+  "running",
+  "verdict"
+ ],
+ "items": [
+  {
+   "id": "X1",
+   "title": "trend-hold floor at the opening stop (floor_only)",
+   "layer": "exit",
+   "source": "Argon",
+   "status": "running",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": "n/a",
+    "tool": true,
+    "smoke": "pending",
+    "data_check": true
+   },
+   "ref": "docs/sweeps/trend_hold_fix_2026-11-07.json"
+  },
+  {
+   "id": "X2",
+   "title": "trend-hold off after a +15 bp peak (afterpeak_only)",
+   "layer": "exit",
+   "source": "Argon",
+   "status": "running",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": "n/a",
+    "tool": true,
+    "smoke": "pending",
+    "data_check": true
+   },
+   "ref": "docs/sweeps/trend_hold_fix_2026-11-07.json"
+  },
+  {
+   "id": "X3",
+   "title": "both trend-hold fixes (primary)",
+   "layer": "exit",
+   "source": "Argon",
+   "status": "running",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": "n/a",
+    "tool": true,
+    "smoke": "pending",
+    "data_check": true
+   },
+   "ref": "docs/sweeps/trend_hold_fix_2026-11-07.json"
+  },
+  {
+   "id": "X4",
+   "title": "trend hold off entirely (hold_off, reference)",
+   "layer": "exit",
+   "source": "operator/Argon",
+   "status": "running",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": "n/a",
+    "tool": true,
+    "smoke": "pending",
+    "data_check": true
+   },
+   "ref": "docs/sweeps/trend_hold_fix_2026-11-07.json"
+  },
+  {
+   "id": "X5",
+   "title": "proportional peak lock 50% from +15 bp (lock50)",
+   "layer": "exit",
+   "source": "Argon",
+   "status": "running",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": "n/a",
+    "tool": true,
+    "smoke": "pending",
+    "data_check": true
+   },
+   "ref": "docs/sweeps/trend_hold_fix_2026-11-07.json"
+  },
+  {
+   "id": "X6",
+   "title": "idle step 0.01R instead of 0.05R (step01)",
+   "layer": "exit",
+   "source": "Argon",
+   "status": "running",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": "n/a",
+    "tool": true,
+    "smoke": "pending",
+    "data_check": true
+   },
+   "ref": "docs/sweeps/trend_hold_fix_2026-11-07.json"
+  },
+  {
+   "id": "X7",
+   "title": "park the stop at last-1c instead of selling at last (overtake_off)",
+   "layer": "exit",
+   "source": "Argon",
+   "status": "running",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": "n/a",
+    "tool": true,
+    "smoke": "pending",
+    "data_check": true
+   },
+   "ref": "docs/sweeps/trend_hold_fix_2026-11-07.json"
+  },
+  {
+   "id": "X8",
+   "title": "all Argon exit fixes together (argon_exits)",
+   "layer": "exit",
+   "source": "Argon",
+   "status": "running",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded.",
+   "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": "n/a",
+    "tool": true,
+    "smoke": "pending",
+    "data_check": true
+   },
+   "ref": "docs/sweeps/trend_hold_fix_2026-11-07.json"
+  },
+  {
+   "id": "X9",
+   "title": "tranche A: bank 40-60% at +15/+20/+25 bp, rest runs (4 arms)",
+   "layer": "exit",
+   "source": "Argon",
+   "status": "queued",
+   "evidence": "Replay fixed (tranche B breakeven). Optimistic fill model. Live gaps: rr clamp, market sell, 1R runner trail.",
+   "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Runs after X1-X8. A pass means build a live path, not flip a switch.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": "n/a",
+    "tool": true,
+    "smoke": "pending",
+    "data_check": true
+   },
+   "ref": "docs/sweeps/tranche_a_2026-11-07.json"
+  },
+  {
+   "id": "X10",
+   "title": "%R fast length 10 and half smoothing (rte_len, 2 arms)",
+   "layer": "exit",
+   "source": "Gemini",
+   "status": "running",
+   "evidence": "About 9+ of 45 files done at 04:25; first run crashed and was relaunched.",
+   "next": "Read REPORT.md when done.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": true,
+    "data_check": true
+   },
+   "ref": "docs/sweeps/rte_len_2026-11-06.json"
+  },
+  {
+   "id": "X11",
+   "title": "triangle exit, leash 10/12, steep30 gate",
+   "layer": "exit",
+   "source": "operator",
+   "status": "verdict_fail",
+   "evidence": "Closed earlier (steep30 screen passed, confirm t 1.15).",
+   "next": "none",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "legacy",
+    "data_check": "legacy"
+   },
+   "ref": "docs/running_list.md"
+  },
+  {
+   "id": "N1",
+   "title": "V1 volume-clock %R",
+   "layer": "entry",
+   "source": "Argon",
+   "status": "blocked",
+   "evidence": "Run says FAIL (-4.5 bp, lifts very negative) but the random-minute controls average ~+9 bp net, which is implausible.",
+   "next": "Diagnose the control calculation, rerun if it is a bug.",
+   "blocked_on": "control sanity check",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "planted-series tests only",
+    "data_check": false
+   },
+   "ref": "docs/studies/bar_signal_family_prereg.json"
+  },
+  {
+   "id": "N2",
+   "title": "K absorption bar",
+   "layer": "entry",
+   "source": "Argon",
+   "status": "underpowered",
+   "evidence": "101 triggers, needs 300. Not a verdict on the idea.",
+   "next": "Loosening thresholds would be a new prereg.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "planted-series tests only",
+    "data_check": true
+   },
+   "ref": "docs/studies/bar_signal_family_prereg.json"
+  },
+  {
+   "id": "N3",
+   "title": "W opening washout",
+   "layer": "entry",
+   "source": "Argon",
+   "status": "blocked",
+   "evidence": "Run says FAIL (-12.3 bp) but shares the same control code as N1.",
+   "next": "Same control sanity check.",
+   "blocked_on": "control sanity check",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "planted-series tests only",
+    "data_check": false
+   },
+   "ref": "docs/studies/bar_signal_family_prereg.json"
+  },
+  {
+   "id": "N4",
+   "title": "D dwell/knock",
+   "layer": "entry",
+   "source": "Argon",
+   "status": "blocked",
+   "evidence": "Run says FAIL (-6.1 bp, lift vs first-try breakout -3.3) but shares the control code.",
+   "next": "Same control sanity check.",
+   "blocked_on": "control sanity check",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "planted-series tests only",
+    "data_check": false
+   },
+   "ref": "docs/studies/bar_signal_family_prereg.json"
+  },
+  {
+   "id": "N5",
+   "title": "sector-ETF lead-lag (SMH, IBIT, IGV, XBI, URA)",
+   "layer": "entry",
+   "source": "Argon",
+   "status": "idea",
+   "evidence": "ETF bars fetched (12 ETFs, 120 days). No prereg yet.",
+   "next": "Write prereg, skeptic review, build.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": false,
+    "skeptic": false,
+    "tool": false,
+    "smoke": false,
+    "data_check": true
+   },
+   "ref": ""
+  },
+  {
+   "id": "N6",
+   "title": "H3 board breadth (simultaneous names turning up)",
+   "layer": "entry",
+   "source": "Argon",
+   "status": "idea",
+   "evidence": "Specified in the amended board_structure_family prereg; tool not built.",
+   "next": "Build: 9/25-11/05 sessions, board from sources.jsonl.gz, SPY control.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": false,
+    "smoke": false,
+    "data_check": false
+   },
+   "ref": "docs/studies/board_structure_family_prereg.json"
+  },
+  {
+   "id": "N7",
+   "title": "double arm (skip arm 1, buy arm 2 above its base)",
+   "layer": "entry",
+   "source": "operator/Argon",
+   "status": "idea",
+   "evidence": "Not specified or built.",
+   "next": "Prereg first.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": false,
+    "skeptic": false,
+    "tool": false,
+    "smoke": false,
+    "data_check": false
+   },
+   "ref": ""
+  },
+  {
+   "id": "N8",
+   "title": "H1 peer lead-lag",
+   "layer": "entry",
+   "source": "Argon/Claude",
+   "status": "verdict_fail",
+   "evidence": "FAIL -9.4 bp, t -2.11",
+   "next": "none",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "legacy",
+    "data_check": "legacy"
+   },
+   "ref": "docs/running_list.md"
+  },
+  {
+   "id": "N9",
+   "title": "H2 stop-run reclaim",
+   "layer": "entry",
+   "source": "Argon/Claude",
+   "status": "verdict_fail",
+   "evidence": "FAIL -5.9 bp, lift 0 vs controls",
+   "next": "none",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "legacy",
+    "data_check": "legacy"
+   },
+   "ref": "docs/running_list.md"
+  },
+  {
+   "id": "N10",
+   "title": "R5 regime follow-through gate",
+   "layer": "entry",
+   "source": "Argon/Claude",
+   "status": "verdict_fail",
+   "evidence": "FAIL +1.0 bp, t 1.16",
+   "next": "none",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "legacy",
+    "data_check": "legacy"
+   },
+   "ref": "docs/running_list.md"
+  },
+  {
+   "id": "N11",
+   "title": "B2 beta decoupling",
+   "layer": "entry",
+   "source": "Argon/Claude",
+   "status": "verdict_fail",
+   "evidence": "FAIL: pure SPY exposure (+29 / -40 bp)",
+   "next": "none",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "legacy",
+    "data_check": "legacy"
+   },
+   "ref": "docs/running_list.md"
+  },
+  {
+   "id": "N12",
+   "title": "1-2-3 pattern",
+   "layer": "entry",
+   "source": "Argon/Claude",
+   "status": "verdict_fail",
+   "evidence": "FAIL -13.7 bp/trade",
+   "next": "none",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "legacy",
+    "data_check": "legacy"
+   },
+   "ref": "docs/running_list.md"
+  },
+  {
+   "id": "N14",
+   "title": "relative strength scan",
+   "layer": "entry",
+   "source": "Argon/Claude",
+   "status": "verdict_fail",
+   "evidence": "FAIL -5.5 bp, t -0.53",
+   "next": "none",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "legacy",
+    "data_check": "legacy"
+   },
+   "ref": "docs/running_list.md"
+  },
+  {
+   "id": "N13",
+   "title": "spread compression",
+   "layer": "entry",
+   "source": "Claude",
+   "status": "underpowered",
+   "evidence": "UNDERPOWERED and negative.",
+   "next": "none",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "legacy",
+    "data_check": "legacy"
+   },
+   "ref": ""
+  },
+  {
+   "id": "N15",
+   "title": "premarket rules on history",
+   "layer": "entry",
+   "source": "operator",
+   "status": "void",
+   "evidence": "69% of alert names had too few premarket bars; R1 -281 bp/day. VOID, not a refutation.",
+   "next": "Revisit only with SIP premarket data.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "legacy",
+    "data_check": "legacy"
+   },
+   "ref": ""
+  },
+  {
+   "id": "S1",
+   "title": "volatility-scaled sizing",
+   "layer": "sizing",
+   "source": "Argon",
+   "status": "verdict_fail",
+   "evidence": "-7.4 vs -7.9 bp/trade",
+   "next": "none",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "legacy",
+    "data_check": "legacy"
+   },
+   "ref": ""
+  },
+  {
+   "id": "S2",
+   "title": "per-name daily attempt cap",
+   "layer": "sizing",
+   "source": "Argon",
+   "status": "verdict_fail",
+   "evidence": "Later attempts not worse (4th -1.9, 5th 0.0 bp)",
+   "next": "none",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "legacy",
+    "data_check": "legacy"
+   },
+   "ref": ""
+  },
+  {
+   "id": "S3",
+   "title": "payoff asymmetry fixes (hold winners longer / time-stop never-greens)",
+   "layer": "exit",
+   "source": "Argon",
+   "status": "verdict_fail",
+   "evidence": "Real asymmetry; both fixes lose (60% of cuts end better if held).",
+   "next": "none",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": "legacy",
+    "data_check": "legacy"
+   },
+   "ref": "docs/running_list.md"
+  },
+  {
+   "id": "L1",
+   "title": "stop built from planned entry, not the fill",
+   "layer": "live-code",
+   "source": "Argon",
+   "status": "open",
+   "evidence": "Slippage since 10/26: mean +4.5 bp, median +2.3, 30% beyond 5 bp (n 1747) on a ~60 bp stop.",
+   "next": "Candidate live change; needs the operator's say.",
+   "blocked_on": "",
+   "gates": {},
+   "ref": ""
+  },
+  {
+   "id": "L2",
+   "title": "pre-entry prints can set the peak and arm breakeven",
+   "layer": "live-code",
+   "source": "Argon",
+   "status": "open",
+   "evidence": "Plausible; '64 prints on tick 1' not confirmed in code.",
+   "next": "Check against logged peaks before touching anything.",
+   "blocked_on": "",
+   "gates": {},
+   "ref": ""
+  },
+  {
+   "id": "L3",
+   "title": "live clamps ai_watch_synth_rr at max(0.25)",
+   "layer": "live-code",
+   "source": "Argon",
+   "status": "open",
+   "evidence": "Verified: targets under +125 bp cannot be set live.",
+   "next": "Needed only if X9 passes.",
+   "blocked_on": "",
+   "gates": {},
+   "ref": ""
+  },
+  {
+   "id": "L4",
+   "title": "vacuity guard for sweeps",
+   "layer": "process",
+   "source": "Claude",
+   "status": "open",
+   "evidence": "Replay arms can silently not run (X1/X3 floor was a no-op).",
+   "next": "Add one-day smoke check to sweep_replays.py.",
+   "blocked_on": "",
+   "gates": {},
+   "ref": ""
+  },
+  {
+   "id": "F1",
+   "title": "forward: range position",
+   "layer": "forward",
+   "source": "Claude",
+   "status": "collecting",
+   "evidence": "Logging live on IEX, counts only until 150 entries.",
+   "next": "Read about 11/13-11/17.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": true,
+    "data_check": true
+   },
+   "ref": ""
+  },
+  {
+   "id": "F2",
+   "title": "forward: run size (apex)",
+   "layer": "forward",
+   "source": "Claude",
+   "status": "collecting",
+   "evidence": "Logging live on IEX, counts only until 150 entries.",
+   "next": "Read about 11/13-11/17.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": true,
+    "data_check": true
+   },
+   "ref": ""
+  },
+  {
+   "id": "F3",
+   "title": "forward: run efficiency",
+   "layer": "forward",
+   "source": "Claude",
+   "status": "collecting",
+   "evidence": "Logging live on IEX, counts only until 150 entries.",
+   "next": "Read about 11/13-11/17.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": true,
+    "data_check": true
+   },
+   "ref": ""
+  },
+  {
+   "id": "F4",
+   "title": "forward: stall score",
+   "layer": "forward",
+   "source": "Claude",
+   "status": "collecting",
+   "evidence": "Logging live on IEX, counts only until 150 entries.",
+   "next": "Read about 11/13-11/17.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": true,
+    "data_check": true
+   },
+   "ref": ""
+  },
+  {
+   "id": "F5",
+   "title": "forward: slope H1/H2",
+   "layer": "forward",
+   "source": "Claude",
+   "status": "collecting",
+   "evidence": "Logging live on IEX, counts only until 150 entries.",
+   "next": "Read about 11/13-11/17.",
+   "blocked_on": "",
+   "gates": {
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": true,
+    "data_check": true
+   },
+   "ref": ""
+  },
+  {
+   "id": "D1",
+   "title": "ETF minute bars for thematic ETFs",
+   "layer": "data",
+   "source": "Argon",
+   "status": "done",
+   "evidence": "120 days, 12 ETFs in ai_reports/warehouse/etf.",
+   "next": "none",
+   "blocked_on": "",
+   "gates": {
+    "tool": true,
+    "smoke": true
+   },
+   "ref": ""
+  },
+  {
+   "id": "D2",
+   "title": "SIP subscription",
+   "layer": "data",
+   "source": "operator",
+   "status": "parked",
+   "evidence": "Operator: skip for now. Alpaca refunded the charge.",
+   "next": "Revisit if a study needs SIP.",
+   "blocked_on": "",
+   "gates": {},
+   "ref": ""
+  }
+ ]
+}
