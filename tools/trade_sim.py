@@ -95,7 +95,7 @@ def sim_trade(sym: str, entry: float, fill_ts: float, prints, cfg: dict, delay: 
         px = float(pr[j][1])
         run = (px / entry - 1) * 1e4
         if p["t1_hit"]:
-            tgt = (float(p["target_1"]) / entry - 1) * 1e4
+            tgt = (float(p.get("t1_px") or p["target_1"]) / entry - 1) * 1e4
             sc = float(p["scale"])
             extra = 0.0 if cfg.get("sim_t1_limit") else SELL_EXTRA        # a resting limit sells at its price, no spread crossed
             return {"gross_bp": sc * tgt + (1 - sc) * run - (sc * extra if t1_cost else 0.0), "why": why,
@@ -110,6 +110,13 @@ def sim_trade(sym: str, entry: float, fill_ts: float, prints, cfg: dict, delay: 
         through = float(cfg.get("sim_t1_through_bp", 0.0) or 0.0)      # resting limit: fills only after price trades THROUGH the target
         if t1_rr > 0 and float(p["scale"]) > 0 and not p["t1_hit"] and px >= float(p["target_1"]) * (1 + through / 1e4):
             p["t1_hit"], p["t1_r"] = True, t1_rr
+            if cfg.get("sim_t1_limit"):
+                p["t1_px"] = float(p["target_1"])                       # resting limit: sells at its price, no latency
+            else:                                                       # market sale: the first print `delay` s after the trigger
+                j1 = i
+                while delay > 0 and j1 < n - 1 and pr[j1][0] < ts + delay:
+                    j1 += 1
+                p["t1_px"] = float(pr[j1][1])
             p["local_stop_price"] = max(float(p["local_stop_price"]), float(p["entry"]))   # tranche B to breakeven, as live
         e, risk = float(p["entry"]), float(p["risk_per_share"])
         p["peak_price"] = max(float(p.get("peak_price") or e), px)

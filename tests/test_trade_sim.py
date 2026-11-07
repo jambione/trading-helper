@@ -89,3 +89,16 @@ def test_resting_limit_needs_the_through_distance_and_pays_no_spread():
     mkt = run({"ai_watch_synth_rr": 0.04, "ai_watch_synth_scale_out_pct": 60.0})
     assert tight["t1"] is True and far["t1"] is False        # +30 bp path never trades 15 bp through a +20 bp target... but 35 bp is not reached
     assert tight["gross_bp"] > mkt["gross_bp"]               # no extra sale cost
+
+
+def test_delay_moves_the_market_tranche_sale_but_not_a_resting_limit():
+    pr = [(T0 + i, 100.0 + 0.01 * i, 1) for i in range(60)]          # steady climb, never stops out
+    mkt = {"ai_watch_synth_rr": 0.003, "ai_watch_synth_scale_out_pct": 50.0}
+    lim = {**mkt, "sim_t1_limit": True}
+    a, b = run(mkt, 0.0, pr), run(mkt, 5.0, pr)
+    assert a["t1"] and b["t1"]
+    c, d = run(lim, 0.0, pr), run(lim, 5.0, pr)
+    # the market sale happens 5 s later at a HIGHER price on a rising path; the limit sale is the same price either way
+    assert b["gross_bp"] > a["gross_bp"] - 1e-9
+    t1_gain = lambda r: r["gross_bp"]  # noqa: E731
+    assert abs(t1_gain(c) - t1_gain(d)) < 30.0
