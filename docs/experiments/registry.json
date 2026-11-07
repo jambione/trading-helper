@@ -93,7 +93,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): lock50 PASS but marginal: +0.91 bp/trade (t 2.03, halves +1.04/+0.78, drop-5 +0.09, bootstrap p5 +0.29, 1 s delay +0.01). 105 of 776 trades changed (~+8 bp on those).",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): lock50 PASS but marginal: +0.91 bp/trade (t 2.03, halves +1.04/+0.78, drop-5 +0.09, bootstrap p5 +0.29, 1 s delay +0.01). 105 of 776 trades changed (~+8 bp on those). 11/07 CONFOUND (Argon, verified): the peak-lock hold bypass fires for any stop >= entry+1c, which includes the plain breakeven floor, so lock50/argon_exits also switch the trend hold off after breakeven - mixed with X2. Replay results for these two arms are void until the bypass is narrowed and they are rerun.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -147,7 +147,7 @@
    "layer": "exit",
    "source": "Argon",
    "status": "running",
-   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): argon_exits FAIL: +0.38 bp (t 0.49); drop-5 -1.19, bootstrap p5 -0.76.",
+   "evidence": "Replay restarted 05:29 on 503ef6ac after the audit fixes; the first run was discarded. Smoke 11/07 08:20: the result JSONs of the fixed code contain trail:initial_floor (floor_only, both) / trail:peak_lock (lock50), so the branches fire. 08:14: first pass stopped at 07:33 on the no-start window with only 2 of 5 screen days done (floor/afterpeak/step01/lock50 DROP, overtake_off KEEP on 46 trades - not meaningful); resumed 08:2x without the window. S3/S4 (docs/TRADE_SIM.md, 776 trades 10/08-11/05, real post-fill SIP prints, price-only, trend hold OFF): argon_exits FAIL: +0.38 bp (t 0.49); drop-5 -1.19, bootstrap p5 -0.76. 11/07 CONFOUND (Argon, verified): the peak-lock hold bypass fires for any stop >= entry+1c, which includes the plain breakeven floor, so lock50/argon_exits also switch the trend hold off after breakeven - mixed with X2. Replay results for these two arms are void until the bypass is narrowed and they are rerun.",
    "next": "Smoke: day logs must show the new path firing (trail:initial_floor / after_peak / peak_lock / t1_hit) on the first 2 days; then read REPORT.md. Read REPORT.md; skeptic review on any pass; operator decides.",
    "blocked_on": "",
    "gates": {
@@ -881,10 +881,10 @@
    "title": "build S3 held-out trade simulation (776+ logged entries, post-fill SIP prints, real position code) and S4 stress",
    "layer": "process",
    "source": "operator 11/07 (no time for forward tests)",
-   "status": "done",
+   "status": "blocked",
    "evidence": "Built and run 11/07. tools/trade_sim.py + 9 tests; fetch cache ai_reports/trade_sim_prints_v2 (776 trades, last-sale-eligible prints, isolated bad ticks dropped: 1,070 of 7.0M). Two data bugs found on the way: non-last-sale prints, then 900 bp bad ticks that made fake stop-outs (baseline went -23.7 -> -20.5 -> -11.85 bp vs logged -7.84). Remaining 4 bp gap = no trend hold + SIP wicks the IEX-fed desk never saw.",
-   "next": "",
-   "blocked_on": "",
+   "next": "Fix, then code-review gate (skeptic reads tool vs live path + planted-edge canary) before any S3/S4 number is used. All S3/S4 numbers so far are void.",
+   "blocked_on": "simulator fidelity bugs found by Argon 11/07 and verified: steps every SIP print (desk acts every 0.25 s / 3 s), runner not on the live 1R trail after tranche A, delayed-sale timing, look-ahead bad-tick filter, 'PASS' means improves-not-profitable",
    "gates": {},
    "ref": "docs/SIM_STAGE.md"
   },
