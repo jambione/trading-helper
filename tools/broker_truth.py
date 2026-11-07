@@ -66,6 +66,25 @@ def round_trips(fills):
     return out, unmatched, still_open
 
 
+def round_trips_by_day(fills):
+    """Pair within each ET trading day (the desk is intraday: 0 overnight trips). An orphan - a buy lot left open at the day's end, or a sell
+    with no open buy (from a mid-stream paper-account reset) - is REPORTED with its date and never carried forward, so it cannot swallow the
+    next days' round trips for that symbol (11/07 audit: 6 orphaned lots had swallowed 22 trips and moved the total by $18.86).
+    -> (round_trips, [(day, symbol, qty, kind)] orphans)."""
+    by = defaultdict(list)
+    for f in fills:
+        by[iso_day(f["t"])].append(f)
+    out, orphans = [], []
+    for day in sorted(by):
+        rts, unmatched_total, still_open = round_trips(by[day])
+        out += rts
+        for sym, q in still_open.items():
+            orphans.append((day, sym, q, "open buy at day end"))
+        if unmatched_total > 1e-9:
+            orphans.append((day, "*", unmatched_total, "sell shares with no open buy (shares)"))
+    return out, orphans
+
+
 def iso_week(t):
     d = dt.datetime.fromtimestamp(t, ET).date()
     y, w, _ = d.isocalendar()
@@ -183,7 +202,9 @@ def report():
         return 1
     sells_short = sum(1 for f in fills if "short" in f["side"])
     fl = [{**f, "side": "sell" if f["side"].startswith("sell") else "buy"} for f in fills]
-    rts, unmatched, still_open = round_trips(fl)
+    rts, orphans = round_trips_by_day(fl)
+    unmatched = sum(o[2] for o in orphans if o[1] == "*")
+    still_open = {o[1]: o[2] for o in orphans if o[1] != "*"}
     wk = weekly(rts)
     eq = equity_by_week()
     keys = sorted(eq)
@@ -213,9 +234,11 @@ def report():
                   f"{cc['archive_orders']}, matched {cc['matched']}, only in Alpaca {cc['only_alpaca']}, only in archive {cc['only_archive']}, "
                   f"quantity mismatches {cc['qty_mismatch']}, worst average-price difference "
                   f"{'n/a' if cc['max_px_diff_bp'] is None else f'{cc["max_px_diff_bp"]:.2f} bp'}. If these agree, the archive below is trustworthy.", ""]
-        art, aun, aop = round_trips([{**f, "side": "sell" if f["side"].startswith("sell") else "buy"} for f in arch])
+        art, aorph = round_trips_by_day([{**f, "side": "sell" if f["side"].startswith("sell") else "buy"} for f in arch])
+        aun = sum(o[2] for o in aorph if o[1] == "*")
+        aop = {(o[0], o[1]): o[2] for o in aorph if o[1] != "*"}
         lines += [f"Archived fills {len(arch)} orders, {iso_day(min(f['t'] for f in arch))} to {iso_day(max(f['t'] for f in arch))}; round trips {len(art)}; "
-                  f"sell quantity with no open buy {aun:.0f}; still open {len(aop)}.", "",
+                  f"sell quantity with no open buy {aun:.0f} shares; open-buy orphans at a day end {len(aop)}. Pairing resets each trading day (intraday desk); orphans are listed, never carried forward.", "",
                   "| week (Mon) | round trips | win rate | avg win bp | avg loss bp | net bp / trip | realized $ | cumulative $ | overnight trips |",
                   "|---|---|---|---|---|---|---|---|---|"]
         cum = 0.0
@@ -223,6 +246,8 @@ def report():
             cum += st["pnl"]
             lines.append(f"| {mon} | {st['n']} | {100 * st['win']:.0f}% | {st['avg_win']:+.1f} | {st['avg_loss']:+.1f} | {st['bp']:+.1f} | "
                          f"{st['pnl']:+,.2f} | {cum:+,.2f} | {st['overnight']} |")
+    if arch and aorph:
+        lines += ["", "Orphans in the archive (mid-stream paper-account resets or partial lots): " + "; ".join(f"{d} {sym} {q:g} ({k})" for d, sym, q, k in aorph[:30])]
     lines += ["", "Cross-check: realized $ per week should track the equity change, apart from open positions at week end,",
               "deposits/resets and fees. A large gap in a week means one of the two sources is wrong for that week; look before trusting it."]
     out = "\n".join(lines) + "\n"

@@ -43,3 +43,20 @@ def test_cross_check_matches_order_level_totals():
     arc = [{"order_id": "o1", "symbol": "A", "side": "buy", "qty": 10, "price": 100.6, "t": T}]
     cc = bt.cross_check(alp, arc)
     assert cc["matched"] == 1 and cc["qty_mismatch"] == 0 and cc["max_px_diff_bp"] < 1e-6
+
+
+def test_orphan_lot_does_not_swallow_later_days():
+    D = 86400.0
+    fills = [f("A", "buy", 10, 100.0, 0),                                    # day 1: orphan lot (account reset, never sold)
+             f("A", "buy", 100, 100.0, D), f("A", "sell", 100, 101.0, D + 60),      # day 2: a clean round trip
+             f("A", "buy", 100, 100.0, 2 * D), f("A", "sell", 100, 99.0, 2 * D + 60)]  # day 3: another
+    whole, _, still = bt.round_trips(fills)
+    by_day, orphans = bt.round_trips_by_day(fills)
+    assert len(whole) == 0 and still.get("A") == 10                        # the old behaviour: everything swallowed
+    assert len(by_day) == 2 and abs(sum(r["pnl"] for r in by_day) - 0.0) < 1e-9
+    assert any(o[1] == "A" and o[2] == 10 for o in orphans)                 # and the orphan is reported with its day
+
+
+def test_unmatched_sell_is_listed_with_its_day():
+    _, orphans = bt.round_trips_by_day([f("A", "sell", 5, 100.0, 0)])
+    assert orphans and orphans[0][1] == "*" and orphans[0][2] == 5
