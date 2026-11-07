@@ -183,8 +183,8 @@
    "layer": "exit",
    "source": "Gemini",
    "status": "blocked",
-   "evidence": "Finished 05:20 but VACUOUS: len10 and half_both are identical to baseline (5 screen days, 133 -> 133 trades, net +0.3 -> +0.3, day delta +0). A different %R length cannot change nothing. The knob is read by live code (ai_entry_watch _rte_fast_length), so the replay probably serves %R from recorded dashboard/engine state instead of recomputing from bars (unproven).",
-   "next": "Find out why the override has no effect; if the replay cannot recompute %R, test %R length on the SIP warehouse instead.",
+   "evidence": "Finished 05:20 but VACUOUS: len10 and half_both are identical to baseline (5 screen days, 133 -> 133 trades, net +0.3 -> +0.3, day delta +0). A different %R length cannot change nothing. The knob is read by live code (ai_entry_watch _rte_fast_length), so the replay probably serves %R from recorded dashboard/engine state instead of recomputing from bars (unproven). CAUSE FOUND (Argon, verified in code): ensure_live_exhaustion calls refresh_engine_exh first (ai_entry_watch.py:12465); when the recorded engine reading is Finnhub-realtime and <=8 s old (_engine_exh_fresh, :9421) it copies the engine %R (computed with 21/7/112 in signal_engine) and never reaches the local path that reads rte_fast_length. The cap `float(cfg.get(...) or 8.0)` plus max(0.5, cap) also means 0 cannot switch it off. So a replay cannot vary the %R length at all - the readings are recorded.",
+   "next": "Do not retry in the replay. Test %R length 10 vs 21 on the SIP warehouse (compute both from bars, P2 controls) as a prereg study.",
    "blocked_on": "vacuous sweep: need a replay path that recomputes %R from bars, or a historical %R study on the warehouse",
    "gates": {
     "prereg": true,
@@ -966,8 +966,8 @@
    "layer": "live-code",
    "source": "Argon (live-code read 11/07)",
    "status": "open",
-   "evidence": "VERIFIED in code (ai_entry_watch.py:11823-11850 with stream_bars.filled_clock_rows returning exactly length bars): live smoothed %R = one blend of the live raw value with the raw %R of the last closed window, not the 7-bar EWM the chart and signals.py use. Not in running_list or the docs I searched. Consequence unmeasured: rising/falling flags (exh_falling) may be noisier than the chart line.",
-   "next": "Measure first: compare the live pctr to a properly smoothed %R on logged bars (how often rising/falling disagree). Then a default-off knob that feeds length+warm-up rows, as a replay arm - after X10 confirms the replay runs this path.",
+   "evidence": "VERIFIED in code (ai_entry_watch.py:11823-11850 with stream_bars.filled_clock_rows returning exactly length bars): live smoothed %R = one blend of the live raw value with the raw %R of the last closed window, not the 7-bar EWM the chart and signals.py use. Not in running_list or the docs I searched. Consequence unmeasured: rising/falling flags (exh_falling) may be noisier than the chart line. 11/07 narrowing (Argon, verified): this local path only runs when the engine reading is not fresh (non-realtime or >8 s old) and in trail_yields_to_triangle. The ledger does not record which path produced each poll (pctr_px_src absent), so the fraction affected is unknown.",
+   "next": "Add pctr_px_src to the decision ledger (small, safe logging change) to measure the fraction of polls on the local path; fix only if that fraction is material.",
    "blocked_on": "",
    "gates": {
     "prereg": false,
@@ -983,16 +983,16 @@
    "title": "112-minute morning lockout: slow %R set to None before 112 bars exist, so presquare returns wait_exh until ~11:21",
    "layer": "entry",
    "source": "Argon (live-code read 11/07)",
-   "status": "open",
-   "evidence": "Code path real (min_range=slow_len -> None). Data AGAINST a blanket lockout: 777 entries since 10/08 have a slow %R at every hour (1 of 777 missing); 30% of entries come before 11:21 against 28% of the session, and 10:30-11:00 is the busiest half-hour. Entries are survivors, so blocked names are not visible there. A SIP brief already asked whether premarket bars fill the 112-bar line.",
-   "next": "Measure directly: count watch polls with slow None and reason wait_exh per half-hour from the decision ledger.",
+   "status": "done",
+   "evidence": "[REFUTED by measurement, not a study] REFUTED as a blanket lockout. 268,663 RTH decision-ledger polls 10/15-11/06: wait_exh (what a missing slow %R produces) is the LOWEST early: share of polls by half-hour from 09:30 = 1.5%, 4.3%, 3.0%, 4.4%, then 10.0%, 9.7%, 13.0%, 9.1%, 12.3%, 11.9%, 12.7%, 12.9%, 12.9%. A 112-minute lockout would put the peak before 11:21. Also: the engine path (Finnhub-realtime, prior-day bars stitched) supplies slow %R when fresh, which is why entries at every hour carry it.",
+   "next": "",
    "blocked_on": "",
    "gates": {
     "prereg": false,
     "skeptic": false,
     "tool": false,
     "smoke": false,
-    "data_check": false
+    "data_check": true
    },
    "ref": ""
   },
