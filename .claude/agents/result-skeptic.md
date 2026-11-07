@@ -62,9 +62,16 @@ Do not trust the write-up. Re-derive from the raw outputs / rerun the script.
 4. **Out-of-period.** Rerun on a period the study did not touch (60+ earlier
    days, or another year for daily strategies). Combined score: +6.6 bp on 8
    days, failed on 60.
-5. **Net after realistic cost** and vs the random control, per half.
-6. **Concentration.** Drop the top 3 days and top 5 names; does it survive?
-   (Monthly momentum was 3 mania months.) Check beta: regress on SPY.
+5. **Two verdicts (docs/TEST_STANDARD.md).** EDGE = beats a fair random minute
+   (primary control at the family t-bar, both halves; other controls point the
+   same way). PROFITABLE = net > 0 after realistic cost, both halves. Judge and
+   report them separately; a real EDGE that is not PROFITABLE is a component, not
+   a failure.
+6. **Concentration.** Robustness veto: winsorize the top 1% of trades (by P&L)
+   and re-check both halves. Dropping the top days/names is REPORTED, not a
+   veto, because momentum profit lives in the right tail. (Monthly momentum was
+   3 mania months, which the winsorized check also catches.) Check beta: regress
+   on SPY.
 7. **Sensitivity.** Perturb the main parameter one notch each way. A knife
    edge (one good cell surrounded by bad) is a fail.
 8. **Live path.** Does the live code compute the same thing as the backtest
