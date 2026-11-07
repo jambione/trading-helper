@@ -3777,9 +3777,12 @@ def trail_exit_trend_hold(pos: dict | None, ticker: str, px: float, now: float |
             return False                       # the hard stop is absolute
         # Peak lock (default off): a stop above the fill is a profit lock the trade earned; the hold must not override it
         # (at +5 bp the lock sits exactly on the band edge and the hold would block it).
+        # Only when the LOCK is what holds the stop (11/07 audit: entry+1c is also the plain breakeven floor, so a bare
+        # ">= entry+1c" test switched the hold off after every breakeven and confounded lock50 with afterpeak_only).
         if float(cfg.get("ai_local_trail_peak_lock_frac", 0) or 0) > 0:
             lsp = _num(pos.get("local_stop_price"))
-            if lsp is not None and lsp >= entry + 0.01 - 1e-9:
+            lock = _peak_lock_stop(pos, cfg)
+            if lsp is not None and lock is not None and lock > entry + 0.01 + 1e-9 and lsp >= lock - 0.01 - 1e-9:
                 _dc_note("trail:peak_lock")
                 return False
         # 11/07 (Argon's audit, both default OFF; replay first): the hold was meant for exits near entry, but as written

@@ -35,7 +35,7 @@ def _notes(monkeypatch):
 
 def test_trend_hold_does_not_block_a_peak_lock_stop(monkeypatch):
     got = _notes(monkeypatch)
-    pos = {"entry_price": 20.0, "stop_price": 19.0, "entry_stop_price": 19.0, "local_stop_price": 20.01, "peak_price": 20.04}
+    pos = {"entry_price": 20.0, "stop_price": 19.0, "entry_stop_price": 19.0, "local_stop_price": 20.04, "peak_price": 20.08}
     cfg = {"ai_trail_exit_trend_hold": True, "ai_local_trail_peak_lock_frac": 0.5}
     assert ap.trail_exit_trend_hold(pos, "T", 20.01, cfg=cfg) is False
     assert got == ["trail:peak_lock"]
@@ -48,3 +48,12 @@ def test_initial_floor_works_without_the_stored_field(monkeypatch):
     init = ap.initial_local_stop(20.0, 1.0, cfg, spread_r=None)
     assert ap.trail_exit_trend_hold(pos, "T", init - 0.01, cfg=cfg) is False
     assert got == ["trail:initial_floor"]
+
+
+def test_plain_breakeven_does_not_trigger_the_peak_lock_bypass(monkeypatch):
+    got = _notes(monkeypatch)
+    # peak only +16 bp on a $20 name -> lock = 20 + 0.5*0.032 = 20.016 -> floors to 20.01 = the breakeven floor, not a lock above it
+    pos = {"entry_price": 20.0, "stop_price": 19.0, "entry_stop_price": 19.0, "local_stop_price": 20.01, "peak_price": 20.032}
+    cfg = {"ai_trail_exit_trend_hold": True, "ai_local_trail_peak_lock_frac": 0.5}
+    ap.trail_exit_trend_hold(pos, "T", 20.01, cfg=cfg)
+    assert "trail:peak_lock" not in got
