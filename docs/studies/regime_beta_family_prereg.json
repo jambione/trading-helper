@@ -11,16 +11,37 @@
   "trade": "Afternoon continuation: on each surge event 10:30-15:30, buy at the open of bar t+1, sell at the close of bar t+6 (5 bars later); one per name per 30 minutes; 6 bp round trip.",
   "primary": "Per day: mean net of the afternoon continuation trades. Difference HIGH-day mean minus other-day mean (day-level Welch t).",
   "pass": "ALL: (1) HIGH minus other > 0 with t >= the family critical value; (2) > 0 in BOTH halves; (3) the continuation trades MAKE MONEY on HIGH days: mean per-day net > 0 in BOTH halves (a gate that only loses less does not pass); (4) at least 30 HIGH days and 30 other days scored; (5) still > 0 at 10 bp cost on HIGH days.",
-  "information": ["correlation of M_d with the afternoon mean FT (persistence)", "the desk's own daily net vs M_d on the 20 overlapping sessions 9/16-10/15 (too few to score)", "thresholds +15 and +30 bp for the surge", "never-green-like share: afternoon trades that never print +5 bp"]
+  "information": [
+   "correlation of M_d with the afternoon mean FT (persistence)",
+   "the desk's own daily net vs M_d on the 20 overlapping sessions 9/16-10/15 (too few to score)",
+   "thresholds +15 and +30 bp for the surge",
+   "never-green-like share: afternoon trades that never print +5 bp"
+  ]
  },
  "B2_beta_decoupling": {
   "trigger": "At the close of bar t (09:45-15:30): SPY's 3-bar return (close t / close t-3 - 1) <= -15 bp; the stock has beta >= 1.2; its own 3-bar return is >= -2 bp (it held up) and its residual 3-bar return (stock - beta x SPY) >= +15 bp. One trigger per name per 30 minutes.",
   "trade": "Buy at the open of bar t+1, sell at the close of the bar 10 bars after the entry bar (as in board_structure_family H1/H2); 6 bp round trip.",
   "controls": "(a) same name, a random minute in the same clock hour (+-30), within 09:45-15:30, more than 15 minutes from any trigger (5 draws averaged); (b) the matched non-decoupler: at the same minute, a random universe stock with beta >= 1.2 whose residual 3-bar return is within +-5 bp (it fell with SPY), same trade.",
   "pass": "ALL: (1) mean per-day net > 0 with t >= the family critical value; (2) > 0 in BOTH halves; (3) lift vs EACH control > 0 in both halves and pooled lift t >= 1.65 for each; (4) pooled net > 0 after dropping the best 5 days and, separately, the 5 names with the largest P&L; (5) pooled net > 0 at 10 bp cost; (6) at least 300 triggers and 100 per half, else UNDERPOWERED. Order: VOID, UNDERPOWERED, FAIL, PASS.",
-  "information": ["SPY drop thresholds -10 and -25 bp", "beta >= 1.0 and >= 1.5", "exits at 3 and 30 bars", "what the stock does while SPY recovers (SPY's next 10-bar return > 0 vs <= 0)"]
+  "information": [
+   "SPY drop thresholds -10 and -25 bp",
+   "beta >= 1.0 and >= 1.5",
+   "exits at 3 and 30 bars",
+   "what the stock does while SPY recovers (SPY's next 10-bar return > 0 vs <= 0)"
+  ]
  },
  "if_pass": "result-skeptic review of the positive; a pass is SIP-only and must replicate on ai_reports/warehouse/iex with the same cells before any live arm or gate; then a forward/paper test. Never straight to live.",
  "tool": "tools/studies/regime_beta_family.py (built after this file is committed and a result-skeptic READY; may not change anything above).",
- "status": "READY, skeptic review pending"
+ "status": "READY, skeptic review pending",
+ "amended": {
+  "when": "2026-11-07 ~06:30 ET, after result-skeptic round 1 FIX FIRST (8 findings), before any code or data pull.",
+  "1_R5_lookahead": "Replaces morning_score and the trade window: M_d = mean FT of surge events at bars 09:45-10:24 (FT ends by the 10:29 close), one per name per 30 min, previous-bar close present, at least 10 of the 15 volume bars present (the warehouse is regular-session only); unscored if fewer than 30 events or fewer than 15 distinct names. Afternoon surge events 10:30-15:30.",
+  "2_R5_controls": "Added R5 pass: (6) on HIGH days the beta-hedged net (trade return minus beta x SPY over the same bars, less cost) is > 0 in both halves; (7) on HIGH days the lift vs same-name, same-clock-hour (+-30) random minutes (10:30-15:30, more than 15 min from any event, 5 draws, seed sha256(sym|day|t|'R5-a'|k)) is > 0 in both halves with day-clustered t >= 1.65. Added to if_pass: a pass licenses only a new afternoon-continuation arm gated on HIGH days; it says nothing about gating the desk's own entries.",
+  "3_R5_inference": "Replaces pass (1): HIGH minus other > 0 with BOTH the Welch t (Welch-Satterthwaite df) and a HAC t (OLS of the day mean on a HIGH dummy, Newey-West lag 5) at or above the family critical value at that df. Replaces pass (4): at least 30 HIGH and 30 other days, and at least 12 of each in each half; halves split at the median day that has a HIGH/other label; the HIGH share per half is reported.",
+  "4_B2_rebound": "Added B2 pass: (7) the beta-hedged net (stock minus beta x SPY over the hold, less cost) is > 0 in both halves with day-clustered t >= 1.65. The information split by SPY's next 10 bars (> 0 vs <= 0) becomes required reporting.",
+  "5_B2_control_b": "Replaces control (b): the same minute, a random universe stock with |beta - trigger beta| <= 0.2, beta >= 1.2 and residual 3-bar return within +-5 bp, seed sha256(sym|day|t|'B2-b'), up to 20 draws; if none qualifies the trigger is left out of lift (b) and counted, and more than 20% left out = VOID. Report the number of distinct SPY-dip episodes (dip minutes more than 10 min apart); at least 40 trigger days and 15 per half, else UNDERPOWERED.",
+  "6_multiplicity": "Replaces the family alpha: one-sided alpha 0.05/5 = 0.01 for R5 and B2 (scipy t.ppf(0.99, df)), since five hypotheses run this weekend (H1, H2, H3, R5, B2). Information cells can never promote a pass.",
+  "7_universe_and_cost": "Added to data: ETF/ETN/levered products excluded with ticker_filters.is_not_stock; the tool aborts if asset names are unavailable. Replaces the 10 bp conditions: net > 0 at a 10 bp round trip in BOTH halves (R5 on HIGH days, and B2).",
+  "8_replication": "Replaces if_pass: a pass is SIP-only. Before any arm: (a) rerun unchanged on SIP sessions after 10/15 (at least 20 days, fetched fresh); every pass condition except the t bar must hold, plus mean > 0 at one-sided t >= 1.65; (b) rerun on warehouse/iex with the same cells, the same conditions and one-sided 0.05, and report the share of SIP triggers that also fire on IEX. Then paper. Never straight to live."
+ }
 }
