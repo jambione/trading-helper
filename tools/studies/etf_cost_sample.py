@@ -26,14 +26,18 @@ ETFS = ["SMH", "SOXX", "IBIT", "IGV", "XBI", "URA", "XLE", "XLF", "ARKK", "QQQ",
 OUT = ROOT / "ai_reports" / "warehouse" / "etf" / "cost.json"
 
 
+def _h(*parts) -> int:
+    return int(hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest(), 16)
+
+
 def sample_plan(etf: str, days: list[str], n_days: int = 10, n_min: int = 20):
-    """Pure: [(day, minute_of_day)] for one ETF from the seed."""
-    rng = random.Random(int(hashlib.sha256(f"etf-cost|{etf}".encode()).hexdigest()[:16], 16))
-    ds = sorted(rng.sample(sorted(days), min(n_days, len(days))))
+    """Pure: [(day, minute_of_day)] for one ETF - the n_days sessions with the lowest sha256('etf-cost'|ETF|day), and in each the
+    n_min minutes (09:45-15:30) with the lowest sha256('etf-cost'|ETF|day|minute) (prereg wording, skeptic round 1)."""
+    ds = sorted(sorted(days, key=lambda d: _h("etf-cost", etf, d))[:n_days])
     plan = []
     for d in ds:
-        for m in sorted(rng.sample(range(9 * 60 + 45, 15 * 60 + 30 + 1), n_min)):
-            plan.append((d, m))
+        mins = sorted(range(9 * 60 + 45, 15 * 60 + 30 + 1), key=lambda m: _h("etf-cost", etf, d, m))[:n_min]
+        plan += [(d, m) for m in sorted(mins)]
     return plan
 
 
