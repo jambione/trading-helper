@@ -1759,6 +1759,27 @@ function _updateBookRow(el, r) {
   // call ages out of the freshness window) here too.
   const tickerCell = el.querySelector('.cell-ticker');
   if (tickerCell) {
+    let styleBadge = tickerCell.querySelector('.style-badge');
+    const badgeHtml = _bookStyleBadge(r);
+    if (badgeHtml) {
+      if (!styleBadge) {
+        const dummy = document.createElement('div');
+        dummy.innerHTML = badgeHtml;
+        const newEl = dummy.firstElementChild;
+        if (newEl) {
+          tickerCell.insertBefore(newEl, tickerCell.querySelector('.bro-badge') || tickerCell.querySelector('.book-call-btn'));
+        }
+      } else {
+        const dummy = document.createElement('div');
+        dummy.innerHTML = badgeHtml;
+        const newEl = dummy.firstElementChild;
+        if (newEl && (styleBadge.className !== newEl.className || styleBadge.textContent !== newEl.textContent)) {
+          tickerCell.replaceChild(newEl, styleBadge);
+        }
+      }
+    } else if (styleBadge) {
+      styleBadge.remove();
+    }
     const badge = tickerCell.querySelector('.bro-badge');
     if (r.bro_call && !badge) {
       const span = document.createElement('span');
@@ -1904,6 +1925,24 @@ function _bookNearArm(r) {
   return c.length > 0 && c.every(x => x.ok === true);
 }
 
+function _bookStyleBadge(r) {
+  if (!r) return '';
+  const style = String(r.trade_style || r.style || '').toLowerCase();
+  const arm = String(r.arm || r.look_reason || r.entry_reason || r.why || (r.arm_details && r.arm_details.exit_style) || '').toLowerCase();
+  const src = String(r.source || '').toLowerCase();
+
+  if (style === 'thrust' || arm.includes('catalyst_thrust') || arm.includes('open_thrust')) {
+    return '<span class="style-badge style-badge--thrust" title="Style: Catalyst Open Thrust (09:30 Inception)">THRUST</span>';
+  }
+  if (style === 'maker' || arm.includes('maker') || arm.includes('air_pocket') || arm.includes('liquidity')) {
+    return '<span class="style-badge style-badge--maker" title="Style: Passive Air-Pocket Maker">MAKER</span>';
+  }
+  if (style === 'main' || r.is_position || arm.includes('presquare') || arm.includes('square') || arm.includes('zone')) {
+    return '<span class="style-badge style-badge--main" title="Style: Main Momentum Breakout">MAIN</span>';
+  }
+  return '';
+}
+
 function _bookRowHtml(r) {
   const sym = String((r && r.symbol) || '').toUpperCase();
   if (!sym) return '';
@@ -1936,7 +1975,7 @@ function _bookRowHtml(r) {
   const nearCls = _bookNearArm(r) ? ' feed-row--ai-near' : '';
   return `<div class="${rowCls}${nearCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}" title="${_esc(_bookBlockerTitle(r))}">`
     + `<div class="feed-cols feed-cols--ai-book">`
-    + `<div class="cell-ticker">${_esc(sym)}${r.bro_call
+    + `<div class="cell-ticker">${_esc(sym)}${_bookStyleBadge(r)}${r.bro_call
       ? `<span class="bro-badge" title="Trader Bro called this one out">BRO</span>`
       : ''}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`

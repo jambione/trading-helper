@@ -2539,6 +2539,31 @@ body.mobile [data-tv-toggle-btn] {
   color: var(--bg, #0f1115);
   background: var(--accent, #6ea8fe);
 }
+.panel-ai-watch .feed-cols--ai-book .cell-ticker .style-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  vertical-align: middle;
+  text-transform: uppercase;
+}
+.panel-ai-watch .feed-cols--ai-book .cell-ticker .style-badge--thrust {
+  color: #000;
+  background: #f59e0b; /* Amber gold for 09:30 open thrust */
+}
+.panel-ai-watch .feed-cols--ai-book .cell-ticker .style-badge--maker {
+  color: #000;
+  background: #38bdf8; /* Cyan sky for passive air-pocket maker */
+}
+.panel-ai-watch .feed-cols--ai-book .cell-ticker .style-badge--main {
+  color: #6ea8fe;
+  background: rgba(110, 168, 254, 0.15);
+  border: 1px solid rgba(110, 168, 254, 0.4);
+}
 .panel-ai-watch .feed-cols--ai-book .cell-trail.is-hit {
   color: var(--danger, #f87171);
   font-weight: 600;
