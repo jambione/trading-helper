@@ -294,6 +294,7 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
     """-> (rows by key + BASE baseline rows, stats). `inject` replaces the computed triggers (canaries): {"S": {sym:[t]}, "R21": {...},
     "R10": {...}, "E": {etf:[t]}, "L": [(etf, t)]}."""
     out = {k: [] for k in KEYS + ("BASE",)}
+    out["TRIG"] = {}                      # COMPLETE trigger sets (including triggers whose trade was skipped) - needed to reproduce control pools in canary passes
     st = defaultdict(int)
     beta, _peers = residual_stats(hist, names)             # R5's beta, unchanged (present >= 15, >= 500 points)
     names = [n for n in names if n in beta and n in day["idx"]]
@@ -337,6 +338,7 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
             trig = {n: first_true(ts) for n, ts in inject["S"].items() if n in A}
         else:
             trig = {n: first_true([t for t in range(FIRST, LAST + 1) if not np.isnan(A[n]["res1"][t]) and A[n]["res1"][t] >= 0.0020 and vol_ratio(A[n]["v"], t) >= 2.0]) for n in names}
+        out["TRIG"]["S"] = {n: list(ts) for n, ts in trig.items() if ts}
         for n in names:
             for t in trig.get(n, []):
                 net = trade(A[n]["o"], A[n]["c"], t, 5, COST)
@@ -367,6 +369,7 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
                     trigR[L][n] = first_true(presquare_bars(cc, hh, ll, off, L))
         for L in (10, 21):
             key = f"R{L}"
+            out["TRIG"][key] = {n: list(ts) for n, ts in trigR[L].items() if ts}
             for n, ts in trigR[L].items():
                 for t in ts:
                     net = trade(A[n]["o"], A[n]["c"], t, 10, COST)
@@ -397,6 +400,7 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
                 trigE = {x: first_true([t for t in range(FIRST, LAST + 1) if not np.isnan(a["res1"][t]) and a["res1"][t] >= e_thr and vol_ratio(a["v"], t) >= 2.0]) for x, a in E.items()}
             if "SMH" in trigE and "SOXX" in trigE:
                 trigE["SOXX"] = [t for t in trigE["SOXX"] if t not in set(trigE["SMH"])]
+            out["TRIG"]["E"] = {x: list(ts) for x, ts in trigE.items() if ts}
             rt = lambda m: costs[m]["rt_bp"]  # noqa: E731 (a missing cost raises: no silent 2 bp)
             for x, ts in trigE.items():
                 for t in ts:
@@ -444,6 +448,7 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
                     ev += [(x, t) for t in range(FIRST, LAST + 1) if not np.isnan(er2[t]) and er2[t] >= 0.0015 and vol_ratio(a["v"], t) >= 2.0]
             order = {x: i for i, x in enumerate(SECTOR)}
             ev = sorted(set(ev), key=lambda z: (z[1], order[z[0]]))        # same order in the normal and injected paths
+            out["TRIG"]["L"] = list(ev)
             ltrig = defaultdict(list)                       # per-stock kept L triggers
             kept = []                                       # PASS 1: every kept trigger (refractory + a usable trade), no controls yet
             event_hit = set()
@@ -476,13 +481,11 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
 
 # ---------------- canaries (through the real scoring path) ----------------
 def triggers_of(out):
-    """Rows -> inject dict reproducing the same triggers."""
-    inj = {"S": defaultdict(list), "R21": defaultdict(list), "R10": defaultdict(list), "E": defaultdict(list)}
-    for k in ("S", "R21", "R10", "E"):
-        for r in out[k]:
-            inj[k][r["sym"]].append(r["t"])
-    res = {k: dict(v) for k, v in inj.items()}
-    res["L"] = sorted({(r["etf"], r["t"]) for r in out["L"]})
+    """The COMPLETE trigger set of a pass (not only the triggers that produced a trade): a trigger whose trade was skipped is still excluded from
+    other triggers' control pools in the real pass, so the injected pass must exclude it too."""
+    T = out.get("TRIG") or {}
+    res = {k: {sym: list(ts) for sym, ts in (T.get(k) or {}).items()} for k in ("S", "R21", "R10", "E")}
+    res["L"] = list(T.get("L") or [])
     return res
 
 

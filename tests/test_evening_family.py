@@ -322,3 +322,19 @@ def test_a_missing_spy_in_the_etf_day_skips_E_and_L_and_is_counted():
     del eday["idx"]["SPY"]
     out, st = ef.score_day(day, hist[-1], hist, names, "2026-02-13", eday, [_etf_day(i) for i in range(20)], {x: {"rt_bp": 2.0} for x in ef.ALL_ETF}, 0.0020, which=("E", "L"))
     assert out["E"] == [] and out["L"] == [] and st.get("etf_history_incomplete_days") == 1
+
+
+def test_a_trigger_whose_trade_is_skipped_still_excludes_itself_from_controls_in_the_planted_pass():
+    """Canary bug (11/08): a trigger with a missing exit bar has no row, so it was absent from the injected trigger set and re-entered the control
+    pool in the planted pass - controls moved by 100+ bp when only exits changed. The injected set must be the COMPLETE trigger set."""
+    names = [f"N{i}" for i in range(6)]                          # tiny pool so every eligible name is drawn (k = 5)
+    hist = [_day(names, 1000 + i) for i in range(20)]
+    for h in hist:
+        h["_date"] = "x"
+    day = _day(names, 81, surge={"N1": (100, 0.008, 0.0100), "N0": (110, 0.006, 0.0)})
+    day["c"][day["idx"]["N1"], 105] = np.nan                     # N1 triggers at 100 but its trade (exit bar 105) is missing -> no row
+    o, _ = ef.score_day(day, hist[-1], hist, names, "2026-02-14", which=("S",))
+    assert not [r for r in o["S"] if r["sym"] == "N1" and r["t"] == 100]          # skipped: no row
+    assert [r for r in o["S"] if r["sym"] == "N0" and r["t"] == 110]
+    cd = ef.canary_day(day, hist[-1], hist, names, "2026-02-14", None, None, None, 0.0020, o, which=("S",))
+    assert cd["S"]["ctrl_shift"] and max(cd["S"]["ctrl_shift"]) < 0.5, cd["S"]["ctrl_shift"]

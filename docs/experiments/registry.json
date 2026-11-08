@@ -1284,6 +1284,18 @@
    "blocked_on": "",
    "gates": {},
    "ref": "tools/studies/open_thrust_deep_dive.py (archive tag)"
+  },
+  {
+   "id": "P6",
+   "title": "evening_family canary failure on the first read: injected trigger set was incomplete (skipped-trade triggers)",
+   "layer": "process",
+   "source": "canary 11/08",
+   "status": "done",
+   "evidence": "The planted-edge/null canaries (built because the 4 code reviews kept finding bugs) refused the read: controls moved up to 145 bp. Root cause found and reproduced on synthetic data: triggers whose trade was skipped were missing from the injected set. Four reviews missed it; the canary caught it before any outcome was read. Fixed; run.pkl moved aside unread; read repeated once.",
+   "next": "",
+   "blocked_on": "",
+   "gates": {},
+   "ref": "tools/studies/evening_family.py"
   }
  ]
 }
