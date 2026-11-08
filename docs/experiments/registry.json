@@ -1272,6 +1272,18 @@
    "blocked_on": "",
    "gates": {},
    "ref": "docs/TRADE_SIM_red_scratch.md"
+  },
+  {
+   "id": "N26",
+   "title": "Open Thrust on morning news catalysts (Row 70), fast lead 11/08",
+   "layer": "entry",
+   "source": "Argon pivot / Row 70 (AGY)",
+   "status": "open",
+   "evidence": "FAST LEAD (exploratory, no prereg, unverified): the archived script (archive/desk-2026-11-03:tools/studies/open_thrust_deep_dive.py) run unmodified on the cached catalyst data (3,249 events, 3,317 candidates) gives, after 7 bp friction: all gappers -13.7 bp (t -3.15); fundamental catalysts -4.0 (t -0.5); catalysts + green bar 0 +4.2 bp (t +0.35, halves -16.7 / +27.4); catalysts + strong bull bar 0 -0.4 bp (t -0.03); 2-minute exit +0.5 bp. The '+15.14 bp, gap >= 8%, 1-minute prior-low trailing stop' headline in Row 70 is NOT in this script (it has only fixed-hold and bracket variants) and is not reproducible from committed code. Halves flip sign (-17 vs +27), the sign of a regime effect, not an edge. No result here is significant.",
+   "next": "If pursued: write a prereg for the trailing-stop variant as its own hypothesis (code does not exist), with P2 controls, and test intraday breaking news separately.",
+   "blocked_on": "",
+   "gates": {},
+   "ref": "tools/studies/open_thrust_deep_dive.py (archive tag)"
   }
  ]
 }

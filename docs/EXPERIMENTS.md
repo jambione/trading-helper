@@ -9,7 +9,7 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 | idea | 16 |
 | collecting | 5 |
 | blocked | 4 |
-| open | 9 |
+| open | 10 |
 | verdict_edge | 2 |
 | verdict_fail | 22 |
 | underpowered | 2 |
@@ -32,6 +32,7 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 - **C2** [blocked] surge continuation (morning/afternoon surge minutes) - Looked like EDGE: about +2 bp vs random minutes, t +5.4 (R5 information cell, 11/07). But it was an information cell, and that study's same-name control could reach back to t-30..t-16 (pre-trigger). Next: Pre-register as its own hypothesis with P2 controls. (blocked on: P2-control rerun)
 - **C3** [blocked] %R latch / RSI fire - Looked like EDGE: lift bar met in both halves, 15-min markout +3.8 / +11.2 bp (t 2.9 / 4.0), 10/12. Flat before the spread. Control construction not yet audited. Next: Audit its control; rerun with P2 controls if needed. (blocked on: control audit (P1))
 - **C5** [blocked] flow compression (spread squeezed to 1 cent + buyer flow) - Gross +4.8 bp; lift +13.38 bp vs uncompressed control (t >15) but that lift is mostly cost saved, not direction. Net -2.68 bp. Next: Compare gross to a fair random minute on the same names; with N20 (structurally 1-cent names). (blocked on: fair random-minute comparison)
+- **N26** [open] Open Thrust on morning news catalysts (Row 70), fast lead 11/08 - FAST LEAD (exploratory, no prereg, unverified): the archived script (archive/desk-2026-11-03:tools/studies/open_thrust_deep_dive.py) run unmodified on the cached catalyst data (3,249 events, 3,317 candidates) gives, after 7 bp friction: all gappers -13.7 bp (t -3.15); fundamental catalysts -4.0 (t -0.5); catalysts + green bar 0 +4.2 bp (t +0.35, halves -16.7 / +27.4); catalysts + strong bull bar 0 -0.4 bp (t -0.03); 2-minute exit +0.5 bp. The '+15.14 bp, gap >= 8%, 1-minute prior-low trailing stop' headline in Row 70 is NOT in this script (it has only fixed-hold and bracket variants) and is not reproducible from committed code. Halves flip sign (-17 vs +27), the sign of a regime effect, not an edge. No result here is significant. Next: If pursued: write a prereg for the trailing-stop variant as its own hypothesis (code does not exist), with P2 controls, and test intraday breaking news separately.
 
 ## In flight
 
@@ -150,6 +151,7 @@ Pipeline: idea -> prereg -> skeptic (prereg) -> tool -> code review (tool vs liv
 | C4 | Fibonacci golden pocket (rerun with corrected controls) | re-label under TEST_STANDARD 11/07 | verdict_fail | RERUN 11/07 (docs/FIB_PULLBACK_AMENDED3.md, one score after three code reviews): prereg verdict UNDERPOWERED; TEST_STANDARD reading: no EDGE, not PROFITABLE. Lift vs the setup-matched same-minute other-names control -1.6 bp (t -0.53) in half A and +4.3 bp (t 1.92) in half B, pooled +1.3 bp (t 0.69); net -7.6 / -3.7 bp at 5 bp cost. Controls sane (within 3 bp of the unfiltered baseline). The original +31/+36 bp (t 8-9) came from a same-name later-minute control that loses 21-25 bp; against it the lift here is +31 to +39 bp. It is a control artifact, not a Fibonacci edge. |
 | C5 | flow compression (spread squeezed to 1 cent + buyer flow) | re-label under TEST_STANDARD 11/07 | blocked | Gross +4.8 bp; lift +13.38 bp vs uncompressed control (t >15) but that lift is mostly cost saved, not direction. Net -2.68 bp. |
 | C6 | overnight S2 ranking (2000-2015) | re-label under TEST_STANDARD 11/07 | verdict_edge | EDGE gross: +8.6 bp, t 9.7 (10/4). Hedged alpha unproven (mostly beta), and the overnight book is retired (10/29). Kept on the list for completeness. |
+| N26 | Open Thrust on morning news catalysts (Row 70), fast lead 11/08 | Argon pivot / Row 70 (AGY) | open | FAST LEAD (exploratory, no prereg, unverified): the archived script (archive/desk-2026-11-03:tools/studies/open_thrust_deep_dive.py) run unmodified on the cached catalyst data (3,249 events, 3,317 candidates) gives, after 7 bp friction: all gappers -13.7 bp (t -3.15); fundamental catalysts -4.0 (t -0.5); catalysts + green bar 0 +4.2 bp (t +0.35, halves -16.7 / +27.4); catalysts + strong bull bar 0 -0.4 bp (t -0.03); 2-minute exit +0.5 bp. The '+15.14 bp, gap >= 8%, 1-minute prior-low trailing stop' headline in Row 70 is NOT in this script (it has only fixed-hold and bracket variants) and is not reproducible from committed code. Halves flip sign (-17 vs +27), the sign of a regime effect, not an edge. No result here is significant. |
 
 ### sizing
 
