@@ -18073,6 +18073,30 @@ def should_arm_buy(
             record["block_detail"] = f"gapped {_gap:+.1f}%"
             return False, "gapped_down"
 
+    # ── High-Magnitude Pivot Arms (Catalyst Inception & Passive Maker) ────────
+    # Evaluated at market open / panic sweeps before waiting on slow technical structure.
+    if bool(cfg.get("ai_catalyst_thrust_enabled", False)):
+        try:
+            from ai_catalyst_thrust import is_catalyst_thrust_eligible
+            cat_ok, cat_why, cat_details = is_catalyst_thrust_eligible(record, cfg, now=now)
+            if cat_ok:
+                if isinstance(record, dict) and cat_details:
+                    record["arm_details"] = cat_details
+                return True, f"catalyst_thrust_{cat_why}"
+        except Exception as _e:
+            log.warning("[ARM] catalyst_thrust error: %s", _e)
+
+    if bool(cfg.get("ai_liquidity_maker_enabled", False)):
+        try:
+            from ai_liquidity_maker import is_liquidity_maker_eligible
+            maker_ok, maker_why, maker_details = is_liquidity_maker_eligible(record, cfg, now=now)
+            if maker_ok:
+                if isinstance(record, dict) and maker_details:
+                    record["arm_details"] = maker_details
+                return True, f"maker_{maker_why}"
+        except Exception as _e:
+            log.warning("[ARM] liquidity_maker error: %s", _e)
+
     structure = record.get("structure")
     if not isinstance(structure, dict):
         return False, "no_structure"
