@@ -847,7 +847,7 @@
    "layer": "process",
    "source": "operator question 11/07",
    "status": "open",
-   "evidence": "bar_signal_family's one-sided exclusion inflated same-name controls (+11.6/+27.9 bp vs -7.5 bp for random minutes). board_structure_family (H1/H2) is symmetric (verified). ~20 other tools use random-minute controls and are unaudited: analyst_upgrade, book_walls, clock_windows, daily_filter_screen, early_entry_honest, first_presq_adversarial_argon, five_pillars_study, gate_counterfactual, momentum_alert_markouts, limit_below_study, momentum_runway_study, range_arm_control, runway_target_study, sector_study, sip_breakout_study and others. AUDIT RESULT (subagent + Argon, 11/07): none has the exact one-sided bug, but the stricter point holds - any same-name control drawn BEFORE the trigger sits on the path that made the stock fire. Flagged: sr_* family (5 tools, same-hour pool excluding only the trigger minute), range_arm_control (600 s exclusion vs 1800 s hold), premarket_depth_probe, sip_breakout_study, fib_pullback, structure_pullback, book_walls (300 s vs 600 s horizon), desk_vs_random/five_pillars/momentum_runway (full-day same-name), and board_structure_family H1/H2 (controls reach t-30..t-16). Clean: strictly-later or same-minute cross-name controls (early_entry_honest, limit_below, wr_trend_trade, etf_bars, first_presq_adversarial, analyst_upgrade, regime_beta_family B2 horizons). 11/07 11:30: board_structure_family H1/H2 patched to later-only same-name controls + control-sanity line; rerun running on the mini.",
+   "evidence": "bar_signal_family's one-sided exclusion inflated same-name controls (+11.6/+27.9 bp vs -7.5 bp for random minutes). board_structure_family (H1/H2) is symmetric (verified). ~20 other tools use random-minute controls and are unaudited: analyst_upgrade, book_walls, clock_windows, daily_filter_screen, early_entry_honest, first_presq_adversarial_argon, five_pillars_study, gate_counterfactual, momentum_alert_markouts, limit_below_study, momentum_runway_study, range_arm_control, runway_target_study, sector_study, sip_breakout_study and others. AUDIT RESULT (subagent + Argon, 11/07): none has the exact one-sided bug, but the stricter point holds - any same-name control drawn BEFORE the trigger sits on the path that made the stock fire. Flagged: sr_* family (5 tools, same-hour pool excluding only the trigger minute), range_arm_control (600 s exclusion vs 1800 s hold), premarket_depth_probe, sip_breakout_study, fib_pullback, structure_pullback, book_walls (300 s vs 600 s horizon), desk_vs_random/five_pillars/momentum_runway (full-day same-name), and board_structure_family H1/H2 (controls reach t-30..t-16). Clean: strictly-later or same-minute cross-name controls (early_entry_honest, limit_below, wr_trend_trade, etf_bars, first_presq_adversarial, analyst_upgrade, regime_beta_family B2 horizons). 11/07 11:30: board_structure_family H1/H2 patched to later-only same-name controls + control-sanity line; rerun running on the mini. 11/07 20:00: board_structure H1/H2 and the Fibonacci study rerun with P2 controls; both show no EDGE. Fibonacci's earlier +31/+36 bp was a control artifact.",
    "next": "Read the H1/H2 rerun; then range_arm_control (NEAR_SEC >= hold, later-only), sr_* family, premarket_depth_probe, fib/structure_pullback, book_walls, sip_breakout, desk_vs_random/five_pillars/momentum_runway.",
    "blocked_on": "",
    "gates": {},
@@ -1152,22 +1152,22 @@
   },
   {
    "id": "C4",
-   "title": "Fibonacci golden pocket",
+   "title": "Fibonacci golden pocket (rerun with corrected controls)",
    "layer": "entry",
    "source": "re-label under TEST_STANDARD 11/07",
-   "status": "blocked",
-   "evidence": "Looked like EDGE: +31 / +36 bp vs random (t 8-9), 10/23; but its own report says the lift mostly measures how badly the control loses, and the control exclusion (15 min) is shorter than the 30-min hold (P1 audit).",
-   "next": "Rerun with P2 controls (later-only + same-minute cross-name).",
-   "blocked_on": "P2-control rerun",
+   "status": "verdict_fail",
+   "evidence": "RERUN 11/07 (docs/FIB_PULLBACK_AMENDED3.md, one score after three code reviews): prereg verdict UNDERPOWERED; TEST_STANDARD reading: no EDGE, not PROFITABLE. Lift vs the setup-matched same-minute other-names control -1.6 bp (t -0.53) in half A and +4.3 bp (t 1.92) in half B, pooled +1.3 bp (t 0.69); net -7.6 / -3.7 bp at 5 bp cost. Controls sane (within 3 bp of the unfiltered baseline). The original +31/+36 bp (t 8-9) came from a same-name later-minute control that loses 21-25 bp; against it the lift here is +31 to +39 bp. It is a control artifact, not a Fibonacci edge.",
+   "next": "",
+   "blocked_on": "",
    "gates": {
     "prereg": true,
     "skeptic": true,
     "tool": true,
-    "smoke": "legacy",
-    "data_check": "legacy"
+    "smoke": true,
+    "data_check": true
    },
    "ref": "docs/TEST_SCORECARD_2026-10-23.md",
-   "component": true
+   "component": false
   },
   {
    "id": "C5",
