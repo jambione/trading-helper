@@ -177,6 +177,22 @@ def control(bars: list, sig: dict, tr: dict, sym: str, day: str, tag: str) -> di
     return {"gross": g, "net": g - COST, "why": r["why"]}
 
 
+def control_uncond(bars: list, tr: dict, sym: str, day: str, tag: str = "fib-uncond") -> dict | None:
+    """BASELINE for the control-sanity line (TEST_STANDARD): a seeded same-name minute strictly after the trade (exit+2..exit+62), in the decision
+    window with room, with NO bullish/VWAP setup filter, same % stop/target/time stop. Shows what a plain random minute earns here."""
+    lo, hi = tr["exit_min"] + 2, tr["exit_min"] + 62
+    cand = [t for t in range(1, len(bars) - 1)
+            if lo <= bars[t][0] <= hi and DEC_LO <= bars[t][0] <= DEC_HI and bars[t + 1][0] + TIME_STOP - 1 <= 15 * 60 + 59
+            and bars[t + 1][0] - bars[t][0] <= GAP_MAX and bars[t + 1][1] >= MIN_PX]
+    if not cand:
+        return None
+    t = random.Random(int(hashlib.sha256(f"{sym}|{day}|{tr['entry_min']}|{tag}".encode()).hexdigest()[:16], 16)).choice(cand)
+    o = bars[t + 1][1]
+    r = simulate(bars, t + 1, o * (1 - tr["stop_pct"]), o * (1 + tr["target_pct"]))
+    g = r["exit"] / o - 1
+    return {"gross": g, "net": g - COST}
+
+
 def control_xs(all_bars: dict, sym: str, sig: dict, tr: dict, day: str, k: int = 5) -> dict | None:
     """amended_3 PRIMARY control: the same decision minute on up to k seeded OTHER names whose bar at that minute is bullish and
     above VWAP (setup-matched), entered at their next open with the SAME % stop, % target and time stop. Mean over the draws."""
@@ -195,7 +211,7 @@ def control_xs(all_bars: dict, sym: str, sig: dict, tr: dict, day: str, k: int =
         return None
     rng = random.Random(int(hashlib.sha256(f"{sym}|{day}|{sig['dec_min']}|fib-xs".encode()).hexdigest()[:16], 16))
     vals = []
-    for o, idx in (rng.choice(pool) for _ in range(k)):
+    for o, idx in rng.sample(pool, min(k, len(pool))):
         b = all_bars[o]
         op = b[idx + 1][1]
         r = simulate(b, idx + 1, op * (1 - tr["stop_pct"]), op * (1 + tr["target_pct"]))
@@ -236,11 +252,12 @@ def day_task(args) -> dict:
                     continue
                 c1 = control_xs(all_bars, sym, sig, tr, day)                     # amended_3 PRIMARY: same minute, other names
                 c2 = control(bars, sig, tr, sym, day, "fib-gp-ctrl")             # amended_3 SECONDARY: same name, after the trade
+                c3 = control_uncond(bars, tr, sym, day)                          # baseline for the control-sanity line
                 if c1 is None:
                     st[f"{v}_no_control"] += 1
                 taken += 1
                 rows.append({"day": day, "sym": sym, "variant": v, "dec_min": sig["dec_min"], **tr,
-                             "ctrl": c1["net"] if c1 else None, "ctrl2": c2["net"] if c2 else None,
+                             "ctrl": c1["net"] if c1 else None, "ctrl2": c2["net"] if c2 else None, "ctrl_u": c3["net"] if c3 else None,
                              "ctrl_gross": c1["gross"] if c1 else None, "swing": sig["H"] / sig["L"] - 1})
     return {"rows": rows, "stats": dict(st)}
 
@@ -318,6 +335,46 @@ def half_verdict(gp: list[dict]) -> tuple[str, dict]:
     ok = (s["mean"] >= LIFT_BAR and s["t"] >= T_PASS and net is not None and net > 0
           and all(x is not None and x >= 0 for x in (drop3(gp, "day"), drop3(gp, "sym"))))
     return ("PASS" if ok else "NOT_PASSED"), s
+
+
+def standard_reading(by_half: dict) -> dict:
+    """docs/TEST_STANDARD.md reading of the same scored rows (reported ALONGSIDE the prereg verdict; the prereg's own bars are unchanged).
+    by_half: {"A": gp_rows, "B": gp_rows} after no_overlap. EDGE = primary lift > 0 in both halves, pooled day-clustered t >= T_PASS (the prereg's own
+    fixed 2.0, stated before the score), winsorized (top 1% of per-trade lifts clipped) lift > 0 in both halves, secondary lift > 0 pooled, and the
+    primary control within 3 bp of the unconditional baseline (else VOID). PROFITABLE = EDGE and net > 0 at 5 bp AND 20 bp in both halves.
+    drop-3-days/names stay REPORTED (prereg pass veto), the winsorized check is the TEST_STANDARD veto. Net is computed on the CONTROLLED subset."""
+    out = {"halves": {}}
+    allrows = []
+    for h, gp in by_half.items():
+        ctl = [r for r in gp if r.get("ctrl") is not None]
+        diffs = sorted(r["net"] - r["ctrl"] for r in ctl)
+        cap = diffs[max(0, int(0.99 * len(diffs)) - 1)] if diffs else 0.0
+        win = day_stats(ctl, lambda r, c=cap: min(r["net"] - r["ctrl"], c))["mean"]
+        sec = [r for r in gp if r.get("ctrl2") is not None]
+        base = [r["ctrl_u"] for r in gp if r.get("ctrl_u") is not None]
+        out["halves"][h] = {
+            "trades": len(gp), "controlled": len(ctl), "no_control_share": 1 - len(ctl) / max(1, len(gp)),
+            "ctrl_mean": statistics.mean(r["ctrl"] for r in ctl) if ctl else None,
+            "ctrl2_mean": statistics.mean(r["ctrl2"] for r in sec) if sec else None, "ctrl2_n": len(sec),
+            "baseline_mean": statistics.mean(base) if base else None, "baseline_n": len(base),
+            "lift": day_stats(ctl, diff)["mean"], "lift_t": day_stats(ctl, diff)["t"],
+            "lift_secondary": day_stats(sec, lambda r: r["net"] - r["ctrl2"])["mean"],
+            "winsorized_lift": win, "net_controlled": day_stats(ctl, lambda r: r["net"])["mean"],
+            "net_5bp": day_stats(ctl, lambda r: r["gross"] - 0.0005)["mean"], "net_20bp": day_stats(ctl, lambda r: r["gross"] - 0.0020)["mean"],
+        }
+        allrows += ctl
+    H = out["halves"]
+    pooled = day_stats(allrows, diff)
+    sec_all = day_stats([r for hh in by_half.values() for r in hh if r.get("ctrl2") is not None], lambda r: r["net"] - r["ctrl2"])["mean"]
+    cm = [H[h]["ctrl_mean"] for h in H if H[h]["ctrl_mean"] is not None]
+    bm = [H[h]["baseline_mean"] for h in H if H[h]["baseline_mean"] is not None]
+    void = (not cm or not bm or abs(statistics.mean(cm) * 1e4 - statistics.mean(bm) * 1e4) > 3.0)
+    pos = lambda x: x is not None and x > 0  # noqa: E731
+    edge = (not void and all(pos(H[h]["lift"]) and pos(H[h]["winsorized_lift"]) for h in H) and pooled["t"] is not None and pooled["t"] >= T_PASS and pos(sec_all))
+    prof = edge and all(pos(H[h]["net_5bp"]) and pos(H[h]["net_20bp"]) for h in H)
+    out.update({"pooled_lift": pooled["mean"], "pooled_t": pooled["t"], "secondary_pooled": sec_all, "VOID": void, "EDGE": bool(edge), "PROFITABLE": bool(prof),
+                "note": "SIP bars from the warehouse; the desk trades on IEX. Standard reading is reported alongside the prereg verdict (unchanged)."})
+    return out
 
 
 def final(halves: list[str], ubs: list, days: list[int]) -> str:
@@ -408,6 +465,7 @@ def main() -> None:
         res["info"][h]["win_rate"] = sum(1 for r in gp if r["net"] > 0) / max(1, len(gp))
         res["info"][h]["price_ge_20"] = day_stats([r for r in gp if r["entry_px"] >= INFO_PX], diff)["mean"]
     res["verdict"] = final(hv, ubs, dys)
+    res["standard_reading"] = standard_reading({h: no_overlap(by[("GP", h)]) for h in ("A", "B")})
     spec = all(res["specificity"][h][o]["mean"] is not None and res["specificity"][h][o]["mean"] >= 0
                and (res["specificity"][h][o]["t"] or 0) >= T_SPEC for h in ("A", "B") for o in ("SHALLOW", "DEEP"))
     if res["verdict"] == "PASS":

@@ -124,35 +124,70 @@ def test_skips():
     assert F.trade(bars2, sig) == {"skip": "entry_gap"}
 
 
-# ---------------- amended_3 controls (11/07) ----------------
-def _bars(start_min=600, n=200, base=20.0):
-    """Gently rising bars where every bar is bullish (close > open and > previous high) and above VWAP."""
+# ---------------- amended_3 controls (11/07): windows proven by making ONLY the minutes under test eligible ----------------
+def _sel(good, start=600, n=330, base=20.0):
+    """Bars where only the minutes in `good` form a bullish, above-VWAP setup (isolated, so close > previous high holds); every other bar is flat-down."""
     out = []
     for i in range(n):
-        o = base + 0.01 * i
-        out.append((start_min + i, o, o + 0.012, o - 0.002, o + 0.011, 1000.0))
+        m = start + i
+        if m in good:
+            out.append((m, base, base + 0.22, base - 0.01, base + 0.20, 1000.0))
+        else:
+            out.append((m, base, base + 0.001, base - 0.012, base - 0.01, 1000.0))
     return out
 
 
-def test_secondary_control_is_drawn_strictly_after_the_trade():
-    import fib_pullback as fp
-    bars = _bars()
-    sig = {"dec_min": 640, "H": 30.0, "L": 19.0, "brk": 19.0}
-    tr = {"exit_min": 670, "stop_pct": 0.005, "target_pct": 0.01}
-    for tag in ("a", "b", "c", "d"):
-        c = fp.control(bars, sig, tr, "X", "2026-06-01", tag)
-        assert c is not None
-    # every eligible candidate is after exit + 2 min: re-derive the candidate set exactly as the function does
-    lo = tr["exit_min"] + 2
-    cand = [t for t in range(1, len(bars) - 1) if lo <= bars[t][0] <= tr["exit_min"] + 62]
-    assert cand and min(bars[t][0] for t in cand) >= lo
+SIG = {"dec_min": 640, "H": 30.0, "L": 19.0, "brk": 19.0}
+TR = {"exit_min": 670, "entry_min": 641, "stop_pct": 0.005, "target_pct": 0.01}
 
 
-def test_primary_control_uses_other_names_at_the_same_minute():
+def _ctl(good):
     import fib_pullback as fp
-    allb = {"X": _bars(), "Y": _bars(base=30.0), "Z": _bars(base=40.0)}
-    sig = {"dec_min": 640}
-    tr = {"stop_pct": 0.005, "target_pct": 0.01}
+    return fp.control(_sel(good), SIG, TR, "X", "2026-06-01", "t")
+
+
+def test_secondary_window_only_after_exit_plus_2_through_exit_plus_62():
+    assert _ctl({620}) is None            # before the signal
+    assert _ctl({650}) is None            # inside the trade
+    assert _ctl({671}) is None            # exit + 1: too close
+    assert _ctl({733}) is None            # exit + 63: past the window
+    assert _ctl({672}) is not None        # exit + 2
+    assert _ctl({732}) is not None        # exit + 62
+    assert _ctl({620, 650, 733, 680}) is not None     # one eligible minute among ineligible ones is enough
+
+
+def _xs_bars(good_at_dec):
+    return _sel({640, 700} if good_at_dec else {700})
+
+
+def test_primary_control_needs_a_bullish_above_vwap_bar_AT_the_decision_minute_on_another_name():
+    import fib_pullback as fp
+    sig, tr = {"dec_min": 640}, {"stop_pct": 0.005, "target_pct": 0.01, "entry_min": 641}
+    allb = {"X": _sel({640}), "Y": _sel(set()), "Z": _sel({640})}                  # Y not bullish at 640, Z is
     c = fp.control_xs(allb, "X", sig, tr, "2026-06-01")
-    assert c is not None and "net" in c
-    assert fp.control_xs({"X": _bars()}, "X", sig, tr, "2026-06-01") is None      # no other names -> no primary control
+    assert c is not None
+    assert fp.control_xs({"X": _sel({640}), "Y": _sel(set())}, "X", sig, tr, "2026-06-01") is None          # only a non-setup name -> no control
+    assert fp.control_xs({"X": _sel({640})}, "X", sig, tr, "2026-06-01") is None                           # the name itself is never its control
+    # eligibility uses the decision bar only: changing Z AFTER the decision minute does not remove it from the pool
+    z2 = _sel({640}); z2[-30:] = [(b[0], 20.0, 20.001, 19.99, 19.995, 1000.0) for b in z2[-30:]]
+    assert fp.control_xs({"X": _sel({640}), "Z": z2}, "X", sig, tr, "2026-06-01") is not None
+    # deterministic, and without replacement (3 eligible names -> the 5-draw average uses each at most once)
+    assert fp.control_xs(allb, "X", sig, tr, "2026-06-01") == c
+
+
+def test_baseline_control_has_no_setup_filter_but_the_same_window():
+    import fib_pullback as fp
+    bars = _sel(set())                                                             # no bullish setup anywhere
+    assert fp.control(bars, SIG, TR, "X", "2026-06-01", "t") is None               # the setup-matched control finds nothing
+    assert fp.control_uncond(bars, TR, "X", "2026-06-01") is not None              # the baseline does not need a setup
+    assert fp.control_uncond(_sel(set(), n=60), TR, "X", "2026-06-01") is None     # but still only after exit + 2
+
+
+def test_standard_reading_flags_void_when_the_control_is_far_from_the_baseline():
+    import fib_pullback as fp
+    rows = lambda ctrl, base: [{"day": f"2026-06-{1 + i // 4:02d}", "sym": f"S{i % 9}", "net": 0.004 + 0.0004 * (i % 5), "gross": 0.0045 + 0.0004 * (i % 5),
+                               "ctrl": ctrl, "ctrl2": ctrl, "ctrl_u": base} for i in range(200)]
+    near = fp.standard_reading({"A": rows(-0.0006, -0.0006), "B": rows(-0.0006, -0.0006)})
+    far = fp.standard_reading({"A": rows(0.0100, -0.0006), "B": rows(0.0100, -0.0006)})
+    assert near["VOID"] is False and far["VOID"] is True and far["EDGE"] is False
+    assert near["halves"]["A"]["no_control_share"] == 0
