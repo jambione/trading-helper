@@ -1934,9 +1934,6 @@ function _bookStyleBadge(r) {
   if (style === 'thrust' || arm.includes('catalyst_thrust') || arm.includes('open_thrust')) {
     return '<span class="style-badge style-badge--thrust" title="Style: Catalyst Open Thrust (09:30 Inception)">THRUST</span>';
   }
-  if (style === 'maker' || arm.includes('maker') || arm.includes('air_pocket') || arm.includes('liquidity')) {
-    return '<span class="style-badge style-badge--maker" title="Style: Passive Air-Pocket Maker">MAKER</span>';
-  }
   if (style === 'main' || r.is_position || arm.includes('presquare') || arm.includes('square') || arm.includes('zone')) {
     return '<span class="style-badge style-badge--main" title="Style: Main Momentum Breakout">MAIN</span>';
   }

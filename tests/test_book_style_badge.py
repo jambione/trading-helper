@@ -12,7 +12,6 @@ def test_style_badge_css_present():
         content = f.read()
     assert ".style-badge" in content
     assert ".style-badge--thrust" in content
-    assert ".style-badge--maker" in content
     assert ".style-badge--main" in content
 
 def test_style_badge_js_function_present():
@@ -22,6 +21,5 @@ def test_style_badge_js_function_present():
         content = f.read()
     assert "function _bookStyleBadge(r)" in content
     assert "style-badge--thrust" in content
-    assert "style-badge--maker" in content
     assert "style-badge--main" in content
     assert "_bookStyleBadge(r)" in content

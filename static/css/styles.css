@@ -2555,10 +2555,6 @@ body.mobile [data-tv-toggle-btn] {
   color: #000;
   background: #f59e0b; /* Amber gold for 09:30 open thrust */
 }
-.panel-ai-watch .feed-cols--ai-book .cell-ticker .style-badge--maker {
-  color: #000;
-  background: #38bdf8; /* Cyan sky for passive air-pocket maker */
-}
 .panel-ai-watch .feed-cols--ai-book .cell-ticker .style-badge--main {
   color: #6ea8fe;
   background: rgba(110, 168, 254, 0.15);
