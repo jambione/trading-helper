@@ -375,7 +375,9 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
                     out[key].append({"d": d, "sym": n, "t": t, "net": net, "net_s": net + COST - STRESS, "ca": ca, "cb": cb})
                     base_row(key, A, n, t, 10)
     # ---- E and L need ETF bars aligned to the stock history ----
-    if etf_day is not None and etf_hist is not None and len(etf_hist) == len(hist) and ("E" in which or "L" in which):
+    if etf_day is not None and "SPY" not in etf_day["idx"] and ("E" in which or "L" in which):
+        st["etf_history_incomplete_days"] += 1
+    elif etf_day is not None and etf_hist is not None and len(etf_hist) == len(hist) and ("E" in which or "L" in which):
         ebeta = etf_betas(etf_hist, [x for x in ALL_ETF if x != "SPY"])
         ebeta["SPY"] = 1.0
         espy = etf_day["c"][etf_day["idx"]["SPY"]]
@@ -482,20 +484,29 @@ def triggers_of(out):
     return res
 
 
-def plant_copy(day, etf_day, out, bp):
-    """Copies of the day arrays with +bp (basis points) added to the exit-bar close of every trigger row."""
+def plant_copy(day, etf_day, out, bp, keys=KEYS):
+    """Copies of the day arrays with +bp (basis points) added ONCE to the exit-bar close of every trigger row of the given keys
+    (a bar shared by two rows is planted once, not twice)."""
     d2 = dict(day, c=day["c"].copy())
     e2 = dict(etf_day, c=etf_day["c"].copy()) if etf_day is not None else None
-    for k in KEYS:
+    done = set()
+    for k in keys:
         for r in out[k]:
             t, H = r["t"], HOLD[k]
             if t + H >= 390:
                 continue
             if k == "E":
-                if e2 is not None:
-                    e2["c"][e2["idx"][r["sym"]], t + H] *= (1 + bp / 1e4)
+                if e2 is None or r["sym"] not in e2["idx"]:
+                    continue
+                key = ("E", e2["idx"][r["sym"]], t + H)
+                if key not in done:
+                    e2["c"][key[1], t + H] *= (1 + bp / 1e4)
+                    done.add(key)
             else:
-                d2["c"][d2["idx"][r["sym"]], t + H] *= (1 + bp / 1e4)
+                key = ("S", d2["idx"][r["sym"]], t + H)
+                if key not in done:
+                    d2["c"][key[1], t + H] *= (1 + bp / 1e4)
+                    done.add(key)
     return d2, e2
 
 
@@ -512,22 +523,31 @@ def null_injection(out, names, etf_names, d):
     return res
 
 
+FAMILY = {"S": ("S",), "E": ("E",), "L": ("L",), "R21": ("R",), "R10": ("R",)}
+
+
 def canary_day(day, prev, hist, names, d, etf_day, etf_hist, costs, e_thr, out1, which=("S", "E", "L", "R")):
     """-> {key: {"planted": per-trigger change in net (expect +8), "ctrl_shift": |change| of each primary control, "null_day_mean": [mean lift
-    of the day's null rows] (one value per day, if any), "row_mismatch": rows present in one planted/real pass but not the other}}"""
+    of the day's null rows] (one value per day, if any), "row_mismatch": rows present in one planted/real pass but not the other}}.
+    ONE key is planted per pass (a planted exit bar of one family can be another family's control bar), the real triggers are injected for
+    that family so detection is unaffected."""
     res = {k: {"planted": [], "ctrl_shift": [], "null_day_mean": [], "row_mismatch": 0} for k in KEYS}
     inj = triggers_of(out1)
-    d2, e2 = plant_copy(day, etf_day, out1, 8.0)
-    out2, _ = score_day(d2, prev, hist, names, d, e2, etf_hist, costs, e_thr, which=which, inject=inj)
-    nul = null_injection(out1, names, ALL_ETF, d)
-    out3, _ = score_day(day, prev, hist, names, d, etf_day, etf_hist, costs, e_thr, which=which, inject=nul)
     for k in KEYS:
+        fam = FAMILY[k]
+        if not set(fam) & set(which) or not out1[k]:
+            continue
+        d2, e2 = plant_copy(day, etf_day, out1, 8.0, keys=(k,))
+        out2, _ = score_day(d2, prev, hist, names, d, e2, etf_hist, costs, e_thr, which=fam, inject=inj)
         a = {(r["sym"], r["t"]): r for r in out1[k]}
         b = {(r["sym"], r["t"]): r for r in out2[k]}
         res[k]["row_mismatch"] = len(set(a) ^ set(b))
         both = [x for x in a if x in b]
         res[k]["planted"] = [b[x]["net"] - a[x]["net"] for x in both]
         res[k]["ctrl_shift"] = [abs(b[x]["ca"] - a[x]["ca"]) for x in both if a[x]["ca"] is not None and b[x]["ca"] is not None]
+    nul = null_injection(out1, names, ALL_ETF, d)
+    out3, _ = score_day(day, prev, hist, names, d, etf_day, etf_hist, costs, e_thr, which=which, inject=nul)
+    for k in KEYS:
         nl = [r["net"] - r["ca"] for r in out3[k] if r.get("ca") is not None]
         if nl:
             res[k]["null_day_mean"] = [float(np.mean(nl))]
@@ -615,7 +635,10 @@ def run(mode="run"):
             raise SystemExit("run.pkl exists: the prereg allows ONE read (delete it only with the operator's say)")
         if not (OUT / "count.json").exists():
             raise SystemExit("run the outcome-blind 'count' first")
-        e_thr = json.loads((OUT / "count.json").read_text())["E_threshold"]
+        cj = json.loads((OUT / "count.json").read_text())
+        if not cj.get("canary_plan_ok"):
+            raise SystemExit(f"canary sample too thin for the one read ({cj.get('canary_plan')}): widen the (outcome-blind) sampling rule and log it first")
+        e_thr = cj["E_threshold"]
         costs = load_costs()
     else:
         e_thr, costs = 0.0020, {x: {"rt_bp": 2.0} for x in ALL_ETF}    # counts do not depend on costs
@@ -626,8 +649,11 @@ def run(mode="run"):
     stats = defaultdict(int)
     acc = {k: {"planted": [], "ctrl_shift": [], "null_day_mean": [], "row_mismatch": 0} for k in KEYS}
     n_days = 0
+    plan = {k: {"triggers": 0, "days": 0} for k in KEYS}                     # outcome-blind: triggers/days the canary sample will contain
     for d, day, prev, hist, names in iter_days(WH_SIP):
         ed, eh = etf_context(etf_files, etf_cache, d, hist)
+        if ed is None:
+            stats["etf_missing_days"] += 1
         o, st = score_day(day, prev, hist, names, d, ed, eh, costs, e_thr)
         for k, v in st.items():
             stats[k] += v
@@ -645,6 +671,11 @@ def run(mode="run"):
                     for f in ("planted", "ctrl_shift", "null_day_mean"):
                         acc[k][f] += cd[k][f]
                     acc[k]["row_mismatch"] += cd[k]["row_mismatch"]
+        full_day = int(hashlib.sha256(f"canary|{d}".encode()).hexdigest(), 16) % 8 == 0
+        for k in KEYS:
+            if full_day or (k == "E" and o["E"]):
+                plan[k]["triggers"] += len(o[k])
+                plan[k]["days"] += 1 if o[k] else 0
         n_days += 1
         print(d, dict(counts), flush=True)
     conf = {"S": [], "BASE": []}
@@ -661,6 +692,8 @@ def run(mode="run"):
                                               "L_no_residual_days": stats.get("L_no_residual_days", 0), "scored_days": n_days,
                                               "confirm_scored_days": conf_days, "etf_history_incomplete_days": stats.get("etf_history_incomplete_days", 0)}
         cnt["E_threshold"] = 0.0020 if cnt["E"] >= 300 else 0.0010
+        cnt["canary_plan"] = plan
+        cnt["canary_plan_ok"] = all(v["triggers"] >= 5 and v["days"] >= 10 for v in plan.values())
         (OUT / "count.json").write_text(json.dumps(cnt, indent=1))
         print(cnt)
         return 0

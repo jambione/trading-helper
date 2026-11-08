@@ -271,3 +271,54 @@ def test_L_pass_two_controls_do_not_depend_on_processing_order():
     # B triggered in [t-15, t] for t=100 and C triggered AT t: both are excluded for A, whatever order they were processed in
     assert ef.primary_pool(["A", "B", "C", "D"], trig, 100, "A") == ["D"]
     assert ef.primary_pool(["A", "B", "C", "D"], dict(reversed(list(trig.items()))), 100, "A") == ["D"]
+
+
+def test_planting_one_key_per_pass_keeps_controls_unchanged_with_S_R10_R21_at_the_same_minute():
+    names = [f"N{i}" for i in range(25)]
+    hist = [_day(names, 800 + i) for i in range(20)]
+    for h in hist:
+        h["_date"] = "x"
+    day = _day(names, 51)
+    inj = {"S": {"N0": [100]}, "R21": {"N1": [100]}, "R10": {"N2": [100]}}
+    out1 = {}
+    o, _ = ef.score_day(day, hist[-1], hist, names, "2026-02-12", which=("S", "R"), inject=inj)
+    cd = ef.canary_day(day, hist[-1], hist, names, "2026-02-12", None, None, None, 0.0020, o, which=("S", "R"))
+    for k in ("S", "R21", "R10"):
+        assert len(cd[k]["planted"]) == 1 and abs(cd[k]["planted"][0] - 8.0) < 0.5, k
+        assert cd[k]["ctrl_shift"] and max(cd[k]["ctrl_shift"]) < 0.5, k
+        assert cd[k]["row_mismatch"] == 0, k
+
+
+def test_plant_copy_plants_a_shared_bar_once_and_only_the_requested_key():
+    names = ["N0", "N1"]
+    day = _day(names, 61)
+    out = {k: [] for k in ef.KEYS}
+    out["S"] = [{"sym": "N0", "t": 100}]
+    out["R10"] = [{"sym": "N0", "t": 95}]                         # R10 exit bar t+10 = 105 = S exit bar 100+5? no: 95+10 = 105 and 100+5 = 105 -> shared bar
+    both, _ = ef.plant_copy(day, None, out, 8.0)
+    only_s, _ = ef.plant_copy(day, None, out, 8.0, keys=("S",))
+    i = day["idx"]["N0"]
+    assert abs(both["c"][i, 105] / day["c"][i, 105] - 1.0008) < 1e-9     # planted once, not twice
+    assert abs(only_s["c"][i, 105] / day["c"][i, 105] - 1.0008) < 1e-9
+    none, _ = ef.plant_copy(day, None, out, 8.0, keys=("E",))
+    assert (none["c"] == day["c"]).all()
+
+
+def test_run_refuses_when_the_canary_sample_is_too_thin(tmp_path, monkeypatch):
+    monkeypatch.setattr(ef, "OUT", tmp_path)
+    (tmp_path / "count.json").write_text('{"E_threshold": 0.001, "canary_plan_ok": false, "canary_plan": {"E": {"triggers": 2, "days": 1}}}')
+    try:
+        ef.run("run")
+        assert False, "should have refused"
+    except SystemExit as e:
+        assert "canary sample too thin" in str(e)
+
+
+def test_a_missing_spy_in_the_etf_day_skips_E_and_L_and_is_counted():
+    names = [f"N{i}" for i in range(25)]
+    hist = [_day(names, 900 + i) for i in range(20)]
+    day = _day(names, 71)
+    eday = _etf_day(72)
+    del eday["idx"]["SPY"]
+    out, st = ef.score_day(day, hist[-1], hist, names, "2026-02-13", eday, [_etf_day(i) for i in range(20)], {x: {"rt_bp": 2.0} for x in ef.ALL_ETF}, 0.0020, which=("E", "L"))
+    assert out["E"] == [] and out["L"] == [] and st.get("etf_history_incomplete_days") == 1
