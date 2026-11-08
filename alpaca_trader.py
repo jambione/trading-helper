@@ -856,6 +856,129 @@ def buy_market_shares(
         return {"ok": False, "order_id": None, "status": "error", "note": str(e)}
 
 
+def buy_marketable_limit(
+    ticker: str,
+    price: float,
+    dollar_amount: Optional[float] = None,
+    rsi: float = 0.0,
+    hist: float = 0.0,
+    *,
+    qty: float | int | None = None,
+    cap_bp: float = 5.0,
+    min_cap_dollars: float = 0.02,
+    time_in_force: Optional[str] = "ioc",
+) -> dict:
+    """BUY submitted as a marketable limit order (RTH).
+
+    Guards against paying excessive entry slippage by capping the limit price at:
+        limit_px = round(price + max(price * (cap_bp / 10000.0), min_cap_dollars), 2)
+    Default TIF is IOC (Immediate Or Cancel) so any portion of the order that
+    would fill beyond the capped limit is instantly cancelled by the exchange,
+    preventing resting limit fills on subsequent collapses.
+    """
+    amount = float(dollar_amount if dollar_amount is not None else _trade_amount)
+    mode_tag = f"[{_mode.upper()}]"
+
+    if not _can_mutate():
+        _log_action("BUY_LOGGED", ticker, price, rsi, hist,
+                    note="TRADER_MODE=off — no order placed")
+        return {"ok": False, "order_id": None, "status": "trader_off",
+                "note": "TRADER_MODE=off — no order placed"}
+
+    if not symbol_tradable(ticker):
+        _log_action("BUY_SKIPPED", ticker, price, rsi, hist,
+                    note="not tradable on Alpaca — no order placed")
+        return {"ok": False, "order_id": None, "status": "not_tradable",
+                "note": "not tradable on Alpaca"}
+
+    if _require_protective_exit():
+        return _refuse_unprotected(
+            ticker, price, rsi, hist, why="bare_marketable_limit")
+
+    if not price or price <= 0:
+        _log_action("BUY_SKIPPED", ticker, 0.0, rsi, hist, note="no price")
+        return {"ok": False, "order_id": None, "status": "no_price", "note": "no price"}
+
+    cap_dollars = max(float(price) * (float(cap_bp) / 10000.0), float(min_cap_dollars))
+    limit_px = round(float(price) + cap_dollars, 2)
+
+    frac = want_fractional(ticker, extended_hours=False)
+    if qty is not None:
+        submit_qty = _order_qty(qty, fractional=frac, price=limit_px)
+    else:
+        from desk_risk import shares_from_dollars
+        raw = shares_from_dollars(amount, limit_px, fractional=frac)
+        submit_qty = _order_qty(raw, fractional=frac, price=limit_px)
+    if submit_qty is None:
+        note = f"limit ${limit_px:.2f} > ${amount:.0f} budget"
+        _log_action("BUY_SKIPPED", ticker, price, rsi, hist, note=note)
+        return {"ok": False, "order_id": None, "status": "under_budget", "note": note}
+
+    frac_tag = "fractional=true" if frac else "fractional=false"
+    tif_str = str(time_in_force or "ioc").lower()
+    print(f"\n  [TRADER] {mode_tag} 🟢 BUY  {ticker}  "
+          f"{submit_qty:g} sh marketable limit ${limit_px:.2f} (+{cap_bp:g}bp cap, tif={tif_str})  "
+          f"(~${float(submit_qty) * limit_px:.0f} of ${amount:.0f})"
+          f"  [{frac_tag}]")
+
+    try:
+        from alpaca.trading.requests import LimitOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+
+        tif_enum = TimeInForce.IOC if tif_str == "ioc" else TimeInForce.DAY
+
+        order = _submit_order(
+            LimitOrderRequest(
+                symbol        = ticker,
+                qty           = submit_qty,
+                side          = OrderSide.BUY,
+                time_in_force = tif_enum,
+                limit_price   = limit_px,
+            )
+        )
+        order_id = str(order.id)
+        status_raw = str(getattr(order, "status", "")).lower()
+        status = status_raw.split(".")[-1] if "." in status_raw else status_raw
+
+        # If order was cancelled / rejected immediately (e.g. swept past IOC limit)
+        if status in ("canceled", "cancelled", "expired", "rejected"):
+            print(f"  [TRADER] ⚠️  BUY marketable limit not filled (slipped past cap)  id={order_id}  status={status}")
+            _log_action("BUY_CANCELLED", ticker, price, rsi, hist,
+                        order_id=order_id, order_status=status, qty=submit_qty,
+                        note=f"marketable_limit_cap_breached limit_px={limit_px} {frac_tag}")
+            return {
+                "ok": False,
+                "order_id": order_id,
+                "status": status,
+                "error": "marketable_limit_cap_breached",
+                "note": "marketable_limit_cap_breached",
+                "limit_px": limit_px,
+                "cap_bp": cap_bp,
+                "qty": submit_qty,
+                "fractional": frac,
+            }
+
+        print(f"  [TRADER] ✓  BUY order submitted  id={order_id}  status={status}")
+        _log_action("BUY", ticker, price, rsi, hist,
+                    order_id=order_id, order_status=status, qty=submit_qty,
+                    note=f"marketable_limit {frac_tag} limit_px={limit_px}")
+        return {
+            "ok": True,
+            "order_id": order_id,
+            "status": status,
+            "note": None,
+            "limit_px": limit_px,
+            "cap_bp": cap_bp,
+            "qty": submit_qty,
+            "fractional": frac,
+        }
+
+    except Exception as e:
+        print(f"  [TRADER] ❌  BUY order failed: {e}")
+        _log_action("BUY_ERROR", ticker, price, rsi, hist, error=str(e))
+        return {"ok": False, "order_id": None, "status": "error", "note": str(e)}
+
+
 def _status_is(o: Optional[dict], *words: str) -> bool:
     s = str((o or {}).get("status") or "").lower()
     return any(w in s for w in words)

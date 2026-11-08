@@ -100,6 +100,30 @@ _STRUCTURE_BUDGET_WINDOW_SEC = 3600.0
 _wash_cooldown_until: dict[str, float] = {}
 _WASH_COOLDOWN_SEC = 1800.0  # 30 minutes
 
+# Per-symbol cooldown after marketable limit order was cancelled/swept without fill.
+# Prevents the "immediate re-buy death spiral" where a slipping stock is repeatedly re-attempted.
+_marketable_limit_cooldown_until: dict[str, float] = {}
+_MARKETABLE_LIMIT_COOLDOWN_DEFAULT_SEC = 900.0  # 15 minutes
+
+
+def set_marketable_limit_cooldown(symbol: str, cooldown_sec: float = 900.0, now: float | None = None) -> None:
+    t = time.time() if now is None else float(now)
+    _marketable_limit_cooldown_until[str(symbol).upper()] = t + max(0.0, float(cooldown_sec))
+
+
+def get_marketable_limit_cooldown(symbol: str, now: float | None = None) -> float:
+    t = time.time() if now is None else float(now)
+    until = _marketable_limit_cooldown_until.get(str(symbol).upper(), 0.0)
+    return max(0.0, until - t)
+
+
+def clear_marketable_limit_cooldown(symbol: str | None = None) -> None:
+    if symbol is None:
+        _marketable_limit_cooldown_until.clear()
+    else:
+        _marketable_limit_cooldown_until.pop(str(symbol).upper(), None)
+
+
 # After a stale_timeout drop, refuse re-seed until this clock — but only while
 # the tape is still dead. A young stream print clears the cool immediately
 # (see _stale_timeout_blocked). 30m cool starved selection on 2026-09-04.
@@ -199,6 +223,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "no_quote_age": "no quote age",
     "wash_trade": "wash trade",
     "wash_cooldown": "wash cool",
+    "slip_cancel_cooldown": "slip cool",
     "already_holding": "held",
     "no_buying_power": "no BP",
     "risk_gate": "risk gate",
@@ -4416,7 +4441,7 @@ _POST_ARM_BLOCK_CODES = frozenset({
     "dead_reentry", "loser_reentry", "reentry_cooldown",
     "buy_cap", "max_positions", "not_trading_hours",
     "already_held", "already_holding", "already_managed",
-    "wash_trade", "wash_cooldown",
+    "wash_trade", "wash_cooldown", "slip_cancel_cooldown",
     "daily_loss_limit", "open_risk_cap",
     "trader_not_ready", "no_equity", "no_buying_power",
     "placing",
@@ -20246,6 +20271,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _skip("wash_cooldown",
                   detail=f"{int(wash_until - t0)}s left")
             continue
+        slip_until = float(_marketable_limit_cooldown_until.get(sym) or 0.0)
+        if slip_until > t0:
+            _skip("slip_cancel_cooldown",
+                  detail=f"{int(slip_until - t0)}s left")
+            continue
 
         # A row must not be refused for lacking a quote age until something
         # has tried to give it one. _row_tape_stale fails closed on an unknown
@@ -20683,13 +20713,19 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         else:
             err = ""
             if isinstance(result, dict):
-                err = str(result.get("error") or "place_failed")[:200]
+                err = str(result.get("error") or result.get("note") or result.get("status") or "place_failed")[:200]
             else:
                 err = "place_failed"
             wash_hit = (
                 "wash" in err.lower()
                 or "40310000" in err
                 or err.strip().lower() == "wash_trade"
+            )
+            marketable_limit_slip = (
+                "marketable_limit" in err.lower()
+                or "slipped" in err.lower()
+                or (isinstance(result, dict) and result.get("status") in ("canceled", "cancelled", "expired")
+                    and "limit" in str(result.get("note") or "").lower())
             )
             if wash_hit:
                 cool_s = float(
@@ -20698,12 +20734,20 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 )
                 _wash_cooldown_until[sym] = t0 + max(60.0, cool_s)
                 set_block_reason(rec, "wash_trade", now=t0, detail=err)
+            elif marketable_limit_slip:
+                cool_s = float(
+                    cfg.get("ai_marketable_limit_cooldown_sec", _MARKETABLE_LIMIT_COOLDOWN_DEFAULT_SEC)
+                    or _MARKETABLE_LIMIT_COOLDOWN_DEFAULT_SEC
+                )
+                set_marketable_limit_cooldown(sym, cool_s, now=t0)
+                set_block_reason(rec, "slip_cancel_cooldown", now=t0, detail=f"{int(cool_s)}s cool")
             else:
                 set_block_reason(rec, err, now=t0, detail=err)
             try:
                 events.append(cp.log_event(
                     "entry_fail", symbol=sym, reason=err,
-                    wash_cooldown=wash_hit))
+                    wash_cooldown=wash_hit,
+                    marketable_limit_slip=marketable_limit_slip))
             except Exception:
                 events.append({
                     "kind": "entry_fail",
