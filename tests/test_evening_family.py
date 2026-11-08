@@ -162,15 +162,19 @@ def test_h2h_needs_60_days_and_reports_direction():
 
 
 def test_canary_verdict_flags_a_bad_planted_value_and_passes_a_good_one():
-    good = {k: {"planted": [8.0] * 10, "ctrl_shift": [0.0] * 10, "null_lifts": list(np.random.default_rng(1).normal(0, 5, 200))} for k in ef.KEYS}
+    good = {k: {"planted": [8.0] * 10, "ctrl_shift": [0.0] * 10, "null_day_mean": list(np.random.default_rng(1).normal(0, 2, 30)), "row_mismatch": 0} for k in ef.KEYS}
     assert ef.canary_verdict(good)[0] is True
     bad = {**good, "E": {**good["E"], "planted": [5.0] * 10}}
     ok, why = ef.canary_verdict(bad)
     assert ok is False and any("E: planted" in w for w in why)
     shifted = {**good, "L": {**good["L"], "ctrl_shift": [0.0, 0.9]}}
     assert ef.canary_verdict(shifted)[0] is False
-    biased = {**good, "S": {**good["S"], "null_lifts": [4.0 + x for x in good["S"]["null_lifts"]]}}
+    biased = {**good, "S": {**good["S"], "null_day_mean": [4.0 + x for x in good["S"]["null_day_mean"]]}}
     assert ef.canary_verdict(biased)[0] is False
+    few = {**good, "R10": {**good["R10"], "null_day_mean": [0.1] * 4}}
+    assert ef.canary_verdict(few)[0] is False                                  # a null canary needs >= 10 days
+    mism = {**good, "L": {**good["L"], "row_mismatch": 3}}
+    assert ef.canary_verdict(mism)[0] is False                                 # rows missing from the planted pass cannot hide a failure
 
 
 def test_sample_k_is_without_replacement_and_capped():
@@ -208,3 +212,62 @@ def test_run_refuses_a_second_read(tmp_path, monkeypatch):
         assert False, "should have refused"
     except SystemExit as e:
         assert "ONE read" in str(e)
+
+
+def _etf_day(seed, surge=None):
+    """Synthetic ETF session: SPY + the 12 ETFs; SMH carries a shared factor that mapped stocks follow."""
+    rng = np.random.default_rng(seed)
+    syms = ["SPY"] + [x for x in ef.ALL_ETF if x != "SPY"]
+    c = np.zeros((len(syms), 390)); v = np.full((len(syms), 390), 1000.0)
+    spy_r = rng.normal(0, 0.0003, 390)
+    for k, s_ in enumerate(syms):
+        r = rng.normal(0, 0.0004, 390) + (spy_r if s_ == "SPY" else 0.0)
+        if surge and s_ in surge:
+            t, jump = surge[s_]
+            r[t] += jump; r[t - 1] += jump / 2; v[k, t] = 9000.0
+        c[k] = 100.0 * np.exp(np.cumsum(r))
+    o = np.concatenate([c[:, :1], c[:, :-1]], axis=1)
+    return {"syms": syms, "idx": {s_: i for i, s_ in enumerate(syms)}, "o": o, "h": c * 1.0002, "l": c * 0.9998, "c": c, "v": v}
+
+
+def test_R_inject_uses_the_same_control_pool_as_the_normal_path():
+    names = [f"N{i}" for i in range(25)]
+    hist = [_day(names, 500 + i) for i in range(20)]
+    day = _day(names, 31)
+    for h in hist + [day]:
+        h["_date"] = "x"
+    # inject two R21 triggers; the pool must still be every eligible name (not just the two triggered stocks)
+    out, st = ef.score_day(day, hist[-1], hist, names, "2026-02-10", which=("R",), inject={"R21": {"N0": [120], "N1": [200]}, "R10": {}})
+    rows = out["R21"]
+    assert len(rows) == 2 and all(r["ca"] is not None for r in rows)
+    assert st.get("R21_removed_primary", 0) <= 2                              # only the other triggered stock is removed, not a tiny pool
+
+
+def test_E_and_L_go_through_score_day_and_the_canary_inputs_match():
+    names = [f"N{i}" for i in range(25)]
+    hist = [_day(names, 600 + i) for i in range(20)]
+    ehist = [_etf_day(700 + i) for i in range(20)]
+    for k, (h, e) in enumerate(zip(hist, ehist)):
+        h["_date"] = e["_date"] = f"d{k}"
+    day = _day(names, 41)
+    eday = _etf_day(42, surge={"SMH": (100, 0.004), "QQQ": (200, 0.004)})
+    costs = {x: {"rt_bp": 2.0} for x in ef.ALL_ETF}
+    out, st = ef.score_day(day, hist[-1], hist, names, "2026-02-11", eday, ehist, costs, 0.0020, which=("E",))
+    assert {(r["sym"], r["t"]) for r in out["E"]} >= {("SMH", 100), ("QQQ", 200)}
+    inj = ef.triggers_of(out)
+    d2, e2 = ef.plant_copy(day, eday, out, 8.0)
+    out2, _ = ef.score_day(d2, hist[-1], hist, names, "2026-02-11", e2, ehist, costs, 0.0020, which=("E",), inject=inj)
+    a = {(r["sym"], r["t"]): r for r in out["E"]}
+    b = {(r["sym"], r["t"]): r for r in out2["E"]}
+    assert set(a) == set(b)
+    assert all(abs((b[k]["net"] - a[k]["net"]) - 8.0) < 0.5 for k in a)
+    # misaligned ETF history disables E/L and is counted, not silently run
+    out3, st3 = ef.score_day(day, hist[-1], hist, names, "2026-02-11", eday, ehist[:-1], costs, 0.0020, which=("E",))
+    assert out3["E"] == [] and st3.get("etf_history_incomplete_days") == 1
+
+
+def test_L_pass_two_controls_do_not_depend_on_processing_order():
+    trig = {"B": [90], "C": [100]}
+    # B triggered in [t-15, t] for t=100 and C triggered AT t: both are excluded for A, whatever order they were processed in
+    assert ef.primary_pool(["A", "B", "C", "D"], trig, 100, "A") == ["D"]
+    assert ef.primary_pool(["A", "B", "C", "D"], dict(reversed(list(trig.items()))), 100, "A") == ["D"]

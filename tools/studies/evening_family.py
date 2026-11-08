@@ -152,14 +152,14 @@ def corr(a, b):
 # ---------------- %R pre-square (R) ----------------
 def minute_grid(prev_c, prev_h, prev_l, c, h, l):  # noqa: E741
     """Previous session's last 112 RTH bars + today's, short gaps filled flat. As signals._minute_grid_pr, gaps longer than
-    MINUTE_GAP_FILL_MAX (15) stay NaN (so no trigger can fire on a filled minute that has no real bar after a long silence)."""
+    MINUTE_GAP_FILL_MAX (a bar-time gap > 15 minutes, i.e. > 14 missing minutes) stay NaN (so no trigger can fire on a filled minute that has no real bar after a long silence)."""
     def fill(cc, hh, ll):
         cc, hh, ll = np.array(cc, float), np.array(hh, float), np.array(ll, float)
         last, gap = np.nan, 0
         for i in range(len(cc)):
             if np.isnan(cc[i]):
                 gap += 1
-                if gap <= 15 and not np.isnan(last):
+                if gap <= 14 and not np.isnan(last):
                     cc[i] = hh[i] = ll[i] = last
             else:
                 gap = 0
@@ -347,6 +347,7 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
     # ---- R (both lengths) ----
     if "R" in which and prev is not None:
         trigR = {10: {}, 21: {}}
+        elig = [n for n in names if prev["idx"].get(n) is not None]       # control candidates: same in normal and injected paths
         injected = bool(inject) and any(f"R{L}" in inject for L in (10, 21))
         if injected:
             for L in (10, 21):
@@ -370,7 +371,7 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
                     if net is None:
                         st[f"{key}_skipped"] += 1
                         continue
-                    ca, cb = controls(key, n, A, t, 10, trigR[L], ts, lambda m: COST, list(trigR[L]))
+                    ca, cb = controls(key, n, A, t, 10, trigR[L], ts, lambda m: COST, elig)
                     out[key].append({"d": d, "sym": n, "t": t, "net": net, "net_s": net + COST - STRESS, "ca": ca, "cb": cb})
                     base_row(key, A, n, t, 10)
     # ---- E and L need ETF bars aligned to the stock history ----
@@ -437,9 +438,12 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
                     with np.errstate(invalid="ignore"):
                         er2 = (a["c"] / np.roll(a["c"], 2) - 1) - ebeta[x] * (espy / np.roll(espy, 2) - 1)
                     ev += [(x, t) for t in range(FIRST, LAST + 1) if not np.isnan(er2[t]) and er2[t] >= 0.0015 and vol_ratio(a["v"], t) >= 2.0]
-            ltrig = defaultdict(list)                       # per-stock kept L triggers, in time order
-            for x, t in sorted(ev, key=lambda z: z[1]):
-                hit = False
+            order = {x: i for i, x in enumerate(SECTOR)}
+            ev = sorted(set(ev), key=lambda z: (z[1], order[z[0]]))        # same order in the normal and injected paths
+            ltrig = defaultdict(list)                       # per-stock kept L triggers
+            kept = []                                       # PASS 1: every kept trigger (refractory + a usable trade), no controls yet
+            event_hit = set()
+            for x, t in ev:
                 for n, mx in mapped.items():
                     if mx != x or not ok_f[n][t] or (ltrig[n] and t - ltrig[n][-1] < REFRACT):
                         continue
@@ -447,16 +451,20 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
                     if net is None:
                         st["L_skipped"] += 1
                         continue
-                    excl = {x} | {y for y in SECTOR if etf_corr.get((x, y), 0) >= 0.5}
-                    cand = [m for m in names if mapped.get(m) not in excl]
-                    flt = lambda m, tt: bool(ok_f[m][tt])  # noqa: E731
-                    ca, cb = controls("L", n, A, t, 10, ltrig, list(ltrig[n]) + [t], lambda m: COST, cand, flt=flt)
                     ltrig[n].append(t)
-                    hit = True
-                    out["L"].append({"d": d, "sym": n, "t": t, "etf": x, "net": net, "net_s": net + COST - STRESS, "ca": ca, "cb": cb})
-                    base_row("L", {m: A[m] for m in names if ok_f[m][t]}, n, t, 10)
-                if hit:
-                    st["L_events"] += 1
+                    kept.append((n, x, t, net))
+                    event_hit.add((x, t))
+            st["L_events"] += len(event_hit)
+            st["L_mapped_stocks"] += len(mapped)
+            if not sres or not eres:
+                st["L_no_residual_days"] += 1
+            for n, x, t, net in kept:                       # PASS 2: controls see ALL kept triggers (only those <= t are used)
+                excl = {x} | {y for y in SECTOR if etf_corr.get((x, y), 0) >= 0.5}
+                cand = [m for m in names if mapped.get(m) not in excl]
+                flt = lambda m, tt: bool(ok_f[m][tt])  # noqa: E731
+                ca, cb = controls("L", n, A, t, 10, ltrig, ltrig[n], lambda m: COST, cand, flt=flt)
+                out["L"].append({"d": d, "sym": n, "t": t, "etf": x, "net": net, "net_s": net + COST - STRESS, "ca": ca, "cb": cb})
+                base_row("L", {m: A[m] for m in names if ok_f[m][t]}, n, t, 10)
     elif ("E" in which or "L" in which) and etf_day is not None:
         st["etf_history_incomplete_days"] += 1
     return out, dict(st)
@@ -500,34 +508,41 @@ def null_injection(out, names, etf_names, d):
     for r in out["E"]:
         inj["E"][seeded("null", "E", d, r["sym"], r["t"]).choice(sorted(etf_names))].append(r["t"])
     res = {k: dict(v) for k, v in inj.items()}
-    res["L"] = [(seeded("null", "L", d, r["sym"], r["t"]).choice(SECTOR), r["t"]) for r in out["L"]]
+    res["L"] = sorted({(seeded("null", "L", d, x, t).choice(SECTOR), t) for x, t in {(r["etf"], r["t"]) for r in out["L"]}})
     return res
 
 
-def canary_day(day, prev, hist, names, d, etf_day, etf_hist, costs, e_thr, out1):
-    """-> {key: {"planted": per-trigger change in net (expect +8), "ctrl_shift": |change| of each primary control, "null_lifts": [...]}}"""
-    res = {k: {"planted": [], "ctrl_shift": [], "null_lifts": []} for k in KEYS}
+def canary_day(day, prev, hist, names, d, etf_day, etf_hist, costs, e_thr, out1, which=("S", "E", "L", "R")):
+    """-> {key: {"planted": per-trigger change in net (expect +8), "ctrl_shift": |change| of each primary control, "null_day_mean": [mean lift
+    of the day's null rows] (one value per day, if any), "row_mismatch": rows present in one planted/real pass but not the other}}"""
+    res = {k: {"planted": [], "ctrl_shift": [], "null_day_mean": [], "row_mismatch": 0} for k in KEYS}
     inj = triggers_of(out1)
     d2, e2 = plant_copy(day, etf_day, out1, 8.0)
-    out2, _ = score_day(d2, prev, hist, names, d, e2, etf_hist, costs, e_thr, inject=inj)
+    out2, _ = score_day(d2, prev, hist, names, d, e2, etf_hist, costs, e_thr, which=which, inject=inj)
     nul = null_injection(out1, names, ALL_ETF, d)
-    out3, _ = score_day(day, prev, hist, names, d, etf_day, etf_hist, costs, e_thr, inject=nul)
+    out3, _ = score_day(day, prev, hist, names, d, etf_day, etf_hist, costs, e_thr, which=which, inject=nul)
     for k in KEYS:
         a = {(r["sym"], r["t"]): r for r in out1[k]}
         b = {(r["sym"], r["t"]): r for r in out2[k]}
+        res[k]["row_mismatch"] = len(set(a) ^ set(b))
         both = [x for x in a if x in b]
         res[k]["planted"] = [b[x]["net"] - a[x]["net"] for x in both]
         res[k]["ctrl_shift"] = [abs(b[x]["ca"] - a[x]["ca"]) for x in both if a[x]["ca"] is not None and b[x]["ca"] is not None]
-        res[k]["null_lifts"] = [r["net"] - r["ca"] for r in out3[k] if r.get("ca") is not None]
+        nl = [r["net"] - r["ca"] for r in out3[k] if r.get("ca") is not None]
+        if nl:
+            res[k]["null_day_mean"] = [float(np.mean(nl))]
     return res
 
 
 def canary_verdict(acc):
-    """acc: {key: {"planted": [...], "ctrl_shift": [...], "null_lifts": [...]}} accumulated over the sample days. -> (ok, [failures])."""
+    """acc: {key: {"planted": [...], "ctrl_shift": [...], "null_day_mean": [...], "row_mismatch": int}} accumulated over the sample days.
+    The null test is on per-DAY mean lifts (rows within a day are clustered): |mean| <= 2 x the day-level SE, with >= 10 days."""
     bad = []
     for k in KEYS:
         a = acc.get(k) or {}
-        pl, cs, nl = a.get("planted", []), a.get("ctrl_shift", []), a.get("null_lifts", [])
+        pl, cs, nd = a.get("planted", []), a.get("ctrl_shift", []), a.get("null_day_mean", [])
+        if a.get("row_mismatch", 0):
+            bad.append(f"{k}: {a['row_mismatch']} rows differ between the real and planted passes")
         if len(pl) < 5:
             bad.append(f"{k}: too few canary triggers ({len(pl)}) to test")
             continue
@@ -535,12 +550,12 @@ def canary_verdict(acc):
             bad.append(f"{k}: planted +8 bp came back as {np.mean(pl):+.2f}")
         if cs and max(cs) > 0.5:
             bad.append(f"{k}: a control moved by up to {max(cs):.2f} bp when only exits were changed")
-        if len(nl) >= 20:
-            se = float(np.std(nl, ddof=1) / math.sqrt(len(nl)))
-            if abs(float(np.mean(nl))) > 2 * se:
-                bad.append(f"{k}: null lift {np.mean(nl):+.2f} bp is outside 2 SE ({se:.2f})")
+        if len(nd) >= 10:
+            se = float(np.std(nd, ddof=1) / math.sqrt(len(nd)))
+            if abs(float(np.mean(nd))) > 2 * se:
+                bad.append(f"{k}: null day-mean lift {np.mean(nd):+.2f} bp is outside 2 SE ({se:.2f}, {len(nd)} days)")
         else:
-            bad.append(f"{k}: too few null-canary rows ({len(nl)})")
+            bad.append(f"{k}: null canary has only {len(nd)} days (need 10)")
     return (not bad), bad
 
 
@@ -609,7 +624,7 @@ def run(mode="run"):
     res = {k: [] for k in KEYS + ("BASE",)}
     counts = defaultdict(int)
     stats = defaultdict(int)
-    acc = {k: {"planted": [], "ctrl_shift": [], "null_lifts": []} for k in KEYS}
+    acc = {k: {"planted": [], "ctrl_shift": [], "null_day_mean": [], "row_mismatch": 0} for k in KEYS}
     n_days = 0
     for d, day, prev, hist, names in iter_days(WH_SIP):
         ed, eh = etf_context(etf_files, etf_cache, d, hist)
@@ -621,11 +636,15 @@ def run(mode="run"):
         if mode == "run":
             for k in res:
                 res[k] += o[k]
-            if int(hashlib.sha256(f"canary|{d}".encode()).hexdigest(), 16) % 8 == 0:     # seeded ~1 in 8 days
-                cd = canary_day(day, prev, hist, names, d, ed, eh, costs, e_thr, o)
+            full = int(hashlib.sha256(f"canary|{d}".encode()).hexdigest(), 16) % 8 == 0     # seeded ~1 in 8 days: all hypotheses
+            if full or o["E"]:                                                              # plus E-only canary on every day with ETF triggers
+                cd = canary_day(day, prev, hist, names, d, ed, eh, costs, e_thr, o, which=("S", "E", "L", "R") if full else ("E",))
                 for k in KEYS:
-                    for f in ("planted", "ctrl_shift", "null_lifts"):
+                    if not full and k != "E":
+                        continue
+                    for f in ("planted", "ctrl_shift", "null_day_mean"):
                         acc[k][f] += cd[k][f]
+                    acc[k]["row_mismatch"] += cd[k]["row_mismatch"]
         n_days += 1
         print(d, dict(counts), flush=True)
     conf = {"S": [], "BASE": []}
@@ -638,7 +657,8 @@ def run(mode="run"):
             conf["BASE"] += [b for b in o["BASE"] if b["key"] == "S"]
         conf_days += 1
     if mode == "count":
-        cnt = {k: counts[k] for k in KEYS} | {"S_confirm": conf_count, "L_events": stats.get("L_events", 0), "scored_days": n_days,
+        cnt = {k: counts[k] for k in KEYS} | {"S_confirm": conf_count, "L_events": stats.get("L_events", 0), "L_mapped_stock_days": stats.get("L_mapped_stocks", 0),
+                                              "L_no_residual_days": stats.get("L_no_residual_days", 0), "scored_days": n_days,
                                               "confirm_scored_days": conf_days, "etf_history_incomplete_days": stats.get("etf_history_incomplete_days", 0)}
         cnt["E_threshold"] = 0.0020 if cnt["E"] >= 300 else 0.0010
         (OUT / "count.json").write_text(json.dumps(cnt, indent=1))
@@ -705,7 +725,11 @@ def report():
     put("S - discovery-sample re-score (information only)", ev, s, bm)
     lines += [f"({sk('S')})", ""]
     ev, s, bm = block("E", res["E"], [b for b in res["BASE"] if b["key"] == "E"], 60, 25)
+    miss = sum(1 for r in res["E"] if r.get("net_s") is None)
+    if s == "PROFITABLE" and res["E"] and miss / len(res["E"]) > 0.10:
+        s = "EDGE"                                          # stress cost missing for > 10% of rows: PROFITABLE vetoed
     put("E surge continuation, ETFs", ev, s, bm)
+    lines += [f"(E rows without a stress quote: {miss} of {len(res['E'])}; PROFITABLE is vetoed above 10%)"]
     lines += [f"(E threshold used: {z['e_thr'] * 1e4:.0f} bp; {sk('E')}; ETF history incomplete days {st.get('etf_history_incomplete_days', 0)})", ""]
     ev, s, bm = block("L", res["L"], [b for b in res["BASE"] if b["key"] == "L"])
     days = sorted({r["d"] for r in res["L"]})
@@ -715,7 +739,14 @@ def report():
     if s not in ("VOID",) and (len(evs) < 60 or min(h1, h2) < 25):
         s = "UNDERPOWERED"
     put("L sector-ETF lead-lag", ev, s, bm)
-    lines += [f"(distinct ETF events {len(evs)}, halves {h1}/{h2}; need >= 60 and >= 25 per half; {sk('L')})", ""]
+    ep, lastk = 0, {}
+    for e in sorted(evs, key=lambda z: (z[1], z[2], z[0])):
+        k = (e[1], e[0])
+        if k not in lastk or e[2] - lastk[k] > 5:
+            ep += 1
+        lastk[k] = e[2]
+    lines += [f"(distinct ETF x minute events {len(evs)}, merged into {ep} episodes (consecutive minutes within 5), halves {h1}/{h2}; need >= 60 and >= 25 per half; "
+              f"mapped-stock-days {st.get('L_mapped_stocks', 0)}, days without residuals {st.get('L_no_residual_days', 0)}; {sk('L')})", ""]
     e21, s21, b21 = block("R21", res["R21"], [b for b in res["BASE"] if b["key"] == "R21"])
     put("R21 live pre-square (descriptive)", e21, s21, b21)
     e10, s10, b10 = block("R10", res["R10"], [b for b in res["BASE"] if b["key"] == "R10"])
