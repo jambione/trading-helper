@@ -20463,9 +20463,18 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
 
         structure = rec.get("structure")
+        is_thrust = bool(
+            (rec.get("arm_details") or {}).get("strategy") == "thrust"
+            or str(rec.get("arm_why") or "").startswith("catalyst_thrust")
+            or str(why or "").startswith("catalyst_thrust")
+        )
         if not isinstance(structure, dict):
-            _skip("no_structure")
-            continue
+            if is_thrust and isinstance(rec.get("arm_details"), dict):
+                structure = dict(rec["arm_details"])
+                rec["structure"] = structure
+            else:
+                _skip("no_structure")
+                continue
 
         equity = _equity()
         if equity <= 0:
@@ -20578,9 +20587,20 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _skip(f"recheck_{why2}")
             continue
 
-        place_decision = _decision_for_place(
-            structure, ask=ask_f, cfg=cfg,
-            late_hold=(why2 == "last_late_hold"))
+        if is_thrust and isinstance(rec.get("arm_details"), dict):
+            place_decision = dict(rec["arm_details"])
+            place_decision["decision"] = "BUY"
+            place_decision["wait_kind"] = None
+            place_decision["synthetic"] = True
+            place_decision["skip_zone"] = True
+            place_decision["zone_kind"] = "catalyst_thrust"
+            place_decision["strategy"] = "thrust"
+            place_decision["stop_price"] = rec["arm_details"]["initial_stop"]
+            place_decision["target_1"] = None
+        else:
+            place_decision = _decision_for_place(
+                structure, ask=ask_f, cfg=cfg,
+                late_hold=(why2 == "last_late_hold"))
         if arm_at_last(cfg):
             place_decision["skip_zone"] = True
             if not place_decision.get("zone_kind"):

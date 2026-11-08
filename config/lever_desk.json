@@ -9,7 +9,7 @@
       "shipped_at": "2026-09-10",
       "knobs": {
         "ai_local_trail_time_decay_enabled": true,
-        "ai_local_trail_decay_idle_sec": 8.0,
+        "ai_local_trail_decay_idle_sec": 15.0,
         "ai_local_trail_decay_step_r": 0.05
       },
       "baseline_sessions": ["2026-09-09"],

@@ -1359,7 +1359,7 @@ DEFAULT_CONFIG = {
     # Stop chase enabled: ratchets stop up toward current price while green;
     # Run up -.01: parks at last - $0.01 (overtake off, min_give_px=0).
     "ai_local_trail_time_decay_enabled": True,
-    "ai_local_trail_decay_idle_sec":  8.0,
+    "ai_local_trail_decay_idle_sec":  15.0,
     "ai_local_trail_decay_step_r":    0.05,
     # Same idle clock while last ≤ entry, smaller step. 0 disables.
     # Missing key in a partial cfg also disables (see green_catchup_raise).

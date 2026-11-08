@@ -2321,15 +2321,18 @@ def place_scaled_entry(
                         out["target_order_id"] = None
                         out["order_type"] = "MARKETABLE_LIMIT"
                     else:
-                        cool_s = float(cfg.get("ai_marketable_limit_cooldown_sec", 900.0) or 900.0)
-                        try:
-                            import ai_entry_watch as ew
-                            ew.set_marketable_limit_cooldown(ticker, cool_s)
-                        except Exception:
-                            pass
-                        log_event("marketable_limit_cancelled", symbol=ticker, ref_price=ref,
-                                  limit_px=out.get("limit_px"), status=out.get("status"),
-                                  cooldown_sec=cool_s)
+                        st = str(out.get("status") or "").lower()
+                        note = str(out.get("note") or "").lower()
+                        if st in ("canceled", "cancelled", "expired") or "cap" in note:
+                            cool_s = float(cfg.get("ai_marketable_limit_cooldown_sec", 900.0) or 900.0)
+                            try:
+                                import ai_entry_watch as ew
+                                ew.set_marketable_limit_cooldown(ticker, cool_s)
+                            except Exception:
+                                pass
+                            log_event("marketable_limit_cancelled", symbol=ticker, ref_price=ref,
+                                      limit_px=out.get("limit_px"), status=out.get("status"),
+                                      cooldown_sec=cool_s)
                     return out
 
                 out = alpaca_trader.buy_market_shares(
@@ -2434,6 +2437,14 @@ def place_scaled_entry(
                 note="heal will attach stop if still unprotected after fill",
             )
 
+    # Sizing / Partial fill adjustment:
+    if result_a.get("ok") and (result_a.get("partial") or result_a.get("filled_qty") is not None):
+        filled_q = float(result_a.get("filled_qty") or result_a.get("qty") or parent_qty)
+        if filled_q > 0:
+            qty_a = filled_q
+            qty_b = 0
+            total_qty = filled_q
+
     # Runner is bookkeeping only — same parent order / same resting stop.
     result_b = {
         "ok": True,
@@ -2448,6 +2459,16 @@ def place_scaled_entry(
     )
     if late_hold:
         strategy = "late_hold"
+    is_thrust = (
+        str(strategy or "").lower() == "thrust"
+        or str(decision.get("zone_kind") or "").lower() == "catalyst_thrust"
+        or str(decision.get("arm_why") or "").startswith("catalyst_thrust")
+    )
+    if is_thrust:
+        strategy = "thrust"
+        dual = False
+        scale_out_pct = 0.0
+        logical_dual = False
     h4_swing = bool(decision.get("h4_swing")) or str(strategy or "") == "h4_swing"
     if h4_swing:
         strategy = "h4_swing"
@@ -2456,7 +2477,7 @@ def place_scaled_entry(
         logical_dual = False
     protection_mode = "broker" if broker_stop else "local_stop"
     local_stop_px = (
-        stop_price if (late_hold or h4_swing)
+        stop_price if (late_hold or h4_swing or is_thrust)
         else (initial_local_stop(sizing_entry, risk_px, cfg) or stop_price)
     )
     if not broker_stop:
@@ -2625,6 +2646,26 @@ def place_scaled_entry(
         # Range arm (ai_watch_range_arm): levels at the arm; range_r_btm puts the position on the range exit.
         **{k: decision.get(k) for k in RANGE_POSITION_KEYS if isinstance(decision, dict) and k in decision},
     }
+
+    if entry_order_type == "MARKETABLE_LIMIT" and result_a.get("ok"):
+        row["entry_confirmed"] = True
+        fill_p = _num(result_a.get("fill_px"))
+        if fill_p and fill_p > 0:
+            row["entry_price"] = fill_p
+        lim_p = _num(result_a.get("limit_px"))
+        if lim_p and lim_p > 0:
+            row["entry_limit_price"] = lim_p
+    if result_a.get("partial"):
+        row["partial_fill"] = True
+        log_event("marketable_limit_partial_fill", symbol=ticker, filled_qty=qty_a, requested_qty=parent_qty)
+    if is_thrust:
+        row["strategy"] = "thrust"
+        row["zone_kind"] = "catalyst_thrust"
+        row["max_hold_sec"] = float(decision.get("max_hold_sec") or 900.0)
+        row["bar0_low"] = decision.get("bar0_low")
+        row["target_1"] = None
+        row["trail_pct"] = None
+        row["runner_trail_r"] = None
 
     def _put(st: dict[str, Any]) -> None:
         st[ticker] = row
@@ -3470,6 +3511,101 @@ def _range_exit_tick(ticker: str, pos: dict[str, Any], trigger: float | None, ev
     events.append({"ticker": ticker, "event": f"{why}_sell_failed", **info})
     log_event(f"{why}_sell_failed", symbol=ticker, **info)
     return True, False
+
+
+def _thrust_exit_tick(ticker: str, pos: dict[str, Any], trigger: float | None, events: list[dict[str, Any]],
+                      exit_why: dict[str, Any], *, raise_only: bool = False) -> tuple[bool, bool]:
+    """apply_local_trail for a Catalyst Open Thrust position:
+    1. 15-minute time stop (exit at market)
+    2. Prior 1-minute bar low trailing ratchet stop (ratchets stop up only, never down)
+    3. Disaster stop floor max(bar0_low, entry * 0.98)
+    4. NO scalp shelf decay, NO leash, NO profit target capping.
+    Returns (changed, closed).
+    """
+    import alpaca_trader
+
+    if not pos.get("entry_confirmed"):
+        return False, False
+    if pos.get("closing_reason"):
+        return bool(unstrand_failed_close(ticker, pos)), False
+
+    now = time.time()
+    entry_t = _num(pos.get("entry_time")) or _num(pos.get("entry_ts")) or now
+    hold_sec = now - entry_t
+    max_hold_sec = float(pos.get("max_hold_sec") or 900.0)
+
+    # 1. 15-Minute Time Stop Check
+    if hold_sec >= max_hold_sec:
+        if raise_only:
+            return False, False
+        alpaca_trader.cancel_open_orders(ticker)
+        out = alpaca_trader.close_out(ticker) or {}
+        oid = str(out.get("order_id") or "") if isinstance(out, dict) else ""
+        if oid:
+            pos["close_order_id"] = oid
+            pos["closing_reason"] = "thrust_time_stop"
+            exit_why[ticker] = "thrust_time_stop"
+            events.append({"ticker": ticker, "event": "thrust_time_stop", "order_id": oid, "hold_sec": round(hold_sec, 1)})
+            log_event("thrust_exit_time", symbol=ticker, order_id=oid, hold_sec=round(hold_sec, 1), trigger=trigger)
+            return True, True
+        exit_why[ticker] = "thrust_time_retry"
+        return False, False
+
+    # 2. Ratchet Stop Update from completed 1-minute bars
+    changed = False
+    current_stop = _num(pos.get("local_stop_price")) or _num(pos.get("stop_price")) or _num(pos.get("entry_stop_price"))
+    entry_px = _num(pos.get("entry_price")) or 0.0
+    bar0_low = _num(pos.get("bar0_low"))
+
+    from ai_catalyst_thrust import compute_open_thrust_ratchet_stop
+
+    # Collect session bars
+    recent_bars = []
+    try:
+        import ob_observe
+        ob_b = ob_observe.bars(ticker)
+        if ob_b:
+            for b in ob_b:
+                recent_bars.append({"t": b[0], "o": b[1], "h": b[2], "l": b[3], "c": b[4]})
+    except Exception:
+        pass
+
+    if recent_bars and entry_px > 0:
+        new_stop = compute_open_thrust_ratchet_stop(
+            entry_price=entry_px,
+            current_stop=current_stop,
+            recent_bars=recent_bars,
+            bar0_low=bar0_low,
+            entry_time=entry_t,
+        )
+        if new_stop and current_stop and new_stop > current_stop + 1e-6:
+            pos["local_stop_price"] = round(new_stop, 2)
+            pos["stop_price"] = round(new_stop, 2)
+            current_stop = round(new_stop, 2)
+            changed = True
+            events.append({"ticker": ticker, "event": "thrust_ratchet_lift", "new_stop": current_stop})
+            log_event("thrust_ratchet_lift", symbol=ticker, new_stop=current_stop)
+
+    if raise_only:
+        return changed, False
+
+    # 3. Stop Breach Check
+    px = trigger if trigger is not None else _num(pos.get("last_seen_price"))
+    if px is not None and current_stop is not None and px <= current_stop + 1e-9:
+        alpaca_trader.cancel_open_orders(ticker)
+        out = alpaca_trader.close_out(ticker) or {}
+        oid = str(out.get("order_id") or "") if isinstance(out, dict) else ""
+        if oid:
+            pos["close_order_id"] = oid
+            pos["closing_reason"] = "thrust_stop"
+            exit_why[ticker] = "thrust_stop"
+            events.append({"ticker": ticker, "event": "thrust_stop", "order_id": oid, "stop_px": current_stop, "trigger": px})
+            log_event("thrust_exit_stop", symbol=ticker, order_id=oid, stop_px=current_stop, trigger=px)
+            return True, True
+        exit_why[ticker] = "thrust_stop_retry"
+        return False, False
+
+    return changed, False
 
 
 def rsi_dump_due(
@@ -5303,6 +5439,9 @@ def apply_local_trail(
     if range_exit_applies(pos, _cfg_all()):
         # Range position (ai_exit_range): target / stop / time only; no shelf, ratchet or leash.
         ch, closed = _range_exit_tick(ticker, pos, trigger, events, exit_why, raise_only=raise_only)
+        return (ch or changed_handoff), closed
+    if str(pos.get("strategy") or "").lower() == "thrust" or str(pos.get("zone_kind") or "").lower() == "catalyst_thrust":
+        ch, closed = _thrust_exit_tick(ticker, pos, trigger, events, exit_why, raise_only=raise_only)
         return (ch or changed_handoff), closed
 
     now = time.time()
