@@ -40,6 +40,8 @@ ALPHA = 0.05 / 4
 FIRST, LAST = 15, 360
 REFRACT = 30
 NDRAW = 5
+CANARY_MOD = 5          # full-canary days: 1 in 5 by hash (widened from 1 in 8 on 11/07 after an OUTCOME-BLIND count showed 9 days per key; logged in the prereg)
+CANARY_MIN_DAYS = 12    # the null canary needs >= 10 days with rows; 12 leaves margin (4th review)
 SECTOR = ["SMH", "SOXX", "IBIT", "IGV", "XBI", "URA", "XLE", "XLF", "ARKK"]
 ALL_ETF = SECTOR + ["QQQ", "IWM", "SPY"]
 HOLD = {"S": 5, "E": 5, "L": 10, "R21": 10, "R10": 10}
@@ -662,7 +664,7 @@ def run(mode="run"):
         if mode == "run":
             for k in res:
                 res[k] += o[k]
-            full = int(hashlib.sha256(f"canary|{d}".encode()).hexdigest(), 16) % 8 == 0     # seeded ~1 in 8 days: all hypotheses
+            full = int(hashlib.sha256(f"canary|{d}".encode()).hexdigest(), 16) % CANARY_MOD == 0     # seeded 1 in CANARY_MOD days: all hypotheses
             if full or o["E"]:                                                              # plus E-only canary on every day with ETF triggers
                 cd = canary_day(day, prev, hist, names, d, ed, eh, costs, e_thr, o, which=("S", "E", "L", "R") if full else ("E",))
                 for k in KEYS:
@@ -671,7 +673,7 @@ def run(mode="run"):
                     for f in ("planted", "ctrl_shift", "null_day_mean"):
                         acc[k][f] += cd[k][f]
                     acc[k]["row_mismatch"] += cd[k]["row_mismatch"]
-        full_day = int(hashlib.sha256(f"canary|{d}".encode()).hexdigest(), 16) % 8 == 0
+        full_day = int(hashlib.sha256(f"canary|{d}".encode()).hexdigest(), 16) % CANARY_MOD == 0
         for k in KEYS:
             if full_day or (k == "E" and o["E"]):
                 plan[k]["triggers"] += len(o[k])
@@ -693,7 +695,7 @@ def run(mode="run"):
                                               "confirm_scored_days": conf_days, "etf_history_incomplete_days": stats.get("etf_history_incomplete_days", 0)}
         cnt["E_threshold"] = 0.0020 if cnt["E"] >= 300 else 0.0010
         cnt["canary_plan"] = plan
-        cnt["canary_plan_ok"] = all(v["triggers"] >= 5 and v["days"] >= 10 for v in plan.values())
+        cnt["canary_plan_ok"] = all(v["triggers"] >= 5 and v["days"] >= CANARY_MIN_DAYS for v in plan.values())
         (OUT / "count.json").write_text(json.dumps(cnt, indent=1))
         print(cnt)
         return 0
