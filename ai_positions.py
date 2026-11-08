@@ -2265,10 +2265,13 @@ def place_scaled_entry(
             current_last=ref_last,
             symbol=ticker,
         )
-    entry_order_type = (
-        "MARKET" if use_market_entry
-        else ("LIMIT" if (placed_entry_limit or entry_limit) else "MARKET")
-    )
+    if float(cfg.get("ai_marketable_limit_cap_bp", 0.0) or 0.0) > 0 and use_market_entry:
+        entry_order_type = "MARKETABLE_LIMIT"
+    else:
+        entry_order_type = (
+            "MARKET" if use_market_entry
+            else ("LIMIT" if (placed_entry_limit or entry_limit) else "MARKET")
+        )
 
     entry_test = (entry_test_plan(cfg, current_bid, current_ask)
                   if use_market_entry else None)
@@ -2305,6 +2308,30 @@ def place_scaled_entry(
                 # Exact share count — do not re-derive via dollar//price (that
                 # re-truncates fractionals). +0.01 cushion kept only as a
                 # dollar_amount fallback when qty is omitted.
+                cap_bp = float(cfg.get("ai_marketable_limit_cap_bp", 0.0) or 0.0)
+                if cap_bp > 0:
+                    min_cap = float(cfg.get("ai_marketable_limit_min_cap_dollars", 0.02) or 0.02)
+                    tif = str(cfg.get("ai_marketable_limit_tif", "ioc") or "ioc")
+                    out = alpaca_trader.buy_marketable_limit(
+                        ticker, ref, qty=parent_qty, cap_bp=cap_bp, min_cap_dollars=min_cap, time_in_force=tif,
+                    ) or {}
+                    if out.get("ok"):
+                        out["buy_order_id"] = out.get("order_id")
+                        out["stop_order_id"] = None
+                        out["target_order_id"] = None
+                        out["order_type"] = "MARKETABLE_LIMIT"
+                    else:
+                        cool_s = float(cfg.get("ai_marketable_limit_cooldown_sec", 900.0) or 900.0)
+                        try:
+                            import ai_entry_watch as ew
+                            ew.set_marketable_limit_cooldown(ticker, cool_s)
+                        except Exception:
+                            pass
+                        log_event("marketable_limit_cancelled", symbol=ticker, ref_price=ref,
+                                  limit_px=out.get("limit_px"), status=out.get("status"),
+                                  cooldown_sec=cool_s)
+                    return out
+
                 out = alpaca_trader.buy_market_shares(
                     ticker, ref, qty=parent_qty,
                 ) or {}

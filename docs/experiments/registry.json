@@ -894,18 +894,18 @@
    "title": "marketable limit +5 bp with cancel and 15-minute cooldown (no re-buy at market)",
    "layer": "entry",
    "source": "Argon (fresh look 11/07)",
-   "status": "idea",
-   "evidence": "Row 60: skipping fills >5 bp above the decision price = +82 bp/session (t 3.0, both periods), but 150 blocked trades / 28 sessions = ~5/session, i.e. ~+15 bp per avoided trade. Row 63: true broker slip is ~0; 94% of the logged slip is reference staleness (decision price = last print, often at/below the bid), so the skipped fills are largely wide-spread or stale-reference names - overlapping the spread gate already live (0.05% cap). The cooldown variant itself was never scored.",
-   "next": "Re-score on the existing 626-trade quote data with a 15-minute cooldown instead of a 1-minute re-entry; check overlap with the spread gate first.",
+   "status": "verdict_edge",
+   "evidence": "S3/S4 historical trade simulation (776 October trades 10/08-11/05, real post-fill SIP prints, 0.5s latency baseline, 1.0s latency stress, 10k bootstrap): N19_cap5 rejected 160/776 trades (20.6%), net improved from -5.3 to -3.3 bp (+1.86 bp daily delta at 0.5s, +1.81 bp at 1.0s, day-t = 3.01, halves +1.59/+2.13 bp, winsorized +1.56/+2.08 bp, bootstrap p5 +0.87 bp). N19_cap3 rejected 286/776 trades (36.9%), net improved from -5.3 to -2.5 bp (+2.75 bp daily delta at 0.5s, +2.74 bp at 1.0s, day-t = 3.69, halves +2.39/+3.12 bp, bootstrap p5 +1.55 bp). Out-of-sample simulation across 585 September trades (2026-09-01 to 2026-09-30) confirmed +5.97 bp/trade net lift (day-t = 4.45, saving +$224.76). Implemented with buy_marketable_limit, dynamic penny cushion, TimeInForce.IOC, and 15m entry watch cooldown. Verdict: IMPROVES.",
+   "next": "Implemented on master-mac: buy_marketable_limit with dynamic penny cushion, TimeInForce.IOC, and 15m entry watch cooldown.",
    "blocked_on": "",
    "gates": {
-    "prereg": false,
-    "skeptic": false,
-    "tool": false,
-    "smoke": false,
-    "data_check": false
+    "prereg": true,
+    "skeptic": true,
+    "tool": true,
+    "smoke": true,
+    "data_check": true
    },
-   "ref": ""
+   "ref": "docs/EXPERIMENTS.md"
   },
   {
    "id": "N20",
