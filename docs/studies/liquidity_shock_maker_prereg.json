@@ -1,0 +1,50 @@
+{
+ "id": "liquidity_shock_maker_2026-11-08",
+ "registered": "2026-11-08 07:30 ET",
+ "operator": "Jonathan Brasfield (Phase 3 Track #4: Passive Liquidity Air-Pocket Maker, branch feat/profit-loss-optimization-2026-11-08). Read-only study on SIP warehouse; no live change, no spend. Strict adherence to docs/TEST_STANDARD.md.",
+ "hypothesis": "Track #4 Passive Liquidity Air-Pocket Maker: After a sharp 2-bar SPY-residual air-pocket drop (>= 80 bp drop over 2 minutes) accompanied by a sudden volume surge (vol_ratio >= 3.0) during non-crash intraday regimes, resting passive limit buy orders at c[t] - 2 bp capture liquidity provider rebound edge over a 10-bar hold under conservative passive maker execution rules (2 bp trade-through required for fills, worst-case intraday stop priority, no entry-bar target taking).",
+ "family": "1 SCORED test: M (Passive Liquidity Air-Pocket Maker); one-sided alpha 0.05; critical t = scipy stats.t.ppf(1 - 0.05, scored_days - 1) on per-day mean lifts vs PRIMARY control.",
+ "data": "ai_reports/warehouse/sip/DAY.npz (120 sessions 2026-04-27..2026-10-15, RTH 1-minute SIP bars). Halves by date at the median scored session.",
+ "universe": {
+  "base": "Top 400 stocks by prior-session dollar volume (iter_days from evening_family.py), with 20 prior sessions required for SPY beta (residual_stats, present >= 15 sessions and >= 500 points). Levered products, ETNs, and ETFs excluded via is_not_stock.",
+  "liquidity_filter": "Opening price on day D in [$25.0, $500.0] (day['o'][i, 0]), and mean prior-20-session daily dollar volume >= $20,000,000 computed strictly from hist (never using day D volume)."
+ },
+ "trigger": {
+  "window": "Bar t in [15, 360] (09:45 to 15:30 ET).",
+  "refractory": "30 minutes per stock (first_true: one trigger per 30 bars, clock restarts only at a kept trigger; fires only on the first bar condition becomes true).",
+  "regime": "Non-crash intraday regime strictly up to decision minute: (1) stock close at t-2 vs day open: c[t-2] / o[0] - 1 >= -0.0050 (-50 bp); (2) SPY 15-bar return at t: spy_c[t] / spy_c[t-15] - 1 >= -0.0030 (-30 bp).",
+  "residual_drop": "SPY-residual 2-bar return at t: res2[t] = (c[t] / c[t-2] - 1) - beta * (spy_c[t] / spy_c[t-2] - 1) <= -e_drop. Primary threshold: e_drop = 0.0080 (80 bp drop over 2 bars).",
+  "volume_surge": "vol_ratio(v, t) = v[t] / mean(v[t-15:t]) >= 3.0 with >= 10 non-missing bars in the lookback window.",
+  "fallback_rule": "Pre-registered outcome-blind count fallback rule: If --mode count finds < 300 filled triggers across the 120 sessions at 80 bp, use ONE fallback threshold fixed in advance: e_drop = 0.0060 (60 bp drop) with vol_ratio >= 2.5. Chosen strictly on the outcome-blind count before any return is read."
+ },
+ "execution": {
+  "order_placement": "At the close of trigger bar t, place a passive resting BUY limit for bar t+1 (1-minute TTL) at p_lim = c[t] * (1.0 - 0.0002) (2 bp below c[t]).",
+  "fill_rule": "Requires strict 2 bp trade-through on bar t+1: l[t+1] <= p_lim * (1.0 - 0.0002). If not filled, order expires unfilled at the end of bar t+1, counted in unfilled_triggers, no trade row created.",
+  "missing_bars": "If any of o, h, l, c at t+1 or exit bar t+1+H (t+11) is NaN, trade is skipped and counted in skipped_triggers.",
+  "entry_price": "Conservative gap-through entry: entry_px = p_lim (never claim better entry than p_lim even if o[t+1] gapped down; if o[t+1] gapped below stop, full gap loss is taken)."
+ },
+ "exit": {
+  "horizon": "H = 10 bars (holding window [t+1, t+11]).",
+  "stop_price": "Catastrophic stop at p_stop = entry_px * (1.0 - 0.0100) (-100 bp).",
+  "target_price": "Passive profit target at p_target = entry_px * (1.0 + 0.0040) (+40 bp).",
+  "bar_t_plus_1": "Strict anti-peeking on entry bar t+1: Check catastrophic stop ONLY (if l[t+1] <= p_stop, exit at min(p_stop, o[t+1]) - 3.0 bp taker fee). Profit target is NEVER allowed to execute on bar t+1.",
+  "bars_k": "For bars k in [t+2, t+11]: (1) If any bar is NaN, skip trade; (2) First check stop (worst-case priority): if l[k] <= p_stop, exit at min(p_stop, o[k]) - 3.0 bp taker fee; (3) Second check passive target (with 2 bp trade-through): if h[k] >= p_target * (1.0 + 0.0002), exit at p_target with 0.0 bp maker fee.",
+  "time_stop": "If neither stop nor target hit by end of bar t+11, exit at c[t+11] - 3.0 bp taker fee.",
+  "costs": "Maker entry fee: 0.0 bp. Taker stop/time exit fee: 3.0 bp. Passive target exit fee: 0.0 bp. Stress cost: net_s = net - 4.0 bp."
+ },
+ "controls": {
+  "primary": "PRIMARY (ca): 5 seeded other stocks in the eligible universe at minute t passing the same non-crash regime filter (c[t-2] / o[0] - 1 >= -0.0050), excluding stocks that triggered in [t-15, t] (never excluding future triggers). Entering at o[t+1], exiting at c[t+11] minus standard 6.0 bp round trip cost.",
+  "secondary": "SECONDARY (cb): Same stock, 5 seeded later minutes m in [t+12, t+72] (inside [15, 360]), clear of [t', t'+11] for triggers t' <= m, passing the non-crash regime filter. Entering at o[m+1], exiting at c[m+11] minus 6.0 bp round trip cost.",
+  "baseline": "BASELINE (BASE): Random stock from eligible non-crash universe at same bar-of-day t, entering at o[t+1], exiting at c[t+11] minus 6.0 bp. Primary control mean more than 3.0 bp from BASE mean = VOID, no exceptions."
+ },
+ "verdict": {
+  "standard": "EDGE: pooled day-clustered t >= critical value (alpha 0.05, df = scored_days - 1) and lift vs primary control > 0 in each date half; lift vs secondary control > 0 pooled; winsorized check (clip top 1% of per-trade lifts) > 0 in both halves. PROFITABLE: EDGE and net > 0 in both halves and net_s (stress) > 0 pooled.",
+  "counts": "Filled triggers >= 300, >= 100 per half; scored days >= 60, >= 25 per half; else UNDERPOWERED. Hierarchy: VOID, UNDERPOWERED, FAIL, EDGE, PROFITABLE."
+ },
+ "canaries": {
+  "planted": "Add +8 bp to exit of filled triggers via _planted_map keyed by (sym, t) of filled trades; lift must rise by 8.0 +- 0.5 bp with primary and secondary controls unchanged (ca and cb ctrl_shift < 0.5 bp, row_mismatch == 0).",
+  "null": "Triggers redrawn at random keeping each day's trigger count and bar-of-day mix; pooled day-mean lift within 2 SE of 0 with >= 10 days.",
+  "complete_triggers": "Canary injection receives complete trigger set out['TRIG']['M'] (including unfilled and skipped triggers) so control pools in normal and planted passes are perfectly identical."
+ },
+ "anti_peeking_gate": "Strict two-phase execution: --mode count runs first to establish trigger counts and select the pre-registered threshold outcome-blind. --mode run requires count.json and canary_plan_ok, executes single read, pickles run.pkl, and refuses any second read."
+}

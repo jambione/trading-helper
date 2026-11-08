@@ -1,0 +1,38 @@
+{
+  "id": "catalyst_thrust_family_2026-11-08",
+  "registered": "2026-11-08 07:45 ET (amended 07:55 ET: strictly causal trailing control pool c[day] <= trig[day], verified premarket news file check, deep-copy bar planting)",
+  "operator": "Operator 11/08: Phase 4 (Track #3: Hard Catalysts — Open Thrust & Intraday Breaking News Shock). Standard: docs/TEST_STANDARD.md (EDGE vs PROFITABLE, P2 controls with the 11/07 amendment: PRIMARY control = same-minute other-instrument).",
+  "family": "2 SCORED tests: H_OPEN (09:30 Open Thrust with gap >= 5%, green bar 0, causal 1m prior-low ratchet stop) and H_OPEN_GAP8 (same with gap >= 8%). One-sided alpha 0.05/2 = 0.025 each; critical t = scipy.stats.t.ppf(1 - 0.025, scored_days - 1) on per-day means. Fixed hold horizons (2m/3m/5m), strong-body bar 0 (ratio >= 0.5), and unfiltered gappers are DESCRIPTIVE information cells.",
+  "data": "ai_reports/catalyst_pullback/ (classified_candidates.json with 3317 candidates across 684 sessions 2024-01-02..2026-09-25, 1m SIP bars in bars/{day}_{sym}.json, Benzinga news in news/{day}_{sym}.json). Note: cached Benzinga news files are strictly pre-market/overnight (16:00 D-1 to 09:25 D); both scored arms are self-contained in the cached 2024-2026 data without requiring live API calls. Halves: Half A (2024-01-02..2025-05-31), Half B (2025-06-01..2026-10-30) per classified_candidates.json.",
+  "common": {
+    "trade": "Wait for bar 0 (09:30:00-09:31:00 ET) to close. Require bar 0 to be green (c[0] > o[0]). Enter long at the open of bar 1 (09:31:00 ET, o[1]). Causal 1-minute prior-low ratchet stop over bars k = 1..15 (max 15-minute hold): initial stop for bar 1 is s = max(l[0], entry_px * (1.0 - 0.0200)). On each bar k in 1..15: if l[k] <= s, exit at min(s, o[k]) (gaps below s fill at worse open price o[k]); only after bar k completes without stopping out, ratchet stop for bar k+1: s = max(s, l[k]). If not stopped out by bar k=15, exit at c[15].",
+    "cost": "12.0 bp round-trip standard friction, 16.0 bp stress cost (binding for PROFITABLE).",
+    "controls": "PRIMARY (ca): strictly causal same-minute other-instrument control — 5 seeded (sha256('ca'|hyp|day|sym|k)) non-catalyst gappers (is_primary == False, entry_px >= $10.0, gap >= 5%, bar 0 green, c[day] <= trig[day], c[sym] != trig[sym]). Same-day non-catalyst candidates preferred; if fewer than 5, trailing candidates within 60 calendar days prior to trig[day] (or all prior candidates in Half A). Never draws future candidates c[day] > trig[day]. At the exact same bar (09:31 entry), running the exact same causal prior-low ratchet trade and friction. SECONDARY (cb): same-stock strictly later-in-session control — 5 seeded minutes m in [30, 90] (10:00 to 11:00 ET) where bar m is green (c[m] > o[m]), entering at o[m+1] and running the exact same causal prior-low ratchet trade and friction over [m+1, m+15].",
+    "verdict": "EDGE = lift vs PRIMARY control: pooled day-clustered t >= family critical value (df = scored_days - 1) and lift > 0 in EACH half (by date); lift vs SECONDARY control > 0 pooled; winsorized check (clip top 1% of per-trade lifts) > 0 in both halves. PROFITABLE = EDGE and net > 0 in both halves and net > 0 at stress cost (16 bp). Counts: >= 300 triggers, >= 100 per half, >= 60 scored days and >= 25 per half, else UNDERPOWERED. Order: VOID, UNDERPOWERED, FAIL (no EDGE), EDGE, PROFITABLE. Information cells never promote a verdict.",
+    "canary": "Run for BOTH H_OPEN and H_OPEN_GAP8 with a fixed seed before the read: (a) planted — add +8 bp to every trigger's exit via a deep copy of the candidate's bar data; lift must rise by 8.0 bp (+-0.5 bp) with both primary (ca) and secondary (cb) controls unchanged (|max_ca_shift_bp| < 0.5 bp, |max_cb_shift_bp| < 0.5 bp) and row_mismatch == 0; (b) null — triggers re-drawn at random keeping each day's trigger count and causal structure; pooled day-mean lift within 2 standard errors of 0 with >= 10 days. Any canary failure = tool is not trusted and outcome read is refused.",
+    "returns": "Gross return = (exit_px - entry_px) / entry_px. Net return (bp) = gross_ret * 10000.0 - cost_bp. If a bar needed by a trade or trigger is missing or invalid, the candidate is skipped and counted; zero forward-fill.",
+    "baseline_void": "Unconditional baseline BASE = random non-catalyst candidate drawn from the trigger's OWN causal control pool for each trigger (seed 'baseline'|hyp|day|sym|k) at 09:31. A PRIMARY control mean more than 3.0 bp from it = VOID, no exceptions.",
+    "feed": "All candidate bars are 1-minute SIP bars cached in ai_reports/catalyst_pullback/bars/.",
+    "reporting": "Writes docs/CATALYST_THRUST_FAMILY.md and ai_reports/catalyst_thrust_family/result.json and run.pkl."
+  },
+  "H_OPEN": {
+    "claim": "Fundamental morning catalyst with green opening thrust bar exhibits positive continuation edge at 09:31 under a causal 1-minute prior-low ratchet stop.",
+    "filter": "is_primary == True, verified premarket news in news/{day}_{sym}.json (< 09:25:00 ET), entry_px >= 10.0, gap >= 0.05, bar 0 green (c[0] > o[0]), bars >= 16.",
+    "H": 15,
+    "information": [
+      "Fixed 2m, 3m, 5m hold without ratchet stop",
+      "Unfiltered gappers (primary + technical)",
+      "Bar 0 strong body ratio >= 0.5"
+    ]
+  },
+  "H_OPEN_GAP8": {
+    "claim": "High-gap (>= 8%) fundamental morning catalyst with green opening thrust bar exhibits enhanced positive continuation edge under a causal 1-minute prior-low ratchet stop.",
+    "filter": "is_primary == True, verified premarket news in news/{day}_{sym}.json (< 09:25:00 ET), entry_px >= 10.0, gap >= 0.08, bar 0 green (c[0] > o[0]), bars >= 16.",
+    "H": 15,
+    "information": [
+      "Fixed 2m, 3m, 5m hold without ratchet stop",
+      "Unfiltered gappers >= 8%",
+      "Bar 0 strong body ratio >= 0.5"
+    ]
+  }
+}
