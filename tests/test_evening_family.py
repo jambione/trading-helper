@@ -49,15 +49,10 @@ def _rows(n_days=70, per_day=8, edge=0.0, seed=1):
     return rows
 
 
-def test_planted_canary_recovers_the_planted_edge():
-    rows = _rows(edge=0.0)
-    assert abs(ef.canary_planted(rows, 8.0) - 8.0) < 1e-6
-
-
 def test_null_rows_give_no_edge_and_a_real_edge_is_detected():
-    null = ef.evaluate(_rows(edge=0.0), 2.28)
+    null = ef.evaluate(_rows(edge=0.0))
     assert null["status"] in ("FAIL", "UNDERPOWERED") and null["status"] != "EDGE"
-    real = ef.evaluate(_rows(edge=6.0), 2.28)
+    real = ef.evaluate(_rows(edge=6.0))
     assert real["status"] in ("EDGE", "PROFITABLE")
 
 
@@ -66,8 +61,9 @@ def test_minute_grid_fills_flat_and_returns_offset():
     c = np.full(390, np.nan); h = c.copy(); l = c.copy()
     c[:5] = 11.0; h[:5] = 11.01; l[:5] = 10.99
     cc, hh, ll, off = ef.minute_grid(pc, ph, pl, c, h, l)
-    assert off == 112 and len(cc) == 112 + 390 and not np.isnan(cc).any()
-    assert cc[112 + 10] == 11.0 and hh[112 + 10] == 11.0       # missing minute carried flat
+    assert off == 112 and len(cc) == 112 + 390
+    assert cc[112 + 10] == 11.0 and hh[112 + 10] == 11.0       # a short gap is carried flat
+    assert np.isnan(cc[112 + 100])                              # a gap longer than 15 minutes stays a gap (signals.MINUTE_GAP_FILL_MAX)
 
 
 def test_presquare_requires_two_consecutive_bars_and_trigger_is_the_second():
@@ -132,3 +128,83 @@ def test_planted_edge_through_score_day_moves_the_lift_by_the_planted_amount():
     rb = [r for r in ob["S"] if r["sym"] == "N0" and r["t"] == 100][0]
     rp = [r for r in op["S"] if r["sym"] == "N0" and r["t"] == 100][0]
     assert abs((rp["net"] - rb["net"]) - 40.0) < 4.0
+
+
+# ---------------- review fixes: stress, VOID, H2H, canary harness, one-read guard ----------------
+def test_e_stress_net_uses_the_larger_of_2x_cost_and_actual_spreads():
+    assert abs(ef.e_stress_net(net=10.0, rt_bp=4.0, sp_entry=1.0, sp_exit=1.0) - (14.0 - 8.0)) < 1e-9     # 2x cost wins
+    assert abs(ef.e_stress_net(net=10.0, rt_bp=4.0, sp_entry=6.0, sp_exit=5.0) - (14.0 - 11.0)) < 1e-9    # actual spreads win
+
+
+def test_attach_e_stress_skips_trades_with_a_missing_quote():
+    rows = [{"sym": "SPY", "d": "2026-03-02", "t": 100, "net": 5.0}, {"sym": "SPY", "d": "2026-03-02", "t": 200, "net": 5.0}]
+    costs = {"SPY": {"rt_bp": 2.0}}
+    sp = lambda etf, d, m: None if m == 570 + 201 else 1.0      # second trade's entry quote missing  # noqa: E731
+    ef.attach_e_stress(rows, costs, sp)
+    assert rows[0]["net_s"] is not None and rows[1]["net_s"] is None
+
+
+def test_void_when_baseline_missing_or_control_far_from_it():
+    ev = {"ca_mean": -6.0}
+    assert ef.void_status(ev, [])[0] is True
+    assert ef.void_status(ev, [{"net": -6.5}, {"net": -5.5}])[0] is False
+    assert ef.void_status({"ca_mean": 2.0}, [{"net": -6.0}])[0] is True
+    assert ef.void_status({"ca_mean": float("nan")}, [{"net": -6.0}])[0] is True
+
+
+def test_h2h_needs_60_days_and_reports_direction():
+    def rows(delta, n=70):
+        return [{"d": f"2026-03-{1 + i // 3:02d}-{i:03d}", "net": 1.0 + delta + (i % 5) * 0.4, "ca": 0.0} for i in range(n)]
+    assert ef.h2h(rows(0.0, 30), rows(0.0, 30))["status"] == "UNDERPOWERED"
+    better = ef.h2h(rows(3.0), rows(0.0))
+    assert better["status"] == "L=10 BETTER" and better["mean"] > 0
+    assert ef.h2h(rows(0.0), rows(0.0))["status"] == "NOT BETTER"
+
+
+def test_canary_verdict_flags_a_bad_planted_value_and_passes_a_good_one():
+    good = {k: {"planted": [8.0] * 10, "ctrl_shift": [0.0] * 10, "null_lifts": list(np.random.default_rng(1).normal(0, 5, 200))} for k in ef.KEYS}
+    assert ef.canary_verdict(good)[0] is True
+    bad = {**good, "E": {**good["E"], "planted": [5.0] * 10}}
+    ok, why = ef.canary_verdict(bad)
+    assert ok is False and any("E: planted" in w for w in why)
+    shifted = {**good, "L": {**good["L"], "ctrl_shift": [0.0, 0.9]}}
+    assert ef.canary_verdict(shifted)[0] is False
+    biased = {**good, "S": {**good["S"], "null_lifts": [4.0 + x for x in good["S"]["null_lifts"]]}}
+    assert ef.canary_verdict(biased)[0] is False
+
+
+def test_sample_k_is_without_replacement_and_capped():
+    import random
+    got = ef.sample_k(random.Random(1), list("abc"), 5)
+    assert sorted(got) == ["a", "b", "c"]
+
+
+def test_canary_through_the_real_path_for_S_and_R():
+    names = [f"N{i}" for i in range(25)]
+    hist = [_day(names, 400 + i) for i in range(20)]
+    for h in hist:
+        h["_date"] = "x"
+    day = _day(names, 21, surge={"N0": (100, 0.006, 0.0), "N3": (150, 0.006, 0.0)})
+    out1, _ = ef.score_day(day, hist[-1], hist, names, "2026-02-09", which=("S",))
+    assert len(out1["S"]) >= 2
+    inj = ef.triggers_of(out1)
+    d2, _ = ef.plant_copy(day, None, out1, 8.0)
+    out2, _ = ef.score_day(d2, hist[-1], hist, names, "2026-02-09", which=("S",), inject=inj)
+    a = {(r["sym"], r["t"]): r for r in out1["S"]}
+    b = {(r["sym"], r["t"]): r for r in out2["S"]}
+    assert set(a) == set(b)
+    assert all(abs((b[k]["net"] - a[k]["net"]) - 8.0) < 0.5 for k in a)
+    assert all(abs(b[k]["ca"] - a[k]["ca"]) < 0.5 for k in a if a[k]["ca"] is not None)
+    nul = ef.null_injection(out1, names, ef.ALL_ETF, "2026-02-09")
+    assert sum(len(v) for v in nul["S"].values()) == len(out1["S"])           # same count and the same bars
+    assert sorted(t for v in nul["S"].values() for t in v) == sorted(r["t"] for r in out1["S"])
+
+
+def test_run_refuses_a_second_read(tmp_path, monkeypatch):
+    monkeypatch.setattr(ef, "OUT", tmp_path)
+    (tmp_path / "run.pkl").write_bytes(b"x")
+    try:
+        ef.run("run")
+        assert False, "should have refused"
+    except SystemExit as e:
+        assert "ONE read" in str(e)

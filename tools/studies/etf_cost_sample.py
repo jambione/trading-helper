@@ -47,29 +47,39 @@ def spread_bp(bid: float, ask: float) -> float | None:
     return (ask - bid) / ((ask + bid) / 2) * 1e4
 
 
-def main():
+def make_client():
     import alpaca_api as aa
+    from config import load_config_ro
+    return aa.connect_data_client(dict(load_config_ro() or {}))
+
+
+def spread_at(client, etf: str, day: str, minute: int):
+    """NBBO spread in bp of mid in force at the start of `minute` (minute of day, ET): the last SIP quote in the 5 s before it. None if absent."""
     from alpaca.data.requests import StockQuotesRequest
     from alpaca.data.enums import DataFeed
-    from config import load_config_ro
-    client = aa.connect_data_client(dict(load_config_ro() or {}))
+    t1 = datetime.fromisoformat(day).replace(hour=minute // 60, minute=minute % 60, tzinfo=ET)
+    try:
+        q = client.get_stock_quotes(StockQuotesRequest(symbol_or_symbols=etf, start=t1 - timedelta(seconds=5), end=t1, feed=DataFeed.SIP))
+        rows = (q.data or {}).get(etf, [])
+    except Exception as e:  # noqa: BLE001
+        print("ERR", etf, day, minute, str(e)[:80])
+        return None
+    if not rows:
+        return None
+    last = rows[-1]
+    return spread_bp(float(last.bid_price), float(last.ask_price))
+
+
+def main():
+    client = make_client()
     days = sorted(p.stem for p in (ROOT / "ai_reports" / "warehouse" / "etf").glob("20??-??-??.npz"))
     res = {}
     for etf in ETFS:
         vals = []
         for d, m in sample_plan(etf, days):
-            t1 = datetime.fromisoformat(d).replace(hour=m // 60, minute=m % 60, tzinfo=ET)
-            try:
-                q = client.get_stock_quotes(StockQuotesRequest(symbol_or_symbols=etf, start=t1 - timedelta(seconds=5), end=t1, feed=DataFeed.SIP))
-                rows = (q.data or {}).get(etf, [])
-            except Exception as e:  # noqa: BLE001
-                print("ERR", etf, d, m, str(e)[:80])
-                continue
-            if rows:
-                last = rows[-1]
-                s = spread_bp(float(last.bid_price), float(last.ask_price))
-                if s is not None:
-                    vals.append(s)
+            s_ = spread_at(client, etf, d, m)
+            if s_ is not None:
+                vals.append(s_)
             time.sleep(0.05)
         med = statistics.median(vals) if vals else None
         res[etf] = {"n": len(vals), "median_spread_bp": med, "rt_bp": None if med is None else med + 1.0,

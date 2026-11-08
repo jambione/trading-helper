@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""evening_family (docs/studies/evening_family_2026-11-07_prereg.json, skeptic rounds applied). Read-only, SIP warehouses.
+"""evening_family (docs/studies/evening_family_2026-11-07_prereg.json, skeptic rounds 1-2 + code review applied). Read-only, SIP warehouses.
 
 S  surge continuation, stocks (R5 rule unchanged), VERDICT on warehouse_confirm; the 120-day read is a discovery re-score.
-E  surge continuation on 12 ETFs (per-ETF costs from ai_reports/warehouse/etf/cost.json; stress = max(2x, actual spreads)).
+E  surge continuation on 12 ETFs (per-ETF costs from ai_reports/warehouse/etf/cost.json; stress = max(2x, actual NBBO spreads)).
 L  sector-ETF lead-lag (stock residual 2-bar return in [-15, +2] bp after its mapped ETF jumps).
 R  live pre-square arm with fast %R length 21 vs 10; scored as a head-to-head of primary-control lifts (R-H2H).
 
-    .venv/bin/python tools/studies/evening_family.py count            # outcome-blind trigger counts (decides E's threshold)
-    .venv/bin/python tools/studies/evening_family.py run              # canaries, then the one read -> docs/EVENING_FAMILY.md
+    .venv/bin/python tools/studies/evening_family.py count    # outcome-blind trigger counts only (decides E's threshold); writes count.json
+    .venv/bin/python tools/studies/evening_family.py run      # ONE read: scores, runs canaries on a seeded day sample, pickles run.pkl (refuses a second run)
+    .venv/bin/python tools/studies/evening_family.py report   # canaries must pass, then writes docs/EVENING_FAMILY.md
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import pickle
-import random
 import sys
-from collections import deque
+from collections import defaultdict, deque
 from datetime import date
 from pathlib import Path
 
@@ -26,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools" / "studies"))
 from relative_strength_scan import load_day, prev_weekday  # noqa: E402
-from board_structure_family import universe, seeded, tstat  # noqa: E402
+from board_structure_family import universe, seeded, tstat, residual_stats  # noqa: E402
 from bar_signal_family import wr_smoothed  # noqa: E402
 
 WH_SIP = ROOT / "ai_reports" / "warehouse" / "sip"
@@ -41,6 +42,8 @@ REFRACT = 30
 NDRAW = 5
 SECTOR = ["SMH", "SOXX", "IBIT", "IGV", "XBI", "URA", "XLE", "XLF", "ARKK"]
 ALL_ETF = SECTOR + ["QQQ", "IWM", "SPY"]
+HOLD = {"S": 5, "E": 5, "L": 10, "R21": 10, "R10": 10}
+KEYS = ("S", "E", "L", "R21", "R10")
 
 
 # ---------------- generic pieces (pure) ----------------
@@ -63,7 +66,7 @@ def vol_ratio(v, t, k=15, need=10):
 
 
 def first_true(cond_ts, refract=REFRACT):
-    """Transition-free list of trigger bars -> keep the first, restart the clock only at a kept trigger."""
+    """Keep the first trigger; restart the clock only at a kept trigger."""
     kept, last = [], -10 ** 9
     for t in sorted(cond_ts):
         if t - last >= refract:
@@ -81,19 +84,41 @@ def trade(o, c, t, H, cost):
 
 def later_minutes(t, H, trig):
     """Secondary control candidates: t+H+2 .. t+H+62 inside 15..360, clear of [x, x+H+1] for every trigger x <= m (triggers after m
-    are future information at m and are NOT used)."""
+    are future information at m and are NOT used). Pass ALL of the instrument's kept trigger times."""
     return [m for m in range(max(FIRST, t + H + 2), min(LAST, t + H + 62) + 1) if all(not (x <= m <= x + H + 1) for x in trig if x <= m)]
 
 
 def primary_pool(candidates, trig, t, me, exclude=()):
-    """Same-minute control pool: other instruments that did NOT trigger in [t-15, t] (known at the decision minute). Triggers after t are
-    future information and are never used (round-2 look-ahead fix)."""
+    """Same-minute control pool: other instruments that did NOT trigger in [t-15, t] (known at the decision minute). Triggers after t
+    are future information and are never used (round-2 look-ahead fix)."""
     return [m for m in candidates if m != me and m not in exclude and not any(t - 15 <= x <= t for x in trig.get(m, []))]
 
 
-def betas_and_residuals(hist, names):
-    """beta vs SPY over the previous sessions (09:35 on) and the residual return matrix rows, keyed by name. hist days must carry SPY."""
+def sample_k(rng, pool, k=NDRAW):
+    """Without replacement."""
+    pool = list(pool)
+    return rng.sample(pool, min(k, len(pool)))
+
+
+def residuals(hist, names, beta):
+    """Residual 1-minute return vectors (09:35 on) per name over the history sessions, with the GIVEN beta."""
     R, S = {n: [] for n in names}, []
+    for d in hist:
+        si = d["idx"].get("SPY")
+        if si is None:
+            return {}
+        spy = d["c"][si]
+        S.append(spy[6:] / spy[5:-1] - 1)
+        for n in names:
+            i = d["idx"].get(n)
+            R[n].append(np.full(384, np.nan) if i is None else d["c"][i][6:] / d["c"][i][5:-1] - 1)
+    S = np.concatenate(S)
+    return {n: np.concatenate(R[n]) - beta[n] * S for n in names if n in beta}
+
+
+def etf_betas(hist, names):
+    """Plain beta vs SPY for the ETFs over the history sessions (>= 500 points)."""
+    S, R = [], {n: [] for n in names}
     for d in hist:
         si = d["idx"].get("SPY")
         if si is None:
@@ -104,20 +129,15 @@ def betas_and_residuals(hist, names):
             i = d["idx"].get(n)
             R[n].append(np.full(384, np.nan) if i is None else d["c"][i][6:] / d["c"][i][5:-1] - 1)
     if not S:
-        return {}, {}
+        return {}
     S = np.concatenate(S)
-    beta, res = {}, {}
+    out = {}
     for n in names:
         x = np.concatenate(R[n])
         m = ~np.isnan(x) & ~np.isnan(S)
-        if m.sum() < 500:
-            continue
-        b = float(np.dot(x[m], S[m]) / np.dot(S[m], S[m])) if np.dot(S[m], S[m]) > 0 else 1.0
-        beta[n] = b
-        e = np.full_like(x, np.nan)
-        e[m] = x[m] - b * S[m]
-        res[n] = e
-    return beta, res
+        if m.sum() >= 500 and np.dot(S[m], S[m]) > 0:
+            out[n] = float(np.dot(x[m], S[m]) / np.dot(S[m], S[m]))
+    return out
 
 
 def corr(a, b):
@@ -131,14 +151,18 @@ def corr(a, b):
 
 # ---------------- %R pre-square (R) ----------------
 def minute_grid(prev_c, prev_h, prev_l, c, h, l):  # noqa: E741
-    """Previous session's last 112 RTH bars + today's, missing minutes filled flat (close carried, high = low = close)."""
+    """Previous session's last 112 RTH bars + today's, short gaps filled flat. As signals._minute_grid_pr, gaps longer than
+    MINUTE_GAP_FILL_MAX (15) stay NaN (so no trigger can fire on a filled minute that has no real bar after a long silence)."""
     def fill(cc, hh, ll):
         cc, hh, ll = np.array(cc, float), np.array(hh, float), np.array(ll, float)
-        last = np.nan
+        last, gap = np.nan, 0
         for i in range(len(cc)):
             if np.isnan(cc[i]):
-                cc[i] = hh[i] = ll[i] = last
+                gap += 1
+                if gap <= 15 and not np.isnan(last):
+                    cc[i] = hh[i] = ll[i] = last
             else:
+                gap = 0
                 last = cc[i]
                 if np.isnan(hh[i]):
                     hh[i] = cc[i]
@@ -147,14 +171,12 @@ def minute_grid(prev_c, prev_h, prev_l, c, h, l):  # noqa: E741
         return cc, hh, ll
     pc, ph, pl = fill(prev_c[-112:], prev_h[-112:], prev_l[-112:])
     tc, th, tl = fill(c, h, l)
-    if np.isnan(tc[0]) and len(pc) and not np.isnan(pc[-1]):          # carry the prior close into a late-starting session
-        tc, th, tl = fill(np.concatenate([[pc[-1]], c]), np.concatenate([[pc[-1]], h]), np.concatenate([[pc[-1]], l]))
-        tc, th, tl = tc[1:], th[1:], tl[1:]
     return np.concatenate([pc, tc]), np.concatenate([ph, th]), np.concatenate([pl, tl]), len(pc)
 
 
 def presquare_bars(cc, hh, ll, off, L):
-    """Today's bar indexes where the live pre-square is true on this bar AND the previous one (trigger = the second)."""
+    """Today's bar indexes where the live pre-square is true on this bar AND the previous one, and not the one before (trigger = the
+    second). rte_direction_eps 0.05 (config.py:1139). Cites ai_entry_watch.py:13087-13148."""
     fast = wr_smoothed(hh, ll, cc, n=L, span=7)
     slow = wr_smoothed(hh, ll, cc, n=112, span=3)
     ok = np.zeros(len(cc), dtype=bool)
@@ -167,8 +189,14 @@ def presquare_bars(cc, hh, ll, off, L):
 
 
 # ---------------- evaluation ----------------
-def evaluate(rows, crit, min_days=60, min_half_days=25):
-    """rows: [{d, net, net_s, ca (primary control), cb (secondary)}] -> verdict dict per docs/TEST_STANDARD.md."""
+def crit_t(days):
+    from scipy import stats
+    return float(stats.t.ppf(1 - ALPHA, max(1, days - 1)))
+
+
+def evaluate(rows, min_days=60, min_half_days=25, min_n=300, min_half_n=100):
+    """rows: [{d, net, net_s, ca (primary), cb (secondary)}] -> verdict dict per docs/TEST_STANDARD.md. crit uses scored days
+    = days with at least one trigger that has a primary control."""
     if not rows:
         return {"status": "UNDERPOWERED", "n": 0}
     days = sorted({r["d"] for r in rows})
@@ -188,112 +216,166 @@ def evaluate(rows, crit, min_days=60, min_half_days=25):
     lifts = sorted(r["net"] - r["ca"] for r in rows if r.get("ca") is not None)
     cap = lifts[max(0, int(0.99 * len(lifts)) - 1)] if lifts else 0.0
     win = dmean(rows, lambda r: None if r.get("ca") is None else min(r["net"] - r["ca"], cap))
-    h = lambda dd: (np.mean([v for d, v in dd.items() if d < mid]) if any(d < mid for d in dd) else float("nan"),  # noqa: E731
-                    np.mean([v for d, v in dd.items() if d >= mid]) if any(d >= mid for d in dd) else float("nan"))
+
+    def h(dd):
+        a = [v for d, v in dd.items() if d < mid]
+        b = [v for d, v in dd.items() if d >= mid]
+        return (float(np.mean(a)) if a else float("nan"), float(np.mean(b)) if b else float("nan"))
     lv = list(lift.values())
+    crit = crit_t(len(lv))
     t_l = tstat(lv)
     n_h = (sum(1 for r in rows if r["d"] < mid), sum(1 for r in rows if r["d"] >= mid))
     d_h = (sum(1 for d in net if d < mid), sum(1 for d in net if d >= mid))
-    under = len(rows) < 300 or min(n_h) < 100 or len(net) < min_days or min(d_h) < min_half_days
-    hl, hw, hn, hs = h(lift), h(win), h(net), h(nets) if nets else (float("nan"), float("nan"))
-    edge = (t_l >= crit and hl[0] > 0 and hl[1] > 0 and (np.mean(list(liftb.values())) if liftb else -1) > 0 and hw[0] > 0 and hw[1] > 0)
-    prof = edge and hn[0] > 0 and hn[1] > 0 and (np.mean(list(nets.values())) if nets else -1) > 0
+    under = len(rows) < min_n or min(n_h) < min_half_n or len(net) < min_days or min(d_h) < min_half_days or not lv
+    hl, hw, hn = h(lift), h(win), h(net)
+    pos = lambda x: x == x and x > 0  # noqa: E731
+    edge = (t_l >= crit and pos(hl[0]) and pos(hl[1]) and bool(liftb) and np.mean(list(liftb.values())) > 0 and pos(hw[0]) and pos(hw[1]))
+    prof = edge and pos(hn[0]) and pos(hn[1]) and bool(nets) and np.mean(list(nets.values())) > 0
     status = "UNDERPOWERED" if under else ("PROFITABLE" if prof else ("EDGE" if edge else "FAIL"))
-    return {"status": status, "n": len(rows), "n_h": n_h, "days": len(net), "d_h": d_h, "crit": crit,
+    cas = [r["ca"] for r in rows if r.get("ca") is not None]
+    cbs = [r["cb"] for r in rows if r.get("cb") is not None]
+    return {"status": status, "n": len(rows), "n_h": n_h, "days": len(lv), "d_h": d_h, "crit": crit,
             "lift": float(np.mean(lv)) if lv else float("nan"), "lift_t": t_l, "lift_h": hl, "liftb": float(np.mean(list(liftb.values()))) if liftb else float("nan"),
-            "win_h": hw, "net": float(np.mean(list(net.values()))), "net_h": hn, "net_stress": float(np.mean(list(nets.values()))) if nets else float("nan"),
-            "ca_mean": float(np.mean([r["ca"] for r in rows if r.get("ca") is not None])) if any(r.get("ca") is not None for r in rows) else float("nan")}
+            "win_h": hw, "net": float(np.mean(list(net.values()))), "net_h": hn,
+            "net_stress": float(np.mean(list(nets.values()))) if nets else float("nan"),
+            "ca_mean": float(np.mean(cas)) if cas else float("nan"), "cb_mean": float(np.mean(cbs)) if cbs else float("nan")}
 
 
-def canary_planted(rows, bp=8.0):
-    a = [r["net"] - r["ca"] for r in rows if r.get("ca") is not None]
-    b = [(r["net"] + bp) - r["ca"] for r in rows if r.get("ca") is not None]
-    return (np.mean(b) - np.mean(a)) if a else float("nan")
+def void_status(ev, base_rows):
+    """VOID when the primary control mean is more than 3 bp from the bar-of-day baseline, or the baseline/control is missing."""
+    bm = float(np.mean([b["net"] for b in base_rows])) if base_rows else float("nan")
+    if not base_rows or math.isnan(ev.get("ca_mean", float("nan"))) or math.isnan(bm):
+        return True, bm
+    return abs(ev["ca_mean"] - bm) > 3.0, bm
 
 
-def crit_t(days):
-    from scipy import stats
-    return float(stats.t.ppf(1 - ALPHA, max(1, days - 1)))
+def h2h(res10, res21, min_days=60):
+    """Per day, mean primary-control lift of L=10 minus L=21, days with both. -> dict."""
+    def dl(rows):
+        out = {}
+        for r in rows:
+            if r.get("ca") is not None:
+                out.setdefault(r["d"], []).append(r["net"] - r["ca"])
+        return {d: float(np.mean(v)) for d, v in out.items()}
+    a10, a21 = dl(res10), dl(res21)
+    both = sorted(set(a10) & set(a21))
+    if len(both) < min_days:
+        return {"status": "UNDERPOWERED", "days": len(both)}
+    diff = [a10[d] - a21[d] for d in both]
+    mid = both[len(both) // 2]
+    h1 = float(np.mean([a10[d] - a21[d] for d in both if d < mid]))
+    h2 = float(np.mean([a10[d] - a21[d] for d in both if d >= mid]))
+    t, crit = tstat(diff), crit_t(len(both))
+    return {"status": "L=10 BETTER" if (t >= crit and h1 > 0 and h2 > 0) else "NOT BETTER", "days": len(both),
+            "mean": float(np.mean(diff)), "t": t, "crit": crit, "h": (h1, h2)}
+
+
+# ---------------- E stress (actual NBBO spreads) ----------------
+def e_stress_net(net, rt_bp, sp_entry, sp_exit):
+    """Stress net = gross - max(2 x rt, spread at entry + spread at exit); net = gross - rt."""
+    gross = net + rt_bp
+    return gross - max(2 * rt_bp, sp_entry + sp_exit)
+
+
+def attach_e_stress(rows, costs, spread_fn):
+    """spread_fn(etf, day, minute_of_day) -> bp or None. Rows with a missing quote keep net_s None (PROFITABLE cannot fire for them)."""
+    for r in rows:
+        rt = costs[r["sym"]]["rt_bp"]
+        a = spread_fn(r["sym"], r["d"], 570 + r["t"] + 1)
+        b = spread_fn(r["sym"], r["d"], 570 + r["t"] + HOLD["E"])
+        r["net_s"] = e_stress_net(r["net"], rt, a, b) if (a is not None and b is not None) else None
+    return rows
 
 
 # ---------------- per-day scoring ----------------
-def _draw_xs(rng, pool, k=NDRAW):
-    return [rng.choice(pool) for _ in range(k)] if pool else []
-
-
-def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None, e_thr=0.0020, which=("S", "E", "L", "R")):
-    out = {k: [] for k in ("S", "E", "L", "R21", "R10", "BASE")}
-    stats = {"skipped": 0}
-    beta, res_hist = betas_and_residuals(hist, names)
+def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None, e_thr=0.0020, which=("S", "E", "L", "R"), inject=None):
+    """-> (rows by key + BASE baseline rows, stats). `inject` replaces the computed triggers (canaries): {"S": {sym:[t]}, "R21": {...},
+    "R10": {...}, "E": {etf:[t]}, "L": [(etf, t)]}."""
+    out = {k: [] for k in KEYS + ("BASE",)}
+    st = defaultdict(int)
+    beta, _peers = residual_stats(hist, names)             # R5's beta, unchanged (present >= 15, >= 500 points)
     names = [n for n in names if n in beta and n in day["idx"]]
     spy = day["c"][day["idx"]["SPY"]]
     spy1 = r1(spy)
-    # per-name arrays
     A = {}
     for n in names:
         i = day["idx"][n]
         c, o, v = day["c"][i], day["o"][i], day["v"][i]
-        res1 = r1(c) - beta[n] * spy1
-        A[n] = {"i": i, "o": o, "c": c, "v": v, "res1": res1}
+        A[n] = {"i": i, "o": o, "c": c, "v": v, "res1": r1(c) - beta[n] * spy1}
+
+    def base_row(key, arrays, who, t, H, cost_of=lambda m: COST):
+        if not arrays:
+            return
+        m0 = seeded("baseline", key, d, who, t).choice(sorted(arrays))
+        b = trade(arrays[m0]["o"], arrays[m0]["c"], t, H, cost_of(m0))
+        if b is not None:
+            out["BASE"].append({"key": key, "net": b})
+
+    def controls(key, who, arrays, t, H, trig_all, own_trig, cost_of, cand, exclude=(), flt=None):
+        """-> (primary mean, secondary mean) with removal counts in st."""
+        full = [m for m in cand if m != who]
+        pool = primary_pool(full, trig_all, t, who, exclude)
+        if flt is not None:
+            pool = [m for m in pool if flt(m, t)]
+        st[f"{key}_removed_primary"] += len(full) - len(pool)
+        xs = [trade(arrays[m]["o"], arrays[m]["c"], t, H, cost_of(m)) for m in sample_k(seeded(who, d, f"{key}-a", t), pool)]
+        xs = [x for x in xs if x is not None]
+        raw = list(range(max(FIRST, t + H + 2), min(LAST, t + H + 62) + 1))
+        lm = later_minutes(t, H, own_trig)
+        if flt is not None:
+            lm = [m for m in lm if flt(who, m)]
+        st[f"{key}_removed_secondary"] += len(raw) - len(lm)
+        ls_ = [trade(arrays[who]["o"], arrays[who]["c"], m, H, cost_of(who)) for m in sample_k(seeded(who, d, f"{key}-b", t), lm)]
+        ls_ = [x for x in ls_ if x is not None]
+        return (float(np.mean(xs)) if xs else None), (float(np.mean(ls_)) if ls_ else None)
+
     # ---- S ----
     if "S" in which:
-        trig = {}
+        if inject and "S" in inject:
+            trig = {n: first_true(ts) for n, ts in inject["S"].items() if n in A}
+        else:
+            trig = {n: first_true([t for t in range(FIRST, LAST + 1) if not np.isnan(A[n]["res1"][t]) and A[n]["res1"][t] >= 0.0020 and vol_ratio(A[n]["v"], t) >= 2.0]) for n in names}
         for n in names:
-            a = A[n]
-            ts = [t for t in range(FIRST, LAST + 1) if not np.isnan(a["res1"][t]) and a["res1"][t] >= 0.0020 and vol_ratio(a["v"], t) >= 2.0]
-            trig[n] = first_true(ts)
-        for n in names:
-            for t in trig[n]:
+            for t in trig.get(n, []):
                 net = trade(A[n]["o"], A[n]["c"], t, 5, COST)
                 if net is None:
-                    stats["skipped"] += 1
+                    st["S_skipped"] += 1
                     continue
-                pool = primary_pool(names, trig, t, n)
-                xs = [trade(A[m]["o"], A[m]["c"], t, 5, COST) for m in _draw_xs(seeded(n, d, "S-a", t), pool)]
-                xs = [x for x in xs if x is not None]
-                lm = later_minutes(t, 5, trig[n])
-                ls_ = [trade(A[n]["o"], A[n]["c"], m, 5, COST) for m in _draw_xs(seeded(n, d, "S-b", t), lm)]
-                ls_ = [x for x in ls_ if x is not None]
-                out["S"].append({"d": d, "sym": n, "t": t, "net": net, "net_s": net + COST - STRESS,
-                                 "ca": float(np.mean(xs)) if xs else None, "cb": float(np.mean(ls_)) if ls_ else None})
-                _b = trade(A[m0]["o"], A[m0]["c"], t, 5, COST) if (m0 := seeded("baseline", "S", d, n, t).choice(names)) else None
-                if _b is not None:
-                    out["BASE"].append({"key": "S", "net": _b})
+                ca, cb = controls("S", n, A, t, 5, trig, trig[n], lambda m: COST, names)
+                out["S"].append({"d": d, "sym": n, "t": t, "net": net, "net_s": net + COST - STRESS, "ca": ca, "cb": cb})
+                base_row("S", A, n, t, 5)
     # ---- R (both lengths) ----
     if "R" in which and prev is not None:
-        trig = {10: {}, 21: {}}
-        for n in names:
-            j = prev["idx"].get(n)
-            if j is None:
-                continue
-            i = A[n]["i"]
-            cc, hh, ll, off = minute_grid(prev["c"][j], prev["h"][j], prev["l"][j], day["c"][i], day["h"][i], day["l"][i])
-            if off < 112:
-                continue
+        trigR = {10: {}, 21: {}}
+        injected = bool(inject) and any(f"R{L}" in inject for L in (10, 21))
+        if injected:
             for L in (10, 21):
-                trig[L][n] = first_true(presquare_bars(cc, hh, ll, off, L))
+                trigR[L] = {n: first_true(ts) for n, ts in inject.get(f"R{L}", {}).items() if n in A}
+        else:
+            for n in names:
+                j = prev["idx"].get(n)
+                if j is None:
+                    continue
+                i = A[n]["i"]
+                cc, hh, ll, off = minute_grid(prev["c"][j], prev["h"][j], prev["l"][j], day["c"][i], day["h"][i], day["l"][i])
+                if off < 112:
+                    continue
+                for L in (10, 21):
+                    trigR[L][n] = first_true(presquare_bars(cc, hh, ll, off, L))
         for L in (10, 21):
             key = f"R{L}"
-            for n, ts in trig[L].items():
+            for n, ts in trigR[L].items():
                 for t in ts:
                     net = trade(A[n]["o"], A[n]["c"], t, 10, COST)
                     if net is None:
-                        stats["skipped"] += 1
+                        st[f"{key}_skipped"] += 1
                         continue
-                    pool = primary_pool(list(trig[L]), trig[L], t, n)
-                    xs = [trade(A[m]["o"], A[m]["c"], t, 10, COST) for m in _draw_xs(seeded(n, d, f"{key}-a", t), pool)]
-                    xs = [x for x in xs if x is not None]
-                    lm = later_minutes(t, 10, ts)
-                    ls_ = [trade(A[n]["o"], A[n]["c"], m, 10, COST) for m in _draw_xs(seeded(n, d, f"{key}-b", t), lm)]
-                    ls_ = [x for x in ls_ if x is not None]
-                    out[key].append({"d": d, "sym": n, "t": t, "net": net, "net_s": net + COST - STRESS,
-                                     "ca": float(np.mean(xs)) if xs else None, "cb": float(np.mean(ls_)) if ls_ else None})
-                    _b = trade(A[m0]["o"], A[m0]["c"], t, 10, COST) if (m0 := seeded("baseline", key, d, n, t).choice(names)) else None
-                    if _b is not None:
-                        out["BASE"].append({"key": key, "net": _b})
-    # ---- E and L need ETF bars ----
-    if etf_day is not None and etf_hist:
-        ebeta, eres = betas_and_residuals(etf_hist, [x for x in ALL_ETF if x != "SPY"])
+                    ca, cb = controls(key, n, A, t, 10, trigR[L], ts, lambda m: COST, list(trigR[L]))
+                    out[key].append({"d": d, "sym": n, "t": t, "net": net, "net_s": net + COST - STRESS, "ca": ca, "cb": cb})
+                    base_row(key, A, n, t, 10)
+    # ---- E and L need ETF bars aligned to the stock history ----
+    if etf_day is not None and etf_hist is not None and len(etf_hist) == len(hist) and ("E" in which or "L" in which):
+        ebeta = etf_betas(etf_hist, [x for x in ALL_ETF if x != "SPY"])
         ebeta["SPY"] = 1.0
         espy = etf_day["c"][etf_day["idx"]["SPY"]]
         E = {}
@@ -302,94 +384,164 @@ def score_day(day, prev, hist, names, d, etf_day=None, etf_hist=None, costs=None
             if k is None or x not in ebeta:
                 continue
             c = etf_day["c"][k]
-            rr = r1(c) if x == "SPY" else r1(c) - ebeta[x] * r1(espy)
-            E[x] = {"o": etf_day["o"][k], "c": c, "v": etf_day["v"][k], "res1": rr}
+            E[x] = {"o": etf_day["o"][k], "c": c, "v": etf_day["v"][k], "res1": r1(c) if x == "SPY" else r1(c) - ebeta[x] * r1(espy)}
         if "E" in which:
-            trig = {}
-            for x, a in E.items():
-                ts = [t for t in range(FIRST, LAST + 1) if not np.isnan(a["res1"][t]) and a["res1"][t] >= e_thr and vol_ratio(a["v"], t) >= 2.0]
-                trig[x] = first_true(ts)
-            if "SMH" in trig and "SOXX" in trig:                       # near-duplicates: keep SMH when both fire the same minute
-                trig["SOXX"] = [t for t in trig["SOXX"] if t not in set(trig["SMH"])]
-            for x, ts in trig.items():
-                cx = (costs or {}).get(x, {}).get("rt_bp") or 2.0
+            if inject and "E" in inject:
+                trigE = {x: first_true(ts) for x, ts in inject["E"].items() if x in E}
+            else:
+                trigE = {x: first_true([t for t in range(FIRST, LAST + 1) if not np.isnan(a["res1"][t]) and a["res1"][t] >= e_thr and vol_ratio(a["v"], t) >= 2.0]) for x, a in E.items()}
+            if "SMH" in trigE and "SOXX" in trigE:
+                trigE["SOXX"] = [t for t in trigE["SOXX"] if t not in set(trigE["SMH"])]
+            rt = lambda m: costs[m]["rt_bp"]  # noqa: E731 (a missing cost raises: no silent 2 bp)
+            for x, ts in trigE.items():
                 for t in ts:
-                    net = trade(E[x]["o"], E[x]["c"], t, 5, cx)
+                    net = trade(E[x]["o"], E[x]["c"], t, 5, rt(x))
                     if net is None:
-                        stats["skipped"] += 1
+                        st["E_skipped"] += 1
                         continue
-                    dup = {'SMH': 'SOXX', 'SOXX': 'SMH'}.get(x)
-                    pool = primary_pool(list(E), trig, t, x, exclude=(dup,))
-                    xs = [trade(E[y]["o"], E[y]["c"], t, 5, (costs or {}).get(y, {}).get("rt_bp") or 2.0) for y in _draw_xs(seeded(x, d, "E-a", t), pool)]
-                    xs = [z for z in xs if z is not None]
-                    lm = later_minutes(t, 5, ts)
-                    ls_ = [trade(E[x]["o"], E[x]["c"], m, 5, cx) for m in _draw_xs(seeded(x, d, "E-b", t), lm)]
-                    ls_ = [z for z in ls_ if z is not None]
-                    out["E"].append({"d": d, "sym": x, "t": t, "net": net, "net_s": None, "cost": cx,
-                                     "ca": float(np.mean(xs)) if xs else None, "cb": float(np.mean(ls_)) if ls_ else None})
-                    y0 = seeded("baseline", "E", d, x, t).choice(sorted(E))
-                    _b = trade(E[y0]["o"], E[y0]["c"], t, 5, (costs or {}).get(y0, {}).get("rt_bp") or 2.0)
-                    if _b is not None:
-                        out["BASE"].append({"key": "E", "net": _b})
+                    dup = {"SMH": "SOXX", "SOXX": "SMH"}.get(x)
+                    ca, cb = controls("E", x, E, t, 5, trigE, ts, rt, list(E), exclude=(dup,))
+                    out["E"].append({"d": d, "sym": x, "t": t, "net": net, "net_s": None, "ca": ca, "cb": cb})
+                    base_row("E", E, x, t, 5, rt)
         if "L" in which:
-            # mapping from the previous 20 sessions only: stock residuals (stock hist) vs ETF residuals (ETF hist), aligned by day
-            mapped, etf_corr = {}, {}
+            eres = residuals(etf_hist, [x for x in SECTOR if x in ebeta], ebeta)
+            sres = residuals(hist, names, beta)
+            etf_corr = {}
             for x in SECTOR:
                 for y in SECTOR:
                     if x < y and x in eres and y in eres:
                         etf_corr[(x, y)] = etf_corr[(y, x)] = corr(eres[x], eres[y])
+            mapped = {}
             for n in names:
-                if n not in res_hist:
+                if n not in sres:
                     continue
                 best, bc = None, 0.30
                 for x in SECTOR:
-                    if x in eres and len(eres[x]) == len(res_hist[n]):
-                        cr = corr(res_hist[n], eres[x])
+                    if x in eres:
+                        cr = corr(sres[n], eres[x])
                         if not np.isnan(cr) and cr >= bc:
                             best, bc = x, cr
                 if best:
                     mapped[n] = best
-            r2 = {n: (A[n]["c"] / np.roll(A[n]["c"], 2) - 1) - beta[n] * (spy / np.roll(spy, 2) - 1) for n in names}
-            ok_f = {n: (lambda arr: (arr >= -0.0015) & (arr <= 0.0002))(r2[n]) for n in names}
-            ev = []
-            for x in SECTOR:
-                if x not in E:
-                    continue
-                a = E[x]
-                er2 = (a["c"] / np.roll(a["c"], 2) - 1) - ebeta[x] * (espy / np.roll(espy, 2) - 1)
-                for t in range(FIRST, LAST + 1):
-                    if not np.isnan(er2[t]) and er2[t] >= 0.0015 and vol_ratio(a["v"], t) >= 2.0:
-                        ev.append((x, t))
-            last = {}
+            with np.errstate(invalid="ignore"):
+                r2 = {n: (A[n]["c"] / np.roll(A[n]["c"], 2) - 1) - beta[n] * (spy / np.roll(spy, 2) - 1) for n in names}
+            ok_f = {n: (r2[n] >= -0.0015) & (r2[n] <= 0.0002) for n in names}
+            if inject and "L" in inject:
+                ev = list(inject["L"])
+            else:
+                ev = []
+                for x in SECTOR:
+                    if x not in E:
+                        continue
+                    a = E[x]
+                    with np.errstate(invalid="ignore"):
+                        er2 = (a["c"] / np.roll(a["c"], 2) - 1) - ebeta[x] * (espy / np.roll(espy, 2) - 1)
+                    ev += [(x, t) for t in range(FIRST, LAST + 1) if not np.isnan(er2[t]) and er2[t] >= 0.0015 and vol_ratio(a["v"], t) >= 2.0]
+            ltrig = defaultdict(list)                       # per-stock kept L triggers, in time order
             for x, t in sorted(ev, key=lambda z: z[1]):
                 hit = False
                 for n, mx in mapped.items():
-                    if mx != x or not ok_f[n][t] or t - last.get(n, -10 ** 9) < REFRACT:
+                    if mx != x or not ok_f[n][t] or (ltrig[n] and t - ltrig[n][-1] < REFRACT):
                         continue
                     net = trade(A[n]["o"], A[n]["c"], t, 10, COST)
                     if net is None:
-                        stats["skipped"] += 1
+                        st["L_skipped"] += 1
                         continue
-                    last[n] = t
-                    hit = True
                     excl = {x} | {y for y in SECTOR if etf_corr.get((x, y), 0) >= 0.5}
-                    pool = [m for m in names if m != n and ok_f[m][t] and mapped.get(m) not in excl]
-                    xs = [trade(A[m]["o"], A[m]["c"], t, 10, COST) for m in _draw_xs(seeded(n, d, "L-a", t), pool)]
-                    xs = [z for z in xs if z is not None]
-                    lm = [m for m in later_minutes(t, 10, [t]) if ok_f[n][m]]
-                    ls_ = [trade(A[n]["o"], A[n]["c"], m, 10, COST) for m in _draw_xs(seeded(n, d, "L-b", t), lm)]
-                    ls_ = [z for z in ls_ if z is not None]
-                    out["L"].append({"d": d, "sym": n, "t": t, "etf": x, "net": net, "net_s": net + COST - STRESS,
-                                     "ca": float(np.mean(xs)) if xs else None, "cb": float(np.mean(ls_)) if ls_ else None})
-                    bp_ = [m for m in names if ok_f[m][t]]
-                    if bp_:
-                        m0 = seeded("baseline", "L", d, n, t).choice(bp_)
-                        _b = trade(A[m0]["o"], A[m0]["c"], t, 10, COST)
-                        if _b is not None:
-                            out["BASE"].append({"key": "L", "net": _b})
-                stats.setdefault("L_events", 0)
-                stats["L_events"] += int(hit)
-    return out, stats
+                    cand = [m for m in names if mapped.get(m) not in excl]
+                    flt = lambda m, tt: bool(ok_f[m][tt])  # noqa: E731
+                    ca, cb = controls("L", n, A, t, 10, ltrig, list(ltrig[n]) + [t], lambda m: COST, cand, flt=flt)
+                    ltrig[n].append(t)
+                    hit = True
+                    out["L"].append({"d": d, "sym": n, "t": t, "etf": x, "net": net, "net_s": net + COST - STRESS, "ca": ca, "cb": cb})
+                    base_row("L", {m: A[m] for m in names if ok_f[m][t]}, n, t, 10)
+                if hit:
+                    st["L_events"] += 1
+    elif ("E" in which or "L" in which) and etf_day is not None:
+        st["etf_history_incomplete_days"] += 1
+    return out, dict(st)
+
+
+# ---------------- canaries (through the real scoring path) ----------------
+def triggers_of(out):
+    """Rows -> inject dict reproducing the same triggers."""
+    inj = {"S": defaultdict(list), "R21": defaultdict(list), "R10": defaultdict(list), "E": defaultdict(list)}
+    for k in ("S", "R21", "R10", "E"):
+        for r in out[k]:
+            inj[k][r["sym"]].append(r["t"])
+    res = {k: dict(v) for k, v in inj.items()}
+    res["L"] = sorted({(r["etf"], r["t"]) for r in out["L"]})
+    return res
+
+
+def plant_copy(day, etf_day, out, bp):
+    """Copies of the day arrays with +bp (basis points) added to the exit-bar close of every trigger row."""
+    d2 = dict(day, c=day["c"].copy())
+    e2 = dict(etf_day, c=etf_day["c"].copy()) if etf_day is not None else None
+    for k in KEYS:
+        for r in out[k]:
+            t, H = r["t"], HOLD[k]
+            if t + H >= 390:
+                continue
+            if k == "E":
+                if e2 is not None:
+                    e2["c"][e2["idx"][r["sym"]], t + H] *= (1 + bp / 1e4)
+            else:
+                d2["c"][d2["idx"][r["sym"]], t + H] *= (1 + bp / 1e4)
+    return d2, e2
+
+
+def null_injection(out, names, etf_names, d):
+    """Re-draw each trigger's instrument at random keeping each day's trigger count and bar-of-day mix."""
+    inj = {"S": defaultdict(list), "R21": defaultdict(list), "R10": defaultdict(list), "E": defaultdict(list)}
+    for k in ("S", "R21", "R10"):
+        for r in out[k]:
+            inj[k][seeded("null", k, d, r["sym"], r["t"]).choice(sorted(names))].append(r["t"])
+    for r in out["E"]:
+        inj["E"][seeded("null", "E", d, r["sym"], r["t"]).choice(sorted(etf_names))].append(r["t"])
+    res = {k: dict(v) for k, v in inj.items()}
+    res["L"] = [(seeded("null", "L", d, r["sym"], r["t"]).choice(SECTOR), r["t"]) for r in out["L"]]
+    return res
+
+
+def canary_day(day, prev, hist, names, d, etf_day, etf_hist, costs, e_thr, out1):
+    """-> {key: {"planted": per-trigger change in net (expect +8), "ctrl_shift": |change| of each primary control, "null_lifts": [...]}}"""
+    res = {k: {"planted": [], "ctrl_shift": [], "null_lifts": []} for k in KEYS}
+    inj = triggers_of(out1)
+    d2, e2 = plant_copy(day, etf_day, out1, 8.0)
+    out2, _ = score_day(d2, prev, hist, names, d, e2, etf_hist, costs, e_thr, inject=inj)
+    nul = null_injection(out1, names, ALL_ETF, d)
+    out3, _ = score_day(day, prev, hist, names, d, etf_day, etf_hist, costs, e_thr, inject=nul)
+    for k in KEYS:
+        a = {(r["sym"], r["t"]): r for r in out1[k]}
+        b = {(r["sym"], r["t"]): r for r in out2[k]}
+        both = [x for x in a if x in b]
+        res[k]["planted"] = [b[x]["net"] - a[x]["net"] for x in both]
+        res[k]["ctrl_shift"] = [abs(b[x]["ca"] - a[x]["ca"]) for x in both if a[x]["ca"] is not None and b[x]["ca"] is not None]
+        res[k]["null_lifts"] = [r["net"] - r["ca"] for r in out3[k] if r.get("ca") is not None]
+    return res
+
+
+def canary_verdict(acc):
+    """acc: {key: {"planted": [...], "ctrl_shift": [...], "null_lifts": [...]}} accumulated over the sample days. -> (ok, [failures])."""
+    bad = []
+    for k in KEYS:
+        a = acc.get(k) or {}
+        pl, cs, nl = a.get("planted", []), a.get("ctrl_shift", []), a.get("null_lifts", [])
+        if len(pl) < 5:
+            bad.append(f"{k}: too few canary triggers ({len(pl)}) to test")
+            continue
+        if abs(float(np.mean(pl)) - 8.0) > 0.5:
+            bad.append(f"{k}: planted +8 bp came back as {np.mean(pl):+.2f}")
+        if cs and max(cs) > 0.5:
+            bad.append(f"{k}: a control moved by up to {max(cs):.2f} bp when only exits were changed")
+        if len(nl) >= 20:
+            se = float(np.std(nl, ddof=1) / math.sqrt(len(nl)))
+            if abs(float(np.mean(nl))) > 2 * se:
+                bad.append(f"{k}: null lift {np.mean(nl):+.2f} bp is outside 2 SE ({se:.2f})")
+        else:
+            bad.append(f"{k}: too few null-canary rows ({len(nl)})")
+    return (not bad), bad
 
 
 # ---------------- driver ----------------
@@ -404,6 +556,7 @@ def iter_days(wh, need_hist=20):
     for f in files:
         dd = date.fromisoformat(f.stem)
         day = load_day(f)
+        day["_date"] = f.stem
         if "SPY" not in day["idx"] or prev is None or pd_ != prev_weekday(dd):
             prev, pd_ = day, dd
             hist.append(day)
@@ -417,100 +570,166 @@ def iter_days(wh, need_hist=20):
         hist.append(day)
 
 
+def load_costs():
+    p = WH_ETF / "cost.json"
+    if not p.exists():
+        raise SystemExit("ETF costs missing: run etf_cost_sample.py first")
+    c = json.loads(p.read_text())
+    miss = [x for x in ALL_ETF if not (c.get(x) or {}).get("rt_bp")]
+    if miss:
+        raise SystemExit(f"ETF costs missing for {miss}")
+    return c
+
+
+def etf_context(etf_files, cache, d, hist):
+    """ETF day + the ETF sessions on the SAME dates as the stock history (None when any is missing)."""
+    if d not in etf_files or any(h["_date"] not in etf_files for h in hist):
+        return None, None
+
+    def get(s):
+        if s not in cache:
+            cache[s] = load_day(etf_files[s])
+        return cache[s]
+    return get(d), [get(h["_date"]) for h in hist]
+
+
 def run(mode="run"):
     OUT.mkdir(parents=True, exist_ok=True)
-    costs = json.loads((WH_ETF / "cost.json").read_text()) if (WH_ETF / "cost.json").exists() else {}
+    if mode == "run":
+        if (OUT / "run.pkl").exists():
+            raise SystemExit("run.pkl exists: the prereg allows ONE read (delete it only with the operator's say)")
+        if not (OUT / "count.json").exists():
+            raise SystemExit("run the outcome-blind 'count' first")
+        e_thr = json.loads((OUT / "count.json").read_text())["E_threshold"]
+        costs = load_costs()
+    else:
+        e_thr, costs = 0.0020, {x: {"rt_bp": 2.0} for x in ALL_ETF}    # counts do not depend on costs
     etf_files = {p.stem: p for p in WH_ETF.glob("20??-??-??.npz")}
-    etf_hist = deque(maxlen=20)
-    res = {k: [] for k in ("S", "E", "L", "R21", "R10", "BASE")}
-    st_all = {"skipped": 0, "L_events": 0}
-    e_thr = 0.0020
-    if mode == "run" and (OUT / "count.json").exists():
-        e_thr = json.loads((OUT / "count.json").read_text()).get("E_threshold", 0.0020)
+    etf_cache = {}
+    res = {k: [] for k in KEYS + ("BASE",)}
+    counts = defaultdict(int)
+    stats = defaultdict(int)
+    acc = {k: {"planted": [], "ctrl_shift": [], "null_lifts": []} for k in KEYS}
+    n_days = 0
     for d, day, prev, hist, names in iter_days(WH_SIP):
-        ed = load_day(etf_files[d]) if d in etf_files else None
-        o, st = score_day(day, prev, hist, names, d, ed, list(etf_hist), costs, e_thr)
-        if ed is not None:
-            etf_hist.append(ed)
-        for k in res:
-            res[k] += o[k]
+        ed, eh = etf_context(etf_files, etf_cache, d, hist)
+        o, st = score_day(day, prev, hist, names, d, ed, eh, costs, e_thr)
         for k, v in st.items():
-            st_all[k] = st_all.get(k, 0) + v
-        print(d, {k: len(v) for k, v in res.items()}, flush=True)
+            stats[k] += v
+        for k in KEYS:
+            counts[k] += len(o[k])
+        if mode == "run":
+            for k in res:
+                res[k] += o[k]
+            if int(hashlib.sha256(f"canary|{d}".encode()).hexdigest(), 16) % 8 == 0:     # seeded ~1 in 8 days
+                cd = canary_day(day, prev, hist, names, d, ed, eh, costs, e_thr, o)
+                for k in KEYS:
+                    for f in ("planted", "ctrl_shift", "null_lifts"):
+                        acc[k][f] += cd[k][f]
+        n_days += 1
+        print(d, dict(counts), flush=True)
     conf = {"S": [], "BASE": []}
+    conf_days, conf_count = 0, 0
     for d, day, prev, hist, names in iter_days(WH_CONF):
         o, _ = score_day(day, prev, hist, names, d, which=("S",))
-        conf["S"] += o["S"]
-        conf["BASE"] += [b for b in o["BASE"] if b["key"] == "S"]
-        print("confirm", d, len(conf["S"]), flush=True)
+        conf_count += len(o["S"])
+        if mode == "run":
+            conf["S"] += o["S"]
+            conf["BASE"] += [b for b in o["BASE"] if b["key"] == "S"]
+        conf_days += 1
+    if mode == "count":
+        cnt = {k: counts[k] for k in KEYS} | {"S_confirm": conf_count, "L_events": stats.get("L_events", 0), "scored_days": n_days,
+                                              "confirm_scored_days": conf_days, "etf_history_incomplete_days": stats.get("etf_history_incomplete_days", 0)}
+        cnt["E_threshold"] = 0.0020 if cnt["E"] >= 300 else 0.0010
+        (OUT / "count.json").write_text(json.dumps(cnt, indent=1))
+        print(cnt)
+        return 0
     iex = {"R21": [], "R10": []}
     for d, day, prev, hist, names in iter_days(WH_IEX):
         o, _ = score_day(day, prev, hist, names, d, which=("R",))
         iex["R21"] += o["R21"]
         iex["R10"] += o["R10"]
-    pickle.dump({"res": res, "conf": conf, "iex": iex, "stats": st_all, "e_thr": e_thr}, open(OUT / f"{mode}.pkl", "wb"))
-    if mode == "count":
-        cnt = {k: len(v) for k, v in res.items()} | {"S_confirm": len(conf["S"]), "L_events": st_all.get("L_events", 0)}
-        cnt["E_threshold"] = 0.0020 if cnt["E"] >= 300 else 0.0010
-        (OUT / "count.json").write_text(json.dumps(cnt, indent=1))
-        print(cnt)
-        return 0
+    import etf_cost_sample as ecs                          # E stress from actual NBBO spreads (Alpaca historical quotes; mini)
+    client = ecs.make_client()
+    qcache = {}
+
+    def spread_fn(etf, day_, minute):
+        k = (etf, day_, minute)
+        if k not in qcache:
+            qcache[k] = ecs.spread_at(client, etf, day_, minute)
+        return qcache[k]
+    attach_e_stress(res["E"], costs, spread_fn)
+    pickle.dump({"res": res, "conf": conf, "iex": iex, "stats": dict(stats), "e_thr": e_thr, "canary": acc, "scored_days": n_days, "conf_days": conf_days},
+                open(OUT / "run.pkl", "wb"))
     return report()
 
 
 def report():
     z = pickle.load(open(OUT / "run.pkl", "rb"))
-    res, conf, iex = z["res"], z["conf"], z["iex"]
-    lines = ["# evening_family (docs/studies/evening_family_2026-11-07_prereg.json)", "",
-             "SIP bars; nothing here is shown on IEX except the R information cell. Family of 4 scored tests (S on the confirm sample, E, L, R-H2H), alpha 0.0125.", ""]
+    ok, bad = canary_verdict(z["canary"])
+    lines = ["# evening_family (docs/studies/evening_family_2026-11-07_prereg.json)", ""]
+    if not ok:
+        lines += ["## CANARIES FAILED - nothing below is trusted or read", ""] + [f"- {b}" for b in bad]
+        out = "\n".join(lines) + "\n"
+        (ROOT / "docs" / "EVENING_FAMILY.md").write_text(out)
+        print(out)
+        return 2
+    res, conf, iex, st = z["res"], z["conf"], z["iex"], z["stats"]
+    lines += ["SIP bars; nothing here is shown on IEX except the R information cell. 4 scored tests (S on the confirm sample, E, L, R-H2H), alpha 0.0125. "
+              "Canaries passed (planted +8 bp recovered, controls unchanged, null lift within 2 SE) for S, E, L, R21, R10.",
+              f"Scored days: discovery {z['scored_days']}, confirm {z['conf_days']}. Information cells (H = 10/30, thresholds, SPY-hedged, per-ETF, L = 14) were NOT implemented; "
+              "S bars 15-360 form one refractory list (R5 ran 15-54 and 60-360 separately); R minute grid fills gaps up to 15 minutes only (signals.MINUTE_GAP_FILL_MAX).", ""]
 
     def block(name, rows, base, min_days=60, min_half=25):
-        days = len({r["d"] for r in rows})
-        ev = evaluate(rows, crit_t(days), min_days, min_half) if rows else {"status": "UNDERPOWERED", "n": 0}
-        bm = float(np.mean([b["net"] for b in base])) if base else float("nan")
-        void = rows and not math.isnan(ev.get("ca_mean", float("nan"))) and abs(ev["ca_mean"] - bm) > 3.0
+        ev = evaluate(rows, min_days, min_half) if rows else {"status": "UNDERPOWERED", "n": 0}
+        void, bm = void_status(ev, base) if rows else (False, float("nan"))
         status = "VOID" if void else ev["status"]
+        return ev, status, bm
+
+    def put(name, ev, status, bm):
         lines.append(f"## {name}: {status}")
         if ev.get("n"):
-            lines += [f"- n {ev['n']} (halves {ev['n_h']}), days {ev['days']} (halves {ev['d_h']}); primary control mean {ev['ca_mean']:+.2f} vs bar-of-day baseline {bm:+.2f} bp",
-                      f"- lift vs primary {ev['lift']:+.2f} bp, day-t {ev['lift_t']:.2f} vs crit {ev['crit']:.2f}, halves {ev['lift_h'][0]:+.2f}/{ev['lift_h'][1]:+.2f}; winsorized halves {ev['win_h'][0]:+.2f}/{ev['win_h'][1]:+.2f}; vs secondary {ev['liftb']:+.2f}",
-                      f"- net {ev['net']:+.2f} bp (halves {ev['net_h'][0]:+.2f}/{ev['net_h'][1]:+.2f}); at stress {ev['net_stress']:+.2f}",
-                      f"- canary: planted +8 bp moves the lift by {canary_planted(rows):+.2f}"]
+            lines += [f"- n {ev['n']} (halves {ev['n_h']}), scored days {ev['days']} (halves {ev['d_h']}); primary control mean {ev['ca_mean']:+.2f}, secondary {ev['cb_mean']:+.2f}, "
+                      f"bar-of-day baseline {bm:+.2f} bp",
+                      f"- lift vs primary {ev['lift']:+.2f} bp, day-t {ev['lift_t']:.2f} vs crit {ev['crit']:.2f}, halves {ev['lift_h'][0]:+.2f}/{ev['lift_h'][1]:+.2f}; winsorized halves "
+                      f"{ev['win_h'][0]:+.2f}/{ev['win_h'][1]:+.2f}; lift vs secondary {ev['liftb']:+.2f}",
+                      f"- net {ev['net']:+.2f} bp (halves {ev['net_h'][0]:+.2f}/{ev['net_h'][1]:+.2f}); at stress {ev['net_stress']:+.2f}"]
         lines.append("")
-        return ev
 
-    bS = [b for b in conf["BASE"]]
-    block("S surge continuation, stocks - CONFIRM sample (verdict)", conf["S"], bS, 40, 15)
-    block("S - discovery-sample re-score (information only)", res["S"], [b for b in res["BASE"] if b["key"] == "S"])
-    block("E surge continuation, ETFs", res["E"], [b for b in res["BASE"] if b["key"] == "E"], 60, 25)
-    lines.append(f"(E threshold used: {z['e_thr'] * 1e4:.0f} bp)")
-    lines.append("")
-    block("L sector-ETF lead-lag", res["L"], [b for b in res["BASE"] if b["key"] == "L"])
-    lines.append(f"(L distinct ETF events with a trade: {z['stats'].get('L_events', 0)}; needs >= 60 and >= 25 per half)")
-    lines.append("")
-    e21 = block("R21 live pre-square (descriptive)", res["R21"], [b for b in res["BASE"] if b["key"] == "R21"])
-    e10 = block("R10 pre-square with fast length 10 (descriptive)", res["R10"], [b for b in res["BASE"] if b["key"] == "R10"])
-    # R-H2H: per day, mean primary lift of L=10 minus that of L=21, days with both
-    def dl(rows):
-        out = {}
-        for r in rows:
-            if r.get("ca") is not None:
-                out.setdefault(r["d"], []).append(r["net"] - r["ca"])
-        return {d: float(np.mean(v)) for d, v in out.items()}
-    a10, a21 = dl(res["R10"]), dl(res["R21"])
-    both = sorted(set(a10) & set(a21))
-    diff = [a10[d] - a21[d] for d in both]
-    if len(both) >= 60:
-        mid = both[len(both) // 2]
-        h1 = np.mean([a10[d] - a21[d] for d in both if d < mid]); h2 = np.mean([a10[d] - a21[d] for d in both if d >= mid])
-        t = tstat(diff); crit = crit_t(len(both))
-        st = "L=10 BETTER" if (t >= crit and h1 > 0 and h2 > 0) else "NOT BETTER"
-        lines += [f"## R-H2H (scored): {st}", f"- {len(both)} days with both; mean lift difference {np.mean(diff):+.2f} bp, day-t {t:.2f} vs crit {crit:.2f}, halves {h1:+.2f}/{h2:+.2f}", ""]
+    def sk(key):
+        return f"skipped trades {st.get(key + '_skipped', 0)}; control candidates removed: primary {st.get(key + '_removed_primary', 0)}, secondary {st.get(key + '_removed_secondary', 0)}"
+
+    ev, s, bm = block("S", conf["S"], conf["BASE"], 40, 15)
+    put("S surge continuation, stocks - CONFIRM sample (verdict)", ev, s, bm)
+    ev, s, bm = block("S", res["S"], [b for b in res["BASE"] if b["key"] == "S"])
+    put("S - discovery-sample re-score (information only)", ev, s, bm)
+    lines += [f"({sk('S')})", ""]
+    ev, s, bm = block("E", res["E"], [b for b in res["BASE"] if b["key"] == "E"], 60, 25)
+    put("E surge continuation, ETFs", ev, s, bm)
+    lines += [f"(E threshold used: {z['e_thr'] * 1e4:.0f} bp; {sk('E')}; ETF history incomplete days {st.get('etf_history_incomplete_days', 0)})", ""]
+    ev, s, bm = block("L", res["L"], [b for b in res["BASE"] if b["key"] == "L"])
+    days = sorted({r["d"] for r in res["L"]})
+    mid = days[len(days) // 2] if days else ""
+    evs = {(r["d"], r["etf"], r["t"]) for r in res["L"]}
+    h1, h2 = sum(1 for e in evs if e[0] < mid), sum(1 for e in evs if e[0] >= mid)
+    if s not in ("VOID",) and (len(evs) < 60 or min(h1, h2) < 25):
+        s = "UNDERPOWERED"
+    put("L sector-ETF lead-lag", ev, s, bm)
+    lines += [f"(distinct ETF events {len(evs)}, halves {h1}/{h2}; need >= 60 and >= 25 per half; {sk('L')})", ""]
+    e21, s21, b21 = block("R21", res["R21"], [b for b in res["BASE"] if b["key"] == "R21"])
+    put("R21 live pre-square (descriptive)", e21, s21, b21)
+    e10, s10, b10 = block("R10", res["R10"], [b for b in res["BASE"] if b["key"] == "R10"])
+    put("R10 pre-square with fast length 10 (descriptive)", e10, s10, b10)
+    lines += [f"({sk('R21')}) ({sk('R10')})", ""]
+    hh = h2h(res["R10"], res["R21"])
+    if "VOID" in (s10, s21):
+        lines += ["## R-H2H (scored): VOID (an arm's primary control is more than 3 bp from its baseline)", ""]
+    elif hh["status"] == "UNDERPOWERED":
+        lines += [f"## R-H2H (scored): UNDERPOWERED ({hh['days']} days with both, need 60)", ""]
     else:
-        lines += [f"## R-H2H (scored): UNDERPOWERED ({len(both)} days with both, need 60)", ""]
-    for L in ("R21", "R10"):
-        r = iex[L]
-        lines.append(f"- IEX information cell {L}: n {len(r)}, mean lift {np.mean([x['net'] - x['ca'] for x in r if x.get('ca') is not None]) if r else float('nan'):+.2f} bp")
+        lines += [f"## R-H2H (scored): {hh['status']}", f"- {hh['days']} days with both; mean lift difference {hh['mean']:+.2f} bp, day-t {hh['t']:.2f} vs crit {hh['crit']:.2f}, halves {hh['h'][0]:+.2f}/{hh['h'][1]:+.2f}", ""]
+    ih = h2h(iex["R10"], iex["R21"], min_days=20)
+    lines.append(f"- IEX information cell, same head-to-head: {ih['status']}" + (f", {ih['days']} days, mean difference {ih['mean']:+.2f} bp, halves {ih['h'][0]:+.2f}/{ih['h'][1]:+.2f}" if ih.get("mean") is not None else f" ({ih['days']} days)"))
     out = "\n".join(lines) + "\n"
     (ROOT / "docs" / "EVENING_FAMILY.md").write_text(out)
     print(out)
