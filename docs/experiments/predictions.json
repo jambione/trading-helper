@@ -7,8 +7,8 @@
    "who": "Claude",
    "made": "2026-11-07 12:20",
    "expect": "screen DROP or a delta within +-10 bp/day; does not reach confirm",
-   "resolved": null,
-   "correct": null
+   "resolved": "2026-11-07: X3 'both' screen was DROP (+8 bp/day, 40% of days) and it did not reach the sweep's confirm stage.",
+   "correct": true
   },
   {
    "id": "PR2",
@@ -16,8 +16,8 @@
    "who": "Claude",
    "made": "2026-11-07 12:20",
    "expect": "small positive day delta (cuts the -70..-80 bp tail) but fewer than 60% of days better",
-   "resolved": null,
-   "correct": null
+   "resolved": "2026-11-07: floor_only was exactly 0 on the screen AND on the 10 confirm days; 'small positive' was wrong (it never fired).",
+   "correct": false
   },
   {
    "id": "PR3",
@@ -25,8 +25,8 @@
    "who": "Claude",
    "made": "2026-11-07 12:20",
    "expect": "DROP at the screen (the trade sim showed +0.11 bp at realistic latency)",
-   "resolved": null,
-   "correct": null
+   "resolved": "2026-11-07: fixed lock50 lost -7.5 bp/day on the 10-day run and -0.5..+0.1 bp/trade in the simulator; 'DROP' held (the run used the confirm days, not the screen stage).",
+   "correct": true
   },
   {
    "id": "PR4",
@@ -52,8 +52,8 @@
    "who": "Argon",
    "made": "2026-11-07 15:05",
    "expect": "positive: the logical candidate to ship is both + lock50 without step01 (Argon, relayed by the operator)",
-   "resolved": null,
-   "correct": null
+   "resolved": "2026-11-07: 'both' was -11.9 bp/day (t -1.24) on the 10 older days; both+lock50 -7.5. Not positive.",
+   "correct": false
   },
   {
    "id": "PR7",
@@ -61,8 +61,8 @@
    "who": "Claude",
    "made": "2026-11-07 15:05",
    "expect": "mean day delta positive (it never lost a day on the screen) but small: day-t below 2.0; the gain concentrated on a few days where the tail event happened",
-   "resolved": null,
-   "correct": null
+   "resolved": "2026-11-07: 'both' was NEGATIVE (-11.9 bp/day), not 'positive but small'; I had it positive, wrongly. Direction wrong.",
+   "correct": false
   },
   {
    "id": "PR8",
@@ -70,8 +70,8 @@
    "who": "Argon",
    "made": "2026-11-07 (relayed)",
    "expect": "+0.4 to +1.0 bp/trade (+8 to +20 bp/day); solidly positive on event days, near zero otherwise",
-   "resolved": null,
-   "correct": null
+   "resolved": "2026-11-07: 'both' net/trade -0.35 -> -1.03 bp (-0.68), not +0.4 to +1.0.",
+   "correct": false
   },
   {
    "id": "PR9",
@@ -79,8 +79,8 @@
    "who": "Argon",
    "made": "2026-11-07 (relayed)",
    "expect": "lock50 adds 0 to +0.3 bp/trade; 'both' alone may beat both_lock50",
-   "resolved": null,
-   "correct": null
+   "resolved": "2026-11-07: lock50 added +0.25 bp/trade on top of 'both' (-1.03 -> -0.78), inside his 0 to +0.3 range; but both_lock50 (-7.5/day) beat 'both' (-11.9/day), so 'both alone may beat both_lock50' did not happen. Scored on the stated numeric range.",
+   "correct": true
   },
   {
    "id": "PR10",
@@ -88,8 +88,8 @@
    "who": "Claude",
    "made": "2026-11-07 16:00",
    "expect": "both_lock50 within +-0.3 bp/trade of 'both' (the lock adds nothing measurable)",
-   "resolved": null,
-   "correct": null
+   "resolved": "2026-11-07: both -1.03 vs both_lock50 -0.78 bp/trade: a +0.25 difference, inside +-0.3. (Per-day means differ more: -11.9 vs -7.5.)",
+   "correct": true
   },
   {
    "id": "PR11",
