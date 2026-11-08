@@ -20463,11 +20463,18 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
 
         structure = rec.get("structure")
+        thrust_enabled = bool(cfg.get("ai_catalyst_thrust_enabled", False))
         is_thrust = bool(
-            (rec.get("arm_details") or {}).get("strategy") == "thrust"
-            or str(rec.get("arm_why") or "").startswith("catalyst_thrust")
-            or str(why or "").startswith("catalyst_thrust")
+            thrust_enabled
+            and (
+                (rec.get("arm_details") or {}).get("strategy") == "thrust"
+                or str(rec.get("arm_why") or "").startswith("catalyst_thrust")
+                or str(why or "").startswith("catalyst_thrust")
+            )
         )
+        if not is_thrust:
+            rec.pop("arm_details", None)
+
         if not isinstance(structure, dict):
             if is_thrust and isinstance(rec.get("arm_details"), dict):
                 structure = dict(rec["arm_details"])

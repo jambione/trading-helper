@@ -943,8 +943,8 @@ def buy_marketable_limit(
         # Terminal status poll for IOC orders:
         # Alpaca's synchronous POST returns "new" / "accepted" / "pending_new".
         # The exchange matching engine cancels unfilled shares asynchronously.
-        # Poll up to 2.0s for terminal status (filled, canceled, expired, rejected).
-        terminal_statuses = ("filled", "canceled", "cancelled", "expired", "rejected")
+        # Poll up to 2.0s for terminal status (filled, canceled, expired, rejected, partially_filled).
+        terminal_statuses = ("filled", "canceled", "cancelled", "expired", "rejected", "partially_filled")
         status_terminal = status in terminal_statuses
         cur_order_dict = None
 
@@ -979,8 +979,18 @@ def buy_marketable_limit(
         filled_qty = None
         fill_px = None
         if cur_order_dict:
-            filled_qty = cur_order_dict.get("filled_qty")
-            fill_px = cur_order_dict.get("filled_avg_price")
+            fq = cur_order_dict.get("filled_qty")
+            if fq is not None:
+                try:
+                    filled_qty = float(fq)
+                except (ValueError, TypeError):
+                    filled_qty = None
+            fap = cur_order_dict.get("filled_avg_price")
+            if fap is not None:
+                try:
+                    fill_px = float(fap)
+                except (ValueError, TypeError):
+                    fill_px = None
         else:
             fq = getattr(order, "filled_qty", None)
             if fq is not None and isinstance(fq, (int, float, str)):
@@ -995,22 +1005,53 @@ def buy_marketable_limit(
                 except (ValueError, TypeError):
                     fill_px = None
 
-        # Zero-fill case: Order canceled / expired / rejected with 0 filled shares
-        is_zero_fill = (filled_qty is not None and filled_qty <= 0.0) or (
-            filled_qty is None and status in ("canceled", "cancelled", "expired", "rejected")
-        )
+        # If order was already terminal on submit (skipped poll) and filled_qty is missing,
+        # query Alpaca directly to ensure any partial fills are not untracked.
+        if filled_qty is None and is_active():
+            try:
+                cur_order_dict = get_order(order_id)
+                if cur_order_dict:
+                    raw_st = str(cur_order_dict.get("status") or "").lower()
+                    status = raw_st.split(".")[-1] if "." in raw_st else raw_st
+                    fq = cur_order_dict.get("filled_qty")
+                    if fq is not None:
+                        try:
+                            filled_qty = float(fq)
+                        except (ValueError, TypeError):
+                            pass
+                    fap = cur_order_dict.get("filled_avg_price")
+                    if fap is not None:
+                        try:
+                            fill_px = float(fap)
+                        except (ValueError, TypeError):
+                            pass
+            except Exception:
+                pass
 
-        if is_zero_fill:
-            print(f"  [TRADER] ⚠️  BUY marketable limit not filled (slipped past cap)  id={order_id}  status={status}")
+        # Determine final filled quantity safely:
+        # 1. If explicit positive filled_qty is known, trust it.
+        # 2. If status is unambiguously "filled", assume full submit_qty.
+        # 3. Otherwise (canceled, expired, rejected, timed out, or zero-fill), final_qty is strictly 0.0.
+        if filled_qty is not None and filled_qty > 0.0:
+            final_qty = float(filled_qty)
+        elif status == "filled":
+            final_qty = float(submit_qty)
+        else:
+            final_qty = 0.0
+
+        if final_qty <= 0.0:
+            is_cap_breach = status in ("canceled", "cancelled", "expired")
+            note_str = "marketable_limit_cap_breached" if is_cap_breach else f"order_{status}"
+            print(f"  [TRADER] ⚠️  BUY marketable limit not filled ({note_str})  id={order_id}  status={status}")
             _log_action("BUY_CANCELLED", ticker, price, rsi, hist,
                         order_id=order_id, order_status=status, qty=submit_qty,
-                        note=f"marketable_limit_cap_breached limit_px={limit_px} {frac_tag}")
+                        note=f"{note_str} limit_px={limit_px} {frac_tag}")
             return {
                 "ok": False,
                 "order_id": order_id,
                 "status": status,
-                "error": "marketable_limit_cap_breached",
-                "note": "marketable_limit_cap_breached",
+                "error": note_str,
+                "note": note_str,
                 "limit_px": limit_px,
                 "cap_bp": cap_bp,
                 "qty": submit_qty,
@@ -1019,8 +1060,7 @@ def buy_marketable_limit(
             }
 
         # Filled (either full or partial)
-        final_qty = float(filled_qty) if (filled_qty is not None and filled_qty > 0) else submit_qty
-        is_partial = (filled_qty is not None and 0 < filled_qty < (submit_qty - 1e-6))
+        is_partial = (final_qty < (submit_qty - 1e-6))
         part_tag = f" (PARTIAL {final_qty:g}/{submit_qty:g})" if is_partial else ""
 
         print(f"  [TRADER] ✓  BUY order {status}{part_tag}  id={order_id}  filled_qty={final_qty:g}")
