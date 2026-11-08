@@ -175,19 +175,41 @@ def test_primary_control_needs_a_bullish_above_vwap_bar_AT_the_decision_minute_o
     assert fp.control_xs(allb, "X", sig, tr, "2026-06-01") == c
 
 
-def test_baseline_control_has_no_setup_filter_but_the_same_window():
+def test_baseline_is_same_minute_other_names_without_the_setup_filter():
     import fib_pullback as fp
-    bars = _sel(set())                                                             # no bullish setup anywhere
-    assert fp.control(bars, SIG, TR, "X", "2026-06-01", "t") is None               # the setup-matched control finds nothing
-    assert fp.control_uncond(bars, TR, "X", "2026-06-01") is not None              # the baseline does not need a setup
-    assert fp.control_uncond(_sel(set(), n=60), TR, "X", "2026-06-01") is None     # but still only after exit + 2
+    sig, tr = {"dec_min": 640}, {"stop_pct": 0.005, "target_pct": 0.01, "entry_min": 641}
+    allb = {"X": _sel({640}), "Y": _sel(set()), "Z": _sel(set())}                 # no OTHER name has a setup at 640
+    assert fp.control_xs(allb, "X", sig, tr, "2026-06-01") is None               # the primary needs a setup
+    assert fp.control_xs(allb, "X", sig, tr, "2026-06-01", setup=False, tag="b") is not None   # the baseline does not
+    assert fp.control_xs({"X": _sel({640})}, "X", sig, tr, "2026-06-01", setup=False) is None  # never the name itself
+    vw = {k: fp.vwaps(v) for k, v in allb.items()}
+    assert fp.control_xs(allb, "X", sig, tr, "2026-06-01", setup=False, tag="b", vw=vw) == fp.control_xs(allb, "X", sig, tr, "2026-06-01", setup=False, tag="b")
 
 
-def test_standard_reading_flags_void_when_the_control_is_far_from_the_baseline():
+def test_same_name_unfiltered_line_is_still_after_the_trade_only():
     import fib_pullback as fp
-    rows = lambda ctrl, base: [{"day": f"2026-06-{1 + i // 4:02d}", "sym": f"S{i % 9}", "net": 0.004 + 0.0004 * (i % 5), "gross": 0.0045 + 0.0004 * (i % 5),
-                               "ctrl": ctrl, "ctrl2": ctrl, "ctrl_u": base} for i in range(200)]
-    near = fp.standard_reading({"A": rows(-0.0006, -0.0006), "B": rows(-0.0006, -0.0006)})
-    far = fp.standard_reading({"A": rows(0.0100, -0.0006), "B": rows(0.0100, -0.0006)})
+    assert fp.control_uncond(_sel(set()), TR, "X", "2026-06-01") is not None
+    assert fp.control_uncond(_sel(set(), n=60), TR, "X", "2026-06-01") is None
+
+
+def _rows(ctrl_off, base_off, n=200):
+    """Rows with variation: ctrl = ctrl_off + noise, ctrl_u = base_off + noise (paired per row)."""
+    out = []
+    for i in range(n):
+        e = ((i * 7) % 11 - 5) * 0.0002
+        out.append({"day": f"2026-06-{1 + i // 4:02d}", "sym": f"S{i % 9}", "net": 0.004 + 0.0004 * (i % 5), "gross": 0.0045 + 0.0004 * (i % 5),
+                    "ctrl": ctrl_off + e, "ctrl2": ctrl_off + e, "ctrl_u": base_off + ((i * 3) % 7 - 3) * 0.0002, "ctrl_s": base_off})
+    return out
+
+
+def test_standard_reading_void_needs_a_gap_over_3bp_AND_a_significant_paired_difference():
+    import fib_pullback as fp
+    near = fp.standard_reading({"A": _rows(-0.0006, -0.0006), "B": _rows(-0.0006, -0.0006)})
+    far = fp.standard_reading({"A": _rows(0.0100, -0.0006), "B": _rows(0.0100, -0.0006)})
+    one_half = fp.standard_reading({"A": _rows(-0.0006, -0.0006), "B": _rows(0.0100, -0.0006)})      # a gap in ONE half voids the whole reading
     assert near["VOID"] is False and far["VOID"] is True and far["EDGE"] is False
-    assert near["halves"]["A"]["no_control_share"] == 0
+    assert one_half["VOID"] is True and one_half["halves"]["A"]["void_half"] is False
+    assert near["halves"]["A"]["no_control_share"] == 0 and near["halves"]["A"]["filter_effect_bp"] is not None
+    # a gap that is large but noisy (not significant) does not void: tiny sample
+    noisy = fp.standard_reading({"A": _rows(0.0006, -0.0006, n=6), "B": _rows(0.0006, -0.0006, n=6)})
+    assert noisy["halves"]["A"]["filter_effect_t"] is None or abs(noisy["halves"]["A"]["filter_effect_t"]) >= 0

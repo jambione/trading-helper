@@ -193,9 +193,11 @@ def control_uncond(bars: list, tr: dict, sym: str, day: str, tag: str = "fib-unc
     return {"gross": g, "net": g - COST}
 
 
-def control_xs(all_bars: dict, sym: str, sig: dict, tr: dict, day: str, k: int = 5) -> dict | None:
-    """amended_3 PRIMARY control: the same decision minute on up to k seeded OTHER names whose bar at that minute is bullish and
-    above VWAP (setup-matched), entered at their next open with the SAME % stop, % target and time stop. Mean over the draws."""
+def control_xs(all_bars: dict, sym: str, sig: dict, tr: dict, day: str, k: int = 5, setup: bool = True, vw: dict | None = None, tag: str = "fib-xs") -> dict | None:
+    """Same decision minute on up to k seeded OTHER names (without replacement), entered at their next open with the SAME % stop, % target and
+    time stop; mean over the draws. setup=True (PRIMARY, amended_3): only names whose bar at that minute is bullish and above VWAP (setup-matched).
+    setup=False (BASELINE, code review 11/07): the same draw with the bullish/VWAP filter removed = an unconditional random name at that minute.
+    vw = optional {name: vwaps(bars)} cache."""
     pool = []
     for o in sorted(all_bars):
         if o == sym:
@@ -204,12 +206,14 @@ def control_xs(all_bars: dict, sym: str, sig: dict, tr: dict, day: str, k: int =
         idx = next((i for i in range(1, len(b) - 1) if b[i][0] == sig["dec_min"]), None)
         if idx is None or b[idx + 1][0] - b[idx][0] > GAP_MAX or b[idx + 1][1] < MIN_PX:
             continue
-        if not bullish(b, idx) or b[idx][4] <= vwaps(b)[idx]:
-            continue
+        if setup:
+            v_ = (vw[o] if vw and o in vw else vwaps(b))
+            if not bullish(b, idx) or b[idx][4] <= v_[idx]:
+                continue
         pool.append((o, idx))
     if not pool:
         return None
-    rng = random.Random(int(hashlib.sha256(f"{sym}|{day}|{sig['dec_min']}|fib-xs".encode()).hexdigest()[:16], 16))
+    rng = random.Random(int(hashlib.sha256(f"{sym}|{day}|{sig['dec_min']}|{tag}".encode()).hexdigest()[:16], 16))
     vals = []
     for o, idx in rng.sample(pool, min(k, len(pool))):
         b = all_bars[o]
@@ -233,6 +237,7 @@ def day_task(args) -> dict:
     for sym in names:
         bb = [tuple(float(x) for x in r) for r in raw[sym]]
         all_bars[sym] = [(int(x[0]),) + x[1:] for x in bb]
+    vw = {sym: vwaps(all_bars[sym]) for sym in names}                        # computed once per name-day (speed only)
     for sym in names:
         bars = all_bars[sym]
         for v in VARIANTS:
@@ -250,14 +255,15 @@ def day_task(args) -> dict:
                 if tr is None or "skip" in tr:
                     st[f"{v}_skip_{(tr or {}).get('skip')}"] += 1
                     continue
-                c1 = control_xs(all_bars, sym, sig, tr, day)                     # amended_3 PRIMARY: same minute, other names
+                c1 = control_xs(all_bars, sym, sig, tr, day, vw=vw)               # amended_3 PRIMARY: same minute, other names, setup-matched
                 c2 = control(bars, sig, tr, sym, day, "fib-gp-ctrl")             # amended_3 SECONDARY: same name, after the trade
-                c3 = control_uncond(bars, tr, sym, day)                          # baseline for the control-sanity line
+                c3 = control_xs(all_bars, sym, sig, tr, day, setup=False, tag="fib-xs-base")      # BASELINE: same minute, other names, NO setup filter
+                c4 = control_uncond(bars, tr, sym, day)                          # extra line only: same name, after the trade, no filter
                 if c1 is None:
                     st[f"{v}_no_control"] += 1
                 taken += 1
                 rows.append({"day": day, "sym": sym, "variant": v, "dec_min": sig["dec_min"], **tr,
-                             "ctrl": c1["net"] if c1 else None, "ctrl2": c2["net"] if c2 else None, "ctrl_u": c3["net"] if c3 else None,
+                             "ctrl": c1["net"] if c1 else None, "ctrl2": c2["net"] if c2 else None, "ctrl_u": c3["net"] if c3 else None, "ctrl_s": c4["net"] if c4 else None,
                              "ctrl_gross": c1["gross"] if c1 else None, "swing": sig["H"] / sig["L"] - 1})
     return {"rows": rows, "stats": dict(st)}
 
@@ -339,39 +345,46 @@ def half_verdict(gp: list[dict]) -> tuple[str, dict]:
 
 def standard_reading(by_half: dict) -> dict:
     """docs/TEST_STANDARD.md reading of the same scored rows (reported ALONGSIDE the prereg verdict; the prereg's own bars are unchanged).
-    by_half: {"A": gp_rows, "B": gp_rows} after no_overlap. EDGE = primary lift > 0 in both halves, pooled day-clustered t >= T_PASS (the prereg's own
-    fixed 2.0, stated before the score), winsorized (top 1% of per-trade lifts clipped) lift > 0 in both halves, secondary lift > 0 pooled, and the
-    primary control within 3 bp of the unconditional baseline (else VOID). PROFITABLE = EDGE and net > 0 at 5 bp AND 20 bp in both halves.
-    drop-3-days/names stay REPORTED (prereg pass veto), the winsorized check is the TEST_STANDARD veto. Net is computed on the CONTROLLED subset."""
+    by_half: {"A": gp_rows, "B": gp_rows} after no_overlap. EDGE = primary lift > 0 in both halves, pooled day-clustered t >= T_PASS (the prereg's
+    fixed 2.0, stated before the score), winsorized lift (one-sided: the top 1% of per-trade lifts clipped) > 0 in both halves, secondary lift > 0
+    pooled, and NOT VOID. VOID (per half, either half): the primary control mean differs from the BASELINE (same minute, other names, no setup
+    filter) by more than 3 bp AND the paired day-clustered |t| of (primary - baseline) exceeds 2, on the rows that have both; the filter effect
+    (primary - baseline) is printed. PROFITABLE = EDGE and net > 0 at 5 bp and 20 bp in both halves, on the controlled rows AND on all GP rows.
+    drop-3-days/names stay REPORTED (prereg pass veto); the winsorized check is the TEST_STANDARD veto."""
     out = {"halves": {}}
-    allrows = []
+    allrows, void = [], False
     for h, gp in by_half.items():
         ctl = [r for r in gp if r.get("ctrl") is not None]
         diffs = sorted(r["net"] - r["ctrl"] for r in ctl)
         cap = diffs[max(0, int(0.99 * len(diffs)) - 1)] if diffs else 0.0
         win = day_stats(ctl, lambda r, c=cap: min(r["net"] - r["ctrl"], c))["mean"]
         sec = [r for r in gp if r.get("ctrl2") is not None]
-        base = [r["ctrl_u"] for r in gp if r.get("ctrl_u") is not None]
+        both = [r for r in gp if r.get("ctrl") is not None and r.get("ctrl_u") is not None]          # SAME rows for primary and baseline
+        fe = day_stats(both, lambda r: r["ctrl"] - r["ctrl_u"])
+        gap_bp = (fe["mean"] or 0.0) * 1e4
+        h_void = (not both) or (abs(gap_bp) > 3.0 and fe["t"] is not None and abs(fe["t"]) > 2.0)
+        void = void or h_void
+        sm = [r["ctrl_s"] for r in gp if r.get("ctrl_s") is not None]
         out["halves"][h] = {
             "trades": len(gp), "controlled": len(ctl), "no_control_share": 1 - len(ctl) / max(1, len(gp)),
-            "ctrl_mean": statistics.mean(r["ctrl"] for r in ctl) if ctl else None,
+            "ctrl_mean": statistics.mean(r["ctrl"] for r in both) if both else None,
+            "baseline_mean": statistics.mean(r["ctrl_u"] for r in both) if both else None, "baseline_n": len(both),
+            "filter_effect_bp": gap_bp if both else None, "filter_effect_t": fe["t"], "void_half": h_void,
             "ctrl2_mean": statistics.mean(r["ctrl2"] for r in sec) if sec else None, "ctrl2_n": len(sec),
-            "baseline_mean": statistics.mean(base) if base else None, "baseline_n": len(base),
+            "same_name_unfiltered_mean": statistics.mean(sm) if sm else None,
             "lift": day_stats(ctl, diff)["mean"], "lift_t": day_stats(ctl, diff)["t"],
             "lift_secondary": day_stats(sec, lambda r: r["net"] - r["ctrl2"])["mean"],
             "winsorized_lift": win, "net_controlled": day_stats(ctl, lambda r: r["net"])["mean"],
             "net_5bp": day_stats(ctl, lambda r: r["gross"] - 0.0005)["mean"], "net_20bp": day_stats(ctl, lambda r: r["gross"] - 0.0020)["mean"],
+            "net_5bp_all": day_stats(gp, lambda r: r["gross"] - 0.0005)["mean"], "net_20bp_all": day_stats(gp, lambda r: r["gross"] - 0.0020)["mean"],
         }
         allrows += ctl
     H = out["halves"]
     pooled = day_stats(allrows, diff)
     sec_all = day_stats([r for hh in by_half.values() for r in hh if r.get("ctrl2") is not None], lambda r: r["net"] - r["ctrl2"])["mean"]
-    cm = [H[h]["ctrl_mean"] for h in H if H[h]["ctrl_mean"] is not None]
-    bm = [H[h]["baseline_mean"] for h in H if H[h]["baseline_mean"] is not None]
-    void = (not cm or not bm or abs(statistics.mean(cm) * 1e4 - statistics.mean(bm) * 1e4) > 3.0)
     pos = lambda x: x is not None and x > 0  # noqa: E731
     edge = (not void and all(pos(H[h]["lift"]) and pos(H[h]["winsorized_lift"]) for h in H) and pooled["t"] is not None and pooled["t"] >= T_PASS and pos(sec_all))
-    prof = edge and all(pos(H[h]["net_5bp"]) and pos(H[h]["net_20bp"]) for h in H)
+    prof = edge and all(pos(H[h]["net_5bp"]) and pos(H[h]["net_20bp"]) and pos(H[h]["net_5bp_all"]) and pos(H[h]["net_20bp_all"]) for h in H)
     out.update({"pooled_lift": pooled["mean"], "pooled_t": pooled["t"], "secondary_pooled": sec_all, "VOID": void, "EDGE": bool(edge), "PROFITABLE": bool(prof),
                 "note": "SIP bars from the warehouse; the desk trades on IEX. Standard reading is reported alongside the prereg verdict (unchanged)."})
     return out
