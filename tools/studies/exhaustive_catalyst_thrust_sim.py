@@ -62,6 +62,20 @@ def parse_iso_dt(s: str) -> datetime:
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
+def is_premarket_catalyst(news_dt: datetime, session_date_str: str) -> bool:
+    """Checks if a catalyst timestamp was published strictly before 09:25:00 ET on session day."""
+    dt_et = news_dt.astimezone(ET)
+    day_et = dt_et.strftime("%Y-%m-%d")
+    if day_et < session_date_str:
+        return True
+    if day_et == session_date_str:
+        # Strictly before 09:25:00 ET
+        return (dt_et.hour * 60 + dt_et.minute < 9 * 60 + 25) or (
+            dt_et.hour * 60 + dt_et.minute == 9 * 60 + 25 and dt_et.second == 0 and dt_et.microsecond == 0
+        )
+    return False
+
+
 def verify_premarket_news(day_str: str, sym: str) -> bool:
     npath = NEWS_DIR / f"{day_str}_{sym}.json"
     if not npath.exists():
@@ -72,19 +86,9 @@ def verify_premarket_news(day_str: str, sym: str) -> bool:
         if not isinstance(items, list):
             return False
         for it in items:
-            t_str = it.get("created") or it.get("published") or it.get("updated")
-            if not t_str:
-                continue
-            dt = parse_iso_dt(t_str)
-            dt_et = dt.astimezone(ET)
-            d_et = dt_et.strftime("%Y-%m-%d")
-            if d_et < day_str:
+            t_str = it.get("created_at") or it.get("created")
+            if t_str and is_premarket_catalyst(parse_iso_dt(t_str), day_str):
                 return True
-            if d_et == day_str:
-                if (dt_et.hour * 60 + dt_et.minute < 9 * 60 + 25) or (
-                    dt_et.hour * 60 + dt_et.minute == 9 * 60 + 25 and dt_et.second == 0 and dt_et.microsecond == 0
-                ):
-                    return True
         return False
     except Exception:
         return False
@@ -274,7 +278,14 @@ def fixed_hold_trade(bars: list[dict], start_idx: int = 0, H: int = 3, cost_bp: 
 
 def compute_metrics(trades: list[dict]) -> dict:
     if not trades:
-        return {"n_trades": 0, "n_days": 0}
+        return {
+            "n_trades": 0, "n_trades_a": 0, "n_trades_b": 0, "n_days": 0,
+            "mean_net_bp": 0.0, "net_a_bp": 0.0, "net_b_bp": 0.0,
+            "winsor_mean_bp": 0.0, "winsor_a_bp": 0.0, "winsor_b_bp": 0.0,
+            "se_day_bp": 0.0, "t_stat": 0.0, "win_rate_pct": 0.0, "profit_factor": 0.0,
+            "max_dd_bp": 0.0, "mean_mfe_bp": 0.0, "mfe_p50_bp": 0.0, "mfe_p75_bp": 0.0,
+            "mfe_p90_bp": 0.0, "mean_mae_bp": 0.0, "mae_p50_bp": 0.0, "reasons": {},
+        }
 
     by_day = defaultdict(list)
     by_half = {"A": [], "B": []}
