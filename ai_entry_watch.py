@@ -18073,6 +18073,19 @@ def should_arm_buy(
             record["block_detail"] = f"gapped {_gap:+.1f}%"
             return False, "gapped_down"
 
+    # ── High-Magnitude Pivot Arm (Catalyst Inception) ────────
+    # Evaluated at market open (09:30-09:35 ET) before waiting on slow technical structure.
+    if bool(cfg.get("ai_catalyst_thrust_enabled", False)):
+        try:
+            from ai_catalyst_thrust import is_catalyst_thrust_eligible
+            cat_ok, cat_why, cat_details = is_catalyst_thrust_eligible(record, cfg, now=now)
+            if cat_ok:
+                if isinstance(record, dict) and cat_details:
+                    record["arm_details"] = cat_details
+                return True, f"catalyst_thrust_{cat_why}"
+        except Exception as _e:
+            log.warning("[ARM] catalyst_thrust error: %s", _e)
+
     structure = record.get("structure")
     if not isinstance(structure, dict):
         return False, "no_structure"
