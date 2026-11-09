@@ -315,3 +315,28 @@ def test_catalyst_thrust_exempt_from_earliest_entry_delay():
 
     # But trading_hours_active is True during market hours
     assert aew.trading_hours_active(cfg, t_open, market_open=True) is True
+
+
+def test_catalyst_thrust_arms_despite_wide_sip_spread():
+    """Verify that a catalyst thrust candidate arms even if the scalp spread check would fail."""
+    import ai_entry_watch as aew
+    cfg = {
+        "ai_catalyst_thrust_enabled": True,
+        "ai_watch_max_sip_spread_pct": 0.15,
+    }
+    dt_valid = datetime(2026, 11, 4, 9, 31, 15, tzinfo=ET)
+    rec = {
+        "symbol": "THRUST",
+        "price": 50.0,
+        "gap_pct": 12.0,
+        "source": "movers",
+        "status": "watching",
+        "has_catalyst": True,
+    }
+    green_bars = [{"o": 49.0, "h": 50.5, "l": 48.9, "c": 50.2}]  # close_pos: 1.3 / 1.6 = 0.81 >= 0.65
+
+    with patch("ai_catalyst_thrust.is_catalyst_thrust_eligible", return_value=(True, "bar1_inception", {"initial_stop": 48.9})), \
+         patch("ai_entry_watch.sip_spread_pct", return_value=0.35):  # 35 bp spread (> 15 bp limit)
+        ok, why = aew.should_arm_buy(rec, ask=50.2, bid=50.0, cfg=cfg, now=dt_valid.timestamp())
+        assert ok is True
+        assert why == "catalyst_thrust_bar1_inception"

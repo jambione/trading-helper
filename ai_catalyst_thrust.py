@@ -141,15 +141,38 @@ def is_catalyst_thrust_eligible(
     # 3. Gap Threshold Check (8%+ by default, strictly premarket gap, never intraday pct_change)
     min_gap = float(cfg.get("ai_catalyst_thrust_min_gap_pct", DEFAULT_MIN_GAP_PCT))
     gap = None
-    if record.get("gap_pct") is not None:
-        gap = float(record["gap_pct"])
-    elif record.get("premarket_pct") is not None:
-        gap = float(record["premarket_pct"])
-    else:
+    for k in ("gap_pct", "premarket_pct", "admit_pct_change", "pct_change", "change_pct", "pctr_gap"):
+        v = record.get(k)
+        if v is not None:
+            try:
+                gap = float(v)
+                break
+            except (ValueError, TypeError):
+                continue
+
+    if gap is None and isinstance(record.get("indicator"), dict):
+        v = record["indicator"].get("pctr_gap")
+        if v is not None:
+            try:
+                gap = float(v)
+            except (ValueError, TypeError):
+                pass
+
+    if gap is None:
         open_px = float(record.get("open") or record.get("session_open") or 0.0)
         prev_close = float(record.get("prev_close") or record.get("previous_close") or 0.0)
         if open_px > 0 and prev_close > 0:
             gap = ((open_px - prev_close) / prev_close) * 100.0
+
+    sym = str(record.get("symbol") or "").upper().strip()
+    if gap is None and sym:
+        try:
+            from ai_entry_watch import open_gap_pct
+            og = open_gap_pct(sym, now=now)
+            if og is not None:
+                gap = float(og)
+        except Exception:
+            pass
 
     if gap is None:
         return False, "gap_unknown", {}
@@ -157,7 +180,6 @@ def is_catalyst_thrust_eligible(
         return False, f"gap_{gap:.1f}%<{min_gap:.1f}%", {}
 
     # 4. Fundamental Catalyst Verification (< 09:25:00 ET timestamp)
-    sym = str(record.get("symbol") or "").upper().strip()
     src = str(record.get("source") or "").lower().strip()
     is_catalyst = (
         bool(record.get("catalyst_verified"))
@@ -197,16 +219,45 @@ def is_catalyst_thrust_eligible(
     if bars and len(bars) > 0:
         bar0 = bars[0]
     else:
-        # Check ob_observe store
+        # Check ob_observe store for today's 09:30:00 ET candle
+        today_s = dt_et.strftime("%Y-%m-%d")
         try:
             import ob_observe
             ob_bars = ob_observe.bars(sym)
             if ob_bars:
-                # Format: (ts, o, h, l, c)
-                b = ob_bars[0]
-                bar0 = {"o": b[1], "h": b[2], "l": b[3], "c": b[4]}
+                for b in ob_bars:
+                    b_dt = datetime.fromtimestamp(b[0], tz=ET)
+                    if b_dt.strftime("%Y-%m-%d") == today_s and b_dt.hour == 9 and b_dt.minute == 30:
+                        bar0 = {"o": b[1], "h": b[2], "l": b[3], "c": b[4]}
+                        break
         except Exception:
             pass
+
+        # Fallback to Alpaca IEX data feed for 09:30 minute bar
+        if not bar0:
+            try:
+                from ai_entry_watch import _data_client
+                from alpaca.data.requests import StockBarsRequest
+                from alpaca.data.timeframe import TimeFrame
+                from alpaca.data.enums import DataFeed
+                client = _data_client()
+                today_d = dt_et.date()
+                req = StockBarsRequest(
+                    symbol_or_symbols=sym,
+                    timeframe=TimeFrame.Minute,
+                    start=datetime(today_d.year, today_d.month, today_d.day, 9, 30, tzinfo=ET),
+                    feed=DataFeed.IEX,
+                    limit=5,
+                )
+                barset = client.get_stock_bars(req)
+                b_list = barset.get(sym, []) if hasattr(barset, "get") else barset[sym]
+                for b in b_list:
+                    b_et = b.timestamp.astimezone(ET)
+                    if b_et.strftime("%Y-%m-%d") == today_s and b_et.hour == 9 and b_et.minute == 30:
+                        bar0 = {"o": float(b.open), "h": float(b.high), "l": float(b.low), "c": float(b.close)}
+                        break
+            except Exception:
+                pass
 
     if not bar0:
         # Fall back to record session open

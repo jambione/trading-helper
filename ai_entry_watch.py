@@ -18043,6 +18043,19 @@ def should_arm_buy(
         _eng_age = engine_heartbeat_age(now=now)
         if _eng_age is None or _eng_age > _eng_max:
             return False, "engine_stale"
+    # ── High-Magnitude Pivot Arm (Catalyst Inception) ────────
+    # Evaluated at market open (09:30-09:35 ET) before waiting on slow technical structure or scalp spread gates.
+    if bool(cfg.get("ai_catalyst_thrust_enabled", False)):
+        try:
+            from ai_catalyst_thrust import is_catalyst_thrust_eligible
+            cat_ok, cat_why, cat_details = is_catalyst_thrust_eligible(record, cfg, now=now)
+            if cat_ok:
+                if isinstance(record, dict) and cat_details:
+                    record["arm_details"] = cat_details
+                return True, f"catalyst_thrust_{cat_why}"
+        except Exception as _e:
+            log.warning("[ARM] catalyst_thrust error: %s", _e)
+
     _gate_sym = str(record.get("symbol") or "").upper()
     # Spread gate: the whole trading cost is the spread (exec_report,
     # 2026-09-23: fills at the touch, 0 excess). A <= 0.20% gate cut the
@@ -18072,19 +18085,6 @@ def should_arm_buy(
         if _gap < -_gap_max:
             record["block_detail"] = f"gapped {_gap:+.1f}%"
             return False, "gapped_down"
-
-    # ── High-Magnitude Pivot Arm (Catalyst Inception) ────────
-    # Evaluated at market open (09:30-09:35 ET) before waiting on slow technical structure.
-    if bool(cfg.get("ai_catalyst_thrust_enabled", False)):
-        try:
-            from ai_catalyst_thrust import is_catalyst_thrust_eligible
-            cat_ok, cat_why, cat_details = is_catalyst_thrust_eligible(record, cfg, now=now)
-            if cat_ok:
-                if isinstance(record, dict) and cat_details:
-                    record["arm_details"] = cat_details
-                return True, f"catalyst_thrust_{cat_why}"
-        except Exception as _e:
-            log.warning("[ARM] catalyst_thrust error: %s", _e)
 
     structure = record.get("structure")
     if not isinstance(structure, dict):
