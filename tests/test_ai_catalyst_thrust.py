@@ -167,8 +167,9 @@ def test_catalyst_thrust_premarket_news_timestamp_verification():
         ]
     }
     with patch("news_feed.load_cache", return_value=news_cache):
+        bars = [{"o": 48.0, "h": 51.0, "l": 47.5, "c": 50.0}]
         good_cand = {"symbol": "GOOD", "price": 50.0, "gap_pct": 10.0, "source": "movers"}
-        ok, why, details = is_catalyst_thrust_eligible(good_cand, cfg, now=now_ts)
+        ok, why, details = is_catalyst_thrust_eligible(good_cand, cfg, bars=bars, now=now_ts)
         assert ok
         assert why == "catalyst_open_thrust"
 
