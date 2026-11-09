@@ -3514,15 +3514,19 @@ def _range_exit_tick(ticker: str, pos: dict[str, Any], trigger: float | None, ev
 
 
 def _thrust_exit_tick(ticker: str, pos: dict[str, Any], trigger: float | None, events: list[dict[str, Any]],
-                      exit_why: dict[str, Any], *, raise_only: bool = False) -> tuple[bool, bool]:
+                      exit_why: dict[str, Any], *, raise_only: bool = False,
+                      cfg: dict | None = None) -> tuple[bool, bool]:
     """apply_local_trail for a Catalyst Open Thrust position:
     1. 15-minute time stop (exit at market)
     2. Prior 1-minute bar low trailing ratchet stop (ratchets stop up only, never down)
-    3. Disaster stop floor max(bar0_low, entry * 0.98)
-    4. NO scalp shelf decay, NO leash, NO profit target capping.
+    3. Breakeven lock at +30 bp (summer chop / morning fade protection)
+    4. Disaster stop floor max(bar0_low, entry * 0.98)
+    5. NO scalp shelf decay, NO leash, NO profit target capping.
     Returns (changed, closed).
     """
     import alpaca_trader
+
+    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
 
     if not pos.get("entry_confirmed"):
         return False, False
@@ -3585,6 +3589,20 @@ def _thrust_exit_tick(ticker: str, pos: dict[str, Any], trigger: float | None, e
             changed = True
             events.append({"ticker": ticker, "event": "thrust_ratchet_lift", "new_stop": current_stop})
             log_event("thrust_ratchet_lift", symbol=ticker, new_stop=current_stop)
+
+    # 2b. Condition 2: Breakeven profit lock at +30 bp (Summer chop / fade protection)
+    be_bp = float(cfg.get("ai_catalyst_thrust_be_at_bp", 30.0) or 30.0)
+    peak_px = _num(pos.get("peak_price")) or trigger
+    if be_bp > 0 and peak_px and entry_px > 0:
+        if peak_px >= entry_px * (1.0 + be_bp / 10000.0) - 1e-9:
+            be_stop = round(entry_px + 0.01, 2)
+            if current_stop is not None and be_stop > current_stop:
+                current_stop = be_stop
+                pos["local_stop_price"] = be_stop
+                pos["stop_price"] = be_stop
+                changed = True
+                events.append({"ticker": ticker, "event": "thrust_breakeven_lock", "new_stop": be_stop})
+                log_event("thrust_breakeven_lock", symbol=ticker, new_stop=be_stop)
 
     if raise_only:
         return changed, False

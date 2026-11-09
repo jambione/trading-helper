@@ -47,6 +47,8 @@
   "ai_catalyst_thrust_enabled": true,
   "ai_catalyst_thrust_min_gap_pct": 8.0,
   "ai_catalyst_thrust_min_price": 20.0,
+  "ai_catalyst_thrust_min_close_pos": 0.65,
+  "ai_catalyst_thrust_be_at_bp": 30.0,
   "ai_entry_unconfirmed_ttl_sec": 900.0,
   "ai_eod_liquidate_enabled": true,
   "ai_eod_liquidate_time": "15:58",

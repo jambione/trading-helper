@@ -103,6 +103,13 @@ def test_catalyst_thrust_bar0_green_and_doji_filters():
     assert details["bar0_low"] == 99.5
     assert details["initial_stop"] == 99.5  # 99.5 > 101.5 * 0.98 (99.47)
 
+    # Upper blow-off wick rejection (Condition 1: close < top 35% of bar range)
+    wick_bars = [{"o": 100.0, "h": 105.0, "l": 99.5, "c": 100.5}]
+    rec_wick = {"symbol": "WICK", "price": 100.5, "gap_pct": 10.0, "source": "ai_catalyst"}
+    ok, why, _ = is_catalyst_thrust_eligible(rec_wick, cfg, now=dt_valid, bars=wick_bars)
+    assert not ok
+    assert "bar0_wick_rejection" in why
+
 
 def test_compute_open_thrust_initial_stop():
     entry_px = 100.0
@@ -260,3 +267,32 @@ def test_catalyst_thrust_position_management_ratchet_and_breach():
         assert pos["closing_reason"] == "thrust_stop"
         mock_cancel.assert_called_once_with("RUN")
         mock_close.assert_called_once_with("RUN")
+
+
+def test_catalyst_thrust_breakeven_lock_at_30bp():
+    """Verify that hitting +30 bp MFE locks stop at entry + $0.01 (Condition 2)."""
+    t0 = time.time()
+    pos = {
+        "strategy": "thrust",
+        "zone_kind": "catalyst_thrust",
+        "entry_confirmed": True,
+        "entry_price": 100.00,
+        "entry_time": t0 - 60.0,
+        "local_stop_price": 98.00,
+        "stop_price": 98.00,
+        "peak_price": 100.40,  # +40 bp MFE (> +30 bp threshold)
+        "max_hold_sec": 900.0,
+    }
+    events = []
+    exit_why = {}
+    cfg = {"ai_catalyst_thrust_be_at_bp": 30.0}
+
+    changed, closed = ai_positions._thrust_exit_tick(
+        "RUN", pos, trigger=100.20, events=events, exit_why=exit_why, cfg=cfg
+    )
+    assert changed is True
+    assert not closed
+    # Stop is raised to entry + 0.01 = 100.01
+    assert pos["local_stop_price"] == 100.01
+    assert pos["stop_price"] == 100.01
+    assert any(e.get("event") == "thrust_breakeven_lock" for e in events)

@@ -220,12 +220,21 @@ def is_catalyst_thrust_eligible(
         b0_open = float(bar0.get("o") or bar0.get("open") or 0.0)
         b0_close = float(bar0.get("c") or bar0.get("close") or 0.0)
         b0_low = float(bar0.get("l") or bar0.get("low") or 0.0)
+        b0_high = float(bar0.get("h") or bar0.get("high") or b0_close)
         if b0_open <= 0 or b0_close < b0_open:
             return False, "bar0_red", {}
         if b0_close == b0_open:
             return False, "bar0_doji", {}
         if b0_low <= 0:
             b0_low = b0_open * 0.99
+
+        # Condition 1: Require solid candle body / close near high (no upper blow-off wick)
+        rng = b0_high - b0_low
+        if rng > 0:
+            close_pos = (b0_close - b0_low) / rng
+            min_close_pos = float(cfg.get("ai_catalyst_thrust_min_close_pos", 0.65) or 0.65)
+            if close_pos < min_close_pos:
+                return False, f"bar0_wick_rejection_{close_pos:.2f}<{min_close_pos:.2f}", {}
 
     initial_stop = compute_open_thrust_initial_stop(
         entry_price=price,
