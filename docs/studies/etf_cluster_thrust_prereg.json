@@ -1,0 +1,34 @@
+{
+ "id": "etf_cluster_thrust_2026-11-08",
+ "registered": "2026-11-08 12:45 ET",
+ "operator": "Test Constituent Cluster Thrust on Sector ETFs per Grok Path 3 / Test Standard 11/07. Read-only study.",
+ "family": "3 SCORED tests: K2_H3, K3_H3, K3_H5; alpha 0.05/3 = 0.0167 each; critical t on per-day means. Standard: docs/TEST_STANDARD.md.",
+ "data": "ai_reports/warehouse/sip/DAY.npz (120 sessions 2026-04-27..2026-10-15, RTH 1-minute SIP bars) and ai_reports/warehouse/etf/DAY.npz (same days; SMH SOXX IBIT IGV XBI URA XLE XLF ARKK QQQ IWM SPY). Stock universe per day = top 400 by prior-session dollar volume, $10-$500 at 09:30 open, ETFs excluded, 20 prior sessions required for betas/volume baselines. Halves by date at median scored session.",
+ "common": {
+  "mapping": "Each universe stock mapped to the ETF among SMH SOXX IBIT IGV XBI URA XLE XLF ARKK QQQ with highest SPY-residual 1-minute return correlation over prior 20 sessions (cutoff >= 0.30; unmapped if below).",
+  "constituent_thrust": "Stock 1-bar SPY-residual return res1 = r1 - beta x SPY r1 >= +15 bp and volume ratio v(t)/mean(v[t-15..t-1]) >= 2.0 with >= 10 non-missing bars.",
+  "trade": "Buy ETF open of bar t+1, sell ETF close of bar t+H (hold H bars). Entries 09:45-15:30 (bars 15-360). One trigger per ETF per 30 minutes (refractory). When SMH and SOXX trigger at the same minute, keep only SMH.",
+  "cost": "Per-ETF round trip = median quoted NBBO spread (bp of mid) from warehouse/etf/cost.json + 1 bp; stress = 2x that.",
+  "controls": "PRIMARY: same-minute other-ETF control - the same trade on 5 seeded other ETFs at trigger minute t, excluding ETFs that triggered in [t-15, t]. SMH and SOXX never serve as each other's control. SECONDARY: same-ETF later-only control - 5 seeded minutes in t+H+2..t+H+62.",
+  "verdict": "EDGE = lift vs PRIMARY control > 0 in both halves with day-clustered t >= family critical value, secondary lift > 0 pooled, winsorized check (top 1% clipped) > 0 in both halves. PROFITABLE = EDGE and net > 0 in both halves and at stress cost. Power: >= 300 triggers, >= 100 per half, >= 60 scored days (>= 25 per half).",
+  "canary": "Planted (+8 bp added to trigger exits) recovered within 0.5 bp with controls unchanged; null canary lift within 2 SE of 0."
+ },
+ "hypotheses": {
+  "K2_H3": {
+   "claim": "At least 2 mapped constituents thrust at minute t -> ETF thrusts over H=3 minutes.",
+   "K": 2,
+   "H": 3
+  },
+  "K3_H3": {
+   "claim": "At least 3 mapped constituents thrust at minute t -> ETF thrusts over H=3 minutes.",
+   "K": 3,
+   "H": 3
+  },
+  "K3_H5": {
+   "claim": "At least 3 mapped constituents thrust at minute t -> ETF thrusts over H=5 minutes.",
+   "K": 3,
+   "H": 5
+  }
+ },
+ "tool": "tools/studies/etf_cluster_thrust.py"
+}

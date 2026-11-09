@@ -1,0 +1,31 @@
+{
+  "id": "range_bisect",
+  "registered": "2026-11-08, before any split of these minutes by position in the range",
+  "operator": "Bisect the high and the low. Enter only between the midpoint and the low.",
+  "why_this_is_new": "The between-levels rule was scored once and failed as a skip-everything filter (docs/studies/FLAT_CONJUNCTION_2026-11-08.md). That read did not record where in the range the price sat. The forward range-position logger is a different question: desk entries, top fifth, rs_pos30 >= 0.80, and it has not been read. This cut is the midpoint of the same 15-bar high and low the sideways rule already uses.",
+  "already_seen": "The pooled sideways means on this window were seen before this registration. They are not a target and they do not move the midpoint. No position split has been computed.",
+  "code": {
+    "levels": "ai_entry_watch._range_shape_fields. The high and the low are the last 15 closed bars, with the passed price included. rs_pos15 is 0 at the low and 1 at the high.",
+    "sideways": "tools/studies/flat_conjunction.is_sideways, thresholds unchanged: range >= 20 bp, rs_er15 <= 0.30, abs(rise) <= half the range, fast %R span >= 15 with net <= half the span, wr_d10_slow <= 0.",
+    "feed": "IEX. The same live functions. A minute the functions refuse is dropped."
+  },
+  "entry_rule": {
+    "range": "The minute must be sideways under the frozen rule. That is the high and the low being bisected. A minute at the high often fails that rule because the slow line is rising. Those minutes stay out. The slope leg is not removed.",
+    "lower_half": "rs_pos15 <= 0.5. This includes the midpoint and the low.",
+    "upper_half": "sideways and rs_pos15 > 0.5. This is the control half, not an entry.",
+    "frozen": "0.5 was the operator's bisect. It is not fit. No other cut is tried."
+  },
+  "score_window": "The same window as the parent read: every IEX warehouse session through 2026-09-23 inclusive. Two warmup sessions are not scored. Days after 2026-09-23 are not scored.",
+  "sampling": "Same grid as the parent: top 40 names by the prior session's IEX dollar volume, first open >= $20, decisions 10:00 to 15:50 ET every 5 minutes. Forward is the next 5 minutes.",
+  "outcome": {"gross_bp": "close five minutes ahead versus the last close the live function could see", "never_green": "no high in the next 5 bars reaches that close * 1.0005", "cost_bp": 4, "stress_bp": 8},
+  "questions": {
+    "SEPARATES": "mean gross of the lower half minus mean gross of the upper half > 0 in BOTH date halves, day-clustered t >= 1.96, and the same sign after clipping the top 1% of gross. The lower half must also sit above the unconditional mean of every scored minute in both halves. That second comparison only has to point the same way.",
+    "PROFITABLE": "SEPARATES, and the lower-half net > 0 in both halves at 4 bp and at 8 bp, and the day-bootstrap 5th percentile of (lower-half mean minus all-minute mean) > 0, and that bootstrap median beats a random skip of the same count per day."
+  },
+  "power": "Each half needs >= 20 days with at least 5 lower-half and 5 upper-half minutes, and >= 200 lower-half minutes. Otherwise UNDERPOWERED. The thresholds are not loosened after seeing the share.",
+  "desk_information": "Watch-path entries on 2026-11-02..2026-11-06, same live functions. Five sessions. INFORMATION only.",
+  "canary": "tests/test_range_bisect.py. A price at the low of a live oscillation is an entry. A price at the high is not. A planted gap on the lower half must SEPARATE. A zero plant must not be PROFITABLE.",
+  "if_pass": "Not a live gate. A positive still needs a result-skeptic review. Same-name later-only is not in this read.",
+  "if_fail": "Close. Do not move 0.5 or any sideways threshold.",
+  "tool": "tools/studies/range_bisect.py"
+}

@@ -1,0 +1,45 @@
+{
+  "id": "flat_conjunction",
+  "registered": "2026-11-08, before any market read of this between-levels rule",
+  "operator": "Sideways means going between a high level and a low level. Use price pattern, %R, and slope together, from the current desk code, to decide whether that minute is one to skip.",
+  "why_this_is_new": "The 11/05 sideways_shape read tested a tight motionless range. The 10/16 sideways filter tested a slow %R rise and a signed price-efficiency bar on its own. The frozen |wr_d5| <= 10.7 flat cut is a different rule. None of those is this conjunction. A tight-range percentile pass was started and discarded when the operator corrected the definition. Its percentiles were not read and are not a threshold here.",
+  "code": {
+    "price_pattern": "ai_entry_watch._range_shape_fields -> rs_rng15_bp, rs_rise15_bp, rs_er15. Last 15 closed bars. The passed price is included in the high and the low.",
+    "percent_r": "tools.sell_double_check.line_window on the fast line (length 21, EWM span 7, 11 points: 10 closed readings plus the live reading). wr_span is max minus min. wr_net is the absolute change from the first point to the live point.",
+    "slope": "ai_entry_watch._wr_slope_fields -> wr_d10_slow. Slow line is length 112, EWM span 3. The value is the live reading minus the reading 10 closed minutes earlier.",
+    "not_line_trend": "sell_double_check.line_trend is the exit classifier. Its word sideways means the live %R is sitting on the lookback high within 0.05. A smooth climb is that word, and a flat wiggle is not. It is not this rule.",
+    "feed": "IEX. config.py alpaca_bar_feed default is still iex.",
+    "no_reimplementation": "A minute is dropped when a live function returns empty. The study does not recompute %R or the 15-bar range."
+  },
+  "sideways_rule": {
+    "price_pattern": "rs_rng15_bp >= 20 and rs_er15 <= 0.30 and abs(rs_rise15_bp) <= 0.5 * rs_rng15_bp. The high and the low are at least 20 bp apart, the path is the published 0.30 chop bar or less efficient, and the net move is at most half the high-to-low distance.",
+    "percent_r": "wr_span >= 15 and wr_net <= 0.5 * wr_span. The fast line itself traveled at least 15 points and gave back at least half of that travel.",
+    "slope": "wr_d10_slow <= 0. The slow line is not rising over the last 10 closed minutes.",
+    "conjunction": "SIDEWAYS only when all three are true. A motionless wiggle under 20 bp is not sideways. A one-way climb is not sideways. The current price may sit at either end of the range.",
+    "frozen": "20 bp, 0.30, 0.5, 15 points, and slow slope <= 0 were chosen from the operator's words and the published 0.30 bar, before any market outcome of this conjunction. Nothing is fit on the score window."
+  },
+  "score_window": "Every IEX warehouse session through 2026-09-23 inclusive. The first two sessions are warmup for the slow line and are not scored. 2026-09-24 through 2026-10-30 is the already-scored sideways_shape window and is excluded. No warehouse day after 2026-09-23 is scored.",
+  "sampling": {
+    "names": "Top 40 symbols by the PRIOR session's IEX dollar volume (close * volume), whose first bar open today is >= $20. Rank is known before today's forward returns.",
+    "warmup": "The two prior IEX sessions are prepended so the slow %R line (112) is defined, then those sessions are not scored.",
+    "grid": "Decision times 10:00, 10:05, ... 15:50 ET. The live functions see bars that started before that minute. Forward is the next 5 one-minute bars.",
+    "drop": "Missing live fields or a gap the live range function refuses: the minute is dropped, not called not-sideways."
+  },
+  "outcome": {
+    "gross_bp": "close five minutes ahead versus the close of the last bar the live function could see, in bp",
+    "never_green": "no high in the next 5 bars reaches that close * 1.0005",
+    "cost_bp": 4,
+    "stress_bp": 8
+  },
+  "questions": {
+    "SEPARATES": "mean gross of not-sideways minus mean gross of sideways > 0 in BOTH date halves, day-clustered t >= 1.96 on the daily difference, and the same sign after clipping the top 1% of gross returns",
+    "PROFITABLE": "SEPARATES, and not-sideways net > 0 in both halves at 4 bp and at 8 bp, and the day-bootstrap 5th percentile of (not-sideways mean minus all-minute mean) > 0, and that bootstrap median beats a random skip of the same count per day"
+  },
+  "controls_printed": "Unconditional mean of every scored minute, beside sideways and not-sideways. Random same-count skip. The primary contrast is the skip itself: these minutes versus the other minutes on the same grid. Same-name later-only is not in this read. No second threshold is tried.",
+  "power": "Each half needs >= 20 days that have at least 5 sideways and 5 not-sideways minutes, and >= 200 sideways minutes. Otherwise UNDERPOWERED. The point estimate is still printed. It cannot promote a gate. A rare rule that misses this bar stays UNDERPOWERED. The thresholds are not loosened after seeing the share.",
+  "desk_information": "Watch-path entries on 2026-11-02..2026-11-06 (replay-cache IEX bars, the same live functions, the same rule). Five sessions, under the 8-day bar. Printed, verdict forced to INFORMATION. It cannot pass or fail the hypothesis.",
+  "canary": "tests/test_flat_conjunction.py calls the live functions. A tape that travels between a high and a low is sideways. A straight rise is not. A motionless tape is not. A planted +8 bp on not-sideways minutes must SEPARATE. A zero plant must not be PROFITABLE. --score refuses to run if the canary fails.",
+  "if_pass": "Not a live gate. A positive still needs a result-skeptic review before it counts. This read does not include the same-name later-only control.",
+  "if_fail": "Close. Do not move 20 bp, 0.30, 0.5, 15 points, the slow-slope bar, the 15-bar window, the 5-minute grid, or the top-40.",
+  "tool": "tools/studies/flat_conjunction.py"
+}
