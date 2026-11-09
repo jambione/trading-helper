@@ -76,7 +76,7 @@ def run_audit():
         print("Standing by for next RTH market open (09:31 ET).\n")
         print("Audit Criteria Active:")
         print("  1. Bar 0 Body Ratio Filter: >= 0.65 (close in top 35% of range, no upper wicks)")
-        print("  2. Breakeven Lock: +30 bp MFE triggers stop lift to entry + $0.01")
+        print("  2. Structural Trailing Stop: Prior 1-minute bar low (ratchet up only)")
         print("  3. Execution Cap: 5.0 bp marketable limit IOC with $0.02 min cap")
         print("=" * 75)
         return
