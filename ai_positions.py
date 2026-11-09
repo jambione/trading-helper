@@ -2321,15 +2321,18 @@ def place_scaled_entry(
                         out["target_order_id"] = None
                         out["order_type"] = "MARKETABLE_LIMIT"
                     else:
-                        cool_s = float(cfg.get("ai_marketable_limit_cooldown_sec", 900.0) or 900.0)
-                        try:
-                            import ai_entry_watch as ew
-                            ew.set_marketable_limit_cooldown(ticker, cool_s)
-                        except Exception:
-                            pass
-                        log_event("marketable_limit_cancelled", symbol=ticker, ref_price=ref,
-                                  limit_px=out.get("limit_px"), status=out.get("status"),
-                                  cooldown_sec=cool_s)
+                        st = str(out.get("status") or "").lower()
+                        note = str(out.get("note") or "").lower()
+                        if st in ("canceled", "cancelled", "expired") or "cap" in note:
+                            cool_s = float(cfg.get("ai_marketable_limit_cooldown_sec", 900.0) or 900.0)
+                            try:
+                                import ai_entry_watch as ew
+                                ew.set_marketable_limit_cooldown(ticker, cool_s)
+                            except Exception:
+                                pass
+                            log_event("marketable_limit_cancelled", symbol=ticker, ref_price=ref,
+                                      limit_px=out.get("limit_px"), status=out.get("status"),
+                                      cooldown_sec=cool_s)
                     return out
 
                 out = alpaca_trader.buy_market_shares(
@@ -2433,6 +2436,14 @@ def place_scaled_entry(
                 reason="stop_order_id_missing_from_response",
                 note="heal will attach stop if still unprotected after fill",
             )
+
+    # Sizing / Partial fill adjustment:
+    if result_a.get("ok") and (result_a.get("partial") or result_a.get("filled_qty") is not None):
+        filled_q = float(result_a.get("filled_qty") or result_a.get("qty") or parent_qty)
+        if filled_q > 0:
+            qty_a = filled_q
+            qty_b = 0
+            total_qty = filled_q
 
     # Runner is bookkeeping only — same parent order / same resting stop.
     result_b = {
@@ -2625,6 +2636,18 @@ def place_scaled_entry(
         # Range arm (ai_watch_range_arm): levels at the arm; range_r_btm puts the position on the range exit.
         **{k: decision.get(k) for k in RANGE_POSITION_KEYS if isinstance(decision, dict) and k in decision},
     }
+
+    if entry_order_type == "MARKETABLE_LIMIT" and result_a.get("ok"):
+        row["entry_confirmed"] = True
+        fill_p = _num(result_a.get("fill_px"))
+        if fill_p and fill_p > 0:
+            row["entry_price"] = fill_p
+        lim_p = _num(result_a.get("limit_px"))
+        if lim_p and lim_p > 0:
+            row["entry_limit_price"] = lim_p
+    if result_a.get("partial"):
+        row["partial_fill"] = True
+        log_event("marketable_limit_partial_fill", symbol=ticker, filled_qty=qty_a, requested_qty=parent_qty)
 
     def _put(st: dict[str, Any]) -> None:
         st[ticker] = row

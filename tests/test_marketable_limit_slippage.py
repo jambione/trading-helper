@@ -24,7 +24,7 @@ class TestMarketableLimitPriceCalculation(unittest.TestCase):
 
             mock_order = MagicMock()
             mock_order.id = "mock_ord_1"
-            mock_order.status = "new"
+            mock_order.status = "filled"
             mock_submit.return_value = mock_order
 
             out = alpaca_trader.buy_marketable_limit(
@@ -94,6 +94,160 @@ class TestMarketableLimitPriceCalculation(unittest.TestCase):
             self.assertEqual(out["status"], "canceled")
             self.assertEqual(out["error"], "marketable_limit_cap_breached")
             self.assertEqual(out["note"], "marketable_limit_cap_breached")
+
+    def test_ioc_polling_transitions_from_new_to_filled(self):
+        """When an IOC order is submitted, Alpaca POST returns 'new', then get_order returns 'filled'."""
+        with patch.object(alpaca_trader, "_can_mutate", return_value=True), \
+             patch.object(alpaca_trader, "symbol_tradable", return_value=True), \
+             patch.object(alpaca_trader, "_require_protective_exit", return_value=False), \
+             patch.object(alpaca_trader, "want_fractional", return_value=False), \
+             patch.object(alpaca_trader, "is_active", return_value=True), \
+             patch.object(alpaca_trader, "get_order") as mock_get_order, \
+             patch.object(alpaca_trader, "_submit_order") as mock_submit:
+
+            mock_order = MagicMock()
+            mock_order.id = "mock_ord_poll_fill"
+            mock_order.status = "new"
+            mock_submit.return_value = mock_order
+
+            mock_get_order.return_value = {
+                "status": "filled",
+                "filled_qty": 20.0,
+                "filled_avg_price": 50.01,
+            }
+
+            out = alpaca_trader.buy_marketable_limit("XYZ", price=50.00, qty=20, cap_bp=5.0)
+            self.assertTrue(out["ok"])
+            self.assertEqual(out["status"], "filled")
+            self.assertEqual(out["qty"], 20.0)
+            self.assertEqual(out["fill_px"], 50.01)
+            self.assertFalse(out["partial"])
+
+    def test_ioc_polling_transitions_from_new_to_canceled_zero_fill(self):
+        """When an IOC order slips past cap, get_order returns canceled with 0 filled shares."""
+        with patch.object(alpaca_trader, "_can_mutate", return_value=True), \
+             patch.object(alpaca_trader, "symbol_tradable", return_value=True), \
+             patch.object(alpaca_trader, "_require_protective_exit", return_value=False), \
+             patch.object(alpaca_trader, "want_fractional", return_value=False), \
+             patch.object(alpaca_trader, "is_active", return_value=True), \
+             patch.object(alpaca_trader, "get_order") as mock_get_order, \
+             patch.object(alpaca_trader, "_submit_order") as mock_submit:
+
+            mock_order = MagicMock()
+            mock_order.id = "mock_ord_poll_cancel"
+            mock_order.status = "new"
+            mock_submit.return_value = mock_order
+
+            mock_get_order.return_value = {
+                "status": "canceled",
+                "filled_qty": 0.0,
+                "filled_avg_price": None,
+            }
+
+            out = alpaca_trader.buy_marketable_limit("XYZ", price=50.00, qty=20, cap_bp=5.0)
+            self.assertFalse(out["ok"])
+            self.assertEqual(out["status"], "canceled")
+            self.assertEqual(out["filled_qty"], 0.0)
+            self.assertEqual(out["error"], "marketable_limit_cap_breached")
+
+    def test_ioc_polling_partial_fill_reconciliation(self):
+        """When an IOC order matches partially (e.g. 15 of 50 shares) then cancels remainder."""
+        with patch.object(alpaca_trader, "_can_mutate", return_value=True), \
+             patch.object(alpaca_trader, "symbol_tradable", return_value=True), \
+             patch.object(alpaca_trader, "_require_protective_exit", return_value=False), \
+             patch.object(alpaca_trader, "want_fractional", return_value=False), \
+             patch.object(alpaca_trader, "is_active", return_value=True), \
+             patch.object(alpaca_trader, "get_order") as mock_get_order, \
+             patch.object(alpaca_trader, "_submit_order") as mock_submit:
+
+            mock_order = MagicMock()
+            mock_order.id = "mock_ord_partial"
+            mock_order.status = "new"
+            mock_submit.return_value = mock_order
+
+            mock_get_order.return_value = {
+                "status": "canceled",
+                "filled_qty": 15.0,
+                "filled_avg_price": 50.02,
+            }
+
+            out = alpaca_trader.buy_marketable_limit("XYZ", price=50.00, qty=50, cap_bp=5.0)
+            self.assertTrue(out["ok"])
+            self.assertEqual(out["qty"], 15.0)
+            self.assertEqual(out["filled_qty"], 15.0)
+            self.assertEqual(out["fill_px"], 50.02)
+            self.assertTrue(out["partial"])
+
+    def test_unconfirmed_status_returns_not_ok_with_zero_fill(self):
+        """When an IOC order remains unconfirmed / timed out, it must return ok: False and 0 filled shares."""
+        with patch.object(alpaca_trader, "_can_mutate", return_value=True), \
+             patch.object(alpaca_trader, "symbol_tradable", return_value=True), \
+             patch.object(alpaca_trader, "_require_protective_exit", return_value=False), \
+             patch.object(alpaca_trader, "want_fractional", return_value=False), \
+             patch.object(alpaca_trader, "_submit_order") as mock_submit:
+
+            mock_order = MagicMock()
+            mock_order.id = "mock_ord_timeout"
+            mock_order.status = "new"
+            mock_order.filled_qty = None
+            mock_submit.return_value = mock_order
+
+            out = alpaca_trader.buy_marketable_limit("XYZ", price=50.00, qty=25, cap_bp=5.0)
+            self.assertFalse(out["ok"])
+            self.assertEqual(out["filled_qty"], 0.0)
+            self.assertEqual(out["error"], "order_new")
+            self.assertEqual(out["note"], "order_new")
+
+    def test_rejected_status_does_not_breach_cap_cooldown(self):
+        """When an order is rejected (e.g. buying power), error must be order_rejected and not trigger cap cooldown."""
+        with patch.object(alpaca_trader, "_can_mutate", return_value=True), \
+             patch.object(alpaca_trader, "symbol_tradable", return_value=True), \
+             patch.object(alpaca_trader, "_require_protective_exit", return_value=False), \
+             patch.object(alpaca_trader, "want_fractional", return_value=False), \
+             patch.object(alpaca_trader, "_submit_order") as mock_submit:
+
+            mock_order = MagicMock()
+            mock_order.id = "mock_ord_rejected"
+            mock_order.status = "rejected"
+            mock_order.filled_qty = None
+            mock_submit.return_value = mock_order
+
+            out = alpaca_trader.buy_marketable_limit("XYZ", price=50.00, qty=25, cap_bp=5.0)
+            self.assertFalse(out["ok"])
+            self.assertEqual(out["filled_qty"], 0.0)
+            self.assertEqual(out["error"], "order_rejected")
+            self.assertEqual(out["note"], "order_rejected")
+            self.assertNotIn("cap", out["note"])
+
+    def test_canceled_submit_with_missing_filled_qty_polls_order_api(self):
+        """When an order is returned canceled on submit with missing filled_qty, poll get_order to recover any fills."""
+        with patch.object(alpaca_trader, "_can_mutate", return_value=True), \
+             patch.object(alpaca_trader, "symbol_tradable", return_value=True), \
+             patch.object(alpaca_trader, "_require_protective_exit", return_value=False), \
+             patch.object(alpaca_trader, "want_fractional", return_value=False), \
+             patch.object(alpaca_trader, "is_active", return_value=True), \
+             patch.object(alpaca_trader, "get_order") as mock_get_order, \
+             patch.object(alpaca_trader, "_submit_order") as mock_submit:
+
+            mock_order = MagicMock()
+            mock_order.id = "mock_ord_sync_cancel"
+            mock_order.status = "canceled"
+            mock_order.filled_qty = None
+            mock_submit.return_value = mock_order
+
+            mock_get_order.return_value = {
+                "status": "canceled",
+                "filled_qty": 12.0,
+                "filled_avg_price": 50.01,
+            }
+
+            out = alpaca_trader.buy_marketable_limit("XYZ", price=50.00, qty=30, cap_bp=5.0)
+            self.assertTrue(out["ok"])
+            self.assertEqual(out["qty"], 12.0)
+            self.assertEqual(out["filled_qty"], 12.0)
+            self.assertEqual(out["fill_px"], 50.01)
+            self.assertTrue(out["partial"])
+            mock_get_order.assert_called_with("mock_ord_sync_cancel")
 
 
 class TestMarketableLimitCooldown(unittest.TestCase):
@@ -261,6 +415,51 @@ class TestAIPositionsMarketableLimitRouting(unittest.TestCase):
             cooldown_left = ew.get_marketable_limit_cooldown("NVDA")
             self.assertGreater(cooldown_left, 550.0)
             self.assertLessEqual(cooldown_left, 600.0)
+
+    def test_partial_fill_adjusts_position_quantities(self):
+        """When marketable limit fills partially, ai_positions books only filled shares."""
+        mock_cfg = {
+            "ai_broker_stop_enabled": False,
+            "ai_entry_order_style": "market",
+            "ai_marketable_limit_cap_bp": 5.0,
+            "ai_marketable_limit_min_cap_dollars": 0.02,
+        }
+
+        decision = {
+            "entry_low": 49.90,
+            "entry_high": 50.10,
+            "stop_price": 48.00,
+            "target_1": 54.00,
+            "desk_force": True,
+        }
+
+        with patch("config.load_config_ro", return_value=mock_cfg), \
+             patch("alpaca_trader.buy_marketable_limit") as mock_limit, \
+             patch("ai_positions._update_state") as mock_update_state:
+
+            mock_limit.return_value = {
+                "ok": True,
+                "order_id": "ord_part_300",
+                "status": "canceled",
+                "qty": 15.0,
+                "filled_qty": 15.0,
+                "fill_px": 50.01,
+                "partial": True,
+                "limit_px": 50.03,
+            }
+
+            out = ai_positions.place_scaled_entry(
+                "AAPL",
+                decision,
+                account_equity=25000.0,
+                current_ask=50.00,
+                current_bid=49.98,
+            )
+
+            self.assertTrue(out.get("ok"))
+            self.assertEqual(out.get("qty_a"), 15.0)
+            self.assertEqual(out.get("qty_b"), 0)
+            mock_update_state.assert_called_once()
 
 
 if __name__ == "__main__":
