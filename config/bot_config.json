@@ -44,7 +44,7 @@
   "ai_marketable_limit_min_cap_dollars": 0.02,
   "ai_marketable_limit_tif": "ioc",
   "ai_marketable_limit_cooldown_sec": 900.0,
-  "ai_catalyst_thrust_enabled": false,
+  "ai_catalyst_thrust_enabled": true,
   "ai_catalyst_thrust_min_gap_pct": 8.0,
   "ai_catalyst_thrust_min_price": 20.0,
   "ai_entry_unconfirmed_ttl_sec": 900.0,

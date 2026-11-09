@@ -137,14 +137,16 @@ def simulate_trade_execution(
     entry_px: float,
     initial_stop_px: float,
     max_hold_bars: int = 15,
+    fixed_exit_bars: int | None = None,
     cost_bp: float = COST_STD_BP,
 ) -> dict | None:
-    """Manages trade using the validated 1-minute prior-low trailing ratchet stop."""
+    """Manages trade using the validated 1-minute prior-low trailing ratchet stop or fixed hold."""
     if entry_bar_idx >= len(bars) or entry_px <= 0 or initial_stop_px <= 0:
         return None
 
     s = initial_stop_px
-    end_idx = min(entry_bar_idx + max_hold_bars - 1, len(bars) - 1)
+    hold_limit = fixed_exit_bars if fixed_exit_bars is not None else max_hold_bars
+    end_idx = min(entry_bar_idx + hold_limit - 1, len(bars) - 1)
     if end_idx < entry_bar_idx:
         return None
 
@@ -178,8 +180,9 @@ def simulate_trade_execution(
             exit_reason = "time"
             break
 
-        # 3. Causal ratchet update for bar k+1
-        s = max(s, l_k)
+        # 3. Causal ratchet update for bar k+1 (only if not a fixed hold without ratchet)
+        if fixed_exit_bars is None:
+            s = max(s, l_k)
 
     if exit_px is None or exit_px <= 0:
         return None
@@ -205,13 +208,119 @@ def simulate_trade_execution(
 
 
 def sim_baseline(bars: list[dict]) -> dict | None:
-    """Setup 1: Baseline Bar 1 Open. Bar 0 green."""
+    """Setup 1: Baseline Bar 1 Open. Bar 0 green. Structural Ratchet (15 bars)."""
     if float(bars[0]["c"]) <= float(bars[0]["o"]):
         return None  # Bar 0 red
     entry_px = float(bars[1]["o"])
     b0_low = float(bars[0]["l"])
     initial_stop = max(b0_low, entry_px * 0.98)
     return simulate_trade_execution(bars, entry_bar_idx=1, entry_px=entry_px, initial_stop_px=initial_stop)
+
+
+def sim_baseline_fixed_3m(bars: list[dict]) -> dict | None:
+    """Setup 1b: Baseline Bar 1 Open with strict 3-minute fixed exit (no ratchet)."""
+    if float(bars[0]["c"]) <= float(bars[0]["o"]):
+        return None
+    entry_px = float(bars[1]["o"])
+    b0_low = float(bars[0]["l"])
+    initial_stop = max(b0_low, entry_px * 0.98)
+    return simulate_trade_execution(
+        bars, entry_bar_idx=1, entry_px=entry_px, initial_stop_px=initial_stop, fixed_exit_bars=3
+    )
+
+
+def sim_micro_pullback(bars: list[dict], max_lookback_bars: int = 4) -> dict | None:
+    """Setup 3b: Micro-Pullback Reversal (Option A+).
+    Leg 1 begins with Bar 0 green.
+    Looks for the first 1-2 bar consolidation/pullback holding strictly above Bar 0 low/open.
+    Enters on the break above the pause candle's high, with stop anchored to the micro-low.
+    """
+    if float(bars[0]["c"]) <= float(bars[0]["o"]):
+        return None
+    b0_low = float(bars[0]["l"])
+    b0_open = float(bars[0]["o"])
+
+    # Search for pause candle in bar 1 or bar 2
+    for pause_idx in range(1, min(max_lookback_bars, len(bars) - 1)):
+        p_o = float(bars[pause_idx]["o"])
+        p_h = float(bars[pause_idx]["h"])
+        p_l = float(bars[pause_idx]["l"])
+        p_c = float(bars[pause_idx]["c"])
+
+        # Must hold above session floor (Bar 0 low / open)
+        if p_l < b0_low or p_l < b0_open:
+            return None
+
+        # Is this candle a pause / pullback?
+        # Either red candle, inside bar, or pullback below prior high
+        prior_h = float(bars[pause_idx - 1]["h"])
+        is_pause = (p_c <= p_o) or (p_h <= prior_h) or (p_l < float(bars[pause_idx - 1]["l"]))
+
+        if is_pause:
+            # Check next bar (pause_idx + 1) for upside break above pause_idx high
+            next_idx = pause_idx + 1
+            if next_idx >= len(bars):
+                return None
+            n_o = float(bars[next_idx]["o"])
+            n_h = float(bars[next_idx]["h"])
+            n_l = float(bars[next_idx]["l"])
+
+            if n_l < b0_low:
+                return None
+
+            if n_h > p_h:
+                entry_px = max(p_h, n_o)
+                # Razor-sharp micro stop placed right below the pause low
+                initial_stop = max(p_l, entry_px * 0.98)
+                return simulate_trade_execution(
+                    bars, entry_bar_idx=next_idx, entry_px=entry_px, initial_stop_px=initial_stop
+                )
+
+    return None
+
+
+def sim_micro_pullback_fixed_3m(bars: list[dict]) -> dict | None:
+    """Setup 3c: Micro-Pullback Reversal with 3-minute fixed exit (testing 3m choke)."""
+    if float(bars[0]["c"]) <= float(bars[0]["o"]):
+        return None
+    b0_low = float(bars[0]["l"])
+    b0_open = float(bars[0]["o"])
+
+    for pause_idx in range(1, min(4, len(bars) - 1)):
+        p_o = float(bars[pause_idx]["o"])
+        p_h = float(bars[pause_idx]["h"])
+        p_l = float(bars[pause_idx]["l"])
+        p_c = float(bars[pause_idx]["c"])
+
+        if p_l < b0_low or p_l < b0_open:
+            return None
+
+        prior_h = float(bars[pause_idx - 1]["h"])
+        is_pause = (p_c <= p_o) or (p_h <= prior_h) or (p_l < float(bars[pause_idx - 1]["l"]))
+
+        if is_pause:
+            next_idx = pause_idx + 1
+            if next_idx >= len(bars):
+                return None
+            n_o = float(bars[next_idx]["o"])
+            n_h = float(bars[next_idx]["h"])
+            n_l = float(bars[next_idx]["l"])
+
+            if n_l < b0_low:
+                return None
+
+            if n_h > p_h:
+                entry_px = max(p_h, n_o)
+                initial_stop = max(p_l, entry_px * 0.98)
+                return simulate_trade_execution(
+                    bars,
+                    entry_bar_idx=next_idx,
+                    entry_px=entry_px,
+                    initial_stop_px=initial_stop,
+                    fixed_exit_bars=3,
+                )
+
+    return None
 
 
 def sim_orb_higher_high(bars: list[dict], max_arm_bars: int = 5) -> dict | None:
@@ -438,9 +547,12 @@ def main():
 
     # Setups to evaluate
     setups = [
-        ("1_BASELINE_THRUST", sim_baseline),
+        ("1_BASELINE_THRUST_RATCHET_15M", sim_baseline),
+        ("1b_BASELINE_THRUST_FIXED_3M", sim_baseline_fixed_3m),
         ("2_ORB_HIGHER_HIGH", sim_orb_higher_high),
         ("3_HIGHER_LOW_PULLBACK", sim_higher_low_pullback),
+        ("3b_MICRO_PULLBACK_RATCHET_15M", sim_micro_pullback),
+        ("3c_MICRO_PULLBACK_FIXED_3M", sim_micro_pullback_fixed_3m),
         ("4_VWAP_CONFLUENCE", sim_vwap_confluence),
     ]
 
