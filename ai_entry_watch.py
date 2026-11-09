@@ -20535,7 +20535,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _skip(_blocker_for_gate(gate_why), detail=gate_why)
             continue
 
-        if not allow_buys:
+        thrust_trading_open = is_thrust and trading_hours_active(cfg, t0, market_open=market_open)
+        if not allow_buys and not thrust_trading_open:
             # Structure/zone ready, but no paper entry until RTH (market hours).
             _skip("not_trading_hours")
             continue

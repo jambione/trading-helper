@@ -296,3 +296,22 @@ def test_catalyst_thrust_breakeven_lock_at_30bp():
     assert pos["local_stop_price"] == 100.01
     assert pos["stop_price"] == 100.01
     assert any(e.get("event") == "thrust_breakeven_lock" for e in events)
+
+
+def test_catalyst_thrust_exempt_from_earliest_entry_delay():
+    """Verify that catalyst thrust entries can execute at 09:31 ET even when ai_entry_earliest_time is 09:45."""
+    import ai_entry_watch as aew
+    cfg = {
+        "ai_catalyst_thrust_enabled": True,
+        "ai_entry_earliest_time": "09:45",
+        "ai_sod_liquidate_enabled": False,
+    }
+    # 09:32:00 ET
+    dt_open = datetime(2026, 11, 9, 9, 32, 0, tzinfo=ET)
+    t_open = dt_open.timestamp()
+
+    # entry_window_open is False for regular scalp trades
+    assert aew.entry_window_open(cfg, t_open) is False
+
+    # But trading_hours_active is True during market hours
+    assert aew.trading_hours_active(cfg, t_open, market_open=True) is True
