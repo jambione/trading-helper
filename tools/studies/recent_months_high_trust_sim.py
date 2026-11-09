@@ -107,6 +107,7 @@ def simulate_trade(
     initial_stop_px: float,
     max_hold_bars: int = 15,
     fixed_exit_bars: int | None = None,
+    breakeven_trigger_bp: float | None = None,
     cost_bp: float = COST_STD_BP,
 ) -> dict | None:
     if entry_bar_idx >= len(bars) or entry_px <= 0 or initial_stop_px <= 0:
@@ -123,6 +124,7 @@ def simulate_trade(
     exit_reason = None
     mfe_px = entry_px
     mae_px = entry_px
+    be_active = False
 
     for k in range(entry_bar_idx, end_idx + 1):
         b = bars[k]
@@ -134,11 +136,17 @@ def simulate_trade(
         mfe_px = max(mfe_px, h_k)
         mae_px = min(mae_px, l_k)
 
+        # Breakeven lock check: if price touches +be_trigger_bp, ratchet stop to entry + 1c
+        if breakeven_trigger_bp is not None and breakeven_trigger_bp > 0:
+            if h_k >= entry_px * (1.0 + breakeven_trigger_bp / 10000.0) - 1e-9:
+                be_active = True
+                s = max(s, entry_px * (1.0 + 1.0 / 10000.0))
+
         # 1. Stop loss hit check
         if l_k <= s:
             exit_px = min(s, o_k)
             exit_bar_idx = k
-            exit_reason = "stop"
+            exit_reason = "breakeven" if be_active else "stop"
             break
 
         # 2. Final hold bar exit (time stop)
@@ -151,6 +159,8 @@ def simulate_trade(
         # 3. Structural ratchet update for bar k+1
         if fixed_exit_bars is None:
             s = max(s, l_k)
+            if be_active:
+                s = max(s, entry_px * (1.0 + 1.0 / 10000.0))
 
     if exit_px is None or exit_px <= 0:
         return None
@@ -176,7 +186,8 @@ def simulate_trade(
     }
 
 
-def sim_inception_ratchet_15m(bars: list[dict]) -> dict | None:
+def sim_raw_thrust_15m(bars: list[dict]) -> dict | None:
+    """Setup 1: Raw Inception Thrust (15m prior-low ratchet, no wick filter, no BE lock)."""
     if float(bars[0]["c"]) <= float(bars[0]["o"]):
         return None
     entry_px = float(bars[1]["o"])
@@ -185,7 +196,65 @@ def sim_inception_ratchet_15m(bars: list[dict]) -> dict | None:
     return simulate_trade(bars, entry_bar_idx=1, entry_px=entry_px, initial_stop_px=initial_stop, max_hold_bars=15)
 
 
-def sim_inception_fixed_3m(bars: list[dict]) -> dict | None:
+def sim_hardened_thrust_15m(bars: list[dict]) -> dict | None:
+    """Setup 2: Hardened Inception Thrust with Condition 1 (Wick Filter >= 0.65) and Condition 2 (BE Lock at +30 bp)."""
+    b0 = bars[0]
+    b0_o, b0_h, b0_l, b0_c = float(b0["o"]), float(b0["h"]), float(b0["l"]), float(b0["c"])
+    if b0_c <= b0_o:
+        return None
+    rng = b0_h - b0_l
+    if rng > 0:
+        close_pos = (b0_c - b0_l) / rng
+        if close_pos < 0.65:
+            return None  # Veto blow-off wick
+    entry_px = float(bars[1]["o"])
+    initial_stop = max(b0_l, entry_px * 0.98)
+    return simulate_trade(
+        bars, entry_bar_idx=1, entry_px=entry_px, initial_stop_px=initial_stop,
+        max_hold_bars=15, breakeven_trigger_bp=30.0
+    )
+
+
+def sim_hardened_thrust_no_be(bars: list[dict]) -> dict | None:
+    """Setup 3: Hardened Inception Thrust with Condition 1 only (Wick Filter >= 0.65, NO BE Lock)."""
+    b0 = bars[0]
+    b0_o, b0_h, b0_l, b0_c = float(b0["o"]), float(b0["h"]), float(b0["l"]), float(b0["c"])
+    if b0_c <= b0_o:
+        return None
+    rng = b0_h - b0_l
+    if rng > 0:
+        close_pos = (b0_c - b0_l) / rng
+        if close_pos < 0.65:
+            return None  # Veto blow-off wick
+    entry_px = float(bars[1]["o"])
+    initial_stop = max(b0_l, entry_px * 0.98)
+    return simulate_trade(
+        bars, entry_bar_idx=1, entry_px=entry_px, initial_stop_px=initial_stop,
+        max_hold_bars=15, breakeven_trigger_bp=None
+    )
+
+
+def sim_hardened_thrust_fixed_3m(bars: list[dict]) -> dict | None:
+    """Setup 4: Hardened Inception Thrust (Wick Filter >= 0.65) with strict 3-minute exit."""
+    b0 = bars[0]
+    b0_o, b0_h, b0_l, b0_c = float(b0["o"]), float(b0["h"]), float(b0["l"]), float(b0["c"])
+    if b0_c <= b0_o:
+        return None
+    rng = b0_h - b0_l
+    if rng > 0:
+        close_pos = (b0_c - b0_l) / rng
+        if close_pos < 0.65:
+            return None
+    entry_px = float(bars[1]["o"])
+    initial_stop = max(b0_l, entry_px * 0.98)
+    return simulate_trade(
+        bars, entry_bar_idx=1, entry_px=entry_px, initial_stop_px=initial_stop,
+        fixed_exit_bars=3, breakeven_trigger_bp=30.0
+    )
+
+
+def sim_raw_fixed_3m(bars: list[dict]) -> dict | None:
+    """Setup 5: Raw Inception Thrust with strict 3-minute exit (no wick check, no BE lock)."""
     if float(bars[0]["c"]) <= float(bars[0]["o"]):
         return None
     entry_px = float(bars[1]["o"])
@@ -325,11 +394,11 @@ def evaluate_window(primaries: list[dict], controls: list[dict], start_date: str
     print(f"{'='*75}")
 
     setups = [
-        ("1_INCEPTION_RATCHET_15M", sim_inception_ratchet_15m),
-        ("2_INCEPTION_FIXED_3M", sim_inception_fixed_3m),
-        ("3_INCEPTION_FIXED_5M", sim_inception_fixed_5m),
-        ("4_ORB_BREAKOUT", sim_orb_breakout),
-        ("5_MICRO_PULLBACK", sim_micro_pullback),
+        ("1_RAW_THRUST_15M", sim_raw_thrust_15m),
+        ("2_HARDENED_THRUST_15M", sim_hardened_thrust_15m),
+        ("3_HARDENED_THRUST_NO_BE", sim_hardened_thrust_no_be),
+        ("4_HARDENED_FIXED_3M", sim_hardened_thrust_fixed_3m),
+        ("5_RAW_FIXED_3M", sim_raw_fixed_3m),
     ]
 
     out_summary = {}
@@ -353,7 +422,7 @@ def evaluate_window(primaries: list[dict], controls: list[dict], start_date: str
     # Non-catalyst control benchmark on Setup 1
     ctrl_trades = []
     for c in c_window:
-        res = sim_inception_ratchet_15m(c["bars"])
+        res = sim_raw_thrust_15m(c["bars"])
         if res:
             res["day"] = c["day"]
             res["sym"] = c["sym"]
@@ -362,8 +431,8 @@ def evaluate_window(primaries: list[dict], controls: list[dict], start_date: str
     out_summary["CONTROL_NON_CATALYST"] = ctrl_m
     print(f"--- CONTROL_NON_CATALYST (Inception Ratchet on Non-News Gappers) ---")
     print(f"  Trades: {ctrl_m['n_trades']} over {ctrl_m['n_days']} sessions | Net: {ctrl_m['mean_net_bp']:+.2f} bp | PF: {ctrl_m['profit_factor']:.2f}")
-    lift = out_summary["1_INCEPTION_RATCHET_15M"]["mean_net_bp"] - ctrl_m["mean_net_bp"]
-    print(f"  >>> REALIZED FIVE-PILLARS CATALYST LIFT: {lift:+.2f} bp <<<\n")
+    lift = out_summary["2_HARDENED_THRUST_15M"]["mean_net_bp"] - ctrl_m["mean_net_bp"]
+    print(f"  >>> HARDENED THRUST CATALYST LIFT VS CONTROLS: {lift:+.2f} bp <<<\n")
 
     return out_summary
 
@@ -419,6 +488,13 @@ def main():
         verified_primaries, verified_controls,
         start_date="2026-01-02", end_date="2026-09-25",
         label="FULL_YEAR_2026 (YTD 2026)"
+    )
+
+    # 4. Full Historical Sample (January 2, 2024 to September 25, 2026) - 684 Sessions
+    results_all["FULL_HISTORICAL_SAMPLE"] = evaluate_window(
+        verified_primaries, verified_controls,
+        start_date="2024-01-02", end_date="2026-09-25",
+        label="FULL_HISTORICAL_SAMPLE (2024 - 2026, 684 Sessions)"
     )
 
     out_file = OUT_DIR / "recent_months_high_trust_results.json"
