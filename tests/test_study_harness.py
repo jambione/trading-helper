@@ -113,7 +113,7 @@ def test_holdout_hidden_then_one_final_read(wh, tmp_path, monkeypatch, capsys):
     assert "REFUSED" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("name", ["current_square", "early_leg_turn", "base_break", "early_square", "square_variable", "square_flat", "square_up3to6", "square_up6plus", "square_early_only", "square_late_only", "surge_unmoved", "flow_proxy"])
+@pytest.mark.parametrize("name", ["current_square", "early_leg_turn", "base_break", "early_square", "square_variable", "square_flat", "square_up3to6", "square_up6plus", "square_early_only", "square_late_only", "surge_unmoved", "flow_proxy", "full_green", "full_green_strong", "full_green_retest"])
 def test_shipped_signals_are_causal_and_shaped(wh, name):
     fn, hold, nm = H.load_signal(Path(H.__file__).parent / "signals" / f"{name}.py")
     r = H.run(fn, hold, sorted(wh.glob("*.npz"))[:8], {**CFG, "min_trades": 0, "min_days": 0})   # raises on look-ahead
@@ -166,3 +166,11 @@ def test_day_pick_return_is_next_open_to_the_1559_open():
     o = np.full((1, H.NBAR), 100.0)
     o[0, D.EXIT] = 102.0
     assert D.to_close({"o": o}, D.DECIDE)[0] == pytest.approx(200.0)
+
+
+def test_full_green_needs_no_wicks():
+    sys.path.insert(0, str(Path(H.__file__).parent / "signals"))
+    from full_green import full_green
+    day = {"o": np.array([[100.0, 100.0, 100.0]]), "l": np.array([[100.0, 99.8, 100.0]]),
+           "h": np.array([[100.3, 100.3, 100.5]]), "c": np.array([[100.3, 100.3, 100.3]])}
+    assert list(full_green(day)[0]) == [True, False, False]        # clean; lower wick; upper wick
