@@ -103,10 +103,23 @@ _WASH_COOLDOWN_SEC = 1800.0  # 30 minutes
 # Per-symbol cooldown after marketable limit order was cancelled/swept without fill.
 # Prevents the "immediate re-buy death spiral" where a slipping stock is repeatedly re-attempted.
 _marketable_limit_cooldown_until: dict[str, float] = {}
-_MARKETABLE_LIMIT_COOLDOWN_DEFAULT_SEC = 900.0  # 15 minutes
+# 60 s, not 15 min: the arm needs a RISING price, so the orders that miss the cap are the names still running.
+# A long lockout kept the desk out of exactly those and left it filling the ones that had stalled.
+_MARKETABLE_LIMIT_COOLDOWN_DEFAULT_SEC = 60.0
 
 
-def set_marketable_limit_cooldown(symbol: str, cooldown_sec: float = 900.0, now: float | None = None) -> None:
+def marketable_limit_cooldown_sec(cfg: dict | None) -> float:
+    """ai_marketable_limit_cooldown_sec; 0 means no lockout (was impossible: `or 900` turned 0 back into 15 min)."""
+    raw = (cfg or {}).get("ai_marketable_limit_cooldown_sec")
+    if raw is None:
+        return _MARKETABLE_LIMIT_COOLDOWN_DEFAULT_SEC
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return _MARKETABLE_LIMIT_COOLDOWN_DEFAULT_SEC
+
+
+def set_marketable_limit_cooldown(symbol: str, cooldown_sec: float = _MARKETABLE_LIMIT_COOLDOWN_DEFAULT_SEC, now: float | None = None) -> None:
     t = time.time() if now is None else float(now)
     _marketable_limit_cooldown_until[str(symbol).upper()] = t + max(0.0, float(cooldown_sec))
 
@@ -12160,8 +12173,16 @@ def live_exhaustion_pair(
         return None
     slow_rows, slow_span_sec = clock_window_rows(
         symbol, cfg, now, length=slow_len)
+    # Variable slow window (operator 11/10): 0 = the full slow length must exist (about two hours of bars, so no
+    # square before late morning on RTH-only bars). N > 0 = the slow line forms on as few as N bars and grows to
+    # the full length; below the full length it is the range %R of the bars that exist ("clock_range").
+    try:
+        slow_min = int(cfg.get("ai_watch_exhaustion_slow_min_bars", 0) or 0)
+    except (TypeError, ValueError):
+        slow_min = 0
+    slow_min = slow_len if slow_min <= 0 else max(2, min(slow_len, slow_min))
     slow = _live_percent_r_line(
-        slow_rows, px, slow_len, slow_span, eps, min_range=slow_len)
+        slow_rows, px, slow_len, slow_span, eps, min_range=slow_min)
     out = {
         "fast": fast[0],
         "fast_rising": fast[1],
@@ -20735,12 +20756,13 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 _wash_cooldown_until[sym] = t0 + max(60.0, cool_s)
                 set_block_reason(rec, "wash_trade", now=t0, detail=err)
             elif marketable_limit_slip:
-                cool_s = float(
-                    cfg.get("ai_marketable_limit_cooldown_sec", _MARKETABLE_LIMIT_COOLDOWN_DEFAULT_SEC)
-                    or _MARKETABLE_LIMIT_COOLDOWN_DEFAULT_SEC
-                )
-                set_marketable_limit_cooldown(sym, cool_s, now=t0)
-                set_block_reason(rec, "slip_cancel_cooldown", now=t0, detail=f"{int(cool_s)}s cool")
+                cool_s = marketable_limit_cooldown_sec(cfg)
+                if cool_s > 0:
+                    set_marketable_limit_cooldown(sym, cool_s, now=t0)
+                    set_block_reason(rec, "slip_cancel_cooldown", now=t0, detail=f"{int(cool_s)}s cool")
+                else:
+                    clear_marketable_limit_cooldown(sym)
+                    set_block_reason(rec, err, now=t0, detail=err)
             else:
                 set_block_reason(rec, err, now=t0, detail=err)
             try:

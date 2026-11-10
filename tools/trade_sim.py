@@ -39,6 +39,19 @@ VARIANTS = {
     "t25_60": {"ai_watch_synth_rr": 0.05, "ai_watch_synth_scale_out_pct": 60.0},
     "t20_40": {"ai_watch_synth_rr": 0.04, "ai_watch_synth_scale_out_pct": 40.0},
 }
+# Loss-to-win gap (operator 11/10): the OPPOSITE direction to the locks above. run_* lets a green trade run (slower or no idle
+# step, wider give from the peak, later breakeven); init_30 halves the opening stop; init_30_run does both. Prints end 25 min after
+# the fill (HOLD_MAX), so a runner is cut there.
+_RUN = {"ai_local_trail_time_decay_enabled": False, "ai_local_trail_peak_give_pct": 0.70, "ai_local_trail_be_at_pct": 0.30}
+VARIANTS.update({
+    "run_idle60": {"ai_local_trail_decay_idle_sec": 60.0},
+    "run_decay_off": {"ai_local_trail_time_decay_enabled": False},
+    "run_peak70": {"ai_local_trail_peak_give_pct": 0.70},
+    "run_be30": {"ai_local_trail_be_at_pct": 0.30},
+    "run_all": dict(_RUN),
+    "init_30": {"ai_local_trail_initial_give_r": 0.06},
+    "init_30_run": {**_RUN, "ai_local_trail_initial_give_r": 0.06},
+})
 # Never-green bleed (operator + Argon 11/07): (a) the existing underwater leash ai_local_trail_decay_red_step_r (live 0 = off),
 # (b) a resting SCRATCH: once a trade has been never-green (peak < entry + 5 bp) for T s, rest a sell limit at the entry price; it fills
 # when a print reaches entry x (1 + 2 bp) (bid-reach proxy); the -60 bp shelf stays as the backstop.

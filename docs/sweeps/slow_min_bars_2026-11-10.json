@@ -1,0 +1,56 @@
+{
+ "name": "slow_min_bars_2026-11-10",
+ "sha": "HEAD",
+ "start": "09:30",
+ "end": "15:50",
+ "purpose": "Operator 11/10: opens start late (first orders 10:19 on 11/9, 11:04 on 11/10) because the slow %R line needs 112 one-minute bars. slow20 = ai_watch_exhaustion_slow_min_bars 20 (slow line forms on 20 bars and grows to 112). early0935 = entries allowed from 09:35 (live 09:45). slow20_0935 = both. Bars fixed before any result: the sweep's own SCREEN (mean day delta > 0 and >= 60% of days better) and CONFIRM (mean > 0, day-t >= 1.5, both halves > 0). The harness on the liquid warehouse found the extra early trades neither better nor worse (lift about 0), so the expected result is MORE and EARLIER opens with no change in bp per trade; a KEEP here is not required to turn the knob on for earlier opens, but a clear DROP (day delta < 0, most days worse) means leave it off. Also read: first-entry time per day and trade count per arm.",
+ "baseline": {
+  "live_book": true,
+  "set": {}
+ },
+ "base_set": {
+  "ai_max_positions": 3,
+  "ai_max_position_pct": 33.0,
+  "ai_risk_pct": 1.65
+ },
+ "variants": {
+  "slow20": {
+   "live_book": true,
+   "set": {
+    "ai_watch_exhaustion_slow_min_bars": 20
+   }
+  },
+  "early0935": {
+   "live_book": true,
+   "set": {
+    "ai_entry_earliest_time": "09:35"
+   }
+  },
+  "slow20_0935": {
+   "live_book": true,
+   "set": {
+    "ai_watch_exhaustion_slow_min_bars": 20,
+    "ai_entry_earliest_time": "09:35"
+   }
+  }
+ },
+ "screen_days": [
+  "2026-11-10",
+  "2026-11-09",
+  "2026-11-06",
+  "2026-11-05",
+  "2026-11-04"
+ ],
+ "confirm_days": [
+  "2026-11-03",
+  "2026-11-02",
+  "2026-10-30",
+  "2026-10-29",
+  "2026-10-28",
+  "2026-10-27",
+  "2026-10-26",
+  "2026-10-23",
+  "2026-10-22",
+  "2026-10-21"
+ ]
+}

@@ -2315,6 +2315,18 @@ def place_scaled_entry(
                     out = alpaca_trader.buy_marketable_limit(
                         ticker, ref, qty=parent_qty, cap_bp=cap_bp, min_cap_dollars=min_cap, time_in_force=tif,
                     ) or {}
+                    # Re-price (off at 0): a miss on a rising name is retried at the fresh ask instead of being
+                    # locked out, as long as the ask has not run more than the chase limit past the first reference.
+                    tries = marketable_reprice_max(cfg)
+                    while tries > 0 and _marketable_missed(out):
+                        tries -= 1
+                        ref2 = marketable_reprice_ref(ref, _fresh_ask(ticker), marketable_reprice_chase_bp(cfg))
+                        if ref2 is None:
+                            break
+                        log_event("marketable_limit_reprice", symbol=ticker, ref_price=ref, new_ref=ref2)
+                        out = alpaca_trader.buy_marketable_limit(
+                            ticker, ref2, qty=parent_qty, cap_bp=cap_bp, min_cap_dollars=min_cap, time_in_force=tif,
+                        ) or {}
                     if out.get("ok"):
                         out["buy_order_id"] = out.get("order_id")
                         out["stop_order_id"] = None
@@ -2324,10 +2336,12 @@ def place_scaled_entry(
                         st = str(out.get("status") or "").lower()
                         note = str(out.get("note") or "").lower()
                         if st in ("canceled", "cancelled", "expired") or "cap" in note:
-                            cool_s = float(cfg.get("ai_marketable_limit_cooldown_sec", 900.0) or 900.0)
+                            cool_s = 0.0
                             try:
                                 import ai_entry_watch as ew
-                                ew.set_marketable_limit_cooldown(ticker, cool_s)
+                                cool_s = ew.marketable_limit_cooldown_sec(cfg)
+                                if cool_s > 0:
+                                    ew.set_marketable_limit_cooldown(ticker, cool_s)
                             except Exception:
                                 pass
                             log_event("marketable_limit_cancelled", symbol=ticker, ref_price=ref,
@@ -3160,6 +3174,49 @@ def _update_excursions(pos: dict[str, Any], price: float | None) -> None:
     mfe = _num(pos.get("mfe_r"))
     pos["mae_r"] = r if mae is None else min(mae, r)
     pos["mfe_r"] = r if mfe is None else max(mfe, r)
+
+
+def marketable_reprice_max(cfg: dict | None) -> int:
+    """ai_marketable_limit_reprice_max: extra attempts after a missed marketable limit (0 = none, capped at 3)."""
+    try:
+        return max(0, min(3, int((cfg or {}).get("ai_marketable_limit_reprice_max", 0) or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def marketable_reprice_chase_bp(cfg: dict | None) -> float:
+    """ai_marketable_limit_reprice_chase_bp: how far above the FIRST reference a re-price may go (default 15 bp)."""
+    try:
+        return max(0.0, float((cfg or {}).get("ai_marketable_limit_reprice_chase_bp", 15.0)))
+    except (TypeError, ValueError):
+        return 15.0
+
+
+def marketable_reprice_ref(first_ref: float, fresh_ask: float | None, chase_bp: float) -> float | None:
+    """The reference for a retry, or None when there is no fresh ask or it ran past the chase limit."""
+    try:
+        r0, a = float(first_ref), float(fresh_ask)
+    except (TypeError, ValueError):
+        return None
+    if r0 <= 0 or a <= 0 or a > r0 * (1.0 + chase_bp / 1e4) + 1e-9:
+        return None
+    return a
+
+
+def _marketable_missed(out: dict | None) -> bool:
+    if not isinstance(out, dict) or out.get("ok"):
+        return False
+    st = str(out.get("status") or "").lower()
+    return st in ("canceled", "cancelled", "expired") or "cap" in str(out.get("note") or "").lower()
+
+
+def _fresh_ask(ticker: str) -> float | None:
+    try:
+        import ai_trading
+        ai_trading.refresh_quotes_now([ticker])
+        return ai_trading._latest_ask(ticker)
+    except Exception:
+        return None
 
 
 def breakeven_floor(entry: float | None, cfg: dict | None = None) -> float | None:

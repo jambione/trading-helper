@@ -416,6 +416,47 @@ class TestAIPositionsMarketableLimitRouting(unittest.TestCase):
             self.assertGreater(cooldown_left, 550.0)
             self.assertLessEqual(cooldown_left, 600.0)
 
+    def test_cooldown_knob_honors_zero_and_defaults_to_60(self):
+        self.assertEqual(ew.marketable_limit_cooldown_sec({}), 60.0)
+        self.assertEqual(ew.marketable_limit_cooldown_sec({"ai_marketable_limit_cooldown_sec": 0}), 0.0)
+        self.assertEqual(ew.marketable_limit_cooldown_sec({"ai_marketable_limit_cooldown_sec": 45}), 45.0)
+        self.assertEqual(ew.marketable_limit_cooldown_sec({"ai_marketable_limit_cooldown_sec": "x"}), 60.0)
+
+    def test_zero_cooldown_leaves_the_name_free(self):
+        mock_cfg = {"ai_broker_stop_enabled": False, "ai_entry_order_style": "market",
+                    "ai_marketable_limit_cap_bp": 3.0, "ai_marketable_limit_cooldown_sec": 0.0}
+        decision = {"entry_low": 49.90, "entry_high": 50.10, "stop_price": 48.00, "target_1": 54.00, "desk_force": True}
+        with patch("config.load_config_ro", return_value=mock_cfg), \
+             patch("alpaca_trader.buy_marketable_limit") as mock_limit:
+            mock_limit.return_value = {"ok": False, "status": "canceled", "error": "marketable_limit_cap_breached"}
+            out = ai_positions.place_scaled_entry("NVDA", decision, account_equity=25000.0,
+                                                  current_ask=50.00, current_bid=49.98)
+            self.assertFalse(out.get("ok"))
+            self.assertEqual(ew.get_marketable_limit_cooldown("NVDA"), 0.0)
+
+    def test_reprice_ref_respects_the_chase_limit(self):
+        self.assertEqual(ai_positions.marketable_reprice_ref(50.00, 50.05, 15.0), 50.05)     # +10 bp: retry
+        self.assertIsNone(ai_positions.marketable_reprice_ref(50.00, 50.10, 15.0))            # +20 bp: ran away
+        self.assertIsNone(ai_positions.marketable_reprice_ref(50.00, None, 15.0))
+        self.assertEqual(ai_positions.marketable_reprice_max({}), 0)
+        self.assertEqual(ai_positions.marketable_reprice_max({"ai_marketable_limit_reprice_max": 9}), 3)
+
+    def test_reprice_retries_once_at_the_fresh_ask(self):
+        mock_cfg = {"ai_broker_stop_enabled": False, "ai_entry_order_style": "market", "ai_marketable_limit_cap_bp": 5.0,
+                    "ai_marketable_limit_reprice_max": 1, "ai_marketable_limit_cooldown_sec": 60.0}
+        decision = {"entry_low": 49.90, "entry_high": 50.10, "stop_price": 48.00, "target_1": 54.00, "desk_force": True}
+        miss = {"ok": False, "status": "canceled", "error": "marketable_limit_cap_breached"}
+        with patch("config.load_config_ro", return_value=mock_cfg), \
+             patch("ai_positions._fresh_ask", return_value=50.04), \
+             patch("alpaca_trader.buy_marketable_limit") as mock_limit:
+            mock_limit.side_effect = [miss, miss]
+            out = ai_positions.place_scaled_entry("NVDA", decision, account_equity=25000.0,
+                                                  current_ask=50.00, current_bid=49.98)
+            self.assertFalse(out.get("ok"))
+            self.assertEqual(mock_limit.call_count, 2)
+            self.assertEqual(mock_limit.call_args_list[1].args[1], 50.04)
+            self.assertGreater(ew.get_marketable_limit_cooldown("NVDA"), 0.0)      # both missed: lockout still applies
+
     def test_partial_fill_adjusts_position_quantities(self):
         """When marketable limit fills partially, ai_positions books only filled shares."""
         mock_cfg = {
