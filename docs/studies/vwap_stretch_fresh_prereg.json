@@ -1,0 +1,15 @@
+{
+ "name": "vwap_stretch_fresh",
+ "written": "2026-11-10 ~18:10 ET, before any bar after 2026-10-15 was read by any test",
+ "rule": "tools/studies/entry_ideas.py vwap_stretch, unchanged: close at least 0.3 x the prior-day range below session VWAP, bar volume >= 2x the mean of the previous 20 bars, green bar; buy the next bar's open",
+ "how_found": "one of 8 reversal entries read on the dev window 4/28-9/17 at 15/30 m, then re-read at 30/60/120 m and on the top 50 names. Liquid top 400: lift +2.1/+2.8/+3.3 bp (t 2.45/2.26/1.51), both halves positive at every hold. Top 50 at 60 m: lift +10.0 (t 2.54). None reached the family bar (2.96). This is a development find after several looks, so only fresh data counts.",
+ "data": "ai_reports/warehouse/sip_fresh: SIP 1-minute bars 2026-10-16..2026-11-10 for the names in the 10/15 liquid file; harness --holdout 0",
+ "primary": "hold 60 m, top 400, $10-500, 6 bp cost",
+ "secondary": [
+  "hold 30 m and 120 m, same universe",
+  "top 50 names, price up to $5000, 1 bp cost, hold 60 m"
+ ],
+ "pass": "PRIMARY lift vs same-minute other names > 0 in BOTH halves by date AND pooled day-t >= 1.65 (one-sided, one primary read, about 18 days). Report gross and net; net > 0 is NOT required for the lift verdict and is reported separately.",
+ "fail": "primary lift <= 0 pooled, or either half <= 0. No retuning, no second read.",
+ "caveats": "about 18 sessions is low power: a true +2.8 bp lift would be expected to give t near 1. A FAIL here is weak evidence against; a PASS is weak evidence for. Gross on the dev window was mostly the market bouncing after selloff minutes in a rising period, so gross is not the test."
+}

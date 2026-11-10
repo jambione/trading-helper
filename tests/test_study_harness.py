@@ -182,3 +182,12 @@ def test_pattern_battery_patterns_are_causal(wh):
     for name, fn in PB.PATTERNS.items():
         r = H.run(PB.wrap(fn), 3, files, {**CFG, "min_trades": 0, "min_days": 0})      # raises SystemExit on look-ahead
         assert r["verdict"], name
+
+
+def test_entry_ideas_are_causal(wh):
+    import entry_ideas as EI
+    import pattern_battery as PB
+    files = sorted(wh.glob("*.npz"))[:5]
+    for name, fn in EI.IDEAS.items():
+        r = H.run(PB.wrap(fn), 15, files, {**CFG, "min_trades": 0, "min_days": 0})      # raises SystemExit on look-ahead
+        assert r["verdict"], name
