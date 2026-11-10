@@ -174,3 +174,11 @@ def test_full_green_needs_no_wicks():
     day = {"o": np.array([[100.0, 100.0, 100.0]]), "l": np.array([[100.0, 99.8, 100.0]]),
            "h": np.array([[100.3, 100.3, 100.5]]), "c": np.array([[100.3, 100.3, 100.3]])}
     assert list(full_green(day)[0]) == [True, False, False]        # clean; lower wick; upper wick
+
+
+def test_pattern_battery_patterns_are_causal(wh):
+    import pattern_battery as PB
+    files = sorted(wh.glob("*.npz"))[:5]
+    for name, fn in PB.PATTERNS.items():
+        r = H.run(PB.wrap(fn), 3, files, {**CFG, "min_trades": 0, "min_days": 0})      # raises SystemExit on look-ahead
+        assert r["verdict"], name
