@@ -1,0 +1,27 @@
+{
+ "name": "crypto_funding_carry",
+ "written": "2026-11-11, before any funding or price history was downloaded or looked at",
+ "question": "operator 11/11: is there anything like the desk that makes money? Candidate: crypto funding-rate carry. Hold the coin, short the same amount of its perpetual future, collect the funding payments; the two legs cancel the coin's price move.",
+ "data": "public exchange history, fetched as JSON from documented public endpoints, no account. Order of preference: Binance USDT-margined perpetuals (BTCUSDT, ETHUSDT: funding every 8 h since 2019, 8-hour bars for the perpetual and for spot); if that is not reachable from here, BitMEX (XBTUSD funding since 2016 with its index) or Deribit. Whatever source is used is named in the result. Full history, nothing dropped: March 2020, May 2021, the 2022 failures (Luna, FTX) and every later episode stay in.",
+ "position": "1 unit of spot long and 1 unit of perpetual short, re-equalised every funding period. Per period P&L on the notional = funding received by the short (rate x notional; negative when the rate is negative) + the change in (spot - perpetual) / spot (the basis) . Capital = 1.0 for the coin + 0.5 as margin for the short = 1.5 per 1.0 of notional; returns are on that 1.5.",
+ "costs": "0.10% per side on spot and 0.05% per side on the perpetual (plain taker fees, no discounts): 0.30% of notional per round trip. ALWAYS-ON pays one round trip per year (re-entry once a year is assumed). SWITCHED pays a round trip every time it turns on and off.",
+ "strategies": {
+  "primary": "ALWAYS-ON, BTC and ETH separately, then half of each.",
+  "secondary": "SWITCHED: on only while the average funding rate of the last 21 periods (7 days) is above +0.01% per 8 h, off otherwise (cash at 0%). Fixed here, not tuned."
+ },
+ "pass": "ALWAYS-ON half-and-half: net return on capital > 0 in BOTH halves of the history; pooled net return at least 2 percentage points a year above what cash paid (cash taken as roughly 0.5% in 2020, 0.1% in 2021, 2% in 2022, 5% in 2023-2024, 4% in 2025-2026: approximate, stated as such); worst rolling 12 months no worse than -5%; and the short leg is never within 10% of liquidation with 50% margin topped up each period (largest single-period rise in the coin < 40%).",
+ "reported_whatever_the_verdict": [
+  "net return per calendar year",
+  "share of periods with negative funding and the longest negative stretch",
+  "worst drawdown and worst 12 months",
+  "the largest single-period rise (liquidation stress)",
+  "how many years of carry one exchange failure would erase if the capital on that exchange were lost (a scenario, not a probability: the history cannot say how likely a failure is)"
+ ],
+ "what_this_cannot_show": [
+  "exchange failure, frozen withdrawals and hacks: the largest real risk, and not in any price series",
+  "whether a venue a US resident may legally use pays the same funding; the longest histories are on venues that do not accept US customers, and the rules have been changing (to be checked separately before anything else)",
+  "taxes, and the cost of moving margin between the two legs",
+  "slippage in a crash, when both legs are hard to trade at once"
+ ],
+ "no_money": "a backtest only. Nothing is opened, no account is created, no order is placed."
+}
