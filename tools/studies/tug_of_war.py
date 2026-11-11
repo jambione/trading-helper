@@ -66,6 +66,41 @@ def measures(day: dict) -> dict:
         return {k: np.where(ok, v, np.nan) for k, v in out.items()}
 
 
+def candles(day: dict, k: int) -> dict:
+    """Clock-aligned k-minute candles from the 1-minute bars (09:30, 09:30+k, ...), (n, 390 // k)."""
+    n, T = day["c"].shape
+    w = T // k
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        def cut(x):
+            return x[:, :w * k].reshape(n, w, k)
+        o, h, l, c, v = (cut(np.asarray(day[q], float)) for q in ("o", "h", "l", "c", "v"))
+        have = ~np.isnan(c)
+        first = np.argmax(have, axis=2)
+        last = k - 1 - np.argmax(have[:, :, ::-1], axis=2)
+        ii, jj = np.meshgrid(np.arange(n), np.arange(w), indexing="ij")
+        any_ = have.any(axis=2)
+        return {"o": np.where(any_, o[ii, jj, first], np.nan), "h": np.nanmax(h, axis=2), "l": np.nanmin(l, axis=2),
+                "c": np.where(any_, c[ii, jj, last], np.nan), "v": np.nansum(v, axis=2)}
+
+
+def measures_tf(day: dict, k: int = 1) -> dict:
+    """The same measures on k-minute candles, mapped back to minutes: minute m sees only candles that have fully closed
+    by the end of minute m (the chart's last finished candle), never the one still forming."""
+    if k == 1:
+        return measures(day)
+    mk = measures(candles(day, k))
+    T = day["c"].shape[1]
+    j = (np.arange(T) + 1) // k - 1                              # index of the last finished k-minute candle at minute m
+    out = {}
+    for name, a in mk.items():
+        full = np.full((a.shape[0], T), np.nan)
+        ok = (j >= 0) & (j < a.shape[1])
+        full[:, ok] = a[:, j[ok]]
+        out[name] = full
+    return out
+
+
 def buckets(m: dict) -> dict[str, np.ndarray]:
     """Named states -> bool masks. NaN never matches."""
     with np.errstate(all="ignore"):
@@ -81,10 +116,10 @@ def buckets(m: dict) -> dict[str, np.ndarray]:
         return b
 
 
-def test_a(files, holds, cfg):
+def test_a(files, holds, cfg, k=1):
     import current_square as CS
     names = list(buckets({k: np.zeros((1, 1)) for k in ("rope", "wick", "greens", "full", "higher")}))
-    print(f"A. THE DESK'S ARM on the warehouse, split by tug-of-war state ({files[1].stem}..{files[-1].stem}); numbers are bp")
+    print(f"A. THE DESK'S ARM on the warehouse, split by tug-of-war state on {k}-MINUTE candles ({files[1].stem}..{files[-1].stem}); numbers are bp")
     for hold in holds:
         base = H.run(CS.signal, hold, files, cfg, check=False)
         print(f"\n  hold {hold} m   ALL arm entries: {base['trades']} trades, per trade gross {base['gross_trade']:+.2f}, vs same-minute peers {base['lift']['mean']:+.2f}")
@@ -93,7 +128,7 @@ def test_a(files, holds, cfg):
             def fn(day, prev, name=name):
                 with np.errstate(all="ignore"), warnings.catch_warnings():
                     warnings.simplefilter("ignore", RuntimeWarning)
-                    return CS.signal(day, prev) & np.nan_to_num(buckets(measures(day))[name]).astype(bool)
+                    return CS.signal(day, prev) & np.nan_to_num(buckets(measures_tf(day, k))[name]).astype(bool)
             r = H.run(fn, hold, files, cfg, check=(hold == holds[0] and name == names[0]))
             if r["verdict"] == "NO TRADES":
                 continue
@@ -101,7 +136,7 @@ def test_a(files, holds, cfg):
                   f"{r['lift']['t']:>+7.2f}{r['lift_halves'][0]:>+8.2f}/{r['lift_halves'][1]:<+6.2f}", flush=True)
 
 
-def test_b(wh: Path, outcomes: Path):
+def test_b(wh: Path, outcomes: Path, k: int = 1):
     rows = []
     cache: dict[str, tuple | None] = {}
     for ln in open(outcomes):
@@ -121,7 +156,7 @@ def test_b(wh: Path, outcomes: Path):
             if f.exists():
                 raw = H.load_day(f)
                 with np.errstate(all="ignore"):
-                    cache[day] = ({s: i for i, s in enumerate(raw["syms"])}, buckets(measures(raw)), measures(raw)["rope"])
+                    cache[day] = ({s: i for i, s in enumerate(raw["syms"])}, buckets(measures_tf(raw, k)), None)
             else:
                 cache[day] = None
         if cache[day] is None:
@@ -129,7 +164,7 @@ def test_b(wh: Path, outcomes: Path):
         idx, bk, _rope = cache[day]
         m = d.hour * 60 + d.minute - H.M0 - 1                              # the last bar that had closed before the entry
         i = idx.get(o["symbol"])
-        if i is None or m < N or m >= H.NBAR:
+        if i is None or m < N * k or m >= H.NBAR:
             continue
         rows.append({"day": day, "bp": (x / e - 1) * 1e4, **{k: bool(v[i, m]) for k, v in bk.items()}})
     if not rows:
@@ -138,7 +173,7 @@ def test_b(wh: Path, outcomes: Path):
     allbp = np.array([r["bp"] for r in rows])
     days = sorted({r["day"] for r in rows})
     print(f"\nB. THE DESK'S OWN ENTRIES since 10/08 matched to bars: {len(rows)} trades on {len(days)} days, mean {allbp.mean():+.2f} bp per trade (exit vs entry, spread included)")
-    print(f"  {'state in the 5 bars before the entry':<52}{'trades':>8}{'share':>7}{'bp/trade':>10}{'win':>6}{'rest bp':>9}{'diff':>8}{'day-t':>7}{'halves (diff)':>16}")
+    print(f"  {f'state in the last 5 finished {k}-minute candles':<52}{'trades':>8}{'share':>7}{'bp/trade':>10}{'win':>6}{'rest bp':>9}{'diff':>8}{'day-t':>7}{'halves (diff)':>16}")
     for name in [k for k in rows[0] if k not in ("day", "bp")]:
         a = [r for r in rows if r[name]]
         b = [r for r in rows if not r[name]]
@@ -168,13 +203,14 @@ def main(argv=None) -> int:
     ap.add_argument("--holds", default="3,15")
     ap.add_argument("--holdout", type=int, default=20)
     ap.add_argument("--skip-a", action="store_true")
+    ap.add_argument("--tf", type=int, default=1, help="candle size in minutes (1, 5, 10)")
     a = ap.parse_args(argv)
     files = sorted(Path(a.warehouse).glob("*.npz"))
     dev = files[:-a.holdout] if a.holdout > 0 else files
     cfg = {**H.DEFAULTS, "holdout": a.holdout, "family": 18, "min_trades": 0, "min_days": 0}
     if not a.skip_a:
-        test_a(dev, [int(x) for x in a.holds.split(",")], cfg)
-    test_b(Path(a.warehouse), H.ROOT / "ai_reports" / "outcomes.jsonl")
+        test_a(dev, [int(x) for x in a.holds.split(",")], cfg, a.tf)
+    test_b(Path(a.warehouse), H.ROOT / "ai_reports" / "outcomes.jsonl", a.tf)
     return 0
 
 

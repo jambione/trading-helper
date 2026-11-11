@@ -324,3 +324,22 @@ def test_tug_of_war_measures_read_only_the_last_five_bars():
         cut[k][:, 15:] = np.nan
     m1, m2 = TW.measures(day), TW.measures(cut)
     assert all(np.allclose(m1[k][:, :15], m2[k][:, :15], equal_nan=True) for k in m1)   # nothing after bar m is read
+
+
+def test_five_minute_candles_use_only_finished_candles():
+    import tug_of_war as TW
+    n = H.NBAR
+    c = np.tile(100.0 + np.arange(n) * 0.1, (1, 1))
+    o = c - 0.1
+    day = {"o": o, "h": c + 0.05, "l": o - 0.05, "c": c, "v": np.ones((1, n))}
+    k5 = TW.candles(day, 5)
+    assert k5["o"].shape == (1, 78) and k5["o"][0, 0] == pytest.approx(99.9) and k5["c"][0, 0] == pytest.approx(100.4)
+    assert k5["h"][0, 1] == pytest.approx(100.95) and k5["v"][0, 0] == 5
+    m = TW.measures_tf(day, 5)
+    assert np.isnan(m["rope"][0, 23]) and not np.isnan(m["rope"][0, 24])          # five finished 5-minute candles exist at 09:54, not before
+    assert m["rope"][0, 24] == m["rope"][0, 28] and m["rope"][0, 29] != m["rope"][0, 28] or m["greens"][0, 29] == 5
+    cut = {q: v.copy() for q, v in day.items()}
+    for q in ("o", "h", "l", "c"):
+        cut[q][:, 27:] = np.nan                                                   # blank from 09:57: the 09:55 candle is unfinished
+    m2 = TW.measures_tf(cut, 5)
+    assert np.allclose(m["rope"][:, :27], m2["rope"][:, :27], equal_nan=True)
