@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.jambi.auto-picker - the hands-off pick ledger (tools/auto_picker.py, docs/studies/auto_picker_prereg.json).
+  Every Monday 08:30 local (ET) it asks the desk's two AI agents for stock ideas from the week's headlines and records
+  them in ~/pick_ledgers. It places NO orders. Runs in gui/<uid> so the agents' Keychain logins are readable.
+  A Monday the machine is asleep or the market is closed: launchd runs it at the next wake; the entry is the next open.
+  Install / remove: scripts/install_auto_picker.sh [remove]
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jambi.auto-picker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/jambimac/repo/trading-helper/.venv/bin/python</string>
+    <string>-u</string>
+    <string>/Users/jambimac/repo/trading-helper/tools/auto_picker.py</string>
+    <string>run</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/jambimac/repo/trading-helper</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/jambimac/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>1</integer>
+    <key>Hour</key>
+    <integer>8</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/auto_picker.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/auto_picker.log</string>
+</dict>
+</plist>

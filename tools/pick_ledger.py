@@ -77,7 +77,7 @@ def chain_problem(picks: list[dict]) -> str | None:
 
 
 def add_pick(symbol: str, thesis: str, months: float, sell_if: str, *, now: datetime | None = None, retro: bool = False,
-             path: Path | None = None, universe: list[str] | None = None) -> dict:
+             path: Path | None = None, universe: list[str] | None = None, extra: dict | None = None) -> dict:
     path = path or LEDGER
     sym = symbol.strip().upper()
     if not re.fullmatch(r"[A-Z]{1,5}(\.[A-Z])?", sym):
@@ -107,25 +107,38 @@ def add_pick(symbol: str, thesis: str, months: float, sell_if: str, *, now: date
     pool = sorted(s for s in uni if s != sym)
     rec = {"id": rid, "prev": prev, "symbol": sym, "recorded_at": stamp, "thesis": thesis.strip(), "hold_months": months,
            "sell_if": sell_if.strip(), "retro": bool(retro),
-           "controls": random.Random(rid).sample(pool, N_CONTROL) if len(pool) >= N_CONTROL else []}
+           "controls": random.Random(rid).sample(pool, N_CONTROL) if len(pool) >= N_CONTROL else [], **(extra or {})}
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as fh:
         fh.write(json.dumps(rec) + "\n")
     return rec
 
 
+def _git_root(path: Path) -> Path | None:
+    r = subprocess.run(["git", "-C", str(path.parent), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+
+
 def git_commit(path: Path, sym: str) -> bool:
-    rel = str(path.relative_to(ROOT))
-    a = subprocess.run(["git", "-C", str(ROOT), "add", rel], capture_output=True, text=True)
-    c = subprocess.run(["git", "-C", str(ROOT), "commit", "-q", "-m", f"pick: {sym}", "--", rel], capture_output=True, text=True)
+    """Commit the ledger file in whichever git repo holds it (the project repo, or a ledger's own repo)."""
+    root = _git_root(path)
+    if root is None:
+        return False
+    rel = str(path.resolve().relative_to(root.resolve()))
+    ident = ["-c", "user.name=pick-ledger", "-c", "user.email=pick-ledger@localhost"] if root.resolve() != ROOT.resolve() else []
+    a = subprocess.run(["git", "-C", str(root), "add", rel], capture_output=True, text=True)
+    c = subprocess.run(["git", "-C", str(root), *ident, "commit", "-q", "-m", f"pick: {sym}", "--", rel], capture_output=True, text=True)
     return a.returncode == 0 and c.returncode == 0
 
 
 def first_commit_ts(pick_id: str, path: Path | None = None) -> float | None:
     """Unix time of the first commit that contains this pick's id; None when it was never committed."""
     path = path or LEDGER
-    r = subprocess.run(["git", "-C", str(ROOT), "log", "--reverse", "--format=%ct", f"-S\"id\": \"{pick_id}\"", "--", str(path.relative_to(ROOT))],
-                       capture_output=True, text=True)
+    root = _git_root(path)
+    if root is None:
+        return None
+    rel = str(path.resolve().relative_to(root.resolve()))
+    r = subprocess.run(["git", "-C", str(root), "log", "--reverse", "--format=%ct", f"-S\"id\": \"{pick_id}\"", "--", rel], capture_output=True, text=True)
     out = r.stdout.split()
     return float(out[0]) if out else None
 
@@ -297,8 +310,9 @@ def pct(v) -> str:
     return "   n/a" if v is None else f"{100 * v:+6.1f}%"
 
 
-def cmd_score() -> int:
-    picks = read_ledger()
+def cmd_score(ledger: Path | None = None) -> int:
+    ledger = ledger or LEDGER
+    picks = read_ledger(ledger)
     if not picks:
         print("no picks recorded yet")
         return 0
@@ -311,8 +325,9 @@ def cmd_score() -> int:
     need = sorted({p["symbol"] for p in live} | {"SPY"} | {c for p in live for c in p.get("controls", [])})
     bars = fetch(need, start)
     days = sorted(bars["SPY"])
-    funds = fund_check([p["symbol"] for p in live])
-    scored = [score_pick(p, days, bars, commit_ts=first_commit_ts(p["id"]), is_fund=funds.get(p["symbol"], False)) for p in picks]
+    known = set(frozen_universe())                                       # the frozen list is common stocks only
+    funds = {**fund_check([p["symbol"] for p in live if p["symbol"] not in known]), **{x: False for x in known}}
+    scored = [score_pick(p, days, bars, commit_ts=first_commit_ts(p["id"], ledger), is_fund=funds.get(p["symbol"], False)) for p in picks]
     print(f"{len(picks)} picks; prices through {days[-1]}; picks recorded after {END_DATE} do not count\n")
     print(f"{'symbol':<7}{'recorded':<12}{'entry':<12}" + "".join(f"{f'{h}s pick':>9}{'vs SPY':>8}{'vs rand':>8}{'':>2}" for h in HORIZONS))
     for s in scored:
@@ -348,14 +363,17 @@ def main(argv=None) -> int:
     a.add_argument("--retro", action="store_true", help="a pick made after the fact: listed, never scored")
     sub.add_parser("list")
     sub.add_parser("score")
+    for sp in sub.choices.values():
+        sp.add_argument("--ledger", type=Path, help="a ledger file other than docs/pick_ledger.jsonl (e.g. an automatic picker's)")
     args = ap.parse_args(argv)
+    ledger = args.ledger or LEDGER
     if args.cmd == "add":
         try:
-            r = add_pick(args.symbol, args.thesis, args.months, args.sell_if, retro=args.retro)
+            r = add_pick(args.symbol, args.thesis, args.months, args.sell_if, retro=args.retro, path=ledger)
         except ValueError as e:
             print(f"not recorded: {e}")
             return 1
-        ok = git_commit(LEDGER, r["symbol"])
+        ok = git_commit(ledger, r["symbol"])
         print(f"recorded {r['symbol']} at {r['recorded_at']} ({'RETRO, never scored' if r['retro'] else 'entry = the next session open'}); "
               f"{len(r['controls'])} control names drawn.")
         print("committed. Now run:  git push" if ok else "NOT COMMITTED (git refused). A pick only counts if it is committed before its entry open: commit docs/pick_ledger.jsonl now.")
@@ -363,10 +381,10 @@ def main(argv=None) -> int:
             print("WARNING: the control list docs/studies/pick_ledger_universe.txt is missing here, so this pick has no random-name control and will BLOCK the verdict.")
         return 0
     if args.cmd == "list":
-        for p in read_ledger():
+        for p in read_ledger(ledger):
             print(f"{p['recorded_at'][:16]}  {p['symbol']:<6} {p['hold_months']:g} mo  {'RETRO  ' if p.get('retro') else ''}{p['thesis']}  | sell if: {p['sell_if']}")
         return 0
-    return cmd_score()
+    return cmd_score(ledger)
 
 
 if __name__ == "__main__":

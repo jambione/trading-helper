@@ -1,0 +1,20 @@
+{
+ "name": "auto_picker",
+ "written": "2026-11-11, before the first automatic pick",
+ "why": "operator 11/11: the project must be hands off. The pick ledger (docs/studies/pick_ledger_prereg.json) needed him to record picks; here the desk's own two AI agents are the pickers and nothing needs a person.",
+ "question": "do stock picks made by AGY (Gemini) or by Grok from the week's headlines beat SPY over about three months? This is the one kind of information no price rule in this project has used: a reading of business news.",
+ "tool": "tools/auto_picker.py (weekly LaunchAgent on the mini) recording into tools/pick_ledger.py ledgers at ~/pick_ledgers/<agent>/pick_ledger.jsonl, each its own git repo.",
+ "procedure": "each Monday before the open: up to 220 headlines from the past 7 days that name a stock in the frozen list (docs/studies/pick_ledger_universe.txt, 1,931 liquid common stocks, frozen 2026-11-11); one fixed prompt per agent (its hash is stored on every pick); the agent returns up to 6 ideas; the first 3 valid ones are recorded (symbol must be on the frozen list; a name picked in the last 92 days is skipped). Entry = that day's open. If the news fetch returns fewer than 30 headlines, or an agent does not answer, nothing is recorded for it that week and no make-up picks are taken.",
+ "scoring": "exactly the pick-ledger rules as amended after skeptic round 1: ratio lift vs SPY at 63 sessions, 30 control names drawn per pick from the frozen list, rank among them, beta-adjusted excess, commit-before-entry proof, first 30 countable picks per agent in record order, BLOCKED if any of them cannot be scored, end date 2027-11-11.",
+ "pass": "per agent, ALL of the pick-ledger pass conditions, with the clustered t raised to 2.24 because two agents are read (family of 2). tools/pick_ledger.py prints t; a t between 2.0 and 2.24 that the tool calls PASS is NOT a pass for this study.",
+ "expected_timing": "3 picks a week per agent -> 30 picks in about 10 weeks -> last window closes about 13 weeks later: a verdict around late April to May 2027.",
+ "caveats": [
+  "my prior that either agent beats SPY is low; the purpose is to find out at almost no cost (two model calls a week)",
+  "the model named on a pick may be changed by a CLI update; the model string is stored per pick and a change is reported with the verdict, not hidden",
+  "an agent's training data is older than the news it is shown; it is judging headlines, and headline selection (newest first, liquid names only) is part of what is tested",
+  "thirty picks show only a large skill (an estimate: about +10 to +13% per pick per quarter)",
+  "picks from one season share a market regime",
+  "this study has not had its own skeptic review; the ledger rules it rests on were reviewed 11/11. Review this file before the first read.",
+  "no order is placed by anything here; a PASS would be a reason to design a paper portfolio test, not to buy"
+ ]
+}
