@@ -21,5 +21,18 @@
   "it measures PICKING, not what the operator would have earned: his own entries, sizes and exits are not modelled.",
   "nothing here places an order or recommends one."
  ],
- "skeptic": "review requested 11/11 before the first pick; findings to be applied before any read"
+ "skeptic": "round 1 on 11/11 (NOT READY: 3 blockers, 5 majors, 4 minors); every finding applied before any pick was recorded, see amended_after_skeptic_round_1",
+ "amended_after_skeptic_round_1": {
+  "proof_of_order": "each ledger line carries the id of the line before it and an id computed from its own content (hash chain); `add` commits the line itself; `score` refuses a damaged chain and scores a pick only if its line's first git commit is earlier than its entry open. Picks are recorded on the MacBook (which can push).",
+  "sample": "the first 30 COUNTABLE picks in record order. Retro picks, funds / levered products, and picks recorded after 2027-11-11 never count. If any of the 30 cannot be scored (never committed, committed late, no entry bar, stock type unknown) or lacks its random-name control or beta, the verdict is BLOCKED; it is never replaced by pick 31. Fewer than 30 by 2027-11-11 = UNPROVEN.",
+  "one_pick_per_symbol": "per 92 calendar days (about 63 sessions), so one name cannot fill the sample inside one window.",
+  "control_B": "30 names drawn at `add` time (seeded by the line's id) from docs/studies/pick_ledger_universe.txt, a list of 1,931 liquid common stocks FROZEN on 2026-11-11 from the 2026-10-15 table, before any pick; the 30 names are stored in the ledger line. Being fixed before every pick, the list has no look-ahead; a control name that later stops trading is valued at its last close.",
+  "pass": "ALL of: mean ratio lift vs SPY > 0; t >= 2.0 with picks clustered by entry month (at least 4 months); more than half the picks ahead of SPY; median ahead of SPY; mean ratio lift vs the 30 random names > 0; mean rank of the pick among its own 30 controls above the 50th percentile; mean beta-adjusted excess (pick - beta x SPY, beta from the 252 sessions before entry) > 0.",
+  "power": "an estimate, not a measurement: with a 20-25% standard deviation of 63-session excess return across picks, 30 picks have about 80% power only for an average edge near +10 to +13% per pick per quarter. This test can show a large skill; it cannot rule out a modest one.",
+  "known_soft_spots": [
+   "a name that goes bankrupt is valued at its last exchange close, which overstates it (flagged in the output)",
+   "the operator can see running numbers for open picks; that is unavoidable for his own positions and is why the sample is fixed by record order and has an end date",
+   "beta from 252 prior sessions is missing for a recent listing; such a pick blocks the verdict until the prereg is amended in writing"
+  ]
+ }
 }

@@ -109,6 +109,7 @@ Order: WP1-WP3 are engineering and can start now, in parallel, by any assistant.
   (`tools/sweep_replays.py` with an empty variant), and the file is shorter.
 
 ### WP4. Operator-pick ledger (the one untested source of edge)
+- **STATUS 11/11: BUILT.** `tools/pick_ledger.py`, prereg and skeptic fixes are in (running list row 119). What remains is the operator recording picks: `python3 tools/pick_ledger.py add SYMBOL --thesis "..." --months N --sell-if "..."` on the MacBook, then `git push`. Score on the mini with `.venv/bin/python tools/pick_ledger.py score`.
 - **Goal:** measure whether the operator's own stock picks beat a fair control, before any money rides on them.
 - **Files:** new `tools/pick_ledger.py`; existing `tools/studies/my_calls_score.py` (intraday "Buy?" clicks) as a pattern;
   `tools/studies/daily_horizon.py` for the control construction (`span_ret`, ratio lift).

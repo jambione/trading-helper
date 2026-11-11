@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
 """pick_ledger.py - do the operator's own stock picks beat a fair control? (docs/RESTRUCTURE_PLAN_2026-11-11.md WP4,
-docs/studies/pick_ledger_prereg.json)
+docs/studies/pick_ledger_prereg.json). Nothing here places an order.
 
-Record a pick BEFORE the outcome, then let time score it. Nothing here places an order.
-
-    python3 tools/pick_ledger.py add OKLO --thesis "why I think it runs" --months 6 --sell-if "what would make me sell"
+    python3 tools/pick_ledger.py add ABCD --thesis "why I think it runs" --months 6 --sell-if "what would make me sell"
     python3 tools/pick_ledger.py list
-    .venv/bin/python tools/pick_ledger.py score          # needs Alpaca data: run on the mini
+    .venv/bin/python tools/pick_ledger.py score          # needs Alpaca data: run on the mini after `git pull`
+
+Record picks on the MacBook (it can push). `add` commits the ledger line itself; push it the same day.
 
 Rules (fixed in the prereg, enforced here):
-- A pick is stamped with the time it was recorded. Its entry is the OPEN of the first session that starts after that time.
-  There is no way to enter a past date. `--retro` records a pick made after the fact; it is listed and NEVER scored.
-- The same symbol recorded again within 10 calendar days is refused (one idea, one pick).
-- Scored at 21, 63 and 126 sessions (about 1, 3 and 6 months), open to open, adjusted prices, as the RATIO
-  (1 + pick) / (1 + control) - 1 against SPY, and against the mean of 30 seeded random names from the liquid list.
-  A pick is scored at its horizon whether or not the operator still holds it: the question is whether the PICK was good.
-- The verdict is read once, on the FIRST 30 scoreable picks in the order they were recorded, when all 30 have a closed
-  63-session window. Later picks never change it. Until then `score` shows each pick's progress and says NOT YET.
-
-The ledger is docs/pick_ledger.jsonl. Commit it after every `add`: git history is the proof a pick came before its outcome.
+- A pick is stamped with the time it was recorded; its entry is the OPEN of the first session that starts after that time.
+  No past dates. `--retro` records a pick made after the fact: listed, never scored, never counted.
+- Proof of order: every line carries the id of the line before it (a hash chain), and `score` only scores a pick whose
+  line was COMMITTED to git before its entry open. A broken chain, an edited line or a late commit is refused.
+- One pick per symbol per 92 calendar days (63 sessions): one idea, one pick. Common stocks only (funds are never scored).
+- Scored at 21, 63 and 126 sessions, open to open, adjusted prices, whether or not the operator still holds it:
+  ratio lift (1+pick)/(1+control)-1 against SPY; against the mean of 30 control names drawn at `add` time from a frozen
+  list (docs/studies/pick_ledger_universe.txt) and stored in the ledger line; the pick's rank among those 30; and the
+  beta-adjusted excess, pick - beta x SPY, beta from the 252 sessions before entry.
+- ONE verdict, on the first 30 countable picks in record order, once all 30 have a closed 63-session window. If any of the
+  30 cannot be scored, or lacks its control, the verdict is BLOCKED, never quietly replaced by pick 31.
+  Picks recorded after the prereg's end date do not count.
 """
 from __future__ import annotations
 
@@ -29,6 +31,8 @@ import math
 import os
 import random
 import re
+import statistics
+import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -36,9 +40,11 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(os.environ.get("REPO") or Path(__file__).resolve().parents[1])
 LEDGER = ROOT / "docs" / "pick_ledger.jsonl"
+UNIVERSE = ROOT / "docs" / "studies" / "pick_ledger_universe.txt"
 ET = ZoneInfo("America/New_York")
 HORIZONS = (21, 63, 126)
-PRIMARY, NEED, N_CONTROL, DEDUPE_DAYS = 63, 30, 30, 10
+PRIMARY, NEED, N_CONTROL, DEDUPE_DAYS, BETA_DAYS = 63, 30, 30, 92, 252
+END_DATE = "2027-11-11"                   # picks recorded after this do not count; fewer than 30 by then = UNPROVEN
 
 
 # ---------- ledger ----------
@@ -49,8 +55,29 @@ def read_ledger(path: Path | None = None) -> list[dict]:
     return [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
 
 
+def frozen_universe(path: Path | None = None) -> list[str]:
+    path = path or UNIVERSE
+    return [x.strip() for x in path.read_text().splitlines() if x.strip() and not x.startswith("#")] if path.exists() else []
+
+
+def record_id(prev: str, sym: str, recorded_at: str, thesis: str) -> str:
+    return hashlib.sha1(f"{prev}|{sym}|{recorded_at}|{thesis}".encode()).hexdigest()[:12]
+
+
+def chain_problem(picks: list[dict]) -> str | None:
+    """None when every line links to the one before it and its id matches its content."""
+    prev = ""
+    for i, p in enumerate(picks, 1):
+        if p.get("prev", "") != prev:
+            return f"line {i} ({p.get('symbol')}) does not follow the line before it: a line was removed, inserted or reordered"
+        if p.get("id") != record_id(prev, p["symbol"], p["recorded_at"], p["thesis"]):
+            return f"line {i} ({p.get('symbol')}) was edited after it was recorded"
+        prev = p["id"]
+    return None
+
+
 def add_pick(symbol: str, thesis: str, months: float, sell_if: str, *, now: datetime | None = None, retro: bool = False,
-             path: Path | None = None) -> dict:
+             path: Path | None = None, universe: list[str] | None = None) -> dict:
     path = path or LEDGER
     sym = symbol.strip().upper()
     if not re.fullmatch(r"[A-Z]{1,5}(\.[A-Z])?", sym):
@@ -64,31 +91,63 @@ def add_pick(symbol: str, thesis: str, months: float, sell_if: str, *, now: date
     if not 0.5 <= months <= 36:
         raise ValueError("intended hold must be between 0.5 and 36 months")
     now = (now or datetime.now(ET)).astimezone(ET)
-    for p in read_ledger(path):
+    picks = read_ledger(path)
+    bad = chain_problem(picks)
+    if bad:
+        raise ValueError(f"the ledger is damaged ({bad}); restore it from git before adding")
+    for p in picks:
         if p["symbol"] == sym and not p.get("retro") and not retro:
-            if abs((now - datetime.fromisoformat(p["recorded_at"])).days) < DEDUPE_DAYS:
-                raise ValueError(f"{sym} was already recorded on {p['recorded_at'][:10]} (one idea, one pick; wait {DEDUPE_DAYS} days)")
-    rec = {"id": hashlib.sha1(f"{sym}|{now.isoformat()}".encode()).hexdigest()[:10], "symbol": sym, "recorded_at": now.isoformat(timespec="seconds"),
-           "thesis": thesis.strip(), "hold_months": months, "sell_if": sell_if.strip(), "retro": bool(retro)}
+            gap = abs((now - datetime.fromisoformat(p["recorded_at"])).days)
+            if gap < DEDUPE_DAYS:
+                raise ValueError(f"{sym} was already recorded on {p['recorded_at'][:10]} (one pick per symbol per {DEDUPE_DAYS} days)")
+    uni = frozen_universe() if universe is None else universe
+    prev = picks[-1]["id"] if picks else ""
+    stamp = now.isoformat(timespec="seconds")
+    rid = record_id(prev, sym, stamp, thesis.strip())
+    pool = sorted(s for s in uni if s != sym)
+    rec = {"id": rid, "prev": prev, "symbol": sym, "recorded_at": stamp, "thesis": thesis.strip(), "hold_months": months,
+           "sell_if": sell_if.strip(), "retro": bool(retro),
+           "controls": random.Random(rid).sample(pool, N_CONTROL) if len(pool) >= N_CONTROL else []}
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as fh:
         fh.write(json.dumps(rec) + "\n")
     return rec
 
 
+def git_commit(path: Path, sym: str) -> bool:
+    rel = str(path.relative_to(ROOT))
+    a = subprocess.run(["git", "-C", str(ROOT), "add", rel], capture_output=True, text=True)
+    c = subprocess.run(["git", "-C", str(ROOT), "commit", "-q", "-m", f"pick: {sym}", "--", rel], capture_output=True, text=True)
+    return a.returncode == 0 and c.returncode == 0
+
+
+def first_commit_ts(pick_id: str, path: Path | None = None) -> float | None:
+    """Unix time of the first commit that contains this pick's id; None when it was never committed."""
+    path = path or LEDGER
+    r = subprocess.run(["git", "-C", str(ROOT), "log", "--reverse", "--format=%ct", f"-S\"id\": \"{pick_id}\"", "--", str(path.relative_to(ROOT))],
+                       capture_output=True, text=True)
+    out = r.stdout.split()
+    return float(out[0]) if out else None
+
+
 # ---------- scoring (pure) ----------
+def open_ts(day: str) -> float:
+    y, m, d = map(int, day.split("-"))
+    return datetime(y, m, d, 9, 30, tzinfo=ET).timestamp()
+
+
 def entry_index(days: list[str], recorded_at: str) -> int | None:
     """Index of the first session whose 09:30 ET open is after the record time; None when it has not happened yet."""
-    t = datetime.fromisoformat(recorded_at).astimezone(ET)
+    t = datetime.fromisoformat(recorded_at).timestamp()
     for i, d in enumerate(days):
-        y, m, dd = map(int, d.split("-"))
-        if datetime(y, m, dd, 9, 30, tzinfo=ET) > t:
+        if open_ts(d) > t:
             return i
     return None
 
 
 def span(bars: dict[str, tuple], days: list[str], a: int, b: int) -> float | None:
-    """Simple return, open of days[a] to open of days[b]; a name with no bar at b is sold at its last close before b."""
+    """Simple return, open of days[a] to open of days[b]; a name with no bar at b is sold at its last close before b
+    (this OVERSTATES a bankruptcy; such a pick is rare and is named in the output)."""
     e = bars.get(days[a])
     if not e:
         return None
@@ -101,22 +160,43 @@ def span(bars: dict[str, tuple], days: list[str], a: int, b: int) -> float | Non
     return None
 
 
-def control_names(pick: dict, universe: list[str], n: int = N_CONTROL) -> list[str]:
-    pool = sorted(s for s in universe if s != pick["symbol"])
-    return random.Random(pick["id"]).sample(pool, min(n, len(pool)))
+def beta_before(bars_s: dict, bars_m: dict, days: list[str], a: int, n: int = BETA_DAYS) -> float | None:
+    """Slope of the name's daily close-to-close return on SPY's over the n sessions before entry; None with under 120 pairs."""
+    xs, ys = [], []
+    for k in range(max(1, a - n), a):
+        d0, d1 = days[k - 1], days[k]
+        if d0 in bars_s and d1 in bars_s and d0 in bars_m and d1 in bars_m:
+            ys.append(bars_s[d1][1] / bars_s[d0][1] - 1)
+            xs.append(bars_m[d1][1] / bars_m[d0][1] - 1)
+    if len(xs) < 120:
+        return None
+    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+    den = sum((x - mx) ** 2 for x in xs)
+    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den if den > 0 else None
 
 
-def score_pick(pick: dict, days: list[str], bars: dict[str, dict], universe: list[str]) -> dict:
+def score_pick(pick: dict, days: list[str], bars: dict[str, dict], *, commit_ts: float | None = None, is_fund: bool | None = False) -> dict:
     """days = sessions with an SPY bar, ascending. bars = {symbol: {day: (open, close)}} adjusted."""
-    out = {"id": pick["id"], "symbol": pick["symbol"], "recorded_at": pick["recorded_at"], "status": "retro (never scored)" if pick.get("retro") else "", "h": {}}
+    out = {"id": pick["id"], "symbol": pick["symbol"], "recorded_at": pick["recorded_at"], "status": "", "counts": True, "h": {}}
     if pick.get("retro"):
-        return out
+        return {**out, "status": "retro (never scored)", "counts": False}
+    if pick["recorded_at"][:10] > END_DATE:
+        return {**out, "status": f"recorded after {END_DATE} (does not count)", "counts": False}
+    if is_fund:
+        return {**out, "status": "a fund, not a common stock (never scored)", "counts": False}
     a = entry_index(days, pick["recorded_at"])
-    if a is None or pick["symbol"] not in bars or days[a] not in bars[pick["symbol"]]:
-        out["status"] = "waiting for its first open" if a is None else "no bar on the entry day (not scoreable)"
-        return out
-    out["entry_day"], out["entry_px"] = days[a], bars[pick["symbol"]][days[a]][0]
-    ctl = control_names(pick, universe)
+    if a is None:
+        return {**out, "status": "waiting for its first open"}
+    if is_fund is None:
+        return {**out, "status": "stock type could not be checked (BLOCKS the verdict)"}
+    if commit_ts is None:
+        return {**out, "status": "never committed to git (BLOCKS the verdict)"}
+    if commit_ts > open_ts(days[a]):
+        return {**out, "status": "committed AFTER its entry open (BLOCKS the verdict)"}
+    if pick["symbol"] not in bars or days[a] not in bars[pick["symbol"]]:
+        return {**out, "status": "no bar on the entry day (BLOCKS the verdict)"}
+    out["entry_day"] = days[a]
+    beta = beta_before(bars[pick["symbol"]], bars["SPY"], days, a)
     last = len(days) - 1
     for h in HORIZONS:
         b = a + h
@@ -125,33 +205,59 @@ def score_pick(pick: dict, days: list[str], bars: dict[str, dict], universe: lis
         if bb <= a:
             continue
         r, s = span(bars[pick["symbol"]], days, a, bb), span(bars["SPY"], days, a, bb)
-        cs = [x for x in (span(bars.get(c, {}), days, a, bb) for c in ctl) if x is not None]
+        cs = [x for x in (span(bars.get(c, {}), days, a, bb) for c in pick.get("controls", [])) if x is not None]
         if r is None or s is None:
             continue
+        full = len(cs) >= 0.8 * N_CONTROL
         out["h"][h] = {"closed": closed, "sessions": bb - a, "pick": r, "spy": s, "vs_spy": (1 + r) / (1 + s) - 1,
-                       "vs_random": ((1 + r) / (1 + sum(cs) / len(cs)) - 1) if len(cs) >= 10 else None, "n_control": len(cs)}
+                       "vs_random": ((1 + r) / (1 + sum(cs) / len(cs)) - 1) if full else None,
+                       "rank": (sum(r > c for c in cs) / len(cs)) if full else None,
+                       "beta": beta, "beta_excess": (r - beta * s) if beta is not None else None, "n_control": len(cs),
+                       "delisted": days[bb] not in bars[pick["symbol"]]}
     out["status"] = "scored"
     return out
 
 
-def verdict(scored: list[dict], h: int = PRIMARY, need: int = NEED) -> dict:
-    """The first `need` scoreable picks in record order; read only when every one of them has a closed window."""
-    ok = [s for s in sorted(scored, key=lambda s: s["recorded_at"]) if s["status"] == "scored"][:need]
-    closed = [s for s in ok if s["h"].get(h, {}).get("closed")]
-    res = {"horizon": h, "scoreable": len(ok), "closed": len(closed), "need": need}
-    if len(ok) < need or len(closed) < need:
+def cluster_t(x: list[float], groups: list[str]) -> float:
+    """t of the mean with picks entered in the same month treated as one cluster."""
+    n, m = len(x), sum(x) / len(x)
+    labs = sorted(set(groups))
+    g = len(labs)
+    if g < 4:
+        return float("nan")
+    s = [sum(v - m for v, q in zip(x, groups) if q == lab) for lab in labs]
+    var = sum(v * v for v in s) / n ** 2 * g / (g - 1)
+    return m / math.sqrt(var) if var > 0 else float("nan")
+
+
+def verdict(scored: list[dict], h: int = PRIMARY, need: int = NEED, today: str | None = None) -> dict:
+    """The first `need` countable picks in record order. Any of them unscoreable or without its controls -> BLOCKED."""
+    order = sorted((s for s in scored if s.get("counts", True)), key=lambda s: datetime.fromisoformat(s["recorded_at"]))
+    first = order[:need]
+    res = {"horizon": h, "counted": len(first), "need": need}
+    blocked = [f"{s['symbol']}: {s['status']}" for s in first if "BLOCKS" in s["status"]]
+    if blocked:
+        return {**res, "verdict": "BLOCKED", "why": blocked}
+    closed = [s for s in first if s["status"] == "scored" and s["h"].get(h, {}).get("closed")]
+    if len(first) < need:
+        if today and today > END_DATE:
+            return {**res, "verdict": f"UNPROVEN ({len(first)} of {need} picks recorded by {END_DATE})"}
+        return {**res, "verdict": f"NOT YET ({len(first)} of {need} picks recorded)"}
+    if len(closed) < need:
         return {**res, "verdict": f"NOT YET ({len(closed)} of {need} picks have a closed {h}-session window)"}
-    x = [s["h"][h]["vs_spy"] for s in closed]
-    y = [s["h"][h]["vs_random"] for s in closed if s["h"][h]["vs_random"] is not None]
-    m = sum(x) / len(x)
-    sd = math.sqrt(sum((v - m) ** 2 for v in x) / (len(x) - 1))
-    t = m / (sd / math.sqrt(len(x))) if sd > 0 else float("nan")
-    ahead = sum(v > 0 for v in x) / len(x)
-    med = sorted(x)[len(x) // 2]
-    res.update(mean_vs_spy=m, t=t, ahead=ahead, median_vs_spy=med, mean_vs_random=(sum(y) / len(y)) if y else None,
-               best_share=(max(x) / sum(x)) if sum(x) > 0 else None)
-    passed = m > 0 and t >= 2.0 and ahead > 0.5 and med > 0 and (not y or sum(y) / len(y) > 0)
-    res["verdict"] = "PASS" if passed else "FAIL"
+    hh = [s["h"][h] for s in closed]
+    missing = [s["symbol"] for s in closed if s["h"][h]["vs_random"] is None or s["h"][h]["beta_excess"] is None]
+    if missing:
+        return {**res, "verdict": "BLOCKED", "why": [f"{m}: no random-name control or no beta" for m in missing]}
+    x = [v["vs_spy"] for v in hh]
+    months = [s["entry_day"][:7] for s in closed]
+    res.update(mean_vs_spy=sum(x) / len(x), median_vs_spy=statistics.median(x), t=cluster_t(x, months), ahead=sum(v > 0 for v in x) / len(x),
+               mean_vs_random=statistics.fmean(v["vs_random"] for v in hh), mean_rank=statistics.fmean(v["rank"] for v in hh),
+               mean_beta_excess=statistics.fmean(v["beta_excess"] for v in hh), best_share=(max(x) / sum(x)) if sum(x) > 0 else None,
+               months=len(set(months)))
+    ok = (res["mean_vs_spy"] > 0 and res["t"] >= 2.0 and res["ahead"] > 0.5 and res["median_vs_spy"] > 0 and res["mean_vs_random"] > 0
+          and res["mean_rank"] > 0.5 and res["mean_beta_excess"] > 0)
+    res["verdict"] = "PASS" if ok else "FAIL"
     return res
 
 
@@ -161,7 +267,8 @@ def fetch(symbols: list[str], start: datetime) -> dict[str, dict]:
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
-    s = json.load(open(ROOT / "secrets_data.json"))
+    with open(ROOT / "secrets_data.json") as fh:
+        s = json.load(fh)
     cl = StockHistoricalDataClient(s["alpaca_data_api_key"], s["alpaca_data_secret_key"])
     out: dict[str, dict] = {}
     end = datetime.now(ET) - timedelta(minutes=20)
@@ -173,15 +280,16 @@ def fetch(symbols: list[str], start: datetime) -> dict[str, dict]:
     return out
 
 
-def liquid_universe() -> list[str]:
-    """Names liquid on the last day of the liquidity table (extended nightly by WP2). Empty when the table is not here."""
-    p = ROOT / "ai_reports" / "gapdown" / "daily.pkl"
+def fund_check(symbols: list[str]) -> dict[str, bool | None]:
+    """True = fund / levered product, False = common stock, None = could not check (the asset list is not on this machine)."""
+    p = ROOT / "ai_reports" / "allsym" / "assets.json"
     if not p.exists():
-        return []
-    import pickle
-    d = pickle.load(open(p, "rb"))
-    last = max(d["adj"]["SPY"])
-    return sorted(s for s, ds in d["liquid"].items() if ds and ds[-1] == last)
+        return {s: None for s in symbols}
+    sys.path.insert(0, str(ROOT))
+    from ticker_filters import is_common, is_not_stock
+    with open(p) as fh:
+        names = json.load(fh)
+    return {s: (None if s not in names else bool(is_not_stock(s, names[s]) or not is_common(s))) for s in symbols}
 
 
 # ---------- cli ----------
@@ -194,14 +302,18 @@ def cmd_score() -> int:
     if not picks:
         print("no picks recorded yet")
         return 0
-    uni = liquid_universe()
+    bad = chain_problem(picks)
+    if bad:
+        print(f"REFUSED: the ledger is damaged: {bad}. Restore docs/pick_ledger.jsonl from git.")
+        return 1
     live = [p for p in picks if not p.get("retro")]
-    start = min(datetime.fromisoformat(p["recorded_at"]) for p in picks) - timedelta(days=5)
-    ctl = sorted({c for p in live for c in control_names(p, uni)})
-    bars = fetch(sorted({p["symbol"] for p in live} | {"SPY"} | set(ctl)), start)
+    start = min(datetime.fromisoformat(p["recorded_at"]) for p in picks) - timedelta(days=420)
+    need = sorted({p["symbol"] for p in live} | {"SPY"} | {c for p in live for c in p.get("controls", [])})
+    bars = fetch(need, start)
     days = sorted(bars["SPY"])
-    scored = [score_pick(p, days, bars, uni) for p in picks]
-    print(f"{len(picks)} picks; control universe {len(uni)} liquid names; prices through {days[-1]}\n")
+    funds = fund_check([p["symbol"] for p in live])
+    scored = [score_pick(p, days, bars, commit_ts=first_commit_ts(p["id"]), is_fund=funds.get(p["symbol"], False)) for p in picks]
+    print(f"{len(picks)} picks; prices through {days[-1]}; picks recorded after {END_DATE} do not count\n")
     print(f"{'symbol':<7}{'recorded':<12}{'entry':<12}" + "".join(f"{f'{h}s pick':>9}{'vs SPY':>8}{'vs rand':>8}{'':>2}" for h in HORIZONS))
     for s in scored:
         if s["status"] != "scored":
@@ -210,19 +322,23 @@ def cmd_score() -> int:
         row = f"{s['symbol']:<7}{s['recorded_at'][:10]:<12}{s['entry_day']:<12}"
         for h in HORIZONS:
             x = s["h"].get(h)
-            row += f"{'':>27}" if not x else f"{pct(x['pick']):>9}{pct(x['vs_spy']):>8}{pct(x['vs_random']):>8}{'' if x['closed'] else '*':>2}"
+            flag = "" if not x else ("†" if x["delisted"] else "" if x["closed"] else "*")
+            row += f"{'':>27}" if not x else f"{pct(x['pick']):>9}{pct(x['vs_spy']):>8}{pct(x['vs_random']):>8}{flag:>2}"
         print(row)
-    print("\n* = window still open (marked to the latest open; information only, not part of any verdict)")
-    v = verdict(scored)
+    print("\n* = window still open (marked to the latest open; not part of any verdict)   † = stopped trading, valued at its last close")
+    v = verdict(scored, today=datetime.now(ET).strftime("%Y-%m-%d"))
     print(f"\nVERDICT at {PRIMARY} sessions on the first {NEED} picks: {v['verdict']}")
+    for w in v.get("why", []):
+        print(f"  {w}")
     if "mean_vs_spy" in v:
-        print(f"  mean vs SPY {pct(v['mean_vs_spy'])}  median {pct(v['median_vs_spy'])}  t {v['t']:+.2f}  ahead of SPY {100 * v['ahead']:.0f}%  "
-              f"mean vs random names {pct(v['mean_vs_random'])}  best single pick = {pct(v['best_share'])} of the total")
+        print(f"  vs SPY: mean {pct(v['mean_vs_spy'])}, median {pct(v['median_vs_spy'])}, t {v['t']:+.2f} (clustered over {v['months']} entry months), ahead {100 * v['ahead']:.0f}%\n"
+              f"  vs 30 random names: mean {pct(v['mean_vs_random'])}, average rank {100 * v['mean_rank']:.0f}th percentile;  beta-adjusted excess {pct(v['mean_beta_excess'])};  "
+              f"best single pick = {pct(v['best_share'])} of the total")
     return 0
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Record stock picks before the outcome and score them against SPY.")
+    ap = argparse.ArgumentParser(description="Record stock picks before the outcome and score them against SPY. Places no orders.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("add", help="record a pick now")
     a.add_argument("symbol")
@@ -239,8 +355,12 @@ def main(argv=None) -> int:
         except ValueError as e:
             print(f"not recorded: {e}")
             return 1
-        print(f"recorded {r['symbol']} at {r['recorded_at']} ({'RETRO, never scored' if r['retro'] else 'entry = the next session open'}).\n"
-              f"Now commit it:  git add docs/pick_ledger.jsonl && git commit -m 'pick: {r['symbol']}' && git push")
+        ok = git_commit(LEDGER, r["symbol"])
+        print(f"recorded {r['symbol']} at {r['recorded_at']} ({'RETRO, never scored' if r['retro'] else 'entry = the next session open'}); "
+              f"{len(r['controls'])} control names drawn.")
+        print("committed. Now run:  git push" if ok else "NOT COMMITTED (git refused). A pick only counts if it is committed before its entry open: commit docs/pick_ledger.jsonl now.")
+        if not r["controls"]:
+            print("WARNING: the control list docs/studies/pick_ledger_universe.txt is missing here, so this pick has no random-name control and will BLOCK the verdict.")
         return 0
     if args.cmd == "list":
         for p in read_ledger():
