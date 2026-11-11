@@ -1,0 +1,17 @@
+{
+ "name": "vwap_deep_pair",
+ "written": "2026-11-11, before SPY/QQQ minute bars for 2024-2026 were downloaded and before any per-trade paired number was computed",
+ "idea": "operator 11/11 'test the paired trade idea'. vwap_deep beats its peers by +5 bp (day-mean, 556 days) but loses outright because market-wide selloff days keep falling. A pair removes the market leg: long the stretched name, short an index ETF for the same dollars, same 60 minutes.",
+ "entry": "tools/studies/signals/vwap_deep.py unchanged; largest 50 names by prior-session dollar volume (warehouse sip_top, 2024-01-03..2026-04-24)",
+ "trade": "buy the name at the next bar's open, short the hedge at its open in the same minute; close both at the opens 60 bars later. Pair return = name return - hedge return. Trades capped at +-500 bp.",
+ "primary": "hedge = QQQ (the largest-50 list is mostly Nasdaq mega caps). 3 pairs at a time, taken in time order (the desk's slot limit). Cost 3 bp per pair round trip (about 2 bp stock + 1 bp ETF); stress 8 bp.",
+ "pass": "mean net per pair > 0 at 3 bp in BOTH halves by date, AND day-t of the daily result >= 2.0, AND mean net per pair > 0 at the 8 bp stress cost.",
+ "secondary": [
+  "hedge = SPY",
+  "hedge = the equal-weight basket of the other largest-50 names (not tradeable as one order; shows the ceiling)",
+  "every signal, no slot limit",
+  "by half-year"
+ ],
+ "fail": "anything short of the pass line. No retuning of depth, hold or hedge; a different hedge ratio (beta) is a new idea.",
+ "caveats": "bars, not quotes; equal dollars, not beta-matched, so a high-beta name is under-hedged on a selloff day; a pair ties up capital on both legs; the desk has no short leg today and would need one built. Short ETF borrow is assumed free and available."
+}
