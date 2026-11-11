@@ -290,7 +290,9 @@ def verdict(s, s4):
         return "VACUOUS", [f"only {s['changed']} of {s['n']} trades changed"]
     c = {"both halves > 0": s["h1"] > 0 and s["h2"] > 0, "day-t >= 2.0": s["t"] >= 2.0,
          "winsorized both halves > 0": s["win_h1"] > 0 and s["win_h2"] > 0, "bootstrap p5 > 0": s["p5"] > 0,
-         "S4 all exits 1 s late > 0": bool(s4.get("n")) and s4["mean_day"] > 0}
+         "S4 all exits 1 s late > 0": bool(s4.get("n")) and s4["mean_day"] > 0,
+         # per trade, not only per day: a day mean counts a 2-trade day like a 60-trade day (running list rows 116-117)
+         "per-trade delta > 0": s["var_mean"] - s["base_mean"] > 0}
     bad = [k for k, v in c.items() if not v]
     return ("IMPROVES" if not bad else "NO"), bad
 

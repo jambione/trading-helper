@@ -105,6 +105,13 @@ def _day_means(chunk):
     return [sum(x["bp"] for x in r) / len(r) for _, r in chunk]
 
 
+def _trade_mean(chunk):
+    """Net bp per TRADE over the sessions in chunk (every trade counts once). A mean of day means counts a 5-trade day
+    like a 60-trade day; that once made a losing rule read as profitable (running list rows 116-117)."""
+    xs = [x["bp"] for _, r in chunk for x in r]
+    return sum(xs) / len(xs) if xs else float("nan")
+
+
 def _welch(a, b):
     if len(a) < 3 or len(b) < 3:
         return float("nan"), float("nan")
@@ -121,6 +128,10 @@ def trend_and_ships(days_all):
         verdict = "GROWING" if diff >= 2 and t >= 1.5 else "REGRESSING" if diff <= -2 and t <= -1.5 else "FLAT"
         out.append(f"**{verdict}**: last 10 sessions vs the 10 before: {diff:+.1f} bp/trade (t {t:+.2f}). "
                    "Rule: GROWING needs >= +2 bp and t >= 1.5; REGRESSING <= -2 bp and t <= -1.5; anything else FLAT.")
+        pt_new, pt_old = _trade_mean(days_all[-10:]), _trade_mean(days_all[-20:-10])
+        clash = (pt_new - pt_old) * diff < 0
+        out.append(f"Per trade (every trade counts once): {pt_old:+.1f} -> {pt_new:+.1f} bp ({pt_new - pt_old:+.1f}). The verdict above is on day means"
+                   + ("; **the per-trade change points the OTHER way: trust the per-trade number.**" if clash else "; the two agree in direction."))
     else:
         out.append("Fewer than 20 sessions: no verdict.")
     out.append("")
@@ -129,14 +140,15 @@ def trend_and_ships(days_all):
     except (OSError, ValueError):
         ships = []
     if ships:
-        out += ["| shipped | change | sessions after | net bp before (10) | net bp after | read |", "|---|---|---:|---:|---:|---|"]
+        out += ["| shipped | change | sessions after | net bp before (10) | net bp after | read | per trade before -> after |", "|---|---|---:|---:|---:|---|---|"]
         for sh in ships:
             before = [d for d in days_all if d[0] < sh["date"]][-10:]
             after = [d for d in days_all if d[0] >= sh["date"]]
             nb = f"{sum(_day_means(before))/len(before):+.1f}" if before else "-"
             na = f"{sum(_day_means(after))/len(after):+.1f}" if after else "-"
             read = "NOT ENOUGH DATA" if len(after) < 10 else ("BETTER" if after and before and sum(_day_means(after))/len(after) > sum(_day_means(before))/len(before) + 2 else "WORSE" if after and before and sum(_day_means(after))/len(after) < sum(_day_means(before))/len(before) - 2 else "NO CHANGE")
-            out.append(f"| {sh['date']} | {sh['change'][:70]} | {len(after)} | {nb} | {na} | {read} |")
+            pt = f"{_trade_mean(before):+.1f} -> {_trade_mean(after):+.1f}" if before and after else "-"
+            out.append(f"| {sh['date']} | {sh['change'][:70]} | {len(after)} | {nb} | {na} | {read} | {pt} |")
         out.append("")
     return out
 

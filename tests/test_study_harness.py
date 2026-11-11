@@ -271,3 +271,32 @@ def test_ride_rule_reads_no_edge_on_pure_drift():
     assert r["trades"] > 500
     assert r["verdict"] == "FAIL"
     assert abs(r["lift"]) < 40                                   # bp per trade; the arithmetic version sat near +15 to +17 with t up to PASS
+
+
+def test_nightly_append_pure_pieces(tmp_path):
+    import warehouse_nightly as WN
+    old = {"2026-11-05": (100.0, 101.0), "2026-11-06": (101.0, 102.0)}
+    assert not WN.adj_moved(old, {"2026-11-06": (101.0, 102.0), "2026-11-09": (102.0, 103.0)})
+    assert WN.adj_moved(old, {"2026-11-06": (50.5, 51.0)})                     # a 2-for-1 split since
+    assert WN.adj_moved(old, {"2026-11-06": (100.5, 101.5)})                   # a dividend since (0.5%)
+    days = ["2026-11-05", "2026-11-06", "2026-11-09", "2026-11-10"]
+    assert WN.missing_sessions({"2026-11-06"}, days, "2026-11-05", 40) == ["2026-11-09", "2026-11-10"]
+    assert WN.missing_sessions(set(), days, "2026-11-05", 1) == ["2026-11-06"]
+    rows = [("d1", 12.0, 5e6), ("d2", 12.0, 5e6), ("d3", 12.0, 5e6)]
+    assert WN.new_liquid_dates(rows, "d2", lambda r: {"d2", "d3"}) == ["d3"]
+    pk = {"syms": np.array(["AAA", "BBB"]), "x": np.array([1])}
+    assert WN.save_day(tmp_path, "2026-11-10", dict(pk), {"AAA"}) is True
+    z = np.load(tmp_path / "2026-11-10.npz", allow_pickle=True)
+    assert list(z["uni"]) == [True, False]
+    assert WN.save_day(tmp_path, "2026-11-10", dict(pk), {"BBB"}) is False     # a day file is never overwritten
+    assert list(np.load(tmp_path / "2026-11-10.npz", allow_pickle=True)["uni"]) == [True, False]
+    assert WN.last_file_day(tmp_path) == "2026-11-10" and WN.last_file_day(tmp_path / "none") == ""
+
+
+def test_tomorrows_universe_is_known_tonight():
+    import warehouse_nightly as WN
+    import warehouse_top as WT
+    days = ["2026-11-09", "2026-11-10"]
+    daily = {"BIG": {d: (100.0, 1e6) for d in days}, "NEW": {"2026-11-09": (20.0, 10.0), "2026-11-10": (20.0, 9e7)}}
+    uni = WT.pick(daily, days + [WN.TOMORROW], 1)
+    assert uni["2026-11-10"] == ["BIG"] and uni[WN.TOMORROW] == ["NEW"]        # NEW's volume today puts it in tomorrow's list
