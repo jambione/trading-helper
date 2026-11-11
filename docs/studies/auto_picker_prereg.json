@@ -16,5 +16,6 @@
   "picks from one season share a market regime",
   "this study has not had its own skeptic review; the ledger rules it rests on were reviewed 11/11. Review this file before the first read.",
   "no order is placed by anything here; a PASS would be a reason to design a paper portfolio test, not to buy"
- ]
+ ],
+ "amended_2026-11-11_prompt": "Before any outcome existed (first picks recorded 07:47 ET the same morning; none had an entry yet). The first run's prompt pasted all 1,931 allowed symbols. Grok answered (ZTS, GXO, OKLO recorded). AGY, model gemini-3.8-flash-high, logged in and working (47 s, 5,319 output tokens), tried to run a Python command to check its picks against the list; headless mode refused the command and it returned no text, so nothing was recorded for it. Fix: the prompt no longer pastes the list and tells the agent not to use tools; the allowed list is still enforced by the code on every pick. Both agents use the new wording from here on; the prompt hash on each pick shows which wording produced it (Grok's first three carry the old hash). One retry with the same prompt was also added for an empty reply."
 }

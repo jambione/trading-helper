@@ -73,19 +73,25 @@ def headlines(universe: set[str], days: int = 7, limit: int = MAX_HEADLINES) -> 
 
 
 def build_prompt(today: str, heads: list[str], universe: list[str], held: list[str]) -> str:
+    """The wording is fixed; only the date, the week's headlines and the recent-picks line change.
+    11/11: the first version pasted all 1,931 allowed symbols. AGY (an agent) answered by trying to run a Python command to
+    check its picks against that list; headless mode refused the command and the session ended with no reply. The list is
+    gone from the prompt: every symbol in the headlines is already on it, and the code drops anything that is not."""
+    del universe                                  # kept in the signature; the allowed list is enforced in parse(), not pasted
     return (
         f"Today is {today}. You are choosing stocks for a paper record that tests whether your picks beat the S&P 500.\n"
         "No money is traded. Each pick is bought on paper at the next market open and judged against SPY after about three months.\n\n"
+        "Answer directly in your reply. Do NOT run commands, write files, browse, or use any tool: everything you need is in this message.\n\n"
         f"Choose your {ASK_FOR} best ideas, best first, for a holding period of 3 to 12 months. Rules:\n"
-        "- US common stocks only, and ONLY symbols from the ALLOWED list at the end.\n"
+        "- US common stocks only. Every symbol that appears before a colon in the HEADLINES below is allowed.\n"
+        "  You may also name another large, liquid US common stock priced above $10; anything not allowed is simply dropped.\n"
         "- Base each idea on a business reason (earnings, a product, demand, a contract, a turnaround), not on a chart.\n"
         "- Do not invent facts or numbers. If you rely on a headline below, say which one in a few words.\n"
         + (f"- Do not repeat these recent picks: {', '.join(held)}.\n" if held else "")
         + "\nReply with JSON ONLY, exactly this shape:\n"
         '{"picks": [{"sym": "ABC", "thesis": "one or two sentences on why it should beat the market", "months": 6, '
         '"sell_if": "what would prove the idea wrong"}]}\n\n'
-        f"HEADLINES from the past week ({len(heads)}):\n" + "\n".join(heads) + "\n\n"
-        "ALLOWED symbols:\n" + " ".join(universe) + "\n"
+        f"HEADLINES from the past week ({len(heads)}):\n" + "\n".join(heads) + "\n"
     )
 
 

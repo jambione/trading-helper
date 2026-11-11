@@ -44,6 +44,8 @@ def test_record_takes_three_commits_each_and_skips_a_recent_repeat(tmp_path, mon
     assert [r["symbol"] for r in nxt] == ["LAST"]                              # the three recent names are skipped, not re-recorded
 
 
-def test_prompt_wording_is_fixed_apart_from_the_news():
-    a = A.build_prompt("DATE", [], UNI, [])
-    assert "ONLY symbols from the ALLOWED list" in a and "No money is traded" in a and a.endswith(" ".join(UNI) + "\n")
+def test_prompt_forbids_tools_and_does_not_paste_the_allowed_list():
+    a = A.build_prompt("DATE", ["GOOD: backlog doubles"], UNI, ["OKAY"])
+    assert "Do NOT run commands" in a and "No money is traded" in a and "Do not repeat these recent picks: OKAY" in a
+    assert "GOOD: backlog doubles" in a and " ".join(UNI[:5]) not in a          # the 1,931-symbol list made AGY reach for a tool
+    assert A.build_prompt("DATE", [], UNI, []) == A.build_prompt("DATE", [], [], [])
