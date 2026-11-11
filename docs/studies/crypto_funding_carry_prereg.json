@@ -23,5 +23,8 @@
   "taxes, and the cost of moving margin between the two legs",
   "slippage in a crash, when both legs are hard to trade at once"
  ],
- "no_money": "a backtest only. Nothing is opened, no account is created, no order is placed."
+ "no_money": "a backtest only. Nothing is opened, no account is created, no order is placed.",
+ "data_used": "Deribit public API (BTC-PERPETUAL, ETH-PERPETUAL), hourly funding and prices 2019-04-30 to 2026-11-11, 8,255 complete 8-hour periods per coin. Binance and Bybit refuse US connections (HTTP 451 / 403) and BitMEX returned 403; not worked around.",
+ "bug_fixed_before_reporting": "the first run read the future's price one hour after the coin's (Deribit chart bars are keyed by their start), which made the hedged position look like it moved up to 10% in 8 hours. Fixed and covered by a test before any result was reported; no rule or threshold changed.",
+ "result_2026-11-11": "FAIL on one condition. ALWAYS-ON half BTC / half ETH, after fees, on capital of 1.5 per 1.0 of position: +4.33% a year (halves +5.07% / +3.60%) against cash of about 2.8% over the span, i.e. +1.5 points, short of the +2 required. The other three conditions passed: worst 12 months -3.05% (limit -5%), worst drawdown -5.2%, largest 8-hour rise 17% (limit 40%). By year: 2019 +5.5, 2020 +5.1, 2021 +11.6, 2022 -2.9, 2023 +4.7, 2024 +6.3, 2025 +1.9, 2026 to date +0.9. BTC alone +5.0% a year, ETH alone +3.6%. SWITCHED (secondary): +3.5% a year, worst 12 months -0.6%, in the trade 29% of the time, 2025 -0.2% and 2026 0.0%. Reading: the carry is real and steady but small, and it has shrunk: in 2025-2026 it paid less than cash. One exchange failure would erase about 23 years of it on the capital held there."
 }
