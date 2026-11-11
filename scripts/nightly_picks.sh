@@ -17,6 +17,7 @@ nice -n 19 .venv/bin/python tools/studies/warehouse_nightly.py > /tmp/nightly/wa
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 .venv/bin/python -u tools/auto_picker.py run > /tmp/nightly/auto_picker-$d.log 2>&1
 .venv/bin/python -u tools/fact_picker.py run > /tmp/nightly/fact_picker-$d.log 2>&1
+.venv/bin/python tools/pick_positions.py status > /tmp/nightly/pick_positions-$d.log 2>&1   # paper holdings vs the S&P -> ~/pick_ledgers/POSITIONS.txt
 if [ -s docs/pick_ledger.jsonl ]; then
   .venv/bin/python tools/pick_ledger.py score > /tmp/nightly/pick_ledger-$d.log 2>&1
 fi
