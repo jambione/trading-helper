@@ -39,8 +39,8 @@
   <key>ProcessType</key>
   <string>Background</string>
   <key>StandardOutPath</key>
-  <string>/Users/jambimac/repo/trading-helper/logs/auto_picker.log</string>
+  <string>/Users/jambimac/repo/trading-helper/logs/fact_picker.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/jambimac/repo/trading-helper/logs/auto_picker.log</string>
+  <string>/Users/jambimac/repo/trading-helper/logs/fact_picker.log</string>
 </dict>
 </plist>
