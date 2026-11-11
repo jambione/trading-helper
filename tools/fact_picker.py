@@ -13,6 +13,7 @@ Rules, written first: docs/studies/fact_picker_prereg.json. Analyst targets are 
     .venv/bin/python tools/fact_picker.py sheet          # build and print this week's sheet only (no agent is asked)
     .venv/bin/python tools/fact_picker.py replay         # twelve PAST Mondays, a screen only (from the mini's Terminal)
     .venv/bin/python tools/fact_picker.py replay-score
+    .venv/bin/python tools/fact_picker.py cikmap FILE    # one time: the SEC's company_tickers.json, saved from a browser
 
 Like auto_picker, `run` and `replay` must run inside the mini's logged-in session (the agents' logins are in the Keychain).
 SEC access: data.sec.gov needs no key. The symbol -> SEC company number table (docs/studies/sec_cik_map.json) comes from
@@ -344,9 +345,13 @@ def cik_map() -> dict[str, int]:
     ua = _agent_ua()
     if not ua:
         raise RuntimeError('no SEC company-number table yet: set "sec_user_agent" (a name and contact, as the SEC asks) in secrets_data.json and run again')
+    return write_cik_map(_get("https://www.sec.gov/files/company_tickers.json", ua))
+
+
+def write_cik_map(table: dict) -> dict[str, int]:
+    """The SEC's company_tickers.json (fetched, or saved from a browser) -> the frozen list's symbol -> company number."""
     uni = set(P.frozen_universe())
-    rows = _get("https://www.sec.gov/files/company_tickers.json", ua).values()
-    out = {str(r["ticker"]).upper().replace("-", "."): int(r["cik_str"]) for r in rows}
+    out = {str(r["ticker"]).upper().replace("-", "."): int(r["cik_str"]) for r in table.values()}
     out = {k: v for k, v in sorted(out.items()) if k in uni}
     CIK_MAP.write_text(json.dumps(out, indent=0) + "\n")
     return out
@@ -672,6 +677,10 @@ def replay_score(lines: dict[str, list[dict]] | None = None) -> str:
 
 if __name__ == "__main__":
     cmd = (sys.argv[1:] or ["run"])[0]
+    if cmd == "cikmap":                                                   # fact_picker.py cikmap ~/Downloads/company_tickers.json
+        m = write_cik_map(json.loads(Path(sys.argv[2]).expanduser().read_text()))
+        print(f"{len(m)} of {len(P.frozen_universe())} listed symbols matched -> {CIK_MAP}")
+        sys.exit(0)
     if cmd == "sheet":
         s, n = make_sheet(datetime.now(ET))
         print("\n".join(s.values()) + f"\n\n{len(s)} names from {n} headlines")
