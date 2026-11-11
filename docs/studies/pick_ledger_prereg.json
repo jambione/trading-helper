@@ -1,0 +1,25 @@
+{
+ "name": "pick_ledger",
+ "written": "2026-11-11, before any pick was recorded",
+ "question": "do the operator's own stock picks beat simply holding the index? His two large real-money gains (months-long holds in single names) are the only edge in this project with a real-money record, and two wins in a rising market prove nothing.",
+ "tool": "tools/pick_ledger.py; ledger docs/pick_ledger.jsonl, committed after every add (git history is the proof of order)",
+ "what_counts_as_a_pick": "a symbol recorded with `add` BEFORE its entry: stamped with the record time, thesis, intended hold and a sell condition. A repeat of the same symbol within 10 calendar days is refused. A pick recorded after the fact (--retro) is listed and never scored. Picks are scored whether or not real money was put on them.",
+ "entry_exit": "entry = the open of the first session starting after the record time; exit for scoring = the open 21 / 63 / 126 sessions later (adjusted prices); a name that stops trading is sold at its last close. The pick is scored at the horizon whether or not the operator still holds it.",
+ "measure": "ratio lift (1 + pick) / (1 + control) - 1. Control A = SPY over the same sessions. Control B = the mean of 30 random names from the liquid list (close >= $10, 20-day dollar volume >= $20M), seeded by the pick id.",
+ "primary": "63 sessions, on the FIRST 30 scoreable picks in record order, read once when all 30 have a closed window. Later picks never enter this verdict.",
+ "pass": "mean ratio lift vs SPY > 0 AND t across the 30 picks >= 2.0 AND more than half the picks ahead of SPY AND the median pick ahead of SPY AND mean lift vs the random names > 0.",
+ "fail": "anything else. No second sample for the same question without a new prereg.",
+ "reported_not_verdict": [
+  "21 and 126 sessions",
+  "open windows marked to the latest open",
+  "the best single pick's share of the total (the ride-the-trend test on 11/11 showed the top 1% of trades making more than the whole profit)"
+ ],
+ "caveats": [
+  "30 picks give low power: only a large skill shows up. A FAIL means not shown, not disproven.",
+  "picks made in one market regime share that regime; t across picks overstates the evidence if they cluster in time or in one sector.",
+  "this takes at least 3 months after the 30th pick.",
+  "it measures PICKING, not what the operator would have earned: his own entries, sizes and exits are not modelled.",
+  "nothing here places an order or recommends one."
+ ],
+ "skeptic": "review requested 11/11 before the first pick; findings to be applied before any read"
+}
