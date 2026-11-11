@@ -42,14 +42,16 @@ PRIMARY, NEED, N_CONTROL, DEDUPE_DAYS = 63, 30, 30, 10
 
 
 # ---------- ledger ----------
-def read_ledger(path: Path = LEDGER) -> list[dict]:
+def read_ledger(path: Path | None = None) -> list[dict]:
+    path = path or LEDGER
     if not path.exists():
         return []
     return [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
 
 
 def add_pick(symbol: str, thesis: str, months: float, sell_if: str, *, now: datetime | None = None, retro: bool = False,
-             path: Path = LEDGER) -> dict:
+             path: Path | None = None) -> dict:
+    path = path or LEDGER
     sym = symbol.strip().upper()
     if not re.fullmatch(r"[A-Z]{1,5}(\.[A-Z])?", sym):
         raise ValueError(f"'{symbol}' is not a stock symbol")
