@@ -1,0 +1,15 @@
+{
+ "name": "vwap_deep_fresh",
+ "written": "2026-11-11 ~04:20 ET, before any bar after 2026-10-15 was read by any test (sip_fresh fetched, unread)",
+ "rule": "tools/studies/signals/vwap_deep.py unchanged: the name's close is at least 0.5 x its prior-day range below its session VWAP; no candle or volume condition; from 09:50; buy the next bar's open, sell the open 60 bars later; one position per name at a time",
+ "universe": "the 50 largest names by prior-session dollar volume, price $10-5000 (harness --top-n 50 --price-hi 5000)",
+ "how_found": "reversal_map.py on dev days 4/28-9/17: forward return rises steadily with distance below VWAP and falls with distance above (both halves); strongest in the largest 50 (+18.7 bp vs the other largest-50 names at 60 m, t 3.97). Green bar and volume made no difference, so they were dropped. Trade-level harness read on dev: 1,693 trades, lift +8.84 bp (t 2.03, halves +11.0 / +6.7), gross +28.2, net at 1 bp +27.2 (halves +34.3 / +20.1). Chosen after many looks at the dev window, so only fresh data counts.",
+ "data": "ai_reports/warehouse/sip_fresh, 2026-10-16..2026-11-10 (18 sessions), harness --holdout 0",
+ "primary": "hold 60 m. LIFT verdict: lift vs same-minute other largest-50 names > 0 in both halves by date and pooled day-t >= 1.65 (one-sided). MONEY verdict (separate): mean net > 0 at 1 bp and at 6 bp, both halves > 0 at 6 bp.",
+ "secondary": [
+  "hold 30 m and 120 m",
+  "vwap_deep_03 (0.3 ranges) at 60 m"
+ ],
+ "fail": "primary lift <= 0 pooled or in either half. No retuning, no second read.",
+ "caveats": "18 sessions is low power (dev day-t of 2.0 on 98 days implies about 0.9 expected here). Gross can be the group bouncing with the market; that is why lift is the verdict. 1 bp is the quoted-spread cost on these names in normal minutes; spreads widen in a selloff, so 6 bp is the honest stress."
+}
