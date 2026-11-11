@@ -343,3 +343,10 @@ def test_five_minute_candles_use_only_finished_candles():
         cut[q][:, 27:] = np.nan                                                   # blank from 09:57: the 09:55 candle is unfinished
     m2 = TW.measures_tf(cut, 5)
     assert np.allclose(m["rope"][:, :27], m2["rope"][:, :27], equal_nan=True)
+
+
+def test_tug_forward_counts_until_due(tmp_path):
+    import tug_of_war as TW
+    (tmp_path / "out.jsonl").write_text("")
+    text = TW.forward(tmp_path, tmp_path / "out.jsonl")
+    assert text.count("NOT DUE") == 2 and "0 of 40 flagged" in text and "PRIMARY" in text

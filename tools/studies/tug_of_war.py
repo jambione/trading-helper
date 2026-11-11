@@ -197,6 +197,76 @@ def test_b(wh: Path, outcomes: Path, k: int = 1):
               f"{half(True):>+9.2f}/{half(False):<+6.2f}")
 
 
+FWD_SINCE, FWD_MIN_FLAGGED, FWD_MIN_ALL = "2026-11-12", 40, 400
+FWD = (("PRIMARY   10-minute candles: 4 of 4 stepping higher", 10, "higher steps: 4 of 4"),
+       ("SECONDARY  5-minute candles: 4 or 5 of 5 green", 5, "greens: 4+ of 5"))
+
+
+def desk_rows(wh: Path, outcomes: Path, k: int, since: str) -> list[dict]:
+    """The desk's entries on or after `since`, each with its tug-of-war states on k-minute candles finished before the entry."""
+    rows, cache = [], {}
+    for ln in open(outcomes):
+        try:
+            o = json.loads(ln)
+        except ValueError:
+            continue
+        e, x, t = o.get("entry_price"), o.get("exit_price"), o.get("entry_time")
+        if not (e and x and t) or o.get("strategy") != "day_scalp_v0" or e < 20:
+            continue
+        d = datetime.fromtimestamp(t, ET)
+        day = d.strftime("%Y-%m-%d")
+        if day < since:
+            continue
+        if day not in cache:
+            f = wh / f"{day}.npz"
+            cache[day] = None
+            if f.exists():
+                raw = H.load_day(f)
+                with np.errstate(all="ignore"):
+                    bk = buckets(measures_tf(raw, k))
+                    bk["greens: 4+ of 5"] = bk["greens: 4 of 5"] | bk["greens: 5 of 5"]
+                cache[day] = ({s: i for i, s in enumerate(raw["syms"])}, bk)
+        if cache[day] is None:
+            continue
+        idx, bk = cache[day]
+        m = d.hour * 60 + d.minute - H.M0 - 1
+        i = idx.get(o["symbol"])
+        if i is None or m < N * k or m >= H.NBAR:
+            continue
+        rows.append({"day": day, "bp": (x / e - 1) * 1e4, **{name: bool(v[i, m]) for name, v in bk.items()}})
+    return rows
+
+
+def forward(wh: Path, outcomes: Path) -> str:
+    """docs/studies/tug_of_war_forward_prereg.json: counts only until due, then ONE read."""
+    out = [f"Tug-of-war forward test on desk entries from {FWD_SINCE} (written {datetime.now(ET):%Y-%m-%d %H:%M} ET)"]
+    for label, k, name in FWD:
+        rows = desk_rows(wh, outcomes, k, FWD_SINCE)
+        flag = [r for r in rows if r[name]]
+        rest = [r for r in rows if not r[name]]
+        if len(flag) < FWD_MIN_FLAGGED or len(rows) < FWD_MIN_ALL:
+            out.append(f"  {label}: NOT DUE ({len(flag)} of {FWD_MIN_FLAGGED} flagged entries, {len(rows)} of {FWD_MIN_ALL} entries in all)")
+            continue
+        days = sorted({r["day"] for r in rows})
+        mid = days[len(days) // 2]
+        by = defaultdict(lambda: [[], []])
+        for r in rows:
+            by[r["day"]][0 if r[name] else 1].append(r["bp"])
+        dv = np.array([np.mean(v[0]) - np.mean(v[1]) for _d, v in sorted(by.items()) if v[0] and v[1]])
+        t = dv.mean() / (dv.std(ddof=1) / math.sqrt(len(dv))) if len(dv) > 3 and dv.std() > 0 else float("nan")
+
+        def half(first):
+            a = [r["bp"] for r in flag if (r["day"] < mid) == first]
+            b = [r["bp"] for r in rest if (r["day"] < mid) == first]
+            return (np.mean(a) - np.mean(b)) if a and b else float("nan")
+        diff = float(np.mean([r["bp"] for r in flag]) - np.mean([r["bp"] for r in rest]))
+        h1, h2 = half(True), half(False)
+        ok = diff <= -3.0 and h1 < 0 and h2 < 0 and t <= -2.0
+        out.append(f"  {label}: {'CONFIRMED (flagged entries do worse)' if ok else 'NOT CONFIRMED'}  flagged {len(flag)} trades {np.mean([r['bp'] for r in flag]):+.2f} bp, "
+                   f"rest {len(rest)} trades {np.mean([r['bp'] for r in rest]):+.2f} bp, diff {diff:+.2f} (need <= -3), day-t {t:+.2f} (need <= -2), halves {h1:+.2f} / {h2:+.2f}")
+    return "\n".join(out)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warehouse", default=str(H.WH))
@@ -204,7 +274,13 @@ def main(argv=None) -> int:
     ap.add_argument("--holdout", type=int, default=20)
     ap.add_argument("--skip-a", action="store_true")
     ap.add_argument("--tf", type=int, default=1, help="candle size in minutes (1, 5, 10)")
+    ap.add_argument("--forward", action="store_true", help="the pre-registered forward test on fresh desk entries (counts until due)")
     a = ap.parse_args(argv)
+    if a.forward:
+        text = forward(Path(a.warehouse), H.ROOT / "ai_reports" / "outcomes.jsonl")
+        (H.ROOT / "ai_reports" / "tug_of_war_forward.txt").write_text(text + "\n")
+        print(text)
+        return 0
     files = sorted(Path(a.warehouse).glob("*.npz"))
     dev = files[:-a.holdout] if a.holdout > 0 else files
     cfg = {**H.DEFAULTS, "holdout": a.holdout, "family": 18, "min_trades": 0, "min_days": 0}

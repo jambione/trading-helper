@@ -1,0 +1,13 @@
+{
+ "name": "tug_of_war_forward",
+ "written": "2026-11-11 afternoon, after reading desk entries through 11/10 only; entries from 2026-11-12 on are unseen",
+ "origin": "operator 11/11: candle 'tug of war' on 5- and 10-minute views. Looking back (running list row 122), his ENTER rule was not supported, but entries after a sustained run of rising candles did worse: on desk entries 10/08-11/10, 10-minute '4 of 4 stepping higher' 58 trades -9.4 bp vs -3.5 (day-t -2.03, both halves), 5-minute '4 of 5 green' 92 trades -7.4 vs -3.6 (t -2.32, both halves). About 36 states per view were read, so this needs fresh data.",
+ "measure": "tools/studies/tug_of_war.py, unchanged: clock-aligned k-minute candles, only candles fully closed before the entry minute; 'higher steps' = how many of the last 4 steps raised the body middle; 'greens' = how many of the last 5 candles closed up.",
+ "sample": "every desk entry (day_scalp_v0, entry >= $20) from 2026-11-12 on that can be matched to the nightly warehouse bars. Result per trade = exit vs entry in bp (spread included).",
+ "primary": "10-minute candles, 4 of 4 stepping higher at entry. Read ONCE when there are at least 40 flagged entries and 400 entries in all (about 3 to 4 weeks at the 10/08-11/10 rate).",
+ "secondary": "5-minute candles, 4 or 5 of the last 5 green. Same thresholds, reported, not the verdict.",
+ "confirmed_if": "flagged entries average at least 3 bp WORSE than the rest, the difference is negative in both halves by date, and the day-level t of the daily (flagged - rest) difference is <= -2.0.",
+ "otherwise": "NOT CONFIRMED; the idea is closed. No retuning of the candle size, the count or the thresholds.",
+ "if_confirmed": "a refusal for those entries is tested in replay (tools/sweep_replays.py) before any config change; expected effect is a smaller loss on about a tenth of entries, not a profitable desk.",
+ "caveat": "a config or code change to the desk's entries during the window changes the sample; note it with the read. The desk is not changed by this test; nothing is logged live, the state is computed nightly from saved bars."
+}

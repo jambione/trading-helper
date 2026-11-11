@@ -46,4 +46,5 @@ scripts/regression_check.sh > /tmp/nightly/regression-$d.log 2>&1   # new failin
 .venv/bin/python tools/broker_truth.py fetch > /tmp/nightly/broker_truth-$d.log 2>&1   # Alpaca fills + equity, read-only (operator 11/07)
 .venv/bin/python tools/broker_truth.py report >> /tmp/nightly/broker_truth-$d.log 2>&1  # docs/BROKER_TRUTH.md (untracked; generated)
 nice -n 19 .venv/bin/python tools/studies/warehouse_nightly.py > /tmp/nightly/warehouse-$d.log 2>&1   # append today's bars to the study warehouses (restructure plan WP2, 11/11)
+.venv/bin/python tools/studies/tug_of_war.py --forward > /tmp/nightly/tug_forward-$d.log 2>&1   # 5/10-minute candle run before entry, counts only until due (prereg 11/11)
 echo DONE > /tmp/nightly/done-$d
