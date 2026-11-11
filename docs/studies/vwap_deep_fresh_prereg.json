@@ -11,5 +11,6 @@
   "vwap_deep_03 (0.3 ranges) at 60 m"
  ],
  "fail": "primary lift <= 0 pooled or in either half. No retuning, no second read.",
- "caveats": "18 sessions is low power (dev day-t of 2.0 on 98 days implies about 0.9 expected here). Gross can be the group bouncing with the market; that is why lift is the verdict. 1 bp is the quoted-spread cost on these names in normal minutes; spreads widen in a selloff, so 6 bp is the honest stress."
+ "caveats": "18 sessions is low power (dev day-t of 2.0 on 98 days implies about 0.9 expected here). Gross can be the group bouncing with the market; that is why lift is the verdict. 1 bp is the quoted-spread cost on these names in normal minutes; spreads widen in a selloff, so 6 bp is the honest stress.",
+ "result_2026-11-11": "UNDERPOWERED / not passed: 405 trades on 17 days, lift +21.9 bp (halves +6.1 / +36.1, day-t 0.95 < 1.65). Per trade: gross -4.12, net at 6 bp -10.12. See vwap_deep_history_prereg.json."
 }

@@ -201,3 +201,18 @@ def test_top_universe_ranks_on_the_prior_session_only():
              "PENNY": {d: (5.0, 90_000_000) for d in days}}
     uni = WT.pick(daily, days, 2)
     assert uni["2026-01-07"] == ["BIG", "MID"]            # SPIKE's volume on 01-07 itself cannot put it in 01-07; PENNY is under $10
+
+
+def test_profitable_needs_per_trade_net_not_only_day_means():
+    rng = np.random.default_rng(5)
+
+    def day(n, mu):
+        g = mu + rng.normal(0, 1.0, n)
+        return {"gross": g, "lift": g.copy(), "lift_later": g.copy(), "ctl_min": np.zeros(n), "ctl_later": np.zeros(n),
+                "px": np.full(n, 100.0), "base_sum": 0.0, "base_n": 1}
+    quiet = [day(2, 40.0) for _ in range(30)]                    # a few big winners on quiet days
+    busy = [day(200, -3.0) for _ in range(6)]                    # many small losers on the busy days
+    per_day = [x for i in range(6) for x in (quiet[5 * i:5 * i + 5] + [busy[i]])]
+    r = H.verdict(per_day, {**H.DEFAULTS, "min_trades": 0, "min_days": 0})
+    assert r["net"]["mean"] > 0 and r["net_trade"] < 0           # day means say yes, the account says no
+    assert not r["profitable"]

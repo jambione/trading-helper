@@ -22,7 +22,8 @@ Model (fixed, the same for every idea so results compare):
 - Both control means are printed beside the unconditional random-minute mean.
 - Stats are by DAY (day-clustered t), split in two halves by date; top 1% of trades winsorized as the concentration check.
 - EDGE: primary lift > 0 in both halves, pooled day-t >= the critical value (--family k tightens it), secondary lift > 0,
-  winsorized lift > 0. PROFITABLE: EDGE and net > 0 after cost in both halves and at the stress cost.
+  winsorized lift > 0. PROFITABLE: EDGE and net > 0 after cost in both halves and at the stress cost, both as the mean of
+  day means AND per trade (pooled). The per-trade line is what an account earns; day means flatter rules that fire in bursts.
 - Look-ahead guard: the signal is re-run with every bar after a random minute blanked; any change before that minute aborts.
 - Hold-out: the latest --holdout sessions are never scored unless --final. Every read is appended to ai_reports/harness/reads.jsonl
   with the signal file's hash, so a second "final" read of the same NAME is visible (and refused without --force).
@@ -209,13 +210,24 @@ def verdict(per_day: list[dict], cfg: dict) -> dict:
     res["cost_mean"] = float(np.nanmean(np.concatenate([d["cost"] for d in per_day])))
     res["net_halves"] = [day_stat(_dmean(x, "net"))["mean"] if x else float("nan") for x in halves]
     res["net_stress"] = day_stat(_dmean(per_day, "net_stress"))
+    # Per TRADE, not per day. A day-mean treats a day with 2 trades like a day with 120, and the busy days are the
+    # market-wide ones where an entry behaves differently (vwap_deep 11/11: day-mean gross +16 bp, per-trade gross -2 bp).
+    def _pooled(xs, key):
+        v = np.concatenate([d[key] for d in xs]) if xs else np.array([])
+        v = v[~np.isnan(v)]
+        return float(v.mean()) if len(v) else float("nan")
+    res["gross_trade"] = _pooled(per_day, "gross")
+    res["net_trade"] = _pooled(per_day, "net")
+    res["net_trade_halves"] = [_pooled(x, "net") for x in halves]
+    res["net_trade_stress"] = _pooled(per_day, "net_stress")
     res["ctl_same_minute"] = float(np.nanmean(np.concatenate([d["ctl_min"] for d in per_day])))
     res["ctl_same_name_later"] = float(np.nanmean(np.concatenate([d["ctl_later"] for d in per_day])))
     res["baseline_random_minute"] = sum(d["base_sum"] for d in per_day) / max(1, sum(d["base_n"] for d in per_day))
     pos = lambda v: v is not None and not math.isnan(v) and v > 0
     edge = (all(pos(v) for v in res["lift_halves"]) and pos(res["lift"]["mean"]) and res["lift"]["t"] >= crit
             and pos(res["lift_later"]["mean"]) and pos(res["lift_winsor"]["mean"]))
-    prof = edge and all(pos(v) for v in res["net_halves"]) and pos(res["net_stress"]["mean"])
+    prof = (edge and all(pos(v) for v in res["net_halves"]) and pos(res["net_stress"]["mean"])
+            and all(pos(v) for v in res["net_trade_halves"]) and pos(res["net_trade_stress"]))
     under = n_tr < cfg["min_trades"] or len(per_day) < cfg["min_days"]
     res["edge"], res["profitable"] = bool(edge), bool(prof)
     res["verdict"] = "UNDERPOWERED" if under else "PROFITABLE" if prof else "EDGE (component)" if edge else "FAIL"
@@ -320,8 +332,10 @@ def report(name: str, hold: int, r: dict, cfg: dict, final: bool) -> str:
          f"halves {r['lift_halves'][0]:+.2f} / {r['lift_halves'][1]:+.2f}",
          f"  lift vs same name, later         : {r['lift_later']['mean']:+.2f} bp  day-t {r['lift_later']['t']:+.2f}",
          f"  lift, top 1% of trades capped    : {r['lift_winsor']['mean']:+.2f} bp",
-         f"  gross {r['gross']['mean']:+.2f}   net (mean cost {r['cost_mean']:.1f} bp) {r['net']['mean']:+.2f} (halves {r['net_halves'][0]:+.2f} / "
+         f"  day-mean gross {r['gross']['mean']:+.2f}   net (mean cost {r['cost_mean']:.1f} bp) {r['net']['mean']:+.2f} (halves {r['net_halves'][0]:+.2f} / "
          f"{r['net_halves'][1]:+.2f})   net at stress cost {r['net_stress']['mean']:+.2f}",
+         f"  PER TRADE (what an account gets): gross {r['gross_trade']:+.2f}   net {r['net_trade']:+.2f} (halves {r['net_trade_halves'][0]:+.2f} / "
+         f"{r['net_trade_halves'][1]:+.2f})   net at stress cost {r['net_trade_stress']:+.2f}",
          f"  control means: same minute {r['ctl_same_minute']:+.2f}, same name later {r['ctl_same_name_later']:+.2f}, "
          f"random minute {r['baseline_random_minute']:+.2f}",
          f"  VERDICT: {r['verdict']}"]

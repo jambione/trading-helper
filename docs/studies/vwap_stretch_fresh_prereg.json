@@ -11,5 +11,6 @@
  ],
  "pass": "PRIMARY lift vs same-minute other names > 0 in BOTH halves by date AND pooled day-t >= 1.65 (one-sided, one primary read, about 18 days). Report gross and net; net > 0 is NOT required for the lift verdict and is reported separately.",
  "fail": "primary lift <= 0 pooled, or either half <= 0. No retuning, no second read.",
- "caveats": "about 18 sessions is low power: a true +2.8 bp lift would be expected to give t near 1. A FAIL here is weak evidence against; a PASS is weak evidence for. Gross on the dev window was mostly the market bouncing after selloff minutes in a rising period, so gross is not the test."
+ "caveats": "about 18 sessions is low power: a true +2.8 bp lift would be expected to give t near 1. A FAIL here is weak evidence against; a PASS is weak evidence for. Gross on the dev window was mostly the market bouncing after selloff minutes in a rising period, so gross is not the test.",
+ "result_2026-11-11": "FAIL: top 400 at 60 m lift +5.47 bp but halves -2.59 / +13.53 (a half <= 0); 18 days."
 }
