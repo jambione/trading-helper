@@ -30,5 +30,6 @@
    "null canary in tests: drift with no edge must not read PASS"
   ],
   "money_line": "30 bp per round trip (the desk measured about 31 bp for overnight market orders), not 10"
- }
+ },
+ "result_2026-11-11": "ALL SIX FAIL (verdict window 2017-2022, 3,639 names, median 1,384 tradeable a day). Beta-adjusted difference vs all tradeable names, bp per basket (t): 6-1 momentum +5.8 (0.11, halves +16.9 / -4.2); 52-week-high nearness -0.7 (-0.02); new 60-day high +4.6 (0.28); one-week losers -17.9 (-1.65); one-month momentum -33.9 (-0.68). Yearly after 10 bp: +8.5%, +5.3%, +3.7%, -6.0%, +2.6% against +9.3% for all names equal-weight and +11.3% for SPY. Ride rule: 16,446 trades, median hold 29 sessions, mean +88 bp but median -265 bp, win 37%, top 1% of trades = 118% of the total; ratio lift vs the universe +9.9 bp (t 0.33), beta-adjusted +3.5 (t 0.12). 10-position account 2017-2022 over 200 tie-break seeds: median +3.3%/yr (range -5.9% to +19.5%), drawdown -36%, Sharpe 0.16, vs SPY +11.0%/yr, -32%, 0.56; 2023+ median +7.0% vs SPY +21.6%. No rule beat simply holding the index. The account's result depends mainly on WHICH ten names it happened to hold."
 }
