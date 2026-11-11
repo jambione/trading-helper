@@ -190,10 +190,16 @@ def run(now: datetime | None = None) -> int:
                   if (now - datetime.fromisoformat(p["recorded_at"])).days < P.DEDUPE_DAYS]
         prompt = build_prompt(now.strftime("%Y-%m-%d"), heads, uni, recent)
         sha = hashlib.sha1(build_prompt("DATE", [], uni, []).encode()).hexdigest()[:10]       # the fixed wording, without the week's news
-        try:
-            text, model = ask_agent(agent, prompt)
-        except Exception as e:  # noqa: BLE001
-            log.append(f"{agent}: no reply ({type(e).__name__} {e!s:.120})")
+        text = model = err = None
+        for _attempt in range(2):                                         # one retry with the SAME prompt (an empty reply is often transient)
+            try:
+                text, model = ask_agent(agent, prompt)
+                if parse(text, set(uni)):
+                    break
+            except Exception as e:  # noqa: BLE001
+                err = f"{type(e).__name__} {e!s:.120}"
+        if not text:
+            log.append(f"{agent}: no reply after 2 tries ({err})")
             continue
         raw = HOME / agent / "raw"
         raw.mkdir(exist_ok=True)
