@@ -44,6 +44,7 @@ UNIVERSE = ROOT / "docs" / "studies" / "pick_ledger_universe.txt"
 ET = ZoneInfo("America/New_York")
 HORIZONS = (21, 63, 126)
 PRIMARY, NEED, N_CONTROL, DEDUPE_DAYS, BETA_DAYS = 63, 30, 30, 92, 252
+EARLY, EARLY_T = 21, 2.5                  # one-month early look on the same first 30 picks; a higher t because it is a second look
 END_DATE = "2027-11-11"                   # picks recorded after this do not count; fewer than 30 by then = UNPROVEN
 
 
@@ -243,7 +244,7 @@ def cluster_t(x: list[float], groups: list[str]) -> float:
     return m / math.sqrt(var) if var > 0 else float("nan")
 
 
-def verdict(scored: list[dict], h: int = PRIMARY, need: int = NEED, today: str | None = None) -> dict:
+def verdict(scored: list[dict], h: int = PRIMARY, need: int = NEED, today: str | None = None, t_min: float = 2.0) -> dict:
     """The first `need` countable picks in record order. Any of them unscoreable or without its controls -> BLOCKED."""
     order = sorted((s for s in scored if s.get("counts", True)), key=lambda s: datetime.fromisoformat(s["recorded_at"]))
     first = order[:need]
@@ -268,7 +269,7 @@ def verdict(scored: list[dict], h: int = PRIMARY, need: int = NEED, today: str |
                mean_vs_random=statistics.fmean(v["vs_random"] for v in hh), mean_rank=statistics.fmean(v["rank"] for v in hh),
                mean_beta_excess=statistics.fmean(v["beta_excess"] for v in hh), best_share=(max(x) / sum(x)) if sum(x) > 0 else None,
                months=len(set(months)))
-    ok = (res["mean_vs_spy"] > 0 and res["t"] >= 2.0 and res["ahead"] > 0.5 and res["median_vs_spy"] > 0 and res["mean_vs_random"] > 0
+    ok = (res["mean_vs_spy"] > 0 and res["t"] >= t_min and res["ahead"] > 0.5 and res["median_vs_spy"] > 0 and res["mean_vs_random"] > 0
           and res["mean_rank"] > 0.5 and res["mean_beta_excess"] > 0)
     res["verdict"] = "PASS" if ok else "FAIL"
     return res
@@ -341,7 +342,13 @@ def cmd_score(ledger: Path | None = None) -> int:
             row += f"{'':>27}" if not x else f"{pct(x['pick']):>9}{pct(x['vs_spy']):>8}{pct(x['vs_random']):>8}{flag:>2}"
         print(row)
     print("\n* = window still open (marked to the latest open; not part of any verdict)   † = stopped trading, valued at its last close")
-    v = verdict(scored, today=datetime.now(ET).strftime("%Y-%m-%d"))
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    ev = verdict(scored, h=EARLY, today=today, t_min=EARLY_T)
+    print(f"\nEARLY LOOK at {EARLY} sessions on the first {NEED} picks (needs t >= {EARLY_T}; the {PRIMARY}-session verdict below is the stronger one): {ev['verdict']}")
+    if "mean_vs_spy" in ev:
+        print(f"  vs SPY: mean {pct(ev['mean_vs_spy'])}, median {pct(ev['median_vs_spy'])}, t {ev['t']:+.2f}, ahead {100 * ev['ahead']:.0f}%; "
+              f"vs random names {pct(ev['mean_vs_random'])}; beta-adjusted {pct(ev['mean_beta_excess'])}")
+    v = verdict(scored, today=today)
     print(f"\nVERDICT at {PRIMARY} sessions on the first {NEED} picks: {v['verdict']}")
     for w in v.get("why", []):
         print(f"  {w}")

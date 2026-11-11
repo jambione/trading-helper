@@ -49,3 +49,28 @@ def test_prompt_forbids_tools_and_does_not_paste_the_allowed_list():
     assert "Do NOT run commands" in a and "No money is traded" in a and "Do not repeat these recent picks: OKAY" in a
     assert "GOOD: backlog doubles" in a and " ".join(UNI[:5]) not in a          # the 1,931-symbol list made AGY reach for a tool
     assert A.build_prompt("DATE", [], UNI, []) == A.build_prompt("DATE", [], [], [])
+
+
+def test_replay_mondays_are_twelve_past_mondays_in_four_months():
+    m = A.replay_mondays()
+    assert len(m) == 12 and all(x.weekday() == 0 for x in m) and m[0].strftime("%Y-%m-%d") == "2026-07-27" and m[-1].strftime("%Y-%m-%d") == "2026-10-12"
+    assert len({x.strftime("%Y-%m") for x in m}) == 4
+
+
+def test_replay_collects_three_a_week_skips_repeats_and_adds_a_random_control(tmp_path, monkeypatch):
+    monkeypatch.setattr(A, "HOME", tmp_path)
+    monkeypatch.setattr(P, "frozen_universe", lambda path=None: UNI)
+    asked = []
+
+    def ask(agent, prompt):
+        asked.append((agent, prompt[:20]))
+        return REPLY, "m"
+    heads = [f"{s}: something happened at {s}" for s in UNI[:40]]
+    lines = A.replay_collect(ask=ask, heads_for=lambda mon: heads)
+    assert [r["symbol"] for r in lines["agy"][:4]] == ["GOOD", "OKAY", "MORE", "LAST"]     # week 1 takes three, week 2 the one left
+    assert len(lines["agy"]) == 4 and len(lines["random"]) == 36                             # only 4 distinct ideas; the control fills every week
+    assert all(len(r["controls"]) == 30 and r["source"].startswith("replay_") for r in lines["grok"])
+    assert lines["agy"][0]["recorded_at"].startswith("2026-07-27T08:30")
+    n = len(asked)
+    A.replay_collect(ask=ask, heads_for=lambda mon: heads)                                    # resumable: saved replies are reused
+    assert len(asked) == n

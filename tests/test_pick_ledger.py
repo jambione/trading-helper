@@ -126,3 +126,14 @@ def test_one_lucky_pick_does_not_pass():
 def test_picks_bunched_in_one_month_cannot_reach_the_t_bar():
     v = P.verdict(_scored([0.04 + 0.002 * i for i in range(30)], month="2026-03-10"))
     assert v["verdict"] == "FAIL" and v["t"] != v["t"]                      # one cluster: no t at all
+
+
+def test_early_look_uses_the_21_session_window_and_a_higher_t():
+    s = _scored([0.04 + 0.002 * i for i in range(30)])
+    for x in s:
+        x["h"][21] = dict(x["h"][63])
+    assert P.verdict(s, h=P.EARLY, t_min=P.EARLY_T)["verdict"] == "PASS"
+    assert P.verdict(s, h=P.EARLY, t_min=1e9)["verdict"] == "FAIL"           # the t bar is really applied
+    for x in s[:5]:
+        x["h"][21]["closed"] = False
+    assert "NOT YET" in P.verdict(s, h=P.EARLY, t_min=P.EARLY_T)["verdict"]

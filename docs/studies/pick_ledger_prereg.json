@@ -34,5 +34,6 @@
    "the operator can see running numbers for open picks; that is unavoidable for his own positions and is why the sample is fixed by record order and has an end date",
    "beta from 252 prior sessions is missing for a recent listing; such a pick blocks the verdict until the prereg is amended in writing"
   ]
- }
+ },
+ "amended_2026-11-11_early_look": "Operator 11/11: May 2027 is too long to wait. Added an EARLY LOOK at 21 sessions on the SAME first 30 countable picks, read once when all 30 have a closed 21-session window (about late February to March 2027). Same pass conditions as the 63-session verdict, with the clustered t raised to 2.5 because it is a second look at the same picks. It is weaker evidence than the 63-session verdict (one month is a noisy test of a multi-month idea) and does not replace it: an early PASS followed by a 63-session FAIL is a FAIL. Written before any pick was recorded in this ledger."
 }

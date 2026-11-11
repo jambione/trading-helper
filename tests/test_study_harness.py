@@ -300,3 +300,27 @@ def test_tomorrows_universe_is_known_tonight():
     daily = {"BIG": {d: (100.0, 1e6) for d in days}, "NEW": {"2026-11-09": (20.0, 10.0), "2026-11-10": (20.0, 9e7)}}
     uni = WT.pick(daily, days + [WN.TOMORROW], 1)
     assert uni["2026-11-10"] == ["BIG"] and uni[WN.TOMORROW] == ["NEW"]        # NEW's volume today puts it in tomorrow's list
+
+
+def test_tug_of_war_measures_read_only_the_last_five_bars():
+    import tug_of_war as TW
+    n = H.NBAR
+    o = np.full((3, n), 100.0)
+    c = o.copy()
+    c[0, 10:15] = o[0, 10:15] + np.arange(1, 6) * 0.2            # row 0: five green bars stepping up, no wicks
+    o[0, 11:15] = c[0, 10:14]
+    c[1, 10:15] = 100.0                                          # row 1: five dojis in one place with long upper wicks
+    h, l = np.maximum(o, c), np.minimum(o, c)
+    h[1, 10:15] += 0.5
+    l[1, 10:15] -= 0.1
+    day = {"o": o, "h": h, "l": l, "c": c, "v": np.ones((3, n))}
+    b = TW.buckets(TW.measures(day))
+    assert b["rope: BULLS pulling (>= +1)"][0, 14] and b["greens: 5 of 5"][0, 14] and b["higher steps: 4 of 4"][0, 14]
+    assert b["OPERATOR RULE: enter (bulls pulling, not bear wicks)"][0, 14]
+    assert b["rope: SIDEWAYS (-1..+1)"][1, 14] and b["wicks: bear wicks (upper >= 65%)"][1, 14]
+    assert b["OPERATOR RULE: prevent (sideways, bears, or bear wicks)"][1, 14]
+    cut = {k: v.copy() for k, v in day.items()}
+    for k in ("o", "h", "l", "c"):
+        cut[k][:, 15:] = np.nan
+    m1, m2 = TW.measures(day), TW.measures(cut)
+    assert all(np.allclose(m1[k][:, :15], m2[k][:, :15], equal_nan=True) for k in m1)   # nothing after bar m is read

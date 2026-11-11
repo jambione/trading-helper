@@ -1,0 +1,10 @@
+{
+ "name": "auto_picker_replay",
+ "written": "2026-11-11 about 12:50 ET, before the replay was run",
+ "why": "operator 11/11: the live record cannot give a verdict before spring 2027. A replay on the news archive gives a first answer in a day.",
+ "procedure": "tools/auto_picker.py replay. For each of twelve past Mondays, 2026-07-27 to 2026-10-12, each agent (AGY gemini-3.8-flash-high, Grok grok-4.6) gets the same prompt as the live picker with that Monday's date and the up-to-220 headlines from the 7 days before 08:30 ET that name a stock on the frozen list; the first 3 valid ideas are taken (no symbol repeated within 92 days). Entry = that Monday's open (the first open after 08:30). Scored 21 sessions later by the ledger rules: ratio lift vs SPY, 30 random control names per pick, rank among them, beta-adjusted excess, t clustered by entry month (July, August, September, October).",
+ "no_skill_control": "a third 'agent' takes 3 names at random (seeded by the date) from the symbols in the same week's headlines. Being in the news is not skill; an agent has to beat this too.",
+ "reading": "per agent: SIGN OF SKILL = every ledger pass condition at 21 sessions (mean, median and more than half ahead of SPY; mean vs random names > 0; mean rank above the 50th percentile; beta-adjusted > 0; clustered t >= 2.0) AND a mean vs SPY above the random-from-headlines control. Anything else = NO SIGN OF SKILL.",
+ "what_it_cannot_show": "the agents may have been trained on part of July-October 2026 and could be recalling outcomes. Each is asked a memory question about September 2026 first and its answer is printed, but that does not settle it. So a SIGN OF SKILL is a reason to wait for the live record, never a result on its own. NO SIGN is the more informative outcome: recall could only help the agent.",
+ "also": "about 36 picks per agent from four months of one market; this is a screen with low power. No order is placed. One run; the saved replies are reused if it is interrupted, not asked again."
+}

@@ -1,275 +1,182 @@
 #!/usr/bin/env python3
-"""Overnight vs intraday tug of war (Lou, Polk & Skouras 2019) as a name picker. Spec:
-docs/studies/tug_of_war_prereg.json (amended, amended_2; common C1-C4).
+"""tug_of_war.py - the operator's candle "tug of war" as an entry filter (11/11, two annotated charts).
 
-For each warehouse name and day t: INTRA = sum of log(close/open) over the previous 20 warehouse sessions (>= 15
-present), OVN = sum of log(open / prior close) over the same sessions; score = INTRA - OVN. Each scored day (2026-05-26
-.. 10-15) LONG = the top decile by score among names with a 09:45 bar (open >= $10). Trade 09:45 open -> last close
-<= 15:59. LIFT = long mean minus all-eligible mean; day-equal, day-clustered t; a two-way (day x name) clustered t of
-the trade-level excess is required too.
+His reading: a candle's body is the middle of the rope and the wicks are the two teams. If the middle of the rope is in the
+same zone as five minutes ago, do not enter (SIDEWAYS). If the bears are pulling it (bodies stepping down, long upper
+wicks), do not enter (BEARS). Enter only while the bulls are pulling. He also asks whether the count of green bars just
+before the open matters, as a sign of buying into a stall.
 
-  --precheck  Alpaca daily open/close vs warehouse 09:30 open / 15:59 close on 20 seeded name-days (no outcomes);
-              picks the open/close source per amended (1)
-  (default)   count step (outcome-blind; placebo MDE per C1)
-  --score     verdict; refuses without --skeptic-ready, the precheck and a count step from this code
+Measures, all from the last 5 completed 1-minute bars (decision at the close of bar m, bars m-4..m, nothing later):
+  rope   = (body middle now - body middle 5 bars ago) / average bar height of those bars
+           BULLS >= +1.0   SIDEWAYS between -1.0 and +1.0   BEARS <= -1.0
+  wicks  = upper wick share = sum of upper wicks / sum of all wicks   (BEAR wicks >= 0.65, BULL wicks <= 0.35)
+  greens = how many of the 5 bars closed up;  full = how many were "full" (body at least 70% of the bar)
+  higher = how many of the last 4 steps made a higher body middle
+
+Two tests:
+  A. the desk's current arm on the warehouse (tools/studies/signals/current_square.py), split by each measure: does the
+     arm do better while the bulls are pulling, and worse sideways or with bears? Read PER TRADE.
+  B. the desk's OWN entries since 10/08 (ai_reports/outcomes.jsonl), state measured on warehouse bars up to the minute
+     before the entry: what would "prevent enter" have kept and dropped?
+
+    .venv/bin/python tools/studies/tug_of_war.py [--holds 3,15]            # mini
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
-import os
-import random
-import statistics
 import sys
-from collections import Counter, defaultdict
-from concurrent.futures import ProcessPoolExecutor
+import warnings
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import eod_reversal as E  # noqa: E402
+import numpy as np
 
-ROOT = E.ROOT
-OUT_DIR = os.path.join(ROOT, "ai_reports", "tug_of_war")
-FIRST, LAST, HALF_A_END = "2026-05-26", "2026-10-15", "2026-07-29"
-LB, NEED, INFO_LB = 20, 15, 60
-M_OPEN, M_ENTRY, M_CLOSE = 570, 585, 959
-MIN_PX, COST, COSTS = 10.0, 0.0005, (0.0003, 0.0005, 0.0010, 0.0020)
-LIFT_BAR, T_PASS, T_BATCH, T_PLACEBO = 0.0005, 2.0, 2.84, 2.0
-FLOOR_TRADES, FLOOR_DAYS, MIN_ELIGIBLE, DECILE = 300, 20, 20, 0.10
-GAP_LIMIT = 0.0010
+HERE = Path(__file__).resolve().parent
+sys.path[:0] = [str(HERE), str(HERE / "signals")]
+import harness as H
+from _lib import roll
+from pattern_battery import _bars, _lag
 
-
-def day_fields(day: str) -> dict:
-    """sym -> (open 09:30, close <= 15:59, entry 09:45 open or None, trade return or None)."""
-    import indicator_confirm_hist as H
-    out = {}
-    for s, r in H.load_raw("sip", day).items():
-        o = E.bar_at(r, M_OPEN)
-        c = E.last_close_at_or_before(r, M_CLOSE)
-        ent = E.bar_at(r, M_ENTRY)
-        eo = float(ent[1]) if ent is not None else None
-        out[s] = (float(o[1]) if o is not None else None, c, eo, (c / eo - 1) if eo and c else None)
-    return out
+ET = ZoneInfo("America/New_York")
+N = 5
 
 
-def score(hist: list, cur: int, lb: int = LB, need: int = NEED) -> tuple | None:
-    """hist: [(session index, open, close, prior close)]; sessions cur-lb .. cur-1."""
-    xs = [h for h in hist if cur - lb <= h[0] < cur and h[1] and h[2]]
-    if len(xs) < need:
-        return None
-    intra = sum(math.log(h[2] / h[1]) for h in xs)
-    ovn_x = [math.log(h[1] / h[3]) for h in xs if h[3]]
-    if len(ovn_x) < need:
-        return None
-    ovn = sum(ovn_x)
-    return intra - ovn, intra, ovn
+def measures(day: dict) -> dict:
+    """Each (n, 390), column m built from bars m-4..m only."""
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        o, h, l, c, _v, live = _bars(day)
+        mid = (o + c) / 2.0
+        height = h - l
+        avg_h = roll(height, N, np.nanmean)
+        rope = (mid - _lag(mid, N - 1)) / np.where(avg_h > 0, avg_h, np.nan)
+        up, dn = h - np.maximum(o, c), np.minimum(o, c) - l
+        su, sd = roll(up, N, np.nansum), roll(dn, N, np.nansum)
+        wick = np.where(su + sd > 0, su / (su + sd), np.nan)
+        green = (c > o).astype(float)
+        full = ((c > o) & (np.abs(c - o) >= 0.7 * height) & (height > 0)).astype(float)
+        step = (mid > _lag(mid, 1)).astype(float)
+        ok = live & (roll(live.astype(float), N, np.nansum) >= N)
+        out = {"rope": rope, "wick": wick, "greens": roll(green, N, np.nansum), "full": roll(full, N, np.nansum),
+               "higher": roll(step, N - 1, np.nansum)}
+        return {k: np.where(ok, v, np.nan) for k, v in out.items()}
 
 
-def pick(elig: list, key: int, top_first: bool = True) -> list:
-    n = max(1, int(len(elig) * DECILE))
-    return sorted(elig, key=lambda e: ((-e[key]) if top_first else e[key], e[0]))[:n]
+def buckets(m: dict) -> dict[str, np.ndarray]:
+    """Named states -> bool masks. NaN never matches."""
+    with np.errstate(all="ignore"):
+        r, w, g, f, hi = m["rope"], m["wick"], m["greens"], m["full"], m["higher"]
+        b = {"rope: BULLS pulling (>= +1)": r >= 1.0, "rope: SIDEWAYS (-1..+1)": (r > -1.0) & (r < 1.0), "rope: BEARS pulling (<= -1)": r <= -1.0,
+             "rope: strong bulls (>= +2)": r >= 2.0,
+             "wicks: bull wicks (upper <= 35%)": w <= 0.35, "wicks: balanced": (w > 0.35) & (w < 0.65), "wicks: bear wicks (upper >= 65%)": w >= 0.65,
+             "greens: 0-1 of 5": g <= 1, "greens: 2-3 of 5": (g >= 2) & (g <= 3), "greens: 4 of 5": g == 4, "greens: 5 of 5": g == 5,
+             "full greens: 0": f == 0, "full greens: 1-2": (f >= 1) & (f <= 2), "full greens: 3+": f >= 3,
+             "higher steps: 4 of 4": hi == 4, "higher steps: 0-1 of 4": hi <= 1}
+        b["OPERATOR RULE: enter (bulls pulling, not bear wicks)"] = (r >= 1.0) & ~(w >= 0.65)
+        b["OPERATOR RULE: prevent (sideways, bears, or bear wicks)"] = (r < 1.0) | (w >= 0.65)
+        return b
 
 
-def two_way_t(trades: list[tuple[str, str, float]]) -> float | None:
-    """Cameron-Gelbach-Miller two-way clustered t of the mean of x over (day, name, x)."""
-    if len(trades) < 3:
-        return None
-    mu = statistics.mean(t[2] for t in trades)
-    n = len(trades)
-
-    def clus(idx):
-        g = defaultdict(float)
-        for t in trades:
-            g[t[idx] if idx is not None else (t[0], t[1])] += t[2] - mu
-        return sum(v * v for v in g.values())
-    v_day, v_name = clus(0) / n ** 2, clus(1) / n ** 2
-    var = v_day + v_name - clus(None) / n ** 2
-    var = max(var, v_day, v_name)          # CGM can go negative; fall back to the larger one-way variance
-    return mu / math.sqrt(var) if var > 0 else None
-
-
-def placebo(names: list, k: int, day: str) -> list:
-    rng = random.Random(int(hashlib.sha256(f"tug_of_war-placebo|{day}".encode()).hexdigest()[:16], 16))
-    return rng.sample(sorted(names), k)
+def test_a(files, holds, cfg):
+    import current_square as CS
+    names = list(buckets({k: np.zeros((1, 1)) for k in ("rope", "wick", "greens", "full", "higher")}))
+    print(f"A. THE DESK'S ARM on the warehouse, split by tug-of-war state ({files[1].stem}..{files[-1].stem}); numbers are bp")
+    for hold in holds:
+        base = H.run(CS.signal, hold, files, cfg, check=False)
+        print(f"\n  hold {hold} m   ALL arm entries: {base['trades']} trades, per trade gross {base['gross_trade']:+.2f}, vs same-minute peers {base['lift']['mean']:+.2f}")
+        print(f"  {'state at the arm':<52}{'trades':>8}{'share':>7}{'gross/trade':>12}{'vs peers':>9}{'day-t':>7}{'halves':>15}")
+        for name in names:
+            def fn(day, prev, name=name):
+                with np.errstate(all="ignore"), warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    return CS.signal(day, prev) & np.nan_to_num(buckets(measures(day))[name]).astype(bool)
+            r = H.run(fn, hold, files, cfg, check=(hold == holds[0] and name == names[0]))
+            if r["verdict"] == "NO TRADES":
+                continue
+            print(f"  {name:<52}{r['trades']:>8}{100 * r['trades'] / max(1, base['trades']):>6.0f}%{r['gross_trade']:>+12.2f}{r['lift']['mean']:>+9.2f}"
+                  f"{r['lift']['t']:>+7.2f}{r['lift_halves'][0]:>+8.2f}/{r['lift_halves'][1]:<+6.2f}", flush=True)
 
 
-def module_shas() -> dict:
-    d = os.path.dirname(os.path.abspath(__file__))
-    return {m: hashlib.sha256(open(os.path.join(d, f"{m}.py"), "rb").read()).hexdigest()
-            for m in ("tug_of_war", "eod_reversal")}
-
-
-def write(name: str, obj) -> str:
-    os.makedirs(OUT_DIR, exist_ok=True)
-    p = os.path.join(OUT_DIR, name)
-    json.dump(obj, open(p + ".tmp", "w"), indent=1, default=str)
-    os.replace(p + ".tmp", p)
-    return p
-
-
-def precheck() -> dict:
-    """Amended (1): compare Alpaca daily bars with the warehouse on 20 seeded name-days (prices only)."""
-    import indicator_confirm_hist as H
-    from datetime import datetime, timedelta
-    from alpaca.data.enums import Adjustment, DataFeed
-    from alpaca.data.historical import StockHistoricalDataClient
-    from alpaca.data.requests import StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame
-    s = json.load(open(os.path.join(ROOT, "secrets_data.json")))
-    cl = StockHistoricalDataClient(s["alpaca_data_api_key"], s["alpaca_data_secret_key"])
-    days = [d for d in H.warehouse_days() if d <= LAST]
-    rng = random.Random(int(hashlib.sha256(b"tug-precheck").hexdigest()[:16], 16))
-    gaps, picks = [], []
-    for day in rng.sample(days, 20):
-        f = day_fields(day)
-        sym = rng.choice(sorted(s_ for s_, v in f.items() if v[0] and v[1]))
-        d0 = datetime.fromisoformat(day)
-        b = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=sym, timeframe=TimeFrame.Day, start=d0,
-                                               end=d0 + timedelta(days=1), feed=DataFeed.SIP,
-                                               adjustment=Adjustment.SPLIT)).data.get(sym, [])
-        if not b:
+def test_b(wh: Path, outcomes: Path):
+    rows = []
+    cache: dict[str, tuple | None] = {}
+    for ln in open(outcomes):
+        try:
+            o = json.loads(ln)
+        except ValueError:
             continue
-        wo, wc = f[sym][0], f[sym][1]
-        gaps += [abs(b[0].open / wo - 1), abs(b[0].close / wc - 1)]
-        picks.append((day, sym))
-    med = statistics.median(gaps) if gaps else None
-    res = {"pairs": picks, "median_abs_gap": med, "source": "alpaca_daily" if med is not None and med <= GAP_LIMIT
-           else "warehouse", "note": "warehouse open/close used for INTRA/OVN in either case when the alpaca source "
-                                     "is not fetched; see amended_2 (4)"}
-    write("precheck.json", res)
-    return res
+        e, x, t = o.get("entry_price"), o.get("exit_price"), o.get("entry_time")
+        if not (e and x and t) or o.get("strategy") != "day_scalp_v0" or e < 20:
+            continue
+        d = datetime.fromtimestamp(t, ET)
+        day = d.strftime("%Y-%m-%d")
+        if day < "2026-10-08":
+            continue
+        if day not in cache:
+            f = wh / f"{day}.npz"
+            if f.exists():
+                raw = H.load_day(f)
+                with np.errstate(all="ignore"):
+                    cache[day] = ({s: i for i, s in enumerate(raw["syms"])}, buckets(measures(raw)), measures(raw)["rope"])
+            else:
+                cache[day] = None
+        if cache[day] is None:
+            continue
+        idx, bk, _rope = cache[day]
+        m = d.hour * 60 + d.minute - H.M0 - 1                              # the last bar that had closed before the entry
+        i = idx.get(o["symbol"])
+        if i is None or m < N or m >= H.NBAR:
+            continue
+        rows.append({"day": day, "bp": (x / e - 1) * 1e4, **{k: bool(v[i, m]) for k, v in bk.items()}})
+    if not rows:
+        print("\nB. no desk entries could be matched to warehouse bars")
+        return
+    allbp = np.array([r["bp"] for r in rows])
+    days = sorted({r["day"] for r in rows})
+    print(f"\nB. THE DESK'S OWN ENTRIES since 10/08 matched to bars: {len(rows)} trades on {len(days)} days, mean {allbp.mean():+.2f} bp per trade (exit vs entry, spread included)")
+    print(f"  {'state in the 5 bars before the entry':<52}{'trades':>8}{'share':>7}{'bp/trade':>10}{'win':>6}{'rest bp':>9}{'diff':>8}{'day-t':>7}{'halves (diff)':>16}")
+    for name in [k for k in rows[0] if k not in ("day", "bp")]:
+        a = [r for r in rows if r[name]]
+        b = [r for r in rows if not r[name]]
+        if len(a) < 15 or len(b) < 15:
+            print(f"  {name:<52}{len(a):>8}   too few")
+            continue
+        by: dict[str, list] = defaultdict(lambda: [[], []])
+        for r in rows:
+            by[r["day"]][0 if r[name] else 1].append(r["bp"])
+        diffs = [(d, np.mean(v[0]) - np.mean(v[1])) for d, v in sorted(by.items()) if v[0] and v[1]]
+        dv = np.array([x for _d, x in diffs])
+        t = dv.mean() / (dv.std(ddof=1) / math.sqrt(len(dv))) if len(dv) > 3 and dv.std() > 0 else float("nan")
+        mid = days[len(days) // 2]
+
+        def half(lo):
+            xa = [r["bp"] for r in a if (r["day"] < mid) == lo]
+            xb = [r["bp"] for r in b if (r["day"] < mid) == lo]
+            return (np.mean(xa) - np.mean(xb)) if xa and xb else float("nan")
+        ma, mb = np.mean([r["bp"] for r in a]), np.mean([r["bp"] for r in b])
+        print(f"  {name:<52}{len(a):>8}{100 * len(a) / len(rows):>6.0f}%{ma:>+10.2f}{100 * np.mean([r['bp'] > 0 for r in a]):>5.0f}%{mb:>+9.2f}{ma - mb:>+8.2f}{t:>+7.2f}"
+              f"{half(True):>+9.2f}/{half(False):<+6.2f}")
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--precheck", action="store_true")
-    ap.add_argument("--score", action="store_true")
-    ap.add_argument("--skeptic-ready", default="")
-    ap.add_argument("--workers", type=int, default=4)
-    ap.add_argument("--prereg-commit", default="")
-    a = ap.parse_args()
-    if a.precheck:
-        print(json.dumps(precheck(), indent=1))
-        return
-    pc_path = os.path.join(OUT_DIR, "precheck.json")
-    if not os.path.exists(pc_path):
-        raise SystemExit("run --precheck first")
-    import indicator_confirm_hist as H
-    days = [d for d in H.warehouse_days() if d <= LAST]
-    cache = os.path.join(OUT_DIR, "days.json")
-    if os.path.exists(cache) and json.load(open(cache)).get("module_sha256") == module_shas():
-        c = json.load(open(cache))
-        summ, trades, st = c["days"], c["trades"], Counter(c["stats"])
-    else:
-        summ, trades, st = [], [], Counter()
-        hist: dict = defaultdict(list)
-        prev_close: dict = {}
-        with ProcessPoolExecutor(max_workers=a.workers) as ex:
-            for cur, (day, f) in enumerate(zip(days, ex.map(day_fields, days, chunksize=2))):
-                if day >= FIRST:
-                    elig = []
-                    for s, (o, c, eo, ret) in f.items():
-                        if eo is None:
-                            st["skip_no_0945"] += 1
-                            continue
-                        if eo < MIN_PX:
-                            st["skip_below_10"] += 1
-                            continue
-                        sc = score(hist[s], cur)
-                        if sc is None:
-                            st["no_score"] += 1
-                            continue
-                        sc60 = score(hist[s], cur, INFO_LB, 40)
-                        elig.append((s, sc[0], sc[1], -sc[2], ret, sc60[0] if sc60 else None))
-                    if len(elig) >= MIN_ELIGIBLE:
-                        allm = statistics.mean(e[4] for e in elig)
-                        top = pick(elig, 1)
-                        pl = placebo([e[0] for e in elig], len(top), day)
-                        rets = {e[0]: e[4] for e in elig}
-                        e60 = [e for e in elig if e[5] is not None]
-                        summ.append({"day": day, "lift": statistics.mean(e[4] for e in top) - allm,
-                                     "los": statistics.mean(e[4] for e in top), "k": len(top),
-                                     "placebo_lift": statistics.mean(rets[s] for s in pl) - allm,
-                                     "intra_lift": statistics.mean(e[4] for e in pick(elig, 2)) - allm,
-                                     "low_ovn_lift": statistics.mean(e[4] for e in pick(elig, 3)) - allm,
-                                     "bottom_lift": statistics.mean(e[4] for e in pick(elig, 1, False)) - allm,
-                                     "lb60_lift": (statistics.mean(e[4] for e in pick(e60, 5)) - statistics.mean(
-                                         e[4] for e in e60)) if len(e60) >= MIN_ELIGIBLE else None})
-                        trades += [(day, e[0], e[4] - allm) for e in top]
-                    else:
-                        st["day_skipped_few_names"] += 1
-                for s, (o, c, eo, ret) in f.items():       # today's open/close enter history AFTER today is scored
-                    hist[s].append((cur, o, c, prev_close.get(s)))
-                    if len(hist[s]) > INFO_LB + 5:
-                        hist[s].pop(0)
-                    if c:
-                        prev_close[s] = c
-                    else:
-                        prev_close.pop(s, None)
-                for s in list(prev_close):
-                    if s not in f:
-                        prev_close.pop(s)                  # absent today: no prior close for tomorrow's overnight
-        write("days.json", {"days": summ, "trades": trades, "stats": dict(st), "module_sha256": module_shas()})
-    halves = {"A": [d for d in summ if d["day"] <= HALF_A_END], "B": [d for d in summ if d["day"] > HALF_A_END]}
-    if not a.score:
-        cnt = {"stats": dict(st), "module_sha256": module_shas(), "prereg_commit": a.prereg_commit,
-               "precheck": json.load(open(pc_path))}
-        for h, ds in halves.items():
-            pl = [d["placebo_lift"] for d in ds]
-            sd = statistics.stdev(pl) if len(pl) >= 2 else None
-            mde = (T_PLACEBO + 0.84) * sd / math.sqrt(len(pl)) if sd else None
-            n = sum(d["k"] for d in ds)
-            cnt[h] = {"days": len(ds), "long_trades": n, "mde": mde,
-                      "floors_met": n >= FLOOR_TRADES and len(ds) >= FLOOR_DAYS and mde is not None and mde <= LIFT_BAR}
-        print(json.dumps(cnt, indent=1, default=str))
-        print(write("count.json", cnt))
-        return
-    if not a.skeptic_ready:
-        raise SystemExit("--score needs --skeptic-ready")
-    cnt = json.load(open(os.path.join(OUT_DIR, "count.json")))
-    if cnt.get("module_sha256") != module_shas() or not cnt.get("prereg_commit"):
-        raise SystemExit("count.json from different code or without --prereg-commit")
-    if not all(cnt[h]["floors_met"] for h in ("A", "B")):
-        raise SystemExit("UNDERPOWERED at the count step: no outcome is read")
-    res = {"halves": {}, "info": {}}
-    hv, ss = [], []
-    for h, ds in halves.items():
-        s = E.stats([d["lift"] for d in ds])
-        net = E.stats([d["los"] - COST for d in ds])
-        tw = two_way_t([t for t in trades if (t[0] <= HALF_A_END) == (h == "A")])
-        if s["t"] is not None and s["t"] <= -2:
-            v = "FAIL"
-        elif (s["mean"] >= LIFT_BAR and (s["t"] or 0) >= T_PASS and net["mean"] > 0 and tw is not None
-              and tw >= T_PASS):
-            v = "PASS"
-        else:
-            v = "NOT_PASSED"
-        hv.append(v)
-        ss.append(s)
-        res["halves"][h] = {"verdict": v, **s, "two_way_t": tw, "net_mean": net["mean"], "net_t": net["t"],
-                            "batch_t_met": min(s["t"] or 0, tw or 0) >= T_BATCH,
-                            "net_by_cost": {f"{round(c * 1e4)}bp": E.stats([d["los"] - c for d in ds])["mean"]
-                                            for c in COSTS}}
-        res["info"][h] = {k: E.stats([d[k] for d in ds])["mean"] for k in
-                          ("intra_lift", "low_ovn_lift", "bottom_lift", "lb60_lift", "placebo_lift")}
-    if "FAIL" in hv:
-        verdict = "FAIL"
-    elif all(x == "PASS" for x in hv):
-        verdict = "PASS (batch-robust)" if all(res["halves"][h]["batch_t_met"] for h in ("A", "B")) else \
-            "PASS (single-test), not batch-robust"
-    elif all(x["ub"] is not None and x["ub"] < LIFT_BAR for x in ss):
-        verdict = "FAIL"
-    else:
-        verdict = "UNDERPOWERED"
-    res["verdict"] = verdict
-    res["declared"] = ["INTRA/OVN built from warehouse 09:30 opens and 15:59 bar closes (not official auctions); "
-                       "the precheck reports the gap to Alpaca daily bars", "lb60 needs 40 of 60 sessions: "
-                       "incomplete early (information)", "half A is 2026-05-26 .. 07-29 (amended_2)"]
-    res["skeptic_ready"], res["module_sha256"] = a.skeptic_ready, module_shas()
-    write("result.json", res)
-    print(json.dumps(res, indent=1, default=str))
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--warehouse", default=str(H.WH))
+    ap.add_argument("--holds", default="3,15")
+    ap.add_argument("--holdout", type=int, default=20)
+    ap.add_argument("--skip-a", action="store_true")
+    a = ap.parse_args(argv)
+    files = sorted(Path(a.warehouse).glob("*.npz"))
+    dev = files[:-a.holdout] if a.holdout > 0 else files
+    cfg = {**H.DEFAULTS, "holdout": a.holdout, "family": 18, "min_trades": 0, "min_days": 0}
+    if not a.skip_a:
+        test_a(dev, [int(x) for x in a.holds.split(",")], cfg)
+    test_b(Path(a.warehouse), H.ROOT / "ai_reports" / "outcomes.jsonl")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
