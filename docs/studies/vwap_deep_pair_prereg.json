@@ -13,5 +13,6 @@
   "by half-year"
  ],
  "fail": "anything short of the pass line. No retuning of depth, hold or hedge; a different hedge ratio (beta) is a new idea.",
- "caveats": "bars, not quotes; equal dollars, not beta-matched, so a high-beta name is under-hedged on a selloff day; a pair ties up capital on both legs; the desk has no short leg today and would need one built. Short ETF borrow is assumed free and available."
+ "caveats": "bars, not quotes; equal dollars, not beta-matched, so a high-beta name is under-hedged on a selloff day; a pair ties up capital on both legs; the desk has no short leg today and would need one built. Short ETF borrow is assumed free and available.",
+ "result_2026-11-11": "FAIL. Primary (long name / short QQQ, 3 at a time, 3 bp): 5,278 pairs, net -4.61 bp per pair (halves -3.68 / -5.59), day-t -2.84; at 8 bp -9.61. Short SPY -4.90; short the other largest-50 names (6 bp) -7.77, i.e. gross -1.8 per pair even against the peer basket; every signal, short QQQ -2.27; all five half-years negative. So the +5 bp 'lift vs peers' was also a day-mean effect: weighted by trade the stretched name does NOT beat its peers. vwap_deep is closed in every form tested."
 }

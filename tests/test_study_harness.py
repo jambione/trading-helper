@@ -216,3 +216,14 @@ def test_profitable_needs_per_trade_net_not_only_day_means():
     r = H.verdict(per_day, {**H.DEFAULTS, "min_trades": 0, "min_days": 0})
     assert r["net"]["mean"] > 0 and r["net_trade"] < 0           # day means say yes, the account says no
     assert not r["profitable"]
+
+
+def test_pair_trade_subtracts_the_hedge_and_respects_slots():
+    import pair_trade as PT
+    d = {"day": "2026-01-02", "minute": np.array([30, 31, 32, 33, 200]), "name": np.array([20.0, 20.0, 20.0, 20.0, -10.0]),
+         "QQQ": np.array([5.0, 5.0, 5.0, 5.0, -30.0]), "SPY": np.zeros(5), "peers": np.zeros(5)}
+    days = [d] * 4
+    r = PT.simulate(days, "QQQ", 3, 3.0)
+    assert r["n"] == 4 * 4                                   # the 4th signal at minute 33 finds all 3 slots busy; 200 is free again
+    assert r["net"] == pytest.approx((3 * (15 - 3) + (20 - 3)) / 4)
+    assert PT.simulate(days, None, None, 0.0)["net"] == pytest.approx(14.0)
