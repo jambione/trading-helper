@@ -1,0 +1,19 @@
+{
+ "name": "daily_horizon",
+ "written": "2026-11-11, before tools/studies/daily_horizon.py was run on any data",
+ "question": "operator 11/11: 'test the longer horizon idea on the daily data'. Does holding for days to weeks carry an edge that the 3-minute desk does not?",
+ "data": "ai_reports/gapdown/daily.pkl: fully adjusted open/close 2016-01-04..2026-10-15 for 3,639 names that were ever liquid (prior-session close >= $10 and 20-day mean dollar volume >= $20M), plus SPY. A name is tradeable on day d only when d is in its liquid list (computed from sessions before d). KNOWN GAP: last-bar years show delisted names for 2018-2022 (33-97 a year) but almost none for 2023-2025 (1, 1, 8), so the last three years are partly survivorship-biased. Lift against the equal-weight universe is less exposed to that than raw return.",
+ "mechanics": "decide at the close of t, buy the open of t+1, sell the open of t+1+H; a name that stops trading is sold at its last close; cost 10 bp per round trip, stress 30 bp; halves split at 2021-04-01; 260-session warm-up.",
+ "hypotheses": {
+  "1": "momentum 6-1 months: top tenth by return from t-126 to t-21, hold 21 sessions",
+  "2": "nearest the 52-week high: top tenth by close / 252-session high close, hold 21",
+  "3": "new 60-session closing high with close above the 200-session average, hold 10",
+  "4": "one-week losers: bottom tenth by 5-session return, hold 5",
+  "5": "one-month momentum: top tenth by 21-session return, hold 21",
+  "6": "RIDE: buy the first new 60-session closing high in 20 sessions with close above the 200-session average; sell on the first close under the 50-session average (max 250 sessions); one position per name"
+ },
+ "pass_cohort_1_to_5": "non-overlapping baskets. EDGE = basket return minus the equal-weight return of all tradeable names > 0 in both halves and t >= 2.64 (six hypotheses). PASS (money) = EDGE and that lift minus 10 bp > 0 in both halves and the intercept of basket-return-after-cost regressed on SPY's return over the same windows > 0 with t >= 2.0.",
+ "pass_6": "per trade, trade-weighted: return minus the equal-weight universe over the same days > 0 in both halves (by entry date), t across entry-quarter means >= 2.64, and mean lift > 10 bp. Also reported, not a verdict: a 10-position equal-slot account after cost vs SPY (yearly return, both halves, worst drawdown) and the share of the total made by the top 1% of trades.",
+ "prior_work_not_repeated": "12-1 monthly momentum (MOMENTUM_FAIR 10/02, FAIL as beta), overnight ranking, earnings drift, month-end flows, S/R daily breakouts. This family is different in rule and hold but the same warning applies: a long-only basket of strong names in 2016-2026 is mostly market and growth exposure, which is why lift and alpha, not raw return, are the verdict.",
+ "fail": "anything short of the pass lines. No retuning of lookbacks, deciles, holds or exits; a changed rule is a new hypothesis on data that has now been seen."
+}

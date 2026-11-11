@@ -227,3 +227,20 @@ def test_pair_trade_subtracts_the_hedge_and_respects_slots():
     assert r["n"] == 4 * 4                                   # the 4th signal at minute 33 finds all 3 slots busy; 200 is free again
     assert r["net"] == pytest.approx((3 * (15 - 3) + (20 - 3)) / 4)
     assert PT.simulate(days, None, None, 0.0)["net"] == pytest.approx(14.0)
+
+
+def test_daily_horizon_window_return_and_delisting():
+    import daily_horizon as DH
+    O = np.array([[10.0, 10.0], [10.0, 20.0], [11.0, 20.0], [12.0, np.nan], [13.0, np.nan]])
+    C = np.array([[10.0, 10.0], [10.5, 20.0], [11.5, 15.0], [12.5, np.nan], [13.5, np.nan]])
+    r = DH.window_ret(O, DH.ffill0(C), 0, 2)                    # buy open of day 1, sell open of day 3
+    assert r[0] == pytest.approx(2000.0)
+    assert r[1] == pytest.approx(-2500.0)                       # gone by day 3: sold at its last close (15 vs a 20 buy)
+
+
+def test_daily_horizon_alpha_recovers_a_planted_intercept():
+    import daily_horizon as DH
+    rng = np.random.default_rng(1)
+    x = rng.normal(0, 300, 200)
+    a, t, b = DH.alpha_t(50 + 1.2 * x + rng.normal(0, 20, 200), x)
+    assert a == pytest.approx(50, abs=5) and b == pytest.approx(1.2, abs=0.02) and t > 10
