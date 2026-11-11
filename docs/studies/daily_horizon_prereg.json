@@ -15,5 +15,20 @@
  "pass_cohort_1_to_5": "non-overlapping baskets. EDGE = basket return minus the equal-weight return of all tradeable names > 0 in both halves and t >= 2.64 (six hypotheses). PASS (money) = EDGE and that lift minus 10 bp > 0 in both halves and the intercept of basket-return-after-cost regressed on SPY's return over the same windows > 0 with t >= 2.0.",
  "pass_6": "per trade, trade-weighted: return minus the equal-weight universe over the same days > 0 in both halves (by entry date), t across entry-quarter means >= 2.64, and mean lift > 10 bp. Also reported, not a verdict: a 10-position equal-slot account after cost vs SPY (yearly return, both halves, worst drawdown) and the share of the total made by the top 1% of trades.",
  "prior_work_not_repeated": "12-1 monthly momentum (MOMENTUM_FAIR 10/02, FAIL as beta), overnight ranking, earnings drift, month-end flows, S/R daily breakouts. This family is different in rule and hold but the same warning applies: a long-only basket of strong names in 2016-2026 is mostly market and growth exposure, which is why lift and alpha, not raw return, are the verdict.",
- "fail": "anything short of the pass lines. No retuning of lookbacks, deciles, holds or exits; a changed rule is a new hypothesis on data that has now been seen."
+ "fail": "anything short of the pass lines. No retuning of lookbacks, deciles, holds or exits; a changed rule is a new hypothesis on data that has now been seen.",
+ "amended_2026-11-11_after_skeptic_round_1": {
+  "when": "before any run on real data (skeptic verdict NOT READY: 2 blockers, 3 majors, 7 minors; simulations on synthetic data only)",
+  "verdict_window": "ALL six hypotheses are judged on 2017-01-01..2022-12-31 only, halves split at 2020-01-01, because delisted names are in the file for those years. 2023+ is printed as information and is NOT part of any verdict (it is survivorship-exposed, worst for the loser basket).",
+  "cohort_pass_1_to_5": "EDGE = intercept of basket return regressed on the equal-weight return of all tradeable names over the same windows (beta-adjusted) > 0 in both halves and pooled t >= 2.64. PASS (money) = EDGE and that intercept minus 30 bp > 0 in both halves. Raw difference, name-weighted difference and alpha vs SPY are printed, not verdicts.",
+  "ride_pass_6": "control = buying every tradeable name at the trade's entry open and selling at its exit open, same clip (-90% / +300%) and same delisting rule. Lift = (1+r)/(1+c)-1 per trade, trade-weighted. EDGE = lift > 0 in both halves, cluster-robust t by entry quarter >= 2.64, AND the beta-adjusted residual (r - beta*c) has cluster-robust t >= 2.64. PASS = EDGE and mean lift - 30 bp > 0. Reason: an arithmetic r - c over a hold the exit rule chooses is positive on pure drift (3 of 16 no-edge simulations read PASS).",
+  "also_fixed": [
+   "indicators need 95% of their window in real bars (no short-history names)",
+   "account marked on forward-filled opens",
+   "account run over 200 tie-break seeds, median and range reported",
+   "count of liquid names with no adjusted series and FAILED fetch lines printed",
+   "assert the universe never has <= 100 names on a trade's entry day",
+   "null canary in tests: drift with no edge must not read PASS"
+  ],
+  "money_line": "30 bp per round trip (the desk measured about 31 bp for overnight market orders), not 10"
+ }
 }

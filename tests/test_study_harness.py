@@ -244,3 +244,30 @@ def test_daily_horizon_alpha_recovers_a_planted_intercept():
     x = rng.normal(0, 300, 200)
     a, t, b = DH.alpha_t(50 + 1.2 * x + rng.normal(0, 20, 200), x)
     assert a == pytest.approx(50, abs=5) and b == pytest.approx(1.2, abs=0.02) and t > 10
+
+
+def test_cluster_t_is_smaller_than_naive_t_when_trades_share_a_quarter():
+    import daily_horizon as DH
+    rng = np.random.default_rng(2)
+    shock = rng.normal(0, 50, 20)                                # one shock per quarter, shared by its 100 trades
+    g = np.repeat(np.arange(20), 100)
+    x = 5 + shock[g] + rng.normal(0, 10, 2000)
+    assert abs(DH.cluster_t(x, g)) < abs(DH.tstat(x)) / 3
+
+
+def test_ride_rule_reads_no_edge_on_pure_drift():
+    """Skeptic 11/11: stocks = index x martingale with upward drift. The trend exit holds winners longest, so an arithmetic
+    trade-minus-control is positive with no edge. The ratio lift and the beta-adjusted residual must not read PASS."""
+    import datetime as dt
+    import daily_horizon as DH
+    rng = np.random.default_rng(11)
+    T, N = 1800, 160
+    idx = np.cumprod(1 + 0.0005 + rng.normal(0, 0.008, T))
+    C = idx[:, None] * np.cumprod(1 + rng.normal(0, 0.015, (T, N)), axis=0) * 50
+    O = np.vstack([C[:1], C[:-1]]) * (1 + rng.normal(0, 0.002, (T, N)))
+    days = [(dt.date(2016, 3, 1) + dt.timedelta(days=i)).isoformat() for i in range(T)]
+    D = {"days": days, "O": O, "C": C, "Cf": C, "Of": O, "L": np.ones((T, N), bool), "spy_o": idx}
+    r = DH.ride_stats(DH.ride_trades(D), days)
+    assert r["trades"] > 500
+    assert r["verdict"] == "FAIL"
+    assert abs(r["lift"]) < 40                                   # bp per trade; the arithmetic version sat near +15 to +17 with t up to PASS
