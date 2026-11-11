@@ -191,3 +191,13 @@ def test_entry_ideas_are_causal(wh):
     for name, fn in EI.IDEAS.items():
         r = H.run(PB.wrap(fn), 15, files, {**CFG, "min_trades": 0, "min_days": 0})      # raises SystemExit on look-ahead
         assert r["verdict"], name
+
+
+def test_top_universe_ranks_on_the_prior_session_only():
+    import warehouse_top as WT
+    days = ["2026-01-05", "2026-01-06", "2026-01-07"]
+    daily = {"BIG": {d: (100.0, 1_000_000) for d in days}, "MID": {d: (50.0, 1_000_000) for d in days},
+             "SPIKE": {"2026-01-05": (20.0, 100), "2026-01-06": (20.0, 100), "2026-01-07": (20.0, 99_000_000)},
+             "PENNY": {d: (5.0, 90_000_000) for d in days}}
+    uni = WT.pick(daily, days, 2)
+    assert uni["2026-01-07"] == ["BIG", "MID"]            # SPIKE's volume on 01-07 itself cannot put it in 01-07; PENNY is under $10

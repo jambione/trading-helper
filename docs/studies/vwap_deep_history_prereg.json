@@ -1,0 +1,15 @@
+{
+ "name": "vwap_deep_history",
+ "written": "2026-11-11 ~04:35 ET, before the 2024-2026 minute bars for this test were downloaded",
+ "why": "the fresh read 10/16-11/10 (17 days) was right-signed but underpowered: lift +21.9 bp (halves +6.1 / +36.1, day-t 0.95), gross +26.7, net at 6 bp +20.7 with a first half near zero. A long untouched history decides it.",
+ "rule": "tools/studies/signals/vwap_deep.py unchanged (0.5 prior-day ranges below session VWAP, from 09:50, hold 60 m, one position per name)",
+ "data": "tools/studies/warehouse_top.py -> ai_reports/warehouse/sip_top: for each session 2024-01-02..2026-04-24 the 60 common stocks with the largest PRIOR-session dollar volume (raw close >= $10), SIP 1-minute RTH bars, split-adjusted; the harness trades the top 50 of them (--top-n 50 --price-hi 5000 --holdout 0). Names are chosen day by day from the prior session, so there is no hindsight in the universe.",
+ "primary": "hold 60 m, one read. PASS = lift vs same-minute other names > 0 in BOTH halves by date AND pooled day-t >= 2.0 AND lift with the top 1% of trades capped > 0. MONEY (separate) = mean net > 0 at 6 bp in both halves.",
+ "secondary": [
+  "hold 30 m and 120 m (reported, not a verdict)",
+  "by calendar year, to see whether it depends on a rising market",
+  "vwap_deep_03 at 60 m"
+ ],
+ "fail": "lift <= 0 pooled or in either half, or day-t < 2.0. No retuning; a changed depth or hold is a new idea needing new data.",
+ "caveats": "bars, not quotes: the buy is the next bar's open, the true cost in a selloff minute is unknown (6 bp is the stress, quotes must be sampled before any live use). The desk does not trade this today: it needs a new arm, and one position per name for an hour is a different product from the 3-minute scalp."
+}
