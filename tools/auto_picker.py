@@ -50,27 +50,33 @@ def ensure_repo(agent: str) -> Path:
 
 
 def headlines(universe: set[str], days: int = 7, limit: int = MAX_HEADLINES, end: datetime | None = None) -> list[str]:
-    """Headlines from the `days` before `end` (default now) that name a liquid stock, newest first: 'SYM[,SYM]: headline'."""
+    """Headlines from the `days` before `end` (default now) that name a liquid stock, newest first: 'SYM[,SYM]: headline'.
+    Taken day by day with an equal share per day. A single newest-first pull on a Monday morning is almost all weekend
+    items with no listed stock in them (11/11 smoke test: about 25 usable headlines a week), which would have starved the
+    Monday runs."""
     from alpaca.data.historical.news import NewsClient
     from alpaca.data.requests import NewsRequest
     with open(ROOT / "secrets_data.json") as fh:
         s = json.load(fh)
     cl = NewsClient(s["alpaca_data_api_key"], s["alpaca_data_secret_key"])
-    out, seen, token = [], set(), None
     stop = (end or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    start = stop - timedelta(days=days)
-    for _ in range(12):
-        r = cl.get_news(NewsRequest(start=start, end=stop, limit=50, page_token=token, sort="desc"))
-        rows = r.data.get("news", [])
-        for x in rows:
-            syms = [y for y in (x.symbols or []) if y in universe][:3]
-            h = re.sub(r"\s+", " ", x.headline or "").strip()
-            if syms and h and h not in seen:
-                seen.add(h)
-                out.append(f"{','.join(syms)}: {h[:140]}")
-        token = getattr(r, "next_page_token", None)
-        if not token or len(out) >= limit:
-            break
+    per_day = limit // days + 1
+    out, seen = [], set()
+    for k in range(days):
+        hi, lo = stop - timedelta(days=k), stop - timedelta(days=k + 1)
+        got, token = 0, None
+        for _ in range(6):
+            r = cl.get_news(NewsRequest(start=lo, end=hi, limit=50, page_token=token, sort="desc"))
+            for x in r.data.get("news", []):
+                syms = [y for y in (x.symbols or []) if y in universe][:3]
+                h = re.sub(r"\s+", " ", x.headline or "").strip()
+                if syms and h and h not in seen and got < per_day:
+                    seen.add(h)
+                    got += 1
+                    out.append(f"{','.join(syms)}: {h[:140]}")
+            token = getattr(r, "next_page_token", None)
+            if not token or got >= per_day:
+                break
     return out[:limit]
 
 
