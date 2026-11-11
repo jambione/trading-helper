@@ -37,8 +37,9 @@ def test_a_restated_period_shows_the_version_filed_at_the_time():
 
 def _facts(ni=40.0, last_end="2025-12-31", filed="2026-02-15"):
     start = (date.fromisoformat(last_end) - timedelta(days=364)).isoformat()
-    return {"rev": [[start, last_end, 400.0, filed]], "ni": [[start, last_end, ni, filed]], "sh": [[start, last_end, 10.0, filed]],
-            "eq": [["", last_end, 200.0, filed]], "liab": [["", last_end, 300.0, filed]], "ocf": [[start, last_end, 60.0, filed]]}
+    return {"rev": {"t": [[start, last_end, 400.0, filed]]}, "ni": {"t": [[start, last_end, ni, filed]]},
+            "sh": {"t": [[start, last_end, 10.0, filed]]}, "eq": {"t": [["", last_end, 200.0, filed]]},
+            "liab": {"t": [["", last_end, 300.0, filed]]}, "ocf": {"t": [[start, last_end, 60.0, filed]]}}
 
 
 def test_fundamentals_ratios_and_refusals():
@@ -48,17 +49,58 @@ def test_fundamentals_ratios_and_refusals():
     assert loss["pe"] is None and loss["loss"] and loss["ocf_ni"] is None
     assert F.fundamentals(_facts(), "2026-02-15", 20.0) is None          # filed that day: not known before the run
     assert F.fundamentals(_facts(), "2027-03-01", 20.0) is None          # nothing filed for most of a year: stale
-    assert F.fundamentals({**_facts(), "sh": []}, "2026-03-01", 20.0) is None
+    assert F.fundamentals({**_facts(), "sh": {}}, "2026-03-01", 20.0) is None
+    assert F.fundamentals(_facts(), "2026-03-01", 5.0, lambda day: 4.0)["mcap"] == 200   # a 4-for-1 split after the filing: 4x the shares at 1/4 the price
+    raw, adj = {"2025-12-30": (80.0, 80.0), "2026-01-05": (20.0, 20.0)}, {"2025-12-30": (20.0, 20.0), "2026-01-05": (20.0, 20.0)}
+    assert F.split_factor(raw, adj, "2025-12-31") == 4.0 and F.split_factor(raw, adj, "2026-01-05") == 1.0 and F.split_factor({}, adj, "2026-01-05") == 1.0
 
 
-def test_compact_takes_the_tag_with_the_newest_period():
+def _row(start, end, val, filed, form="10-K"):
+    return {"start": start, "end": end, "val": val, "filed": filed, "form": form}
+
+
+def test_compact_keeps_usd_only_and_the_tag_is_chosen_as_of_the_date():
+    old, new = "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"
     raw = {"facts": {"us-gaap": {
-        "Revenues": {"units": {"USD": [{"start": "2023-01-01", "end": "2023-12-31", "val": 1, "filed": "2024-02-01"}]}},
-        "RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": [
-            {"start": "2025-01-01", "end": "2025-12-31", "val": 9, "filed": "2026-02-01"},
-            {"start": "2019-01-01", "end": "2019-12-31", "val": 5, "filed": "2020-02-01"}]}}}}}
+        old: {"units": {"USD": [_row("2024-01-01", "2024-12-31", 100, "2025-02-01"), _row("2025-01-01", "2025-12-31", 120, "2026-02-01")],
+                        "CNY": [_row("2025-01-01", "2025-12-31", 900, "2026-02-01")]}},
+        new: {"units": {"USD": [_row("2025-01-01", "2025-12-31", 30, "2026-02-01"), _row("2026-01-01", "2026-12-31", 150, "2027-02-01"),
+                                _row("2019-01-01", "2019-12-31", 5, "2020-02-01")]}}}}}
     c = F.compact(raw)
-    assert c["rev"] == [["2025-01-01", "2025-12-31", 9.0, "2026-02-01"]] and c["ni"] == []
+    assert set(c["rev"]) == {old, new} and all(r[2] != 900 for r in c["rev"][old]) and len(c["rev"][new]) == 2 and c["ni"] == {}
+    assert F.ttm(F.pick_tag(c["rev"], "2025-06-01")) == 100              # only the old tag had been filed
+    assert F.ttm(F.pick_tag(c["rev"], "2026-06-01")) == 120              # same period end on both tags: the total, not the part
+    assert F.ttm(F.pick_tag(c["rev"], "2027-06-01")) == 150              # the company moved to the new tag
+    raw["facts"]["us-gaap"][old]["units"]["USD"].append(_row("2026-01-01", "2026-12-31", 1, "2027-03-01", form="20-F"))
+    assert F.compact(raw) == {k: {} for k in F.TAGS}                     # a foreign filer gets no sheet
+
+
+def _scored(sym, stamp, lift):
+    h = {"closed": True, "vs_spy": lift, "vs_random": lift, "rank": 0.9 if lift > 0 else 0.1, "beta_excess": lift, "pick": lift, "spy": 0.0}
+    return {"symbol": sym, "recorded_at": stamp, "status": "scored", "counts": True, "entry_day": stamp[:10], "h": {P.EARLY: h}}
+
+
+def test_verdict_has_a_t_across_weeks_even_inside_three_months():
+    mondays = [datetime(2026, 11, 16, 8, 45, tzinfo=ET) + timedelta(days=7 * k) for k in range(10)]     # Nov, Dec, Jan only
+    good = [_scored(f"S{k}{j}", m.isoformat(), 0.04 + 0.01 * ((k + j) % 3)) for k, m in enumerate(mondays) for j in range(3)]
+    v = F.week_verdict(good)
+    assert v["weeks"] == 10 and v["t"] > F.T_MIN and v["verdict"] == "PASS" and len({x["entry_day"][:7] for x in good}) == 3
+    assert F.judge(v, 0.01) == "PASS" and F.judge(v, 0.10) == "FAIL" and F.judge(v, None).startswith("BLOCKED")
+    noisy = [_scored(f"S{k}{j}", m.isoformat(), 0.30 if k == 0 else -0.01) for k, m in enumerate(mondays) for j in range(3)]
+    assert F.week_verdict(noisy)["verdict"] == "FAIL"                    # one lucky week is not a pass
+    assert F.week_verdict(good[:9])["verdict"].startswith("NOT YET")
+
+
+def test_pool_control_is_the_whole_sheet_week_by_week():
+    days = [(date(2026, 11, 2) + timedelta(days=i)).isoformat() for i in range(60)]
+    bars = {"SPY": {d: (100.0, 100.0) for d in days}, "UP": {d: (100.0 + i, 100.0 + i) for i, d in enumerate(days)},
+            "FLAT": {d: (50.0, 50.0) for d in days}}
+    stamp = f"{days[4]}T08:45:00-05:00"
+    a = P.entry_index(days, stamp)
+    want = ((100.0 + a + P.EARLY) / (100.0 + a) - 1) / 2
+    assert abs(F.pool_control({days[4]: ["UP", "FLAT"]}, {days[4]: stamp}, days, bars) - want) < 1e-9
+    assert F.pool_control({days[4]: ["UP", "FLAT"]}, {days[4]: f"{days[50]}T08:45:00-05:00"}, days, bars) is None    # window still open
+    assert F.pool_control({days[4]: ["UP", "GONE", "MISSING"]}, {days[4]: stamp}, days, bars) is None               # too few names priced
 
 
 def _series(n=300, step=0.001, start=100.0):

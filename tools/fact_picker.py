@@ -29,6 +29,7 @@ import os
 import random
 import re
 import statistics
+import subprocess
 import sys
 import time
 import urllib.request
@@ -43,7 +44,8 @@ ROOT, ET = A.ROOT, A.ET
 CIK_MAP = ROOT / "docs" / "studies" / "sec_cik_map.json"
 SEC_CACHE = Path(os.environ.get("FACT_CACHE") or ROOT / "ai_reports" / "fact_picker" / "sec")
 LEDGERS = ("facts", "facts_avoid", "facts_random")
-MAX_POOL, MIN_BARS, PER_WEEK, HOLD_MONTHS, T_MIN = 100, 252, 3, 2.0, 2.0
+MAX_POOL, MIN_BARS, MIN_SHEET, PER_WEEK, HOLD_MONTHS = 100, 252, 20, 3, 2.0
+T_MIN = 2.5          # t across entry WEEKS (10 for 30 picks). Their 21-session windows overlap, so the bar is above 2.0
 TAGS = {
     "rev": ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet",
             "RevenueFromContractWithCustomerIncludingAssessedTax", "RevenuesNetOfInterestExpense"],
@@ -61,20 +63,38 @@ def _d(s: str) -> date:
 
 
 def compact(raw: dict, since: str = "2023-01-01") -> dict:
-    """Keep only the tags the sheet needs from an SEC companyfacts document: {key: [[start, end, value, filed], ...]}.
-    For each key the first tag (in TAGS order) with the most recent period wins, so an abandoned tag is not used."""
+    """Keep only what the sheet needs from an SEC companyfacts document: {key: {tag: [[start, end, value, filed], ...]}}.
+    Money is kept in USD only and share counts in shares only (a filer reporting in another currency gets no sheet), and a
+    foreign filer (20-F / 40-F: ADR share ratios are not in the data) is dropped entirely. The tag is chosen later, at the
+    as-of date (pick_tag), so a filing made after that date cannot change which tag is used."""
     gaap = (raw.get("facts") or {}).get("us-gaap") or {}
-    out = {}
+    out, foreign = {}, False
     for key, tags in TAGS.items():
-        best: list = []
+        unit = "shares" if key == "sh" else "USD"
+        out[key] = {}
         for t in tags:
+            src = ((gaap.get(t) or {}).get("units") or {}).get(unit) or []
+            foreign = foreign or any(str(r.get("form", "")).startswith(("20-F", "40-F")) for r in src)
             rows = [[r.get("start") or "", r["end"], float(r["val"]), r["filed"]]
-                    for u in (gaap.get(t) or {}).get("units", {}).values() for r in u
-                    if r.get("end", "") >= since and r.get("filed") and r.get("val") is not None]
-            if rows and (not best or max(r[1] for r in rows) > max(r[1] for r in best)):
-                best = rows
-        out[key] = best
-    return out
+                    for r in src if r.get("end", "") >= since and r.get("filed") and r.get("val") is not None]
+            if rows:
+                out[key][t] = rows
+    return {k: {} for k in TAGS} if foreign else out
+
+
+def pick_tag(tagrows: dict, asof: str) -> list:
+    """The visible rows of the tag with the most recent period end as of `asof`; on a tie, the larger latest value
+    (a company's total revenue, not one line of it)."""
+    best, best_key = [], None
+    for rows in (tagrows or {}).values():
+        v = visible(rows, asof)
+        if not v:
+            continue
+        end = max(r[1] for r in v)
+        key = (end, max(abs(r[2]) for r in v if r[1] == end))
+        if best_key is None or key > best_key:
+            best, best_key = v, key
+    return best
 
 
 def visible(rows: list, asof: str) -> list:
@@ -133,16 +153,18 @@ def instant(rows: list) -> float | None:
     return max(rows, key=lambda r: (r[1], r[3]))[2] if rows else None
 
 
-def fundamentals(facts: dict, asof: str, price: float) -> dict | None:
-    """Valuation and financials as known before `asof`. None when revenue, income or the share count is missing or stale."""
-    v = {k: visible(facts.get(k, []), asof) for k in TAGS}
+def fundamentals(facts: dict, asof: str, price: float, split_for=None) -> dict | None:
+    """Valuation and financials as known before `asof`. None when revenue, income or the share count is missing or stale.
+    split_for(day) -> shares today per share on `day` (raw close / split-adjusted close): the filed share count is from
+    before any later split, the adjusted price is from after it, so the count is scaled to match."""
+    v = {k: pick_tag(facts.get(k, {}), asof) for k in TAGS}
     rev, ni, sh_row = ttm(v["rev"]), ttm(v["ni"]), latest_period(v["sh"])
     if rev is None or ni is None or sh_row is None or rev <= 0 or sh_row[2] <= 0:
         return None
     last = latest_period(v["rev"])
     if (_d(asof) - _d(last[1])).days > 300:                               # nothing filed for most of a year: not a current sheet
         return None
-    mcap = price * sh_row[2]
+    mcap = price * sh_row[2] * (split_for(sh_row[1]) if split_for else 1.0)
     eq, liab, ocf = instant(v["eq"]), instant(v["liab"]), ttm(v["ocf"])
     return {"mcap": mcap, "pe": mcap / ni if ni > 0 else None, "ps": mcap / rev, "pb": mcap / eq if eq and eq > 0 else None,
             "rev_growth": yoy(v["rev"]), "margin": ni / rev, "ocf_ni": ocf / ni if ocf is not None and ni > 0 else None,
@@ -164,7 +186,7 @@ def rsi(closes: list[float], n: int = 14) -> float | None:
 
 def price_facts(closes: list[float], spy: list[float]) -> dict | None:
     """closes and spy are aligned daily closes, oldest first, ending at the last close BEFORE the run."""
-    if len(closes) < MIN_BARS or len(spy) != len(closes):
+    if len(closes) < MIN_BARS + 1 or len(spy) != len(closes):          # 252 daily returns need 253 closes
         return None
     c = closes
     ret = lambda n: c[-1] / c[-1 - n] - 1 if len(c) > n else None  # noqa: E731
@@ -217,7 +239,16 @@ def mentions(heads: list[str]) -> dict[str, list[str]]:
     return out
 
 
-def build_sheet(heads: list[str], asof: str, bars: dict[str, dict], facts_for) -> dict[str, str]:
+def split_factor(raw: dict, adj: dict, day: str) -> float:
+    """Shares today per share on `day`: raw close / split-adjusted close on the last session up to `day` (1.0 if unknown)."""
+    ds = [d for d in raw if d <= day and d in adj]
+    if not ds:
+        return 1.0
+    d = max(ds)
+    return raw[d][1] / adj[d][1] if adj[d][1] > 0 else 1.0
+
+
+def build_sheet(heads: list[str], asof: str, bars: dict[str, dict], facts_for, split_for=None) -> dict[str, str]:
     """{symbol: sheet line} for the pool. bars = {sym: {day: (open, close)}}; facts_for(sym) -> compact SEC facts or None.
     Only days before `asof` are used, and only names with full price history and current SEC facts are kept."""
     ment = mentions(heads)
@@ -226,11 +257,11 @@ def build_sheet(heads: list[str], asof: str, bars: dict[str, dict], facts_for) -
     for sym in sorted(ment, key=lambda s: (-len(ment[s]), s)):
         b = bars.get(sym) or {}
         use = [d for d in days[-(MIN_BARS + 8):] if d in b]
-        if len(use) < MIN_BARS or use[-1] != days[-1]:
+        if len(use) < MIN_BARS + 1 or use[-1] != days[-1]:
             continue
         p = price_facts([b[d][1] for d in use], [bars["SPY"][d][1] for d in use])
         fx = facts_for(sym)
-        f = fundamentals(fx, asof, p["price"]) if (p and fx) else None
+        f = fundamentals(fx, asof, p["price"], (lambda d, s=sym: split_for(s, d)) if split_for else None) if (p and fx) else None
         if f is None:
             continue
         rows[sym] = sheet_line(sym, f, p, ment[sym])
@@ -332,6 +363,8 @@ def sec_facts(sym: str, ciks: dict[str, int], max_age_days: float = 6.0) -> dict
     try:
         raw = _get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json", _agent_ua() or "trading-helper fact-picker")
     except Exception:  # noqa: BLE001
+        if f.exists():
+            print(f"{sym}: SEC fetch failed, using the copy from {date.fromtimestamp(f.stat().st_mtime)}", flush=True)
         return json.loads(f.read_text()) if f.exists() else None
     time.sleep(0.15)                                                      # the SEC's limit is 10 requests a second
     out = compact(raw)
@@ -340,13 +373,38 @@ def sec_facts(sym: str, ciks: dict[str, int], max_age_days: float = 6.0) -> dict
     return out
 
 
+def fetch_adj(symbols: list[str], start: datetime, adjustment: str) -> dict[str, dict]:
+    """Daily bars like pick_ledger.fetch, with a chosen adjustment ('raw' or 'split')."""
+    from alpaca.data.enums import Adjustment, DataFeed
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    with open(ROOT / "secrets_data.json") as fh:
+        k = json.load(fh)
+    cl = StockHistoricalDataClient(k["alpaca_data_api_key"], k["alpaca_data_secret_key"])
+    out: dict[str, dict] = {}
+    end = datetime.now(ET) - timedelta(minutes=20)
+    for i in range(0, len(symbols), 50):
+        r = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=symbols[i:i + 50], timeframe=TimeFrame.Day, start=start, end=end,
+                                               feed=DataFeed.SIP, adjustment=Adjustment(adjustment)))
+        for sym, rows in (r.data or {}).items():
+            out[sym] = {x.timestamp.astimezone(ET).strftime("%Y-%m-%d"): (float(x.open), float(x.close)) for x in rows}
+    return out
+
+
+def split_lookup(symbols: list[str], start: datetime):
+    raw, spl = fetch_adj(symbols, start, "raw"), fetch_adj(symbols, start, "split")
+    return lambda sym, day: split_factor(raw.get(sym, {}), spl.get(sym, {}), day)
+
+
 def make_sheet(when: datetime, heads: list[str] | None = None) -> tuple[dict[str, str], int]:
     uni = set(P.frozen_universe())
     heads = heads if heads is not None else A.headlines(uni, end=when)
     ciks = cik_map()
     named = sorted(mentions(heads))
     bars = P.fetch(sorted(set(named) | {"SPY"}), when - timedelta(days=420))
-    return build_sheet(heads, when.strftime("%Y-%m-%d"), bars, lambda s: sec_facts(s, ciks)), len(heads)
+    splits = split_lookup(named, when - timedelta(days=800))
+    return build_sheet(heads, when.strftime("%Y-%m-%d"), bars, lambda x: sec_facts(x, ciks), splits), len(heads)
 
 
 def ask_all(prompt: str, pool: set[str], raw_for, ask=None) -> tuple[dict[str, dict[str, float]], dict[str, str]]:
@@ -377,6 +435,8 @@ def record(order: dict[str, list[str]], ranked: list[tuple[str, float]], scores:
         A.ensure_repo(led)
         path = A.ledger_path(led)
         done[led] = []
+        if A.this_week_done(led, now):                                    # a rerun after a crash fills only what is missing
+            continue
         for sym in order[led]:
             if len(done[led]) >= PER_WEEK:
                 break
@@ -396,7 +456,7 @@ def record(order: dict[str, list[str]], ranked: list[tuple[str, float]], scores:
 def run(now: datetime | None = None) -> int:
     now = now or datetime.now(ET)
     day = now.strftime("%Y-%m-%d")
-    if A.this_week_done("facts", now):
+    if all(A.this_week_done(k, now) for k in LEDGERS):
         print("facts: already recorded this week")
         print(report())
         return 0
@@ -405,7 +465,7 @@ def run(now: datetime | None = None) -> int:
     except Exception as e:  # noqa: BLE001
         print(f"could not build the sheet: {type(e).__name__} {e!s:.300}. Nothing recorded.")
         return 1
-    if len(sheet) < 20:
+    if len(sheet) < MIN_SHEET:
         print(f"only {len(sheet)} names have a full fact sheet ({n_heads} headlines); too few to rank. Nothing recorded.")
         return 1
     raw = A.HOME / "facts" / "raw"
@@ -415,13 +475,16 @@ def run(now: datetime | None = None) -> int:
     prompt, pool = build_prompt(day, sheet), sorted(sheet)
     scores, models = ask_all(prompt, set(pool), lambda a: raw / f"{day}_{a}.txt")
     ranked = combine(scores, pool)
-    (raw / f"{day}_scores.json").write_text(json.dumps({"scores": scores, "combined": ranked}, indent=1))
+    (raw / f"{day}_scores.json").write_text(json.dumps({"scores": scores, "combined": ranked, "models": models}, indent=1))
     if not ranked:
         print(f"an agent scored fewer than half of the {len(pool)} names ({ {a: len(s) for a, s in scores.items()} }). Nothing recorded.")
         return 1
     sha = hashlib.sha1(build_prompt("DATE", {}).encode()).hexdigest()[:10]
     done = record(choose(ranked, pool, day), ranked, scores, now=now,
                   extra={"models": models, "prompt_sha": sha, "pool": len(pool), "headlines": n_heads})
+    d = str(A.HOME / "facts")                                             # the sheet, replies and scores go in the same git record
+    subprocess.run(["git", "-C", d, "add", "raw"], check=False)
+    subprocess.run(["git", "-C", d, "commit", "-q", "-m", f"sheet, replies and scores {day}"], check=False)
     print("; ".join(f"{k}: {', '.join(v) or 'none'}" for k, v in done.items()))
     print(report())
     return 0
@@ -435,13 +498,53 @@ def _line(name: str, v: dict) -> str:
             f"ahead {100 * v['ahead']:.0f}%  vs random names {P.pct(v['mean_vs_random'])}  rank {100 * v['mean_rank']:.0f}th pct  beta-adj {P.pct(v['mean_beta_excess'])}")
 
 
-def judge(v: dict, rnd: dict | None) -> str:
-    """The prereg read: the ledger's own PASS at 21 sessions AND a mean above the random ledger's."""
+def week_verdict(scored: list[dict], need: int = P.NEED, today: str | None = None) -> dict:
+    """pick_ledger's verdict at 21 sessions, with the t clustered by entry WEEK instead of entry month: 30 picks at 3 a week
+    span about three calendar months, and pick_ledger's month clustering needs four (it would return no t at all)."""
+    v = P.verdict(scored, h=P.EARLY, need=need, today=today, t_min=T_MIN)
+    if "mean_vs_spy" not in v:
+        return v
+    first = sorted((x for x in scored if x.get("counts", True)), key=lambda x: datetime.fromisoformat(x["recorded_at"]))[:need]
+    wk = ["%d-W%02d" % datetime.fromisoformat(x["recorded_at"]).isocalendar()[:2] for x in first]
+    v["t"], v["weeks"] = P.cluster_t([x["h"][P.EARLY]["vs_spy"] for x in first], wk), len(set(wk))
+    ok = (v["mean_vs_spy"] > 0 and v["t"] >= T_MIN and v["ahead"] > 0.5 and v["median_vs_spy"] > 0 and v["mean_vs_random"] > 0
+          and v["mean_rank"] > 0.5 and v["mean_beta_excess"] > 0)
+    v["verdict"] = "PASS" if ok else "FAIL"
+    return v
+
+
+def pool_control(pools: dict[str, list[str]], stamps: dict[str, str], days: list[str], bars: dict[str, dict]) -> float | None:
+    """The no-skill line: every name on each week's sheet, bought at the same open and held 21 sessions, as a mean ratio
+    lift vs SPY (names averaged inside a week, then weeks averaged). None if any week cannot be scored."""
+    out = []
+    for day, names in pools.items():
+        a = P.entry_index(days, stamps[day])
+        if a is None or a + P.EARLY > len(days) - 1:
+            return None
+        m = P.span(bars["SPY"], days, a, a + P.EARLY)
+        x = [(1 + r) / (1 + m) - 1 for r in (P.span(bars.get(n, {}), days, a, a + P.EARLY) for n in names) if r is not None]
+        if m is None or len(x) < 0.8 * len(names):
+            return None
+        out.append(statistics.fmean(x))
+    return statistics.fmean(out) if out else None
+
+
+def read_pools(raw: Path, days: list[str]) -> dict[str, list[str]]:
+    out = {}
+    for d in days:
+        f = raw / f"{d}_scores.json"
+        if f.exists():
+            out[d] = [x[0] for x in json.loads(f.read_text()).get("combined", [])]
+    return out
+
+
+def judge(v: dict, control: float | None) -> str:
+    """The prereg read: PASS at 21 sessions (t across entry weeks) AND a mean vs SPY above the whole sheet's."""
     if v["verdict"] not in ("PASS", "FAIL"):
         return v["verdict"]
-    if rnd is None or "mean_vs_spy" not in rnd:
-        return "BLOCKED (the random ledger has no closed picks to compare with)"
-    return "PASS" if v["verdict"] == "PASS" and v["mean_vs_spy"] > rnd["mean_vs_spy"] else "FAIL"
+    if control is None:
+        return "BLOCKED (the whole-sheet control could not be scored)"
+    return "PASS" if v["verdict"] == "PASS" and v["mean_vs_spy"] > control else "FAIL"
 
 
 def report() -> str:
@@ -471,20 +574,24 @@ def live_verdict() -> str:
     picks = [p for rows in led.values() for p in rows]
     if not picks:
         return "no picks recorded yet"
-    bars = P.fetch(sorted({p["symbol"] for p in picks} | {"SPY"} | {c for p in picks for c in p["controls"]}),
-                   min(datetime.fromisoformat(p["recorded_at"]) for p in picks) - timedelta(days=420))
+    first = sorted(led["facts"], key=lambda p: datetime.fromisoformat(p["recorded_at"]))[:P.NEED]
+    stamps = {p["recorded_at"][:10]: p["recorded_at"] for p in first}
+    pools = read_pools(A.HOME / "facts" / "raw", sorted(stamps))
+    need = {p["symbol"] for p in picks} | {"SPY"} | {c for p in picks for c in p["controls"]} | {n for v in pools.values() for n in v}
+    bars = P.fetch(sorted(need), min(datetime.fromisoformat(p["recorded_at"]) for p in picks) - timedelta(days=420))
     days = sorted(bars["SPY"])
     sc = {k: [P.score_pick(p, days, bars, commit_ts=P.first_commit_ts(p["id"], A.ledger_path(k))) for p in rows] for k, rows in led.items()}
-    today = datetime.now(ET).strftime("%Y-%m-%d")
-    v = P.verdict(sc["facts"], h=P.EARLY, today=today, t_min=T_MIN)
-    weeks = {s["recorded_at"][:10] for s in sorted(sc["facts"], key=lambda s: s["recorded_at"])[:P.NEED]}
-    side = {}
-    for k in LEDGERS[1:]:
-        ok = [s for s in sc[k] if s["recorded_at"][:10] in weeks and s["status"] == "scored" and s["h"].get(P.EARLY, {}).get("closed")]
-        side[k] = P.verdict(ok, h=P.EARLY, need=len(ok)) if ok else None
-    rows = [f"VERDICT at {P.EARLY} sessions on the first {P.NEED} picks (docs/studies/fact_picker_prereg.json): {judge(v, side['facts_random'])}",
-            _line("facts", v)]
-    rows += [_line(k, s) for k, s in side.items() if s]
+    v = week_verdict(sc["facts"], today=datetime.now(ET).strftime("%Y-%m-%d"))
+    ctl = pool_control(pools, stamps, days, bars) if len(pools) == len(stamps) else None
+    rows = [f"VERDICT at {P.EARLY} sessions on the first {P.NEED} picks (docs/studies/fact_picker_prereg.json): {judge(v, ctl)}",
+            _line("facts", v), f"whole sheet   {'not scoreable yet' if ctl is None else 'vs SPY mean ' + P.pct(ctl)}  (the control the picks must beat)"]
+    models = sorted({json.dumps(p.get("models", {}), sort_keys=True) for p in first})
+    if len(models) > 1:
+        rows.append(f"NOTE: the agents' models changed during the record: {'; '.join(models)}")
+    for k in LEDGERS[1:]:                                                  # reported, not judged
+        ok = [x for x in sc[k] if x["recorded_at"][:10] in stamps and x["status"] == "scored" and x["h"].get(P.EARLY, {}).get("closed")]
+        if ok:
+            rows.append(_line(k, P.verdict(ok, h=P.EARLY, need=len(ok))))
     return "\n".join(rows)
 
 
@@ -499,15 +606,17 @@ def replay_collect(ask=None, heads_for=None, bars=None, facts_for=None) -> dict[
     if facts_for is None:
         ciks = cik_map()
         facts_for = lambda s: sec_facts(s, ciks, max_age_days=30)  # noqa: E731
+    splits = None
     if bars is None:
         named = sorted({s for h in weeks.values() for s in mentions(h)})
         bars = P.fetch(sorted(set(named) | {"SPY"}), mondays[0] - timedelta(days=420))
+        splits = split_lookup(named, mondays[0] - timedelta(days=800))
     lines: dict[str, list[dict]] = {k: [] for k in LEDGERS}
     taken: dict[str, dict] = {k: {} for k in LEDGERS}
     for mon in mondays:
         day = mon.strftime("%Y-%m-%d")
-        sheet = build_sheet(weeks[mon], day, bars, facts_for)
-        if len(sheet) < 20:
+        sheet = build_sheet(weeks[mon], day, bars, facts_for, splits)
+        if len(sheet) < MIN_SHEET:
             print(f"{day}: only {len(sheet)} names with a full sheet, week skipped", flush=True)
             continue
         pool = sorted(sheet)
@@ -518,6 +627,7 @@ def replay_collect(ask=None, heads_for=None, bars=None, facts_for=None) -> dict[
             print(f"{day}: an agent scored fewer than half the names, week skipped", flush=True)
             continue
         comb = dict(ranked)
+        (out_dir / "raw" / f"{day}_scores.json").write_text(json.dumps({"scores": scores, "combined": ranked}))
         for k, order in choose(ranked, pool, day).items():
             ideas = [{"sym": s, "thesis": f"fact-sheet {k}: combined score {comb.get(s, float('nan')):.0f} of 100", "months": HOLD_MONTHS,
                       "sell_if": "held for the test window"} for s in order]
@@ -535,21 +645,26 @@ def replay_score(lines: dict[str, list[dict]] | None = None) -> str:
     picks = [p for rows in lines.values() for p in rows]
     if not picks:
         return "no replay picks"
-    bars = P.fetch(sorted({p["symbol"] for p in picks} | {"SPY"} | {c for p in picks for c in p["controls"]}),
-                   min(datetime.fromisoformat(p["recorded_at"]) for p in picks) - timedelta(days=420))
+    stamps = {p["recorded_at"][:10]: p["recorded_at"] for p in lines["facts"]}
+    pools = read_pools(out_dir / "raw", sorted(stamps))
+    need = {p["symbol"] for p in picks} | {"SPY"} | {c for p in picks for c in p["controls"]} | {n for v in pools.values() for n in v}
+    bars = P.fetch(sorted(need), min(datetime.fromisoformat(p["recorded_at"]) for p in picks) - timedelta(days=420))
     days = sorted(bars["SPY"])
-    rows = [f"FACT-SHEET REPLAY, {A.replay_mondays()[0]:%Y-%m-%d} to {A.REPLAY_LAST}, scored {P.EARLY} sessions after entry. "
-            "A SCREEN, not proof: the agents may have been trained on this period.", ""]
+    rows = [f"FACT-SHEET REPLAY, {A.replay_mondays()[0]:%Y-%m-%d} to {A.REPLAY_LAST}, scored {P.EARLY} sessions after entry. A SCREEN, not proof:",
+            "the agents may have been trained on this period, and the stock list was chosen AFTER it (names that did badly are missing),",
+            "which flatters every line against SPY. Compare the picks with the whole sheet, not with zero.", ""]
     res = {}
     for k, lst in lines.items():
         ok = [x for x in (P.score_pick(p, days, bars, commit_ts=0.0) for p in lst) if x["status"] == "scored" and x["h"].get(P.EARLY, {}).get("closed")]
         if len(ok) < 12:
             rows.append(f"{k:<13} only {len(ok)} scoreable picks")
             continue
-        res[k] = P.verdict(ok, h=P.EARLY, need=len(ok), t_min=T_MIN)
+        res[k] = week_verdict(ok, need=len(ok))
         rows.append(_line(k, res[k]))
+    ctl = pool_control(pools, stamps, days, bars) if pools and len(pools) == len(stamps) else None
+    rows.append(f"whole sheet   {'not scoreable' if ctl is None else 'vs SPY mean ' + P.pct(ctl)}  (the control the picks must beat)")
     if "facts" in res:
-        rows += ["", f"FACTS: {'SIGN OF SKILL (still only a screen)' if judge(res['facts'], res.get('facts_random')) == 'PASS' else 'NO SIGN OF SKILL'}"]
+        rows += ["", f"FACTS: {'SCREEN POSITIVE (not proof; the live record decides)' if judge(res['facts'], ctl) == 'PASS' else 'SCREEN NEGATIVE'}"]
     text = "\n".join(rows)
     (out_dir / "REPORT.txt").write_text(text + "\n")
     return text
