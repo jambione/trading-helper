@@ -54,6 +54,10 @@ def build(positions: str, report: str, picks: dict[str, str], day: str) -> tuple
     v = verdict_lines(report)
     if v:
         body += ["THE TEST", *[f"  {x}" for x in v], ""]
+    odd = A.HOME / "ODD_LOTS.txt"
+    if odd.exists():
+        body += ["ODD-LOT TENDER OFFERS (check the filing and your broker's fee; nothing is bought)",
+                 *[f"  {x}" for x in odd.read_text().splitlines()[5:] if x.strip()], ""]
     body.append("Paper only: no real money. Positions are sold automatically 21 trading days after they are bought.")
     return subject_for(positions, day), "\n".join(body)
 
