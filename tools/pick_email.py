@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import auto_picker as A  # noqa: E402
+import fact_picker as F  # noqa: E402
 import pick_ledger as P  # noqa: E402
 
 
@@ -48,7 +49,7 @@ def subject_for(positions: str, day: str) -> str:
 
 
 def build(positions: str, report: str, picks: dict[str, str], day: str) -> tuple[str, str]:
-    body = [positions.strip(), "", "NEWEST PICKS", f"  fact-sheet picks (bought on paper): {picks['facts']}",
+    body = [positions.strip(), "", "NEWEST PICKS", f"  fact-sheet picks, $50 or less (bought on paper): {picks['facts']}",
             f"  lowest scores (not bought):         {picks['facts_avoid']}", f"  random from the same sheet:         {picks['facts_random']}", ""]
     v = verdict_lines(report)
     if v:
@@ -64,7 +65,7 @@ def main(argv: list[str]) -> int:
         print("no holdings report yet; nothing sent")
         return 1
     subject, text = build(pos_f.read_text(), rep_f.read_text() if rep_f.exists() else "",
-                          {k: newest_picks(k) for k in ("facts", "facts_avoid", "facts_random")}, day)
+                          {k: newest_picks(n) for k, n in zip(("facts", "facts_avoid", "facts_random"), F.LEDGERS)}, day)
     if "--print" in argv:
         print(subject + "\n\n" + text)
         return 0

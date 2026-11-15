@@ -127,10 +127,13 @@ def test_sheet_ignores_prices_on_and_after_the_run_date():
     jump = [100.0] * 280 + [500.0] * 20                                  # the jump happens on the run date itself
     bars = {"SPY": _bars(days, flat), "AAA": _bars(days, jump), "BBB": _bars(days[:270], flat[:270])}
     fx = _facts(last_end="2026-01-31", filed="2026-02-20")
-    sheet = F.build_sheet(["AAA,BBB: big news", "AAA: more news", "ZZZ: no data"], asof, bars, lambda s: fx)
+    sheet = F.build_sheet(["AAA,BBB: big news", "AAA: more news", "ZZZ: no data"], asof, bars, lambda s: fx, max_price=None)
     assert list(sheet) == ["AAA"]                                        # BBB stopped trading before the run; ZZZ has no bars
     assert "1m +0%" in sheet["AAA"] and "P/E 25.0" in sheet["AAA"] and "NEWS: big news / more news" in sheet["AAA"]
-    assert F.build_sheet(["AAA: news"], asof, bars, lambda s: None) == {}
+    assert F.build_sheet(["AAA: news"], asof, bars, lambda s: None, max_price=None) == {}
+    cheap = {**bars, "CCC": _bars(days, [40.0] * 300), "DDD": _bars(days, [50.01] * 300)}
+    capped = F.build_sheet(["AAA: a", "AAA: b", "CCC: c", "DDD: d"], asof, cheap, lambda s: fx)       # the default cap: $50 or less
+    assert list(capped) == ["CCC"] and F.MAX_PRICE == 50.0
 
 
 def test_parse_scores_and_the_half_answered_rule():
@@ -142,8 +145,8 @@ def test_parse_scores_and_the_half_answered_rule():
     assert F.combine({"agy": a, "grok": g}, pool) == [("AAA", 70.0), ("BBB", 70.0)]     # names both scored; tie -> alphabetical
     assert F.combine({"agy": {"AAA": 90.0}, "grok": g}, pool) == []                     # one agent answered under half the sheet
     order = F.choose([("AAA", 70.0), ("BBB", 60.0), ("CCC", 10.0)], pool, "2026-11-16")
-    assert order["facts"] == ["AAA", "BBB", "CCC"] and order["facts_avoid"] == ["CCC", "BBB", "AAA"]
-    assert sorted(order["facts_random"]) == pool and order == F.choose([("AAA", 70.0), ("BBB", 60.0), ("CCC", 10.0)], pool, "2026-11-16")
+    assert order[F.PICKS] == ["AAA", "BBB", "CCC"] and order[F.AVOID] == ["CCC", "BBB", "AAA"]
+    assert sorted(order[F.RANDOM]) == pool and order == F.choose([("AAA", 70.0), ("BBB", 60.0), ("CCC", 10.0)], pool, "2026-11-16")
 
 
 UNI = [f"C{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(80)]
@@ -156,14 +159,14 @@ def test_record_writes_three_committed_ledgers(tmp_path, monkeypatch):
     ranked = F.combine(scores, pool)
     now = datetime(2026, 11, 16, 8, 45, tzinfo=ET)
     done = F.record(F.choose(ranked, pool, "2026-11-16"), ranked, scores, now=now, extra={"pool": 10, "models": {}}, universe=UNI)
-    assert done["facts"] == pool[:-4:-1] and done["facts_avoid"] == pool[:3] and len(done["facts_random"]) == 3
+    assert done[F.PICKS] == pool[:-4:-1] and done[F.AVOID] == pool[:3] and len(done[F.RANDOM]) == 3
     for led in F.LEDGERS:
         rows = P.read_ledger(A.ledger_path(led))
         assert P.chain_problem(rows) is None and all(r["source"] == led and len(r["controls"]) == P.N_CONTROL for r in rows)
         n = subprocess.run(["git", "-C", str(tmp_path / led), "rev-list", "--count", "HEAD"], capture_output=True, text=True).stdout.strip()
         assert n == "3"
     again = F.record(F.choose(ranked, pool, "2026-11-23"), ranked, scores, now=now + timedelta(days=7), extra={"pool": 10}, universe=UNI)
-    assert again["facts"] == pool[-4:-7:-1]                              # last week's names are skipped for 92 days
+    assert again[F.PICKS] == pool[-4:-7:-1]                              # last week's names are skipped for 92 days
 
 
 def test_replay_builds_three_lines_of_picks_from_fakes(tmp_path, monkeypatch):
@@ -173,7 +176,7 @@ def test_replay_builds_three_lines_of_picks_from_fakes(tmp_path, monkeypatch):
     mondays = A.replay_mondays()
     d0 = (mondays[0] - timedelta(days=420)).date()
     days = [(d0 + timedelta(days=i)).isoformat() for i in range(520)]
-    bars = {s: _bars(days, _series(520, 0.0002 * (k + 1))) for k, s in enumerate(["SPY", *pool])}
+    bars = {s: _bars(days, _series(520, 0.00002 * (k + 1), start=20.0)) for k, s in enumerate(["SPY", *pool])}
     fx = _facts(last_end="2026-03-31", filed="2026-05-01")
     heads = [f"{s}: something happened" for s in pool]
     asked = []
@@ -185,6 +188,6 @@ def test_replay_builds_three_lines_of_picks_from_fakes(tmp_path, monkeypatch):
 
     lines = F.replay_collect(ask=ask, heads_for=lambda mon: heads, bars=bars, facts_for=lambda s: fx)
     assert len(asked) == 2 * len(mondays) and all(len(v) == 3 * len(mondays) for v in lines.values())
-    assert [r["symbol"] for r in lines["facts"][:3]] == pool[:-4:-1] and [r["symbol"] for r in lines["facts_avoid"][:3]] == pool[:3]
-    assert len({r["symbol"] for r in lines["facts"]}) == len(lines["facts"])            # no repeat inside 92 days
+    assert [r["symbol"] for r in lines[F.PICKS][:3]] == pool[:-4:-1] and [r["symbol"] for r in lines[F.AVOID][:3]] == pool[:3]
+    assert len({r["symbol"] for r in lines[F.PICKS]}) == len(lines[F.PICKS])            # no repeat inside 92 days
     F.replay_collect(ask=lambda a, p: 1 / 0, heads_for=lambda mon: heads, bars=bars, facts_for=lambda s: fx)   # resumable: saved replies are reused

@@ -26,22 +26,22 @@ import auto_picker as A  # noqa: E402
 import pick_ledger as P  # noqa: E402
 
 ET = A.ET
-LEDGER_NAME = "facts"
+LEDGER_NAMES = ("facts", "facts_u50")    # the first record (closed at 3 picks, still held to day 21) and the $50-cap record
 HOLD = P.EARLY                      # 21 sessions, the test's own window
 SLOTS = 15                          # 3 picks a week held 21 sessions = at most 15 at once; each gets equity / 15
 
 
-def state_path() -> Path:
-    return A.HOME / LEDGER_NAME / "positions.json"
+def state_path(name: str) -> Path:
+    return A.HOME / name / "positions.json"
 
 
-def load_state() -> dict:
-    f = state_path()
+def load_state(name: str) -> dict:
+    f = state_path(name)
     return json.loads(f.read_text()) if f.exists() else {}
 
 
-def save_state(st: dict) -> None:
-    f = state_path()
+def save_state(name: str, st: dict) -> None:
+    f = state_path(name)
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps(st, indent=1) + "\n")
 
@@ -120,16 +120,20 @@ def refresh_fills(tc, state: dict) -> None:
 
 
 def sync(dry: bool = False, now: datetime | None = None) -> int:
+    return max(sync_one(name, dry, now) for name in LEDGER_NAMES)
+
+
+def sync_one(name: str, dry: bool = False, now: datetime | None = None) -> int:
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
     now = now or datetime.now(ET)
     today = now.strftime("%Y-%m-%d")
-    picks = P.read_ledger(A.ledger_path(LEDGER_NAME))
-    state = load_state()
+    picks = P.read_ledger(A.ledger_path(name))
+    state = load_state(name)
     tc = client()
     refresh_fills(tc, state)
     if not picks:
-        print("no picks in the ledger yet")
+        print(f"{name}: no picks in the ledger yet")
         return 0
     first = min(datetime.fromisoformat(p["recorded_at"]) for p in picks).date()
     sessions = session_list(tc, first - timedelta(days=7), now.date() + timedelta(days=60))
@@ -163,10 +167,10 @@ def sync(dry: bool = False, now: datetime | None = None) -> int:
             print(f"{sym}: BUY ${dollars:,.2f} on paper" + (" (dry run)" if dry else ""))
             if not dry:
                 o = tc.submit_order(MarketOrderRequest(symbol=sym, notional=dollars, side=OrderSide.BUY, time_in_force=TimeInForce.DAY,
-                                                       client_order_id=f"facts-buy-{pid}"))
+                                                       client_order_id=f"{name}-buy-{pid}"))
                 state[pid] = {"symbol": sym, "status": "open", "entry_day": today, "dollars": dollars, "buy_order": str(o.id),
                               "buy_px": None, "buy_qty": None}
-                save_state(state)
+                save_state(name, state)
         else:
             st = state[pid]
             qty = st.get("buy_qty")
@@ -176,13 +180,13 @@ def sync(dry: bool = False, now: datetime | None = None) -> int:
             print(f"{sym}: SELL {qty} on paper after {HOLD} sessions" + (" (dry run)" if dry else ""))
             if not dry:
                 o = tc.submit_order(MarketOrderRequest(symbol=sym, qty=qty, side=OrderSide.SELL, time_in_force=TimeInForce.DAY,
-                                                       client_order_id=f"facts-sell-{pid}"))
+                                                       client_order_id=f"{name}-sell-{pid}"))
                 st.update(status="closed", exit_day=today, sell_order=str(o.id), sell_px=None)
-                save_state(state)
+                save_state(name, state)
     if not todo:
-        print("nothing due today")
+        print(f"{name}: nothing due today")
     if not dry:
-        save_state(state)
+        save_state(name, state)
     return 0
 
 
@@ -234,15 +238,18 @@ def render(rows: list[dict], equity: float | None, asof: str) -> str:
 
 
 def status() -> int:
-    state = load_state()
+    states = {name: load_state(name) for name in LEDGER_NAMES}
     equity = None
     try:
         tc = client()
-        refresh_fills(tc, state)
-        save_state(state)
+        for name, st in states.items():
+            refresh_fills(tc, st)
+            if st:
+                save_state(name, st)
         equity = float(tc.get_account().equity)
     except BaseException as e:  # noqa: BLE001
         print(f"(broker not reachable: {e!s:.100})")
+    state = {f"{name}:{k}": v for name, st in states.items() for k, v in st.items()}
     held = sorted({st["symbol"] for st in state.values() if st.get("status") in ("open", "closed")})
     rows = []
     if held:

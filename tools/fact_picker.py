@@ -44,7 +44,9 @@ import pick_ledger as P  # noqa: E402
 ROOT, ET = A.ROOT, A.ET
 CIK_MAP = ROOT / "docs" / "studies" / "sec_cik_map.json"
 SEC_CACHE = Path(os.environ.get("FACT_CACHE") or ROOT / "ai_reports" / "fact_picker" / "sec")
-LEDGERS = ("facts", "facts_avoid", "facts_random")
+MAX_PRICE = 50.0     # operator 11/14: only names whose last close is $50 or less (docs/studies/fact_picker_u50_prereg.json)
+LEDGERS = ("facts_u50", "facts_u50_avoid", "facts_u50_random")       # a new record: the pool changed. ~/pick_ledgers/facts is closed at 3 picks
+PICKS, AVOID, RANDOM = LEDGERS
 MAX_POOL, MIN_BARS, MIN_SHEET, PER_WEEK, HOLD_MONTHS = 100, 252, 20, 3, 2.0
 T_MIN = 2.5          # t across entry WEEKS (10 for 30 picks). Their 21-session windows overlap, so the bar is above 2.0
 TAGS = {
@@ -249,7 +251,8 @@ def split_factor(raw: dict, adj: dict, day: str) -> float:
     return raw[d][1] / adj[d][1] if adj[d][1] > 0 else 1.0
 
 
-def build_sheet(heads: list[str], asof: str, bars: dict[str, dict], facts_for, split_for=None) -> dict[str, str]:
+def build_sheet(heads: list[str], asof: str, bars: dict[str, dict], facts_for, split_for=None,
+                max_price: float | None = MAX_PRICE) -> dict[str, str]:
     """{symbol: sheet line} for the pool. bars = {sym: {day: (open, close)}}; facts_for(sym) -> compact SEC facts or None.
     Only days before `asof` are used, and only names with full price history and current SEC facts are kept."""
     ment = mentions(heads)
@@ -261,6 +264,8 @@ def build_sheet(heads: list[str], asof: str, bars: dict[str, dict], facts_for, s
         if len(use) < MIN_BARS + 1 or use[-1] != days[-1]:
             continue
         p = price_facts([b[d][1] for d in use], [bars["SPY"][d][1] for d in use])
+        if p and max_price is not None and p["price"] > max_price:            # the price cap comes before the 100-name cut
+            continue
         fx = facts_for(sym)
         f = fundamentals(fx, asof, p["price"], (lambda d, s=sym: split_for(s, d)) if split_for else None) if (p and fx) else None
         if f is None:
@@ -321,7 +326,7 @@ def choose(ranked: list[tuple[str, float]], pool: list[str], day: str) -> dict[s
     order = [s for s, _ in ranked]
     rnd = sorted(pool)
     random.Random(f"facts-{day}").shuffle(rnd)
-    return {"facts": order, "facts_avoid": order[::-1], "facts_random": rnd}
+    return {PICKS: order, AVOID: order[::-1], RANDOM: rnd}
 
 
 # ---------- I/O (mini only) ----------
@@ -462,7 +467,7 @@ def run(now: datetime | None = None) -> int:
     now = now or datetime.now(ET)
     day = now.strftime("%Y-%m-%d")
     if all(A.this_week_done(k, now) for k in LEDGERS):
-        print("facts: already recorded this week")
+        print(f"{PICKS}: already recorded this week")
         print(report())
         return 0
     try:
@@ -473,8 +478,8 @@ def run(now: datetime | None = None) -> int:
     if len(sheet) < MIN_SHEET:
         print(f"only {len(sheet)} names have a full fact sheet ({n_heads} headlines); too few to rank. Nothing recorded.")
         return 1
-    raw = A.HOME / "facts" / "raw"
-    A.ensure_repo("facts")
+    raw = A.HOME / PICKS / "raw"
+    A.ensure_repo(PICKS)
     raw.mkdir(exist_ok=True)
     (raw / f"{day}_sheet.txt").write_text("\n".join(sheet.values()) + "\n")
     prompt, pool = build_prompt(day, sheet), sorted(sheet)
@@ -487,7 +492,7 @@ def run(now: datetime | None = None) -> int:
     sha = hashlib.sha1(build_prompt("DATE", {}).encode()).hexdigest()[:10]
     done = record(choose(ranked, pool, day), ranked, scores, now=now,
                   extra={"models": models, "prompt_sha": sha, "pool": len(pool), "headlines": n_heads})
-    d = str(A.HOME / "facts")                                             # the sheet, replies and scores go in the same git record
+    d = str(A.HOME / PICKS)                                             # the sheet, replies and scores go in the same git record
     subprocess.run(["git", "-C", d, "add", "raw"], check=False)
     subprocess.run(["git", "-C", d, "commit", "-q", "-m", f"sheet, replies and scores {day}"], check=False)
     print("; ".join(f"{k}: {', '.join(v) or 'none'}" for k, v in done.items()))
@@ -554,7 +559,7 @@ def judge(v: dict, control: float | None) -> str:
 
 def report() -> str:
     parts = [f"Fact-sheet picker, written {datetime.now(ET):%Y-%m-%d %H:%M} ET. Paper record only; no orders are placed.",
-             "facts = top 3 combined scores each week; facts_avoid = bottom 3; facts_random = 3 random names from the same sheet.\n"]
+             f"Only names priced ${MAX_PRICE:.0f} or less. {PICKS} = top 3 combined scores each week; {AVOID} = bottom 3; {RANDOM} = 3 random names from the same sheet.\n"]
     for led in LEDGERS:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -579,17 +584,17 @@ def live_verdict() -> str:
     picks = [p for rows in led.values() for p in rows]
     if not picks:
         return "no picks recorded yet"
-    first = sorted(led["facts"], key=lambda p: datetime.fromisoformat(p["recorded_at"]))[:P.NEED]
+    first = sorted(led[PICKS], key=lambda p: datetime.fromisoformat(p["recorded_at"]))[:P.NEED]
     stamps = {p["recorded_at"][:10]: p["recorded_at"] for p in first}
-    pools = read_pools(A.HOME / "facts" / "raw", sorted(stamps))
+    pools = read_pools(A.HOME / PICKS / "raw", sorted(stamps))
     need = {p["symbol"] for p in picks} | {"SPY"} | {c for p in picks for c in p["controls"]} | {n for v in pools.values() for n in v}
     bars = P.fetch(sorted(need), min(datetime.fromisoformat(p["recorded_at"]) for p in picks) - timedelta(days=420))
     days = sorted(bars["SPY"])
     sc = {k: [P.score_pick(p, days, bars, commit_ts=P.first_commit_ts(p["id"], A.ledger_path(k))) for p in rows] for k, rows in led.items()}
-    v = week_verdict(sc["facts"], today=datetime.now(ET).strftime("%Y-%m-%d"))
+    v = week_verdict(sc[PICKS], today=datetime.now(ET).strftime("%Y-%m-%d"))
     ctl = pool_control(pools, stamps, days, bars) if len(pools) == len(stamps) else None
-    rows = [f"VERDICT at {P.EARLY} sessions on the first {P.NEED} picks (docs/studies/fact_picker_prereg.json): {judge(v, ctl)}",
-            _line("facts", v), f"whole sheet   {'not scoreable yet' if ctl is None else 'vs SPY mean ' + P.pct(ctl)}  (the control the picks must beat)"]
+    rows = [f"VERDICT at {P.EARLY} sessions on the first {P.NEED} picks (docs/studies/fact_picker_u50_prereg.json): {judge(v, ctl)}",
+            _line(PICKS, v), f"whole sheet   {'not scoreable yet' if ctl is None else 'vs SPY mean ' + P.pct(ctl)}  (the control the picks must beat)"]
     models = sorted({json.dumps(p.get("models", {}), sort_keys=True) for p in first})
     if len(models) > 1:
         rows.append(f"NOTE: the agents' models changed during the record: {'; '.join(models)}")
@@ -603,7 +608,7 @@ def live_verdict() -> str:
 # ---------- replay on past weeks (a screen only) ----------
 def replay_collect(ask=None, heads_for=None, bars=None, facts_for=None) -> dict[str, list[dict]]:
     uni = P.frozen_universe()
-    out_dir = A.HOME / "facts_replay"
+    out_dir = A.HOME / f"{PICKS}_replay"
     (out_dir / "raw").mkdir(parents=True, exist_ok=True)
     heads_for = heads_for or (lambda mon: A.headlines(set(uni), end=mon))
     mondays = A.replay_mondays()
@@ -645,12 +650,12 @@ def replay_collect(ask=None, heads_for=None, bars=None, facts_for=None) -> dict[
 
 
 def replay_score(lines: dict[str, list[dict]] | None = None) -> str:
-    out_dir = A.HOME / "facts_replay"
+    out_dir = A.HOME / f"{PICKS}_replay"
     lines = lines or {k: P.read_ledger(out_dir / f"{k}.jsonl") for k in LEDGERS}
     picks = [p for rows in lines.values() for p in rows]
     if not picks:
         return "no replay picks"
-    stamps = {p["recorded_at"][:10]: p["recorded_at"] for p in lines["facts"]}
+    stamps = {p["recorded_at"][:10]: p["recorded_at"] for p in lines[PICKS]}
     pools = read_pools(out_dir / "raw", sorted(stamps))
     need = {p["symbol"] for p in picks} | {"SPY"} | {c for p in picks for c in p["controls"]} | {n for v in pools.values() for n in v}
     bars = P.fetch(sorted(need), min(datetime.fromisoformat(p["recorded_at"]) for p in picks) - timedelta(days=420))
@@ -668,8 +673,8 @@ def replay_score(lines: dict[str, list[dict]] | None = None) -> str:
         rows.append(_line(k, res[k]))
     ctl = pool_control(pools, stamps, days, bars) if pools and len(pools) == len(stamps) else None
     rows.append(f"whole sheet   {'not scoreable' if ctl is None else 'vs SPY mean ' + P.pct(ctl)}  (the control the picks must beat)")
-    if "facts" in res:
-        rows += ["", f"FACTS: {'SCREEN POSITIVE (not proof; the live record decides)' if judge(res['facts'], ctl) == 'PASS' else 'SCREEN NEGATIVE'}"]
+    if PICKS in res:
+        rows += ["", f"FACTS: {'SCREEN POSITIVE (not proof; the live record decides)' if judge(res[PICKS], ctl) == 'PASS' else 'SCREEN NEGATIVE'}"]
     text = "\n".join(rows)
     (out_dir / "REPORT.txt").write_text(text + "\n")
     return text
