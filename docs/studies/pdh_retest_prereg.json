@@ -1,0 +1,21 @@
+{
+ "name": "pdh_retest",
+ "written": "2026-11-14 evening ET, before tools/studies/pdh_retest.py was run on any data",
+ "source": "operator 11/14: a pasted YouTube transcript ('one daily candle'): mark the previous day's high and low, wait for a 5-minute candle to close beyond one, enter on the retest of the level with a confirming 1-minute candle, stop just behind the level, target 2x the risk. Continuation setup only, both directions.",
+ "data": "PRIMARY: ai_reports/warehouse/sip, 1-minute SIP bars, the 400 most liquid names a day (prior-session dollar volume, first price $10-$500), 2026-04-27..2026-11-13 (140 scored sessions). REPLICATION: ai_reports/warehouse/sip_top, the 60 largest names, 2024-01..2026-04 (the video's examples are TSLA, AAPL, AMD). Regular session only.",
+ "rule": {
+  "levels": "PDH = the prior session's highest high, PDL = its lowest low (regular hours).",
+  "break": "LONG: the first 5-minute candle of the day (09:30 grid) whose close is above PDH. SHORT: the first whose close is below PDL.",
+  "retest": "within the next 30 one-minute bars after that candle: a bar whose low is at or under PDH x 1.0010 (it came back to the level), that closes above PDH and above its own open (buyers stepped in). If any 1-minute bar closes more than 0.10% back through the level first, the setup is dead for the day. Mirror image for shorts at PDL.",
+  "entry": "the open of the next 1-minute bar. One trade per name per side per day.",
+  "stop": "0.15% beyond the level on the wrong side (PDH x 0.9985 for longs, PDL x 1.0015 for shorts). A trade whose entry is already through its stop, or whose risk is under 0.05% of price, is skipped.",
+  "target": "entry plus 2x the risk (1:2).",
+  "exit": "the first of stop or target; if one bar touches both, the stop is taken; otherwise the 15:59 close."
+ },
+ "control": "for each trade, the same side, the same risk in percent, the same 2x target and the same time exit applied to every OTHER name in that day's universe at the same entry minute (exact mean, not a draw). LIFT = trade minus that mean. It answers: did the level and the retest matter, or was it just the market at that minute?",
+ "also_reported": "the same rule entered at the close of the breaking 5-minute candle with no retest (does waiting for the retest help?); longs and shorts separately; win rate against the 33.3% a 1:2 bracket needs before cost; gross and net.",
+ "cost": "6 bp per round trip (the harness default for the liquid list), 10 bp stress; 2 bp on the 60 largest names.",
+ "verdict": "judged PER TRADE on the primary sample, longs and shorts pooled, halves split by date. EDGE = mean lift > 0 in both halves and the day-clustered t of the pooled lift >= 2.0. PROFITABLE = EDGE and mean net after 6 bp > 0 in both halves and > 0 at 10 bp. Anything else = FAIL. Fewer than 300 trades = UNDERPOWERED. The replication sample is reported beside it; a primary PASS that the replication contradicts (lift <= 0) is downgraded to NOT CONFIRMED.",
+ "checks_before_the_read": "a no-edge run (random name, minute and side at the same count, same bracket) must show lift within 2 bp of zero; a planted run (+10 bp added to the price path after each real entry in the trade's direction) must show lift well above zero. Both on the primary sample; they do not reveal the rule's result.",
+ "one_read": "no retuning of the zone, the 30-bar wait, the stop distance or the target after the result is seen; a changed rule is a new test. A positive result goes to the result-skeptic before it is called found."
+}
