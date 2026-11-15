@@ -44,6 +44,7 @@ import pick_ledger as P  # noqa: E402
 ROOT, ET = A.ROOT, A.ET
 CIK_MAP = ROOT / "docs" / "studies" / "sec_cik_map.json"
 SEC_CACHE = Path(os.environ.get("FACT_CACHE") or ROOT / "ai_reports" / "fact_picker" / "sec")
+HEAD_FETCH, HEAD_LIMIT = 500, 3000     # read up to 500 news items a day (auto_picker reads 50): the $50 cap needs a wider net
 MAX_PRICE = 50.0     # operator 11/14: only names whose last close is $50 or less (docs/studies/fact_picker_u50_prereg.json)
 LEDGERS = ("facts_u50", "facts_u50_avoid", "facts_u50_random")       # a new record: the pool changed. ~/pick_ledgers/facts is closed at 3 picks
 PICKS, AVOID, RANDOM = LEDGERS
@@ -409,7 +410,7 @@ def split_lookup(symbols: list[str], start: datetime):
 
 def make_sheet(when: datetime, heads: list[str] | None = None) -> tuple[dict[str, str], int]:
     uni = set(P.frozen_universe())
-    heads = heads if heads is not None else A.headlines(uni, end=when)
+    heads = heads if heads is not None else A.headlines(uni, limit=HEAD_LIMIT, end=when, fetch=HEAD_FETCH)
     ciks = cik_map()
     named = sorted(mentions(heads))
     bars = P.fetch(sorted(set(named) | {"SPY"}), when - timedelta(days=420))
@@ -610,7 +611,7 @@ def replay_collect(ask=None, heads_for=None, bars=None, facts_for=None) -> dict[
     uni = P.frozen_universe()
     out_dir = A.HOME / f"{PICKS}_replay"
     (out_dir / "raw").mkdir(parents=True, exist_ok=True)
-    heads_for = heads_for or (lambda mon: A.headlines(set(uni), end=mon))
+    heads_for = heads_for or (lambda mon: A.headlines(set(uni), limit=HEAD_LIMIT, end=mon, fetch=HEAD_FETCH))
     mondays = A.replay_mondays()
     weeks = {mon: heads_for(mon) for mon in mondays}
     if facts_for is None:

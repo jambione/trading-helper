@@ -49,7 +49,7 @@ def ensure_repo(agent: str) -> Path:
     return d
 
 
-def headlines(universe: set[str], days: int = 7, limit: int = MAX_HEADLINES, end: datetime | None = None) -> list[str]:
+def headlines(universe: set[str], days: int = 7, limit: int = MAX_HEADLINES, end: datetime | None = None, fetch: int = 50) -> list[str]:
     """Headlines from the `days` before `end` (default now) that name a liquid stock, newest first: 'SYM[,SYM]: headline'.
     Taken day by day with an equal share per day. A single newest-first pull on a Monday morning is almost all weekend
     items with no listed stock in them (11/11 smoke test: about 25 usable headlines a week), which would have starved the
@@ -66,7 +66,7 @@ def headlines(universe: set[str], days: int = 7, limit: int = MAX_HEADLINES, end
         hi, lo = stop - timedelta(days=k), stop - timedelta(days=k + 1)
         got, token = 0, None
         for _ in range(6):
-            r = cl.get_news(NewsRequest(start=lo, end=hi, limit=50, page_token=token, sort="desc"))
+            r = cl.get_news(NewsRequest(start=lo, end=hi, limit=fetch, page_token=token, sort="desc"))   # 50 a day for auto_picker (its rule); fact_picker reads deeper
             for x in r.data.get("news", []):
                 syms = [y for y in (x.symbols or []) if y in universe][:3]
                 h = re.sub(r"\s+", " ", x.headline or "").strip()
