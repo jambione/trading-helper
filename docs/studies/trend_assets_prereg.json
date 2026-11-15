@@ -1,0 +1,16 @@
+{
+ "name": "trend_assets",
+ "written": "2026-11-15, before tools/studies/trend_assets.py was run on any data",
+ "question": "operator 11/15: 'look into the cross-asset trend following'. Do the two best-known monthly trend rules on a handful of index funds give a smoother ride than buying the S&P 500, at a similar return, in 2016-2026?",
+ "data": "Alpaca daily bars, adjusted for splits and dividends (total return), 2016-01-04 to 2026-11-13, for SPY (US stocks), EFA (foreign stocks), IEF (7-10 year Treasuries), VNQ (real estate), DBC (commodities), AGG (bonds), BIL (1-3 month T-bills, used as cash). Alpaca has nothing before 2016, so the first 10 months are warm-up and the test runs from about 2016-11. That is about 120 monthly decisions: enough to see how the rules behaved through 2018 Q4, the 2020 crash and the 2022 stock-and-bond fall, NOT enough to prove a return edge. Published studies cover 1973-2012 (Faber) and a century (Hurst, Ooi, Pedersen); this checks whether the claim held in the decade we can trade.",
+ "mechanics": "decide on the last trading day of each month from that day's close; trade at the next session's open; hold to the next decision. 5 bp cost on every dollar moved. Cash earns BIL.",
+ "rules": {
+  "R1_faber": "Five equal slots: SPY, EFA, IEF, VNQ, DBC. Each slot holds its fund when the month-end close is above the average of the last 10 month-end closes, otherwise holds BIL. Slots reset to equal weight every month.",
+  "R2_dual_momentum": "If SPY's 12-month return beats BIL's, hold whichever of SPY or EFA had the higher 12-month return; otherwise hold AGG. One fund at a time."
+ },
+ "benchmarks": "B1 SPY bought and held. B2 60/40: 60% SPY, 40% IEF, rebalanced monthly. B3 (for R1 only) the same five funds in equal weight, rebalanced monthly, no trend filter: it shows what the filter itself adds.",
+ "measures": "yearly return (compound), worst peak-to-trough drop on month-end values, Sharpe ratio (monthly return over BIL, annualised), worst calendar year, share of months in cash or bonds, number of switches per year.",
+ "verdict": "a rule is WORTH RUNNING when, over the whole test window, its worst drop is at least one third smaller than SPY's, its Sharpe ratio is at least 60/40's, and its yearly return is no more than 1 point below 60/40's. R1 must also beat B3 on Sharpe (otherwise the filter adds nothing beyond diversification). Anything else = NOT WORTH IT. Both halves (split 2021-11) are printed; a rule that passes overall but fails the drop test in either half is labelled FRAGILE.",
+ "checks": "(1) the buy-and-hold SPY line must match SPY's own compound return over the window within 0.2 points a year; (2) a rule that always holds BIL must return about BIL's yield with no drop; (3) moving every decision one month LATER must not improve a rule by more than noise (if it does, there is a timing error).",
+ "one_read": "no change of funds, lookbacks or rebalance day after the result is seen; a changed rule is a new test. Nothing is traded by this study."
+}
