@@ -539,5 +539,6 @@
     "11:30": 1.8,
     "13:00": 1.5
   },
-  "ai_watch_leg1_max_spread_pct": 0.08
+  "ai_watch_leg1_max_spread_pct": 0.08,
+  "game_open_signup": true
 }

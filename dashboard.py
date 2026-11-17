@@ -4030,7 +4030,7 @@ async def auth_register(request: Request):
         profile, err = await loop.run_in_executor(
             None,
             lambda: request_account(username, password, email, display_name,
-                                    open_signup=bool((STATE.cfg or {}).get("game_open_signup"))),
+                                    open_signup=bool((load_config() or {}).get("game_open_signup"))),   # read fresh: flips without a restart
         )
         if err or not profile:
             status = 409 if err in ("Username is taken", "Email is already in use") else 400
