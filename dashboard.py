@@ -5293,10 +5293,14 @@ async def api_game_state(request: Request):
     payload = load_ai_positions()
     live = game.live_pl(payload, now.timestamp())
     admin = is_admin_user(username)
+    crown = store.crown()
+    cu = (crown or {}).get("username", "")
     return {
         "ok": True, "now_ts": now.timestamp(), "day": day, "game_day": game.is_game_day(day),
         "live": live, "paper": (payload or {}).get("mode") != "live",
-        "rounds": [store.board(day, s, now, live["value"], viewer=username, reveal_all=admin) for s in game.SLOTS],
+        "rounds": [store.board(day, s, now, live["value"], viewer=username, reveal_all=admin, crown_user=cu)
+                   for s in game.SLOTS],
+        "crown": ({k: v for k, v in crown.items() if k != "username"} | {"mine": cu == username}) if crown else None,
         "mine": store.mine(username, day) if username else {},
         "me": {"name": _name, "admin": admin},
     }
@@ -5330,6 +5334,12 @@ async def api_game_board(request: Request, day: str = ""):
     return {"ok": True, "day": day,
             "rounds": [store.board(day, s, now, live, viewer=username, reveal_all=is_admin_user(username))
                        for s in game.SLOTS]}
+
+
+@app.get("/api/game/hall")
+async def api_game_hall(request: Request):
+    """Hall of fame: every round winner and the records."""
+    return {"ok": True, **_GAME_STORE().hall(game.et_now().date().isoformat())}
 
 
 @app.get("/api/game/standings")

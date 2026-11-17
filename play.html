@@ -77,6 +77,42 @@ tr.win td:first-child::before{content:"🏆 "}
 .side h3{margin:0 0 8px;font-size:14px;color:var(--dim);text-transform:uppercase;letter-spacing:1px}
 .up{color:var(--up)} .down{color:var(--down)}
 .rules{color:var(--dim);font-size:13px}
+/* crown + hall of fame */
+.reign{margin-top:8px;font-size:14px;color:var(--accent)}
+.reign b{color:var(--text)}
+.crown{margin-left:4px}
+.records{display:grid;gap:8px;grid-template-columns:1fr 1fr;margin-bottom:10px}
+.rec{background:#0b1220;border:1px solid var(--line);border-radius:8px;padding:8px}
+.rec .k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+.rec .v{font-weight:700;margin-top:2px}
+.rec .s{font-size:12px;color:var(--dim)}
+.hof li{display:block}
+.hof .meta{font-size:12px;color:var(--dim)}
+.linkbtn{background:none;color:var(--dim);padding:6px 0;font-weight:500;text-decoration:underline;min-height:0}
+.replay{background:#1f2a3d;color:var(--text);font-size:12px;padding:4px 10px;min-height:0;margin-left:8px}
+/* reveal overlay */
+.rv{position:fixed;inset:0;z-index:50;background:rgba(5,8,14,.985);display:none;flex-direction:column;align-items:center;justify-content:center;
+  padding:calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));text-align:center}
+.rv.on{display:flex}
+.rv h2{margin:0 0 6px;font-size:16px;color:var(--dim);text-transform:uppercase;letter-spacing:2px}
+.rv .count{font-size:120px;font-weight:900;color:var(--accent);line-height:1}
+.rv .final{font-size:64px;font-weight:900;font-variant-numeric:tabular-nums;margin:8px 0}
+.rv .rtrack{position:relative;width:min(640px,92vw);height:60px;margin:24px 0 8px;border-top:2px solid var(--line)}
+.rv .rdot{position:absolute;top:-8px;width:14px;height:14px;border-radius:50%;background:#94a3b8;transform:translateX(-50%);transition:opacity .5s,transform .5s}
+.rv .rdot.me{background:var(--me)}
+.rv .rdot.out{opacity:0;transform:translateX(-50%) translateY(24px)}
+.rv .rdot.win{background:var(--accent);width:22px;height:22px;top:-12px;box-shadow:0 0 18px var(--accent)}
+.rv .rneedle{position:absolute;top:-22px;width:3px;height:40px;background:var(--text);transform:translateX(-50%)}
+.rv .names{min-height:28px;color:var(--dim);font-size:15px}
+.rv .names s{opacity:.6;margin:0 6px}
+.rv .winner{display:none;margin-top:12px}
+.rv .winner.on{display:block;animation:pop .6s cubic-bezier(.2,1.6,.4,1)}
+.rv .wname{font-size:44px;font-weight:900;color:var(--accent)}
+.rv .wline{font-size:17px;color:var(--text);margin-top:6px}
+.rv .you{font-size:22px;font-weight:900;color:var(--up);margin-top:8px}
+.rv .close{margin-top:24px;background:#1f2a3d;color:var(--text)}
+#confetti{position:fixed;inset:0;pointer-events:none;z-index:60}
+@keyframes pop{0%{transform:scale(.4);opacity:0}100%{transform:scale(1);opacity:1}}
 .ctitle{margin:0 0 8px;font-size:14px;color:var(--dim);text-transform:uppercase;letter-spacing:1px}
 .ptab td.sym{font-weight:700;letter-spacing:.5px}
 .ptab .sub{display:none;font-size:11px;color:var(--dim);font-weight:400;letter-spacing:0}
@@ -113,12 +149,14 @@ tr.win td:first-child::before{content:"🏆 "}
       <div class="label">Desk day P&amp;L · live <span class="badge" id="paper">paper account</span></div>
       <div class="pl" id="live">—</div>
       <div class="stale" id="age"></div>
+      <div class="reign" id="reign"></div>
     </section>
     <section class="card"><h3 class="ctitle">Desk positions <span class="stale" id="pos-n"></span></h3><div id="positions" class="stale">—</div></section>
     <div class="rounds" id="rounds"></div>
   </div>
   <aside style="display:grid;gap:16px;align-content:start">
     <section class="card side"><h3>Trade feed</h3><div id="trades" class="stale">—</div></section>
+    <section class="card side"><h3>Hall of fame</h3><div id="hall" class="stale">The first crown is up for grabs.</div></section>
     <section class="card side"><h3>Season standings <span id="season"></span></h3><div id="standings" class="stale">No rounds settled yet.</div></section>
     <section class="card side rules"><h3>How it works</h3><ul>
       <li>Guess where the desk's day P&amp;L will be at <b>noon</b> and at the <b>4:00 close</b>.</li>
@@ -129,6 +167,16 @@ tr.win td:first-child::before{content:"🏆 "}
     </ul></section>
   </aside>
 </main>
+<div class="rv" id="rv" role="dialog" aria-label="Round result">
+  <h2 id="rv-title"></h2>
+  <div class="count" id="rv-count"></div>
+  <div class="final" id="rv-final"></div>
+  <div class="rtrack" id="rv-track"></div>
+  <div class="names" id="rv-names"></div>
+  <div class="winner" id="rv-winner"><div class="wname" id="rv-wname"></div><div class="wline" id="rv-wline"></div><div class="you" id="rv-you"></div></div>
+  <button class="close" id="rv-close" style="visibility:hidden">Back to the game</button>
+</div>
+<canvas id="confetti"></canvas>
 <script>
 const TOKEN_KEY = 'ss:token';
 if (/[?&]embed=1/.test(location.search)) {          // inside the operator dashboard's Predictions tab
@@ -181,7 +229,8 @@ function roundHTML(r) {
   if (r.phase === 'open') clock = `Guesses lock in <b data-until="${r.lock_ts}">${hms(r.lock_ts - now)}</b>`;
   else if (r.phase === 'locked') clock = `Locked · answer in <b data-until="${r.cutoff_ts}">${hms(r.cutoff_ts - now)}</b> · ${r.n_players} playing`;
   else if (r.phase === 'scoring') clock = 'Reading the desk number…';
-  else if (r.phase === 'settled') clock = `Final: <b class="${cls(r.actual_pl)}">${money(r.actual_pl)}</b> · ${r.n_players} played`;
+  else if (r.phase === 'settled') clock = `Final: <b class="${cls(r.actual_pl)}">${money(r.actual_pl)}</b> · ${r.n_players} played` +
+      (r.rows.length ? ` <button class="replay" data-replay="${r.slot}">▶ Replay reveal</button>` : '');
   else if (r.phase === 'void') clock = 'No result this round (desk snapshot missing).';
   else clock = 'No game today — market closed.';
   let form = '';
@@ -197,7 +246,7 @@ function roundHTML(r) {
   let rows = '';
   if (r.rows.length && !(r.hidden && r.rows.length <= 1)) {
     rows = '<table><tr><th>#</th><th>Player</th><th class="num">Guess</th><th class="num">Off by</th></tr>' +
-      r.rows.map(x => `<tr class="${x.mine ? 'me' : ''} ${x.rank === 1 && r.phase === 'settled' ? 'win' : ''}"><td>${x.rank ?? ''}</td><td>${esc(x.name)}</td>
+      r.rows.map(x => `<tr class="${x.mine ? 'me' : ''} ${x.rank === 1 && r.phase === 'settled' ? 'win' : ''}"><td>${x.rank ?? ''}</td><td>${esc(x.name)}${x.crown ? '<span class="crown" title="Reigning champion">👑</span>' : ''}</td>
         <td class="num">${money(x.value)}</td><td class="num">${x.abs_err == null ? '' : '$' + x.abs_err.toFixed(2)}</td></tr>`).join('') + '</table>';
   }
   return `<section class="card round"><h2>${r.label} round <span class="phase ${r.phase}">${r.phase}</span></h2>
@@ -232,14 +281,112 @@ function renderRounds() {
       else { msg.className = 'msg err'; msg.textContent = res.error || 'Could not save'; }
     });
   });
+  box.querySelectorAll('[data-replay]').forEach(b => b.onclick = () => {
+    const r = S.rounds.find(x => x.slot === b.dataset.replay); if (r) playReveal(r);
+  });
   for (const r of S.rounds) {
-    if (r.phase === 'settled' && r.rows.length && !shownBanner[r.day + r.slot] && r.cutoff_ts > Date.now() / 1000 - 3600) {
-      shownBanner[r.day + r.slot] = 1;
-      const w = r.rows.find(x => x.rank === 1), b = document.getElementById('banner');
-      b.textContent = `🏆 ${r.label} winner: ${w.name} — guessed ${money(w.value)}, final ${money(r.actual_pl)}`;
-      b.style.display = 'block';
-    }
+    if (r.phase !== 'settled' || !r.rows.length) continue;
+    const key = 'rv:' + r.day + ':' + r.slot;
+    if (seen(key)) continue;
+    markSeen(key);
+    if (r.cutoff_ts > Date.now() / 1000 + clockSkew - 45 * 60) playReveal(r);   // fresh result: the show
   }
+}
+
+const seen = k => { try { return localStorage.getItem(k) === '1'; } catch (e) { return !!shownBanner[k]; } };
+const markSeen = k => { shownBanner[k] = 1; try { localStorage.setItem(k, '1'); } catch (e) {} };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let revealing = false;
+const cents = v => { v = Math.round(v * 100) / 100; return v < 1 ? Math.round(v * 100) + '¢' : '$' + v.toFixed(2); };
+
+async function playReveal(r) {
+  if (revealing) return; revealing = true;
+  const $ = id => document.getElementById(id);
+  const ov = $('rv'), rows = r.rows.slice().sort((a, b) => a.rank - b.rank), win = rows[0];
+  $('rv-title').textContent = r.label + ' round · the final number';
+  ['rv-final', 'rv-names', 'rv-count'].forEach(id => $(id).textContent = '');
+  $('rv-winner').className = 'winner'; $('rv-close').style.visibility = 'hidden'; $('rv-you').textContent = '';
+  const vals = rows.map(x => x.value).concat([r.actual_pl, lastLive ?? r.actual_pl]);
+  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = Math.max(10, (hi - lo) * 0.15); lo -= pad; hi += pad;
+  const pos = v => ((v - lo) / (hi - lo) * 100) + '%';
+  $('rv-track').innerHTML = rows.map((x, i) => `<div class="rdot ${x.mine ? 'me' : ''}" data-i="${i}" style="left:${pos(x.value)}"></div>`).join('') +
+    `<div class="rneedle" id="rv-needle" style="left:${pos(lastLive ?? (lo + hi) / 2)}"></div>`;
+  ov.classList.add('on');
+  if (!calm) for (const n of ['3', '2', '1']) { $('rv-count').textContent = n; await sleep(800); }
+  $('rv-count').textContent = '';
+  // needle sweep + counting number
+  const from = lastLive ?? (lo + hi) / 2, to = r.actual_pl, dur = calm ? 1 : 2200, t0 = performance.now(), fin = $('rv-final');
+  await new Promise(done => {
+    const step = now => {
+      const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3), v = from + (to - from) * e;
+      fin.textContent = money(Math.round(v * 100) / 100); fin.className = 'final ' + cls(v);
+      $('rv-needle').style.left = pos(v);
+      k < 1 ? requestAnimationFrame(step) : done();
+    };
+    requestAnimationFrame(step);
+  });
+  await sleep(calm ? 0 : 600);
+  // eliminate farthest-first, down to the winner
+  const names = $('rv-names');
+  for (let i = rows.length - 1; i >= 1; i--) {
+    document.querySelector(`#rv-track .rdot[data-i="${i}"]`).classList.add('out');
+    names.innerHTML = `<s>${esc(rows[i].name)}</s>` + names.innerHTML;
+    if (!calm) await sleep(Math.max(250, 1600 / rows.length));
+  }
+  document.querySelector('#rv-track .rdot[data-i="0"]').classList.add('win');
+  names.innerHTML = '';
+  $('rv-wname').textContent = '👑 ' + win.name;
+  $('rv-wline').textContent = `called ${money(win.value)} · final ${money(r.actual_pl)} · off by ${cents(win.abs_err)}` +
+    (rows.length > 1 ? ` · beat ${esc(rows[1].name)} by ${cents(rows[1].abs_err - win.abs_err)}` : '');
+  if (win.mine) $('rv-you').textContent = 'YOU CALLED IT!';
+  else { const me = rows.find(x => x.mine); if (me) $('rv-you').innerHTML = `<span style="color:var(--dim);font-size:16px;font-weight:500">You finished #${me.rank} of ${rows.length}, off by ${cents(me.abs_err)}</span>`; }
+  $('rv-winner').classList.add('on');
+  if (!calm) confetti(win.mine ? 260 : 140);
+  $('rv-close').style.visibility = 'visible';
+  revealing = false;
+  pollHall(); pollStandings();
+}
+document.getElementById('rv-close').onclick = () => document.getElementById('rv').classList.remove('on');
+
+function confetti(n) {
+  const c = document.getElementById('confetti'), x = c.getContext('2d');
+  c.width = innerWidth; c.height = innerHeight;
+  const cols = ['#f5b301', '#22c55e', '#60a5fa', '#ef4444', '#e6ecf5'];
+  const P = Array.from({length: n}, () => ({x: c.width / 2 + (Math.random() - .5) * 80, y: c.height * .45,
+    vx: (Math.random() - .5) * 14, vy: -Math.random() * 14 - 4, r: Math.random() * 6 + 3, c: cols[Math.random() * 5 | 0], a: Math.random() * 6}));
+  const t0 = performance.now();
+  (function f(now) {
+    x.clearRect(0, 0, c.width, c.height);
+    for (const p of P) { p.vy += .35; p.x += p.vx; p.y += p.vy; p.a += .2;
+      x.fillStyle = p.c; x.save(); x.translate(p.x, p.y); x.rotate(p.a); x.fillRect(-p.r / 2, -p.r / 2, p.r, p.r * .6); x.restore(); }
+    if (now - t0 < 3500) requestAnimationFrame(f); else x.clearRect(0, 0, c.width, c.height);
+  })(t0);
+}
+
+function renderReign() {
+  const c = S.crown, el = document.getElementById('reign');
+  el.innerHTML = c ? `👑 Reigning champ: <b>${esc(c.name)}</b>${c.mine ? ' (you!)' : ''} · ${c.label} ${c.day.slice(5)} · off by ${cents(c.abs_err)}` : '';
+}
+
+let hallAll = false;
+async function pollHall() {
+  try {
+    const h = await api('/api/game/hall'), R = h.records, W = h.winners;
+    if (!W.length) return;
+    const rec = (k, v, sub) => `<div class="rec"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`;
+    let html = '<div class="records">';
+    if (R.closest_call) html += rec('Closest call', esc(R.closest_call.name), `off by ${cents(R.closest_call.abs_err)} · ${R.closest_call.label} ${R.closest_call.day.slice(5)}`);
+    if (R.most_wins_ever) html += rec('Most wins', esc(R.most_wins_ever.name), R.most_wins_ever.wins + ' crown' + (R.most_wins_ever.wins > 1 ? 's' : ''));
+    if (R.month_leader) html += rec('Leads ' + R.month_leader.season, esc(R.month_leader.name), R.month_leader.wins + ' win' + (R.month_leader.wins > 1 ? 's' : '') + ' this month');
+    if (R.biggest_field) html += rec('Biggest field won', esc(R.biggest_field.name), 'beat ' + (R.biggest_field.n_players - 1) + ' · ' + R.biggest_field.label + ' ' + R.biggest_field.day.slice(5));
+    html += '</div><ul class="feed hof">' + (hallAll ? W : W.slice(0, 8)).map(w =>
+      `<li>👑 <b>${esc(w.name)}</b> <span class="meta">· ${w.label} ${w.day.slice(5)}</span><br>
+       <span class="meta">called ${money(w.value)} · final ${money(w.actual)} · off by ${cents(w.abs_err)} · ${w.n_players} played</span></li>`).join('') + '</ul>';
+    if (W.length > 8) html += `<button class="linkbtn" id="hall-more">${hallAll ? 'Show fewer' : 'All ' + W.length + ' winners'}</button>`;
+    document.getElementById('hall').innerHTML = html;
+    const m = document.getElementById('hall-more'); if (m) m.onclick = () => { hallAll = !hallAll; pollHall(); };
+  } catch (e) {}
 }
 
 function tick() {
@@ -251,7 +398,7 @@ async function poll() {
   try {
     S = await api('/api/game/state');
     clockSkew = S.now_ts - Date.now() / 1000;
-    renderLive(); renderRounds();
+    renderLive(); renderReign(); renderRounds();
   } catch (e) { /* keep last view */ }
 }
 const px = v => v == null ? '—' : '$' + (v >= 1000 ? v.toFixed(2) : v.toFixed(2));
@@ -298,8 +445,8 @@ document.getElementById('logout').onclick = async e => {
 };
 const hero = document.querySelector('.hero');
 addEventListener('scroll', () => document.body.classList.toggle('scrolled', hero.getBoundingClientRect().bottom < 60), {passive: true});
-poll(); pollDesk(); pollStandings();
-setInterval(poll, 3000); setInterval(pollDesk, 3000); setInterval(pollStandings, 60000);
+poll(); pollDesk(); pollStandings(); pollHall();
+setInterval(poll, 3000); setInterval(pollDesk, 3000); setInterval(pollStandings, 60000); setInterval(pollHall, 60000);
 setInterval(tick, 1000);
 </script>
 </body>

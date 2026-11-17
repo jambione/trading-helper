@@ -222,3 +222,37 @@ def test_desk_view_shows_positions_and_a_feed_without_strategy_internals():
 def test_desk_view_falls_back_to_broker_positions():
     v = game.desk_view({"positions": {"COLD": {"qty": 39, "avg_entry": 16.81, "current": 16.65, "pl": -6.3, "plpc": -0.96}}})
     assert v["positions"][0]["symbol"] == "COLD" and v["positions"][0]["stop"] is None and v["feed"] == []
+
+
+def _settled_day(store, day, noon_actual, close_actual, guesses):
+    """guesses: {username: (noon_value, close_value)}; display name = username title-cased."""
+    for k, (u, (nv, cv)) in enumerate(guesses.items()):
+        store.submit(u, u.title(), day, "noon", nv, at(8, k, day=day))
+        store.submit(u, u.title(), day, "close", cv, at(10, k, day=day))
+    store.settle(day, "noon", {"day_pl": noon_actual, "updated": at(12, 0, day=day).timestamp()}, 0)
+    store.settle(day, "close", {"day_pl": close_actual, "updated": at(16, 0, day=day).timestamp()}, 0)
+
+
+def test_crown_goes_to_the_latest_winner_and_marks_their_rows(store):
+    _settled_day(store, DAY, -10.0, 25.0, {"ann": (-9.5, 0.0), "bo": (5.0, 24.0)})
+    w = store.winners()
+    assert [(x["slot"], x["name"]) for x in w] == [("close", "Bo"), ("noon", "Ann")]
+    assert w[0]["abs_err"] == 1.0 and w[0]["margin"] == 24.0 and w[0]["n_players"] == 2
+    assert store.crown()["name"] == "Bo"
+    b = store.board(DAY, "noon", at(13, 0), None, crown_user="bo")
+    assert [(r["name"], r["crown"]) for r in b["rows"]] == [("Ann", False), ("Bo", True)]
+
+
+def test_hall_records_and_no_usernames(store):
+    _settled_day(store, DAY, -10.0, 25.0, {"ann": (-9.5, 0.0), "bo": (5.0, 24.0), "cy": (-30.0, 26.5)})
+    _settled_day(store, "2026-11-19", 3.0, 7.0, {"ann": (3.1, 7.2), "bo": (9.0, 0.0)})
+    h = store.hall("2026-11-19")
+    r = h["records"]
+    assert r["closest_call"]["name"] == "Ann" and r["closest_call"]["abs_err"] == 0.1
+    assert r["most_wins_ever"] == {"name": "Ann", "wins": 3}
+    assert r["month_leader"]["name"] == "Ann" and r["biggest_field"]["n_players"] == 3
+    assert len(h["winners"]) == 4 and all("username" not in w for w in h["winners"])
+
+
+def test_hall_is_empty_before_any_round(store):
+    assert store.hall(DAY) == {"winners": [], "records": {}} and store.crown() is None

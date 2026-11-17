@@ -221,7 +221,7 @@ class Store:
             return {r["slot"]: r["value"] for r in rows}
 
     def board(self, day: str, slot: str, now: datetime, live_value: float | None, viewer: str = "",
-              reveal_all: bool = False) -> dict:
+              reveal_all: bool = False, crown_user: str = "") -> dict:
         """Rows for display. Before the lock only the viewer's own guess is shown (others hidden).
         Locked: sorted by distance from the live number. Settled: final ranks."""
         st = self.round_status(day, slot, now)
@@ -239,8 +239,53 @@ class Store:
             if hidden and not me:
                 continue
             out.append({"name": p["display_name"], "value": p["value"], "mine": me,
+                        "crown": bool(crown_user) and p["username"] == crown_user,
                         "abs_err": p.get("abs_err"), "rank": p.get("rank") if not hidden else None})
         return dict(st, target=target, hidden=hidden, rows=out)
+
+    def winners(self, limit: int = 500) -> list[dict]:
+        """Every settled round's winner, newest first (close before noon on the same day)."""
+        with self._conn() as c:
+            rounds = [dict(r) for r in c.execute("SELECT * FROM rounds WHERE status='settled'")]
+        rounds.sort(key=lambda r: (r["day"], r["slot"] == "close"), reverse=True)
+        out = []
+        for r in rounds:
+            ranked = rank(self.predictions(r["day"], r["slot"]), r["actual_pl"])
+            if not ranked:
+                continue
+            w = ranked[0]
+            out.append({"day": r["day"], "slot": r["slot"], "label": SLOT_LABEL[r["slot"]],
+                        "username": w["username"], "name": w["display_name"], "value": w["value"],
+                        "actual": r["actual_pl"], "abs_err": w["abs_err"], "n_players": len(ranked),
+                        "margin": round(ranked[1]["abs_err"] - w["abs_err"], 2) if len(ranked) > 1 else None})
+            if len(out) >= limit:
+                break
+        return out
+
+    def crown(self) -> dict | None:
+        """The crown belongs to the most recent round winner until the next round settles."""
+        w = self.winners(limit=1)
+        return w[0] if w else None
+
+    def hall(self, today: str) -> dict:
+        """Hall of fame: every winner, plus records. Public: display names only."""
+        ws = self.winners()
+        start, end = season_bounds(today)
+        table = self.standings(start, end)
+        records = {}
+        if ws:
+            best = min(ws, key=lambda w: (w["abs_err"], w["day"]))
+            records["closest_call"] = {k: best[k] for k in ("name", "day", "label", "value", "actual", "abs_err")}
+            big = max(ws, key=lambda w: (w["n_players"], w["day"]))
+            records["biggest_field"] = {k: big[k] for k in ("name", "day", "label", "n_players")}
+            counts: dict[str, list] = {}
+            for w in ws:
+                counts.setdefault(w["username"], [w["name"], 0])[1] += 1
+            nm, n = max(counts.values(), key=lambda x: x[1])
+            records["most_wins_ever"] = {"name": nm, "wins": n}
+        if table and table[0]["wins"] > 0:
+            records["month_leader"] = {"name": table[0]["name"], "wins": table[0]["wins"], "season": start[:7]}
+        return {"winners": [{k: v for k, v in w.items() if k != "username"} for w in ws], "records": records}
 
     def standings(self, start_day: str, end_day: str) -> list[dict]:
         """Season table over settled rounds: wins, rounds played, average error."""
