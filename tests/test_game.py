@@ -275,7 +275,7 @@ def test_watch_view_is_plain_english_and_ordered():
         {"symbol": "OWN", "is_position": True, "price": 5.0}]}
     w = game.watch_view(p)
     assert [x["symbol"] for x in w] == ["GO", "SQ", "FAR"]
-    assert [x["stage"] for x in w] == ["buying now", "in the buy zone", "watching"]
+    assert [x["stage"] for x in w] == ["buying now", "extended - past entry", "watching"]
     assert w[1]["trend"] == "hot" and w[2]["heat"] == 40 and w[2]["chg"] == 1.2
     assert set(w[0]) == {"symbol", "last", "chg", "heat", "trend", "stage", "ready"}
     assert "movers" not in json.dumps(w) and "pctr" not in json.dumps(w)
@@ -307,3 +307,13 @@ def test_landing_page_is_the_game_and_the_desk_moved(tmp_path, monkeypatch):
     assert home.status_code == 200 and 'id="adm"' in home.text and "/desk#admin" in home.text
     desk = c.get("/desk")
     assert desk.status_code == 200 and "data-admin-btn" in desk.text and 'href="/play"' not in desk.text
+
+
+def test_presquare_is_the_buy_zone_and_square_is_past_entry():
+    p = {"entry_book": [
+        {"symbol": "SQ", "status": "watching", "exhaustion": 86, "exh_seat_class": "square"},
+        {"symbol": "PRE", "status": "watching", "exhaustion": 70, "exh_seat_class": "pre_square"},
+        {"symbol": "FAR", "status": "watching", "exhaustion": 30, "exh_seat_class": "far"}]}
+    w = game.watch_view(p)
+    assert [(x["symbol"], x["stage"]) for x in w] == [
+        ("PRE", "in the buy zone"), ("SQ", "extended - past entry"), ("FAR", "watching")]

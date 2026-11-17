@@ -212,7 +212,7 @@ tr.ready td{background:rgba(34,197,94,.08)}
 .ptab tr.tick-up td{animation:tup .8s} .ptab tr.tick-down td{animation:tdn .8s}
 @keyframes tup{0%{box-shadow:inset 0 0 0 999px rgba(74,222,128,.22)}100%{box-shadow:inset 0 0 0 999px transparent}}
 @keyframes tdn{0%{box-shadow:inset 0 0 0 999px rgba(251,113,133,.22)}100%{box-shadow:inset 0 0 0 999px transparent}}
-.stage.hot{color:var(--accent-2)} .stage.now{color:var(--up)}
+.stage.hot{color:var(--accent-2)} .stage.now{color:var(--up)} .stage.ext{color:var(--down);opacity:.85}
 .heat .bar{background:rgba(139,92,246,.18)}
 .heat .bar i{background:linear-gradient(90deg,#60a5fa,#a78bfa,#d4b15a,#fb7185)}
 /* trade feed as purple rows */
@@ -577,7 +577,7 @@ function renderWatch(W) {
       <td class="num c-chg ${cls(w.chg)}">${w.chg == null ? '—' : (w.chg >= 0 ? '+' : '') + w.chg.toFixed(1) + '%'}</td>
       <td class="num"><span class="heat"><span class="bar"><i style="width:${w.heat ?? 0}%"></i></span>
         <span class="ar">${{up: '↑', down: '↓', hot: '🔥'}[w.trend] || ''}</span></span></td>
-      <td><span class="stage ${w.ready ? 'now' : w.stage === 'in the buy zone' ? 'hot' : ''}">${esc(w.stage)}</span></td></tr>`).join('') + '</table>'
+      <td><span class="stage ${w.ready ? 'now' : w.stage === 'in the buy zone' ? 'hot' : w.stage.startsWith('extended') ? 'ext' : ''}">${esc(w.stage)}</span></td></tr>`).join('') + '</table>'
     : 'Nothing on deck right now.';
 }
 async function pollDesk() {

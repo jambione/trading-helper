@@ -429,7 +429,10 @@ def desk_view(p: dict) -> dict:
     return {"updated": _num(p.get("updated")), "positions": pos, "feed": feed[:60], "watch": watch_view(p)}
 
 
-_SEAT_LABEL = {"square": "in the buy zone", "pre_square": "getting close", "os": "bouncing off a low"}
+# The restored desk buys only on the APPROACH (ai_watch_presquare_only): pre_square is the buy zone; "square" (both %R
+# lines already overbought) is past the buy point and blocked as not_presquare. Labelled so on 11/17 after OMF showed
+# "in the buy zone" while the desk (correctly) refused it.
+_SEAT_LABEL = {"pre_square": "in the buy zone", "square": "extended - past entry", "os": "bouncing off a low"}
 
 
 def watch_view(p: dict) -> list[dict]:
@@ -448,6 +451,6 @@ def watch_view(p: dict) -> list[dict]:
                         str(r.get("exhaustion_state") or ""), ""),
                     "stage": "buying now" if ready else _SEAT_LABEL.get(seat, "watching"),
                     "ready": ready})
-    rank = {"buying now": 0, "in the buy zone": 1, "getting close": 2, "bouncing off a low": 3}
+    rank = {"buying now": 0, "in the buy zone": 1, "bouncing off a low": 2, "extended - past entry": 3}
     out.sort(key=lambda w: (rank.get(w["stage"], 9), -(w["heat"] or 0), w["symbol"] or ""))
     return out
