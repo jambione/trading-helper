@@ -1,0 +1,17 @@
+{
+ "id": "relative_admit_2026-11-17",
+ "registered": "2026-11-17 ~14:20 ET, while tools/studies/relative_admit.py was running and BEFORE any of its output was read",
+ "operator": "11/17: 'keep our strategy intact with a high win ratio, and also have more opens'; 'How would I know if I can turn it on'",
+ "switch": "ai_relative_strength_admit (market_tape.py, commit 0f7a9157, default false)",
+ "study": "tools/studies/relative_admit.py on the full SIP minute-bar warehouse (ai_reports/relative_admit/result.json)",
+ "turn_on_if_ALL": {
+  "more_opens": "red days: rel_per_10m >= 1.25 x base_per_10m (at least 25% more signals on red days)",
+  "quality_net": "red days: extra mean_net_bp >= base mean_net_bp - 1.0, AND the day-clustered t of (extra - base) > -2.0",
+  "quality_win": "red days: extra win_pct >= base win_pct - 3 points",
+  "green_days_unchanged": "all days: base_per_10m and the base trades are identical under both rules on days SPY is up (by construction; checked)",
+  "enough_data": "red days >= 20 and extra n >= 300"
+ },
+ "else": "leave it off; report which condition failed",
+ "after_turn_on": "ONE live paper experiment (it ends the baseline week): judged by docs/BROKER_TRUTH.md over 5 sessions - opens per 10 min on red days up, win rate and net per trade not worse than the 11/04-11/06 reference (60% win, -2.0 bp). Turn off if win rate falls more than 5 points below the reference.",
+ "caveats": "signals are an upper bound on opens: the desk's spread / volume / tape gates are not modelled (they apply to both rules alike). Minute bars, not the desk's live tick path."
+}
