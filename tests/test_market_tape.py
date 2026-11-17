@@ -75,3 +75,15 @@ def test_study_summary_counts_extra_trades_separately():
     s = ra.summarize(rows)["red_days"]
     assert s["base"]["n"] == 1 and s["extra"]["n"] == 1 and s["extra"]["mean_net_bp"] == -4.0
     assert s["extra_minus_base_bp_daymean"] == -14.0
+
+
+def test_floor_bands_band_and_summary():
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "studies"))
+    import floor_bands as fb
+    assert [fb.band_of(p) for p in (2.0, 4.99, 5.0, 19.99, 20.0, 1.5)] == ["2-5", "2-5", "5-10", "10-20", "20+", None]
+    tr = [{"band": "2-5", "gross": 30.0, "spread": 40.0, "gated": False},
+          {"band": "2-5", "gross": 20.0, "spread": 10.0, "gated": True},
+          {"band": "2-5", "gross": 5.0, "spread": None, "gated": False}]
+    s = fb.summarize(tr, 1)
+    assert s["2-5_gate"]["n"] == 1 and s["2-5_gate"]["net_bp"] == 10.0
+    assert s["2-5_nogate"]["n"] == 2 and s["2-5_nogate"]["net_bp"] == 0.0 and s["2-5_unknown_spread"] == 1
