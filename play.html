@@ -7,10 +7,13 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="apple-mobile-web-app-title" content="Call the P&amp;L" />
+<meta name="apple-mobile-web-app-title" content="Brasfield" />
 <link rel="apple-touch-icon" href="/static/favicon.png" />
-<title>Call the P&amp;L</title>
+<title>Brasfield Momentum · Call the P&amp;L</title>
 <link rel="icon" type="image/png" href="/static/favicon.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600&family=Space+Grotesk:wght@700&display=swap" rel="stylesheet" />
 <style>
 :root{
   --bg:#0b0f17; --panel:#121826; --line:#1f2a3d; --text:#e6ecf5; --dim:#8593a8;
@@ -22,8 +25,13 @@ header{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;align-i
   padding:calc(10px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left));border-bottom:1px solid var(--line)}
 .mini{display:none;font-weight:800;font-size:20px;font-variant-numeric:tabular-nums}
 body.scrolled .mini{display:block}
-header h1{font-size:18px;margin:0;letter-spacing:.5px}
-header h1 b{color:var(--accent)}
+/* Brand block: same as the dashboard header (logo, Brasfield Momentum, product name underneath). */
+.brand{display:flex;align-items:center;gap:14px;min-width:0;text-decoration:none}
+.brand img{width:44px;height:44px;object-fit:contain;flex-shrink:0}
+.brand-text{display:flex;flex-direction:column;gap:4px;min-width:0}
+.brand-title{margin:0;font-family:'Space Grotesk','Inter',sans-serif;font-size:22px;font-weight:700;letter-spacing:.02em;white-space:nowrap;line-height:1}
+.brand-title .n{color:#f0f6ff}.brand-title .s{color:#d4b15a}
+.brand-sub{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:9px;font-weight:600;letter-spacing:.22em;text-transform:uppercase;color:#7d93b5}
 .who{color:var(--dim);font-size:13px}
 .who a{color:var(--dim)}
 main{max-width:1100px;margin:0 auto;padding:16px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));display:grid;gap:16px;grid-template-columns:1fr}
@@ -37,6 +45,10 @@ main{max-width:1100px;margin:0 auto;padding:16px calc(16px + env(safe-area-inset
 @media(max-width:600px){
   .pl{font-size:52px}
   .who #me,.who .sep{display:none}
+  .brand img{width:36px;height:36px}
+  .brand{gap:10px}
+  .brand-title{font-size:17px}
+  body.scrolled .brand-text{display:none}
   td,th{padding:8px 4px}
   button{min-height:44px}
 }
@@ -138,7 +150,14 @@ tr.win td:first-child::before{content:"🏆 "}
 </head>
 <body>
 <header>
-  <h1>Call the <b>P&amp;L</b></h1>
+  <a class="brand" href="/play">
+    <img src="/static/brasfield-logo.png" alt="Brasfield logo" />
+    <span class="brand-text">
+      <h1 class="brand-title"><span class="n">Brasfield</span> <span class="s">Momentum</span></h1>
+      <!-- The game's name lives here only (placeholder); the tab title is built from it. -->
+      <span class="brand-sub" id="game-name">Call the P&amp;L</span>
+    </span>
+  </a>
   <div class="mini" id="mini"></div>
   <div class="who"><span id="me"></span><span class="sep"> · </span><a href="#" id="logout">sign out</a></div>
 </header>
@@ -179,6 +198,7 @@ tr.win td:first-child::before{content:"🏆 "}
 <canvas id="confetti"></canvas>
 <script>
 const TOKEN_KEY = 'ss:token';
+document.title = 'Brasfield Momentum · ' + document.getElementById('game-name').textContent.trim();
 if (/[?&]embed=1/.test(location.search)) {          // inside the operator dashboard's Predictions tab
   document.querySelector('header').style.display = 'none';
   document.querySelector('.rules').style.display = 'none';
