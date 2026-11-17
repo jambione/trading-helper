@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Nightly job after the day desk was wound down (operator 2026-11-11: "calling it quits" on day trading).
+# Nightly job. 11/11 wound-down version kept only the pick steps; 11/17 the day desk was restored, so the desk nightly (scripts/nightly.sh) runs first, then the pick steps.
 # Run by com.jambi.nightly-studies at 16:40 ET on weekdays; safe to run by hand: scripts/nightly_picks.sh [DAY]
 # Keeps only what the longer-hold pick test needs:
 #   1. append today's bars to the study warehouses (daily data for longer-horizon tests)
@@ -11,7 +11,8 @@ cd ~/repo/trading-helper || exit 1
 d=${1:-$(TZ=America/New_York date +%F)}
 mkdir -p /tmp/nightly
 until [ "$(TZ=America/New_York date +%H%M)" -ge 1635 ] || [ "$d" != "$(TZ=America/New_York date +%F)" ]; do sleep 60; done
-nice -n 19 .venv/bin/python tools/studies/warehouse_nightly.py > /tmp/nightly/warehouse-$d.log 2>&1
+# Day desk restored 11/17 (operator): the desk's own nightly (forward studies, day review, scoreboard, broker truth report AND the warehouse append) runs first.
+scripts/nightly.sh "$d" > /tmp/nightly/nightly-desk-$d.log 2>&1
 # Catch-up: if Monday's run was missed (machine off, agent did not answer), record this week's picks tonight.
 # Both commands do nothing when the week is already recorded; the entry is then the next open. Each ends by writing its report.
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
