@@ -1,0 +1,31 @@
+{
+ "id": "news_source_2026-11-17",
+ "registered": "2026-11-17 ~16:40 ET, before any news history was fetched or any result read",
+ "operator": "11/17: 'start building the news source test' - more opens with the strategy intact (entry rule and exits unchanged)",
+ "question": "Do names with fresh Alpaca news, admitted by the desk's own rule, add buy signals the desk does not already get - at no worse quality?",
+ "data": {
+  "news": "Alpaca historical news (free with the account, data-only keys), 07:00-15:30 ET per day, cached in ai_reports/news_source/news/<day>.json",
+  "bars": "SIP minute-bar warehouse ai_reports/warehouse/sip (+ SPY/QQQ via sip_hedge). A news name with no bars there is counted, not scored.",
+  "seen": "names the desk already had that day = every symbol in that day's admission ledger (ai_reports/admit_ledger/<day>.jsonl, or ~/data_archive/admit_ledger/<day>.jsonl.gz)"
+ },
+ "rule": {
+  "causal": "a news name is a candidate only from the minute of its FIRST story that day (stories before 09:30 count at 09:30). Nothing after a signal minute is used to admit it.",
+  "admission": "the desk's rule at the signal minute: price $20-$400, day change >= 1.5% vs prior close (the RELATIVE variant with the live market_tape bar is an information cell)",
+  "signal": "the desk's live pre-square arm (evening_family.presquare_bars, fast %R 21), refractory 30 min, minutes 15-360",
+  "trade": "buy open t+1, sell close t+10, cost 6 bp (10 bp stress) - the same as tools/studies/relative_admit.py"
+ },
+ "arms": {
+  "BASE": "signals on the tight-screener universe (top 400 liquid, ETFs out) admitted by the same rule - the supply the desk already has",
+  "NEWS_EXTRA": "signals on news candidates that are NOT in that day's admission ledger and NOT in the top-400 universe"
+ },
+ "turn_on_if_ALL (ledger days only)": {
+  "more_opens": "NEWS_EXTRA signals per 10 min >= 15% of BASE signals per 10 min",
+  "quality_net": "NEWS_EXTRA mean net bp >= BASE mean net bp - 1.0, AND day-clustered t of (extra - base) > -2.0",
+  "quality_win": "NEWS_EXTRA win % >= BASE win % - 3 points",
+  "enough_data": ">= 30 ledger days with bars and >= 300 NEWS_EXTRA signals; if fewer, the verdict is UNDERPOWERED (not a pass)"
+ },
+ "information_cells": ["all warehouse days, extra = not in top-400 (no ledger)", "RELATIVE admission bar", "spread-gated (15 bp, combined_spreads.json)", "share of news names with no bars"],
+ "else": "do not build the live source; report which condition failed",
+ "after_pass": "build the news source behind a switch (default off); it becomes the NEXT week's single live experiment after market-relative admission is judged",
+ "caveats": "signals are an upper bound on opens (spread/volume/tape gates not modelled, equal for both arms); minute bars, not the live tick path; news symbols tag related companies too, so some candidates are mentions, not the subject"
+}
