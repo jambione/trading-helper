@@ -134,6 +134,9 @@ tr.win td:first-child::before{content:"🏆 "}
 @keyframes tup{0%{background:rgba(34,197,94,.25)}100%{background:transparent}}
 @keyframes tdn{0%{background:rgba(239,68,68,.25)}100%{background:transparent}}
 .wtab td.sym{font-weight:700;letter-spacing:.5px}
+td.sym[data-sym]{cursor:pointer}
+td.sym[data-sym]:hover{color:var(--accent);text-decoration:underline}
+td.sym.copied{color:var(--up)}
 .heat{display:flex;align-items:center;gap:6px;justify-content:flex-end}
 .heat .bar{width:70px;height:6px;border-radius:3px;background:#1f2a3d;overflow:hidden}
 .heat .bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#60a5fa,#f5b301,#ef4444)}
@@ -438,11 +441,27 @@ const pct = v => v == null ? '' : (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
 const hhmm = ts => ts ? new Date(ts * 1000).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York'}).replace(/ [AP]M$/, '') : '';
 let lastPx = {}, seenFeed = null;
 const shares = q => q == null ? '' : (Math.abs(q - Math.round(q)) < 1e-6 ? Math.round(q) : q.toFixed(2)) + ' sh';
+// Click a ticker (On deck or positions): open its TradingView chart in ONE reused tab - same as the desk's
+// book (static/js/tickers.js openTradingViewChart): a named window target, so later clicks re-point that tab
+// instead of piling up new ones or tripping the pop-up blocker - and copy the symbol.
+function openChart(sym) {
+  sym = String(sym || '').trim().toUpperCase();
+  if (!sym) return;
+  const w = window.open('https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(sym), 'tvchart');
+  if (w) { try { w.focus(); } catch (e) {} }
+  try { navigator.clipboard && navigator.clipboard.writeText(sym); } catch (e) {}
+}
+['watch', 'positions'].forEach(id => document.getElementById(id).addEventListener('click', e => {
+  const td = e.target.closest('td[data-sym]');
+  if (!td) return;
+  openChart(td.dataset.sym);
+  td.classList.add('copied'); setTimeout(() => td.classList.remove('copied'), 700);
+}));
 function renderWatch(W) {
   document.getElementById('watch-n').textContent = W.length ? '· ' + W.length + ' names' : '';
   document.getElementById('watch').innerHTML = W.length ?
     '<table class="wtab"><tr><th>Ticker</th><th class="num">Last</th><th class="num c-chg">Chg</th><th class="num">Heat</th><th>Stage</th></tr>' +
-    W.map(w => `<tr class="${w.ready ? 'ready' : ''}"><td class="sym">${esc(w.symbol)}</td><td class="num">${px(w.last)}</td>
+    W.map(w => `<tr class="${w.ready ? 'ready' : ''}"><td class="sym" data-sym="${esc(w.symbol)}" title="Open ${esc(w.symbol)} in TradingView">${esc(w.symbol)}</td><td class="num">${px(w.last)}</td>
       <td class="num c-chg ${cls(w.chg)}">${w.chg == null ? '—' : (w.chg >= 0 ? '+' : '') + w.chg.toFixed(1) + '%'}</td>
       <td class="num"><span class="heat"><span class="bar"><i style="width:${w.heat ?? 0}%"></i></span>
         <span class="ar">${{up: '↑', down: '↓', hot: '🔥'}[w.trend] || ''}</span></span></td>
@@ -458,7 +477,7 @@ async function pollDesk() {
       '<table class="ptab"><tr><th>Ticker</th><th class="num">Last</th><th class="num c-entry">Entry</th><th class="num c-stop">Stop</th><th class="num">P&amp;L</th></tr>' +
       P.map(p => {
         const prev = lastPx[p.symbol], dir = prev == null || p.last == null || p.last === prev ? '' : p.last > prev ? 'tick-up' : 'tick-down';
-        return `<tr class="${dir}"><td class="sym">${esc(p.symbol)}<span class="sub">in ${px(p.entry)}${p.stop != null ? ' · stop ' + px(p.stop) : ''}</span></td>
+        return `<tr class="${dir}"><td class="sym" data-sym="${esc(p.symbol)}" title="Open ${esc(p.symbol)} in TradingView">${esc(p.symbol)}<span class="sub">in ${px(p.entry)}${p.stop != null ? ' · stop ' + px(p.stop) : ''}</span></td>
           <td class="num">${px(p.last)}</td><td class="num c-entry">${px(p.entry)}</td><td class="num c-stop">${px(p.stop)}</td>
           <td class="num ${cls(p.pl)}">${money(p.pl)}<span class="pct">${pct(p.plpc)}</span></td></tr>`;
       }).join('') + '</table>' : 'Flat — no open positions.';
