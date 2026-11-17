@@ -256,3 +256,19 @@ def test_hall_records_and_no_usernames(store):
 
 def test_hall_is_empty_before_any_round(store):
     assert store.hall(DAY) == {"winners": [], "records": {}} and store.crown() is None
+
+
+def test_watch_view_is_plain_english_and_ordered():
+    p = {"entry_book": [
+        {"symbol": "FAR", "status": "watching", "price": 10.0, "pct_change": 1.2, "exhaustion": 40, "exhaustion_state": "heating",
+         "exh_seat_class": "far", "g_spread": 0.3, "pctr": -70, "score": 0.9, "source": "movers"},
+        {"symbol": "SQ", "status": "watching", "price": 20.0, "pct_change": 3.0, "exhaustion": 75, "exhaustion_state": "overbought",
+         "exh_seat_class": "square"},
+        {"symbol": "GO", "status": "watching", "ready": True, "price": 30.0, "exhaustion": 60, "exh_seat_class": "square"},
+        {"symbol": "OWN", "is_position": True, "price": 5.0}]}
+    w = game.watch_view(p)
+    assert [x["symbol"] for x in w] == ["GO", "SQ", "FAR"]
+    assert [x["stage"] for x in w] == ["buying now", "in the buy zone", "watching"]
+    assert w[1]["trend"] == "hot" and w[2]["heat"] == 40 and w[2]["chg"] == 1.2
+    assert set(w[0]) == {"symbol", "last", "chg", "heat", "trend", "stage", "ready"}
+    assert "movers" not in json.dumps(w) and "pctr" not in json.dumps(w)

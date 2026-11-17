@@ -401,4 +401,28 @@ def desk_view(p: dict) -> dict:
             feed.append({"ts": _num(ex.get("time")), "side": "sell", "symbol": sym, "price": px, "qty": q,
                          "pl": pl, "why": {"stop": "stopped out", "scale out": "took partial"}.get(str(ex.get("reason") or ""), "")})
     feed.sort(key=lambda e: e["ts"] or 0, reverse=True)
-    return {"updated": _num(p.get("updated")), "positions": pos, "feed": feed[:60]}
+    return {"updated": _num(p.get("updated")), "positions": pos, "feed": feed[:60], "watch": watch_view(p)}
+
+
+_SEAT_LABEL = {"square": "in the buy zone", "pre_square": "getting close", "os": "bouncing off a low"}
+
+
+def watch_view(p: dict) -> list[dict]:
+    """The names the desk might buy next: price, day change, a 0-100 heat reading with its direction, and a
+    plain-English stage. No gates, scores, seeds or indicator internals."""
+    out = []
+    for r in p.get("entry_book") or []:
+        if not isinstance(r, dict) or r.get("is_position") or r.get("status") == "open":
+            continue
+        heat = _num(r.get("exhaustion"))
+        ready = bool(r.get("ready"))
+        seat = str(r.get("exh_seat_class") or "")
+        out.append({"symbol": r.get("symbol"), "last": _num(r.get("price")), "chg": _num(r.get("pct_change")),
+                    "heat": None if heat is None else round(max(0.0, min(100.0, heat)), 1),
+                    "trend": {"heating": "up", "cooling": "down", "overbought": "hot"}.get(
+                        str(r.get("exhaustion_state") or ""), ""),
+                    "stage": "buying now" if ready else _SEAT_LABEL.get(seat, "watching"),
+                    "ready": ready})
+    rank = {"buying now": 0, "in the buy zone": 1, "getting close": 2, "bouncing off a low": 3}
+    out.sort(key=lambda w: (rank.get(w["stage"], 9), -(w["heat"] or 0), w["symbol"] or ""))
+    return out
