@@ -12,6 +12,7 @@ import auth  # noqa: E402
 import game  # noqa: E402
 
 DAY = "2026-11-18"          # a Wednesday, not a holiday
+TEST_PW = "Passw0rd!x"  # pragma: allowlist secret  (throwaway login for a temp user file)
 
 
 def at(hh, mm, ss=0, day=DAY):
@@ -149,11 +150,11 @@ def test_standings_count_wins_and_average_error(store):
 # ---------------------------------------------------------------- accounts and the player gate
 def test_open_signup_makes_an_active_player(tmp_path, monkeypatch):
     monkeypatch.setattr(auth, "_USERS_FILE", tmp_path / "users.json")
-    auth.request_account("owner", "Passw0rd!x", "o@example.com", "Owner")
-    prof, err = auth.request_account("pat", "Passw0rd!x", "p@example.com", "Pat", open_signup=True)
+    auth.request_account("owner", TEST_PW, "o@example.com", "Owner")
+    prof, err = auth.request_account("pat", TEST_PW, "p@example.com", "Pat", open_signup=True)
     assert not err and prof["status"] == "active" and prof["role"] == "player"
     assert auth.is_player("pat") and not auth.is_player("owner")
-    prof2, _ = auth.request_account("quin", "Passw0rd!x", "q@example.com", "Quin")
+    prof2, _ = auth.request_account("quin", TEST_PW, "q@example.com", "Quin")
     assert prof2["status"] == "pending" and not auth.is_player("quin")
 
 
@@ -162,14 +163,14 @@ def player_client(tmp_path, monkeypatch):
     import dashboard as d
     from fastapi.testclient import TestClient
     monkeypatch.setattr(auth, "_USERS_FILE", tmp_path / "users.json")
-    auth.request_account("owner", "Passw0rd!x", "o@example.com", "Owner")
-    auth.request_account("pat", "Passw0rd!x", "p@example.com", "Pat", open_signup=True)
+    auth.request_account("owner", TEST_PW, "o@example.com", "Owner")
+    auth.request_account("pat", TEST_PW, "p@example.com", "Pat", open_signup=True)
     monkeypatch.setattr(d, "is_auth_required", lambda: True)
     monkeypatch.setattr(d, "record_login", lambda *a, **k: None)
     monkeypatch.setattr(d, "record_traffic_hit", lambda *a, **k: None)
     monkeypatch.setattr(d, "_game_store_obj", game.Store(tmp_path / "g.sqlite", None))
     c = TestClient(d.app)
-    assert c.post("/auth/login", json={"username": "pat", "password": "Passw0rd!x"}).status_code == 200
+    assert c.post("/auth/login", json={"username": "pat", "password": TEST_PW}).status_code == 200
     return c
 
 
