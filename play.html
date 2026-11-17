@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#0b0f17" />
+<meta name="theme-color" content="#0c1828" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -13,15 +13,29 @@
 <link rel="icon" type="image/png" href="/static/favicon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600&family=Space+Grotesk:wght@700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
 <style>
 :root{
-  --bg:#0b0f17; --panel:#121826; --line:#1f2a3d; --text:#e6ecf5; --dim:#8593a8;
-  --up:#22c55e; --down:#ef4444; --accent:#f5b301; --me:#60a5fa;
+  /* The desk's palette (static/css/styles.css): navy surfaces, gold accent, mint/coral P&L, Book purples. */
+  --bg:#0a1220; --bg-deep:#070e18; --panel:#101b2e; --card:#152338; --nav:#0c1828; --nav2:#122036;
+  --line:rgba(255,255,255,.08); --line-hi:rgba(255,255,255,.12);
+  --text:#c8d6ee; --dim:#7d94b8; --bright:#f0f6ff;
+  --up:#4ade80; --up-bg:rgba(74,222,128,.08); --up-bd:rgba(74,222,128,.30);
+  --down:#fb7185; --down-bg:rgba(251,113,133,.08); --down-bd:rgba(251,113,133,.30);
+  --accent:#d4b15a; --accent-2:#e0bc72; --accent-glow:rgba(201,160,68,.18); --accent-bd:rgba(201,160,68,.32);
+  --me:#60a5fa; --warm:#fbbf24;
+  --pu-bd:rgba(167,139,250,.45); --pu-row:rgba(30,20,50,.45); --pu-row-bd:rgba(139,92,246,.14);
+  --pu-hi:rgba(76,29,149,.28); --pu-open:rgba(109,40,217,.38); --pu-text:#ede9fe; --pu-sub:#c4b5fd;
+  --ready:rgba(6,78,59,.48); --ready-bd:rgba(52,211,153,.55);
+  --f-ui:'Inter',ui-sans-serif,system-ui,sans-serif; --f-disp:'Space Grotesk','Inter',sans-serif;
+  --f-mono:'JetBrains Mono','Fira Code',ui-monospace,monospace;
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-header{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;align-items:center;justify-content:space-between;gap:8px;
+body{margin:0;color:var(--text);font:15px/1.4 var(--f-ui);
+  background:radial-gradient(1200px 600px at 15% -10%,rgba(76,29,149,.16),transparent 60%),
+             radial-gradient(900px 500px at 100% 0%,rgba(201,160,68,.07),transparent 60%),var(--bg);
+  background-attachment:fixed}
+header{position:sticky;top:0;z-index:5;background:rgba(12,24,40,.94);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:space-between;gap:8px;
   padding:calc(10px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left));border-bottom:1px solid var(--line)}
 .mini{display:none;font-weight:800;font-size:20px;font-variant-numeric:tabular-nums}
 body.scrolled .mini{display:block}
@@ -104,7 +118,7 @@ tr.win td:first-child::before{content:"🏆 "}
 .rec .k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
 .rec .v{font-weight:700;margin-top:2px}
 .rec .s{font-size:12px;color:var(--dim)}
-.hof li{display:block}
+.feed.hof li{display:block}
 .hof .meta{font-size:12px;color:var(--dim)}
 .linkbtn{background:none;color:var(--dim);padding:6px 0;font-weight:500;text-decoration:underline;min-height:0}
 .replay{background:#1f2a3d;color:var(--text);font-size:12px;padding:4px 10px;min-height:0;margin-left:8px}
@@ -166,6 +180,85 @@ tr.ready td{background:rgba(34,197,94,.08)}
   .ptab .sub{display:block}
 }
 .rules li{margin:4px 0}
+
+/* ── Desk look (operator 11/17: "more of that color scheme") ─────────────────────────────────── */
+.card{background:linear-gradient(180deg,rgba(18,32,54,.92),var(--panel));border:1px solid var(--line-hi);border-radius:12px;
+  box-shadow:0 4px 24px rgba(0,0,0,.40)}
+.hero{background:radial-gradient(500px 160px at 50% 0%,var(--accent-glow),transparent 70%),linear-gradient(180deg,#13223a,var(--panel));
+  border-color:var(--accent-bd);box-shadow:0 0 0 1px rgba(201,160,68,.08),0 4px 28px rgba(0,0,0,.45),0 0 40px rgba(201,160,68,.08)}
+.hero .label{font-family:var(--f-disp);letter-spacing:.14em;font-weight:600}
+.pl{font-family:var(--f-disp);font-weight:700;letter-spacing:-.01em}
+.pl.up{color:var(--up);text-shadow:0 0 28px rgba(74,222,128,.25)} .pl.down{color:var(--down);text-shadow:0 0 28px rgba(251,113,133,.22)}
+.mini{font-family:var(--f-disp)}
+.badge{border-color:var(--accent-bd);color:var(--accent-2);background:rgba(201,160,68,.08)}
+.ctitle,.side h3{font-family:var(--f-disp);font-weight:600;letter-spacing:.1em}
+.round h2{font-family:var(--f-disp);font-weight:700;color:var(--bright)}
+/* the Book's purple panel: gradient body, header strip, purple row cards */
+.card.book{background:linear-gradient(180deg,rgba(76,29,149,.22) 0%,rgba(20,18,32,.96) 42%,#141220 100%);border-color:var(--pu-bd);
+  box-shadow:0 0 0 1px rgba(139,92,246,.18),0 4px 28px rgba(88,28,135,.28),0 0 40px rgba(139,92,246,.08);padding-top:0;overflow:hidden}
+.card.book > h3{margin:0 -16px 10px;padding:12px 16px;color:var(--pu-text);font-size:13px;
+  background:linear-gradient(90deg,rgba(91,33,182,.55) 0%,rgba(32,30,48,.95) 70%);border-bottom:1px solid rgba(167,139,250,.35)}
+.card.book > h3 .stale{color:var(--pu-sub)}
+.card.book table{border-collapse:separate;border-spacing:0 4px}
+.card.book th{color:var(--pu-sub);font-family:var(--f-disp);font-weight:600;letter-spacing:.08em;text-transform:uppercase;font-size:11px;border:0}
+.card.book td{background:var(--pu-row);border-top:1px solid var(--pu-row-bd);border-bottom:1px solid var(--pu-row-bd);padding:9px 8px}
+.card.book td:first-child{border-left:1px solid var(--pu-row-bd);border-radius:8px 0 0 8px}
+.card.book td:last-child{border-right:1px solid var(--pu-row-bd);border-radius:0 8px 8px 0}
+.card.book tr:hover td{background:var(--pu-hi);border-color:rgba(167,139,250,.4)}
+.ptab td{background:var(--pu-open)!important;border-color:rgba(167,139,250,.55)!important}
+.wtab tr.ready td{background:var(--ready)!important;border-color:var(--ready-bd)!important}
+.card.book td.sym{font-family:var(--f-mono);color:var(--bright);letter-spacing:.06em}
+.card.book td.num,.card.book .feed .what{font-family:var(--f-mono);font-size:13px}
+.ptab tr.tick-up td{animation:tup .8s} .ptab tr.tick-down td{animation:tdn .8s}
+@keyframes tup{0%{box-shadow:inset 0 0 0 999px rgba(74,222,128,.22)}100%{box-shadow:inset 0 0 0 999px transparent}}
+@keyframes tdn{0%{box-shadow:inset 0 0 0 999px rgba(251,113,133,.22)}100%{box-shadow:inset 0 0 0 999px transparent}}
+.stage.hot{color:var(--accent-2)} .stage.now{color:var(--up)}
+.heat .bar{background:rgba(139,92,246,.18)}
+.heat .bar i{background:linear-gradient(90deg,#60a5fa,#a78bfa,#d4b15a,#fb7185)}
+/* trade feed as purple rows */
+.card.book .feed{max-height:460px}
+.card.book .feed li{background:var(--pu-row);border:1px solid var(--pu-row-bd);border-radius:8px;padding:8px 10px;margin-bottom:4px}
+.feed .side.buy{background:var(--up-bg);color:var(--up);border:1px solid var(--up-bd)}
+.feed .side.sell{background:rgba(251,191,36,.08);color:var(--warm);border:1px solid rgba(251,191,36,.30)}
+.feed .t{font-family:var(--f-mono)}
+/* rounds: desk pills, gold buttons */
+.phase{font-family:var(--f-disp);font-weight:700;border:1px solid transparent}
+.phase.open{background:var(--up-bg);color:var(--up);border-color:var(--up-bd)}
+.phase.locked{background:rgba(251,191,36,.08);color:var(--warm);border-color:rgba(251,191,36,.30)}
+.phase.scoring{background:rgba(96,165,250,.08);color:#60a5fa;border-color:rgba(96,165,250,.30)}
+.phase.settled{background:rgba(139,92,246,.15);color:var(--pu-sub);border-color:rgba(167,139,250,.35)}
+.phase.void,.phase.off{background:var(--down-bg);color:var(--down);border-color:var(--down-bd)}
+button{background:linear-gradient(135deg,var(--accent-2),var(--accent));color:#1a1305;box-shadow:0 2px 10px rgba(201,160,68,.25)}
+.sign{background:var(--card);color:var(--text);box-shadow:none;border:1px solid var(--line-hi)}
+.sign.neg{background:var(--down-bg);color:var(--down);border-color:var(--down-bd)}
+.replay,.rv .close{background:rgba(139,92,246,.18);color:var(--pu-text);border:1px solid rgba(167,139,250,.35);box-shadow:none}
+.linkbtn{background:none;box-shadow:none}
+input.guess{background:var(--bg-deep);border:1px solid var(--line-hi);font-family:var(--f-mono)}
+input.guess:focus{outline:none;border-color:var(--accent-bd);box-shadow:0 0 0 3px var(--accent-glow)}
+td,th{border-bottom:1px solid var(--line)}
+.round td.num{font-family:var(--f-mono);font-size:13px}
+.dot{border-color:var(--panel)} .dot.win{background:var(--accent);box-shadow:0 0 10px var(--accent)}
+.track{border-top-color:rgba(167,139,250,.25)}
+.rec{background:rgba(139,92,246,.08);border-color:rgba(167,139,250,.22)}
+.reign{color:var(--accent-2)}
+.hbtn{border-color:var(--line-hi);background:rgba(255,255,255,.02)}
+.rv{background:radial-gradient(800px 400px at 50% 30%,rgba(76,29,149,.35),transparent 70%),rgba(7,14,24,.985)}
+.rv .count,.rv .wname{font-family:var(--f-disp)} .rv .final{font-family:var(--f-disp)}
+main{grid-template-columns:minmax(0,1fr)} main > *{min-width:0} .card{min-width:0}
+main > div, main > aside{grid-template-columns:minmax(0,1fr)} .rounds{grid-template-columns:minmax(0,1fr)}
+@media(min-width:700px){.rounds{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media(min-width:900px){main{grid-template-columns:minmax(0,2fr) minmax(0,1fr)}}
+@media(max-width:600px){
+  .card.book td{padding:8px 5px} .card.book table{border-spacing:0 3px}
+  .card.book td.num,.card.book .feed .what{font-size:12px}
+  .card.book td.sym{font-size:13px}
+  .ptab .pct{display:none}
+  .card.book table{width:100%}
+  .ptab .sub{white-space:normal;font-size:10.5px;line-height:1.3}
+  .ptab .sub .st{display:block}
+  .stage{white-space:normal;font-size:11px}
+  .reign{font-size:13px}
+}
 </style>
 </head>
 <body>
@@ -198,12 +291,12 @@ tr.ready td{background:rgba(34,197,94,.08)}
       <div class="stale" id="age"></div>
       <div class="reign" id="reign"></div>
     </section>
-    <section class="card"><h3 class="ctitle">Desk positions <span class="stale" id="pos-n"></span></h3><div id="positions" class="stale">—</div></section>
-    <section class="card"><h3 class="ctitle">On deck <span class="stale" id="watch-n"></span></h3><div id="watch" class="stale">—</div></section>
+    <section class="card book"><h3 class="ctitle">Desk positions <span class="stale" id="pos-n"></span></h3><div id="positions" class="stale">—</div></section>
+    <section class="card book"><h3 class="ctitle">On deck <span class="stale" id="watch-n"></span></h3><div id="watch" class="stale">—</div></section>
     <div class="rounds" id="rounds"></div>
   </div>
   <aside style="display:grid;gap:16px;align-content:start">
-    <section class="card side"><h3>Trade feed</h3><div id="trades" class="stale">—</div></section>
+    <section class="card side book"><h3>Trade feed</h3><div id="trades" class="stale">—</div></section>
     <section class="card side"><h3>Hall of fame</h3><div id="hall" class="stale">The first crown is up for grabs.</div></section>
     <section class="card side"><h3>Season standings <span id="season"></span></h3><div id="standings" class="stale">No rounds settled yet.</div></section>
     <section class="card side rules"><h3>How it works</h3><ul>
@@ -496,7 +589,7 @@ async function pollDesk() {
       '<table class="ptab"><tr><th>Ticker</th><th class="num">Last</th><th class="num c-entry">Entry</th><th class="num c-stop">Stop</th><th class="num">P&amp;L</th></tr>' +
       P.map(p => {
         const prev = lastPx[p.symbol], dir = prev == null || p.last == null || p.last === prev ? '' : p.last > prev ? 'tick-up' : 'tick-down';
-        return `<tr class="${dir}"><td class="sym" data-sym="${esc(p.symbol)}" title="Open ${esc(p.symbol)} in TradingView">${esc(p.symbol)}<span class="sub">in ${px(p.entry)}${p.stop != null ? ' · stop ' + px(p.stop) : ''}</span></td>
+        return `<tr class="${dir}"><td class="sym" data-sym="${esc(p.symbol)}" title="Open ${esc(p.symbol)} in TradingView">${esc(p.symbol)}<span class="sub">in ${px(p.entry)}${p.stop != null ? '<span class="st"> · stop ' + px(p.stop) + '</span>' : ''}</span></td>
           <td class="num">${px(p.last)}</td><td class="num c-entry">${px(p.entry)}</td><td class="num c-stop">${px(p.stop)}</td>
           <td class="num ${cls(p.pl)}">${money(p.pl)}<span class="pct">${pct(p.plpc)}</span></td></tr>`;
       }).join('') + '</table>' : 'Flat — no open positions.';
