@@ -22,7 +22,7 @@ _STORE = (_ROOT / "static" / "js" / "store.js").read_text(encoding="utf-8")
 _DASH = (_ROOT / "dashboard.py").read_text(encoding="utf-8")
 
 # Every Scan source, so a fifth tab cannot be added half-wired either.
-SOURCES = ["tickers", "trending", "movers", "claude"]
+SOURCES = ["game", "tickers", "trending", "movers", "claude"]
 
 
 def test_every_scan_source_has_a_radio_a_label_and_a_pane():

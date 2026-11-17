@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=194" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=195" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -129,6 +129,9 @@
                     🔔 Alerts
                 </button>
 
+                <!-- Call the P&L: the full game page (the only way in on a phone, where the Scan panel is hidden) -->
+                <a href="/play" class="btn btn--ghost" title="Call the P&amp;L — the prediction game">🎯 Game</a>
+
                 <!-- Settings: shown to everyone on localhost; hidden for remote admins -->
                 <button data-settings-btn class="btn btn--ghost admin-settings-hide">
                     ⚙ Settings<span id="feedback-badge" class="feedback-badge" hidden></span>
@@ -195,6 +198,7 @@
         <main class="main-grid">
             <!-- ── SCAN: one table, three sources ───────────────── -->
             <section class="panel panel-scan" data-panel="scan">
+                <input class="scan-radio" type="radio" name="scan-src" id="scan-src-game" value="game" />
                 <input class="scan-radio" type="radio" name="scan-src" id="scan-src-claude" value="claude" />
                 <input class="scan-radio" type="radio" name="scan-src" id="scan-src-tickers" value="tickers" checked />
                 <input class="scan-radio" type="radio" name="scan-src" id="scan-src-trending" value="trending" />
@@ -203,6 +207,7 @@
                 <div class="panel-header panel-header--scan">
                     <span class="panel-title">Scan</span>
                     <div class="scan-sources" role="tablist" aria-label="Scan source">
+                        <label class="scan-source-tab" for="scan-src-game" title="Call the P&amp;L — players' noon and close predictions">Predictions</label>
                         <label class="scan-source-tab" for="scan-src-tickers">Momentum</label>
                         <label class="scan-source-tab" for="scan-src-trending">Trend</label>
                         <label class="scan-source-tab" for="scan-src-movers" title="Alpaca day movers — the one seed that is not sentiment">Movers</label>
@@ -221,6 +226,11 @@
                 </div>
 
                 <div class="scan-body">
+                    <!-- Call the P&L: the player game page, embedded (loads on first open) -->
+                    <section data-panel="game" class="scan-pane" aria-label="Predictions">
+                        <iframe id="game-frame" title="Predictions" data-src="/play?embed=1"
+                                style="flex:1;min-height:0;width:100%;border:0;background:transparent"></iframe>
+                    </section>
                     <!-- Mine (watchlist) -->
                     <section data-panel="tickers" class="scan-pane panel-watchlist">
                         <div class="panel-header">
@@ -977,5 +987,14 @@
             })();
         </script>
         <div id="toast-container"></div>
-    </body>
+    <script>
+(function () {
+  var r = document.getElementById('scan-src-game'), f = document.getElementById('game-frame');
+  if (!r || !f) return;
+  function load() { if (r.checked && !f.getAttribute('src')) f.setAttribute('src', f.getAttribute('data-src')); }
+  document.querySelectorAll('input[name="scan-src"]').forEach(function (x) { x.addEventListener('change', load); });
+  load();
+})();
+</script>
+</body>
 </html>

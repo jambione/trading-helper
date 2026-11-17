@@ -66,7 +66,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse as _SJSONResponse
 
 from auth import (authenticate, create_token, verify_token, is_auth_required,
-                   get_token_username, is_admin_user, user_is_active,
+                   get_token_username, is_admin_user, user_is_active, is_player,
                    request_account, public_profile, list_public_users,
                    set_user_status, change_password, update_profile,
                    create_reset_token, reset_password,
@@ -91,6 +91,7 @@ from config import (load_config, save_config, SAFE_CONFIG_KEYS,
                     PROTECTED_CONFIG_KEYS)
 from session_clock import session_window, next_shot
 import engine_env
+import game
 import version
 
 from email_service import (
@@ -3641,6 +3642,14 @@ def _require_admin(request: Request) -> tuple[str, JSONResponse | None]:
     return username, None
 
 
+_PLAYER_PATHS  = {"/play", "/api/meta", "/favicon.ico", "/auth/logout"}
+_PLAYER_PREFIX = ("/api/game/", "/static/")
+
+
+def _player_path_ok(path: str) -> bool:
+    return path in _PLAYER_PATHS or any(path.startswith(p) for p in _PLAYER_PREFIX)
+
+
 class _AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Auth is opt-in — disabled by default for local use
@@ -3687,6 +3696,12 @@ class _AuthMiddleware(BaseHTTPMiddleware):
 
         # Update last-seen for this user
         _touch_session(username)
+
+        # Game-only accounts (open signup) see the prediction game and nothing of the desk.
+        if username and is_player(username) and not _player_path_ok(path):
+            if path == "/" or not path.startswith("/api"):
+                return RedirectResponse("/play", status_code=302)
+            return _SJSONResponse({"ok": False, "error": "Not available"}, status_code=403)
 
         return await call_next(request)
 
@@ -3856,6 +3871,8 @@ def _bind_ai_entry_watch_in_process() -> None:
 @app.on_event("startup")
 async def _startup():
     loop = asyncio.get_running_loop()
+    if "pytest" not in sys.modules:
+        game.start_settler(_GAME_STORE(), load_ai_positions, log=log)
     # Live server only: tests that start the app must keep the real
     # ai_entry_watch functions (they patch module attributes process-wide).
     if "pytest" not in sys.modules:
@@ -3900,6 +3917,8 @@ async def root(request: Request):
         token, _username = _request_identity(request)
         if not verify_token(token):
             return RedirectResponse("/login", status_code=302)
+        if _username and is_player(_username):
+            return RedirectResponse("/play", status_code=302)
     return FileResponse("dashboard.html")
 
 
@@ -4010,7 +4029,8 @@ async def auth_register(request: Request):
         loop = asyncio.get_running_loop()
         profile, err = await loop.run_in_executor(
             None,
-            lambda: request_account(username, password, email, display_name),
+            lambda: request_account(username, password, email, display_name,
+                                    open_signup=bool((STATE.cfg or {}).get("game_open_signup"))),
         )
         if err or not profile:
             status = 409 if err in ("Username is taken", "Email is already in use") else 400
@@ -4018,11 +4038,12 @@ async def auth_register(request: Request):
                                 status_code=status)
 
         _auth_rate_hit(f"register:{ip}")
-        await loop.run_in_executor(
-            _EMAIL_POOL,
-            lambda: send_access_request_email(
-                profile["username"], profile.get("email") or email, profile.get("display_name") or display_name),
-        )
+        if profile.get("status") == "pending":     # instant game accounts need no approval mail
+            await loop.run_in_executor(
+                _EMAIL_POOL,
+                lambda: send_access_request_email(
+                    profile["username"], profile.get("email") or email, profile.get("display_name") or display_name),
+            )
         if profile.get("email"):
             await loop.run_in_executor(
                 _EMAIL_POOL,
@@ -5236,6 +5257,111 @@ async def api_push_unsubscribe(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# ── Call the P&L (prediction game) ─────────────────────────────────────────
+_game_store_obj: "game.Store | None" = None
+
+
+def _GAME_STORE() -> "game.Store":
+    global _game_store_obj
+    if _game_store_obj is None:
+        _game_store_obj = game.Store()
+    return _game_store_obj
+
+
+def _game_viewer(request: Request) -> tuple[str, str]:
+    _t, username = _request_identity(request)
+    prof = public_profile(username) if username else None
+    return username or "", ((prof or {}).get("display_name") or "Player").strip()[:40]
+
+
+@app.get("/play")
+async def play_page(request: Request):
+    if is_auth_required():
+        token, _u = _request_identity(request)
+        if not verify_token(token):
+            return RedirectResponse("/login", status_code=302)
+    return FileResponse("play.html")
+
+
+@app.get("/api/game/state")
+async def api_game_state(request: Request):
+    """Everything the game page needs in one poll: live P&L, both rounds, my guesses, the boards."""
+    username, _name = _game_viewer(request)
+    now = game.et_now()
+    day = now.date().isoformat()
+    store = _GAME_STORE()
+    payload = load_ai_positions()
+    live = game.live_pl(payload, now.timestamp())
+    admin = is_admin_user(username)
+    return {
+        "ok": True, "now_ts": now.timestamp(), "day": day, "game_day": game.is_game_day(day),
+        "live": live, "paper": (payload or {}).get("mode") != "live",
+        "rounds": [store.board(day, s, now, live["value"], viewer=username, reveal_all=admin) for s in game.SLOTS],
+        "mine": store.mine(username, day) if username else {},
+        "me": {"name": _name, "admin": admin},
+    }
+
+
+@app.post("/api/game/predict")
+async def api_game_predict(request: Request):
+    username, name = _game_viewer(request)
+    if not username:
+        return JSONResponse({"ok": False, "error": "Sign in to play"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    now = game.et_now()
+    ok, err = _GAME_STORE().submit(username, name, now.date().isoformat(), str(body.get("slot") or ""),
+                                   body.get("value"), now)
+    return JSONResponse({"ok": ok, "error": err}, status_code=200 if ok else 400)
+
+
+@app.get("/api/game/board")
+async def api_game_board(request: Request, day: str = ""):
+    username, _n = _game_viewer(request)
+    now = game.et_now()
+    try:
+        day = (game.date.fromisoformat(day) if day else now.date()).isoformat()
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "bad day"}, status_code=400)
+    live = game.live_pl(load_ai_positions(), now.timestamp())["value"] if day == now.date().isoformat() else None
+    store = _GAME_STORE()
+    return {"ok": True, "day": day,
+            "rounds": [store.board(day, s, now, live, viewer=username, reveal_all=is_admin_user(username))
+                       for s in game.SLOTS]}
+
+
+@app.get("/api/game/standings")
+async def api_game_standings(request: Request, day: str = ""):
+    now = game.et_now()
+    try:
+        start, end = game.season_bounds(day or now.date().isoformat())
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "bad day"}, status_code=400)
+    rows = _GAME_STORE().standings(start, end)
+    for r in rows:
+        r.pop("username", None)           # public table: display names only
+    return {"ok": True, "season": start[:7], "rows": rows}
+
+
+@app.get("/api/game/desk")
+async def api_game_desk(request: Request):
+    """Read-only cut of the desk for players: open positions and today's closed trades. No config, no controls."""
+    p = load_ai_positions() or {}
+    pos = []
+    for sym, d in (p.get("positions") or {}).items():
+        if isinstance(d, dict):
+            pos.append({"symbol": sym, "pl": d.get("pl"), "plpc": d.get("plpc"),
+                        "entry": d.get("avg_entry"), "price": d.get("current")})
+    hist = []
+    for r in ((p.get("day_history") or {}).get("rows") or [])[-40:]:
+        if isinstance(r, dict):
+            hist.append({"symbol": r.get("symbol"), "status": r.get("status"), "pl": r.get("pl"),
+                         "entry_time": r.get("entry_time"), "entry_price": r.get("entry_price")})
+    return {"ok": True, "updated": p.get("updated"), "positions": pos, "trades": hist}
+
+
 @app.get("/api/meta")
 async def api_meta(request: Request):
     token, username = _request_identity(request)
@@ -5509,6 +5635,9 @@ async def ws_endpoint(ws: WebSocket, token: str = ""):
     await ws.accept()
     if is_auth_required() and not verify_token(_ws_token(ws, token)):
         await ws.close(code=4001)
+        return
+    if is_auth_required() and is_player(get_token_username(_ws_token(ws, token)) or ""):
+        await ws.close(code=4003)
         return
     import json as _json
     last_snap_str = None

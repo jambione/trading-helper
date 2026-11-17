@@ -245,6 +245,7 @@ def public_profile(username: str, entry=None, *, admin_view: bool = False) -> di
         "display_name": rec["display_name"],
         "email": rec["email"],
         "admin": rec["admin"],
+        "role": rec.get("role") or ("admin" if rec["admin"] else ""),
         "status": rec["status"],
         "created_at": rec["created_at"],
         "billing": {
@@ -368,10 +369,14 @@ def request_account(
     password: str,
     email: str,
     display_name: str,
+    *,
+    open_signup: bool = False,
 ) -> tuple[dict | None, str]:
     """
     Public signup. First account on an empty store becomes admin+active.
-    Everyone after that is pending until an admin approves.
+    Everyone after that is pending until an admin approves - unless
+    ``open_signup`` (config ``game_open_signup``), which makes the account
+    active at once with role "player": players see only the prediction game.
     Returns (public_profile, error).
     """
     username = username.strip().lower()
@@ -399,8 +404,9 @@ def request_account(
             if rec["email"] and rec["email"] == email:
                 return None, "Email is already in use"
         first = len(users) == 0
-        status = "active" if first else "pending"
+        status = "active" if (first or open_signup) else "pending"
         rec = _as_record(username, {
+            "role": "admin" if first else ("player" if open_signup else ""),
             "hash": _hash_password(password),
             "admin": first,
             "status": status,
@@ -426,6 +432,15 @@ def set_admin(username: str, admin: bool) -> bool:
     if ok:
         log.info("[AUTH] Admin set to %s for user: %s", admin, username)
     return ok
+
+
+def is_player(username: str) -> bool:
+    """True for game-only accounts (open signup). They never see the desk dashboard."""
+    username = (username or "").strip().lower()
+    entry = _load_users().get(username)
+    if entry is None or is_admin_user(username):
+        return False
+    return _as_record(username, entry).get("role") == "player"
 
 
 def is_admin_user(username: str) -> bool:

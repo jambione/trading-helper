@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0f17" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Call the P&amp;L" />
+<link rel="apple-touch-icon" href="/static/favicon.png" />
+<title>Call the P&amp;L</title>
+<link rel="icon" type="image/png" href="/static/favicon.png" />
+<style>
+:root{
+  --bg:#0b0f17; --panel:#121826; --line:#1f2a3d; --text:#e6ecf5; --dim:#8593a8;
+  --up:#22c55e; --down:#ef4444; --accent:#f5b301; --me:#60a5fa;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:calc(10px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left));border-bottom:1px solid var(--line)}
+.mini{display:none;font-weight:800;font-size:20px;font-variant-numeric:tabular-nums}
+body.scrolled .mini{display:block}
+header h1{font-size:18px;margin:0;letter-spacing:.5px}
+header h1 b{color:var(--accent)}
+.who{color:var(--dim);font-size:13px}
+.who a{color:var(--dim)}
+main{max-width:1100px;margin:0 auto;padding:16px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));display:grid;gap:16px;grid-template-columns:1fr}
+@media(min-width:900px){main{grid-template-columns:2fr 1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.hero{text-align:center}
+.hero .label{color:var(--dim);font-size:13px;text-transform:uppercase;letter-spacing:1px}
+.pl{font-size:64px;font-weight:800;font-variant-numeric:tabular-nums;margin:6px 0;transition:color .3s}
+.pl.up{color:var(--up)} .pl.down{color:var(--down)}
+.pl.flash{animation:flash .6s}
+@media(max-width:600px){
+  .pl{font-size:52px}
+  .who #me,.who .sep{display:none}
+  td,th{padding:8px 4px}
+  button{min-height:44px}
+}
+@keyframes flash{0%{transform:scale(1.06)}100%{transform:scale(1)}}
+.stale{color:var(--dim);font-size:13px}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
+.rounds{display:grid;gap:16px;grid-template-columns:1fr}
+@media(min-width:700px){.rounds{grid-template-columns:1fr 1fr}}
+.round h2{margin:0 0 4px;font-size:16px;display:flex;justify-content:space-between;align-items:center}
+.phase{font-size:11px;padding:2px 8px;border-radius:99px;text-transform:uppercase;letter-spacing:.5px}
+.phase.open{background:#14532d;color:#bbf7d0}.phase.locked{background:#3f2d00;color:#fde68a}
+.phase.scoring{background:#1e3a8a;color:#bfdbfe}.phase.settled{background:#334155;color:#e2e8f0}
+.phase.void,.phase.off{background:#3b0a0a;color:#fecaca}
+.clock{color:var(--dim);font-size:13px;margin-bottom:10px}
+.clock b{color:var(--text);font-variant-numeric:tabular-nums}
+form{display:flex;gap:8px;margin:8px 0}
+.sign{background:#1f2a3d;color:var(--text);min-width:48px;font-size:20px;padding:0 12px}
+.sign.neg{background:#3b0a0a;color:#fecaca}
+input.guess{flex:1;min-width:0;background:#0b1220;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:10px;font-size:16px}
+button{background:var(--accent);color:#111;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}
+button:disabled{opacity:.4;cursor:default}
+.msg{font-size:13px;min-height:18px;color:var(--dim)}
+.msg.err{color:var(--down)} .msg.ok{color:var(--up)}
+.track{position:relative;height:44px;margin:14px 0 6px;border-top:2px solid var(--line)}
+.dot{position:absolute;top:-7px;width:12px;height:12px;border-radius:50%;background:#94a3b8;transform:translateX(-50%);border:2px solid var(--panel)}
+.dot.me{background:var(--me);width:16px;height:16px;top:-9px}
+.dot.win{background:var(--accent)}
+.needle{position:absolute;top:-16px;width:2px;height:30px;background:var(--text);transform:translateX(-50%);transition:left .6s}
+.needle span{position:absolute;top:30px;left:50%;transform:translateX(-50%);font-size:11px;white-space:nowrap;color:var(--text)}
+.ends{display:flex;justify-content:space-between;color:var(--dim);font-size:11px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--dim);font-weight:500;font-size:12px}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+tr.me td{color:var(--me);font-weight:600}
+tr.win td:first-child::before{content:"🏆 "}
+.banner{display:none;background:linear-gradient(90deg,#3f2d00,#14532d);border:1px solid var(--accent);border-radius:12px;padding:14px;text-align:center;font-size:18px;font-weight:700}
+.side h3{margin:0 0 8px;font-size:14px;color:var(--dim);text-transform:uppercase;letter-spacing:1px}
+.up{color:var(--up)} .down{color:var(--down)}
+.rules{color:var(--dim);font-size:13px}
+.rules li{margin:4px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Call the <b>P&amp;L</b></h1>
+  <div class="mini" id="mini"></div>
+  <div class="who"><span id="me"></span><span class="sep"> · </span><a href="#" id="logout">sign out</a></div>
+</header>
+<main>
+  <div style="display:grid;gap:16px">
+    <div class="banner" id="banner"></div>
+    <section class="card hero">
+      <div class="label">Desk day P&amp;L · live <span class="badge" id="paper">paper account</span></div>
+      <div class="pl" id="live">—</div>
+      <div class="stale" id="age"></div>
+    </section>
+    <div class="rounds" id="rounds"></div>
+  </div>
+  <aside style="display:grid;gap:16px;align-content:start">
+    <section class="card side"><h3>Desk positions</h3><div id="positions" class="stale">—</div></section>
+    <section class="card side"><h3>Today's trades</h3><div id="trades" class="stale">—</div></section>
+    <section class="card side"><h3>Season standings <span id="season"></span></h3><div id="standings" class="stale">No rounds settled yet.</div></section>
+    <section class="card side rules"><h3>How it works</h3><ul>
+      <li>Guess where the desk's day P&amp;L will be at <b>noon</b> and at the <b>4:00 close</b>.</li>
+      <li>Noon guesses lock at 9:30. Close guesses lock at noon.</li>
+      <li>Closest wins. Ties go to whoever guessed first.</li>
+      <li>Other guesses stay hidden until a round locks.</li>
+      <li>Just for fun: a paper account, no money, no prizes.</li>
+    </ul></section>
+  </aside>
+</main>
+<script>
+const TOKEN_KEY = 'ss:token';
+if (/[?&]embed=1/.test(location.search)) {          // inside the operator dashboard's Predictions tab
+  document.querySelector('header').style.display = 'none';
+  document.querySelector('.rules').style.display = 'none';
+  document.querySelector('main').style.gridTemplateColumns = '1fr';
+}
+const tok = () => { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } };
+async function api(path, opts = {}) {
+  const h = Object.assign({'Content-Type': 'application/json'}, opts.headers || {});
+  if (tok()) h['Authorization'] = 'Bearer ' + tok();
+  const r = await fetch(path, Object.assign({credentials: 'same-origin'}, opts, {headers: h}));
+  if (r.status === 401) { location.href = '/login'; throw new Error('unauthorized'); }
+  return r.json();
+}
+const money = v => v == null ? '—' : (v < 0 ? '−$' : '+$') + Math.abs(v).toFixed(2);
+const cls = v => v == null ? '' : v >= 0 ? 'up' : 'down';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function hms(sec) {
+  sec = Math.max(0, Math.floor(sec)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
+}
+let S = null, cardHTML = {}, clockSkew = 0, lastLive = null, drafts = {}, shownBanner = {};
+
+function renderLive() {
+  const el = document.getElementById('live'), v = S.live.value;
+  el.textContent = money(v); el.className = 'pl ' + cls(v);
+  if (v != null && lastLive != null && v !== lastLive) { el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 600); }
+  lastLive = v;
+  const mini = document.getElementById('mini'); mini.textContent = money(v); mini.className = 'mini ' + cls(v);
+  document.getElementById('age').textContent = v == null ? 'Desk feed is quiet right now.' : 'updated ' + Math.round(S.live.age_sec) + 's ago';
+  document.getElementById('paper').style.display = S.paper ? '' : 'none';
+  document.getElementById('me').textContent = S.me.name;
+}
+
+function trackHTML(r) {
+  const vals = r.rows.map(x => x.value).concat(r.target != null ? [r.target] : []);
+  if (!vals.length) return '';
+  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = Math.max(10, (hi - lo) * 0.15); lo -= pad; hi += pad;
+  const pos = v => ((v - lo) / (hi - lo) * 100).toFixed(2) + '%';
+  let h = '<div class="track">';
+  for (const x of r.rows) h += `<div class="dot ${x.mine ? 'me' : ''} ${x.rank === 1 && r.phase === 'settled' ? 'win' : ''}" style="left:${pos(x.value)}" title="${esc(x.name)} ${money(x.value)}"></div>`;
+  if (r.target != null) h += `<div class="needle" style="left:${pos(r.target)}"><span>${r.phase === 'settled' ? 'final' : 'now'} ${money(r.target)}</span></div>`;
+  return h + `</div><div class="ends"><span>${money(lo)}</span><span>${money(hi)}</span></div>`;
+}
+
+function roundHTML(r) {
+  const now = Date.now() / 1000 + clockSkew, mine = S.mine[r.slot];
+  let clock = '';
+  if (r.phase === 'open') clock = `Guesses lock in <b data-until="${r.lock_ts}">${hms(r.lock_ts - now)}</b>`;
+  else if (r.phase === 'locked') clock = `Locked · answer in <b data-until="${r.cutoff_ts}">${hms(r.cutoff_ts - now)}</b> · ${r.n_players} playing`;
+  else if (r.phase === 'scoring') clock = 'Reading the desk number…';
+  else if (r.phase === 'settled') clock = `Final: <b class="${cls(r.actual_pl)}">${money(r.actual_pl)}</b> · ${r.n_players} played`;
+  else if (r.phase === 'void') clock = 'No result this round (desk snapshot missing).';
+  else clock = 'No game today — market closed.';
+  let form = '';
+  if (r.phase === 'open') {
+    const d = drafts[r.slot] ?? (mine ?? ''), neg = String(d).trim().startsWith('-');
+    form = `<form data-slot="${r.slot}"><button type="button" class="sign ${neg ? 'neg' : ''}" aria-label="Switch between gain and loss">${neg ? '−' : '+'}</button>
+            <input class="guess" type="text" inputmode="decimal" autocomplete="off" placeholder="dollars, e.g. 25.00" value="${esc(String(d).replace(/^[-+]/, ''))}" />
+            <button>${mine == null ? 'Lock it in' : 'Update'}</button></form>
+            <div class="msg" id="msg-${r.slot}">${mine == null ? 'You have not guessed yet.' : 'Your guess: ' + money(mine)}${r.hidden ? ' · ' + r.n_players + ' guesses in (hidden until lock)' : ''}</div>`;
+  } else if (mine != null) {
+    form = `<div class="msg">Your guess: <b>${money(mine)}</b></div>`;
+  }
+  let rows = '';
+  if (r.rows.length && !(r.hidden && r.rows.length <= 1)) {
+    rows = '<table><tr><th>#</th><th>Player</th><th class="num">Guess</th><th class="num">Off by</th></tr>' +
+      r.rows.map(x => `<tr class="${x.mine ? 'me' : ''} ${x.rank === 1 && r.phase === 'settled' ? 'win' : ''}"><td>${x.rank ?? ''}</td><td>${esc(x.name)}</td>
+        <td class="num">${money(x.value)}</td><td class="num">${x.abs_err == null ? '' : '$' + x.abs_err.toFixed(2)}</td></tr>`).join('') + '</table>';
+  }
+  return `<section class="card round"><h2>${r.label} round <span class="phase ${r.phase}">${r.phase}</span></h2>
+          <div class="clock">${clock}</div>${form}${r.hidden ? '' : trackHTML(r)}${rows}</section>`;
+}
+
+function renderRounds() {
+  // One card per round, rebuilt only when its content changed (countdowns tick in place), and never
+  // while the player is in that card's form - so a tap on a phone never lands on a vanished button.
+  const box = document.getElementById('rounds'), fresh = [];
+  for (const r of S.rounds) {
+    let card = box.querySelector(`[data-card="${r.slot}"]`);
+    if (!card) { card = document.createElement('div'); card.dataset.card = r.slot; box.appendChild(card); }
+    const html = roundHTML(r).replace(/(data-until="[^"]*">)[^<]*/g, '$1');
+    if (cardHTML[r.slot] === html) continue;
+    if (card.contains(document.activeElement) && document.activeElement.closest('form')) continue;
+    cardHTML[r.slot] = html; card.innerHTML = roundHTML(r); fresh.push(card);
+  }
+  tick();
+  fresh.flatMap(c => [...c.querySelectorAll('form')]).forEach(f => {
+    const inp = f.querySelector('input'), sg = f.querySelector('.sign');
+    const signed = () => { const v = inp.value.replace(/[^0-9.]/g, ''); return v === '' ? '' : (sg.classList.contains('neg') ? '-' : '') + v; };
+    inp.addEventListener('input', () => { drafts[f.dataset.slot] = signed(); });
+    sg.addEventListener('click', () => { sg.classList.toggle('neg'); sg.textContent = sg.classList.contains('neg') ? '−' : '+'; drafts[f.dataset.slot] = signed(); });
+    f.addEventListener('submit', async e => {
+      e.preventDefault();
+      const slot = f.dataset.slot, msg = document.getElementById('msg-' + slot);
+      const val = signed();
+      if (val === '' || isNaN(+val)) { msg.className = 'msg err'; msg.textContent = 'Enter a dollar amount'; return; }
+      const res = await api('/api/game/predict', {method: 'POST', body: JSON.stringify({slot, value: val})});
+      if (res.ok) { delete drafts[slot]; inp.blur(); await poll(); const m = document.getElementById('msg-' + slot); if (m) { m.className = 'msg ok'; m.textContent = 'Locked in: ' + money(+val); } }
+      else { msg.className = 'msg err'; msg.textContent = res.error || 'Could not save'; }
+    });
+  });
+  for (const r of S.rounds) {
+    if (r.phase === 'settled' && r.rows.length && !shownBanner[r.day + r.slot] && r.cutoff_ts > Date.now() / 1000 - 3600) {
+      shownBanner[r.day + r.slot] = 1;
+      const w = r.rows.find(x => x.rank === 1), b = document.getElementById('banner');
+      b.textContent = `🏆 ${r.label} winner: ${w.name} — guessed ${money(w.value)}, final ${money(r.actual_pl)}`;
+      b.style.display = 'block';
+    }
+  }
+}
+
+function tick() {
+  const now = Date.now() / 1000 + clockSkew;
+  document.querySelectorAll('[data-until]').forEach(b => { b.textContent = hms(+b.dataset.until - now); });
+}
+
+async function poll() {
+  try {
+    S = await api('/api/game/state');
+    clockSkew = S.now_ts - Date.now() / 1000;
+    renderLive(); renderRounds();
+  } catch (e) { /* keep last view */ }
+}
+async function pollDesk() {
+  try {
+    const d = await api('/api/game/desk');
+    document.getElementById('positions').innerHTML = d.positions.length ?
+      '<table>' + d.positions.map(p => `<tr><td>${esc(p.symbol)}</td><td class="num ${cls(p.pl)}">${money(p.pl)}</td></tr>`).join('') + '</table>' : 'Flat.';
+    const t = d.trades.slice().reverse();
+    document.getElementById('trades').innerHTML = t.length ?
+      '<table>' + t.map(x => `<tr><td>${esc(x.symbol)}</td><td>${esc(x.status)}</td><td class="num ${cls(x.pl)}">${money(x.pl)}</td></tr>`).join('') + '</table>' : 'No trades yet.';
+  } catch (e) {}
+}
+async function pollStandings() {
+  try {
+    const s = await api('/api/game/standings');
+    document.getElementById('season').textContent = s.season;
+    if (s.rows.length) document.getElementById('standings').innerHTML =
+      '<table><tr><th>Player</th><th class="num">Wins</th><th class="num">Avg off</th></tr>' +
+      s.rows.map(r => `<tr><td>${esc(r.name)}</td><td class="num">${r.wins}</td><td class="num">$${r.avg_err.toFixed(2)}</td></tr>`).join('') + '</table>';
+  } catch (e) {}
+}
+document.getElementById('logout').onclick = async e => {
+  e.preventDefault(); try { localStorage.removeItem(TOKEN_KEY); } catch (x) {}
+  await fetch('/auth/logout', {method: 'POST', credentials: 'same-origin'}); location.href = '/login';
+};
+const hero = document.querySelector('.hero');
+addEventListener('scroll', () => document.body.classList.toggle('scrolled', hero.getBoundingClientRect().bottom < 60), {passive: true});
+poll(); pollDesk(); pollStandings();
+setInterval(poll, 3000); setInterval(pollDesk, 10000); setInterval(pollStandings, 60000);
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
