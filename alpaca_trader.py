@@ -1344,6 +1344,37 @@ def dedupe_open_orders(keep: str = "newest") -> dict:
 # liquidate_all: one refusal used to be final.
 _CANCEL_SETTLE_SEC = 2.0
 _LIQUIDATE_ATTEMPTS = 3
+# A market SELL this young is a close already on its way, not clutter. The paper broker fills fractional
+# closes in pieces over several seconds; on 2026-11-17 the SOD flatten cancelled its own unfilled closes on
+# every pass (29 passes, COLD FIGS G GOOG) and only stopped when the operator paused it. Older than this,
+# the order is treated as stuck: cancelled and re-sent.
+_CLOSE_INFLIGHT_MAX_SEC = 60.0
+
+
+def _is_inflight_close(order, now_ts: float | None = None) -> bool:
+    """True for an open market SELL submitted within _CLOSE_INFLIGHT_MAX_SEC (a close in flight)."""
+    side = str(getattr(getattr(order, "side", ""), "value", getattr(order, "side", "")) or "").lower()
+    typ = str(getattr(getattr(order, "type", ""), "value", getattr(order, "type", "")) or "").lower()
+    if side != "sell" or typ != "market":
+        return False
+    sub = getattr(order, "submitted_at", None) or getattr(order, "created_at", None)
+    try:
+        sub_ts = sub.timestamp()
+    except Exception:  # noqa: BLE001
+        return False
+    return (time.time() if now_ts is None else now_ts) - sub_ts <= _CLOSE_INFLIGHT_MAX_SEC
+
+
+def _list_open_orders():
+    """Open orders, or None when the broker cannot be read."""
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+        return list(_client.get_orders(
+            filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=100)) or [])
+    except Exception as e:  # noqa: BLE001
+        log.warning("[TRADER] list open orders failed: %s", e)
+        return None
 
 
 def liquidate_all(*, except_symbols: set | None = None) -> dict:
@@ -1365,31 +1396,32 @@ def liquidate_all(*, except_symbols: set | None = None) -> dict:
             "ok": False, "canceled": 0, "closed": 0,
             "symbols": [], "errors": ["trader off"],
         }
-    if keep:
-        canceled = 0
-        errors: list[str] = []
-        try:
-            from alpaca.trading.requests import GetOrdersRequest
-            from alpaca.trading.enums import QueryOrderStatus
-            open_orders = list(_client.get_orders(
-                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=100)
-            ) or [])
-        except Exception as e:  # noqa: BLE001
-            errors.append(str(e))
-            open_orders = []
+    canceled = 0
+    errors: list[str] = []
+    inflight: set[str] = set()      # symbols whose close is already on its way: leave it alone
+    open_orders = _list_open_orders() if _client is not None else None
+    if open_orders is not None:
+        now_ts = time.time()
         for o in open_orders:
             sym = str(getattr(o, "symbol", "") or "").upper()
             if not sym or sym in keep:
+                continue
+            if _is_inflight_close(o, now_ts):
+                inflight.add(sym)
                 continue
             try:
                 _cancel_order_by_id(o.id)
                 canceled += 1
             except Exception as e:  # noqa: BLE001
                 errors.append(f"{getattr(o, 'id', '?')}: {e}")
+    elif keep:
+        errors.append("list open orders failed")
     else:
         cancel = cancel_open_orders(None)
         canceled = int(cancel.get("canceled") or 0)
         errors = list(cancel.get("errors") or [])
+    if inflight:
+        print(f"  [TRADER] liquidate_all: waiting on closes already in flight: {sorted(inflight)}", flush=True)
     symbols: list[str] = []
     invalidate_broker_reads()     # verify against the broker, not the tick cache
     detail = get_positions_detail()
@@ -1405,7 +1437,7 @@ def liquidate_all(*, except_symbols: set | None = None) -> dict:
     # retry rather than accept one refusal.
     for attempt in range(_LIQUIDATE_ATTEMPTS):
         remaining = sorted(str(s).upper() for s in detail.keys() if s)
-        remaining = [s for s in remaining if s not in symbols and s not in keep]
+        remaining = [s for s in remaining if s not in symbols and s not in keep and s not in inflight]
         if not remaining:
             break
         if canceled and attempt == 0:
@@ -1461,6 +1493,7 @@ def liquidate_all(*, except_symbols: set | None = None) -> dict:
         "symbols": symbols,
         "errors": errors,
         "still_open": leftover,
+        "pending": sorted(inflight),
     }
 
 

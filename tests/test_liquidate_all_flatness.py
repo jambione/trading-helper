@@ -100,3 +100,90 @@ def test_flat_to_begin_with_is_ok(monkeypatch):
     out = tr.liquidate_all()
 
     assert out["ok"] is True and out["closed"] == 0 and out["still_open"] == []
+
+
+# ── 2026-11-17: closes already in flight are left alone ──────────────────────
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+
+class _Order:
+    def __init__(self, oid, sym, side, typ, age_sec):
+        self.id, self.symbol, self.side, self.type = oid, sym, side, typ
+        self.submitted_at = datetime.now(timezone.utc) - timedelta(seconds=age_sec)
+
+
+class _PieceBroker:
+    """The paper broker on 11/17: a market close stays open and fills in pieces over several seconds.
+    Cancelling it before it finishes means the position is never closed."""
+
+    def __init__(self, positions):
+        self.positions = dict(positions)
+        self.orders = {}          # id -> _Order
+        self.canceled = []
+        self.n = 0
+
+    def submit_close(self, sym):
+        self.n += 1
+        o = _Order(f"o{self.n}", sym, "sell", "market", 0)
+        self.orders[o.id] = o
+        return {"ok": True, "order_id": o.id}
+
+    def cancel(self, oid):
+        self.canceled.append(oid)
+        self.orders.pop(oid, None)
+
+    def fill_all(self):
+        for o in list(self.orders.values()):
+            self.positions.pop(o.symbol, None)
+            self.orders.pop(o.id, None)
+
+
+def _arm_pieces(monkeypatch, b):
+    class _C:
+        def get_orders(self, filter=None):
+            return list(b.orders.values())
+    monkeypatch.setattr(tr, "_client", _C())
+    monkeypatch.setattr(tr, "_can_mutate", lambda: True)
+    monkeypatch.setattr(tr, "_cancel_order_by_id", lambda oid: b.cancel(oid))
+    monkeypatch.setattr(tr, "get_positions_detail", lambda: dict(b.positions))
+    monkeypatch.setattr(tr, "close_out", lambda sym, **kw: b.submit_close(sym))
+    monkeypatch.setattr(tr, "_CANCEL_SETTLE_SEC", 0.0)
+
+
+def test_a_second_pass_does_not_cancel_the_first_pass_closes(monkeypatch):
+    b = _PieceBroker({"COLD": {"qty": 39.2}, "GOOG": {"qty": 2.19}})
+    _arm_pieces(monkeypatch, b)
+    first = tr.liquidate_all()
+    assert first["ok"] is False and sorted(first["still_open"]) == ["COLD", "GOOG"]   # not filled yet
+    assert b.n == 2
+    second = tr.liquidate_all()                                  # the next loop pass, seconds later
+    assert b.canceled == [], "cancelled its own closes in flight - the 11/17 loop"
+    assert b.n == 2, "re-sent closes that were already on their way"
+    assert sorted(second["pending"]) == ["COLD", "GOOG"]
+    b.fill_all()
+    assert tr.liquidate_all()["ok"] is True
+
+
+def test_a_stuck_close_is_cancelled_and_resent(monkeypatch):
+    b = _PieceBroker({"COLD": {"qty": 39.2}})
+    _arm_pieces(monkeypatch, b)
+    b.orders["old"] = _Order("old", "COLD", "sell", "market", tr._CLOSE_INFLIGHT_MAX_SEC + 5)
+    out = tr.liquidate_all()
+    assert b.canceled == ["old"] and b.n == 1 and out["pending"] == []
+
+
+def test_other_open_orders_are_still_cancelled(monkeypatch):
+    b = _PieceBroker({"AAA": {"qty": 5}})
+    _arm_pieces(monkeypatch, b)
+    b.orders["stop"] = _Order("stop", "AAA", "sell", "stop", 5)      # a protective stop is not a close
+    b.orders["buy"] = _Order("buy", "BBB", "buy", "limit", 5)
+    tr.liquidate_all()
+    assert sorted(b.canceled) == ["buy", "stop"] and b.n == 1
+
+
+def test_kept_names_orders_survive(monkeypatch):
+    b = _PieceBroker({"AAA": {"qty": 5}, "H4": {"qty": 3}})
+    _arm_pieces(monkeypatch, b)
+    b.orders["h4stop"] = _Order("h4stop", "H4", "sell", "stop", 5)
+    out = tr.liquidate_all(except_symbols={"H4"})
+    assert "h4stop" not in b.canceled and out["still_open"] == ["AAA"]
