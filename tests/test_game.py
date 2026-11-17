@@ -94,8 +94,12 @@ def test_board_hides_other_guesses_until_the_lock(store):
 
 # ---------------------------------------------------------------- settlement
 def book(updated_dt, pl):
+    """A desk book whose desk trades sum to `pl`, plus a carried-in holding the game must ignore."""
     return {"updated": updated_dt.timestamp(), "mode": "paper",
-            "account": {"day_pl": pl, "equity": 10000 + pl, "last_equity": 10000}}
+            "account": {"day_pl": pl - 40.0, "equity": 10000 + pl, "last_equity": 10000},
+            "day_history": {"day": updated_dt.date().isoformat(), "rows": [
+                {"symbol": "DESK", "entry_time": updated_dt.timestamp() - 600, "pl": pl},
+                {"symbol": "CARRY", "entry_time": None, "pl": -40.0}]}}
 
 
 def test_pick_snapshot_needs_a_book_written_at_or_after_the_cutoff():
@@ -273,3 +277,13 @@ def test_watch_view_is_plain_english_and_ordered():
     assert w[1]["trend"] == "hot" and w[2]["heat"] == 40 and w[2]["chg"] == 1.2
     assert set(w[0]) == {"symbol", "last", "chg", "heat", "trend", "stage", "ready"}
     assert "movers" not in json.dumps(w) and "pctr" not in json.dumps(w)
+
+
+def test_desk_day_pl_ignores_carried_in_holdings_and_refuses_partial_numbers():
+    t = at(11, 45)
+    p = book(t, 13.19)
+    assert game.desk_day_pl(p) == 13.19 and abs(p["account"]["day_pl"] + 26.81) < 1e-9
+    p["day_history"]["rows"].append({"symbol": "OPEN", "entry_time": t.timestamp(), "pl": None})
+    assert game.desk_day_pl(p) is None                                   # a desk row without P&L: no number
+    stale = book(t, 5.0); stale["day_history"]["day"] = "2026-11-17"
+    assert game.desk_day_pl(stale) is None                               # yesterday's history: no number

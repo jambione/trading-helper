@@ -4,9 +4,10 @@ Entertainment only: no entry fee, no prizes, no money in or out. The desk trades
 always does; this module only reads the number it already publishes.
 
 Rules (v1, operator 2026-11-17):
-  * The number is the paper account's day P&L in dollars (Alpaca equity - last_equity), as the desk
-    publishes it in ai_positions_state.json ("account.day_pl"). Players watch that same number live,
-    so the display and the scoring can never disagree.
+  * The number is the DESK's day P&L in dollars: trades the desk opened today, realized plus open marks, from
+    the book's day history in ai_positions_state.json (desk_day_pl). Positions carried in from elsewhere (the
+    picker's holdings sold at the 11/17 open) do not count. Players watch that same number live, so the
+    display and the scoring can never disagree. (Until 11/17 11:50 it was the whole account's day P&L.)
   * Two rounds per trading day:  noon  - guesses lock 09:30, answer = the first desk snapshot at/after 12:00
                                  close - guesses lock 12:00, answer = the first desk snapshot at/after 16:00
   * One guess per player per round, editable until the lock. The server clock is the only clock.
@@ -100,6 +101,31 @@ def rank(preds: list[dict], actual: float) -> list[dict]:
     return out
 
 
+def desk_day_pl(payload: dict | None) -> float | None:
+    """The DESK's day P&L: trades the desk opened today (realized + open marks), from the book's day history.
+    Positions carried in from earlier (no entry time today - e.g. the picker's holdings sold at the open) are
+    not the desk's and do not count (operator 11/17: the account number included the picker sale). None when
+    the history is not today's or any desk row has no P&L - never a partial number."""
+    if not isinstance(payload, dict):
+        return None
+    h = payload.get("day_history") or {}
+    try:
+        upd = float(payload.get("updated") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not upd or str(h.get("day") or "") != datetime.fromtimestamp(upd, ET).date().isoformat():
+        return None
+    tot = 0.0
+    for r in h.get("rows") or []:
+        if not isinstance(r, dict) or not r.get("entry_time"):
+            continue
+        pl = r.get("pl")
+        if not isinstance(pl, (int, float)) or pl != pl:
+            return None
+        tot += float(pl)
+    return round(tot, 2)
+
+
 def pick_snapshot(payload: dict | None, cutoff_ts: float) -> dict | None:
     """The answer for a cutoff from the desk book payload: usable only when the book was written at or after
     the cutoff and within the grace window, and carries a numeric account day P&L. A price and its clock are
@@ -112,12 +138,12 @@ def pick_snapshot(payload: dict | None, cutoff_ts: float) -> dict | None:
         return None
     if not (cutoff_ts <= upd <= cutoff_ts + SNAPSHOT_GRACE_SEC):
         return None
-    acct = payload.get("account") if isinstance(payload.get("account"), dict) else {}
-    pl = acct.get("day_pl")
-    if not isinstance(pl, (int, float)) or pl != pl:
+    pl = desk_day_pl(payload)
+    if pl is None:
         return None
-    return {"day_pl": round(float(pl), 2), "updated": upd, "equity": acct.get("equity"),
-            "last_equity": acct.get("last_equity"), "mode": payload.get("mode")}
+    acct = payload.get("account") if isinstance(payload.get("account"), dict) else {}
+    return {"day_pl": pl, "updated": upd, "account_day_pl": acct.get("day_pl"), "equity": acct.get("equity"),
+            "mode": payload.get("mode")}
 
 
 def live_pl(payload: dict | None, now_ts: float, max_age: float = 120.0) -> dict:
@@ -128,11 +154,10 @@ def live_pl(payload: dict | None, now_ts: float, max_age: float = 120.0) -> dict
         upd = float(payload.get("updated") or 0)
     except (TypeError, ValueError):
         upd = 0.0
-    acct = payload.get("account") if isinstance(payload.get("account"), dict) else {}
-    pl = acct.get("day_pl")
+    pl = desk_day_pl(payload)
     age = now_ts - upd if upd else None
-    ok = isinstance(pl, (int, float)) and age is not None and age <= max_age
-    return {"value": round(float(pl), 2) if ok else None, "age_sec": None if age is None else round(age, 1)}
+    ok = pl is not None and age is not None and age <= max_age
+    return {"value": pl if ok else None, "age_sec": None if age is None else round(age, 1)}
 
 
 # ---------------------------------------------------------------- store
