@@ -445,8 +445,13 @@ def scan(cfg: dict, *, now: float | None = None, universe: list[dict] | None = N
     quotes = (quotes_fn or _fetch_quotes)([u["symbol"] for u in uni])
     if not quotes:
         return None
-    movers = movers_select(uni, quotes, now=t,
-                           min_pct=_f(cfg, "ai_tight_min_pct_change", 1.0))
+    tmin = _f(cfg, "ai_tight_min_pct_change", 1.0)
+    try:   # market-relative admission (market_tape.py; default off = unchanged)
+        import market_tape
+        tmin = market_tape.market_min_pct(cfg, tmin, _client() if market_tape.enabled(cfg) else None)
+    except Exception:  # noqa: BLE001
+        pass
+    movers = movers_select(uni, quotes, now=t, min_pct=tmin)
     sfn = spread_fn or (lambda s: _desk_spread(s, t))
     picks, spent = tight_select(
         movers, sfn, max_spread=_f(cfg, "ai_tight_max_spread_pct", 0.03),

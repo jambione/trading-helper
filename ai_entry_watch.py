@@ -7099,6 +7099,15 @@ def desk_candidate_rows(
     # Gates the soft open seed below. Separate knob because min_pct governs
     # _big_mover_from_dashboard only; 0.0 keeps the shipped behaviour.
     open_seed_min_pct = _cfg_float(cfg, "ai_watch_open_seed_min_pct", 0.0)
+    # Market-relative admission (market_tape.py, ai_relative_strength_admit, default off): on a red day every
+    # "up N%" seed bar below drops by SPY's decline. Off = 0.0 shift, no API call.
+    try:
+        import market_tape as _mt
+        _rs_shift = _mt.market_min_pct(cfg, 0.0)
+    except Exception:  # noqa: BLE001
+        _rs_shift = 0.0
+    if open_seed_min_pct > 0:
+        open_seed_min_pct = open_seed_min_pct + _rs_shift
     # Ratio units: 1.0 == 100% of average volume (same as desk RVOL display).
     min_rvol = _cfg_float(cfg, "ai_watch_min_rvol", 2.0)
     # One map for every seed source. Heating RVOL relief needs %R that
@@ -7234,7 +7243,7 @@ def desk_candidate_rows(
                     and stream_young_max > 0
                     and stream_age <= stream_young_max
                 )
-                stream_min_pct = _cfg_float(cfg, "ai_watch_open_seed_stream_min_pct", 5.0)
+                stream_min_pct = _cfg_float(cfg, "ai_watch_open_seed_stream_min_pct", 5.0) + _rs_shift
                 need_pct = open_seed_min_pct
                 if has_young_stream and stream_min_pct > 0:
                     if open_seed_min_pct <= 0:
@@ -7533,6 +7542,7 @@ def desk_candidate_rows(
                         cfg.get("ai_watch_movers_min_pct_change", 10.0) or 10.0)
                 except (TypeError, ValueError):
                     mv_min_pct = 10.0
+                mv_min_pct += _rs_shift
                 mv_desk, mv_tr = ((None, None)
                                   if not cfg.get("ai_watch_movers_enrich", True)
                                   else _live_quote_map())
@@ -7689,7 +7699,7 @@ def desk_candidate_rows(
                 tg_rows = []
             if isinstance(tg_rows, list):
                 n = int(cfg.get("ai_watch_seed_tight_n", 8) or 8)
-                tg_min_pct = _cfg_float(cfg, "ai_tight_min_pct_change", 1.0)
+                tg_min_pct = _cfg_float(cfg, "ai_tight_min_pct_change", 1.0) + _rs_shift
                 tg_min_px = max(
                     _cfg_float(cfg, "ai_tight_min_price", 10.0),
                     _cfg_float(cfg, "ai_watch_movers_min_price", 0.0))

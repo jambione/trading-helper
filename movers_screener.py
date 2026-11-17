@@ -458,6 +458,11 @@ def fetch_rows(cfg: dict) -> list[dict] | None:
 
     top = int(cfg.get("ai_movers_top", 50) or 50)
     min_pct = float(cfg.get("ai_movers_min_pct_change", 10.0) or 10.0)
+    try:   # market-relative admission (market_tape.py; default off = unchanged)
+        import market_tape
+        min_pct = market_tape.market_min_pct(cfg, min_pct)
+    except Exception:  # noqa: BLE001
+        pass
     lo = float(cfg.get("ai_movers_min_price", 2.0) or 2.0)
     hi = float(cfg.get("ai_movers_max_price", 20.0) or 20.0)
     min_dollar_vol = float(cfg.get("ai_movers_min_dollar_vol", 1_000_000) or 0)

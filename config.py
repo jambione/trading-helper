@@ -547,6 +547,7 @@ DEFAULT_CONFIG = {
     "ai_tight_universe_n":               400,   # top-N by prior-day $vol
     "ai_tight_top":                       15,   # names written per scan
     "ai_tight_max_spread_lookups":        40,   # SIP quote requests per scan, cap
+    "ai_relative_strength_admit":      False,   # market_tape.py: on red days the "up N%" admission bars drop by SPY's decline
     "ai_tight_max_age_sec":            900.0,   # seed refuses an older file
     "ai_tight_max_price":              400.0,   # share-price ceiling for tight (ai_max_price is $100); equity still floats it down
     # Trending shortlist floors (looser than momentum's 50% day-move bar).
@@ -2246,6 +2247,7 @@ SAFE_CONFIG_KEYS = [
     "ai_tight_universe_n",
     "ai_tight_top",
     "ai_tight_max_spread_lookups",
+    "ai_relative_strength_admit",
     "ai_tight_max_age_sec",
     "ai_tight_max_price",
     "ai_watch_trending_min_pct_change",
