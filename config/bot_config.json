@@ -139,7 +139,7 @@
   "ai_sell_signal_breakeven": false,
   "ai_shelf_tick_sec": 0.25,
   "ai_shelf_trace_sec": 10.0,
-  "ai_sod_liquidate_enabled": false,
+  "ai_sod_liquidate_enabled": true,
   "ai_stale_data_flatten": true,
   "ai_stale_data_max_age_sec": 60.0,
   "ai_stop_use_market": true,
