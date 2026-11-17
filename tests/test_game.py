@@ -184,7 +184,9 @@ def test_player_sees_the_game_and_nothing_of_the_desk(player_client):
     for path in ("/api/config", "/api/state", "/api/login-log"):
         assert player_client.get(path).status_code == 403, path
     r = player_client.get("/", follow_redirects=False)
-    assert r.status_code == 302 and r.headers["location"] == "/play"
+    assert r.status_code == 200 and "Call the P&amp;L" in r.text            # the landing page IS the game
+    r = player_client.get("/desk", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "/"         # the desk screen is not for players
 
 
 def test_player_is_refused_on_the_websocket_feed(player_client):
@@ -287,3 +289,21 @@ def test_desk_day_pl_ignores_carried_in_holdings_and_refuses_partial_numbers():
     assert game.desk_day_pl(p) is None                                   # a desk row without P&L: no number
     stale = book(t, 5.0); stale["day_history"]["day"] = "2026-11-17"
     assert game.desk_day_pl(stale) is None                               # yesterday's history: no number
+
+
+def test_landing_page_is_the_game_and_the_desk_moved(tmp_path, monkeypatch):
+    import dashboard as d
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(auth, "_USERS_FILE", tmp_path / "users.json")
+    auth.request_account("owner", TEST_PW, "o@example.com", "Owner")      # first account: admin
+    monkeypatch.setattr(d, "is_auth_required", lambda: True)
+    monkeypatch.setattr(d, "record_login", lambda *a, **k: None)
+    monkeypatch.setattr(d, "record_traffic_hit", lambda *a, **k: None)
+    c = TestClient(d.app)
+    assert c.get("/", follow_redirects=False).headers["location"] == "/login"
+    assert c.get("/desk", follow_redirects=False).headers["location"] == "/login"
+    assert c.post("/auth/login", json={"username": "owner", "password": TEST_PW}).status_code == 200
+    home = c.get("/")
+    assert home.status_code == 200 and 'id="adm"' in home.text and "/desk#admin" in home.text
+    desk = c.get("/desk")
+    assert desk.status_code == 200 and "data-admin-btn" in desk.text and 'href="/play"' not in desk.text

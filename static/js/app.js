@@ -274,6 +274,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   clrWlBtn ?.addEventListener('click', () => controls.clearWatchlist());
   settBtn  ?.addEventListener('click', openConfig);
   adminBtn ?.addEventListener('click', toggleAdmin);
+  // The game page's Admin button lands here as /desk#admin: open the panel straight away.
+  if (location.hash === '#admin') { try { openAdmin(); } catch (e) { console.error('[app] open admin', e); } }
   document.getElementById('active-users-badge')?.addEventListener('click', openAdmin);
   logoutBtn?.addEventListener('click', logout);
 

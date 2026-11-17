@@ -3494,7 +3494,7 @@ def get_active_sessions() -> list[dict]:
 
 # ── Auth middleware ───────────────────────────────────────────────────────────
 
-_PUBLIC_PATHS   = {"/", "/play", "/login", "/register", "/forgot", "/reset",
+_PUBLIC_PATHS   = {"/", "/desk", "/play", "/login", "/register", "/forgot", "/reset",
                    "/auth/login", "/auth/register", "/auth/logout",
                    "/auth/forgot", "/auth/reset",
                    "/api/meta", "/api/pnl", "/favicon.ico"}
@@ -3699,8 +3699,8 @@ class _AuthMiddleware(BaseHTTPMiddleware):
 
         # Game-only accounts (open signup) see the prediction game and nothing of the desk.
         if username and is_player(username) and not _player_path_ok(path):
-            if path == "/" or not path.startswith("/api"):
-                return RedirectResponse("/play", status_code=302)
+            if not path.startswith("/api"):
+                return RedirectResponse("/", status_code=302)
             return _SJSONResponse({"ok": False, "error": "Not available"}, status_code=403)
 
         return await call_next(request)
@@ -3913,12 +3913,23 @@ async def _startup():
 
 @app.get("/")
 async def root(request: Request):
+    """The landing page is the game (operator 11/17). The trading desk screen moved to /desk."""
+    if is_auth_required():
+        token, _username = _request_identity(request)
+        if not verify_token(token):
+            return RedirectResponse("/login", status_code=302)
+    return FileResponse("play.html")
+
+
+@app.get("/desk")
+async def desk_page(request: Request):
+    """The trading desk screen (Scan + Book), formerly the landing page. Not for game-only accounts."""
     if is_auth_required():
         token, _username = _request_identity(request)
         if not verify_token(token):
             return RedirectResponse("/login", status_code=302)
         if _username and is_player(_username):
-            return RedirectResponse("/play", status_code=302)
+            return RedirectResponse("/", status_code=302)
     return FileResponse("dashboard.html")
 
 

@@ -114,6 +114,10 @@ def auth_client(tmp_path, monkeypatch):
     monkeypatch.setattr(d, "send_password_reset_email", lambda *a, **k: True)
     monkeypatch.setattr(d, "record_login", lambda *a, **k: None)
     monkeypatch.setattr(d, "record_traffic_hit", lambda *a, **k: None)
+    # These tests cover the approval flow, so signup is closed here whatever the live config says
+    # (game_open_signup has been on since 11/17; tests/test_game.py covers open signup).
+    _real_load = d.load_config
+    monkeypatch.setattr(d, "load_config", lambda *a, **k: dict(_real_load(*a, **k) or {}, game_open_signup=False))
     return TestClient(d.app)
 
 

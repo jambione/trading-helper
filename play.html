@@ -31,6 +31,12 @@ body.scrolled .mini{display:block}
 .brand-text{display:flex;flex-direction:column;gap:4px;min-width:0}
 .brand-title{margin:0;font-family:'Space Grotesk','Inter',sans-serif;font-size:22px;font-weight:700;letter-spacing:.02em;white-space:nowrap;line-height:1}
 .brand-title .n{color:#f0f6ff}.brand-title .s{color:#d4b15a}
+.who{display:flex;align-items:center;gap:8px}
+.adm{display:flex;gap:8px;margin-right:6px}
+.hbtn{color:var(--text);text-decoration:none;border:1px solid var(--line);border-radius:99px;padding:6px 12px;font-size:13px;white-space:nowrap}
+.hbtn:hover{border-color:var(--accent);color:var(--accent)}
+.hbtn b{font-weight:700}
+@media(max-width:899px){.adm{display:none!important}}
 .brand-sub{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:9px;font-weight:600;letter-spacing:.22em;text-transform:uppercase;color:#7d93b5}
 .who{color:var(--dim);font-size:13px}
 .who a{color:var(--dim)}
@@ -164,7 +170,7 @@ tr.ready td{background:rgba(34,197,94,.08)}
 </head>
 <body>
 <header>
-  <a class="brand" href="/play">
+  <a class="brand" href="/">
     <img src="/static/brasfield-logo.png" alt="Brasfield logo" />
     <span class="brand-text">
       <h1 class="brand-title"><span class="n">Brasfield</span> <span class="s">Momentum</span></h1>
@@ -173,7 +179,15 @@ tr.ready td{background:rgba(34,197,94,.08)}
     </span>
   </a>
   <div class="mini" id="mini"></div>
-  <div class="who"><span id="me"></span><span class="sep"> · </span><a href="#" id="logout">sign out</a></div>
+  <div class="who">
+    <!-- Admin controls (desktop only, admins only): same as the desk header -->
+    <span class="adm" id="adm" hidden>
+      <a class="hbtn" id="adm-online" href="/desk#admin" title="Who is signed in — opens Admin">Online <b id="adm-n">0</b></a>
+      <a class="hbtn" href="/desk" title="The trading desk screen (Scan + Book)">📈 Desk</a>
+      <a class="hbtn" href="/desk#admin" title="Admin panel">🛠 Admin</a>
+    </span>
+    <span id="me"></span><span class="sep"> · </span><a href="#" id="logout">sign out</a>
+  </div>
 </header>
 <main>
   <div style="display:grid;gap:16px">
@@ -245,6 +259,7 @@ function renderLive() {
   document.getElementById('age').textContent = v == null ? 'Desk feed is quiet right now.' : 'updated ' + Math.round(S.live.age_sec) + 's ago';
   document.getElementById('paper').style.display = S.paper ? '' : 'none';
   document.getElementById('me').textContent = S.me.name;
+  if (S.me.admin && !window.__adm) { window.__adm = 1; document.getElementById('adm').hidden = false; pollOnline(); setInterval(pollOnline, 30000); }
 }
 
 function trackHTML(r) {
@@ -427,6 +442,10 @@ async function pollHall() {
 function tick() {
   const now = Date.now() / 1000 + clockSkew;
   document.querySelectorAll('[data-until]').forEach(b => { b.textContent = hms(+b.dataset.until - now); });
+}
+
+async function pollOnline() {
+  try { const d = await api('/api/active-sessions'); if (d && d.ok) document.getElementById('adm-n').textContent = d.count ?? 0; } catch (e) {}
 }
 
 async function poll() {
