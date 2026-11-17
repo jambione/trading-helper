@@ -24,8 +24,16 @@
   "quality_win": "NEWS_EXTRA win % >= BASE win % - 3 points",
   "enough_data": ">= 30 ledger days with bars and >= 300 NEWS_EXTRA signals; if fewer, the verdict is UNDERPOWERED (not a pass)"
  },
- "information_cells": ["all warehouse days, extra = not in top-400 (no ledger)", "RELATIVE admission bar", "spread-gated (15 bp, combined_spreads.json)", "share of news names with no bars"],
+ "information_cells": [
+  "all warehouse days, extra = not in top-400 (no ledger)",
+  "RELATIVE admission bar",
+  "spread-gated (15 bp, combined_spreads.json)",
+  "share of news names with no bars"
+ ],
  "else": "do not build the live source; report which condition failed",
  "after_pass": "build the news source behind a switch (default off); it becomes the NEXT week's single live experiment after market-relative admission is judged",
- "caveats": "signals are an upper bound on opens (spread/volume/tape gates not modelled, equal for both arms); minute bars, not the live tick path; news symbols tag related companies too, so some candidates are mentions, not the subject"
+ "caveats": "signals are an upper bound on opens (spread/volume/tape gates not modelled, equal for both arms); minute bars, not the live tick path; news symbols tag related companies too, so some candidates are mentions, not the subject",
+ "verdict": {
+  "2026-11-17 evening": "PASS on 41 ledger days: news-extra signals 1.62 per 10 min = 27.4% of base (5.91); extra -5.77 bp vs base -6.24 (t -0.44); win 38.2 vs 38.9; 2,297 extra. Info: relative bar 28% / -6.36 vs -6.17; all days not-in-top400 35.5% / -5.66; 53% of news names have no warehouse bars (illiquid). WARNING (information cell, not the bar): only 252 extra signals have a known spread <= 15 bp (the Sept spread file covers 596 names), and those did worse: -11.6 bp, win 31.3%, t -3.04. Before building the live source, measure real spreads at the extra signals' minutes from historical quotes and re-check."
+ }
 }
