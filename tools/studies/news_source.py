@@ -171,7 +171,8 @@ def run():
     spreads = defaultdict(list)
     if SPREADS.exists():
         for kk, v in json.load(open(SPREADS)).items():
-            spreads[kk.split("|")[0]].append(float(v))
+            if isinstance(v, (int, float)):          # the file holds some null readings
+                spreads[kk.split("|")[0]].append(float(v))
     med_sp = {s: statistics.median(v) for s, v in spreads.items()}
     ledger_days, all_days, no_bars, n_news = {}, {}, 0, 0
     prev = None
