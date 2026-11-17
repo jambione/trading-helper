@@ -13,5 +13,9 @@
  },
  "else": "leave it off; report which condition failed",
  "after_turn_on": "ONE live paper experiment (it ends the baseline week): judged by docs/BROKER_TRUTH.md over 5 sessions - opens per 10 min on red days up, win rate and net per trade not worse than the 11/04-11/06 reference (60% win, -2.0 bp). Turn off if win rate falls more than 5 points below the reference.",
- "caveats": "signals are an upper bound on opens: the desk's spread / volume / tape gates are not modelled (they apply to both rules alike). Minute bars, not the desk's live tick path."
+ "caveats": "signals are an upper bound on opens: the desk's spread / volume / tape gates are not modelled (they apply to both rules alike). Minute bars, not the desk's live tick path.",
+ "verdict": {
+  "2026-11-17 ~14:30 ET": "PASS on 141 days (63 red): red-day signals 4.59 -> 6.23 per 10 min (+36%); extra -6.32 bp vs base -7.46 (t +1.19); win 36.2 vs 37.8; 3,559 extra.",
+  "2026-11-17 ~15:45 ET (data fix, same code and bar)": "11/11-11/16 had scored 0 signals: the nightly appender stores SPY only in sip_hedge since 11/11. load_day now merges it (commit after 0f7a9157). Rerun: PASS on 145 days (65 red): 4.51 -> 6.22 per 10 min (+38%); extra -6.25 bp vs base -7.43 (t +1.20); win 36.1 vs 37.8; 3,844 extra."
+ }
 }
