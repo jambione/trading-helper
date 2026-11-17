@@ -39,18 +39,38 @@ def prev_weekday(d: date) -> date:
     return d
 
 
-def load_day(path):
-    """-> dict(syms=[..], idx={sym: row}, o,h,l,c,v matrices (nsym, 390) NaN where no bar)."""
+HEDGE_SYMS = ("SPY", "QQQ")
+
+
+def _load_npz(path):
     z = np.load(path, allow_pickle=True)
     syms = [str(s) for s in z["syms"]]
-    n = len(syms)
-    shape = (n, 390)
-    mats = {k: np.full(shape, np.nan, dtype=np.float32) for k in ("o", "h", "l", "c", "v")}
+    mats = {k: np.full((len(syms), 390), np.nan, dtype=np.float32) for k in ("o", "h", "l", "c", "v")}
     si = z["sym_idx"].astype(np.int64)
     mi = z["minute"].astype(np.int64) - M0
     ok = (mi >= 0) & (mi < 390)
     for k in mats:
         mats[k][si[ok], mi[ok]] = z[k][ok]
+    return syms, mats
+
+
+def load_day(path):
+    """-> dict(syms=[..], idx={sym: row}, o,h,l,c,v matrices (nsym, 390) NaN where no bar).
+
+    From 11/11 the nightly appender (warehouse_nightly.py) stores SPY/QQQ only in the sibling warehouse sip_hedge, so
+    a main-warehouse day file from then on has no SPY: every market-relative measure silently scored zero on those days
+    (found 11/17, relative_admit: 0 signals 11/11-11/16). When SPY/QQQ are missing they are taken from
+    ../sip_hedge/<same day>.npz. Day files are never rewritten."""
+    path = Path(path)
+    syms, mats = _load_npz(path)
+    missing = [h for h in HEDGE_SYMS if h not in syms]
+    hedge = path.parent.parent / "sip_hedge" / path.name
+    if missing and hedge.exists():
+        hs, hm = _load_npz(hedge)
+        take = [hs.index(h) for h in missing if h in hs]
+        if take:
+            syms = syms + [hs[i] for i in take]
+            mats = {k: np.vstack([mats[k], hm[k][take]]) for k in mats}
     return {"syms": syms, "idx": {s: i for i, s in enumerate(syms)}, **mats}
 
 
