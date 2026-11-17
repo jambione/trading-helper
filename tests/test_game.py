@@ -199,3 +199,26 @@ def test_logged_out_play_redirects_to_login(tmp_path, monkeypatch):
     r = c.get("/play", follow_redirects=False)
     assert r.status_code == 302 and r.headers["location"] == "/login"
     assert c.get("/api/game/state").status_code == 401
+
+
+def test_desk_view_shows_positions_and_a_feed_without_strategy_internals():
+    p = {"updated": 100.0,
+         "entry_book": [
+             {"symbol": "AAOI", "is_position": True, "qty": 10, "price": 41.5, "avg_entry": 41.2, "local_stop": 40.9,
+              "pl": 3.0, "plpc": 0.73, "score": 9, "block_reason": "x", "reason": "secret", "source": "momentum"},
+             {"symbol": "WATCH", "is_position": False, "status": "watch", "price": 5.0}],
+         "day_history": {"rows": [
+             {"symbol": "BE", "entry_price": 20.0, "entry_time": 10.0, "qty": 5,
+              "exits": [{"price": 19.0, "time": 20.0, "qty": 5, "reason": "stop"}]}]}}
+    v = game.desk_view(p)
+    assert [x["symbol"] for x in v["positions"]] == ["AAOI"]
+    assert v["positions"][0]["stop"] == 40.9 and v["positions"][0]["last"] == 41.5
+    assert set(v["positions"][0]) == {"symbol", "qty", "last", "entry", "stop", "pl", "plpc"}
+    assert [(e["side"], e["symbol"]) for e in v["feed"]] == [("sell", "BE"), ("buy", "BE")]
+    assert v["feed"][0]["pl"] == -5.0 and v["feed"][0]["why"] == "stopped out"
+    assert "secret" not in json.dumps(v) and "momentum" not in json.dumps(v)
+
+
+def test_desk_view_falls_back_to_broker_positions():
+    v = game.desk_view({"positions": {"COLD": {"qty": 39, "avg_entry": 16.81, "current": 16.65, "pl": -6.3, "plpc": -0.96}}})
+    assert v["positions"][0]["symbol"] == "COLD" and v["positions"][0]["stop"] is None and v["feed"] == []

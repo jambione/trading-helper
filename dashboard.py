@@ -5347,19 +5347,9 @@ async def api_game_standings(request: Request, day: str = ""):
 
 @app.get("/api/game/desk")
 async def api_game_desk(request: Request):
-    """Read-only cut of the desk for players: open positions and today's closed trades. No config, no controls."""
-    p = load_ai_positions() or {}
-    pos = []
-    for sym, d in (p.get("positions") or {}).items():
-        if isinstance(d, dict):
-            pos.append({"symbol": sym, "pl": d.get("pl"), "plpc": d.get("plpc"),
-                        "entry": d.get("avg_entry"), "price": d.get("current")})
-    hist = []
-    for r in ((p.get("day_history") or {}).get("rows") or [])[-40:]:
-        if isinstance(r, dict):
-            hist.append({"symbol": r.get("symbol"), "status": r.get("status"), "pl": r.get("pl"),
-                         "entry_time": r.get("entry_time"), "entry_price": r.get("entry_price")})
-    return {"ok": True, "updated": p.get("updated"), "positions": pos, "trades": hist}
+    """Read-only cut of the desk for players: open positions (last, entry, stop, P&L) and a feed of today's
+    buys and sells. No config, gates or controls."""
+    return {"ok": True, **game.desk_view(load_ai_positions() or {})}
 
 
 @app.get("/api/meta")

@@ -312,3 +312,48 @@ def start_settler(store: Store, load_payload, interval: float = 5.0, log=None) -
     t = threading.Thread(target=loop, name="game-settler", daemon=True)
     t.start()
     return t
+
+
+# ---------------------------------------------------------------- player view of the desk
+def _num(x):
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if v == v else None
+
+
+def desk_view(p: dict) -> dict:
+    """What players may see of the desk book: open positions and a buy/sell feed. Strategy internals
+    (gates, %R, block reasons, scores, seeds) never leave the server."""
+    pos = []
+    for r in p.get("entry_book") or []:
+        if not isinstance(r, dict) or not (r.get("is_position") or r.get("status") == "open"):
+            continue
+        pos.append({"symbol": r.get("symbol"), "qty": _num(r.get("qty")), "last": _num(r.get("price")),
+                    "entry": _num(r.get("avg_entry")), "stop": _num(r.get("local_stop")),
+                    "pl": _num(r.get("pl")), "plpc": _num(r.get("plpc"))})
+    if not pos:                                     # fall back to the broker position map
+        for sym, d in (p.get("positions") or {}).items():
+            if isinstance(d, dict):
+                pos.append({"symbol": sym, "qty": _num(d.get("qty")), "last": _num(d.get("current")),
+                            "entry": _num(d.get("avg_entry")), "stop": None,
+                            "pl": _num(d.get("pl")), "plpc": _num(d.get("plpc"))})
+    pos.sort(key=lambda x: x["symbol"] or "")
+    feed = []
+    for r in (p.get("day_history") or {}).get("rows") or []:
+        if not isinstance(r, dict):
+            continue
+        sym, ep = r.get("symbol"), _num(r.get("entry_price"))
+        if _num(r.get("entry_time")):
+            feed.append({"ts": _num(r.get("entry_time")), "side": "buy", "symbol": sym, "price": ep,
+                         "qty": _num(r.get("qty")), "pl": None})
+        for ex in r.get("exits") or []:
+            if not isinstance(ex, dict):
+                continue
+            px, q = _num(ex.get("price")), _num(ex.get("qty"))
+            pl = round((px - ep) * q, 2) if None not in (px, ep, q) else None
+            feed.append({"ts": _num(ex.get("time")), "side": "sell", "symbol": sym, "price": px, "qty": q,
+                         "pl": pl, "why": {"stop": "stopped out", "scale out": "took partial"}.get(str(ex.get("reason") or ""), "")})
+    feed.sort(key=lambda e: e["ts"] or 0, reverse=True)
+    return {"updated": _num(p.get("updated")), "positions": pos, "feed": feed[:60]}
