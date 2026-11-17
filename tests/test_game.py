@@ -187,3 +187,15 @@ def test_player_is_refused_on_the_websocket_feed(player_client):
     with pytest.raises(WebSocketDisconnect):
         with player_client.websocket_connect("/ws") as ws:
             ws.receive_text()
+
+
+def test_logged_out_play_redirects_to_login(tmp_path, monkeypatch):
+    import dashboard as d
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(auth, "_USERS_FILE", tmp_path / "users.json")
+    monkeypatch.setattr(d, "is_auth_required", lambda: True)
+    monkeypatch.setattr(d, "record_traffic_hit", lambda *a, **k: None)
+    c = TestClient(d.app)
+    r = c.get("/play", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "/login"
+    assert c.get("/api/game/state").status_code == 401

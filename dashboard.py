@@ -3494,7 +3494,7 @@ def get_active_sessions() -> list[dict]:
 
 # ── Auth middleware ───────────────────────────────────────────────────────────
 
-_PUBLIC_PATHS   = {"/", "/login", "/register", "/forgot", "/reset",
+_PUBLIC_PATHS   = {"/", "/play", "/login", "/register", "/forgot", "/reset",
                    "/auth/login", "/auth/register", "/auth/logout",
                    "/auth/forgot", "/auth/reset",
                    "/api/meta", "/api/pnl", "/favicon.ico"}
