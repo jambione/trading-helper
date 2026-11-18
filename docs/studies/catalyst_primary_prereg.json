@@ -1,0 +1,27 @@
+{
+ "id": "catalyst_primary_2026-11-18",
+ "registered": "2026-11-18 ~17:20 ET, before any event below was built or scored",
+ "operator": "11/18: '%R becomes a secondary signal instead of primary. Our primary signal needs to be something else, like a news event or volume pump' -> 'Yes, test it tonight'",
+ "structure": "PRIMARY picks the name and the window; the desk's %R trigger (pre-square, evening_family.presquare_bars) is SECONDARY timing inside that window; the exit is sized to the name.",
+ "primaries (three groups, scored separately)": {
+  "NEWS": "the name's first Alpaca news story of the day (07:00-15:59; pre-open stories count from 09:30) is at most 30 minutes before the trigger minute (window widened from the 15 min said in chat to 30, before any data, so the group can reach the power bar)",
+  "VOL": "volume pace: volume of the last 15 closed minutes / (mean daily volume of the name's prior 5 warehouse days x 15/390) >= 3.0",
+  "BOTH": "NEWS and VOL at the same minute"
+ },
+ "universe_and_band": "SIP warehouse top-400 names, $20-$400 and up >= 1.5% vs prior close at the trigger minute, minutes 15-330 (room for the 60-minute hold)",
+ "entry": "the FIRST %R trigger bar in a primary-active minute, per name per day per group; enter at the open of the next minute",
+ "exit": "ATR = mean (high - low) of the 15 closed minutes before entry; stop = entry - 2 ATR, target = entry + 4 ATR (stop first if one minute touches both); else the close of the 60th minute",
+ "cost": "the real SIP quoted spread in the 60 s before entry (news_source.fetch_quotes), subtracted once as the round-trip cost (row 152: cost = spread); events with no quote are dropped and counted",
+ "sample": "all events if a group-period has <= 4,000; otherwise the 4,000 with the lowest sha256('catalyst'|day|sym|t)",
+ "decides": "days 2026-04-28 .. 2026-09-23",
+ "pass_each_group (Bonferroni for 3 groups)": {
+  "edge": "mean net >= +2.0 bp after the real spread",
+  "significance": "day-clustered t >= 2.4",
+  "both_halves": "mean net > 0 in the first and the second half of the days",
+  "enough": ">= 300 quoted events"
+ },
+ "information_only": "9/24-11/17; each group with NO %R (enter at the first primary-active minute) to show whether %R adds; the desk's fixed +20/-50 bracket on the same events; gross before spread; median spread",
+ "if_pass": "result-skeptic review, then a separate paper lane behind a default-off switch, replayed through the live code, then on under the operator's 11/18 rule",
+ "if_fail": "record; the catalyst-primary + %R-secondary structure is closed at this horizon on SIP bars",
+ "news_data_gaps": "Alpaca news returns 0 stories for some days (4/27, 4/28 seen at fetch time, before any scoring). Days with < 200 stories are news-missing: excluded from NEWS and BOTH, kept for VOL. Names need 5 prior warehouse days for the volume baseline."
+}
