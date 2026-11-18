@@ -1,0 +1,19 @@
+{
+ "id": "repeat_name_2026-11-18",
+ "registered": "2026-11-18 ~12:00 ET, after an exploratory table on the same trades (5 of 6 time x era buckets: later trades in a name beat its first trade of the day) - this bar is the confirmation the operator asked for ('Yes, test it'), with a held-out half",
+ "operator": "11/18: 'It doesn't have to be 100% accurate, as long as it is directionally correct' ... 'Yes, test it'",
+ "question": "Does the desk's first trade of the day in a name do worse than its later trades in that name the same day, controlling for time of day? (If yes: half-size first trades / slot priority for repeat names.)",
+ "data": "broker round trips as tools/studies/flow_exit.load_trades (2026-09-16..11-18, desk-off 11/12-11/16 out). FIRST = no earlier closed trade in that symbol that day at the buy; REPEAT = at least one. Buckets 09:30-10:30, 10:30-12:30, 12:30-close.",
+ "statistic": "per day: average over buckets that have both groups of (mean REPEAT bp - mean FIRST bp); day-clustered t over days",
+ "split": {"train": "days <= 2026-10-23 (the exploratory table saw these AND the test days; the held-out guard is the test-half bar below)", "test": "days >= 2026-10-26"},
+ "pass_if_ALL": {
+  "test_size": "test difference >= +3.0 bp",
+  "test_significance": "test day-clustered t >= 2.0",
+  "both_halves": "train difference > 0",
+  "rule_book": "half-size FIRST trades (dollar P&L, sizes from the fills) improves test dollars per day vs actual",
+  "enough": ">= 100 FIRST and >= 100 REPEAT test trades in bucket-matched days"
+ },
+ "after_pass": "build behind a switch (default off): first trade of the day in a symbol at half the normal notional; slot priority for repeat names as an information cell. Under the operator's 11/18 rule a PASS ships (paper).",
+ "else": "record; do not build",
+ "caveats": "the exploratory look used all days, so the test half is not fully blind - the t >= 2 bar on it is the protection; repeat trades may sit on names still trending, which a live rule would also see (no look-ahead: the earlier trade has closed)"
+}
