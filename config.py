@@ -662,6 +662,7 @@ DEFAULT_CONFIG = {
     "ai_watch_range_engine_max_age_sec": 90.0,
     # Tight source (calm large caps, rvol ~0.5 normal): own floor, 0 = none.
     "ai_watch_tight_min_rvol":          0.0,
+    "ai_first_trade_size_mult":         1.0,    # first buy of the day in a symbol at this fraction of normal size; 1.0 = off (repeat_name_prereg.json, 11/18)
     "ai_watch_tight_overlap_exempt":    False,  # a tight-qualified name listed first by movers/trending keeps tight's rvol/float exemptions (Argon 11/18)
     # Day-chg % that waives known-thin RVOL at seed + inclusion. 0 = off.
     "ai_watch_hot_move_rvol_waive_pct": 20.0,
@@ -2309,6 +2310,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_range_engine_max_age_sec",
     "ai_watch_tight_min_rvol",
     "ai_watch_tight_overlap_exempt",
+    "ai_first_trade_size_mult",
     "ai_watch_hot_move_rvol_waive_pct",
     "ai_watch_extreme_move_pct",
     "ai_watch_arm_min_rvol",

@@ -587,6 +587,19 @@ def _update_state(mutator) -> dict[str, Any]:
         return state
 
 
+def first_trade_qty(qty: float, prior_entries: int, mult: float, *, fractional: bool = False) -> float:
+    """Size of a buy under ai_first_trade_size_mult. Pure.
+
+    Only the day's FIRST buy in the symbol (prior_entries == 0) is scaled; a repeat (>= 1) or an unknown count (< 0) keeps
+    its size. Whole shares round down but never below 1 share; fractional lots keep 4 decimals."""
+    if prior_entries != 0 or not (0.0 < mult < 1.0) or qty <= 0:
+        return qty
+    scaled = qty * mult
+    if fractional:
+        return max(round(scaled, 4), 0.0001)
+    return float(max(1, int(scaled)))
+
+
 def log_event(kind: str, **fields: Any) -> dict[str, Any]:
     """Append a structured desk event (skips, fails, reconcile, entries)."""
     row: dict[str, Any] = {"ts": time.time(), "kind": str(kind)}
@@ -2084,6 +2097,23 @@ def place_scaled_entry(
                         total_qty = max(0.0, max_pb_qty)
             except Exception:
                 pass
+        # First trade of the day in a name at reduced size (repeat_name_prereg.json, operator 11/18 "Yes, build it"):
+        # later trades in a name beat its first trade in both halves of 9/16-11/18 (+7.4 / +4.4 bp), not yet significant.
+        try:
+            first_mult = float(cfg.get("ai_first_trade_size_mult", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            first_mult = 1.0
+        if 0.0 < first_mult < 1.0 and not _phase_b and total_qty > 0:
+            try:
+                import ai_entry_watch as _ew
+                prior = int(_ew._entries_today(ticker))
+            except Exception:  # noqa: BLE001
+                prior = -1                     # unknown: leave the size alone
+            new_qty = first_trade_qty(total_qty, prior, first_mult, fractional=use_frac)
+            if new_qty != total_qty:
+                log_event("first_trade_size", symbol=ticker, qty_before=total_qty, qty_after=new_qty,
+                          mult=first_mult, prior_entries=prior)
+                total_qty = new_qty
         log_event(
             "size_plan", symbol=ticker,
             free_equity=plan.free_equity,
