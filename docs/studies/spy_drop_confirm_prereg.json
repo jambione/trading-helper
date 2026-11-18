@@ -1,0 +1,22 @@
+{
+ "id": "spy_drop_confirm_2026-11-18",
+ "registered": "2026-11-18 ~11:55 ET, before any minute-bar signal was joined to SPY for this rule",
+ "operator": "11/18: 'Yes, confirm it' - the MARKET_DROP skip (docs/studies/entry_context_skip_prereg.json) was right in both halves on broker trades but FAILED significance (t 1.1, 14 test days)",
+ "rule": "skip a buy signal if SPY's return over the 5 complete minutes before the entry minute is <= -5 bp (X = 5 fixed from the broker-trade train half; no re-selection here)",
+ "data": {
+  "signals": "the desk's live pre-square arm on SIP minute bars (news_source.signals_for: fast %R 21, refractory 30, minutes 15-360), top-400 liquid universe, $20-$400, up >= 1.5% at the signal minute (the BASE arm of relative_admit / news_source), every warehouse day with SPY",
+  "spy": "SPY minute closes from the same day file (sip_hedge merged)",
+  "trade": "buy open t+1, sell close t+10, flat 6 bp (as news_source); information: straight-down = low over t+1..t+10 <= open(t+1) - 40 bp"
+ },
+ "pass_if_ALL": {
+  "book": "mean delta per signal (skipped -> 0 instead of net) >= +1.0 bp",
+  "significance": "day-clustered t >= 2.0",
+  "both_halves": "book delta > 0 in the first and the second half of the days",
+  "kept_quality": "kept signals' mean net > all signals' mean net",
+  "enough": ">= 300 skipped signals, else UNDERPOWERED"
+ },
+ "information": ["straight-down share skipped vs kept", "skipped share of signals (opens cost)", "X = 10 and 15 bp (not scored)", "red vs green SPY days"],
+ "after_pass": "build the skip behind a switch (default off) reading SPY minute closes from the live tape (market_tape); under the operator's 11/18 rule a PASS ships (paper) - the next session's experiment",
+ "else": "record; do not build",
+ "caveats": "minute bars with a fixed 10-minute exit, not the desk's trail; the broker-trade result that motivated it is NOT re-used here"
+}
