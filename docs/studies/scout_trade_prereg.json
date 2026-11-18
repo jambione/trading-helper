@@ -19,5 +19,8 @@
  },
  "broker_audit (information; the trades that suggested the idea)": "broker round trips 10/15-11/18: $/day as traded, half-size first, 1-share first, SCOUT; same split of later trades by first-trade outcome in bp",
  "decision": "PASS -> build ai_first_trade_scout (default off) and turn it on under the operator's 11/18 rule (passing tests ship), replay through the live code first if time allows. FAIL -> keep plain 1-share-first (all later trades full size).",
- "note": "1-share-first itself ships 11/19 on the operator's direct instruction (ai_first_trade_fixed_qty 1); its evidence is the same directional repeat_name result, not this test."
+ "note": "1-share-first itself ships 11/19 on the operator's direct instruction (ai_first_trade_fixed_qty 1); its evidence is the same directional repeat_name result, not this test.",
+ "verdict": {
+  "2026-11-18 ~16:50": "FAIL. Primary (4/28-9/23, 103 paired days): later pre-square events after a WINNING first event -6.47 bp (7,437) vs after a LOSING one -6.97 (4,349), lift +0.50, t 1.17, halves 0.00 / +1.11. Previous-event version +0.54, t 1.05. 9/24-11/17: -0.76. First events -6.91 vs later -6.61 overall (the first-vs-later gap is 0.3 bp on the warehouse). Broker 10/15-11/18 (information): scout -$2.55/day vs one-share-first -$5.59, later-after-win -1.49 vs -5.96 bp, t 0.95. Not built; tomorrow runs plain one-share first."
+ }
 }
