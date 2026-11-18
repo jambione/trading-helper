@@ -67,11 +67,20 @@ def rule_delta(tr, flow, last_px, w, k, use_flow=True):
 
 
 def load_trades():
+    """Alpaca FILL activities (broker_truth/fills.jsonl, from 11/04) plus, for earlier days, the order-level fills the desk
+    archived (tools/broker_truth.archive_fills; cross-checked 0.00 bp on the overlap days)."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    from broker_truth import archive_fills
     fills = defaultdict(list)
     for line in open(FILLS):
         f = json.loads(line)
         d = datetime.fromtimestamp(f["t"], ET).date().isoformat()
         if LO <= d <= HI and d not in SKIP:
+            fills[d].append(f)
+    have = set(fills)
+    for f in archive_fills():
+        d = datetime.fromtimestamp(f["t"], ET).date().isoformat()
+        if LO <= d <= HI and d not in SKIP and d not in have:
             fills[d].append(f)
     out = []
     for d in sorted(fills):
