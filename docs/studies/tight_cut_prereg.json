@@ -28,5 +28,15 @@
  "after_pass": "paper experiment: set the three knobs live (config commit with an Evidence line), judge by broker truth over 5 sessions vs the restored-desk win rate; it runs after (or alongside, if the operator says) the market-relative admission week",
  "else": "keep the tight cut as is",
  "caveats": "synthetic days are not the recorded desk (no momentum/trending/research, no book-state history); the comparison is B vs A under the same synthesis, not either vs live; few days",
- "after_pass_amendment_2026-11-18": "Argon: the synthetic replay computes %R for every universe name, but live push_candidates_to_engine caps the signal engine at ai_watch_engine_push_max 30 across all sources. If B ships, raise ai_watch_engine_push_max 30 -> 50 with it, or the 16 extra seeded tight names may get no %R. Does not change the pass bar."
+ "after_pass_amendment_2026-11-18": "Argon: the synthetic replay computes %R for every universe name, but live push_candidates_to_engine caps the signal engine at ai_watch_engine_push_max 30 across all sources. If B ships, raise ai_watch_engine_push_max 30 -> 50 with it, or the 16 extra seeded tight names may get no %R. Does not change the pass bar.",
+ "arm_C_amendment_2026-11-18": {
+  "registered": "2026-11-18 ~05:45 ET, before any arm C replay (arm A 11/17 replay running, no result read)",
+  "C": "B plus ai_watch_tight_overlap_exempt true (commit 5c937d39), replayed on B's universes, after A/B finish",
+  "C_pass_if_ALL": {
+   "vs_B_opens": "C trades >= B trades",
+   "vs_B_quality": "C mean return bp >= B mean - 1.0 AND C win % >= B win % - 3",
+   "C_also_passes_the_A_bar": "C vs A meets the main bar"
+  },
+  "ship_rule": "operator 11/18: a PASS ships before the next open without a further ask. Ship the best passing arm (C if C passes, else B if B passes) with ai_watch_engine_push_max 30 -> 50; nothing if neither passes."
+ }
 }
