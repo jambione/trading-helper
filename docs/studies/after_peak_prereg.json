@@ -1,0 +1,23 @@
+{
+ "id": "after_peak_2026-11-18",
+ "registered": "2026-11-18 ~12:40 ET, before any signal was scored for this pattern (motivated by the live BIPC buy at 12:31:51: a lower-high uptick after a 12:28 peak with the slow %R rolling over)",
+ "operator": "11/18: 'Yes, test it'",
+ "question": "Are pre-square buys that come just after a fresh peak, with the slow %R rolling over, worse than other buys?",
+ "pattern_AFTER_PEAK (fixed, no tuning)": {
+  "peak": "the highest high of the 10 minutes before the signal bar was 2-8 minutes ago",
+  "lower": "the signal bar's close is >= 10 bp below that high",
+  "slow_roll": "slow %R (112, EWM 3) at the signal bar minus 2 bars ago <= 0, AND slow %R 3 bars ago minus 8 bars ago > 0 (it was rising, now flat or falling)"
+ },
+ "data": "the desk's live pre-square arm on SIP minute bars (evening_family.presquare_bars, fast %R 21, refractory 30, minutes 15-360), top-400 universe, $20-$400, up >= 1.5% at the signal bar, every warehouse day with SPY; trade open t+1 -> close t+10, 6 bp; straight-down = low over t+1..t+10 <= open - 40 bp",
+ "pass_if_ALL": {
+  "size": "AFTER_PEAK mean net - other signals' mean net <= -3.0 bp",
+  "significance": "day-clustered t of the per-day difference <= -2.0",
+  "both_halves": "the difference is negative in the first and second half of the days",
+  "kept_quality": "skipping AFTER_PEAK raises the kept signals' mean above all signals' mean",
+  "enough": ">= 500 AFTER_PEAK signals, else UNDERPOWERED"
+ },
+ "information": ["peak + lower only (no slow_roll)", "slow_roll only", "straight-down share AFTER_PEAK vs others", "share of signals flagged (opens cost)"],
+ "after_pass": "a live arm refusal behind a switch (default off) computed from the desk's own 1-minute bars; ships (paper) under the operator's 11/18 rule",
+ "else": "record; do not build",
+ "caveats": "minute bars with a fixed 10-minute exit; the live arm fires on 10-second polls, the pattern is judged at the signal bar's close"
+}
