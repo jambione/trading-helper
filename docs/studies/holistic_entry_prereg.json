@@ -1,0 +1,29 @@
+{
+ "id": "holistic_entry_2026-11-18",
+ "registered": "2026-11-18 ~12:50 ET, before the dataset was built or any feature was looked at against outcomes",
+ "operator": "11/18: 'open the right name at the right time with confidence based on prior price action' ... 'look at the name holistically at the time when we wanna buy it ... different timeframes, not just one minute, maybe five minutes or 10 minutes views'",
+ "question": "Does prior price action, seen on 1-, 5- and 10-minute views plus the day and the market, predict which moments lead to a desk-style win before a stop - well enough to beat costs?",
+ "universe_and_moments": "top-400 liquid names (board_structure_family.universe), every 5th minute from 09:45 to 15:30 where the name is in the desk's admission band at that minute ($20-$400, up >= 1.5% vs prior close). NOT conditioned on the current pre-square signal (information cell: the subset where it fires).",
+ "outcome (fixed)": "enter at the open of minute t+1; WIN if a high reaches entry +20 bp before a low reaches entry -50 bp within 15 minutes; LOSS if the stop is touched first (a minute touching both counts as LOSS); else exit at the close of t+15. Net = bracket result - 6 bp cost.",
+ "features (past only, at the close of minute t)": [
+  "1-min: return over 1 and 3 minutes",
+  "5-min view: return over 5/15/30 min; slope of the last 6 five-minute closes; last 5-min low above the previous 5-min low (higher low); 5-min %R(14) and its change",
+  "10-min view: return over 10/30/60 min; 10-min %R(14) and its change",
+  "position: in the 30-min range, in the day's range; distance below the day high; minutes since the day high; minutes since the 10-min peak",
+  "volume: last 15 min vs the day's average per minute; up-minute volume share over the last 15 min; distance from VWAP",
+  "day: gap at the open, change vs prior close, change since the open",
+  "market: SPY return over 5 and 30 min, SPY day change; minute of day"
+ ],
+ "method": "train days = first two thirds by date; test days = last third. Model: sklearn HistGradientBoostingRegressor on net (defaults, max_iter 200, no tuning on test). Score test moments; take the top decile of predicted net (threshold set on TRAIN predictions).",
+ "pass_if_ALL (test only)": {
+  "edge": "top-decile mean net >= +3.0 bp",
+  "lift": "top-decile mean net >= test average net + 5.0 bp",
+  "significance": "day-clustered t of the top decile's per-day mean net >= 2.0",
+  "frequency": "top-decile moments >= 1 per 10 minutes on average across test days (enough opens)",
+  "stability": "top decile mean net > 0 in both halves of the test days"
+ },
+ "information": ["single-feature quintile spreads on train (which questions matter)", "win rate of the top decile vs average", "top decile restricted to moments where the pre-square signal fires", "feature importances (permutation, on train)"],
+ "after_pass": "turn the model's top features into a transparent entry rule or confidence score, replay it through the live code (tools/replay_session.py), then ship (paper) under the operator's 11/18 rule",
+ "else": "record that prior price action on these views does not predict a desk-style win beyond costs; next step would be a different exit shape or a different universe, not more filters",
+ "caveats": "minute bars, a fixed bracket, 5-minute sampling; overlapping moments within a name are correlated (day-clustered t handles days, not names); test third is about 47 days"
+}
