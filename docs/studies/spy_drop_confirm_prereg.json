@@ -15,8 +15,16 @@
   "kept_quality": "kept signals' mean net > all signals' mean net",
   "enough": ">= 300 skipped signals, else UNDERPOWERED"
  },
- "information": ["straight-down share skipped vs kept", "skipped share of signals (opens cost)", "X = 10 and 15 bp (not scored)", "red vs green SPY days"],
+ "information": [
+  "straight-down share skipped vs kept",
+  "skipped share of signals (opens cost)",
+  "X = 10 and 15 bp (not scored)",
+  "red vs green SPY days"
+ ],
  "after_pass": "build the skip behind a switch (default off) reading SPY minute closes from the live tape (market_tape); under the operator's 11/18 rule a PASS ships (paper) - the next session's experiment",
  "else": "record; do not build",
- "caveats": "minute bars with a fixed 10-minute exit, not the desk's trail; the broker-trade result that motivated it is NOT re-used here"
+ "caveats": "minute bars with a fixed 10-minute exit, not the desk's trail; the broker-trade result that motivated it is NOT re-used here",
+ "verdict": {
+  "2026-11-18 ~11:52": "FAIL - do not build. 142 days, 29,333 signals, 2,988 skipped (10%). Skipped signals are NOT worse: -5.24 vs all -5.65 bp (kept -5.70), win 40.5 vs 39.5, straight-down share 23% vs 22%. Book delta +0.53 (t 4.2) is only 'trade less while every signal loses on average' - kept_quality fails. Halves: skipped -6.19 vs kept -5.21 (half 1), -3.82 vs -6.28 (half 2) - no consistent sign. Red days: skipped -7.03 vs kept -7.67. X=10/15: skipped -6.46 / -1.39. The broker-trade MARKET_DROP lead (entry_context_skip, t 1.1, 14 test days) was noise."
+ }
 }
