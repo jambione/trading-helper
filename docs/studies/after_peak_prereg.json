@@ -16,8 +16,16 @@
   "kept_quality": "skipping AFTER_PEAK raises the kept signals' mean above all signals' mean",
   "enough": ">= 500 AFTER_PEAK signals, else UNDERPOWERED"
  },
- "information": ["peak + lower only (no slow_roll)", "slow_roll only", "straight-down share AFTER_PEAK vs others", "share of signals flagged (opens cost)"],
+ "information": [
+  "peak + lower only (no slow_roll)",
+  "slow_roll only",
+  "straight-down share AFTER_PEAK vs others",
+  "share of signals flagged (opens cost)"
+ ],
  "after_pass": "a live arm refusal behind a switch (default off) computed from the desk's own 1-minute bars; ships (paper) under the operator's 11/18 rule",
  "else": "record; do not build",
- "caveats": "minute bars with a fixed 10-minute exit; the live arm fires on 10-second polls, the pattern is judged at the signal bar's close"
+ "caveats": "minute bars with a fixed 10-minute exit; the live arm fires on 10-second polls, the pattern is judged at the signal bar's close",
+ "verdict": {
+  "2026-11-18 ~12:58": "FAIL on significance only (PROMISING, directional). 142 days, 29,333 signals, 856 flagged (2.9%): -8.49 vs others -5.56 bp (day-mean diff -3.29, t -1.46; need -2.0); both halves negative (-4.97 / -1.63); straight-down share 30% vs 22%. Information: slow_roll alone (6.5% of signals) -2.60 bp, t -2.04; peak+lower alone -0.60 (nothing). Not built by the PASS rule; folded into the holistic_entry model as features (since_peak10, dwr5/dwr10)."
+ }
 }
