@@ -34,5 +34,8 @@
  ],
  "after_pass": "find why each top data reason fires on readable names and fix it in code (a longer data-only clock, a restream, a quote refresh); paper test as the next single experiment after market-relative admission is judged",
  "else": "the data drops are not costing opens worth having; leave them",
- "caveats": "minute bars, not the live tick path; a lost signal is an upper bound on a lost open (seats, tape and spread gates at that moment are not modelled); market-relative admission (on from 11/18) is not part of these days"
+ "caveats": "minute bars, not the live tick path; a lost signal is an upper bound on a lost open (seats, tape and spread gates at that moment are not modelled); market-relative admission (on from 11/18) is not part of these days",
+ "verdict": {
+  "2026-11-18 04:33": "FAIL on 42 ledger days - leave the data drops. 13,297 data drops -> 585 lost signals (13.9 per session), 373 pass the real-spread 15 bp gate = 0.26 per 10 min = 5.7% of gated base (bar 10%). Gated lost trades -6.44 vs base -4.29 bp (Welch t -0.84), win 41.0 vs 39.3; own spread -7.57 vs -4.54. By reason: stale_quote 224, pctr_not_live_alpaca 183, missing_pctr 89, spread_unknown 38, stale_tape_cap 36. Yardstick: setup (control) drops lose 15.4 signals per session, more than data drops, so the data drops are not a special leak. A %R backup feed (Finnhub-built bars) is not worth building for opens. Output ai_reports/data_drops/result.json."
+ }
 }
