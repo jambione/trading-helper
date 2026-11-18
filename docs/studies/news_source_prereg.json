@@ -48,6 +48,7 @@
   "else": "do not build the live news source"
  },
  "verdict": {
-  "2026-11-17 evening": "PASS on 41 ledger days: news-extra signals 1.62 per 10 min = 27.4% of base (5.91); extra -5.77 bp vs base -6.24 (t -0.44); win 38.2 vs 38.9; 2,297 extra. Info: relative bar 28% / -6.36 vs -6.17; all days not-in-top400 35.5% / -5.66; 53% of news names have no warehouse bars (illiquid). WARNING (information cell, not the bar): only 252 extra signals have a known spread <= 15 bp (the Sept spread file covers 596 names), and those did worse: -11.6 bp, win 31.3%, t -3.04. Before building the live source, measure real spreads at the extra signals' minutes from historical quotes and re-check."
+  "2026-11-17 evening": "PASS on 41 ledger days: news-extra signals 1.62 per 10 min = 27.4% of base (5.91); extra -5.77 bp vs base -6.24 (t -0.44); win 38.2 vs 38.9; 2,297 extra. Info: relative bar 28% / -6.36 vs -6.17; all days not-in-top400 35.5% / -5.66; 53% of news names have no warehouse bars (illiquid). WARNING (information cell, not the bar): only 252 extra signals have a known spread <= 15 bp (the Sept spread file covers 596 names), and those did worse: -11.6 bp, win 31.3%, t -3.04. Before building the live source, measure real spreads at the extra signals' minutes from historical quotes and re-check.",
+  "2026-11-17 20:22 spread_check": "FAIL - do not build the live news source. Real SIP spreads at entry: news extras median 12.9 bp (base sample 7.1); 55.5% pass the 15 bp gate (base 78%). Gated extras still add 19.5% signals (0.90 vs 4.61 per 10 min) but trade worse: -6.61 vs -4.37 bp (Welch t -1.51), win 34.9 vs 39.3 (bar: within 3 points). Charged their own spread: -8.18 vs -4.62 bp, win 33.0 vs 38.0. Output ai_reports/news_source/spread_check.json."
  }
 }
