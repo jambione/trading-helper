@@ -5,7 +5,10 @@
  "question": "Does the desk's first trade of the day in a name do worse than its later trades in that name the same day, controlling for time of day? (If yes: half-size first trades / slot priority for repeat names.)",
  "data": "broker round trips as tools/studies/flow_exit.load_trades (2026-09-16..11-18, desk-off 11/12-11/16 out). FIRST = no earlier closed trade in that symbol that day at the buy; REPEAT = at least one. Buckets 09:30-10:30, 10:30-12:30, 12:30-close.",
  "statistic": "per day: average over buckets that have both groups of (mean REPEAT bp - mean FIRST bp); day-clustered t over days",
- "split": {"train": "days <= 2026-10-23 (the exploratory table saw these AND the test days; the held-out guard is the test-half bar below)", "test": "days >= 2026-10-26"},
+ "split": {
+  "train": "days <= 2026-10-23 (the exploratory table saw these AND the test days; the held-out guard is the test-half bar below)",
+  "test": "days >= 2026-10-26"
+ },
  "pass_if_ALL": {
   "test_size": "test difference >= +3.0 bp",
   "test_significance": "test day-clustered t >= 2.0",
@@ -15,5 +18,8 @@
  },
  "after_pass": "build behind a switch (default off): first trade of the day in a symbol at half the normal notional; slot priority for repeat names as an information cell. Under the operator's 11/18 rule a PASS ships (paper).",
  "else": "record; do not build",
- "caveats": "the exploratory look used all days, so the test half is not fully blind - the t >= 2 bar on it is the protection; repeat trades may sit on names still trending, which a live rule would also see (no look-ahead: the earlier trade has closed)"
+ "caveats": "the exploratory look used all days, so the test half is not fully blind - the t >= 2 bar on it is the protection; repeat trades may sit on names still trending, which a live rule would also see (no look-ahead: the earlier trade has closed)",
+ "verdict": {
+  "2026-11-18 11:56": "FAIL on significance only (PROMISING). Bucket-matched REPEAT - FIRST: train +7.36 bp (28 days, t 1.11), test +4.37 bp (15 days, t 0.97; need 2.0). Test means first -6.5 vs repeat +0.32 bp (257 / 226 trades). Half-size first trades: test dollars per day -8.78 -> -4.66. Direction right in both halves; not proven. Operator standard 11/18: 'directionally correct' - offered as a paper experiment, not shipped by the PASS rule."
+ }
 }
