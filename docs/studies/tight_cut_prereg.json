@@ -19,8 +19,14 @@
   "quality_win": "B win % >= A win % - 3 points",
   "enough_data": "A >= 30 trades pooled, else UNDERPOWERED"
  },
- "information": ["opens per 10 min and share of the session with >= 1 and >= 2 positions open, per arm and day", "B trades on names A never traded vs the shared ones", "tight admits per day per arm", "spread lookups per scan (API budget)"],
+ "information": [
+  "opens per 10 min and share of the session with >= 1 and >= 2 positions open, per arm and day",
+  "B trades on names A never traded vs the shared ones",
+  "tight admits per day per arm",
+  "spread lookups per scan (API budget)"
+ ],
  "after_pass": "paper experiment: set the three knobs live (config commit with an Evidence line), judge by broker truth over 5 sessions vs the restored-desk win rate; it runs after (or alongside, if the operator says) the market-relative admission week",
  "else": "keep the tight cut as is",
- "caveats": "synthetic days are not the recorded desk (no momentum/trending/research, no book-state history); the comparison is B vs A under the same synthesis, not either vs live; few days"
+ "caveats": "synthetic days are not the recorded desk (no momentum/trending/research, no book-state history); the comparison is B vs A under the same synthesis, not either vs live; few days",
+ "after_pass_amendment_2026-11-18": "Argon: the synthetic replay computes %R for every universe name, but live push_candidates_to_engine caps the signal engine at ai_watch_engine_push_max 30 across all sources. If B ships, raise ai_watch_engine_push_max 30 -> 50 with it, or the 16 extra seeded tight names may get no %R. Does not change the pass bar."
 }
