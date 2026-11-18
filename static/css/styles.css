@@ -4879,8 +4879,10 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-entry,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-trail { font-size: 15px; }
 
 
-/* Call bar (operator 10/16, desktop only): log a would-buy call for any ticker. Hidden per operator request. */
-.panel-ai-watch .ai-call-bar { display: none !important; }
+/* Call bar (operator 10/16, desktop only): log a would-buy call for any ticker. Hidden 10/xx per operator, shown again 11/18
+   ("Yes, I'll log calls" - the live test of discretionary reading, running list row 151). */
+.panel-ai-watch .ai-call-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px;
+  border-bottom: 1px solid rgba(167, 139, 250, 0.2); background: rgba(124, 58, 237, 0.06); }
 .panel-ai-watch .ai-call-label { font-weight: 700; letter-spacing: .04em; text-transform: uppercase; font-size: 11px; color: #c4b5fd; }
 .panel-ai-watch .ai-call-input { width: 6.5rem; padding: 5px 8px; border-radius: 6px; border: 1px solid rgba(167, 139, 250, 0.4);
   background: rgba(20, 14, 36, 0.6); color: #ede9fe; font: inherit; text-transform: uppercase; }
