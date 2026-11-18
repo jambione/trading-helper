@@ -22,8 +22,16 @@
   "frequency": "top-decile moments >= 1 per 10 minutes on average across test days (enough opens)",
   "stability": "top decile mean net > 0 in both halves of the test days"
  },
- "information": ["single-feature quintile spreads on train (which questions matter)", "win rate of the top decile vs average", "top decile restricted to moments where the pre-square signal fires", "feature importances (permutation, on train)"],
+ "information": [
+  "single-feature quintile spreads on train (which questions matter)",
+  "win rate of the top decile vs average",
+  "top decile restricted to moments where the pre-square signal fires",
+  "feature importances (permutation, on train)"
+ ],
  "after_pass": "turn the model's top features into a transparent entry rule or confidence score, replay it through the live code (tools/replay_session.py), then ship (paper) under the operator's 11/18 rule",
  "else": "record that prior price action on these views does not predict a desk-style win beyond costs; next step would be a different exit shape or a different universe, not more filters",
- "caveats": "minute bars, a fixed bracket, 5-minute sampling; overlapping moments within a name are correlated (day-clustered t handles days, not names); test third is about 47 days"
+ "caveats": "minute bars, a fixed bracket, 5-minute sampling; overlapping moments within a name are correlated (day-clustered t handles days, not names); test third is about 47 days",
+ "verdict": {
+  "2026-11-18 ~13:10": "FAIL, decisively. 142 days (train 94 / test 48), 822,917 moments (565k train / 258k test). Test average net -6.14 bp (= the 6 bp cost: gross ~0). Model top decile -5.96 bp (win 55.4%), and every test decile sits between -5.82 and -6.47 bp - no ordering by confidence. Win rate does vary (decile 1 59.8% vs decile 8 51.8%) but mean net does not. Best single-feature quintile spread on train < 1 bp (spy5 -0.89, below_hod -0.84, r5 -0.75). Importances are market/time (SPY day, SPY 30/5 min, minute of day) - day regime, not repeatable. The desk's pre-square minutes in the test: -6.48 bp; only 7% land in the model's top decile. Conclusion: on these names, at a 15-minute desk bracket, prior price action on 1/5/10-minute views, the day and the market does not predict direction beyond chance; the loss is the cost of the round trip."
+ }
 }
