@@ -1,0 +1,33 @@
+{
+ "id": "trend_confidence_exit_2026-11-18",
+ "registered": "2026-11-18 ~11:35 ET, before any bar was fetched or any trade scored for this rule",
+ "operator": "11/18: 'My confidence would be if we were trending up or on a curl towards an upward trend, sideways and downward trends is low confidence' ... 'Especially if we've been some time below the entry price and never above it'",
+ "prior": "the strict 'unless_up' double-check exit (sell unless both %R lines make a fresh 10-min high) lost 1.6-2.7 bp per cut on 7 replay days (memory never-green-cut-fails-every-version). This rule is looser: a curl or an up-slope is a hold, and it only acts on trades that have never been above entry.",
+ "data": {
+  "trades": "broker round trips, as tools/studies/flow_exit.load_trades (2026-09-16..11-18, desk-off 11/12-11/16 excluded, entries 09:31-15:45)",
+  "bars": "SIP 1-minute bars for the traded symbols from the data-only account (tools/studies/loser_breakdown.api_bars)"
+ },
+ "rule_at_checkpoint_T_minutes": {
+  "minutes": "the T complete minutes after the fill minute (m_in+1 .. m_in+T)",
+  "never_above": "no minute high in those minutes above the buy fill price",
+  "below_now": "close of minute m_in+T below the fill price",
+  "trend_up_or_curl (HOLD)": "least-squares slope of the last 5 closes > 0, OR a curl: last close > previous close AND last low > the lowest low of the 4 minutes before it",
+  "exit": "never_above AND below_now AND NOT trend_up_or_curl, trade still open at the end of minute m_in+T -> sell at that close minus 3 bp; otherwise keep the actual broker exit"
+ },
+ "comparison": "PLAIN = never_above AND below_now, no trend condition (a timed never-green cut). The rule must beat PLAIN as well as holding.",
+ "split": {
+  "train": "entry day <= 2026-10-23: choose T from {3, 5, 10} by book delta",
+  "test": "entry day >= 2026-10-26: the chosen T only, scored once"
+ },
+ "pass_if_ALL (test)": {
+  "book": "mean delta per trade (rule - actual, 0 when untouched) >= +1.0 bp",
+  "significance": "day-clustered t >= 2.0",
+  "beats_plain": "rule book delta >= PLAIN book delta + 1.0 bp",
+  "both_halves": "train book delta of the chosen T > 0",
+  "enough": ">= 40 test trades exited, else UNDERPOWERED"
+ },
+ "information": ["exited trades that were full stop-outs (<= -40 bp) vs later winners", "same rule with %R fast pitch > 0 counted as a curl (not scored)"],
+ "after_pass": "build behind a switch (default off) in ai_positions; under the operator's 11/18 rule a PASS ships (paper)",
+ "else": "no trend-confidence exit; record it",
+ "caveats": "minute bars (the live desk sees seconds and IEX); fills span several desk configs, judged per trade by delta"
+}
