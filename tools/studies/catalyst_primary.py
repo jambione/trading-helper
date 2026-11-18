@@ -29,6 +29,16 @@ SPLIT = "2026-09-24"
 T_FIRST, T_LAST, HOLD = 15, 330, 60
 NEWS_WIN, VOL_PACE, MIN_ARTICLES, CAP = 30, 3.0, 200, 4000
 GROUPS = ("NEWS", "VOL", "BOTH")
+MODES = ("wr", "loose", "nowr")       # wr = the desk's pre-square trigger; loose = open box; nowr = no %R (information)
+DECIDE_MODES = ("wr", "loose")
+T_CRIT = 2.64                         # Bonferroni: 3 groups x 2 timing modes
+
+
+def loose_ok(fast, g):
+    """Open box (operator 11/18 'loosen the %R checks if it's secondary'): fast %R >= -50 and rising this bar. Pure."""
+    if g < 1 or not (np.isfinite(fast[g]) and np.isfinite(fast[g - 1])):
+        return False
+    return bool(fast[g] >= -50 and fast[g] - fast[g - 1] > 0.05)
 
 
 def vol_exit(o, h, l, c, t, hold=HOLD):
@@ -72,6 +82,7 @@ def events():
     from relative_strength_scan import load_day
     from board_structure_family import universe
     from evening_family import WH_SIP, ALL_ETF, minute_grid, presquare_bars, first_true
+    from bar_signal_family import wr_smoothed
     from holistic_entry import bracket, COST
     import news_source as ns
     hist = defaultdict(lambda: deque(maxlen=5))
@@ -98,6 +109,7 @@ def events():
                 story = stories.get(s) if stories is not None else None
                 cc, hh, ll, off = minute_grid(prev["c"][j], prev["h"][j], prev["l"][j], c, h, l)
                 trig = set(first_true(presquare_bars(cc, hh, ll, off, 21)))
+                fast = wr_smoothed(hh, ll, cc, n=21, span=7)
                 done = set()
                 for t in range(T_FIRST, T_LAST + 1):
                     if not np.isfinite(c[t]) or not (20.0 <= c[t] <= 400.0) or (c[t] / pc - 1) * 100 < 1.5:
@@ -108,9 +120,11 @@ def events():
                             continue
                         if not active(g, t, story, pace):
                             continue
-                        for mode in ("wr", "nowr"):
+                        for mode in MODES:
                             key = (g, mode)
                             if key in done or (mode == "wr" and t not in trig):
+                                continue
+                            if mode == "loose" and not loose_ok(fast, t + off):
                                 continue
                             gross = vol_exit(o, h, l, c, t)
                             if gross is None:
@@ -187,8 +201,8 @@ def verdict(st):
     f = []
     if st["mean_net"] < 2.0:
         f.append(f"edge {st['mean_net']} bp (need +2.0)")
-    if (st.get("t_day") or 0) < 2.4:
-        f.append(f"t {st.get('t_day')} (need 2.4)")
+    if (st.get("t_day") or 0) < T_CRIT:
+        f.append(f"t {st.get('t_day')} (need {T_CRIT})")
     if not ((st.get("half1") or -1) > 0 and (st.get("half2") or -1) > 0):
         f.append(f"halves {st.get('half1')} / {st.get('half2')}")
     return ("PASS" if not f else "FAIL"), f
@@ -206,16 +220,17 @@ def score():
         rows.append({**r, "spread": float(sp), "net": r["gross"] - float(sp)})
     res = {"verdicts": {}, "decide": {}, "info": {}}
     for g in GROUPS:
-        for mode in ("wr", "nowr"):
+        for mode in MODES:
             pre = [r for r in rows if r["group"] == g and r["mode"] == mode and r["day"] < SPLIT]
             post = [r for r in rows if r["group"] == g and r["mode"] == mode and r["day"] >= SPLIT]
-            res["decide" if mode == "wr" else "info"][f"{g}|{mode}|pre"] = stats(pre)
+            res["decide" if mode in DECIDE_MODES else "info"][f"{g}|{mode}|pre"] = stats(pre)
             res["info"][f"{g}|{mode}|post"] = stats(post)
-            if mode == "wr":
-                res["verdicts"][g] = verdict(res["decide"][f"{g}|{mode}|pre"])
+            if mode in DECIDE_MODES:
+                res["verdicts"][f"{g}|{mode}"] = verdict(res["decide"][f"{g}|{mode}|pre"])
+            if mode in DECIDE_MODES:
                 br = [{**r, "gross": r["bracket_gross"], "net": r["bracket_gross"] - r["spread"]}
                       for r in pre if r["bracket_gross"] is not None]
-                res["info"][f"{g}|wr|pre|desk_bracket"] = stats(br)
+                res["info"][f"{g}|{mode}|pre|desk_bracket"] = stats(br)
     res["no_quote_dropped"] = {f"{k[0]}|{k[1]}|{'pre' if k[2] else 'post'}": v for k, v in missing.items()}
     res["generated"] = datetime.now(ET).isoformat(timespec="minutes")
     (OUT / "result.json").write_text(json.dumps(res, indent=1))

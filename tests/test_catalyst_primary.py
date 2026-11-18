@@ -42,3 +42,12 @@ def test_verdict():
     assert C.verdict({"n": 10})[0] == "UNDERPOWERED"
     assert C.verdict({"n": 400, "mean_net": 3.0, "t_day": 2.5, "half1": 1.0, "half2": 2.0})[0] == "PASS"
     assert C.verdict({"n": 400, "mean_net": 3.0, "t_day": 2.3, "half1": 1.0, "half2": 2.0})[0] == "FAIL"
+
+
+def test_loose_ok_open_box():
+    f = np.array([-60.0, -55.0, -49.0, -48.0, -48.0, -70.0])
+    assert not C.loose_ok(f, 1)            # rising but below -50
+    assert C.loose_ok(f, 2) and C.loose_ok(f, 3)
+    assert not C.loose_ok(f, 4)            # flat
+    assert not C.loose_ok(f, 0)
+    assert C.T_CRIT == 2.64 and C.DECIDE_MODES == ("wr", "loose")

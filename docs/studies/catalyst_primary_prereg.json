@@ -16,12 +16,17 @@
  "decides": "days 2026-04-28 .. 2026-09-23",
  "pass_each_group (Bonferroni for 3 groups)": {
   "edge": "mean net >= +2.0 bp after the real spread",
-  "significance": "day-clustered t >= 2.4",
+  "significance": "day-clustered t >= 2.64 (amended_1: 6 deciding cells)",
   "both_halves": "mean net > 0 in the first and the second half of the days",
   "enough": ">= 300 quoted events"
  },
  "information_only": "9/24-11/17; each group with NO %R (enter at the first primary-active minute) to show whether %R adds; the desk's fixed +20/-50 bracket on the same events; gross before spread; median spread",
  "if_pass": "result-skeptic review, then a separate paper lane behind a default-off switch, replayed through the live code, then on under the operator's 11/18 rule",
  "if_fail": "record; the catalyst-primary + %R-secondary structure is closed at this horizon on SIP bars",
- "news_data_gaps": "Alpaca news returns 0 stories for some days (4/27, 4/28 seen at fetch time, before any scoring). Days with < 200 stories are news-missing: excluded from NEWS and BOTH, kept for VOL. Names need 5 prior warehouse days for the volume baseline."
+ "news_data_gaps": "Alpaca news returns 0 stories for some days (4/27, 4/28 seen at fetch time, before any scoring). Days with < 200 stories are news-missing: excluded from NEWS and BOTH, kept for VOL. Names need 5 prior warehouse days for the volume baseline.",
+ "amended_1": {
+  "when": "2026-11-18 ~17:45 ET, before the events step ran (news fetch at 5/06; nothing built or scored)",
+  "operator": "'Maybe we can loosen the %R checks (open box) if its secondary'",
+  "change": "adds a second deciding timing mode LOOSE = fast %R (21, EWM 7) >= -50 and rising this bar (> +0.05), no slow-line or convergence check; first such bar in a primary-active minute per name per day per group. Deciding cells are now 3 groups x {desk pre-square, LOOSE} = 6, so significance needs day-clustered t >= 2.64 (Bonferroni); edge, halves and n bars unchanged. No-%R stays information only."
+ }
 }
