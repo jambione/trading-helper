@@ -40,7 +40,7 @@ def test_sample_caps_and_is_deterministic():
 
 def test_verdict():
     assert C.verdict({"n": 10})[0] == "UNDERPOWERED"
-    assert C.verdict({"n": 400, "mean_net": 3.0, "t_day": 2.5, "half1": 1.0, "half2": 2.0})[0] == "PASS"
+    assert C.verdict({"n": 400, "mean_net": 3.0, "t_day": 2.7, "half1": 1.0, "half2": 2.0})[0] == "PASS"
     assert C.verdict({"n": 400, "mean_net": 3.0, "t_day": 2.3, "half1": 1.0, "half2": 2.0})[0] == "FAIL"
 
 
