@@ -1,0 +1,23 @@
+{
+ "id": "operator_marks_2026-11-18",
+ "registered": "2026-11-18 ~13:25 ET, before any of these four rules was computed on the warehouse",
+ "operator": "11/18: three BIPC charts marked 'signals for price increases' - the fast %R rising toward the slow (12:26), RSI-2 under 10 hooking up, and RSI-2 oversold together with the fast %R curling up from near -100",
+ "rules (fixed, no tuning; 1-minute SIP bars; fast %R = Williams %R 21 EWM 7, slow = 112 EWM 3, RSI-2 = Wilder RSI period 2 on closes, the operator's CM_RSI_2)": {
+  "EARLY_CURL": "fast %R <= -50, slow %R >= -35, fast rising this bar (f - f_prev > 0.05) - the curl toward the slow line before the buy zone",
+  "RSI2_HOOK": "RSI-2 was < 10 on the previous bar and rises this bar",
+  "DEEP_CURL": "fast %R was <= -70 at some bar in the last 5 and has risen on each of the last 2 bars",
+  "BOTH": "DEEP_CURL this bar AND a RSI2_HOOK within the last 5 bars (including this one)"
+ },
+ "events": "each rule fires at most once per name per 30 minutes (refractory); minutes 15-360; top-400 universe; name in the desk's admission band at the event ($20-$400, up >= 1.5% vs prior close). Information cell: the same rules with no admission band.",
+ "outcome": "enter at the open of the next minute; +20 bp before -50 bp within 15 min (stop first if both), else the close at 15 min; 6 bp cost (holistic_entry.bracket)",
+ "pass_if_ALL (each rule separately, all 142 days - fixed rules, nothing fitted)": {
+  "edge": "mean net >= +2.0 bp (profitable after cost)",
+  "significance": "day-clustered t >= 2.0",
+  "both_halves": "mean net > 0 in the first and the second half of the days",
+  "enough": ">= 500 events"
+ },
+ "comparison": "every rule is also shown against the average admissible moment (holistic_entry: -6.14 bp) and the desk's pre-square signal (-6.48 bp)",
+ "after_pass": "the passing rule becomes a paper entry trigger behind a switch (default off) next to the pre-square arm, replayed through the live code first, then ships (paper) under the operator's 11/18 rule",
+ "else": "record; the operator's live call log is the remaining test of discretionary reading",
+ "caveats": "minute bars with a fixed bracket, not the desk's trail; IEX vs SIP indicator differences (the operator charts SIP-like data)"
+}
