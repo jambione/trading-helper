@@ -26,8 +26,14 @@
   "both_halves": "train book delta of the chosen T > 0",
   "enough": ">= 40 test trades exited, else UNDERPOWERED"
  },
- "information": ["exited trades that were full stop-outs (<= -40 bp) vs later winners", "same rule with %R fast pitch > 0 counted as a curl (not scored)"],
+ "information": [
+  "exited trades that were full stop-outs (<= -40 bp) vs later winners",
+  "same rule with %R fast pitch > 0 counted as a curl (not scored)"
+ ],
  "after_pass": "build behind a switch (default off) in ai_positions; under the operator's 11/18 rule a PASS ships (paper)",
  "else": "no trend-confidence exit; record it",
- "caveats": "minute bars (the live desk sees seconds and IEX); fills span several desk configs, judged per trade by delta"
+ "caveats": "minute bars (the live desk sees seconds and IEX); fills span several desk configs, judged per trade by delta",
+ "verdict": {
+  "2026-11-18 ~12:05": "FAIL (full data; train 1,207 / test 513). Train: every T negative (3: -0.13, 5: -0.19, 10: -0.17 bp/trade). Test T=3: 82 exits (30 stop-outs, 25 later winners), book -0.64 bp/trade (t -0.61); plain never-green cut -0.61. The up/curl read does not separate the trades that recover. Not built. (The first run on 11/18 had an empty train half - fixed loader, this is the scored run.)"
+ }
 }

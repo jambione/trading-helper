@@ -24,8 +24,15 @@
   "both_halves": "train book delta of the chosen (W, K) > 0",
   "enough": ">= 40 test trades cut, else UNDERPOWERED"
  },
- "information": ["share of full stop-outs (<= -40 bp) the rule cuts vs share of later winners it cuts", "flow_W distribution for straight-to-stop trades vs recovering dips", "AUC of flow_W for straight-to-stop among trades below entry at W"],
+ "information": [
+  "share of full stop-outs (<= -40 bp) the rule cuts vs share of later winners it cuts",
+  "flow_W distribution for straight-to-stop trades vs recovering dips",
+  "AUC of flow_W for straight-to-stop among trades below entry at W"
+ ],
  "after_pass": "build the exit behind a switch (default off) in ai_positions using the live SIP/IEX trade stream; under the operator's 11/18 rule a PASS ships (paper), judged by broker truth",
  "else": "do not build a flow exit; the straight-to-stop trades stay unexplained",
- "caveats": "fills span several desk configs (stops, entry rules) - the rule is judged on its own delta per trade, which is config-neutral as long as the actual exit is later than W; tick rule, not quotes; the live desk sees IEX, not SIP, ticks"
+ "caveats": "fills span several desk configs (stops, entry rules) - the rule is judged on its own delta per trade, which is config-neutral as long as the actual exit is later than W; tick rule, not quotes; the live desk sees IEX, not SIP, ticks",
+ "verdict": {
+  "2026-11-18 ~12:05": "FAIL (full data, 1,718 trades; train 1,207 / test 511). Chosen W=60 s, K=-0.2 (train +0.61 bp). Test: 105 cut (24 full stop-outs, 46 later winners), book -0.39 bp/trade, day t -0.56. Beats the plain never-green cut (-2.87 bp, t -2.16) by 2.5 bp - flow avoids cutting many winners - but is not positive. AUC of low flow for straight-to-stop among trades below entry at 60 s: 0.538 (189 stop-outs / 771 others). First-minute SIP flow does not see the straight-down trades coming. Not built."
+ }
 }
