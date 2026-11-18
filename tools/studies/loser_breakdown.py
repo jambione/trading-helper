@@ -213,7 +213,7 @@ def main(argv):
             arm = arm_row(d, t["symbol"], t["t_in"])
             row = {"day": d, **{k: t[k] for k in ("symbol", "px_in", "px_out", "qty")}, "ret_bp": round(t["ret_bp"], 1),
                    "hold_min": round((t["t_out"] - t["t_in"]) / 60, 1), "minute": m_in,
-                   **path(bars, t["symbol"], m_in, min(389, m_out), t["px_in"]),
+                   **path(bars, t["symbol"], min(389, m_in + 1), min(389, max(m_in + 1, m_out)), t["px_in"]),   # from the minute AFTER the fill: the fill minute's high can precede the fill
                    **context(bars, t["symbol"], m_in, pc.get(t["symbol"]))}
             for k in ("pctr", "pctr_fast_pitch", "pctr_slow_pitch", "cm_rsi", "tape_age_sec"):
                 if isinstance(arm.get(k), (int, float)):
