@@ -1,0 +1,31 @@
+{
+ "id": "flow_exit_2026-11-18",
+ "registered": "2026-11-18 ~11:45 ET, before any tick was fetched or any flow number computed",
+ "operator": "11/18: 'Yes, run it' - can first-minute SIP order flow tell the trades that fall straight to the stop from the dips that recover?",
+ "background": "loser_breakdown (running list row 142): 15% of trades never go green and hit the full stop, = 2.7x the net loss; timed never-green cuts lost in 7 versions because ~60% of dips recover (memory never-green-cut-fails-every-version). This tests a NEW signal, not a timed cut.",
+ "data": {
+  "trades": "broker fills ai_reports/broker_truth/fills.jsonl, round trips paired FIFO per symbol per day (tools/studies/loser_breakdown.pair_fifo), 2026-09-16..2026-11-18, desk-off days 11/12-11/16 excluded, entry 09:31-15:45",
+  "ticks": "SIP trades for the traded symbol from 5 s before the buy fill to 120 s after (data-only account), cached"
+ },
+ "signal": {
+  "flow_W": "tick-rule signed volume from the fill to fill + W s (uptick = buy, downtick = sell, zero tick = previous sign): (buy - sell) / (buy + sell); W in {60, 120}",
+  "below_W": "last SIP trade at fill + W below the buy fill price"
+ },
+ "rule": "at fill + W, if the trade is still open, below_W, and flow_W <= K: sell at the last SIP trade at fill + W minus 3 bp (half the spread, memory never-greens-are-not-entry-cost). Otherwise keep the actual broker exit.",
+ "comparison": "PLAIN = the same rule without the flow condition (the tested never-green cut). FLOW must beat PLAIN as well as holding.",
+ "split": {
+  "train": "trades with entry day <= 2026-10-23 - choose W and K from the grid W {60, 120} x K {-0.2, -0.4, -0.6} by book delta (bp per trade over all train trades)",
+  "test": "trades with entry day >= 2026-10-26 - the chosen (W, K) only, scored once"
+ },
+ "pass_if_ALL (test)": {
+  "book": "mean delta per trade (rule exit - actual exit, 0 for untouched trades) >= +1.0 bp",
+  "significance": "day-clustered t of the per-day mean delta >= 2.0",
+  "beats_plain": "FLOW book delta >= PLAIN book delta + 1.0 bp",
+  "both_halves": "train book delta of the chosen (W, K) > 0",
+  "enough": ">= 40 test trades cut, else UNDERPOWERED"
+ },
+ "information": ["share of full stop-outs (<= -40 bp) the rule cuts vs share of later winners it cuts", "flow_W distribution for straight-to-stop trades vs recovering dips", "AUC of flow_W for straight-to-stop among trades below entry at W"],
+ "after_pass": "build the exit behind a switch (default off) in ai_positions using the live SIP/IEX trade stream; under the operator's 11/18 rule a PASS ships (paper), judged by broker truth",
+ "else": "do not build a flow exit; the straight-to-stop trades stay unexplained",
+ "caveats": "fills span several desk configs (stops, entry rules) - the rule is judged on its own delta per trade, which is config-neutral as long as the actual exit is later than W; tick rule, not quotes; the live desk sees IEX, not SIP, ticks"
+}
