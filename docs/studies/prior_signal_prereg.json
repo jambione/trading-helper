@@ -1,0 +1,21 @@
+{
+ "id": "prior_signal_2026-11-18",
+ "registered": "2026-11-18 ~12:15 ET, before any signal was joined to its earlier same-day signals",
+ "operator": "11/18: 'How can we know the performance of the name prior to buying it for the first time?' ... 'Yes, test it'",
+ "question": "Does the outcome of a name's EARLIER pre-square signal today (taken or not) predict its next one?",
+ "data": "the desk's live pre-square arm on SIP minute bars (news_source.signals_for: fast %R 21, refractory 30, minutes 15-360), top-400 universe, every warehouse day with SPY. The CURRENT signal must pass the BASE admission ($20-$400, up >= 1.5%); earlier signals count whatever their admission (price band only). Trade: open t+1 -> close t+10, 6 bp.",
+ "no_lookahead": "an earlier signal counts only if its 10-minute outcome is complete before the current signal minute (t_prev + 10 < t; the 30-min refractory guarantees it)",
+ "groups": {"WIN": "the most recent earlier signal today netted > 0", "LOSS": "it netted <= 0", "NONE": "no earlier signal today (information: confounded with time of day)"},
+ "statistic": "per day with both groups: mean WIN - mean LOSS (bp); day-clustered t",
+ "pass_if_ALL": {
+  "size": "WIN - LOSS >= +3.0 bp",
+  "significance": "day-clustered t >= 2.0",
+  "both_halves": "WIN - LOSS > 0 in the first and second half of the days",
+  "win_beats_all": "WIN mean > mean of all current signals",
+  "enough": ">= 1,000 WIN and >= 1,000 LOSS signals"
+ },
+ "information": ["NONE vs WIN vs LOSS by time of day", "straight-down share (low over t+1..t+10 <= open - 40 bp) per group", "mean of all earlier signals today instead of the last one"],
+ "after_pass": "a live feature: for each name, the outcome of its last pre-square signal today from the desk's own bars; use for first-trade sizing (full size after a working earlier signal, reduced otherwise) or slot priority - built behind a switch, ships (paper) under the operator's 11/18 rule",
+ "else": "record; the first trade stays at half size (row 147)",
+ "caveats": "minute bars with a fixed 10-minute exit; LOSS includes signals that only lost the 6 bp cost"
+}
