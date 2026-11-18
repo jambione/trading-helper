@@ -28,7 +28,9 @@ OUT = ROOT / "ai_reports" / "catalyst_primary"
 SPLIT = "2026-09-24"
 T_FIRST, T_LAST, HOLD = 15, 330, 60
 NEWS_WIN, VOL_PACE, MIN_ARTICLES, CAP = 30, 3.0, 200, 4000
-GROUPS = ("NEWS", "VOL", "BOTH")
+GROUPS = ("NEWS", "VOL", "BOTH")      # deciding: direction-confirmed (amended_3, Argon 11/18)
+RAW_GROUPS = ("NEWS_RAW", "VOL_RAW", "BOTH_RAW")   # information: the original, direction-blind primaries
+ALL_GROUPS = GROUPS + RAW_GROUPS
 MODES = ("wr", "loose", "nowr")       # wr = the desk's pre-square trigger; loose = open box; nowr = no %R (information)
 DECIDE_MODES = ("wr", "loose")
 T_CRIT = 2.64                         # Bonferroni: 3 groups x 2 timing modes
@@ -72,10 +74,23 @@ def vol_pace(v, t, avg_daily):
     return float(np.nansum(w)) / (avg_daily * 15 / 390)
 
 
-def active(group, t, story_m, pace):
+def active(group, t, story_m, pace, vol_up=True, news_up=True):
+    """vol_up: the pump window closed higher than it opened (c[t] > c[t-15]); news_up: price above the open of the story
+    minute (the tape read the story as good). Only the direction-confirmed groups use them. Pure."""
     news = story_m is not None and 0 <= t - story_m <= NEWS_WIN
     vol = pace is not None and pace >= VOL_PACE
-    return {"NEWS": news, "VOL": vol, "BOTH": news and vol}[group]
+    return {"NEWS_RAW": news, "VOL_RAW": vol, "BOTH_RAW": news and vol,
+            "NEWS": news and news_up, "VOL": vol and vol_up, "BOTH": news and vol and news_up and vol_up}[group]
+
+
+def directions(o, c, t, story_m):
+    """(vol_up, news_up) at closed minute t. Pure."""
+    vol_up = t >= 15 and np.isfinite(c[t]) and np.isfinite(c[t - 15]) and c[t] > c[t - 15]
+    news_up = False
+    if story_m is not None and 0 <= story_m <= t:
+        ref = o[story_m]
+        news_up = bool(np.isfinite(ref) and ref > 0 and c[t] > ref)
+    return bool(vol_up), news_up
 
 
 def events():
@@ -115,10 +130,11 @@ def events():
                     if not np.isfinite(c[t]) or not (20.0 <= c[t] <= 400.0) or (c[t] / pc - 1) * 100 < 1.5:
                         continue
                     pace = vol_pace(v, t, avg)
-                    for g in GROUPS:
-                        if g in GROUPS and stories is None and g != "VOL":
+                    vup, nup = directions(o, c, t, story)
+                    for g in ALL_GROUPS:
+                        if stories is None and g not in ("VOL", "VOL_RAW"):
                             continue
-                        if not active(g, t, story, pace):
+                        if not active(g, t, story, pace, vup, nup):
                             continue
                         for mode in MODES:
                             key = (g, mode)
@@ -231,13 +247,14 @@ def score():
             continue
         rows.append({**r, "spread": float(sp), "net": r["gross"] - float(sp)})
     res = {"verdicts": {}, "decide": {}, "info": {}}
-    for g in GROUPS:
+    for g in ALL_GROUPS:
         for mode in MODES:
             pre = [r for r in rows if r["group"] == g and r["mode"] == mode and r["day"] < SPLIT]
             post = [r for r in rows if r["group"] == g and r["mode"] == mode and r["day"] >= SPLIT]
-            res["decide" if mode in DECIDE_MODES else "info"][f"{g}|{mode}|pre"] = stats(pre)
+            decide = g in GROUPS and mode in DECIDE_MODES
+            res["decide" if decide else "info"][f"{g}|{mode}|pre"] = stats(pre)
             res["info"][f"{g}|{mode}|post"] = stats(post)
-            if mode in DECIDE_MODES:
+            if decide:
                 res["verdicts"][f"{g}|{mode}"] = verdict(res["decide"][f"{g}|{mode}|pre"])
             if mode in DECIDE_MODES:
                 br = [{**r, "gross": r["bracket_gross"], "net": r["bracket_gross"] - r["spread"]}

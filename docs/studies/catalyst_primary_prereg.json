@@ -29,5 +29,10 @@
   "operator": "'Maybe we can loosen the %R checks (open box) if its secondary'",
   "change": "adds a second deciding timing mode LOOSE = fast %R (21, EWM 7) >= -50 and rising this bar (> +0.05), no slow-line or convergence check; first such bar in a primary-active minute per name per day per group. Deciding cells are now 3 groups x {desk pre-square, LOOSE} = 6, so significance needs day-clustered t >= 2.64 (Bonferroni); edge, halves and n bars unchanged. No-%R stays information only."
  },
- "amended_2_information_only": "2026-11-18 ~18:00, before any events: operator goal 'profitable strategy (maybe several by time of day), an open every 10 minutes' -> also report each deciding cell by time bucket (09:45-10:30, 10:30-12:00, 12:00-14:00, 14:00-15:00) and opens per 10 minutes from the full event list. Information only; buckets do not change any verdict."
+ "amended_2_information_only": "2026-11-18 ~18:00, before any events: operator goal 'profitable strategy (maybe several by time of day), an open every 10 minutes' -> also report each deciding cell by time bucket (09:45-10:30, 10:30-12:00, 12:00-14:00, 14:00-15:00) and opens per 10 minutes from the full event list. Information only; buckets do not change any verdict.",
+ "amended_3": {
+  "when": "2026-11-18 ~18:10 ET, while the spread fetch ran; no event had been scored or any result read",
+  "source": "Argon review (operator paste): 3x volume fires on crashes too, and raw news includes bad news; only the strict %R mode implies an up-move",
+  "change": "the DECIDING groups become direction-confirmed: VOL also needs the 15-minute pump window to close up (close[t] > close[t-15]); NEWS also needs price above the open of the story minute (pre-open stories: above the day's open), the tape's read of the story; BOTH needs both. The original direction-blind groups are kept as information only (NEWS_RAW, VOL_RAW, BOTH_RAW). Still 3 groups x 2 timing modes = 6 deciding cells, t >= 2.64; every other rule unchanged."
+ }
 }

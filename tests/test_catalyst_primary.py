@@ -57,3 +57,14 @@ def test_rates_per_10m():
     rows = [{"group": "VOL", "mode": "wr"}] * 32
     span = (C.T_LAST - C.T_FIRST + 1) / 10
     assert abs(C.rates(rows, 1)["VOL|wr"] - round(32 / span, 3)) < 1e-9
+
+
+def test_direction_confirmed_groups():
+    o = np.full(60, 100.0); c = np.full(60, 100.0); c[40] = 101.0
+    assert C.directions(o, c, 40, 30) == (True, True)
+    c2 = c.copy(); c2[40] = 99.0
+    assert C.directions(o, c2, 40, 30) == (False, False)          # pump closed lower; below the story-minute open
+    assert C.directions(o, c, 40, None) == (True, False)
+    assert C.active("VOL_RAW", 40, None, 3.5, False, False) and not C.active("VOL", 40, None, 3.5, False, False)
+    assert C.active("NEWS", 40, 30, None, False, True) and not C.active("NEWS", 40, 30, None, True, False)
+    assert C.active("BOTH", 40, 30, 3.5, True, True) and not C.active("BOTH", 40, 30, 3.5, False, True)
