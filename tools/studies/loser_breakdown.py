@@ -3,8 +3,8 @@
 (operator 11/18: "do the loser breakdown now"). Read-only.
 
 Trades: broker fills (ai_reports/broker_truth/fills.jsonl; today's from the Alpaca FILL activities), paired FIFO per symbol per
-day. Path: SIP minute bars (warehouse; today's from the data-only account) from the entry minute to the exit minute -> MFE / MAE
-in bp of the fill. Entry features: the last arm_ok decision-ledger row for the symbol in the 3 min before the buy, plus bar
+day. Path: SIP minute bars for the traded names from the data-only account from the entry minute to the exit minute -> MFE / MAE
+in bp of the fill. Entry features: the last arm_ok decision-ledger row for the symbol in the 15 min before the buy, plus bar
 context (30-min range position, 5-min and 15-min run-up, day change, distance below the day high so far).
 
     .venv/bin/python tools/studies/loser_breakdown.py 2026-11-02 2026-11-18   # -> ai_reports/loser_breakdown/result.json
@@ -96,7 +96,7 @@ def today_fills(day):
     return out
 
 
-def today_bars(day, syms):
+def api_bars(day, syms):
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
@@ -104,7 +104,7 @@ def today_bars(day, syms):
     k = json.load(open(ROOT / "secrets_data.json"))
     cl = StockHistoricalDataClient(k["alpaca_data_api_key"], k["alpaca_data_secret_key"])
     a = datetime.fromisoformat(day + "T09:30").replace(tzinfo=ET)
-    b = datetime.now(ET) - timedelta(minutes=16)
+    b = min(datetime.now(ET) - timedelta(minutes=16), datetime.fromisoformat(day + "T16:00").replace(tzinfo=ET))
     res = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=sorted(syms), timeframe=TimeFrame.Minute, start=a, end=b,
                                              feed=DataFeed.SIP)).data
     n = len(syms)
@@ -177,18 +177,19 @@ def arm_row(day, sym, t):
         if f'"{sym}"' not in line or '"arm_ok": true' not in line:
             continue
         r = json.loads(line)
-        if r.get("symbol") == sym and t - 180 <= r["ts"] <= t + 5:
+        if r.get("symbol") == sym and t - 900 <= r["ts"] <= t + 5:
             best = r
     return best or {}
 
 
 def main(argv):
     lo, hi = argv[0], argv[1]
+    skip = set(argv[2].split(",")) if len(argv) > 2 else set()   # days the desk was off (picker fills only)
     fills = defaultdict(list)
     for line in open(FILLS):
         f = json.loads(line)
         d = datetime.fromtimestamp(f["t"], ET).date().isoformat()
-        if lo <= d <= hi:
+        if lo <= d <= hi and d not in skip:
             fills[d].append(f)
     today = datetime.now(ET).date().isoformat()
     if lo <= today <= hi and today not in fills:
@@ -203,7 +204,7 @@ def main(argv):
             continue
         syms = {t["symbol"] for t in tr}
         wh = WH_SIP / f"{d}.npz"
-        bars = load_day(wh) if wh.exists() else today_bars(d, syms)
+        bars = api_bars(d, syms)          # traded names are mostly not in the warehouse
         pc = prev_close(d)
         for t in tr:
             m_in, m_out = minute_of(t["t_in"], d), minute_of(t["t_out"], d)
