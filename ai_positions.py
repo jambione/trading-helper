@@ -587,12 +587,19 @@ def _update_state(mutator) -> dict[str, Any]:
         return state
 
 
-def first_trade_qty(qty: float, prior_entries: int, mult: float, *, fractional: bool = False) -> float:
-    """Size of a buy under ai_first_trade_size_mult. Pure.
+def first_trade_qty(qty: float, prior_entries: int, mult: float, *, fractional: bool = False,
+                    fixed_qty: float = 0.0) -> float:
+    """Size of a buy under ai_first_trade_size_mult / ai_first_trade_fixed_qty. Pure.
 
-    Only the day's FIRST buy in the symbol (prior_entries == 0) is scaled; a repeat (>= 1) or an unknown count (< 0) keeps
-    its size. Whole shares round down but never below 1 share; fractional lots keep 4 decimals."""
-    if prior_entries != 0 or not (0.0 < mult < 1.0) or qty <= 0:
+    Only the day's FIRST buy in the symbol (prior_entries == 0) is changed; a repeat (>= 1) or an unknown count (< 0) keeps
+    its size. fixed_qty > 0 (operator 11/18 'one share first, full bore on the second') wins over mult: the first buy is
+    exactly that many whole shares, never more than the planned size. Otherwise whole shares round down but never below
+    1 share; fractional lots keep 4 decimals."""
+    if prior_entries != 0 or qty <= 0:
+        return qty
+    if fixed_qty and fixed_qty > 0:
+        return float(min(qty, float(int(fixed_qty)) or 1.0))
+    if not (0.0 < mult < 1.0):
         return qty
     scaled = qty * mult
     if fractional:
@@ -2103,16 +2110,20 @@ def place_scaled_entry(
             first_mult = float(cfg.get("ai_first_trade_size_mult", 1.0) or 1.0)
         except (TypeError, ValueError):
             first_mult = 1.0
-        if 0.0 < first_mult < 1.0 and not _phase_b and total_qty > 0:
+        try:
+            first_fixed = float(cfg.get("ai_first_trade_fixed_qty", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            first_fixed = 0.0
+        if (0.0 < first_mult < 1.0 or first_fixed > 0) and not _phase_b and total_qty > 0:
             try:
                 import ai_entry_watch as _ew
                 prior = int(_ew._entries_today(ticker))
             except Exception:  # noqa: BLE001
                 prior = -1                     # unknown: leave the size alone
-            new_qty = first_trade_qty(total_qty, prior, first_mult, fractional=use_frac)
+            new_qty = first_trade_qty(total_qty, prior, first_mult, fractional=use_frac, fixed_qty=first_fixed)
             if new_qty != total_qty:
                 log_event("first_trade_size", symbol=ticker, qty_before=total_qty, qty_after=new_qty,
-                          mult=first_mult, prior_entries=prior)
+                          mult=first_mult, fixed_qty=first_fixed or None, prior_entries=prior)
                 total_qty = new_qty
         log_event(
             "size_plan", symbol=ticker,

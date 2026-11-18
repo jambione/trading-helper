@@ -1,0 +1,23 @@
+{
+ "id": "scout_trade_2026-11-18",
+ "registered": "2026-11-18 ~17:00 ET, before any number below was computed",
+ "operator": "11/18: 'why don't we limit every first trade to one share? And then go full bore on the second' -> 'Yes, build it and score the scout version' (full size on later trades only if the first trade in that name made money)",
+ "rule": "SCOUT: the day's first trade in a name is 1 share; a later trade in that name is full size only if that FIRST trade closed with net > 0, else it stays 1 share.",
+ "prior": "LOW-MEDIUM. repeat_name (row 146/147): later trades beat first +7.4 / +4.4 bp, t ~1. Winners-continue in the same name is plausible (momentum within the day) but the desk's 15-minute moves are coin flips after cost (row 150).",
+ "primary_test (independent sample; decides)": {
+  "data": "SIP warehouse 1-minute bars 2026-04-28 .. 2026-09-23 (no broker trades exist there), top-400 universe",
+  "events": "the desk's pre-square trigger (evening_family.presquare_bars, fast 21/EWM 7, slow 112/EWM 3), minutes 15-360, admission band ($20-$400, up >= 1.5% vs prior close); per name a new event only after the previous one's 15-minute bracket is over (t >= previous t + 16), like a desk that holds one position per name",
+  "outcome": "holistic_entry.bracket (+20 before -50 bp within 15 min, 6 bp cost)",
+  "groups": "LATER events (2nd+ in the name that day), split by whether the name's FIRST event that day had net > 0 (WIN) or not (LOSS)",
+  "pass_if_ALL": {
+   "lift": "mean(later after WIN) - mean(later after LOSS) >= +2.0 bp",
+   "significance": "day-clustered t >= 2.0 on per-day (WIN-group mean - LOSS-group mean), days with both",
+   "both_halves": "lift > 0 in the first and second half of the days",
+   "enough": ">= 500 later-after-WIN events"
+  },
+  "information_only": "same split on 9/24-11/17; 'previous event won' instead of 'first event won'; mean of later-after-WIN on its own (is it > 0?)"
+ },
+ "broker_audit (information; the trades that suggested the idea)": "broker round trips 10/15-11/18: $/day as traded, half-size first, 1-share first, SCOUT; same split of later trades by first-trade outcome in bp",
+ "decision": "PASS -> build ai_first_trade_scout (default off) and turn it on under the operator's 11/18 rule (passing tests ship), replay through the live code first if time allows. FAIL -> keep plain 1-share-first (all later trades full size).",
+ "note": "1-share-first itself ships 11/19 on the operator's direct instruction (ai_first_trade_fixed_qty 1); its evidence is the same directional repeat_name result, not this test."
+}
