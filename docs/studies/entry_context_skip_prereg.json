@@ -11,7 +11,10 @@
   "BUNCHED": "skip the buy if at least k other buys (other symbols) filled in the M minutes before it; (M, k) in {(2,1), (5,1), (5,2)}"
  },
  "scoring": "a skipped trade contributes 0 instead of its broker return (delta = -ret); untouched trades 0. Freed slots are NOT refilled (conservative for opens, neutral for the per-trade bar).",
- "split": {"train": "entry day <= 2026-10-23: choose each rule's setting by book delta", "test": "entry day >= 2026-10-26: the chosen setting only, scored once"},
+ "split": {
+  "train": "entry day <= 2026-10-23: choose each rule's setting by book delta",
+  "test": "entry day >= 2026-10-26: the chosen setting only, scored once"
+ },
  "pass_if_ALL (test, each rule separately)": {
   "book": "mean delta per trade >= +1.0 bp",
   "significance": "day-clustered t >= 2.0",
@@ -19,8 +22,15 @@
   "kept_quality": "kept trades' mean net bp > all trades' mean net bp (the skip must raise profit per kept trade, not just trade less)",
   "enough": ">= 40 test trades skipped, else UNDERPOWERED"
  },
- "information": ["share of full stop-outs (<= -40 bp) among skipped vs kept", "opens lost per session", "MARKET_DROP and BUNCHED together"],
+ "information": [
+  "share of full stop-outs (<= -40 bp) among skipped vs kept",
+  "opens lost per session",
+  "MARKET_DROP and BUNCHED together"
+ ],
  "after_pass": "build the passing rule(s) behind a switch (default off); under the operator's 11/18 rule a PASS ships (paper). Opens fall by the skipped share - reported alongside.",
  "else": "record; the straight-to-stop trades are not explained by market drops or bunching",
- "caveats": "fills span several desk configs; warehouse SPY is SIP, the live desk would read SPY from its own feed; no slot refill modelled"
+ "caveats": "fills span several desk configs; warehouse SPY is SIP, the live desk would read SPY from its own feed; no slot refill modelled",
+ "verdict": {
+  "2026-11-18 ~11:50": "Both FAIL on significance only. MARKET_DROP (X=5 bp chosen on train): test 503 trades, 79 skipped (5.6/session), book +1.93 bp/trade, day t 1.1 (need 2.0); skipped trades -12.3 bp vs kept -1.61 (all -3.29); stop-out share 19% skipped vs 9.7% kept; train skipped -25.6 bp, book +2.46 (right direction in both halves). BUNCHED ((5,1) chosen): 223 of 503 skipped (15.9/session), book +1.82, t 1.13, skipped -4.1 vs kept -2.63 - costs 44% of opens for little. Both together: +2.89 bp/trade, t 1.17, 54% of trades skipped. Not shipped (bar: PASS only). MARKET_DROP is PROMISING: confirm on the larger minute-bar signal sample before any live use."
+ }
 }
