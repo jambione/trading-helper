@@ -7047,6 +7047,47 @@ def _cfg_hash(cfg) -> str | None:
         return None
 
 
+def tight_overlap_qualifies(r: dict, live: dict, tr: dict, *, max_px, min_px: float, min_pct: float,
+                            max_sp: float, min_dv: float) -> bool:
+    """Would this tight-file row pass the tight seed's own rules (price cap/floor, % change, the source's
+    spread claim, $ volume)? Pure. Same inputs and order as the tight seed loop in desk_candidate_rows,
+    without logging: used for a name another source listed first (ai_watch_tight_overlap_exempt)."""
+    s = str((r or {}).get("symbol") or "").upper().strip()
+    if not s or is_levered_etp(s):
+        return False
+    px, pct = r.get("price"), r.get("pct_change")
+    for cand in (live or {}, tr or {}):
+        c_px, c_pct = cand.get("price"), _pct_change_value(cand.get("pct_change"))
+        if c_px is not None and c_pct is not None:
+            px, pct = c_px, c_pct
+            break
+    if not _price_under_cap(px, max_px):
+        return False
+    px_f = _f_or_none(px)
+    if min_px > 0 and (px_f is None or px_f < min_px):
+        return False
+    pct_f = _pct_change_value(pct)
+    if pct_f is None or pct_f < min_pct:
+        return False
+    sp = _f_or_none(r.get("spread_pct"))
+    if max_sp > 0 and (sp is None or sp > max_sp + 1e-12):
+        return False
+    dv = _f_or_none(r.get("dollar_volume"))
+    if min_dv > 0 and (dv is None or dv < min_dv):
+        return False
+    return True
+
+
+def tight_gate_source(sym: str, source: str, cfg: dict) -> str:
+    """The source whose rvol floor and float cap apply. A name on this cycle's tight list (_TIGHT_SYMS)
+    keeps tight's exemptions when another source listed it first - only with ai_watch_tight_overlap_exempt."""
+    src = str(source or "").strip().lower()
+    if src != "tight" and bool((cfg or {}).get("ai_watch_tight_overlap_exempt", False)) \
+            and str(sym or "").upper().strip() in _TIGHT_SYMS:
+        return "tight"
+    return src
+
+
 def desk_candidate_rows(
     cfg: dict | None = None,
     now: float | None = None,
@@ -7724,6 +7765,17 @@ def desk_candidate_rows(
                             extra={"price": r.get("price"),
                                    "pct": r.get("pct_change"),
                                    "spread_pct": r.get("spread_pct")})
+                        # Another source listed it first. With the switch on, a name
+                        # that clears tight's own seed rules still counts as tight
+                        # (_TIGHT_SYMS), so admission gives it tight's rvol / float
+                        # exemptions instead of judging a top-400 name as a mover.
+                        if (bool(cfg.get("ai_watch_tight_overlap_exempt", False))
+                                and tight_overlap_qualifies(
+                                    r, (tg_desk or {}).get(s) or {}, (tg_tr or {}).get(s) or {},
+                                    max_px=_max_price_for("tight", cfg, max_price, eq),
+                                    min_px=tg_min_px, min_pct=tg_min_pct,
+                                    max_sp=tg_max_sp, min_dv=tg_min_dv)):
+                            tight_now.add(s)
                         continue
                     if is_levered_etp(s):
                         _note_seed_drop("tight", s, "levered")
@@ -10613,7 +10665,7 @@ def passes_inclusion(
         max_float_m = 0.0
     # Tight names are large caps by construction (the shadow test applied no
     # float cap); the cap would refuse every one of them.
-    if max_float_m > 0 and source != "tight":
+    if max_float_m > 0 and tight_gate_source(sym, source, cfg) != "tight":
         try:
             import float_feed
             fl = float_feed.float_shares(str(row.get("symbol") or ""))
@@ -10652,7 +10704,7 @@ def passes_inclusion(
     # BIAF +52% / LABX +23% are not wiped by SIP rvol 0.8–1.8x while the
     # movers panel is full of real momentum (2026-09-04 midday).
     if source in ("momentum", "trending", "movers", "tight") or mom_soft or is_research:
-        src_for_rvol = source or ("momentum" if mom_soft else "")
+        src_for_rvol = tight_gate_source(sym, source, cfg) or ("momentum" if mom_soft else "")
         rvol_f = _f_or_none(row.get("rvol"))
         pct_for_rvol = _pct_change_value(row.get("pct_change"))
         ind_for_rvol = None
