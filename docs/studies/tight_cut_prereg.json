@@ -1,0 +1,26 @@
+{
+ "id": "tight_cut_2026-11-18",
+ "registered": "2026-11-18 ~05:40 ET, before any universe was built or replay run for either arm",
+ "operator": "11/18: 'Yes, test it' - widen the tight screener's cut (signal_funnel: 67.5% of top-400 pre-square signals are never offered to the desk; 27% of those pass tight's own 0.05% spread rule)",
+ "question": "Does a wider tight cut, with every criterion unchanged, give the desk more opens at no worse quality when the live code runs it?",
+ "arms": {
+  "A": "config/bot_config.json as live (ai_tight_top 15, ai_tight_scan_sec 300, ai_watch_seed_tight_n 8 default, ai_tight_max_spread_lookups 80)",
+  "B": "A with ai_tight_top 45, ai_tight_scan_sec 120, ai_watch_seed_tight_n 24; spread rule (0.05%), price, % change, lookups cap and every desk gate unchanged"
+ },
+ "method": {
+  "universe": "tools/studies/hist_universe.py build DAY --config <arm config>: point-in-time movers + tight admissions from the live screener code on SIP/IEX minute bars (momentum/trending/research not reconstructed - equal in both arms)",
+  "replay": "tools/replay_session.py --day DAY --universe <arm universe> --synth-cap 150 (B also passes its three knobs by --set), live code at HEAD, live exits; fills at the print price, no spread (tight names are <= 0.05% quoted by construction)",
+  "days": "2026-11-05, 11-06, 11-09, 11-10, 11-11, 11-17 (the restored desk's config era)",
+  "data": "data-only Alpaca account (TH_DATA_SECRETS), nice 19"
+ },
+ "pass_if_ALL (pooled over the days)": {
+  "more_opens": "B trades >= 1.25 x A trades",
+  "quality_mean": "B mean return bp >= A mean - 1.0",
+  "quality_win": "B win % >= A win % - 3 points",
+  "enough_data": "A >= 30 trades pooled, else UNDERPOWERED"
+ },
+ "information": ["opens per 10 min and share of the session with >= 1 and >= 2 positions open, per arm and day", "B trades on names A never traded vs the shared ones", "tight admits per day per arm", "spread lookups per scan (API budget)"],
+ "after_pass": "paper experiment: set the three knobs live (config commit with an Evidence line), judge by broker truth over 5 sessions vs the restored-desk win rate; it runs after (or alongside, if the operator says) the market-relative admission week",
+ "else": "keep the tight cut as is",
+ "caveats": "synthetic days are not the recorded desk (no momentum/trending/research, no book-state history); the comparison is B vs A under the same synthesis, not either vs live; few days"
+}
