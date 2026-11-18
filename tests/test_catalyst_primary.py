@@ -51,3 +51,9 @@ def test_loose_ok_open_box():
     assert not C.loose_ok(f, 4)            # flat
     assert not C.loose_ok(f, 0)
     assert C.T_CRIT == 2.64 and C.DECIDE_MODES == ("wr", "loose")
+
+
+def test_rates_per_10m():
+    rows = [{"group": "VOL", "mode": "wr"}] * 32
+    span = (C.T_LAST - C.T_FIRST + 1) / 10
+    assert abs(C.rates(rows, 1)["VOL|wr"] - round(32 / span, 3)) < 1e-9

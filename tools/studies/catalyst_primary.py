@@ -208,6 +208,17 @@ def verdict(st):
     return ("PASS" if not f else "FAIL"), f
 
 
+BUCKETS = (("09:45-10:30", 15, 60), ("10:30-12:00", 60, 150), ("12:00-14:00", 150, 270), ("14:00-15:00", 270, 331))
+
+
+def rates(rows, n_days):
+    """Opens per 10 minutes for each (group, mode) on the FULL event list (before the quote sample). Pure."""
+    c = defaultdict(int)
+    for r in rows:
+        c[(r["group"], r["mode"])] += 1
+    return {f"{g}|{m}": round(v / max(1, n_days) / ((T_LAST - T_FIRST + 1) / 10), 3) for (g, m), v in c.items()}
+
+
 def score():
     import news_source as ns
     cache = json.load(open(ns.QUOTES))
@@ -231,6 +242,14 @@ def score():
                 br = [{**r, "gross": r["bracket_gross"], "net": r["bracket_gross"] - r["spread"]}
                       for r in pre if r["bracket_gross"] is not None]
                 res["info"][f"{g}|{mode}|pre|desk_bracket"] = stats(br)
+    for g in GROUPS:
+        for mode in DECIDE_MODES:
+            for name, a, b in BUCKETS:
+                sub = [r for r in rows if r["group"] == g and r["mode"] == mode and r["day"] < SPLIT and a <= r["t"] < b]
+                res["info"][f"{g}|{mode}|pre|{name}"] = stats(sub)
+    allev = load_events()
+    res["info_opens_per_10m_pre"] = rates([r for r in allev if r["day"] < SPLIT],
+                                          len({r["day"] for r in allev if r["day"] < SPLIT}))
     res["no_quote_dropped"] = {f"{k[0]}|{k[1]}|{'pre' if k[2] else 'post'}": v for k, v in missing.items()}
     res["generated"] = datetime.now(ET).isoformat(timespec="minutes")
     (OUT / "result.json").write_text(json.dumps(res, indent=1))
