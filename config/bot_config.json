@@ -522,6 +522,7 @@
   "ai_tight_max_spread_pct": 0.05,
   "ai_tight_min_pct_change": 1.5,
   "ai_relative_strength_admit": true,
+  "ai_first_trade_size_mult": 0.5,
   "ai_watch_tight_min_rvol": 0.0,
   "ai_tight_max_spread_lookups": 80,
   "ai_watch_wr_trend_min_rise": 15.0,
