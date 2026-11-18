@@ -3,7 +3,8 @@
 Pass bar: docs/studies/news_source_prereg.json (written before any news was fetched). Read-only; data-only Alpaca keys.
 
     .venv/bin/python tools/studies/news_source.py fetch     # cache news for the admission-ledger days (--all: every warehouse day)
-    .venv/bin/python tools/studies/news_source.py run       # score -> ai_reports/news_source/result.json
+    .venv/bin/python tools/studies/news_source.py run       # score -> ai_reports/news_source/result.json (+ ledger_signals.json)
+    .venv/bin/python tools/studies/news_source.py spreads   # real SIP spreads at the signals -> spread_check.json
 
 A news name is a candidate from the minute of its FIRST story that day (pre-open stories count at 09:30). BASE = signals on the
 tight-screener universe (top 400 liquid); NEWS_EXTRA = signals on news candidates outside that universe AND outside that day's
@@ -221,7 +222,123 @@ def run():
            "ledger_days": sorted(ledger_days)}
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "result.json").write_text(json.dumps(res, indent=1))
+    (OUT / "ledger_signals.json").write_text(json.dumps(       # input of the spread check (prereg "spread_check")
+        {d: {"base": [{k: x[k] for k in ("sym", "t", "net", "base")} for x in r["base"] if x["base"]],
+             "extra": [{k: x[k] for k in ("sym", "t", "net", "base")} for x in r["extra"] if x["base"]]}
+         for d, r in ledger_days.items()}))
     print(json.dumps({k: res[k] for k in ("verdict", "fails", "primary_ledger_days")}, indent=1))
+
+
+# ---------------- spread check (prereg "spread_check") ----------------
+QUOTES = OUT / "quotes.json"
+BASE_SAMPLE = 800
+
+
+def _h(*parts) -> int:
+    import hashlib
+    return int(hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest(), 16)
+
+
+def spread_bp(bid, ask):
+    if not (bid > 0 and ask > 0) or ask < bid:
+        return None
+    return (ask - bid) / ((ask + bid) / 2) * 1e4
+
+
+def check_plan(sig: dict) -> list[tuple]:
+    """[(arm, day, sym, t, net)]: every extra signal + the BASE_SAMPLE base signals with the lowest sha256('news-spread'|day|sym|t)."""
+    extra = [("extra", d, x["sym"], x["t"], x["net"]) for d, r in sig.items() for x in r["extra"]]
+    base = [("base", d, x["sym"], x["t"], x["net"]) for d, r in sig.items() for x in r["base"]]
+    base = sorted(base, key=lambda b: _h("news-spread", b[1], b[2], b[3]))[:BASE_SAMPLE]
+    return extra + base
+
+
+def qkey(day, sym, t):
+    return f"{day}|{sym}|{t}"
+
+
+def fetch_quotes(plan, pause_sec=0.35):
+    """Last SIP quote in the 60 s before the entry moment (open of minute t+1) -> spread bp, or None. Cached, resumable."""
+    from datetime import timedelta
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockQuotesRequest
+    from alpaca.data.enums import DataFeed
+    import time
+    k = json.load(open(ROOT / "secrets_data.json"))
+    cl = StockHistoricalDataClient(k["alpaca_data_api_key"], k["alpaca_data_secret_key"])
+    cache = json.load(open(QUOTES)) if QUOTES.exists() else {}
+    todo = [p for p in plan if qkey(p[1], p[2], p[3]) not in cache]
+    print("quotes cached", len(cache), "to fetch", len(todo), flush=True)
+    for n, (_arm, day, sym, t, _net) in enumerate(todo, 1):
+        m = 570 + t + 1
+        t1 = datetime.fromisoformat(day).replace(hour=m // 60, minute=m % 60, tzinfo=ET)
+        try:
+            q = cl.get_stock_quotes(StockQuotesRequest(symbol_or_symbols=sym, start=t1 - timedelta(seconds=60), end=t1, feed=DataFeed.SIP))
+            rows = (q.data or {}).get(sym, [])
+            v = spread_bp(float(rows[-1].bid_price), float(rows[-1].ask_price)) if rows else None
+        except Exception as e:  # noqa: BLE001
+            print("ERR", day, sym, t, str(e)[:80], flush=True)
+            time.sleep(5)
+            continue                     # not cached: retried next run
+        cache[qkey(day, sym, t)] = None if v is None else round(v, 2)
+        if n % 100 == 0:
+            QUOTES.write_text(json.dumps(cache))
+            print(n, "/", len(todo), flush=True)
+        time.sleep(pause_sec)
+    QUOTES.write_text(json.dumps(cache))
+    return cache
+
+
+def score_spreads(plan, cache, n_days, base_total):
+    """Prereg spread_check bar. base_total = all BASE signals on the ledger days (the sample's pass rate scales it)."""
+    def arm(name):
+        rows = [(net, cache.get(qkey(d, s, t))) for a, d, s, t, net in plan if a == name and qkey(d, s, t) in cache]
+        g = [(net, sp) for net, sp in rows if sp is not None and sp <= GATE_BP]
+        nets = np.array([x[0] for x in g]) if g else np.array([])
+        own = np.array([x[0] + COST - x[1] for x in g]) if g else np.array([])
+        sps = [sp for _, sp in rows if sp is not None]
+        return {"measured": len(rows), "no_quote": sum(1 for _, sp in rows if sp is None),
+                "median_spread_bp": round(statistics.median(sps), 2) if sps else None,
+                "gated": len(g), "pass_rate": round(len(g) / len(rows), 3) if rows else None,
+                "mean_net_bp": round(float(nets.mean()), 2) if len(g) else None,
+                "win_pct": round(float((nets > 0).mean() * 100), 1) if len(g) else None,
+                "own_spread_net_bp": round(float(own.mean()), 2) if len(g) else None,
+                "own_spread_win_pct": round(float((own > 0).mean() * 100), 1) if len(g) else None,
+                "_nets": nets}
+    b, e = arm("base"), arm("extra")
+    t = None
+    if len(b["_nets"]) > 1 and len(e["_nets"]) > 1:
+        se = math.sqrt(b["_nets"].var(ddof=1) / len(b["_nets"]) + e["_nets"].var(ddof=1) / len(e["_nets"]))
+        t = round(float((e["_nets"].mean() - b["_nets"].mean()) / se), 2) if se > 0 else None
+    base_rate = base_total * (b["pass_rate"] or 0) / max(1, n_days) / MINUTES * 10
+    extra_rate = e["gated"] / max(1, n_days) / MINUTES * 10
+    share = round(extra_rate / base_rate, 3) if base_rate else None
+    fails = []
+    if e["gated"] < 300:
+        v = "UNDERPOWERED"
+        fails.append(f"gated extra {e['gated']} (need 300)")
+    else:
+        if (share or 0) < 0.15:
+            fails.append(f"more_opens: {share} of gated base (need 0.15)")
+        if e["mean_net_bp"] < b["mean_net_bp"] - 1.0 or (t is not None and t <= -2.0):
+            fails.append(f"quality_net: extra {e['mean_net_bp']} vs base {b['mean_net_bp']} (t {t})")
+        if e["win_pct"] < b["win_pct"] - 3:
+            fails.append(f"quality_win: extra {e['win_pct']} vs base {b['win_pct']}")
+        v = "PASS" if not fails else "FAIL"
+    for x in (b, e):
+        x.pop("_nets")
+    return {"verdict": v, "fails": fails, "days": n_days, "base_sample": b, "extra": e, "t_welch": t,
+            "gated_base_per_10m": round(base_rate, 3), "gated_extra_per_10m": round(extra_rate, 3), "extra_share_of_base": share}
+
+
+def spreads():
+    sig = json.load(open(OUT / "ledger_signals.json"))
+    plan = check_plan(sig)
+    cache = fetch_quotes(plan)
+    res = score_spreads(plan, cache, len(sig), sum(len(r["base"]) for r in sig.values()))
+    res["generated"] = datetime.now(ET).isoformat(timespec="minutes")
+    (OUT / "spread_check.json").write_text(json.dumps(res, indent=1))
+    print(json.dumps(res, indent=1))
 
 
 def main(argv=None):
@@ -234,6 +351,8 @@ def main(argv=None):
         fetch(days)
     elif argv and argv[0] == "run":
         run()
+    elif argv and argv[0] == "spreads":
+        spreads()
     else:
         print(__doc__)
     return 0

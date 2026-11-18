@@ -33,6 +33,20 @@
  "else": "do not build the live source; report which condition failed",
  "after_pass": "build the news source behind a switch (default off); it becomes the NEXT week's single live experiment after market-relative admission is judged",
  "caveats": "signals are an upper bound on opens (spread/volume/tape gates not modelled, equal for both arms); minute bars, not the live tick path; news symbols tag related companies too, so some candidates are mentions, not the subject",
+ "spread_check": {
+  "registered": "2026-11-17 ~19:30 ET, before any historical quote was fetched",
+  "why": "the 15 bp gate in the first run used the Sept spread file (596 names); only 252 extras had a known spread and they did worse",
+  "measure": "for every NEWS_EXTRA ledger-day signal AND a fixed hash-chosen sample of 800 BASE signals: the last SIP NBBO quote in the 60 s before the entry moment (open of minute t+1), spread in bp of mid, from the data-only account. No quote = refused (the desk refuses unknown spreads).",
+  "gate": "keep a signal only if its measured spread <= 15 bp (the desk's gate), in BOTH arms",
+  "metric": "primary: the same flat 6 bp cost as the first run. Information: each trade charged its own measured spread (buy ask, sell bid) instead of 6 bp.",
+  "pass_if_ALL": {
+   "more_opens": "gated NEWS_EXTRA per 10 min >= 15% of BASE per 10 min, with BASE scaled by its own measured gate pass rate",
+   "quality_net": "gated NEWS_EXTRA mean net bp >= gated BASE-sample mean - 1.0, AND Welch t of (extra - base) > -2.0",
+   "quality_win": "gated NEWS_EXTRA win % >= gated BASE-sample win % - 3 points",
+   "enough_data": ">= 300 gated NEWS_EXTRA signals, else UNDERPOWERED"
+  },
+  "else": "do not build the live news source"
+ },
  "verdict": {
   "2026-11-17 evening": "PASS on 41 ledger days: news-extra signals 1.62 per 10 min = 27.4% of base (5.91); extra -5.77 bp vs base -6.24 (t -0.44); win 38.2 vs 38.9; 2,297 extra. Info: relative bar 28% / -6.36 vs -6.17; all days not-in-top400 35.5% / -5.66; 53% of news names have no warehouse bars (illiquid). WARNING (information cell, not the bar): only 252 extra signals have a known spread <= 15 bp (the Sept spread file covers 596 names), and those did worse: -11.6 bp, win 31.3%, t -3.04. Before building the live source, measure real spreads at the extra signals' minutes from historical quotes and re-check."
  }

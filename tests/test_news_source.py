@@ -37,3 +37,19 @@ def test_compare_and_verdict():
     assert v == "FAIL" and any("quality_net" in w for w in why)
     few = {f"d{i}": {"base": _rows([1.0]), "extra": _rows([1.0])} for i in range(10)}
     assert ns.verdict(ns.compare(few))[0] == "UNDERPOWERED"
+
+
+def test_spread_check_gates_both_arms_and_unknown_is_refused():
+    sig = {"2026-11-12": {"base": [{"sym": f"B{i}", "t": i, "net": 1.0 if i % 2 else -1.0, "base": True} for i in range(10)],
+                          "extra": [{"sym": f"E{i}", "t": i, "net": 2.0, "base": True} for i in range(4)]}}
+    plan = ns.check_plan(sig)
+    assert sum(1 for p in plan if p[0] == "extra") == 4 and sum(1 for p in plan if p[0] == "base") == 10
+    cache = {ns.qkey("2026-11-12", f"B{i}", i): 5.0 for i in range(10)}
+    cache[ns.qkey("2026-11-12", "E0", 0)] = 5.0
+    cache[ns.qkey("2026-11-12", "E1", 1)] = 40.0          # wide: refused
+    cache[ns.qkey("2026-11-12", "E2", 2)] = None          # no quote: refused
+    res = ns.score_spreads(plan, cache, 1, 10)            # E3 not fetched: not counted
+    assert res["extra"]["measured"] == 3 and res["extra"]["gated"] == 1 and res["extra"]["no_quote"] == 1
+    assert res["base_sample"]["pass_rate"] == 1.0
+    assert res["extra"]["own_spread_net_bp"] == 2.0 + ns.COST - 5.0
+    assert res["verdict"] == "UNDERPOWERED"
