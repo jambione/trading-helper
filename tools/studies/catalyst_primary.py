@@ -132,8 +132,9 @@ def events():
                             done.add(key)
                             b = bracket(o, h, l, c, t)
                             rows.append({"day": fp.stem, "sym": s, "t": t, "group": g, "mode": mode,
-                                         "gross": round(gross, 2), "bracket_gross": None if b is None else round(b + COST, 2),
-                                         "pace": None if pace is None else round(pace, 2)})
+                                         "gross": round(float(gross), 2),
+                                         "bracket_gross": None if b is None else round(float(b) + COST, 2),
+                                         "pace": None if pace is None else round(float(pace), 2)})
             print(fp.stem, len(rows), flush=True)
         for s, ii in day["idx"].items():
             dv = float(np.nansum(day["v"][ii]))
