@@ -1,0 +1,26 @@
+{
+ "id": "entry_context_skip_2026-11-18",
+ "registered": "2026-11-18 ~11:45 ET, before any SPY bar was joined to a trade or any trade scored for these rules",
+ "operator": "11/18: 'Yes, queue both' - (1) don't buy while SPY is falling; (2) entries bunched together fail together. Goal: avoid the trades that fall straight to the stop (running list row 142).",
+ "data": {
+  "trades": "broker round trips as tools/studies/flow_exit.load_trades (2026-09-16..11-18, desk-off 11/12-11/16 out, entries 09:31-15:45); days without SIP SPY minute bars in the warehouse are dropped",
+  "spy": "SPY 1-minute closes from the SIP warehouse (relative_strength_scan.load_day, merges sip_hedge)"
+ },
+ "rules": {
+  "MARKET_DROP": "skip the buy if SPY's return from the close of minute m-6 to the close of minute m-1 (the 5 complete minutes before the entry minute m) <= -X bp; X in {5, 10, 15}",
+  "BUNCHED": "skip the buy if at least k other buys (other symbols) filled in the M minutes before it; (M, k) in {(2,1), (5,1), (5,2)}"
+ },
+ "scoring": "a skipped trade contributes 0 instead of its broker return (delta = -ret); untouched trades 0. Freed slots are NOT refilled (conservative for opens, neutral for the per-trade bar).",
+ "split": {"train": "entry day <= 2026-10-23: choose each rule's setting by book delta", "test": "entry day >= 2026-10-26: the chosen setting only, scored once"},
+ "pass_if_ALL (test, each rule separately)": {
+  "book": "mean delta per trade >= +1.0 bp",
+  "significance": "day-clustered t >= 2.0",
+  "both_halves": "train book delta of the chosen setting > 0",
+  "kept_quality": "kept trades' mean net bp > all trades' mean net bp (the skip must raise profit per kept trade, not just trade less)",
+  "enough": ">= 40 test trades skipped, else UNDERPOWERED"
+ },
+ "information": ["share of full stop-outs (<= -40 bp) among skipped vs kept", "opens lost per session", "MARKET_DROP and BUNCHED together"],
+ "after_pass": "build the passing rule(s) behind a switch (default off); under the operator's 11/18 rule a PASS ships (paper). Opens fall by the skipped share - reported alongside.",
+ "else": "record; the straight-to-stop trades are not explained by market drops or bunching",
+ "caveats": "fills span several desk configs; warehouse SPY is SIP, the live desk would read SPY from its own feed; no slot refill modelled"
+}
