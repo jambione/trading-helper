@@ -1,0 +1,28 @@
+{
+ "id": "movers_cap_2026-11-18",
+ "registered": "2026-11-18 ~05:00 ET, before any $100+ signal was counted or any quote fetched",
+ "operator": "11/18: 'Lift the $100 cap' - more opens with the strategy intact",
+ "question": "If the movers screener (and the desk-wide ai_max_price) allowed $100-$400, would names the desk does not already have add buy signals at no worse quality?",
+ "current": "movers: $20-$100 (ai_movers_max_price), up >= 1.5%, scan rvol >= 1, IEX $ >= $500k; every non-tight source is also capped by ai_max_price $100. The tight screener alone already goes to $400 (ai_tight_max_price) but only for top-400 names with quoted spread <= 0.05%.",
+ "rule": {
+  "candidate at minute t": "price $100-$400, day change >= 1.5% vs prior close, paced rvol >= 1.0 (cumulative SIP volume to t / (mean full-day SIP volume of the prior 10 warehouse days x max(elapsed/390, 0.05))), cumulative SIP dollar volume >= $2M (ai_watch_movers_min_dollar_volume)",
+  "new to the desk": "no KEPT admission-ledger row for the symbol that day (the desk never seated it from any source); ETFs out",
+  "signal": "the desk's live pre-square arm (evening_family.presquare_bars, fast %R 21, refractory 30), minutes 15-360, candidate at the signal minute",
+  "trade": "buy open t+1, sell close t+10, flat 6 bp (as news_source / data_drops)",
+  "spreads": "last SIP NBBO quote in the 60 s before entry (news_source.fetch_quotes, shared cache) for every CAP signal and the 800-signal BASE sample; desk 15 bp gate on both; no quote = refused"
+ },
+ "arms": {
+  "BASE": "pre-square signals on the top-400 universe, $20-$400, up >= 1.5% - the same base as news_source and data_drops",
+  "CAP": "signals that only the lifted cap would add"
+ },
+ "pass_if_ALL (ledger days)": {
+  "more_opens": "gated CAP per 10 min >= 10% of gated BASE per 10 min",
+  "quality_net": "gated CAP mean net bp >= gated BASE mean - 1.0, AND Welch t of (cap - base) > -2.0",
+  "quality_win": "gated CAP win % >= gated BASE win % - 3 points",
+  "enough_data": ">= 200 gated CAP signals, else UNDERPOWERED"
+ },
+ "information_cells": ["CAP split $100-$200 / $200-$400", "CAP charged its own spread", "how many CAP names were in the top-400 universe (tight saw them but its 0.05% spread rule refused)"],
+ "after_pass": "live change = ai_movers_max_price 100 -> 400 plus a movers exemption from ai_max_price (as tight has), one-share sizing checked at the paper equity; next single paper experiment after market-relative admission is judged",
+ "else": "keep the $100 cap",
+ "caveats": "minute bars, not the live tick path; the screener's top-50 scan cut and IEX-dollar floor are not modelled (the SIP $2M floor stands in); names outside the 1,911-name warehouse cannot be scored; a signal is an upper bound on an open"
+}
