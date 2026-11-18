@@ -1,0 +1,32 @@
+{
+ "id": "wr_thrust_gate_2026-11-18",
+ "registered": "2026-11-18 ~16:00 ET, before any number below was computed by Claude. Argon (operator paste 11/18) already searched the 9/24-11/18 broker trades (d2/d5, thresholds 25/30, slow_now), so those trades are an AUDIT here, not a test.",
+ "claim_under_test": "Argon: keep an arm only when the fast %R line (21, EWM 7) rose >= 25 points over the last 5 closed minutes (wr_d5_fast); kept trades beat skipped by +3..+6 bp in every era, pooled +5.32 bp, day-paired t +2.44 on 1,456 broker trades.",
+ "prior": "LOW. Against: row 95 replay (blocking wr_d5_fast >= 30 left net/trade unchanged, -4.3 -> -4.2 bp); row 55 pitch study (230k events, steep bands = random); holistic_entry row 150 (dwr5 quintiles < 1 bp apart on 823k moments). For: wr_slope_forward forward entries show fewer never-greens above 30 (opposite of its registered hypothesis).",
+ "primary_test (independent sample; decides)": {
+  "data": "SIP warehouse 1-minute bars, days 2026-04-28 .. 2026-09-23 (before the first broker trade Argon used), top-400 universe",
+  "events": "the desk's pre-square trigger (evening_family.presquare_bars, fast 21 / EWM 7, slow 112 / EWM 3, warmed on the prior session), minutes 15-360, in the admission band ($20-$400, up >= 1.5% vs prior close)",
+  "feature": "d5 = fast[t] - fast[t-5] on closed bars at the trigger bar (no later bar, no fill price)",
+  "outcome": "holistic_entry.bracket: enter next minute's open, +20 bp before -50 bp within 15 min, 6 bp cost",
+  "rule": "KEEP if d5 >= 25 (Argon's threshold, not tuned)",
+  "pass_if_ALL": {
+   "lift": "mean(kept) - mean(skipped) >= +2.0 bp",
+   "significance": "day-clustered t >= 2.0 on per-day (kept mean - skipped mean), days with both groups",
+   "both_halves": "lift > 0 in the first and the second half of the days",
+   "enough": "kept >= 500 events"
+  },
+  "information_only": "threshold 30; days 2026-09-24 .. 11-17; no admission band; the same split on every 5th admissible minute (reconciles row 150)"
+ },
+ "audit (Argon's broker numbers; must reproduce in direction, cannot pass alone)": {
+  "trades": "broker FIFO round trips 9/24-11/18 (fills.jsonl + broker_truth.archive_fills), 09:31-15:45 entries; net = broker bp",
+  "versions": "(a) wr_d5_fast logged live at the arm in outcomes.jsonl (from 11/05); (b) rebuilt from IEX bars_v2 closed bars with the FILL price folded in (Argon's method); (c) rebuilt with no live price - the last closed close only (no fill-price information)",
+  "report": "kept vs skipped mean, win, stop share, day-paired t, per era (9/24-10/14, 10/15-11/03, 11/05-11/18), parity of (b) vs (a) where both exist"
+ },
+ "decision": "Build ai_watch_wr_min_d5_fast_pts (default 0 = off) only if the primary test PASSES and the audit reproduces a positive lift in version (c) or (a). Otherwise record and do not build.",
+ "also_reported (no pass bar)": "combined stack on broker trades: thrust gate x entry spread <= 4 bp x half-size first trades; the ai_dead_trade_min 0.0 -> 22 behaviour and trend-hold underwater holds",
+ "verdict": {
+  "2026-11-18 ~16:30": "FAIL. Primary (4/28-9/23, 22,021 pre-square events never seen by Argon): kept 9,446 -6.63 bp vs skipped -6.81, lift +0.18 bp, day t 0.15, halves -0.22 / +0.65. Threshold 30: lift -0.25. 9/24-11/17 warehouse: +0.67 (t 1.75). Every 5th admissible minute: -0.28. Audit: Argon's broker numbers reproduce with the fill price (+5.41 bp, t 2.30); with closed bars only +4.92, t 1.60 (10/15-11/03 +1.74, t -0.04); live-logged 11/05-11/18 +8.12, t 1.18 (7 days). The broker-trade lift does not exist on the same trigger across 100 other days: it is a property of that 36-day sample (selected from several thresholds), not of the signal. Not built."
+ },
+ "exit_check": "ai_dead_trade_min 0.0 is read as 22 (_cfg_float uses `or default`). 34 dead_trade exits since mid-October average -24 bp at 22 min; 'holding longer loses more' says making 0 mean off would be worse. Leave the behaviour; the config value is cosmetic.",
+ "stack_check": "Broker trades 9/24-11/18 (arm-time quote spread): all -6.02 bp (39.9/day); d5>=25 -3.11 (16.4/day); spread<=4 -5.41 (21.1/day); both -3.50 (8.5/day). The two filters do not add."
+}
