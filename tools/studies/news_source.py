@@ -289,7 +289,7 @@ def fetch_quotes(plan, pause_sec=0.35):
     return cache
 
 
-def score_spreads(plan, cache, n_days, base_total):
+def score_spreads(plan, cache, n_days, base_total, min_gated=300, min_share=0.15):
     """Prereg spread_check bar. base_total = all BASE signals on the ledger days (the sample's pass rate scales it)."""
     def arm(name):
         rows = [(net, cache.get(qkey(d, s, t))) for a, d, s, t, net in plan if a == name and qkey(d, s, t) in cache]
@@ -314,12 +314,12 @@ def score_spreads(plan, cache, n_days, base_total):
     extra_rate = e["gated"] / max(1, n_days) / MINUTES * 10
     share = round(extra_rate / base_rate, 3) if base_rate else None
     fails = []
-    if e["gated"] < 300:
+    if e["gated"] < min_gated:
         v = "UNDERPOWERED"
-        fails.append(f"gated extra {e['gated']} (need 300)")
+        fails.append(f"gated extra {e['gated']} (need {min_gated})")
     else:
-        if (share or 0) < 0.15:
-            fails.append(f"more_opens: {share} of gated base (need 0.15)")
+        if (share or 0) < min_share:
+            fails.append(f"more_opens: {share} of gated base (need {min_share})")
         if e["mean_net_bp"] < b["mean_net_bp"] - 1.0 or (t is not None and t <= -2.0):
             fails.append(f"quality_net: extra {e['mean_net_bp']} vs base {b['mean_net_bp']} (t {t})")
         if e["win_pct"] < b["win_pct"] - 3:

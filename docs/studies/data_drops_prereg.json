@@ -1,0 +1,38 @@
+{
+ "id": "data_drops_2026-11-18",
+ "registered": "2026-11-18 ~04:45 ET, before any lost signal was counted or scored (only the drop census by reason had been read)",
+ "operator": "11/18: 'Data losses first' - more opens with the strategy intact; fix plumbing, not criteria",
+ "question": "When the desk drops a seated name for a DATA reason (it could not read the name), does that name go on to give the desk's own buy signal that the desk then never takes - and are those signals as good as the ones it does take?",
+ "data": {
+  "drops": "watch_drop events in ai_reports/events.jsonl, 09:30-16:00 ET, on days with an admission ledger and SIP minute bars",
+  "data_reasons": "dead_unknown with block in {pctr_not_live_alpaca, pctr_not_live_missing, stale_quote, missing_pctr, spread_unknown, gap_unknown, no_quote, await_stream}; stale_tape_cap; stale_timeout; no_stream_trade",
+  "control_reasons (information only)": "never_armable / dead_unknown with a setup block (exh_falling, exh_not_tight, wait_exh, ...)",
+  "reseat": "a kept admission-ledger row for the symbol after the drop",
+  "entries": "entry_ok events"
+ },
+ "rule": {
+  "signal": "the desk's live pre-square arm on SIP minute bars (evening_family.presquare_bars, fast %R 21, refractory 30), first signal minute in (drop minute, drop minute + 60]",
+  "admission at the signal minute": "price $20-$400, day change >= 1.5% vs prior close (the rule in force on these days)",
+  "lost": "the desk did not get it back: no kept ledger row for the symbol between the drop and the signal minute, and no entry_ok for the symbol from the drop to 10 min after the signal. Each (day, symbol, signal minute) counts once.",
+  "trade": "buy open t+1, sell close t+10, flat 6 bp (as news_source / relative_admit)",
+  "spreads": "last SIP NBBO quote in the 60 s before entry (news_source.fetch_quotes) for every LOST signal and the 800-signal BASE sample; desk 15 bp gate on both; no quote = refused"
+ },
+ "arms": {
+  "BASE": "pre-square signals on the tight-screener universe (top 400 liquid, ETFs out) admitted by the same rule, same days - what the desk already has",
+  "LOST": "lost signals after data-reason drops"
+ },
+ "pass_if_ALL": {
+  "more_opens": "gated LOST signals per 10 min >= 10% of gated BASE per 10 min (a smaller bar than a new source because fixing plumbing adds no new names)",
+  "quality_net": "gated LOST mean net bp >= gated BASE mean - 1.0, AND Welch t of (lost - base) > -2.0",
+  "quality_win": "gated LOST win % >= gated BASE win % - 3 points",
+  "enough_data": ">= 200 gated LOST signals, else UNDERPOWERED"
+ },
+ "information_cells": [
+  "LOST per data reason (which drop to fix first)",
+  "LOST per session vs the desk's actual entry_ok per session",
+  "the same count after CONTROL (setup) drops, as a yardstick"
+ ],
+ "after_pass": "find why each top data reason fires on readable names and fix it in code (a longer data-only clock, a restream, a quote refresh); paper test as the next single experiment after market-relative admission is judged",
+ "else": "the data drops are not costing opens worth having; leave them",
+ "caveats": "minute bars, not the live tick path; a lost signal is an upper bound on a lost open (seats, tape and spread gates at that moment are not modelled); market-relative admission (on from 11/18) is not part of these days"
+}
