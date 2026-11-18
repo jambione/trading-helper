@@ -19,5 +19,8 @@
  "comparison": "every rule is also shown against the average admissible moment (holistic_entry: -6.14 bp) and the desk's pre-square signal (-6.48 bp)",
  "after_pass": "the passing rule becomes a paper entry trigger behind a switch (default off) next to the pre-square arm, replayed through the live code first, then ships (paper) under the operator's 11/18 rule",
  "else": "record; the operator's live call log is the remaining test of discretionary reading",
- "caveats": "minute bars with a fixed bracket, not the desk's trail; IEX vs SIP indicator differences (the operator charts SIP-like data)"
+ "caveats": "minute bars with a fixed bracket, not the desk's trail; IEX vs SIP indicator differences (the operator charts SIP-like data)",
+ "verdict": {
+  "2026-11-18 ~13:40": "All four FAIL, decisively, 142 days, in the desk's admission band: EARLY_CURL 44,286 events -6.73 bp (win 55.2%); RSI2_HOOK 90,937 -6.57 (55.2%); DEEP_CURL 61,892 -6.77 (53.7%); BOTH 45,493 -6.72 (53.9%). Halves all -6.3..-6.9. Gross ~0 after the 6 bp cost, the same as an average admissible moment (-6.14) and the desk's pre-square (-6.48). With no admission band: -6.55..-6.85. The charted BIPC moves were real; across every occurrence the same patterns are coin flips."
+ }
 }
