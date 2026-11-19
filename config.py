@@ -69,6 +69,7 @@ DEFAULT_CONFIG = {
     "ai_watch_uptrend_grace_sec": 0.0,
     # A seat refused spread_wide this long straight is freed (0 = off).
     "ai_watch_spread_wide_evict_sec": 0.0,
+    "ai_watch_not_moving_evict_sec": 0.0,
     # Dual-%R seat classes: both lines ≥ −pre_thr (and tight, rising) is
     # pre_square. Soft-seed keeps a pre_square/square seat without full
     # arm_ready.
@@ -1915,6 +1916,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_heating_admit_max_tape_age_sec",
     "ai_watch_dead_seat_evict_sec",
     "ai_watch_spread_wide_evict_sec",
+    "ai_watch_not_moving_evict_sec",
     "ai_watch_uptrend_grace_sec",
     "ai_watch_exh_mid_rise_arm",
     "ai_watch_mid_rise_level",
@@ -2357,6 +2359,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_heating_admit_max_tape_age_sec",
     "ai_watch_dead_seat_evict_sec",
     "ai_watch_spread_wide_evict_sec",
+    "ai_watch_not_moving_evict_sec",
     "ai_watch_uptrend_grace_sec",
     "ai_watch_arm_sources",
     "ai_watch_exh_pre_thr",

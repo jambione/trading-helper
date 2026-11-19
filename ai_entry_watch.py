@@ -3867,6 +3867,58 @@ def _maybe_spread_wide_evict(
     return True
 
 
+_NOT_MOVING_BLOCKS = frozenset({"not_moving", "day_chg_unknown"})
+
+
+def _maybe_not_moving_evict(
+    rec: dict,
+    *,
+    sym: str,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    gt,
+) -> bool:
+    """Free a seat whose arm has been refused not_moving (live day change under ai_watch_arm_min_day_chg) for
+    ``ai_watch_not_moving_evict_sec`` straight (0 = off). Operator 11/19: 'names constantly moving' - a name admitted
+    while up keeps its seat all day, and at 14:08 15 of 18 seats were flat or red, so the book could not offer a mover.
+    Admission re-checks the LIVE day change (the day roster re-prices from the live desk row), so a released name only
+    returns once it is moving again. Same clock pattern as spread_wide: resets on any other block."""
+    try:
+        limit = float(cfg.get("ai_watch_not_moving_evict_sec", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        limit = 0.0
+    if limit <= 0 or not isinstance(rec, dict):
+        return False
+    if str(rec.get("status") or "").lower().strip() != "watching":
+        return False
+    if str(rec.get("block_code") or "").strip().lower() not in _NOT_MOVING_BLOCKS:
+        rec.pop("not_moving_since", None)
+        return False
+    try:
+        if gt is not None and gt.has_open_position(sym):
+            return False
+    except Exception:
+        pass
+    since = _f_or_none(rec.get("not_moving_since"))
+    if since is None or since <= 0 or since > float(now):
+        rec["not_moving_since"] = float(now)
+        return False
+    if (float(now) - float(since)) < limit:
+        return False
+    try:
+        events.append(cp.log_event(
+            "watch_drop", symbol=sym, reason="not_moving_seat",
+            elapsed_sec=round(float(now) - float(since), 1),
+            pct_change=_f_or_none(rec.get("pct_change")),
+        ))
+    except Exception:  # noqa: BLE001
+        events.append({"kind": "watch_drop", "symbol": sym, "reason": "not_moving_seat"})
+    drop_watch_symbols([sym])
+    return True
+
+
 def _maybe_dead_unknown_evict(
     rec: dict,
     *,
@@ -19891,6 +19943,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             ):
                 continue
             if _maybe_spread_wide_evict(
+                rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
+            ):
+                continue
+            if _maybe_not_moving_evict(
                 rec, sym=sym, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
             ):
                 continue
