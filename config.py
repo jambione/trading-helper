@@ -550,6 +550,7 @@ DEFAULT_CONFIG = {
     "ai_relative_strength_admit":      False,   # market_tape.py: on red days the "up N%" admission bars drop by SPY's decline
     "ai_tight_max_age_sec":            900.0,   # seed refuses an older file
     "ai_tight_max_price":              400.0,   # share-price ceiling for tight (ai_max_price is $100); equity still floats it down
+    "ai_watch_ai_pick_max_price":      0.0,     # >0: AI picks (seed_rank / gx_agree) use this share-price ceiling instead of ai_max_price; 0 = off (operator 11/19)
     # Trending shortlist floors (looser than momentum's 50% day-move bar).
     # Seed needs score > min OR day chg ≥ this OR rvol ≥ trending min rvol.
     "ai_watch_trending_min_pct_change": 15.0,
@@ -2253,6 +2254,7 @@ SAFE_CONFIG_KEYS = [
     "ai_relative_strength_admit",
     "ai_tight_max_age_sec",
     "ai_tight_max_price",
+    "ai_watch_ai_pick_max_price",
     "ai_watch_trending_min_pct_change",
     "ai_watch_trending_min_rvol",
     "ai_watch_seed_research",

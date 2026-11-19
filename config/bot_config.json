@@ -524,6 +524,7 @@
   "ai_relative_strength_admit": true,
   "ai_first_trade_size_mult": 1.0,
   "ai_first_trade_fixed_qty": 1,
+  "ai_watch_ai_pick_max_price": 400.0,
   "ai_watch_tight_min_rvol": 0.0,
   "ai_tight_max_spread_lookups": 80,
   "ai_watch_wr_trend_min_rise": 15.0,

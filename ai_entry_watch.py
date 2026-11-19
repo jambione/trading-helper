@@ -1610,7 +1610,7 @@ def stream_pregate(rows: list, cfg: dict | None, *, now: float | None = None) ->
             continue
         px = _f_or_none(row.get("price"))
         lo = _min_price_for(row.get("source"), c, default=0.0)
-        hi_s = _max_price_for(str(row.get("source") or ""), c, hi) or 0.0
+        hi_s = _max_price_for(str(row.get("source") or ""), c, hi, row=row) or 0.0
         if px is not None and ((lo and px + 1e-12 < lo) or (hi_s and px >= hi_s)):
             counts["price"] += 1
             continue
@@ -2022,7 +2022,7 @@ def evaluate_arm_ready(
             cap = float(cfg.get("ai_max_price")) if cfg.get("ai_max_price") is not None else None
         except (TypeError, ValueError):
             cap = None
-    cap = _max_price_for(row.get("source"), cfg, cap)
+    cap = _max_price_for(row.get("source"), cfg, cap, row=row)
     if cap is not None and px is not None and float(px) + 1e-12 >= float(cap):
         return False, "above_max_price"
 
@@ -7930,7 +7930,10 @@ def desk_candidate_rows(
                         },
                     )
                     continue
-                if not _price_under_cap(px_src, max_price):
+                seed_cap = max_price
+                if is_ai_pick({"criteria": r_crit, "gx_agree": r.get("gx_agree")}):
+                    seed_cap = _max_price_for("", cfg, max_price, row={"criteria": r_crit, "gx_agree": r.get("gx_agree")})
+                if not _price_under_cap(px_src, seed_cap):
                     continue
                 # Morning flood: missing price fail-closed (do not seat).
                 if flood and px is None:
@@ -8468,8 +8471,37 @@ _MOMENTUM_SYMS: set[str] = set()
 _TIGHT_SYMS: set[str] = set()
 
 
+AI_PICK_TAGS = frozenset({"seed_rank", "seed_rank_gx", "gx_agree"})
+
+
+def is_ai_pick(row: Any) -> bool:
+    """True when seed_rank (the AGY / Grok rankers) picked this name: its criteria carry a seed_rank tag or the row is
+    marked gx_agree. Pure."""
+    if not isinstance(row, dict):
+        return False
+    if row.get("gx_agree"):
+        return True
+    crit = row.get("admit_criteria") or row.get("criteria") or []
+    return any(str(c).strip().lower() in AI_PICK_TAGS for c in crit if isinstance(c, str))
+
+
+def _ai_pick_cap(cfg: dict, eq: float | None = None) -> float:
+    """ai_watch_ai_pick_max_price (operator 11/19 'Exempt them now': AI picks are not held to the $100 cap), floated
+    down by equity like the tight cap. 0 = off."""
+    cap = _f_or_none((cfg or {}).get("ai_watch_ai_pick_max_price")) or 0.0
+    if cap <= 0:
+        return 0.0
+    if eq is not None and eq > 0:
+        try:
+            from desk_risk import dynamic_max_price
+            return float(dynamic_max_price(eq, {**cfg, "ai_max_price": cap}) or cap)
+        except Exception:  # noqa: BLE001
+            pass
+    return cap
+
+
 def _max_price_for(source: Any, cfg: dict, default: Any,
-                   eq: float | None = None) -> Any:
+                   eq: float | None = None, row: Any = None) -> Any:
     """Share-price ceiling for one source.
 
     ai_max_price ($100) exists because volatile $100+ names (MSTR, COIN,
@@ -8478,6 +8510,11 @@ def _max_price_for(source: Any, cfg: dict, default: Any,
     still floated down by equity where equity is known (one slot buys a
     whole share). 0 = same ceiling as every other source.
     """
+    if row is not None and is_ai_pick(row):
+        ai_cap = _ai_pick_cap(cfg, eq)
+        if ai_cap > 0:
+            base = _f_or_none(default)
+            return ai_cap if base is None or ai_cap > base else default
     if str(source or "").strip().lower() != "tight":
         return default
     cap = _f_or_none(cfg.get("ai_tight_max_price")) or 0.0
@@ -10405,7 +10442,7 @@ def admit_arm_gates(row: dict, cfg: dict | None, *, now: float | None = None,
     if px is not None:
         lo = _min_price_for(row.get("source"), cfg, default=0.0)
         hi = _f_or_none(cfg.get("ai_max_price")) or 0.0
-        hi = _f_or_none(_max_price_for(row.get("source"), cfg, hi)) or 0.0
+        hi = _f_or_none(_max_price_for(row.get("source"), cfg, hi, row=row)) or 0.0
         if lo > 0 and px + 1e-12 < lo:
             return False, "below_min_price"
         if hi > 0 and px + 1e-12 >= hi:
@@ -20141,7 +20178,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             touched[sym] = rec
 
         rec_max_price_f = _f_or_none(_max_price_for(
-            rec.get("source"), cfg, max_price_f, eq_cap))
+            rec.get("source"), cfg, max_price_f, eq_cap, row=rec))
         if rec_max_price_f is not None and ask_f >= rec_max_price_f:
             _skip("above_max_price", max_price=rec_max_price_f)
             continue

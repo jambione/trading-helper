@@ -54,7 +54,8 @@ def test_the_price_cap_survived_the_edit():
     """The sign test sat between the price cap and the volume read; a careless
     deletion would take one of its neighbours with it."""
     block = _research_block()
-    assert "_price_under_cap(px_src, max_price)" in block
+    # 11/19: the cap is seed_cap - max_price for every research name, the AI-pick ceiling only for seed_rank picks
+    assert "seed_cap = max_price" in block and "_price_under_cap(px_src, seed_cap)" in block
     assert "pct_f = _pct_change_value(pct_src)" in block, (
         "pct_f is still read — it feeds the row, it just no longer refuses it")
 
