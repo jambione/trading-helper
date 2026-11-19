@@ -1,6 +1,6 @@
 {
  "id": "morning_picks_hold_2026-11-19",
- "status": "DRAFT - registered for review 2026-11-19 ~11:20 ET, before any event was built or outcome computed; not run until the operator approves",
+ "status": "APPROVED by the operator 2026-11-19 ('Run it tonight'); registered ~11:20 ET before any event was built or outcome computed",
  "operator": "11/19 'how can we look at it in a different way?' -> pick the name, then hold it, instead of timing 15-minute pops (perspective 2); 'Yes, pull the day-hold results and draft the test'",
  "why_new": "day_hold (FAIL 11/19) picked by how many desk SOURCES listed a name - a popularity count - and needed 40 forward sessions (6 weeks). This test ranks on what the tape shows in the first 30 minutes, scores on the SIP warehouse in one night (143 days), and holds more names (5) so the book still opens several names a day.",
  "prior": "LOW. Against: the universe of admitted names fades at every horizon (the-universe-fades-at-every-horizon); the 10-year daily skeleton of yesterday's strong names lost open->close; name facts lifted win rate, not mean. For: one round trip a day pays the spread once on a move of 100-300 bp instead of 20; the leaders test found volume-pace names the least bad (-2.9 bp at 15 min).",
@@ -25,5 +25,10 @@
  },
  "information_only": "K = 3 and K = 10; exit at 12:00 and 14:00; no stop; the day_hold giveback exit (peak +2% then give back half); the desk's live trades on the same names that day; per-name win rate and median hold; SPY over the same window",
  "if_pass": "result-skeptic review, then a paper desk mode that buys the morning picks at 10:00 and holds (default-off switch), replayed through the live code, live on paper under the operator's 11/18 rule",
- "if_fail": "record; picking at 10:00 on first-30-minute tape and holding to the close does not pay on this universe"
+ "if_fail": "record; picking at 10:00 on first-30-minute tape and holding to the close does not pay on this universe",
+ "resolutions": {
+  "split_dividend": "the warehouse has no corporate-action field; a name with a gap <= -50% or >= +100% is treated as a split and excluded (proxy, set before any event was built)",
+  "half_day": "a session with no SPY close in 15:50-15:55 is skipped",
+  "quotes": "each ranker's top 12 names and the 20-name spread sample are quoted at the 10:00 entry; a pick without a quote is skipped and the next-ranked name taken"
+ }
 }

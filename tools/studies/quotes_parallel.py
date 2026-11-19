@@ -40,6 +40,9 @@ def plan_for(study, which):
     if study == "leaders_source":
         import leaders_source as LS
         return LS.plan()
+    if study == "morning_picks_hold":
+        import morning_picks_hold as MPH
+        return MPH.plan(which)
     if study == "opening_square":
         import opening_square as OS
         return OS.plan(which)
