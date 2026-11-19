@@ -24,10 +24,19 @@ JSON schema:
       "score": 8.5,
       "reason": "≤40 chars why this seed for a same-session scalp",
       "invalidation": "price/level or thesis break (informational)",
-      "summary": "one sentence; dated fact if you have one"
+      "summary": "one sentence; dated fact if you have one",
+      "p_good": 0.55,
+      "confidence": 3
     }
   ]
 }
+
+ODDS (scored every night against what the tape did - be calibrated, not optimistic):
+- "p_good": your probability, 0.00-1.00, that this name trades UP +0.5% before it trades DOWN -0.5%,
+  measured from the next regular-session minute after this ranking (09:31 for the 09:25 ranking), within 30 minutes.
+  A coin flip is about 0.45-0.50 for these names. Only go above 0.60 when you have a concrete reason.
+- "confidence": 1-5, how much you trust that number.
+- Ranking order is still your best-first list; odds do not change which names you may pick.
 
 Rules:
 - champion must equal suggestions[0].symbol when suggestions is non-empty.

@@ -237,10 +237,31 @@ def parse_rank_response(text: str, allowed: set[str], *, max_n: int = MAX_SUGGES
             "reason": str(r.get("reason") or r.get("summary") or "seed_rank")[:80],
             "invalidation": str(r.get("invalidation") or "")[:120],
             "summary": str(r.get("summary") or "")[:200],
+            "p_good": _prob(r.get("p_good")),
+            "confidence": _conf(r.get("confidence")),
         })
         if len(out) >= max_n:
             break
     return out
+
+
+def _prob(x) -> float | None:
+    """The model's p_good (11/19 odds scorecard), clamped to 0..1; None when missing or unreadable. Pure."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    if v > 1.0 and v <= 100.0:      # a model that answers in percent
+        v /= 100.0
+    return round(min(1.0, max(0.0, v)), 3) if v == v else None
+
+
+def _conf(x) -> int | None:
+    try:
+        v = int(round(float(x)))
+    except (TypeError, ValueError):
+        return None
+    return min(5, max(1, v))
 
 
 def _extract_suggestions(text: str) -> list[dict]:

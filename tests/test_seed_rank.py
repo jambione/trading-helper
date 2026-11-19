@@ -435,3 +435,18 @@ def test_research_exempt_from_pre_admit_no_tape_deadlock(monkeypatch):
     )
     assert ok is True and why == ""
 
+
+
+def test_parse_keeps_odds_and_confidence():
+    import seed_rank as sr
+    text = '{"suggestions": [{"symbol": "AAA", "score": 8, "p_good": 0.62, "confidence": 4},' \
+           ' {"symbol": "BBB", "score": 7, "p_good": "55", "confidence": 9}, {"symbol": "CCC", "score": 6}]}'
+    out = sr.parse_rank_response(text, {"AAA", "BBB", "CCC"})
+    assert [(r["symbol"], r["p_good"], r["confidence"]) for r in out] == [("AAA", 0.62, 4), ("BBB", 0.55, 5), ("CCC", None, None)]
+    assert sr._prob("x") is None and sr._prob(170) == 1.0 and sr._prob(-0.2) == 0.0 and sr._prob(1.7) == 0.017  # 1-100 read as percent
+
+
+def test_prompt_asks_for_odds():
+    import seed_rank as sr
+    t = sr.PROMPT_FILE.read_text()
+    assert '"p_good"' in t and "+0.5% before" in t and '"confidence"' in t
