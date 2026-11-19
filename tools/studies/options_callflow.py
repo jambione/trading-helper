@@ -202,6 +202,7 @@ def _h(*parts):
 
 def events():
     from catalyst_primary import vol_exit, loose_ok
+    from holistic_entry import bracket, COST
     from bar_signal_family import wr_smoothed
     from evening_family import minute_grid
     from relative_strength_scan import load_day
@@ -243,8 +244,10 @@ def events():
                     a, cl = vol_exit(o, h, l, c, te), close_exit(o, c, te)
                     if a is None or cl is None:
                         continue
+                    bk = bracket(o, h, l, c, te)
                     rows.append({"day": d, "sym": s, "t": te, "sig_t": t, "kind": kind, "mode": mode,
-                                 "atr": round(float(a), 2), "close": round(float(cl), 2)})
+                                 "atr": round(float(a), 2), "close": round(float(cl), 2),
+                                 "desk": None if bk is None else round(float(bk) + COST, 2)})
                 if kind == "call":
                     rng = (_h("ocf", d, s) % (T_LAST - T_FIRST)) + T_FIRST
                     a, cl = vol_exit(o, h, l, c, rng), close_exit(o, c, rng)
@@ -312,7 +315,8 @@ def score():
         if sp > GATE:
             wide += 1
             continue
-        rows.append({**r, "spread": float(sp), "net_atr": r["atr"] - sp, "net_close": r["close"] - sp})
+        rows.append({**r, "spread": float(sp), "net_atr": r["atr"] - sp, "net_close": r["close"] - sp,
+                     "net_desk": None if r.get("desk") is None else r["desk"] - sp})
     res = {"verdicts": {}, "decide": {}, "info": {}, "wide": wide, "no_quote": missing}
     for mode in ("now", "loose"):
         for x in ("atr", "close"):
@@ -326,6 +330,9 @@ def score():
         res["info"][f"put_burst_long|{x}"] = stats([r for r in rows if r["kind"] == "put" and r["mode"] == "now"], f"net_{x}")
         if ctl.get("n") and res["decide"][f"now|{x}"].get("n"):
             res["info"][f"lift_now_vs_control|{x}"] = round(res["decide"][f"now|{x}"]["mean_net"] - ctl["mean_net"], 2)
+    for mode in ("now", "loose"):
+        res["info"][f"{mode}|desk_bracket"] = stats([r for r in rows if r["kind"] == "call" and r["mode"] == mode
+                                                     and r.get("net_desk") is not None], "net_desk")
     calls = [r for r in rows if r["kind"] == "call" and r["mode"] == "now"]
     nd = max(1, len({r["day"] for r in load_events()}))
     res["info"]["call_signals_per_day"] = round(len(calls) / nd, 2)
