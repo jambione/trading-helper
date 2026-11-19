@@ -30,5 +30,8 @@
   "when": "2026-11-19 ~04:55 ET, after the events step showed ~190 wave minutes per day and before any outcome was computed or read",
   "why": "at 35% over t or t-1 a 'wave' was the board's normal state (~60% of minutes), not an event. Calibrated on FREQUENCY ONLY (29 days, every 5th, 9,153 board minutes, no outcome touched): share of board at a new 5-min high in one minute has quantiles 50% 0.24, 75% 0.33, 90% 0.43, 95% 0.50, 98% 0.59.",
   "change": "wave = >= 50% of a >= 10-name board at a new 5-minute high in minute t itself (about the top 5% of minutes); active t..t+2 as before. Everything else unchanged."
+ },
+ "verdict": {
+  "2026-11-19 ~07:00": "ALL FOUR FAIL. 4/28-9/23, real SIP spread, 6 bp gate: strict+desk exit -4.06 bp (n 1,062, t -4.3, halves -4.1/-4.0); strict+ATR -1.75 (t -0.4); loose+desk -6.11 (n 1,443, t -7.3); loose+ATR -4.79 (t -2.9). The wave changes nothing: the same %R triggers outside waves score about the same (control sample still small; full control set fetched after). Opens would be plentiful (loose ~4.6 per 10 min after the gate) but each loses ~5-6 bp. Most wave entries were wide: 9,225 dropped by the 6 bp gate. Rate-limit misses (no quote) dropped, not guessed."
  }
 }
