@@ -24,5 +24,10 @@
  },
  "information_only": "(a) a random bar 15..330 on the same name-day (seed sha256('lhr_r'|day|sym)) with the same exits - lift vs control; (b) the desk's pre-square triggers on the same days (what it buys today); (c) heat < 25 vs 25-40; (d) day change 1.5-3% vs > 3%; (e) time of day; (f) triggers per 10 minutes after the gate",
  "if_pass": "result-skeptic review, then a default-off arm that buys a low-heat turn on admitted names (normal gates), replayed through the live code, on paper under the operator's 11/18 rule",
- "if_fail": "record; buying low heat turning up on up-day names does not pay at these exits after real spreads"
+ "if_fail": "record; buying low heat turning up on up-day names does not pay at these exits after real spreads",
+ "amended_1": {
+  "when": "2026-11-19 ~11:25 ET, before any outcome was computed or read (events still building; no spread fetched)",
+  "why": "operator 'below 20 heat seems reasonable' after checking NVDA / BMRN / CGON on today's tape (today is outside the study window)",
+  "change": "two more deciding cells: the same low-heat triggers restricted to heat < 20 at the trigger bar, scored on both exits with the same bars except significance t >= 2.7 (four-cell family for heat < 20 and heat < 40 together; the heat < 40 cells keep t >= 2.5 as first registered). Same sample, same spreads, nothing else changes."
+ }
 }

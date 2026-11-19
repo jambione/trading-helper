@@ -145,7 +145,8 @@ def score():
         if r["arm"] == "low_heat":
             band = "heat_lt25" if (r["heat"] or 0) < 25 else "heat_25_40"
             mv = "day_1.5_3" if r["day_pct"] <= 3 else "day_gt3"
-            for tag in (band, mv):
+            tags = [band, mv] + (["heat_lt20"] if (r["heat"] if r["heat"] is not None else 99) < 20 else [])
+            for tag in tags:
                 for ex in ("desk", "hold"):
                     traded[(f"low_heat|{tag}", ex, per)].append({**r, "net": r[ex] - sp})
     for k, v in traded.items():
@@ -162,6 +163,12 @@ def score():
         r_ = out.get(f"random|{ex}|decide", {})
         if r_.get("n"):
             verdicts[ex].append(f"lift vs random {round((d.get('mean_net') or 0) - r_['mean_net'], 2)}")
+    for ex in ("desk", "hold"):                      # amended_1: heat < 20 cells, t >= 2.7
+        d, cf = out.get(f"low_heat|heat_lt20|{ex}|decide", {}), out.get(f"low_heat|heat_lt20|{ex}|confirm", {})
+        ok = (d.get("n", 0) >= 300 and (d.get("mean_net") or -99) >= EDGE[ex] and (d.get("t_day") or -99) >= 2.7
+              and (d.get("half1") or -1) > 0 and (d.get("half2") or -1) > 0 and (cf.get("mean_net") or -1) > 0)
+        verdicts[f"heat_lt20|{ex}"] = ["PASS" if ok else "FAIL", f"net {d.get('mean_net')} (need +{EDGE[ex]}) t {d.get('t_day')} "
+                                       f"(need 2.7) halves {d.get('half1')}/{d.get('half2')} n {d.get('n')} confirm {cf.get('mean_net')}"]
     out["VERDICT"] = verdicts
     (OUT / "score.json").write_text(json.dumps(out, indent=1))
     print(json.dumps(verdicts, indent=1))
