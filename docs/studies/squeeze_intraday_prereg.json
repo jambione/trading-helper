@@ -45,5 +45,8 @@
    "count-step placebo: the random-name-minute bars are not stored, so the SE is taken by shuffling HIGH/NORMAL labels within each day over the pooled events and computing the day-clustered SE of the label difference (200 shuffles, median). Only that SE is printed; no group comparison is computed before the count verdict",
    "quotes: every HIGH event; NORMAL capped at 3,000 per period by the lowest sha256('sqz'|day|sym); MID (70-90th) is information only on gross"
   ]
+ },
+ "verdict": {
+  "2026-11-19 ~11:50 ET": "UNDERPOWERED at the count step - not scored, no outcome compared. 3,261 breakout events 4/28-11/18; HIGH (top-decile days-to-cover) only 141 on DECIDE (need 300) and 33 on CONFIRM; NORMAL 1,978 / 623. Placebo day-clustered SE 24 bp -> smallest detectable effect 67 bp (bar 20). The top-400 liquid universe has too few heavily shorted names breaking out intraday (~1 a day). Same result as the 10/23 daily version: the idea stays untested, not failed."
  }
 }
