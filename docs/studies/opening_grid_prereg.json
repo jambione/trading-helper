@@ -1,0 +1,60 @@
+{
+ "id": "opening_grid_2026-11-19",
+ "status": "APPROVED by the operator 11/19 evening (\"Approve\"); skeptic review before any code runs",
+ "registered": "2026-11-19 evening ET, before any grid cell was built or any outcome computed",
+ "operator": "11/19 'I want to run a loop simulation of an A/B test - gathering the best performing setup for our opening' -> 'Yes, draft the grid and holdout rule'",
+ "question": "Of a fixed grid of opening setups (signal x window x name filter), which is best after real spreads, and is the best one good enough to beat what a search over random entries finds by luck?",
+
+ "universe": "warehouse SIP top-400 by prior-day dollar volume, ETFs/ETPs excluded (board_structure_family.universe); price $20-$400 at the trigger bar (the live band)",
+ "entry": "trigger read at the CLOSE of 1-minute bar t; buy at the OPEN of bar t+1; one entry per (cell, name, day) - the first trigger in the window",
+ "cost": "real SIP quoted spread in the 60 s before entry (news_source.fetch_quotes, shared cache); spread > 15 bp not traded; net = gross - spread",
+ "exit (primary, every cell)": "the desk bracket (holistic_entry.bracket: +20 bp before -50 bp within 15 min, stop first on a two-touch minute)",
+
+ "grid (48 cells = 4 x 3 x 4)": {
+  "signal": {
+   "SQUARE": "fast %R (21, EWM 7) and slow %R (112, EWM 3) both >= -20 on bar t and not on t-1, fast rising (opening_square.square_bars) - 'extended past entry'",
+   "PRESQ": "today's desk box (opening_square.presq_all / evening_family.presquare_bars)",
+   "ORB": "first 1-minute close above the high of the 09:30-09:34 bars (5-minute opening range breakout); no trigger before 09:35",
+   "HEAT20": "heat = 100 + fast %R < 20, rising on t and t-1, not t-2 (low_heat_rising.heat_turns with the heat < 20 cut)"
+  },
+  "window (trigger bar)": {
+   "W1": "09:31-09:44",
+   "W2": "09:45-09:59",
+   "W3": "10:00-10:29"
+  },
+  "name filter (at the trigger bar, live values only)": {
+   "F1": "day change +1.5% to +4%, any volume pace",
+   "F2": "day change +1.5% to +4%, volume pace >= 1.5 (cumulative volume / prior-day volume / elapsed session share)",
+   "F3": "day change >= +4%, any volume pace",
+   "F4": "day change >= +4%, volume pace >= 1.5"
+  }
+ },
+
+ "the loop (one refinement round, capped)": "ROUND 1 scores all 48 cells on SEARCH. ROUND 2 takes the top 3 cells by mean net and scores up to 8 neighbors each (window edges shifted +/-5 min; day-change edge 4% moved to 3% / 6%; pace cut 1.5 moved to 1.0 / 2.0), at most 24 new cells. No further rounds. Every cell from both rounds counts in the multiple-testing penalty (at most 72).",
+
+ "HOLDOUT RULE": {
+  "search": "2026-04-28 .. 2026-09-23 only. All ranking, refining and choosing happens here.",
+  "confirm": "2026-09-24 .. 2026-11-18, opened ONCE, for the single chosen cell (runner-up reported as information only). The confirm data are not read for any cell before the choice is written to this file with a timestamp.",
+  "forward": "the next 10 live sessions after the choice, replayed through replay_session.py with the cell's rule and the real recorded spreads - a holdout nobody has seen, because 9/24-11/18 has been used by earlier studies",
+  "disclosed overlap": "tonight's opening_square study already scores SQUARE in 09:30-09:58 on the confirm period; that result will be seen before this grid runs. It is reported next to the grid, and SQUARE cells are not exempted from any bar."
+ },
+
+ "choice (on SEARCH)": "the cell with the highest mean net bp per trade among cells with >= 150 traded entries; ties by $/day on a 3-slot $3,200 book",
+
+ "pass (all required)": {
+  "search_penalty": "day-clustered t >= 3.3 on SEARCH (Bonferroni over up to 72 cells, alpha 0.05)",
+  "beats_luck": "mean net on SEARCH above the 95th percentile of the BEST cell in 200 random-entry grids (each random grid replaces the signal with a random minute in the same window, on the same name-days that pass the same filter; same exit; gross minus that cell's median quoted spread, so no extra quotes are needed)",
+  "edge": "mean net >= +2.0 bp per trade on SEARCH",
+  "both_halves": "mean net > 0 in both date halves of SEARCH",
+  "confirm": "mean net > 0 and day-clustered t >= 1.5 on CONFIRM",
+  "forward": "mean net > 0 over the 10 forward sessions"
+ },
+
+ "reported for every cell (information)": "trades, opens per day, win %, mean net bp, $/day and max drawdown on the 3-slot book, median hold, median spread and share removed by the gate, lift vs the same cell's random-entry control",
+
+ "sample and cost control": "<= 400 traded entries per cell on SEARCH, chosen by the lowest sha256('ogrid'|day|sym|t); quotes shared across cells and with earlier studies' cache; quote fetching only after 16:05 ET and after tonight's study chains finish (the data key is shared with the live dashboard)",
+
+ "if_pass": "result-skeptic review, then the chosen cell as a default-off arm for its window only, replayed through the live code, then paper",
+ "if_fail": "record which cells came closest and that the best of the grid does not beat a search over random entries; the opening is not where the money is with these signals and the desk bracket",
+ "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)"
+}
