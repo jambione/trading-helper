@@ -21,8 +21,20 @@
   "quality_win": "gated CAP win % >= gated BASE win % - 3 points",
   "enough_data": ">= 200 gated CAP signals, else UNDERPOWERED"
  },
- "information_cells": ["CAP split $100-$200 / $200-$400", "CAP charged its own spread", "how many CAP names were in the top-400 universe (tight saw them but its 0.05% spread rule refused)"],
+ "information_cells": [
+  "CAP split $100-$200 / $200-$400",
+  "CAP charged its own spread",
+  "how many CAP names were in the top-400 universe (tight saw them but its 0.05% spread rule refused)"
+ ],
  "after_pass": "live change = ai_movers_max_price 100 -> 400 plus a movers exemption from ai_max_price (as tight has), one-share sizing checked at the paper equity; next single paper experiment after market-relative admission is judged",
  "else": "keep the $100 cap",
- "caveats": "minute bars, not the live tick path; the screener's top-50 scan cut and IEX-dollar floor are not modelled (the SIP $2M floor stands in); names outside the 1,911-name warehouse cannot be scored; a signal is an upper bound on an open"
+ "caveats": "minute bars, not the live tick path; the screener's top-50 scan cut and IEX-dollar floor are not modelled (the SIP $2M floor stands in); names outside the 1,911-name warehouse cannot be scored; a signal is an upper bound on an open",
+ "amended_1": {
+  "when": "2026-11-19 ~05:20 ET, before any $100+ signal was counted or quote fetched (study never built until now)",
+  "operator": "11/19 'Yes, build the $100 cap test now' after Neon's ledger audit (TTWO/PANW/CRWD/FROG/LULU/ZS refused above_max_price on 11/18)",
+  "gate": "the desk's live spread gate is now 6 bp (913dd6fb): both arms are gated at 6 bp, not 15; no quote = refused",
+  "new_arm_RANGE": "the 90% day-range admission cap (ai_watch_admit_max_range_pos). Among BASE-universe pre-square signals ($20-$400, up >= 1.5%, minutes 15-360, refractory 30), HIGH = range position > 90 at the signal minute (price vs today's RTH high/low through that minute, as admission_filter.range_pos), LOW = <= 90. Samples: 800 each by the lowest sha256('range'|day|sym|t), quoted and gated at 6 bp, same 10-minute flat-6-bp trade. PASS (lift the range cap) if gated HIGH mean net >= gated LOW mean - 1.0 bp with Welch t of (HIGH - LOW) > -2.0, HIGH win >= LOW win - 3 points, >= 200 gated HIGH. Approximation stated: the live cap acts at admission, not at each signal.",
+  "kept": "'new to the desk' = no admission-ledger row with kept=true for the symbol that day",
+  "decision": "each arm decides its own config change: CAP -> movers $100-$400 + exemption from ai_max_price; RANGE -> ai_watch_admit_max_range_pos off (or 100). Ships after a close under the operator's 11/18 rule."
+ }
 }
