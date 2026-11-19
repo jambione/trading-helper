@@ -18,5 +18,8 @@
  },
  "information_only": "each symbol alone; 60 s / 10 min / 30 min horizons (open m -> close m, m+9, m+29); bottom tercile as a short (lift only); 2-cent cost; time-of-day buckets; opens per 10 minutes if traded at every gated moment",
  "if_pass": "result-skeptic review, then a paper SPY/QQQ lane behind a default-off switch, live data = IEX trades (a parity check vs SIP first), replayed before any live order",
- "if_fail": "record; order flow at 60 s does not pay even at a 0.2 bp spread"
+ "if_fail": "record; order flow at 60 s does not pay even at a 0.2 bp spread",
+ "verdict": {
+  "2026-11-19 ~08:30": "FAIL: SPY/QQQ top-tercile 60 s buy flow, long 3 min, test half: -0.91 bp net (need +1.0), lift vs rest -0.18, t -3.72; train -0.22. Strong buy flow in the index ETFs is followed by nothing - slightly worse than the other minutes."
+ }
 }

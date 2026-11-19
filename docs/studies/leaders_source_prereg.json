@@ -20,5 +20,8 @@
  },
  "information_only": "leaders split <= $100 / > $100 (overlap with the $100-cap test); each catalyst alone; LEAD charged its own spread; all leaders' signals including names already kept; 6 bp gate",
  "if_pass": "build a 'leaders' book source behind ai_watch_leaders_source (default off; the coverage watcher's list feeds admission, normal gates apply), then on under the operator's 11/18 rule after the close. A source cannot bypass the $100 cap; that is the movers_cap decision.",
- "if_fail": "keep the sources as they are; the report still names the blockers"
+ "if_fail": "keep the sources as they are; the report still names the blockers",
+ "verdict": {
+  "2026-11-19 ~08:19": "PASS (15 bp gate): leaders new to the book -5.40 bp (n 832, win 41.5%) vs base -5.14 (n 629, win 36.7%), Welch t -0.13; adds 0.73 gated opens per 10 min (base 4.56, +16%). Same quality, more opens - the pillar-1/2 bar. Both lose ~5 bp after spread. 6 bp gate info: -5.78 vs -4.36. By catalyst: volume pace -2.85, news -5.88, gap -5.75. Next: build ai_watch_leaders_source (default off), on after the close."
+ }
 }

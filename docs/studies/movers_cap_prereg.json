@@ -36,5 +36,8 @@
   "new_arm_RANGE": "the 90% day-range admission cap (ai_watch_admit_max_range_pos). Among BASE-universe pre-square signals ($20-$400, up >= 1.5%, minutes 15-360, refractory 30), HIGH = range position > 90 at the signal minute (price vs today's RTH high/low through that minute, as admission_filter.range_pos), LOW = <= 90. Samples: 800 each by the lowest sha256('range'|day|sym|t), quoted and gated at 6 bp, same 10-minute flat-6-bp trade. PASS (lift the range cap) if gated HIGH mean net >= gated LOW mean - 1.0 bp with Welch t of (HIGH - LOW) > -2.0, HIGH win >= LOW win - 3 points, >= 200 gated HIGH. Approximation stated: the live cap acts at admission, not at each signal.",
   "kept": "'new to the desk' = no admission-ledger row with kept=true for the symbol that day",
   "decision": "each arm decides its own config change: CAP -> movers $100-$400 + exemption from ai_max_price; RANGE -> ai_watch_admit_max_range_pos off (or 100). Ships after a close under the operator's 11/18 rule."
+ },
+ "verdict": {
+  "2026-11-19 ~08:02": "CAP FAIL: gated $100-$400 movers -5.82 bp (n 985, win 39.3%) vs base -4.26 (n 323); needs >= base - 1. RANGE PASS: names above 90% of the day's range -7.48 bp (n 378, win 33.9%) vs at/below 90 -7.02 (n 312, win 35.3%), Welch t -0.2 - the range cap removes signals no worse than the ones it keeps. Both sets lose; the cap buys no quality. Ship: ai_watch_admit_max_range_pos 90 -> 100 after the close."
  }
 }
