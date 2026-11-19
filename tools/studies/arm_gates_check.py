@@ -64,6 +64,47 @@ def gate_flags(cc, hh, ll, off, t):
     return bool(a), bool(b1 or b2)
 
 
+def pace(v, prev_vol, t):
+    """Cumulative volume 09:30..t over the prior day's volume at the same elapsed share. None if unknown. Pure."""
+    if not (prev_vol and prev_vol > 0):
+        return None
+    cv = float(np.nansum(v[:t + 1]))
+    return round(cv / (prev_vol * (t + 1) / 390.0), 3)
+
+
+CAP_C = 3000
+
+
+def below_band_pool(day, prev, d):
+    """Pre-square triggers on top-400 $20-$400 names with day change in [-5%, +1.5%) at t (amended_1, gate C). Pure-ish."""
+    from board_structure_family import universe
+    from evening_family import ALL_ETF, minute_grid, presquare_bars, first_true
+    from holistic_entry import bracket, COST
+    import news_source as ns
+    out = []
+    for s in universe(day, prev, set(ALL_ETF)):
+        i, j = day["idx"][s], prev["idx"].get(s)
+        if j is None:
+            continue
+        pc = ns.last_close(prev["c"][j])
+        if not pc > 0:
+            continue
+        o, h, l, c, v = (day[k][i] for k in "ohlcv")
+        cc, hh, ll, off = minute_grid(prev["c"][j], prev["h"][j], prev["l"][j], c, h, l)
+
+        def ok(t):
+            return np.isfinite(c[t]) and 20 <= c[t] <= 400 and -5.0 <= (c[t] / pc - 1) * 100 < 1.5
+        for t in first_true([t for t in presquare_bars(cc, hh, ll, off, 21) if 15 <= t <= 360 and ok(t)], 30):
+            b = bracket(o, h, l, c, t)
+            if b is None:
+                continue
+            ga, gb = gate_flags(cc, hh, ll, off, t)
+            out.append({"day": d, "sym": s, "t": int(t), "gross": round(float(b) + COST, 2), "pool": "below",
+                        "A_blocks": ga, "B_blocks": gb, "C_blocks": True,
+                        "pace": pace(v, float(np.nansum(prev["v"][j])), t)})
+    return out
+
+
 def features():
     import signal_cache as sc
     from relative_strength_scan import load_day
@@ -74,7 +115,7 @@ def features():
         by_day[r["day"]].append(r)
     files = {p.stem: p for p in WH_SIP.glob("20??-??-??.npz")}
     days = sorted(files)
-    out = []
+    out, below = [], []
     for d in sorted(by_day):
         i = days.index(d)
         if i == 0:
@@ -86,9 +127,17 @@ def features():
                 continue
             cc, hh, ll, off = minute_grid(prev["c"][b], prev["h"][b], prev["l"][b], day["c"][a], day["h"][a], day["l"][a])
             ga, gb = gate_flags(cc, hh, ll, off, r["t"])
+            pc_ = pace(day["v"][a], float(np.nansum(prev["v"][b])), r["t"])
             out.append({"day": d, "sym": r["sym"], "t": r["t"], "gross": r["bracket_gross"], "g10": r.get("gross10"),
-                        "A_blocks": ga, "B_blocks": gb})
-        print(d, len(out), flush=True)
+                        "A_blocks": ga, "B_blocks": gb, "C_blocks": False, "pool": "cache", "pace": pc_,
+                        "D_blocks": pc_ is not None and pc_ < 1.0})
+        below += below_band_pool(day, prev, d)
+        print(d, len(out), len(below), flush=True)
+    byp = defaultdict(list)
+    for r in below:
+        byp[r["day"] <= DECIDE[1]].append(r)
+    for v in byp.values():
+        out += sorted(v, key=lambda r: hashlib.sha256(f"gates_c|{r['day']}|{r['sym']}|{r['t']}".encode()).hexdigest())[:CAP_C]
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "features.json").write_text(json.dumps(out))
 
@@ -147,14 +196,18 @@ def score():
         if sp > GATE_BP:
             gated += 1
             continue
-        rows.append({**r, "net": r["gross"] - sp, "either": r["A_blocks"] or r["B_blocks"]})
+        rows.append({**r, "net": r["gross"] - sp, "either": r["A_blocks"] or r["B_blocks"],
+                     "D_blocks": bool(r.get("D_blocks")), "C_blocks": bool(r.get("C_blocks"))})
     res = {}
     for per, (a, b) in (("decide", DECIDE), ("confirm", CONFIRM)):
-        sel = [r for r in rows if a <= r["day"] <= b]
-        res[per] = {k: lift(sel, k) for k in ("A_blocks", "B_blocks", "either")}
+        sel_all = [r for r in rows if a <= r["day"] <= b]
+        sel = [r for r in sel_all if r.get("pool", "cache") == "cache"]
+        res[per] = {k: lift(sel, k) for k in ("A_blocks", "B_blocks", "either", "D_blocks")}
+        res[per]["C_blocks"] = lift(sel_all, "C_blocks")
+        res[per]["D_pace_known"] = sum(r.get("pace") is not None for r in sel)
         nd = len({r["day"] for r in sel}) or 1
         res[per]["opens_per_10m_all"] = round(len(sel) / nd / 34.5, 3)
-    verdict = {g: decide(res["decide"][g], res["confirm"][g]) for g in ("A_blocks", "B_blocks")}
+    verdict = {g: decide(res["decide"][g], res["confirm"][g]) for g in ("A_blocks", "B_blocks", "C_blocks", "D_blocks")}
     out = {"VERDICT": verdict, "results": res, "noquote": noq, "gated": gated}
     (OUT / "score.json").write_text(json.dumps(out, indent=1))
     print(json.dumps(out, indent=1))

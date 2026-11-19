@@ -22,5 +22,15 @@
  "information_only": "both gates together (pass both vs blocked by either); opens per 10 minutes each gate removes; the gate's block rate; 10-minute gross; time of day",
  "if_KEEP": "no change",
  "if_REMOVE": "turn that gate off after the close under the operator's 11/18 rule (config only, hot-reloads)",
- "caveat": "live gates read polled/streamed %R, the study reads 1-minute SIP bars; the desk's IEX lines differ (iex-bars-do-not-hide-entry-signal: same AUC)"
+ "caveat": "live gates read polled/streamed %R, the study reads 1-minute SIP bars; the desk's IEX lines differ (iex-bars-do-not-hide-entry-signal: same AUC)",
+ "amended_1": {
+  "when": "2026-11-19 ~13:10 ET, before any outcome of this study was computed (features built, no spread fetched for it, nothing scored)",
+  "why": "operator 11/19 'Do the check updates improve our performance?' -> 'Yes' (add the new live 'still moving' rules shipped at ~13:00)",
+  "new_gates": {
+   "C_blocks (live day change)": "day change vs prior close at the trigger bar < +1.5% (ai_watch_arm_min_day_chg 1.5). Needs signals the signal cache never kept, so a second pool is built: the same pre-square triggers (evening_family.presquare_bars, refractory 30, minutes 15-360, top-400, $20-$400 at t) with day change in [-5%, +1.5%) at t; <= 3,000 per period by the lowest sha256('gates_c'|day|sym|t). C's lift = mean net of the cache sample (all >= +1.5%) minus mean net of this pool.",
+   "D_blocks (live volume)": "volume pace at t < 1.0, where pace = cumulative volume 09:30..t / (prior-day volume x (t+1)/390) - the closest bar-based reading of the desk's live rvol (1.0 = normal pace). Scored on the cache sample (the names that pass C)."
+  },
+  "decision": "same KEEP / REMOVE / UNCLEAR / UNDERPOWERED rule as gates A and B, on DECIDE with CONFIRM direction",
+  "caveat": "pace from prior-day volume is not the desk's average-volume rvol; reported as an approximation"
+ }
 }
