@@ -18509,6 +18509,19 @@ def should_arm_buy(
         if dchg_live + 1e-9 < min_live_chg:
             return False, "not_moving"
 
+    # Live price band at the arm (operator 11/19 'all checks should be realtime'): the band was checked only at
+    # admission, so a seated name that climbed through the $100 cap or fell under the floor could still be bought.
+    if bool(cfg.get("ai_watch_arm_live_price_band", True)):
+        _src = record.get("source")
+        _lo = _min_price_for(_src, cfg, default=1.0)
+        if _src in _MOVERS_LIKE_SOURCES:
+            _lo = max(_lo, _cfg_float(cfg, "ai_watch_movers_min_price", 0.0))
+        _hi = _max_price_for(_src, cfg, _f_or_none(cfg.get("ai_max_price")), row=record)
+        if _lo > 0 and a + 1e-12 < _lo:
+            return False, "below_min_price"
+        if _hi is not None and float(_hi) > 0 and a + 1e-12 >= float(_hi):
+            return False, "above_max_price"
+
     try:
         zone_win = float(cfg.get("ai_watch_zone_exh_window_sec", 0.0) or 0.0)
     except (TypeError, ValueError):
@@ -19121,8 +19134,8 @@ _RVOL_SANE_MAX = 100.0
 def _rank_rvol(rec: dict, live_lookup=None) -> float | None:
     """Best trustworthy relative volume for *rec*, or None.
 
-    Live first: a name can cool off between admission and the poll that would
-    buy it, so the admit-time stamp is the fallback, not the answer.
+    Live only: a name can cool off between admission and the poll that would
+    buy it, so the admit-time stamp is not used (operator 11/19: all checks realtime).
     """
     lookup = live_lookup if live_lookup is not None else _desk_rvol
     sym = str(rec.get("symbol") or "").upper().strip()
@@ -19132,8 +19145,7 @@ def _rank_rvol(rec: dict, live_lookup=None) -> float | None:
             vals.append(_f_or_none(lookup(sym)))
         except Exception:  # noqa: BLE001
             vals.append(None)
-    vals.append(_f_or_none(rec.get("rvol")))
-    vals.append(_f_or_none(rec.get("admit_rvol")))
+    vals.append(_f_or_none(rec.get("rvol")))      # live only (11/19): the admission stamp is never a ranking input
     for v in vals:
         if v is None:
             continue

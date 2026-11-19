@@ -27,3 +27,11 @@ def test_still_moving_gate_is_in_the_arm_and_wired_to_config():
     assert "ai_watch_arm_min_day_chg" in src and '"not_moving"' in src and '"day_chg_unknown"' in src
     assert config.DEFAULT_CONFIG.get("ai_watch_arm_min_day_chg", 0.0) == 0.0 if hasattr(config, "DEFAULT_CONFIG") else True
     assert ew.format_blocker("not_moving") == "not moving today"
+
+
+def test_live_price_band_and_live_only_ranking():
+    import inspect
+    src = inspect.getsource(ew.should_arm_buy)
+    assert "ai_watch_arm_live_price_band" in src and '"above_max_price"' in src and '"below_min_price"' in src
+    assert ew._rank_rvol({"symbol": "X", "admit_rvol": 3.0}, live_lookup=lambda s: None) is None
+    assert ew._rank_rvol({"symbol": "X", "rvol": 1.4, "admit_rvol": 3.0}, live_lookup=lambda s: None) == 1.4

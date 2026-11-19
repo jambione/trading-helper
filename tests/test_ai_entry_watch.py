@@ -5462,14 +5462,15 @@ def test_rvol_ranked_treats_an_impossible_reading_as_unknown():
     ceiling would hand it the seat; absent is the honest answer."""
     import ai_entry_watch as ew
     state = {
-        "BROKEN": {"symbol": "BROKEN", "admit_rvol": 80785.46},
-        "REAL": {"symbol": "REAL", "admit_rvol": 2.4},
+        "BROKEN": {"symbol": "BROKEN", "rvol": 80785.46},
+        "REAL": {"symbol": "REAL", "rvol": 2.4},
     }
     order = [s for s, _ in ew.rvol_ranked(state, live_lookup=lambda s: None)]
     assert order == ["REAL", "BROKEN"]
 
 
 def test_rvol_ranked_falls_back_when_live_is_missing():
+    """11/19: ranking is live only - an admission stamp alone ranks as unknown (last)."""
     import ai_entry_watch as ew
     state = {
         "AAA": {"symbol": "AAA", "admit_rvol": 1.5},
