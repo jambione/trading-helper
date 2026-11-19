@@ -34,5 +34,8 @@
   "when": "2026-11-18 ~18:10 ET, while the spread fetch ran; no event had been scored or any result read",
   "source": "Argon review (operator paste): 3x volume fires on crashes too, and raw news includes bad news; only the strict %R mode implies an up-move",
   "change": "the DECIDING groups become direction-confirmed: VOL also needs the 15-minute pump window to close up (close[t] > close[t-15]); NEWS also needs price above the open of the story minute (pre-open stories: above the day's open), the tape's read of the story; BOTH needs both. The original direction-blind groups are kept as information only (NEWS_RAW, VOL_RAW, BOTH_RAW). Still 3 groups x 2 timing modes = 6 deciding cells, t >= 2.64; every other rule unchanged."
+ },
+ "verdict": {
+  "2026-11-18 ~19:55": "ALL FAIL (5 FAIL, BOTH|wr UNDERPOWERED n 40). 4/28-9/23, real SIP spread: NEWS|wr -21.3 bp (n 507, t -3.0), NEWS|loose -14.3 (2,888, t -3.9), VOL|wr -33.1 (384), VOL|loose -16.6 (2,474, t -4.4), BOTH|loose -11.7 (481), BOTH|wr -47.5 (40). Gross moves -14..+6 bp; the catalyst names' median entry spread is 10.5-16 bp, so the spread alone exceeds any gross move. No-%R versions -13..-19; direction-blind versions slightly worse than confirmed (-16..-42); the desk's +20/-50 bracket -17..-22. %R adds nothing as secondary (loose ~ no-%R). Opens/10m: loose and no-%R groups ~0.8-1.0, strict %R 0.1-0.2. Closest time cell VOL|wr 12:00-14:00 +23.9 bp (n 53, t 1.2): one of 24 bucket cells, information only."
  }
 }
