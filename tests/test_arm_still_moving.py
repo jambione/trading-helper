@@ -76,3 +76,9 @@ def test_not_moving_release_resets_and_never_drops_a_position(monkeypatch):
     assert ew._maybe_not_moving_evict(held, now=1000.0, **dict(kw, gt=_Gt({"X"}))) is False
     assert ew._maybe_not_moving_evict(held, now=1000.0, **dict(kw, cfg={})) is False   # off by default
     assert dropped == []
+
+
+def test_admission_uses_the_live_moving_floor():
+    import inspect
+    src = inspect.getsource(ew.passes_inclusion)
+    assert "ai_watch_arm_min_day_chg" in src and '"not_moving"' in src

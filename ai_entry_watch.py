@@ -10850,6 +10850,20 @@ def passes_inclusion(
             else:
                 met.append("uptrend")
 
+    # Admission uses the arm's 'still moving' floor too (operator 11/19): a name under the live day-change floor can
+    # never be bought, so seating it only cycles it through _maybe_not_moving_evict (TECH +0.1%, CVI -0.4% came back
+    # via relative-strength admission within minutes of release).
+    try:
+        _adm_min_chg = float(cfg.get("ai_watch_arm_min_day_chg", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        _adm_min_chg = 0.0
+    if _adm_min_chg > 0:
+        _pct_now = _pct_change_value(row.get("pct_change"))
+        if _pct_now is not None and _pct_now + 1e-9 < _adm_min_chg:
+            return False, met, "not_moving"
+        if _pct_now is None and not is_research:
+            return False, met, "not_moving"
+
     # Known-thin RVOL refuses; unknown abstains. Momentum, trending, movers
     # and research share this — a 0.72x name occupying the book is a slot
     # taken from something that might actually dislocate (WOOF 0.72 / MOVE
