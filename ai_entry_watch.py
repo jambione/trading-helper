@@ -7848,6 +7848,41 @@ def desk_candidate_rows(
     _TIGHT_SYMS.clear()
     _TIGHT_SYMS.update(tight_now)
 
+    # Leaders source (leaders_source_prereg.json PASS 11/19): the coverage watcher's top-30 liquid $20-$400 gainers
+    # with a catalyst (news / volume pace >= 2x / gap >= 2%), seeded as movers so every movers gate still applies.
+    # rvol is left unknown (the watcher reads IEX snapshots; one feed per ratio), so the rvol floor abstains here.
+    if bool(cfg.get("ai_watch_leaders_source", False)):
+        try:
+            lead_rows = leaders_seed_rows(
+                _read_json_quiet(LEADERS_PATH), time.time(),
+                max_age_sec=_cfg_float(cfg, "ai_watch_leaders_max_age_sec", 900.0),
+                min_pct=_cfg_float(cfg, "ai_watch_leaders_min_pct", 1.5))
+            lead_min_px = _cfg_float(cfg, "ai_watch_movers_min_price", 0.0)
+            for r in lead_rows:
+                s = r["symbol"]
+                if s in seen:
+                    continue
+                if is_levered_etp(s):
+                    _note_seed_drop("leaders", s, "levered")
+                    continue
+                if not _price_under_cap(r["price"], _max_price_for("movers", cfg, max_price, eq)):
+                    _note_seed_drop("leaders", s, "price_cap", price=r["price"])
+                    continue
+                if lead_min_px > 0 and r["price"] < lead_min_px:
+                    _note_seed_drop("leaders", s, "below_min_price", price=r["price"])
+                    continue
+                _why, seed_ind = seed_rvol_gate(s, None, r["pct"], cfg, source="movers",
+                                                row=r, indicators=_seed_inds)
+                seen.add(s)
+                row = {"symbol": s, "source": "movers", "price": r["price"], "pct_change": r["pct"],
+                       "rvol": None, "criteria": ["leaders"], "leader_catalysts": r["catalysts"],
+                       "seed_tag": "leaders"}
+                if isinstance(seed_ind, dict):
+                    row["indicator"] = seed_ind
+                rows.append(row)
+        except Exception:
+            pass
+
     # AI Research boards. No numeric gate here on purpose: a research row is a
     # thesis, and the board has already been through the research pass's own
     # filters. Price / day-change come from Momentum desk first, then Trending
@@ -8469,6 +8504,35 @@ def _push_cfg() -> dict:
 _MOMENTUM_SYMS: set[str] = set()
 # Names the tight seed placed this build (the roster sees symbols, not rows).
 _TIGHT_SYMS: set[str] = set()
+LEADERS_PATH = Path(__file__).resolve().parent / "ai_reports" / "book_coverage" / "leaders.json"
+
+
+def _read_json_quiet(path: Path) -> Any:
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def leaders_seed_rows(doc: Any, now: float, *, max_age_sec: float = 900.0, min_pct: float = 1.5) -> list[dict]:
+    """The coverage watcher's leaders.json -> seedable rows (symbol, price, pct, catalysts), best first. Only a
+    fresh file, only names with at least one catalyst, a price and a day change >= min_pct. Pure."""
+    if not isinstance(doc, dict):
+        return []
+    ts = _f_or_none(doc.get("ts"))
+    if ts is None or (max_age_sec > 0 and now - ts > max_age_sec):
+        return []
+    out = []
+    for r in doc.get("leaders") or []:
+        if not isinstance(r, dict):
+            continue
+        s = str(r.get("symbol") or "").upper().strip()
+        px, pct = _f_or_none(r.get("price")), _f_or_none(r.get("pct"))
+        cats = [str(c) for c in (r.get("catalysts") or []) if c]
+        if not s or not s[0].isalpha() or px is None or px <= 0 or pct is None or pct < min_pct or not cats:
+            continue
+        out.append({"symbol": s, "price": px, "pct": pct, "catalysts": cats})
+    return out
 
 
 AI_PICK_TAGS = frozenset({"seed_rank", "seed_rank_gx", "gx_agree"})

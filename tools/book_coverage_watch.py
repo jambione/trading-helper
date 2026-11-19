@@ -347,6 +347,20 @@ def day_bars(headers, sym: str, day: str) -> list[dict]:
             for b in rows]
 
 
+def leaders_doc(top: list[dict], now: datetime) -> dict:
+    """The leaders list the desk's leaders source reads (ai_watch_leaders_source). Pure."""
+    return {"ts": now.timestamp(), "asof": now.isoformat(timespec="seconds"),
+            "leaders": [{"symbol": r["symbol"], "price": r.get("price"), "pct": r.get("pct"),
+                         "catalysts": list(r.get("catalysts") or [])} for r in top]}
+
+
+def write_leaders(top: list[dict], now: datetime) -> None:
+    OUT.mkdir(parents=True, exist_ok=True)
+    tmp = OUT / "leaders.json.tmp"
+    tmp.write_text(json.dumps(leaders_doc(top, now), indent=1))
+    tmp.replace(OUT / "leaders.json")
+
+
 STATE = {"ranked": [], "rows": {}, "news": {}, "coverage": {}, "cards": {}}
 
 
@@ -366,6 +380,7 @@ def slow_scan(tail: LedgerTail, headers, syms) -> None:
         r["catalysts"] = catalyst_tags(r, STATE["news"].get(r["symbol"]))
     STATE["ranked"], STATE["rows"] = [r["symbol"] for r in full], rows
     STATE["coverage"] = coverage(top, seated, tail.reasons, tail.kept)
+    write_leaders(top, now)
     c = STATE["coverage"]
     miss = ", ".join(f"{m['symbol']} +{m['pct']}% [{next(iter(m['top_reasons']), m['status'])}]" for m in c["missing_detail"][:12])
     print(f"{now:%H:%M} coverage {c['seated']}/{c['leaders']} ({c['coverage_pct']}%) blockers {c['blockers']} | missing: {miss}", flush=True)

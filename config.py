@@ -606,6 +606,9 @@ DEFAULT_CONFIG = {
     "ai_watch_breakout_arm_hi":         0.30,
     # Entry: buy only on the empty-square (presquare) arm (operator 10/8; REPLAY/TEST until a prereg passes).
     "ai_watch_presquare_only":          False,
+    "ai_watch_leaders_source":          False,
+    "ai_watch_leaders_max_age_sec":     900.0,
+    "ai_watch_leaders_min_pct":         1.5,
     # %R trend entry filter (docs/studies/wr_trend_entry_prereg.json; REPLAY/TEST until it passes): an empty-square
     # arm needs the fast %R to have risen at least this many points over the prior 10 minutes. 0 = off.
     "ai_watch_wr_trend_min_rise":       0.0,
@@ -2274,6 +2277,9 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_breakout_arm_lo",
     "ai_watch_breakout_arm_hi",
     "ai_watch_presquare_only",
+    "ai_watch_leaders_source",
+    "ai_watch_leaders_max_age_sec",
+    "ai_watch_leaders_min_pct",
     "ai_watch_wr_trend_min_rise",
     "ai_watch_wr_slow_5m_veto",
     "ai_watch_wr_slow_5m_min_pitch",
