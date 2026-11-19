@@ -1,0 +1,22 @@
+{
+ "id": "etf_flow_2026-11-19",
+ "registered": "2026-11-19 ~05:40 ET, before any tick was fetched or any outcome computed",
+ "operator": "11/19 'Yes, test order flow on SPY/QQQ next' (Neon's Plan B1: move the one real intraday signal to instruments whose spread is ~0.2 bp)",
+ "prior": "MEDIUM-LOW. order_flow_pilot (10/21, 15,563 stock entries): signed SIP trade flow in the last 60 s, top third vs rest, +1.9 / +1.5 bp at 3 minutes, t 3.5 both halves, but 5-16 bp spreads killed it. SPY/QQQ spreads are ~1 cent (~0.15-0.2 bp). Against: SPY/QQQ are the most efficient instruments listed; flow effects there are usually far smaller.",
+ "instruments": "SPY, QQQ",
+ "moments": "every 10th minute 10:00-15:20 ET (m = 30, 40, ..., 350; 33 per symbol-day), 2026-04-28 .. 2026-11-17 SIP sessions present in ai_reports/warehouse/sip_hedge",
+ "feature": "flow imbalance at decision time T = start of minute m: SIP trades in [T-60 s, T) kept per order_flow_pilot KEEP_CODES (regular, odd lot, ISO); tick-rule sign (up-tick +1, down-tick -1, zero-tick carries the previous sign; first trade unsigned); imbalance = sum(sign x size) / sum(size)",
+ "trade": "LONG when imbalance >= the symbol's top-tercile cut; enter at the open of minute m, exit at the close of minute m+2 (3 minutes, as the pilot); SIP 1-minute bars from sip_hedge",
+ "cost": "one full spread per round trip = 1 cent / entry price (SPY/QQQ quote a 1-cent spread almost all day); also shown at 2 cents (information)",
+ "split": "the tercile cut per symbol is computed on the TRAIN half (first half of the days by date) and applied unchanged to the TEST half (second half), which decides",
+ "pass_if_ALL (test half, SPY+QQQ pooled)": {
+  "edge": "gated mean net >= +1.0 bp after the 1-cent spread",
+  "lift": "gated mean minus the rest's mean >= +1.0 bp",
+  "significance": "day-clustered t of the gated net >= 2.0",
+  "train_agrees": "gated net > 0 in the train half too",
+  "enough": ">= 1,000 gated test moments"
+ },
+ "information_only": "each symbol alone; 60 s / 10 min / 30 min horizons (open m -> close m, m+9, m+29); bottom tercile as a short (lift only); 2-cent cost; time-of-day buckets; opens per 10 minutes if traded at every gated moment",
+ "if_pass": "result-skeptic review, then a paper SPY/QQQ lane behind a default-off switch, live data = IEX trades (a parity check vs SIP first), replayed before any live order",
+ "if_fail": "record; order flow at 60 s does not pay even at a 0.2 bp spread"
+}
