@@ -54,3 +54,15 @@ day-clustered t <= -1.0, with at least 50 rows - the study STOPS and is recorded
 fetched or scored. Otherwise the full study runs and its own pass bar decides, unchanged. The screen can only stop a
 study, never pass one, so it does not raise the false-positive rate; a FAIL-early can be reopened with a new prereg.
 Spreads for the screen days come first in the fetch plan so the screen costs a quarter of the fetch.
+
+## Gross-first (11/19 evening, operator: "Add the gross-first screen to future tests") - applies to studies registered from now on
+
+Before any spread is fetched, every cell/arm is scored on GROSS over all its candidate rows (free: no quotes) with
+`early_stop.gross_screen`. Net = gross - spread and a spread is never negative, so if the gross mean's upper bound
+(mean + 2 x day-clustered SE, >= 100 rows) is below the NET pass bar, the cell cannot pass after costs: its quotes are
+SKIPPED and it is recorded as **FAIL-gross**. Otherwise it is quoted and judged by its own pass bar, unchanged. Like
+the early stop, it can only stop a cell, never pass one.
+Known limit: the 15 bp spread gate trades a SUBSET of candidates, and that subset's gross can differ from the whole
+set's (tight-spread names move differently). The z = 2 upper bound is the margin for that; a FAIL-gross cell can be
+reopened with a new prereg if the subset is expected to behave differently. Controls and luck nulls are gross-only and
+need no quotes anyway.

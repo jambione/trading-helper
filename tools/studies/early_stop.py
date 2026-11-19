@@ -49,3 +49,28 @@ def screen(rows, key="net", pass_mean=2.0, margin=MARGIN_BP, stop_t=STOP_T, min_
     if mean < pass_mean - margin and t is not None and t <= stop_t:
         return "STOP", st
     return "CONTINUE", st
+
+
+GROSS_Z = 2.0
+
+
+def gross_screen(rows, key="gross", pass_mean=2.0, z=GROSS_Z, min_n=100):
+    """Gross-first screen (TEST_STANDARD 'Gross-first', 11/19): run on ALL candidate rows BEFORE any spread is fetched.
+    Net = gross - spread with spread >= 0, so a cell whose gross cannot reach the NET pass bar even at its upper bound
+    (mean + z x day-clustered SE) cannot pass after costs: SKIP its quotes. -> ('SKIP_QUOTES' | 'QUOTE', stats). Pure.
+    Like screen(), it can only stop a cell, never pass one."""
+    n = len(rows)
+    if n < min_n:
+        return "QUOTE", {"n": n, "why": f"too few rows to screen ({n} < {min_n})"}
+    per = defaultdict(list)
+    for r in rows:
+        per[r["day"]].append(r[key])
+    m = [sum(v) / len(v) for v in per.values()]
+    mean = sum(r[key] for r in rows) / n
+    if len(m) < 3:
+        return "QUOTE", {"n": n, "why": "fewer than 3 days"}
+    mu = sum(m) / len(m)
+    se = math.sqrt(sum((x - mu) ** 2 for x in m) / (len(m) - 1)) / math.sqrt(len(m))
+    ucb = mean + z * se
+    st = {"n": n, "gross_mean": round(mean, 2), "gross_ucb": round(ucb, 2), "skip_if": f"gross ucb < {pass_mean:g}"}
+    return ("SKIP_QUOTES" if ucb < pass_mean else "QUOTE"), st

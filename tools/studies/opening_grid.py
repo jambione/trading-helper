@@ -432,11 +432,21 @@ def spread_lookup():
 
 def score_cells(days, cells, n_days, rounds=8):
     """Draw + fetch until no cell needs a missing quote. -> {id: (summ, traded rows, n_candidates)}."""
+    from early_stop import gross_screen
     cands = {c["id"]: candidates(days, c) for c in cells}
+    screened = {}
+    for c in cells:      # gross-first (amended_2): no quotes for a cell whose gross cannot reach the net bar
+        v, st = gross_screen([{"day": d, "gross": g} for d, _, _, g in cands[c["id"]]], pass_mean=MIN_EDGE)
+        if v == "SKIP_QUOTES":
+            screened[c["id"]] = {"n": 0, "FAIL_gross": st}
     for rnd in range(rounds):
         f = spread_lookup()
         res, need = {}, set()
+        for cid, st in screened.items():
+            res[cid] = (st, [], len(cands[cid]))
         for c in cells:
+            if c["id"] in screened:
+                continue
             tr, miss = draw(cands[c["id"]], f)
             need.update(miss)
             res[c["id"]] = (summ(tr, n_days), tr, len(cands[c["id"]]))

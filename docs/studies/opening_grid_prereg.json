@@ -68,6 +68,7 @@
   "ORB": "a cross: close[t] > max(high 09:30-09:34) and close[t-1] <= that high; the first cross of the day only, so a W2/W3 cell fires only if no earlier cross happened",
   "cost arithmetic": "holistic_entry.bracket's built-in COST (6 bp) is added back before the spread is subtracted, as opening_square.py does",
   "holdout (replaces confirm/forward pass bars)": "9/24-11/18 is reported as INFORMATION, not a holdout (already read by earlier studies, incl. opening_square's SQUARE 09:30-09:58). The holdout is FORWARD: the next 20 live sessions, at least 150 trades, mean net > 0 and day-clustered t >= 1.5, scored on recorded IEX quotes (the live feed - stated mismatch: IEX spreads overstate the book, which biases forward AGAINST the cell). Before forward starts, one replayed day is checked that study and live fire the chosen signal on the same bars (the live %R includes premarket warm-up; the study's does not).",
-  "robustness (added to pass)": "top-1% winsorized mean net > 0 in both SEARCH halves; at least half of the chosen cell's round-2 neighbours have mean net > 0; beta to SPY over the trade window reported"
+  "amended_2 (gross-first, 11/19 evening, before the run step started; no outcome read)": "TEST_STANDARD 'Gross-first': before quotes, any cell whose gross mean upper bound (mean + 2 x day-clustered SE over all its candidates, >= 100) is below +2.0 bp is FAIL-gross and not quoted; it cannot be chosen. The luck null is unchanged (gross-only).",
+  "robustness (added to pass)":"top-1% winsorized mean net > 0 in both SEARCH halves; at least half of the chosen cell's round-2 neighbours have mean net > 0; beta to SPY over the trade window reported"
  }
 }
