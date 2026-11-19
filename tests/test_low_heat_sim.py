@@ -31,3 +31,10 @@ def test_summary_drawdown():
             {"day": "d3", "n": 1, "pnl": 5.0, "wins": 1, "bp_sum": 2.0}]
     s = m.summary(days)
     assert s["total_pnl"] == -15.0 and s["max_drawdown"] == 30.0 and s["opens_per_day"] == 1.7
+
+
+def test_combined_signals_share_one_book():
+    bars = {s: _bars() for s in "ABCD"}
+    box, heat = [(30, "A"), (31, "B")], [(30, "C"), (32, "D")]
+    tr = m.run_day(box + heat, m.bracket_exit, bars, lambda s, t: 1.0)
+    assert sorted(x["sym"] for x in tr) == ["A", "B", "C"]            # D finds the 3 slots full

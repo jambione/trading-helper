@@ -5,7 +5,8 @@ on Low heat < 20 opens'). INFORMATION ONLY: runs after low_heat_rising is scored
 Book: 3 slots, $3,200 per trade, one position per name, signals taken in time order when a slot is free; entry at the
 open of t+1; cost = the real SIP spread at entry (fetched on demand, shared cache), spread > 15 bp skipped. Two exits:
 the desk bracket (+20 / -50 bp within 15 min) and hold to 15:55 with a -3% stop. Baselines on the same book: today's
-1-minute box (pre-square) signals and random minutes from low_heat_rising's events.
+1-minute box (pre-square) signals and random minutes from low_heat_rising's events; and the two strategies run
+together on one book (operator 11/19: multiple open strategies at the same time).
 
     .venv/bin/python tools/studies/low_heat_sim.py        # -> ai_reports/low_heat_sim/report.md (+ days.json)
 """
@@ -125,6 +126,9 @@ def main():
     arms = {"heat<20": [r for r in ev if r["arm"] == "low_heat" and r.get("heat") is not None and r["heat"] < 20],
             "open box (today)": [r for r in ev if r["arm"] == "presquare"],
             "random minute": [r for r in ev if r["arm"] == "random"]}
+    # operator 11/19 'open to multiple open strategies at the same time. So open box and low heat trending': both
+    # signal sets feed the same 3 slots; whichever fires first while a slot is free is taken
+    arms["open box + heat<20 (combined)"] = arms["open box (today)"] + arms["heat<20"]
     OUT.mkdir(parents=True, exist_ok=True)
     files = {p.stem: p for p in WH_SIP.glob("20??-??-??.npz")}
     days = sorted({r["day"] for r in ev})
