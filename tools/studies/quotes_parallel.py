@@ -34,6 +34,9 @@ def plan_for(study, which):
     if study == "options_callflow":
         import options_callflow as O
         return sorted({("ocf", r["day"], r["sym"], r["t"], 0.0) for r in O.load_events()})
+    if study == "signal_cache":
+        import signal_cache as SC
+        return SC.plan_range(which)
     if study == "leaders_source":
         import leaders_source as LS
         return LS.plan()

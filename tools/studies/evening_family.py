@@ -178,16 +178,19 @@ def minute_grid(prev_c, prev_h, prev_l, c, h, l):  # noqa: E741
 
 def presquare_bars(cc, hh, ll, off, L):
     """Today's bar indexes where the live pre-square is true on this bar AND the previous one, and not the one before (trigger = the
-    second). rte_direction_eps 0.05 (config.py:1139). Cites ai_entry_watch.py:13087-13148."""
+    second). rte_direction_eps 0.05 (config.py:1139). Cites ai_entry_watch.py:13087-13148. 11/19: vectorized, identical output."""
     fast = wr_smoothed(hh, ll, cc, n=L, span=7)
     slow = wr_smoothed(hh, ll, cc, n=112, span=3)
-    ok = np.zeros(len(cc), dtype=bool)
-    for i in range(1, len(cc)):
-        f, s, fp = fast[i], slow[i], fast[i - 1]
-        if np.isnan(f) or np.isnan(s) or np.isnan(fp):
-            continue
-        ok[i] = f >= -35 and s >= -35 and abs(f - s) <= 15 and not (f >= -20 and s >= -20) and f - fp > 0.05
-    return [i - off for i in range(off + 2, len(cc)) if ok[i] and ok[i - 1] and not ok[i - 2] and FIRST <= i - off <= LAST]
+    fp = np.concatenate(([np.nan], fast[:-1]))
+    with np.errstate(invalid="ignore"):
+        good = np.isfinite(fast) & np.isfinite(slow) & np.isfinite(fp)
+        ok = good & (fast >= -35) & (slow >= -35) & (np.abs(fast - slow) <= 15) & ~((fast >= -20) & (slow >= -20)) & (fast - fp > 0.05)
+    ok[0] = False
+    i = np.arange(off + 2, len(cc))
+    if not len(i):
+        return []
+    hit = i[ok[i] & ok[i - 1] & ~ok[i - 2]] - off
+    return [int(t) for t in hit if FIRST <= t <= LAST]
 
 
 # ---------------- evaluation ----------------

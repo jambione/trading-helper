@@ -45,3 +45,12 @@ read at a 0.5 s exit latency in both arms, and S4 = every exit 1 s late in both 
 ## Amendment 11/07 12:30 (after the H2 rerun; applies to FUTURE runs only, logged as registry P5-style change)
 
 The same-name later-only control is biased when the trigger itself predicts drift (after a stop-run the name keeps fading: H2's later-only control sat 3.6 bp below the random-minute baseline). So the PRIMARY control for EDGE is now the same-minute control on other universe stocks; the same-name later-only control is secondary (must point the same way), and its mean is still printed beside the baseline. No past verdict changes: H2 shows no EDGE against either reading of the rule (same-minute lift -0.2).
+
+## Early stop (11/19, operator: "implement the ideas to speed up the tests") - applies to studies registered from now on
+
+Every new warehouse prereg names its screen: the first quarter of its days by date (at least 5), scored first with
+`tools/studies/early_stop.py`. If the screen is clearly failing - mean net below (the pass bar minus 2 bp) AND
+day-clustered t <= -1.0, with at least 50 rows - the study STOPS and is recorded as **FAIL-early**; no more data is
+fetched or scored. Otherwise the full study runs and its own pass bar decides, unchanged. The screen can only stop a
+study, never pass one, so it does not raise the false-positive rate; a FAIL-early can be reopened with a new prereg.
+Spreads for the screen days come first in the fetch plan so the screen costs a quarter of the fetch.

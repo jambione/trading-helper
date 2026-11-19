@@ -33,18 +33,31 @@ NDRAW = 5
 
 # ---------------- pure helpers ----------------
 def wr_smoothed(h, l, c, n=21, span=7):  # noqa: E741
-    """Williams %R(n) then ewm(span, adjust=False) over valid values (signals.py). NaN until n bars exist."""
+    """Williams %R(n) then ewm(span, adjust=False) over valid values (signals.py). NaN until n bars exist.
+    11/19: rolling high/low computed in one vectorized pass (was a per-minute nanmax loop); the EWM recursion stays
+    scalar. Identical output to the loop version (tests/test_wr_smoothed_fast.py)."""
+    import warnings
+    from numpy.lib.stride_tricks import sliding_window_view
     h, l, c = (np.asarray(x, dtype=float) for x in (h, l, c))  # noqa: E741
     out = np.full(len(c), np.nan)
+    if len(c) < n:
+        return out
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        hh = np.nanmax(sliding_window_view(h, n), axis=1)
+        ll = np.nanmin(sliding_window_view(l, n), axis=1)
+    cc = c[n - 1:]
+    ok = np.isfinite(hh) & np.isfinite(ll) & (hh > ll) & np.isfinite(cc)
+    raw = np.full(len(cc), np.nan)
+    raw[ok] = -100.0 * (hh[ok] - cc[ok]) / (hh[ok] - ll[ok])
     a = 2.0 / (span + 1.0)
     prev = None
-    for i in range(n - 1, len(c)):
-        hh, ll = np.nanmax(h[i - n + 1:i + 1]), np.nanmin(l[i - n + 1:i + 1])
-        if not np.isfinite(hh) or not np.isfinite(ll) or hh <= ll or not np.isfinite(c[i]):
-            continue
-        raw = -100.0 * (hh - c[i]) / (hh - ll)
-        prev = raw if prev is None else a * raw + (1 - a) * prev
-        out[i] = prev
+    vals = raw.tolist()
+    res = out[n - 1:]
+    for k, x in enumerate(vals):
+        if ok[k]:
+            prev = x if prev is None else a * x + (1 - a) * prev
+            res[k] = prev
     return out
 
 
