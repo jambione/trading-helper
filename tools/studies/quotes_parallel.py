@@ -31,6 +31,9 @@ def plan_for(study, which):
         import movers_cap as M
         sets = M.plan_sets(json.loads((M.OUT / "signals.json").read_text()))
         return sorted({("mc", r["day"], r["sym"], r["t"], 0.0) for v in sets.values() for r in v})
+    if study == "options_callflow":
+        import options_callflow as O
+        return sorted({("ocf", r["day"], r["sym"], r["t"], 0.0) for r in O.load_events()})
     raise SystemExit(f"unknown study {study}")
 
 

@@ -1,0 +1,18 @@
+{
+ "id": "options_callflow_intraday_2026-11-19",
+ "registered": "2026-11-19 ~05:45 ET, before any option bar of the study window was fetched or any outcome computed (a 2-request probe on AAPL 2026-09-02 checked only that expired-contract minute bars are served)",
+ "operator": "11/19 'Intraday options call flow - I want to make sure that we test this' (Neon: options primary, %R secondary, dealer delta-hedging)",
+ "supersedes": "options_flow_prereg.json (daily next-day cross-section) STOPPED UNDERPOWERED 10/24 before any option data; this is a different, intraday event design",
+ "prior": "LOW-MEDIUM. Pan-Poteshman needs signed opening volume (not available); unsigned option volume is weaker; Johnson-So finds option-heavy names underperform. For: intraday events give far more observations than the daily cross-section.",
+ "universe": "the 40 names with the highest median SIP dollar volume over the 20 warehouse sessions before the first study day, prior close $20-$400, ETFs excluded; fixed for the study",
+ "days": "the last 80 SIP warehouse sessions ending 2026-11-17; the first 5 are baseline-only (no signals)",
+ "option_flow": "per stock-day: contracts from paper-api /v2/options/contracts (status inactive or active) expiring 0-14 calendar days after the day, strike within +-6% of the prior close; 1-minute option bars (data.alpaca.markets /v1beta1/options/bars). Premium per minute = sum(volume x vwap x 100), calls C and puts P separately.",
+ "signal": "closed minute t in 15..330: C15 = sum of C over t-14..t >= 5 x baseline AND C15 >= 3 x P15 AND C15 >= $50,000, where baseline = mean 15-minute call premium of the name's prior 5 study days (their daily call premium / 26); refractory 30 minutes per name",
+ "entries (timing modes)": {"now": "open of minute t+1", "loose": "the first minute t' in t..t+15 with fast %R (21, EWM 7) >= -50 and rising (catalyst_primary.loose_ok); open of t'+1; none -> no trade"},
+ "exits": {"atr": "catalyst_primary.vol_exit (2 ATR stop / 4 ATR target / 60 min)", "close": "the close of minute 385 (15:55)"},
+ "cost": "real SIP quoted spread at entry (news_source.fetch_quotes); spread > 6 bp is not traded (the live gate); net = gross - spread",
+ "pass_each (4 cells: now/loose x atr/close; Bonferroni)": {"edge": "mean net >= +2.0 bp", "significance": "day-clustered t >= 2.5", "both_halves": "mean net > 0 in both date halves", "enough": ">= 200 traded events"},
+ "information_only": "a same-name random-minute control on the signal's day (seed sha256('ocf'|day|sym)), lift vs control; put-heavy bursts (P15 >= 5 x put baseline and >= 3 x C15) long return; signal count per day and opens per 10 minutes; time-of-day buckets",
+ "if_pass": "result-skeptic review, then a live shadow watcher on the options stream (Neon #1) before any paper lane; ships only under the operator's 11/18 rule after the watcher confirms the signal fires live",
+ "if_fail": "record; unsigned intraday call-premium bursts do not pay on liquid names"
+}
