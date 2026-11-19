@@ -155,6 +155,7 @@ class Service:
     # not been rewritten for stale_sec during RTH (see wedged()).
     stale_file: Path | None = None
     stale_sec:  float = 0.0
+    http_fail:  int = 0                # consecutive failed HTTP checks while a process is still there
 
     def wanted(self) -> bool:
         """Whether this service is supposed to be up at all.
@@ -237,6 +238,56 @@ def process_running(pattern: str) -> bool:
 
 
 WEDGE_GRACE_SEC = 180.0   # a fresh engine fetches first bars before writing
+
+# Duplicate-spawn guard (2026-11-18 11:54-12:12: after the console logout pgrep reported every
+# service down while all of them were running; the loop started a new copy of each every ~2 min,
+# 48 duplicates, Alpaca 429s, no entries). Before any start, a second, independent look.
+HTTP_KILL_AFTER = 6       # an HTTP service whose process is still there: kill + restart after this many failed checks
+
+
+def ps_matches(pattern: str, lines: list[str] | None = None) -> list[int]:
+    """PIDs whose command line matches `pattern` (regex, as pgrep -f), read from `ps` rather than pgrep.
+    Our own pid and the ps / pgrep / pkill probes are excluded. `lines` is for tests."""
+    import re
+    if lines is None:
+        try:
+            lines = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True,
+                                   text=True, timeout=10).stdout.splitlines()
+        except (OSError, subprocess.SubprocessError):
+            return []
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        return []
+    me, out = os.getpid(), []
+    for ln in lines:
+        pid_s, _, cmd = ln.strip().partition(" ")
+        try:
+            pid = int(pid_s)
+        except ValueError:
+            continue
+        head = cmd.strip().split(" ", 1)[0].rsplit("/", 1)[-1]
+        if pid == me or head in ("ps", "pgrep", "pkill"):
+            continue
+        if rx.search(cmd):
+            out.append(pid)
+    return out
+
+
+def spawn_decision(svc: "Service", ps_pids: list[int], alive=None) -> str:
+    """What to do with a service the health check calls down. Pure given its inputs.
+
+    'start'           nothing of it is running: start it.
+    'skip_own_pid'    the copy this watchdog last started is still alive: do not start another.
+    'skip_ps'         ps sees a matching process although the health check said down: do not duplicate.
+    'kill_then_start' an HTTP service whose process is there but has failed HTTP_KILL_AFTER checks in a row."""
+    alive = alive or pid_alive
+    there = bool(ps_pids) or bool(svc.pid and alive(svc.pid))
+    if not there:
+        return "start"
+    if svc.health_url and svc.http_fail >= HTTP_KILL_AFTER:
+        return "kill_then_start"
+    return "skip_own_pid" if (svc.pid and alive(svc.pid)) else "skip_ps"
 
 
 def in_rth(now: float) -> bool:
@@ -680,6 +731,7 @@ def main() -> int:
                             log(f"{svc.name}: healthy again after {svc.failures} "
                                 f"failed start(s)")
                         svc.failures = 0
+                        svc.http_fail = 0
                         continue
                     log("!" * 60)
                     log(f"{svc.name}: WEDGED — alive but {svc.stale_file.name} "
@@ -691,6 +743,27 @@ def main() -> int:
 
                 if now < svc.next_try:
                     continue
+
+                pat = svc.pattern or svc.script
+                if svc.health_url:
+                    svc.http_fail += 1
+                what = spawn_decision(svc, ps_matches(pat))
+                if what in ("skip_own_pid", "skip_ps"):
+                    if svc.http_fail <= 1 or svc.failures == 0:
+                        log(f"{svc.name}: health check says down but the process is there "
+                            f"({what}) - not starting a duplicate")
+                    svc.failures += 1
+                    svc.next_try = now + restart_delay(svc.failures)
+                    continue
+                if what == "kill_then_start":
+                    log(f"{svc.name}: process up but {svc.http_fail} HTTP checks failed - killing and restarting")
+                    kill_pattern(pat)
+                    for p_ in ps_matches(pat):          # pkill rides pgrep; make sure
+                        try:
+                            os.kill(p_, signal.SIGKILL)
+                        except OSError:
+                            pass
+                    svc.http_fail = 0
 
                 pid = svc.start(py)
                 if pid is None:

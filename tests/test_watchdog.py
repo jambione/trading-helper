@@ -305,3 +305,33 @@ def test_session_snapshot_is_supervised():
     snap = svcs["snapshot"]
     assert snap.command("/x/python") == ["/x/python", "-u", "tools/session_snapshot.py"]
     assert snap.wanted() is True and snap.health_url is None
+
+
+# ── duplicate-spawn guard (2026-11-18 incident: pgrep blind after console logout, 48 duplicates) ──
+
+def test_ps_matches_parses_and_excludes_probes():
+    lines = ["  101 /x/Python -u signal_engine.py", "  102 pgrep -f signal_engine.py",
+             "  103 ps -axo pid=,command=", "  104 /x/Python -u dashboard.py", "garbage",
+             f"  {os.getpid()} /x/Python -u signal_engine.py"]
+    assert w.ps_matches("signal_engine.py", lines) == [101]
+    assert w.ps_matches("dashboard.py", lines) == [104]
+    assert w.ps_matches("cloudflared.*trading", lines) == []
+    assert w.ps_matches("([bad", lines) == []
+
+
+def test_spawn_decision_never_duplicates():
+    svc = w.Service("engine", "signal_engine.py", "engine.log")
+    assert w.spawn_decision(svc, []) == "start"
+    assert w.spawn_decision(svc, [555]) == "skip_ps"                 # pgrep blind, ps sees it
+    svc.pid = 777
+    assert w.spawn_decision(svc, [], alive=lambda p: True) == "skip_own_pid"
+    assert w.spawn_decision(svc, [], alive=lambda p: False) == "start"
+
+
+def test_spawn_decision_http_service_restarts_only_after_repeated_failures():
+    svc = w.Service("dashboard", "dashboard.py", "dashboard.log", health_url="http://localhost:1/api/meta")
+    svc.http_fail = 1
+    assert w.spawn_decision(svc, [999]) == "skip_ps"
+    svc.http_fail = w.HTTP_KILL_AFTER
+    assert w.spawn_decision(svc, [999]) == "kill_then_start"
+    assert w.spawn_decision(svc, []) == "start"
