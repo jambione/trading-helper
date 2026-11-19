@@ -1,0 +1,26 @@
+{
+ "id": "arm_gates_check_2026-11-19",
+ "registered": "2026-11-19 ~11:45 ET, before any gate feature or outcome was computed",
+ "operator": "11/19 11:39: GMAB / SAIL / AKAM 'in the buy zone' but not bought -> 'Yes, test both gates tonight'",
+ "question": "Do the two live arm gates avoid bad buys, or do they only cost opens? Gate A = ai_watch_wr_trend_min_rise 15 (fast %R must have risen >= 15 points over the last 10 minutes). Gate B = ai_watch_wr_slow_5m_veto (refuse when the slow %R is falling on the 5-minute view). Both are on in the live config; neither has been checked against real spreads on the warehouse.",
+ "entries": "the desk's pre-square triggers from the signal cache (tools/studies/signal_cache.py: top-400, $20-$400, up >= 1.5%, minutes 15-360, refractory 30), 2026-04-28 .. 2026-11-18",
+ "gate_features (from SIP 1-minute bars, prior session's last 112 bars prepended, at the trigger bar t)": {
+  "A_blocks": "fast %R (21, EWM 7) at t minus fast %R at t-10 < 15",
+  "B_blocks": "either (1) slow %R (112, EWM 3) at t minus at t-5 < 0, or (2) the last COMPLETED 5-minute bar's slow %R (28, EWM 3) minus the previous 5-minute bar's < 0 (ai_watch_wr_slow_5m_min_pitch is 0). The live third check (polled slow %R over 5 minutes) is the same quantity as (1) on bars and is not separately modeled."
+ },
+ "outcome": "the desk bracket net (signal_cache bracket_gross: +20 bp before -50 bp within 15 min, entry open t+1) minus the real SIP spread at entry; spread > 15 bp not traded (live gate)",
+ "sample": "<= 5,000 signals per period by the lowest sha256('gates'|day|sym|t); missing spreads fetched after 16:05 (news_source.fetch_quotes)",
+ "decides": "2026-04-28 .. 2026-09-23",
+ "confirms": "2026-09-24 .. 2026-11-18 (direction only)",
+ "per_gate_decision": {
+  "statistic": "lift = mean net of signals the gate PASSES minus mean net of signals it BLOCKS; day-clustered t (two-sample, day-clustered SEs)",
+  "KEEP": "lift >= +2.0 bp with t >= 2.0 on DECIDE and lift > 0 on CONFIRM - the gate avoids worse buys",
+  "REMOVE": "lift <= +0.5 bp on DECIDE and <= +0.5 on CONFIRM - the blocked buys are no worse, so the gate only costs opens",
+  "UNCLEAR": "anything else - leave the gate as it is",
+  "enough": ">= 200 traded signals on each side of the gate on DECIDE, else UNDERPOWERED (leave as is)"
+ },
+ "information_only": "both gates together (pass both vs blocked by either); opens per 10 minutes each gate removes; the gate's block rate; 10-minute gross; time of day",
+ "if_KEEP": "no change",
+ "if_REMOVE": "turn that gate off after the close under the operator's 11/18 rule (config only, hot-reloads)",
+ "caveat": "live gates read polled/streamed %R, the study reads 1-minute SIP bars; the desk's IEX lines differ (iex-bars-do-not-hide-entry-signal: same AUC)"
+}
