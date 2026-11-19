@@ -144,7 +144,8 @@ def quotes():
     plan = sorted({("bw", r["day"], r["sym"], r["t"], 0.0) for r in rows if r["wave"]}, key=lambda p: (p[1] >= SPLIT, p[1], p[2], p[3]))
     ctl = sorted({("bw", r["day"], r["sym"], r["t"], 0.0) for r in rows if not r["wave"]}, key=lambda p: (p[1] >= SPLIT, p[1], p[2], p[3]))
     print("wave entries", len(plan), "control entries", len(ctl), flush=True)
-    ns.fetch_quotes(plan + ctl)
+    only = sys.argv[2] if len(sys.argv) > 2 else "all"
+    ns.fetch_quotes(plan if only == "wave" else ctl if only == "control" else plan + ctl)
 
 
 def stats(rows, key):
