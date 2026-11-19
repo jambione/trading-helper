@@ -96,6 +96,7 @@ def collect(quotes, qkey):
             entries.append(("Low heat turning up (< 20)", exname, with_spread(lo20, ex, quotes, qkey)))
     gates = load("arm_gates_check/features.json")
     if gates:
+        gates = [r for r in gates if r.get("pool", "cache") == "cache"]      # the below-+1.5% pool is gate C only
         both = [r for r in gates if not r["A_blocks"] and not r["B_blocks"]]
         entries.append(("Open box with both gates (live until 11:45)", "15-min bracket", with_spread(both, "gross", quotes, qkey)))
         entries.append(("Open box, no gates", "15-min bracket", with_spread(gates, "gross", quotes, qkey)))
