@@ -1,0 +1,29 @@
+{
+ "id": "morning_picks_hold_2026-11-19",
+ "status": "DRAFT - registered for review 2026-11-19 ~11:20 ET, before any event was built or outcome computed; not run until the operator approves",
+ "operator": "11/19 'how can we look at it in a different way?' -> pick the name, then hold it, instead of timing 15-minute pops (perspective 2); 'Yes, pull the day-hold results and draft the test'",
+ "why_new": "day_hold (FAIL 11/19) picked by how many desk SOURCES listed a name - a popularity count - and needed 40 forward sessions (6 weeks). This test ranks on what the tape shows in the first 30 minutes, scores on the SIP warehouse in one night (143 days), and holds more names (5) so the book still opens several names a day.",
+ "prior": "LOW. Against: the universe of admitted names fades at every horizon (the-universe-fades-at-every-horizon); the 10-year daily skeleton of yesterday's strong names lost open->close; name facts lifted win rate, not mean. For: one round trip a day pays the spread once on a move of 100-300 bp instead of 20; the leaders test found volume-pace names the least bad (-2.9 bp at 15 min).",
+ "days": "SIP warehouse sessions 2026-04-28 .. 2026-11-18 (excluding half days). DECIDE 2026-04-28 .. 2026-09-23; CONFIRM 2026-09-24 .. 2026-11-18",
+ "eligible_at_1000": "warehouse top-400 by prior-day dollar volume, ETFs/ETPs excluded (evening_family.ALL_ETF + is_levered_etp); close of the 09:59 bar $20-$400; up >= 1.5% vs prior close; 09:30-09:59 dollar volume >= $5M; no split/dividend on the day",
+ "rankers (3 cells, Bonferroni)": {
+  "VOL": "volume pace = 09:30-09:59 share volume / prior-day share volume; top 5",
+  "RS": "09:30 open -> 09:59 close return minus SPY's, among names whose 09:59 close is >= 99% of their 09:30-09:59 high (still holding the high); top 5",
+  "GAP": "gap (09:30 open / prior close - 1) >= 2% AND 09:59 close >= 09:30 open (gap not filled); top 5 by gap"
+ },
+ "entry": "open of the 10:00 bar, one entry per pick, equal dollar weight",
+ "exit": "first of: a -3% stop from entry (fill at the stop, or the bar open if it gapped through), else the close of the 15:55 bar",
+ "cost": "real SIP quoted spread in the 60 s before 10:00 per pick (news_source.fetch_quotes, cached); net = gross - spread (buy at the ask, sell at the bid = one full spread per round trip); a pick with no quote is dropped and the next-ranked name taken (counted)",
+ "control": "C = 5 names drawn at random from the same day's eligible list, same entry/exit, 200 draws per day (seed sha256('mph'|day|draw)); control cost = that day's median spread over 20 eligible names sampled by the lowest sha256('mph_sp'|day|sym)",
+ "statistic": "per day: equal-weight mean net of the 5 picks (portfolio bp/day) and picks minus C; mean over days, t across days",
+ "pass_each (VOL / RS / GAP)": {
+  "profit": "picks net >= +10 bp/day on DECIDE",
+  "edge_over_random": "picks minus C >= +10 bp/day with t >= 2.5 on DECIDE",
+  "both_halves": "picks net > 0 in both halves of DECIDE",
+  "confirm": "picks net > 0 AND picks minus C > 0 on CONFIRM",
+  "not_one_day": "picks net still > 0 after dropping the best DECIDE day"
+ },
+ "information_only": "K = 3 and K = 10; exit at 12:00 and 14:00; no stop; the day_hold giveback exit (peak +2% then give back half); the desk's live trades on the same names that day; per-name win rate and median hold; SPY over the same window",
+ "if_pass": "result-skeptic review, then a paper desk mode that buys the morning picks at 10:00 and holds (default-off switch), replayed through the live code, live on paper under the operator's 11/18 rule",
+ "if_fail": "record; picking at 10:00 on first-30-minute tape and holding to the close does not pay on this universe"
+}
