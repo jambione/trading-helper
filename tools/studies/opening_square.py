@@ -122,8 +122,27 @@ def events():
     return rows
 
 
-def plan():
-    rows = json.loads((OUT / "events.json").read_text())
+INFO_CAP = {"presquare": 1500, "random": 1500, "square_late": 1000}
+
+
+def keep_rows(rows):
+    """Amendment 1: every 'square' row; info arms capped per (arm, period) by the lowest sha256('osq'|day|sym|t). Pure."""
+    by = defaultdict(list)
+    for r in rows:
+        by[(r["arm"], r["day"] <= DECIDE[1])].append(r)
+    out = []
+    for (arm, _), v in by.items():
+        cap = INFO_CAP.get(arm)
+        if cap is not None and len(v) > cap:
+            v = sorted(v, key=lambda r: hashlib.sha256(f"osq|{r['day']}|{r['sym']}|{r['t']}".encode()).hexdigest())[:cap]
+        out += v
+    return out
+
+
+def plan(which="all"):
+    rows = keep_rows(json.loads((OUT / "events.json").read_text()))
+    if which != "all":
+        rows = [r for r in rows if (r["arm"] == "square") == (which == "square")]
     return sorted({("osq", r["day"], r["sym"], r["t"], 0.0) for r in rows})
 
 
@@ -167,7 +186,7 @@ def verdict(dec, conf):
 def score():
     import news_source as ns
     cache = json.load(open(ns.QUOTES)) if ns.QUOTES.exists() else {}
-    rows = json.loads((OUT / "events.json").read_text())
+    rows = keep_rows(json.loads((OUT / "events.json").read_text()))
     stats = defaultdict(lambda: {"noquote": 0, "gated": 0, "spreads": []})
     traded = defaultdict(list)
     for r in rows:

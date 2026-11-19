@@ -19,5 +19,10 @@
  },
  "information_only": "(a) PRE-SQUARE triggers (presquare_bars) in the same window and names - what the desk buys today; (b) a random minute in 0..28 on the same name-day (seed sha256('osq'|day|sym)) - lift vs control; (c) 10-minute gross close t+10 vs open t+1; (d) square triggers 30..330 (does the opening matter?); (e) entries per day and per 10 minutes; (f) median spread and share removed by the gate",
  "if_pass": "result-skeptic review; then ship after the close as a default-off switch that lets a full square through not_presquare only before 10:00 ET (ai_watch_square_ok_until_min = 30), replayed through the live code first",
- "if_fail": "record; opening squares do not pay at the desk bracket after real spreads"
+ "if_fail": "record; opening squares do not pay at the desk bracket after real spreads",
+ "amended_1": {
+  "when": "2026-11-19 ~10:25 ET, after the events step and before any outcome was computed, read or quoted (only per-arm event COUNTS were looked at)",
+  "why": "37,693 events; quoting all at ~2 s per quote would take most of a day. Counts: square 6,301 decide / 2,209 confirm; presquare 4,507 / 1,556; random 5,357 / 1,862; square_late 11,788 / 4,113.",
+  "change": "every 'square' (deciding) row is quoted; information arms are capped per (arm, period) by the lowest sha256('osq'|day|sym|t): presquare 1,500, random 1,500, square_late 1,000. The square arm is fetched first. Pass bars unchanged."
+ }
 }

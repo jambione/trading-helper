@@ -40,6 +40,9 @@ def plan_for(study, which):
     if study == "leaders_source":
         import leaders_source as LS
         return LS.plan()
+    if study == "opening_square":
+        import opening_square as OS
+        return OS.plan(which)
     raise SystemExit(f"unknown study {study}")
 
 
