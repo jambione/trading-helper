@@ -2837,21 +2837,28 @@ def test_arm_refuses_known_low_rvol_including_research():
 
     rec = _armable_rec()
     rec["source"] = "xai"
-    rec["admit_rvol"] = 0.46
+    rec["rvol"] = 0.46
     ok, why = ew.should_arm_buy(
         rec, ask=28.0, bid=27.9, cfg=_arm_cfg(ai_watch_arm_min_rvol=2.0))
     assert ok is False and why == "thin_rvol"
 
-    rec["admit_rvol"] = 2.1
+    rec["rvol"] = 2.1
     ok, why = ew.should_arm_buy(
         rec, ask=28.0, bid=27.9, cfg=_arm_cfg(ai_watch_arm_min_rvol=2.0))
     assert ok and why.startswith("zone")
 
-    rec.pop("admit_rvol", None)
+    # 11/19 'all the checks are live': a stale admission rvol is never read at the arm, and with the floor on, no
+    # live reading at all refuses (absence is not a pass)
     rec.pop("rvol", None)
-    ok, why = ew.should_arm_buy(
-        rec, ask=28.0, bid=27.9, cfg=_arm_cfg(ai_watch_arm_min_rvol=2.0))
-    assert ok and why.startswith("zone")
+    rec["admit_rvol"] = 9.9
+    _orig = ew._desk_rvol
+    ew._desk_rvol = lambda s: None
+    try:
+        ok, why = ew.should_arm_buy(
+            rec, ask=28.0, bid=27.9, cfg=_arm_cfg(ai_watch_arm_min_rvol=2.0))
+    finally:
+        ew._desk_rvol = _orig
+    assert ok is False and why == "rvol_unknown"
 
     rec["admit_rvol"] = 0.4
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=_arm_cfg())
@@ -3503,7 +3510,7 @@ def test_cheap_name_already_extended_on_the_day_is_refused():
         "target_1": 1.50, "reward_risk": 1.5,
         "zone_kind": "double_bottom", "synthetic": True,
     })
-    rec["admit_pct_change"] = 64.94
+    rec["pct_change"] = 64.94          # 11/19: the arm reads the LIVE day change, never admit_pct_change
     rec["indicator"] = {
         "pctr": -60.0, "pctr_slow": -60.0,
         "pctr_rising": True, "pctr_slow_rising": True, "pctr_both_rising": True, "pctr_falling": False,
@@ -3519,7 +3526,8 @@ def test_cheap_name_already_extended_on_the_day_is_refused():
     ok, why = ew.should_arm_buy(rec, ask=1.27, bid=1.26, cfg=cfg)
     assert (ok, why) == (False, "extended_cheap")
     assert ew.format_blocker("extended_cheap") == "blow-off"
-    rec["admit_pct_change"] = 8.0
+    rec["pct_change"] = 8.0
+    rec["admit_pct_change"] = 64.94    # a stale blow-off stamp no longer blocks a name that is +8% now
     ok2, why2 = ew.should_arm_buy(rec, ask=1.27, bid=1.26, cfg=cfg)
     assert ok2 and why2.startswith("zone")
 

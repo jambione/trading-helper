@@ -357,6 +357,9 @@ _BLOCKER_LABELS: dict[str, str] = {
     "rsi_not_rising": "RSI↓",
     "rsi_extended": "RSI high",
     "stale_quote": "stale quote",
+    "not_moving": "not moving today",
+    "day_chg_unknown": "day % unknown",
+    "rvol_unknown": "volume unknown",
     # Entry-only: ai_watch_arm_require_stream_price refused a non-stream print.
     "stream_required": "need stream",
     # Post-admit Finnhub subscribe grace — not the same as a dead tape.
@@ -17424,33 +17427,27 @@ def _ob_row_fields(sig: Any) -> dict:
 
 
 def _arm_day_change(record: dict) -> float | None:
-    """Session % change the arm gate sees (admit stamp, else features)."""
+    """LIVE session % change the arm gate sees: the poll's fresh stamp, else the desk row. Never the admission stamp
+    (operator 11/19 'all the checks are live': admit_pct_change was read first, so HOOD bought at -1.5% and HZO at
+    +0.05% on day changes stamped hours earlier). None when no live reading exists."""
     rec = record if isinstance(record, dict) else {}
-    for key in ("admit_pct_change", "pct_change"):
-        got = _f_or_none(rec.get(key))
-        if got is not None:
-            return got
-    feat = rec.get("features")
-    if isinstance(feat, dict):
-        return _f_or_none(feat.get("pct_change"))
-    return None
+    got = _f_or_none(rec.get("pct_change"))
+    if got is not None:
+        return got
+    return _desk_pct_change(str(rec.get("symbol") or ""))
 
 
 def _arm_rvol(record: dict) -> float | None:
-    """RVOL the arm gate sees. Live stamp on the record, else admit.
+    """RVOL the arm gate sees. Live stamp on the record, else the live desk row (never the admit stamp).
 
     Poll stamps a fresh desk rvol onto ``record['rvol']`` before this
     runs. Known-low refuses; missing everywhere → None (abstain).
     """
     rec = record if isinstance(record, dict) else {}
-    for key in ("rvol", "admit_rvol"):
-        got = _f_or_none(rec.get(key))
-        if got is not None:
-            return got
-    feat = rec.get("features")
-    if isinstance(feat, dict):
-        return _f_or_none(feat.get("rvol"))
-    return None
+    got = _f_or_none(rec.get("rvol"))
+    if got is not None:
+        return got
+    return _desk_rvol(str(rec.get("symbol") or ""))   # live desk row; never the admission stamp (11/19)
 
 
 def _desk_pct_change(symbol: str) -> float | None:
@@ -18494,8 +18491,23 @@ def should_arm_buy(
         min_rvol = 0.0
     if min_rvol > 0:
         rv = _arm_rvol(record)
-        if rv is not None and rv + 1e-12 < min_rvol:
+        if rv is None:
+            return False, "rvol_unknown"          # 11/19: absence is not a pass for the 'still moving' check
+        if rv + 1e-12 < min_rvol:
             return False, "thin_rvol"
+
+    # Still moving at the buy (operator 11/19): the LIVE day change must be >= ai_watch_arm_min_day_chg. Admission
+    # checks the day change once; seated names stay on the book all day, so a flat or red name could still arm.
+    try:
+        min_live_chg = float(cfg.get("ai_watch_arm_min_day_chg", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        min_live_chg = 0.0
+    if min_live_chg > 0:
+        dchg_live = _arm_day_change(record)
+        if dchg_live is None:
+            return False, "day_chg_unknown"
+        if dchg_live + 1e-9 < min_live_chg:
+            return False, "not_moving"
 
     try:
         zone_win = float(cfg.get("ai_watch_zone_exh_window_sec", 0.0) or 0.0)
