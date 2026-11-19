@@ -56,5 +56,18 @@
 
  "if_pass": "result-skeptic review, then the chosen cell as a default-off arm for its window only, replayed through the live code, then paper",
  "if_fail": "record which cells came closest and that the best of the grid does not beat a search over random entries; the opening is not where the money is with these signals and the desk bracket",
- "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)"
+ "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)",
+ "amended_1": {
+  "when": "2026-11-19 evening, after the result-skeptic pre-run review (verdict FIX FIRST, 2 blockers / 5 majors), before any code was written or any outcome computed",
+  "luck_null (replaces beats_luck)": "each of 200 random grids runs the FULL two-round loop (48 cells, top 3 by the same choice rule, their neighbours, the same 150 minimum) with the signal replaced by a random minute in the cell's window strictly AFTER 09:31 on name-days passing the same filter at that minute; each random cell is subsampled to the matching real cell's traded n; scored on GROSS bp (no spread on either side). Pass: the chosen real cell's mean GROSS on SEARCH exceeds the 95th percentile of the 200 random-grid winners' mean gross.",
+  "controls (TEST_STANDARD)": "every cell prints, next to its mean: (a) PRIMARY same-minute control - the same entry minute on up to 5 other universe names passing the same filter, same exit; (b) same-name later control - a random minute strictly after the trigger on the same name-day, same exit; (c) the unconditional random-minute mean. EDGE (lift over the primary control, day-clustered t >= 2.5) and PROFITABLE (mean net >= +2 bp after spread) are reported as separate verdicts; PASS needs both.",
+  "choice rule (replaces choice)": "the cell with the highest day-clustered t of mean net on SEARCH among cells with >= 300 traded entries (ties by $/day)",
+  "power and order": "per cell: draw candidate entries in order of the lowest sha256('ogrid'|day|sym|t), fetch the quote, keep the entry if spread <= 15 bp, stop at 400 traded (or when candidates run out). Each cell's minimum detectable effect at t 3.3 is printed from its measured SD.",
+  "HEAT20": "an unclipped copy of heat_turns (no T_LO=15 cut) with the heat < 20 cut applied explicitly",
+  "pace (F2/F4)": "volume pace = cumulative regular-hours volume to bar t / the same name's prior-session cumulative regular-hours volume to the same minute, same SIP feed (not the elapsed-share formula)",
+  "ORB": "a cross: close[t] > max(high 09:30-09:34) and close[t-1] <= that high; the first cross of the day only, so a W2/W3 cell fires only if no earlier cross happened",
+  "cost arithmetic": "holistic_entry.bracket's built-in COST (6 bp) is added back before the spread is subtracted, as opening_square.py does",
+  "holdout (replaces confirm/forward pass bars)": "9/24-11/18 is reported as INFORMATION, not a holdout (already read by earlier studies, incl. opening_square's SQUARE 09:30-09:58). The holdout is FORWARD: the next 20 live sessions, at least 150 trades, mean net > 0 and day-clustered t >= 1.5, scored on recorded IEX quotes (the live feed - stated mismatch: IEX spreads overstate the book, which biases forward AGAINST the cell). Before forward starts, one replayed day is checked that study and live fire the chosen signal on the same bars (the live %R includes premarket warm-up; the study's does not).",
+  "robustness (added to pass)": "top-1% winsorized mean net > 0 in both SEARCH halves; at least half of the chosen cell's round-2 neighbours have mean net > 0; beta to SPY over the trade window reported"
+ }
 }
