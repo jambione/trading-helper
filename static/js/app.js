@@ -25,6 +25,7 @@ import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=133';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 import { init as initMobilePager }                from './mobilePager.js?v=133';
 import { init as initTabSignal }                  from './tabSignal.js?v=1';
+import { init as initBookCheck }                  from './bookCheck.js?v=1';
 
 // Product badge — "Trader Bro v0.8", replacing the old WS·Discord·AI Grok
 // text row. The connectivity/trader-on dots stay (they're live status, not
@@ -241,6 +242,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try { initSessions(); }                                                          catch (e) { console.error('[app] initSessions', e); }
   try { initMobilePager(); }                                                       catch (e) { console.error('[app] initMobilePager', e); }
   try { initTabSignal(); }                                                         catch (e) { console.error('[app] initTabSignal', e); }
+  try { initBookCheck(); }                                                         catch (e) { console.error('[app] initBookCheck', e); }
   notifications.init();
 
   // ── Refresh sessions when Settings → Sessions tab is opened ──

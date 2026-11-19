@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=196" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=197" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -384,6 +384,7 @@
                         </div>
                     </div>
                 </div>
+                <details class="book-check" data-book-check-wrap open><summary class="book-check__sum">Book check · opens &amp; names</summary><div class="book-check__body" data-book-check></div></details>
                 <div class="ai-call-bar" data-call-bar title="Log that you would buy this name now. Log only: it never places an order. Scored after costs against random later minutes.">
                     <label class="ai-call-label" for="call-ticker">Your call</label>
                     <input id="call-ticker" class="ai-call-input" data-call-ticker placeholder="Ticker" maxlength="6" autocomplete="off" spellcheck="false">
@@ -863,7 +864,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=226"></script>
+        <script type="module" src="/static/js/app.js?v=227"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

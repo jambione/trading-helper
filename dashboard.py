@@ -4562,6 +4562,24 @@ def _ensure_call_worker() -> None:
         threading.Thread(target=_call_worker, name="my-calls-exits", daemon=True).start()
 
 
+BOOK_QUALITY_PATH = Path(__file__).resolve().parent / "ai_reports" / "book_coverage" / "latest.json"
+
+
+@app.get("/api/book-quality")
+async def api_book_quality():
+    """Read-only (operator 11/19): tools/book_coverage_watch.py's latest scan - is each seated name a leader with a
+    catalyst, which leaders are missing and why, opens in the last 10 / 60 minutes, and the timing of recent opens.
+    Behind the normal dashboard auth (not /static/, which the public tunnel serves without a login)."""
+    try:
+        data = json.loads(BOOK_QUALITY_PATH.read_text())
+        data["age_sec"] = round(time.time() - BOOK_QUALITY_PATH.stat().st_mtime, 1)
+        return JSONResponse({"ok": True, **data})
+    except FileNotFoundError:
+        return JSONResponse({"ok": False, "error": "no scan yet (the watcher scans 09:35-16:00 ET)"})
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": str(e)[:200]})
+
+
 @app.get("/api/ai/my-calls")
 async def api_ai_my_calls():
     """Today's calls (ET), each scored through the desk's own exits by tools/call_exits.py. Read only.
