@@ -27,7 +27,7 @@ ET = ZoneInfo("America/New_York")
 OUT = ROOT / "ai_reports" / "breadth_wave"
 SPLIT = "2026-09-24"
 T_FIRST, T_LAST, REFRACT = 15, 330, 16
-MIN_BOARD, WAVE_SHARE, WAVE_LIVE, MAX_SPREAD, CAP = 10, 0.35, 2, 6.0, 4000
+MIN_BOARD, WAVE_SHARE, WAVE_LIVE, MAX_SPREAD, CAP = 10, 0.50, 2, 6.0, 4000   # amended_1: 0.50 at t only
 MODES = ("strict", "loose")
 EXITS = ("desk", "atr")
 T_CRIT = 2.5
@@ -46,14 +46,14 @@ def new_high5(h):
 
 def wave_minutes(band, nh):
     """band, nh: (nsym, 390) bool. Wave at t if board >= MIN_BOARD and >= WAVE_SHARE of board made a new 5-min high at
-    t or t-1. Returns (wave bool[390], active bool[390]) where active = a wave at t, t-1 or t-2. Pure."""
+    t (amended_1: this minute only, ~top 5% of minutes). Returns (wave bool[390], active bool[390]) where active = a wave at t, t-1 or t-2. Pure."""
     n = band.shape[1]
     wave = np.zeros(n, dtype=bool)
     for t in range(1, n):
         b = band[:, t]
         if b.sum() < MIN_BOARD:
             continue
-        hit = (nh[:, t] | nh[:, t - 1]) & b
+        hit = nh[:, t] & b
         wave[t] = hit.sum() / b.sum() >= WAVE_SHARE
     active = wave.copy()
     for k in range(1, WAVE_LIVE + 1):

@@ -17,14 +17,14 @@ def test_wave_minutes_share_board_and_live_window():
     n = 20
     band = np.ones((12, n), dtype=bool)
     nh = np.zeros((12, n), dtype=bool)
-    nh[:5, 10] = True                       # 5/12 = 42% -> wave at 10 and (via t-1) at 11
+    nh[:6, 10] = True                       # 6/12 = 50% -> wave at 10 only
     wave, active = B.wave_minutes(band, nh)
-    assert wave[10] and wave[11] and not wave[9] and not wave[12]
-    assert active[10] and active[13] and not active[14]
+    assert wave[10] and not wave[11] and not wave[9]
+    assert active[10] and active[12] and not active[13]
     small = np.ones((9, n), dtype=bool)
     w2, _ = B.wave_minutes(small, np.ones((9, n), dtype=bool))
     assert not w2.any()                     # board below 10 names never waves
-    nh2 = np.zeros((12, n), dtype=bool); nh2[:4, 10] = True     # 33% < 35%
+    nh2 = np.zeros((12, n), dtype=bool); nh2[:5, 10] = True     # 42% < 50%
     assert not B.wave_minutes(band, nh2)[0][10]
 
 

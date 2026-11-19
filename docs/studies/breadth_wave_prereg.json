@@ -6,8 +6,14 @@
  "board": "each minute t, the warehouse top-400 names in the admission band ($20-$400, up >= 1.5% vs prior close at t)",
  "wave": "minute t is a wave minute if the board has >= 10 names and >= 35% of them made a new 5-minute high (high > max of the previous 5 highs) at t or t-1; a wave stays active for minutes t..t+2",
  "entries": "a board name's %R trigger at a minute when a wave is active, minutes 15-330; per name and mode the next entry at least 16 minutes after the previous one (the desk exit's 15-minute horizon); enter at the next minute's open",
- "timing_modes": {"strict": "the desk's pre-square trigger (evening_family.presquare_bars)", "loose": "fast %R (21, EWM 7) >= -50 and rising this bar"},
- "exits": {"desk": "holistic_entry bracket gross (+20 bp before -50 bp within 15 min)", "atr": "catalyst_primary.vol_exit (2 ATR stop / 4 ATR target / 60 min)"},
+ "timing_modes": {
+  "strict": "the desk's pre-square trigger (evening_family.presquare_bars)",
+  "loose": "fast %R (21, EWM 7) >= -50 and rising this bar"
+ },
+ "exits": {
+  "desk": "holistic_entry bracket gross (+20 bp before -50 bp within 15 min)",
+  "atr": "catalyst_primary.vol_exit (2 ATR stop / 4 ATR target / 60 min)"
+ },
  "cost": "real SIP quoted spread in the 60 s before entry (news_source.fetch_quotes); entries with spread > 6 bp are not traded (the desk's live gate) and are dropped; net = gross - spread",
  "sample": "<= 4,000 entries per (mode, period) by the lowest sha256('breadth'|day|sym|t); both exits are scored on the same entries",
  "decides": "2026-04-28 .. 2026-09-23",
@@ -19,5 +25,10 @@
  },
  "information_only": "the same names' %R triggers OUTSIDE waves (does the wave add anything? lift = wave - non-wave); 9/24-11/17; time-of-day buckets; opens per 10 minutes; median spread; share of entries removed by the 6 bp gate",
  "if_pass": "result-skeptic review, then a paper lane behind a default-off switch, replayed through the live code, then on under the operator's 11/18 rule",
- "if_fail": "record; board-wave primary closed at these settings"
+ "if_fail": "record; board-wave primary closed at these settings",
+ "amended_1": {
+  "when": "2026-11-19 ~04:55 ET, after the events step showed ~190 wave minutes per day and before any outcome was computed or read",
+  "why": "at 35% over t or t-1 a 'wave' was the board's normal state (~60% of minutes), not an event. Calibrated on FREQUENCY ONLY (29 days, every 5th, 9,153 board minutes, no outcome touched): share of board at a new 5-min high in one minute has quantiles 50% 0.24, 75% 0.33, 90% 0.43, 95% 0.50, 98% 0.59.",
+  "change": "wave = >= 50% of a >= 10-name board at a new 5-minute high in minute t itself (about the top 5% of minutes); active t..t+2 as before. Everything else unchanged."
+ }
 }
