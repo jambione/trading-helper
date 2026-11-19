@@ -1,6 +1,6 @@
 {
  "id": "squeeze_intraday_2026-11-19",
- "status": "DRAFT - registered for review 2026-11-19 ~11:10 ET, before any event was built or outcome computed; runs after morning_picks_hold if the operator approves",
+ "status": "APPROVED by the operator 2026-11-19 ('Yes, run the short squeeze test tonight'); registered ~11:10 ET before any event",
  "operator": "11/19 'what else makes sense' -> 'Yes, draft the short squeeze test' (perspective 1: open because someone has to buy)",
  "why_new": "short_squeeze_prereg.json (10/23) used DAILY bars and 5-day holds and stopped UNDERPOWERED at its count step (smallest detectable effect 102-119 bp vs a 50 bp bar); no return was read, so the idea is untested, not failed. Intraday events on 1-minute bars are far more numerous and a same-day hold is far less noisy than a week.",
  "prior": "LOW (~10%). Against: heavily shorted stocks underperform on average (shorts are informed); squeezes are rare tail events; the warehouse is the top-400 liquid names, where very high days-to-cover is less common than in small caps. For: conditioning on an intraday breakout puts shorts under pressure the same day, and HIGH-vs-NORMAL on the same trigger isolates the covering fuel.",
@@ -31,5 +31,19 @@
  "information_only": "DTC deciles (dose-response); short interest rising vs falling into the event (changePercent); 30-minute and desk-bracket exits; time of day; events per day and per 10 minutes; median spread; HIGH events that were also on the desk's book that day",
  "if_pass": "result-skeptic review; then a 'squeeze' book source behind a default-off switch (latest FINRA DTC + the live breakout trigger), replayed through the live code, on paper under the operator's 11/18 rule",
  "if_fail": "record; intraday breakouts in heavily shorted liquid names do not pay more than other breakouts",
- "declared_deviations": ["the warehouse holds the top-400 liquid names only; true squeeze candidates are often smaller", "DTC uses FINRA's own average daily volume; float-based short % is not available free", "a report is up to ~4 weeks old by the end of its window"]
+ "declared_deviations": [
+  "the warehouse holds the top-400 liquid names only; true squeeze candidates are often smaller",
+  "DTC uses FINRA's own average daily volume; float-based short % is not available free",
+  "a report is up to ~4 weeks old by the end of its window"
+ ],
+ "amended_1": {
+  "when": "2026-11-19 ~11:40 ET, before any event was built or outcome computed",
+  "changes": [
+   "FINRA's October end-of-month settlement file is dated 2026-10-30 (shrt20261031 does not exist); downloaded 10/15 and 10/30",
+   "DTC deciles are ranked per DAY among that day's warehouse universe names present in the latest published report (price $20-$400, revision/split-flagged rows dropped), since the warehouse universe changes daily",
+   "trading calendar for the publication lag = NYSE weekdays minus 2026 holidays",
+   "count-step placebo: the random-name-minute bars are not stored, so the SE is taken by shuffling HIGH/NORMAL labels within each day over the pooled events and computing the day-clustered SE of the label difference (200 shuffles, median). Only that SE is printed; no group comparison is computed before the count verdict",
+   "quotes: every HIGH event; NORMAL capped at 3,000 per period by the lowest sha256('sqz'|day|sym); MID (70-90th) is information only on gross"
+  ]
+ }
 }

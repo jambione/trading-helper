@@ -40,6 +40,9 @@ def plan_for(study, which):
     if study == "leaders_source":
         import leaders_source as LS
         return LS.plan()
+    if study == "squeeze_intraday":
+        import squeeze_intraday as SQI
+        return SQI.plan(which)
     if study == "low_heat_rising":
         import low_heat_rising as LHR
         return LHR.plan(which)
