@@ -37,7 +37,8 @@ def test_watcher_doc_round_trips_into_seed_rows():
     top = [{"symbol": "SNOW", "price": 80.5, "pct": 4.8, "catalysts": ["vol 3.6x", "gap +3.1%"], "vol_pace": 3.6}]
     doc = bcw.leaders_doc(top, now)
     out = aew.leaders_seed_rows(doc, now.timestamp() + 60)
-    assert out == [{"symbol": "SNOW", "price": 80.5, "pct": 4.8, "catalysts": ["vol 3.6x", "gap +3.1%"]}]
+    assert out == [{"symbol": "SNOW", "price": 80.5, "pct": 4.8, "catalysts": ["vol 3.6x", "gap +3.1%"],
+                    "dollar_volume": None}]
 
 
 def test_switch_defaults_off_and_hot_reloads():
@@ -64,12 +65,13 @@ def _seeded(tmp_path, monkeypatch, leaders, on=True, ts=None):
 
 def test_desk_seeds_leaders_as_movers_with_normal_caps(tmp_path, monkeypatch):
     got = _seeded(tmp_path, monkeypatch, [
-        {"symbol": "NET", "price": 90.0, "pct": 7.0, "catalysts": ["vol 8.9x"]},
+        {"symbol": "NET", "price": 90.0, "pct": 7.0, "catalysts": ["vol 8.9x"], "dollar_volume": 9e8},
         {"symbol": "PANW", "price": 180.0, "pct": 5.5, "catalysts": ["gap +4.7%"]},   # over the $100 cap
         {"symbol": "SOXL", "price": 40.0, "pct": 7.7, "catalysts": ["gap +9.6%"]},    # levered ETP
         {"symbol": "CHEAP", "price": 12.0, "pct": 9.0, "catalysts": ["news 09:40"]}])  # under $20
     assert [r["symbol"] for r in got] == ["NET"]
     assert got[0]["source"] == "movers" and got[0]["seed_tag"] == "leaders" and got[0]["rvol"] is None
+    assert got[0]["dollar_volume"] == 9e8      # admission's movers dollar-volume floor needs it (11/19 CRWV / APH)
 
 
 def test_desk_switch_off_or_stale_file_seeds_no_leaders(tmp_path, monkeypatch):

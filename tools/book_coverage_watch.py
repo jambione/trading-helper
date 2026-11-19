@@ -184,6 +184,7 @@ def enrich(sym: str, s: dict, now: datetime) -> dict | None:
     return {"symbol": sym, "price": round(px, 2), "pct": round((px / pc - 1) * 100, 2),
             "vol_pace": round(dv / (pv * min(elapsed, 1.0)), 2) if pv > 0 else None,
             "gap_pct": round((do / pc - 1) * 100, 2) if do > 0 else None,
+            "dollar_volume": round(dv * px, 0) if dv > 0 else None,
             "spread_bp_iex": round((ask - bid) / ((ask + bid) / 2) * 1e4, 1) if bid > 0 and ask >= bid else None}
 
 
@@ -351,7 +352,8 @@ def leaders_doc(top: list[dict], now: datetime) -> dict:
     """The leaders list the desk's leaders source reads (ai_watch_leaders_source). Pure."""
     return {"ts": now.timestamp(), "asof": now.isoformat(timespec="seconds"),
             "leaders": [{"symbol": r["symbol"], "price": r.get("price"), "pct": r.get("pct"),
-                         "catalysts": list(r.get("catalysts") or [])} for r in top]}
+                         "catalysts": list(r.get("catalysts") or []), "dollar_volume": r.get("dollar_volume")}
+                        for r in top]}
 
 
 def write_leaders(top: list[dict], now: datetime) -> None:
@@ -376,7 +378,7 @@ def slow_scan(tail: LedgerTail, headers, syms) -> None:
     seated = seated_now()
     STATE["news"] = news_first_times(headers, sorted({r["symbol"] for r in top} | seated), day)
     for r in top:
-        r.update({k: rows.get(r["symbol"], {}).get(k) for k in ("vol_pace", "gap_pct")})
+        r.update({k: rows.get(r["symbol"], {}).get(k) for k in ("vol_pace", "gap_pct", "dollar_volume")})
         r["catalysts"] = catalyst_tags(r, STATE["news"].get(r["symbol"]))
     STATE["ranked"], STATE["rows"] = [r["symbol"] for r in full], rows
     STATE["coverage"] = coverage(top, seated, tail.reasons, tail.kept)

@@ -7876,7 +7876,7 @@ def desk_candidate_rows(
                 seen.add(s)
                 row = {"symbol": s, "source": "movers", "price": r["price"], "pct_change": r["pct"],
                        "rvol": None, "criteria": ["leaders"], "leader_catalysts": r["catalysts"],
-                       "seed_tag": "leaders"}
+                       "seed_tag": "leaders", "dollar_volume": r.get("dollar_volume")}
                 if isinstance(seed_ind, dict):
                     row["indicator"] = seed_ind
                 rows.append(row)
@@ -8531,7 +8531,8 @@ def leaders_seed_rows(doc: Any, now: float, *, max_age_sec: float = 900.0, min_p
         cats = [str(c) for c in (r.get("catalysts") or []) if c]
         if not s or not s[0].isalpha() or px is None or px <= 0 or pct is None or pct < min_pct or not cats:
             continue
-        out.append({"symbol": s, "price": px, "pct": pct, "catalysts": cats})
+        out.append({"symbol": s, "price": px, "pct": pct, "catalysts": cats,
+                    "dollar_volume": _f_or_none(r.get("dollar_volume"))})
     return out
 
 
