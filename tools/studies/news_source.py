@@ -257,8 +257,9 @@ def qkey(day, sym, t):
     return f"{day}|{sym}|{t}"
 
 
-def fetch_quotes(plan, pause_sec=0.35):
-    """Last SIP quote in the 60 s before the entry moment (open of minute t+1) -> spread bp, or None. Cached, resumable."""
+def fetch_quotes(plan, pause_sec=0.35, path=None, skip=None):
+    """Last SIP quote in the 60 s before the entry moment (open of minute t+1) -> spread bp, or None. Cached, resumable.
+    path: write to this cache file instead of QUOTES (a parallel worker); skip: keys already cached elsewhere."""
     from datetime import timedelta
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockQuotesRequest
@@ -266,8 +267,10 @@ def fetch_quotes(plan, pause_sec=0.35):
     import time
     k = json.load(open(ROOT / "secrets_data.json"))
     cl = StockHistoricalDataClient(k["alpaca_data_api_key"], k["alpaca_data_secret_key"])
-    cache = json.load(open(QUOTES)) if QUOTES.exists() else {}
-    todo = [p for p in plan if qkey(p[1], p[2], p[3]) not in cache]
+    QF = Path(path) if path else QUOTES
+    cache = json.load(open(QF)) if QF.exists() else {}
+    skip = skip or set()
+    todo = [p for p in plan if qkey(p[1], p[2], p[3]) not in cache and qkey(p[1], p[2], p[3]) not in skip]
     print("quotes cached", len(cache), "to fetch", len(todo), flush=True)
     for n, (_arm, day, sym, t, _net) in enumerate(todo, 1):
         m = 570 + t + 1
@@ -282,10 +285,10 @@ def fetch_quotes(plan, pause_sec=0.35):
             continue                     # not cached: retried next run
         cache[qkey(day, sym, t)] = None if v is None else round(v, 2)
         if n % 100 == 0:
-            QUOTES.write_text(json.dumps(cache))
+            QF.write_text(json.dumps(cache))
             print(n, "/", len(todo), flush=True)
         time.sleep(pause_sec)
-    QUOTES.write_text(json.dumps(cache))
+    QF.write_text(json.dumps(cache))
     return cache
 
 
