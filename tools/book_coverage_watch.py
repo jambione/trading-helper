@@ -405,7 +405,14 @@ def fast_scan(headers) -> dict:
     tmp.write_text(json.dumps(res, indent=1))
     tmp.replace(OUT / "latest.json")
     with open(OUT / f"{day}.jsonl", "a") as fh:
-        fh.write(json.dumps({k: res[k] for k in ("ts", "opens", "book_n", "book_leaders", "book_good", "purity_pct")}) + "\n")
+        cov = STATE["coverage"] or {}
+        fh.write(json.dumps({**{k: res[k] for k in ("ts", "opens", "book_n", "book_leaders", "book_good", "purity_pct")},
+                             "leaders": cov.get("leaders"), "seated_leaders": cov.get("seated"),
+                             "coverage_pct": cov.get("coverage_pct"), "blockers": cov.get("blockers"),
+                             "missing": [{"symbol": m["symbol"], "pct": m["pct"],
+                                          "why": next(iter(m.get("top_reasons") or {}), m["status"])}
+                                         for m in cov.get("missing_detail", [])],
+                             "flagged": [b["symbol"] for b in res.get("book", []) if not b.get("good")]}) + "\n")
     return res
 
 
