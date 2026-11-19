@@ -100,6 +100,14 @@ def collect(quotes, qkey):
         both = [r for r in gates if not r["A_blocks"] and not r["B_blocks"]]
         entries.append(("Open box with both gates (live until 11:45)", "15-min bracket", with_spread(both, "gross", quotes, qkey)))
         entries.append(("Open box, no gates", "15-min bracket", with_spread(gates, "gross", quotes, qkey)))
+    s5 = load("steady_5m/events.json")
+    if s5:
+        for arm, label in (("BOX5", "After 10:30: box on 5-min bars"), ("TREND5", "After 10:30: 5-min trend (EMA20 + VWAP + higher low)"),
+                           ("LOWHEAT5", "After 10:30: low heat on 5-min bars"), ("RANDOM5", "After 10:30: random 5-min bar (control)"),
+                           ("BOX1", "After 10:30: today's 1-min box")):
+            entries.append((label, "5-min exit", with_spread([r for r in s5 if r["arm"] == arm], "gross", quotes, qkey)))
+        entries.append(("After 10:30: today's 1-min box", "15-min bracket",
+                        with_spread([r for r in s5 if r["arm"] == "BOX1"], "bracket", quotes, qkey)))
     return entries
 
 
@@ -119,6 +127,7 @@ def verdicts():
     out = {}
     for name, path in (("opening square", "opening_square/score.json"), ("low heat", "low_heat_rising/score.json"),
                        ("morning picks", "morning_picks_hold/score.json"), ("arm gates", "arm_gates_check/score.json"),
+                       ("steady 5-min", "steady_5m/score.json"),
                        ("options call flow", "options_callflow/result.json")):
         s = load(path)
         if s is None:
