@@ -71,7 +71,7 @@
   "ai_watch_gap_down_block_pct": 1.0,
   "ai_watch_rvol_pace_observe": true,
   "ai_watch_min_rvol_pace": 0.0,
-  "ai_watch_max_sip_spread_pct": 0.04,
+  "ai_watch_max_sip_spread_pct": 0.06,
   "ai_watch_presquare_after_square_min": 10,
   "ai_watch_tape_gap_mult": 1.5,
   "ai_watch_tape_gap_max_sec": 60.0,
