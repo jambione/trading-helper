@@ -40,6 +40,9 @@ def plan_for(study, which):
     if study == "leaders_source":
         import leaders_source as LS
         return LS.plan()
+    if study == "steady_5m":
+        import steady_5m as S5
+        return S5.plan(which)
     if study == "arm_gates_check":
         import arm_gates_check as AG
         return AG.plan(which)
