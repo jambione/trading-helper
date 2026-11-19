@@ -385,9 +385,20 @@ def load_cache(lo, hi):
 
 # ---------------------------------------------------------------- run (quotes + verdict)
 
+def market_hours_now():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    hm = datetime.now(ZoneInfo("America/New_York")).strftime("%H%M")
+    return "0900" <= hm < "1605"
+
+
 def fetch_parallel(keys, n=4):
+    """Never fetches 09:00-16:05 ET: the data key is shared with the live dashboard (exit; rerun 'run' after 16:05)."""
     from multiprocessing import Process
     import news_source as ns
+    if market_hours_now():
+        print("market hours - stopping before fetch; rerun after 16:05 (quotes so far are kept)", flush=True)
+        sys.exit(0)
     main = json.load(open(ns.QUOTES)) if ns.QUOTES.exists() else {}
     plan = [("ogrid", d, s, t, 0.0) for d, s, t in keys]
     parts = [OUT / f"quotes_part{i}.json" for i in range(n)]
