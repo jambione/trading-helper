@@ -34,6 +34,9 @@ def plan_for(study, which):
     if study == "options_callflow":
         import options_callflow as O
         return sorted({("ocf", r["day"], r["sym"], r["t"], 0.0) for r in O.load_events()})
+    if study == "leaders_source":
+        import leaders_source as LS
+        return LS.plan()
     raise SystemExit(f"unknown study {study}")
 
 
@@ -56,7 +59,8 @@ def main():
     study, which, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
     plan = plan_for(study, which)
     have = set(json.load(open(ns.QUOTES))) if ns.QUOTES.exists() else set()
-    parts = [ns.OUT / f"quotes_part{i}.json" for i in range(n)]
+    tag = "" if study == "breadth_wave" else f"_{study}"     # own part files per study so two fetches never share one
+    parts = [ns.OUT / f"quotes_part{tag}{i}.json" for i in range(n)]
     print(study, which, "plan", len(plan), "already cached", sum(ns.qkey(p[1], p[2], p[3]) in have for p in plan), flush=True)
     procs = [Process(target=ns.fetch_quotes, args=(shard(plan, i, n),), kwargs={"path": parts[i], "skip": have}) for i in range(n)]
     for p in procs:

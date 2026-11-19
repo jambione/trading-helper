@@ -1,0 +1,24 @@
+{
+ "id": "leaders_source_2026-11-19",
+ "registered": "2026-11-19 ~06:35 ET, before any leader signal was counted or any quote fetched",
+ "operator": "11/19 two pillars (right names on the book, lots of opens) -> 'Build and replay-test a seat-the-leaders book source' -> 'Yes, test it'",
+ "question": "If the book also seated the day's LEADERS (top-30 liquid $20-$400 gainers with a catalyst) that it does not seat today, would they add buy signals at no worse quality than the signals the book already takes?",
+ "leader_at_minute_t": "among warehouse names with prior-day dollar volume >= $50M and price $20-$400 at t, ranked by % change vs the prior close at t: the top 30, with at least one catalyst at t - news today at or before t (Alpaca news cache, news_source.first_story_minutes; days with < 200 stories count as no-news), volume pace >= 2x (cumulative volume to t / (prior-day volume x elapsed share of the session)), or an opening gap >= 2% (first-minute open vs prior close)",
+ "arms": {
+  "LEAD": "the desk's pre-square signals (evening_family.presquare_bars, refractory 30, minutes 15-360, up >= 1.5%) on names that are leaders at the signal minute AND have no kept=true admission-ledger row that day (new to the book)",
+  "BASE": "movers_cap's BASE sample (800 pre-square signals on the top-400 universe, same days) - the signals the book already competes for"
+ },
+ "trade": "buy open t+1, sell close t+10, flat 6 bp, as movers_cap (same base, same yardstick)",
+ "spread_gate": "15 bp, the live gate since 11/19 06:20 (both arms; no quote = refused). 6 bp shown as information.",
+ "days": "admission-ledger days (from 2026-09-16) present in the SIP warehouse",
+ "sample": "LEAD: all if <= 1,500, else 1,500 by the lowest sha256('leaders'|day|sym|t); BASE reuses movers_cap's quotes",
+ "pass_if_ALL": {
+  "more_opens": "gated LEAD per 10 minutes >= 10% of gated BASE per 10 minutes",
+  "quality_net": "gated LEAD mean net >= gated BASE mean - 1.0 bp AND Welch t (LEAD - BASE) > -2.0",
+  "quality_win": "gated LEAD win % >= gated BASE win % - 3 points",
+  "enough": ">= 200 gated LEAD signals, else UNDERPOWERED"
+ },
+ "information_only": "leaders split <= $100 / > $100 (overlap with the $100-cap test); each catalyst alone; LEAD charged its own spread; all leaders' signals including names already kept; 6 bp gate",
+ "if_pass": "build a 'leaders' book source behind ai_watch_leaders_source (default off; the coverage watcher's list feeds admission, normal gates apply), then on under the operator's 11/18 rule after the close. A source cannot bypass the $100 cap; that is the movers_cap decision.",
+ "if_fail": "keep the sources as they are; the report still names the blockers"
+}
