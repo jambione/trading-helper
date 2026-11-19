@@ -77,8 +77,9 @@ def fetch():
     cl = StockHistoricalDataClient(k["alpaca_data_api_key"], k["alpaca_data_secret_key"])
     TICKS.mkdir(parents=True, exist_ok=True)
     utc = lambda x: datetime.fromtimestamp(x, timezone.utc)  # noqa: E731
+    only = sys.argv[2:] or list(SYMS)          # e.g. 'fetch SPY' and 'fetch QQQ' as two workers
     for d in days():
-        for sym in SYMS:
+        for sym in [x for x in SYMS if x in only]:
             p = TICKS / f"{d}_{sym}.json"
             if p.exists():
                 continue
