@@ -2869,7 +2869,12 @@ def _open_book_snapshot(skip_symbol: str | None = None) -> tuple[float, int]:
             rows = _load_state()
         except Exception:
             rows = {}
-    return open_book_notional(rows or {}, skip_symbol=skip_symbol)
+    try:
+        from desk_risk import scout_qty_limit
+        scout = scout_qty_limit(_cfg_all())
+    except Exception:  # noqa: BLE001
+        scout = 0.0
+    return open_book_notional(rows or {}, skip_symbol=skip_symbol, scout_max_qty=scout)
 
 
 def _buying_power() -> float | None:

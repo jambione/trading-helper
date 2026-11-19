@@ -396,10 +396,22 @@ def position_notional(row: Any) -> float:
     return 0.0
 
 
+def scout_qty_limit(cfg: Any) -> float:
+    """ai_first_trade_fixed_qty when on (> 0), else 0. A position of at most this many shares is a scout: the 1-share
+    first trade of the day (operator 11/19 'fix it before the open'), which must not use a slot or count as committed
+    cash. Pure."""
+    try:
+        v = float((cfg or {}).get("ai_first_trade_fixed_qty", 0.0) or 0.0)
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
+    return v if v > 0 else 0.0
+
+
 def open_book_notional(
     positions: Any,
     *,
     skip_symbol: str | None = None,
+    scout_max_qty: float = 0.0,
 ) -> tuple[float, int]:
     """(open_notional, open_count) from broker or managed-state rows.
 
@@ -425,6 +437,8 @@ def open_book_notional(
             qty = abs(_f(row.get("total_qty"), 0.0))
         if qty <= 0:
             continue
+        if scout_max_qty > 0 and qty <= scout_max_qty + 1e-9:
+            continue          # a 1-share scout: no slot, no committed cash
         total += position_notional(row)
         count += 1
     return round(max(0.0, total), 4), count

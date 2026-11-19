@@ -248,9 +248,34 @@ def _norm_sym(symbol: str) -> str | None:
 
 
 def _open_position_count() -> int:
+    """Open positions that use a slot. 1-share scouts (desk_risk.scout_qty_limit, operator 11/19) do not: three
+    scouts must never block a full-size open."""
     import alpaca_trader
     detail = alpaca_trader.get_positions_detail() or {}
-    return len(detail)
+    try:
+        from config import load_config_ro
+        from desk_risk import scout_qty_limit
+        scout = scout_qty_limit(load_config_ro())
+    except Exception:  # noqa: BLE001
+        scout = 0.0
+    return count_slot_positions(detail, scout)
+
+
+def count_slot_positions(detail, scout_max_qty: float = 0.0) -> int:
+    """Positions holding a slot: every non-zero position except scouts of <= scout_max_qty shares. Pure."""
+    if not isinstance(detail, dict):
+        return 0
+    if scout_max_qty <= 0:
+        return len(detail)
+    n = 0
+    for row in detail.values():
+        try:
+            q = abs(float((row or {}).get("qty") or 0.0)) if isinstance(row, dict) else 0.0
+        except (TypeError, ValueError):
+            q = 0.0
+        if not isinstance(row, dict) or q <= 0 or q > scout_max_qty + 1e-9:
+            n += 1
+    return n
 
 
 # One multi-symbol quote fetch per poll, shared by every _latest_ask/_latest_bid
