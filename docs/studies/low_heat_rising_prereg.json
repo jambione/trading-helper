@@ -1,0 +1,28 @@
+{
+ "id": "low_heat_rising_2026-11-19",
+ "registered": "2026-11-19 ~11:10 ET, before any event was built or any outcome computed",
+ "operator": "11/19 (screenshot of STM / SMCI / NVDA / GOOGL / GOOG / HOOD / AEHR / CGON / GTLB) 'how about those trending up with low heat' -> '\"Low heat isn't a buy signal on this desk\" - can we test it?'",
+ "idea": "Buy a name that is up on the day while its heat is LOW and turning up - early in the next push, before it reaches the pre-square buy zone. Related prior tests: pitch_entries (both 1-min %R lines turning up = random minute, 10/27), oversold_leave (FAIL 10/15), pullback family (FAIL 10/30). Those used different universes, lines or thresholds; this one uses the dashboard's own heat reading on the desk's admission band.",
+ "heat": "the dashboard heat = 100 + fast %R (21, EWM 7) on 1-minute bars with the prior session's last 112 bars prepended (evening_family.minute_grid + bar_signal_family.wr_smoothed, as in presquare_bars); 'rising' = heat up > 0.05 vs the previous bar",
+ "universe": "warehouse SIP top-400 by prior-day dollar volume, ETFs/ETPs excluded; at the trigger bar price $20-$400 and up >= 1.5% vs prior close (the desk's admission band)",
+ "trigger": "LOW-HEAT TURN at bar t in 15..330: heat < 40 on bar t, heat rising on bar t AND on bar t-1, and not rising on bar t-2 (the second rising bar of a new turn). Per name a 30-minute refractory.",
+ "entry": "open of bar t+1",
+ "exits (2 cells, Bonferroni)": {
+  "desk": "holistic_entry.bracket: +20 bp before -50 bp within 15 min",
+  "hold": "close of the 15:55 bar with a -3% stop (morning_picks_hold.exit_main logic from the entry bar)"
+ },
+ "cost": "real SIP quoted spread in the 60 s before entry (news_source.fetch_quotes); spread > 15 bp not traded (the live gate); net = gross - spread",
+ "sample": "<= 4,000 triggers per period by the lowest sha256('lhr'|day|sym|t); both exits scored on the same entries",
+ "decides": "2026-04-28 .. 2026-09-23",
+ "confirms": "2026-09-24 .. 2026-11-18: mean net > 0 required",
+ "pass_each": {
+  "edge": "mean net >= +2.0 bp (desk) / >= +10.0 bp (hold)",
+  "significance": "day-clustered t >= 2.5",
+  "both_halves": "mean net > 0 in both date halves of DECIDE",
+  "enough": ">= 300 traded entries",
+  "confirm": "mean net > 0 on CONFIRM"
+ },
+ "information_only": "(a) a random bar 15..330 on the same name-day (seed sha256('lhr_r'|day|sym)) with the same exits - lift vs control; (b) the desk's pre-square triggers on the same days (what it buys today); (c) heat < 25 vs 25-40; (d) day change 1.5-3% vs > 3%; (e) time of day; (f) triggers per 10 minutes after the gate",
+ "if_pass": "result-skeptic review, then a default-off arm that buys a low-heat turn on admitted names (normal gates), replayed through the live code, on paper under the operator's 11/18 rule",
+ "if_fail": "record; buying low heat turning up on up-day names does not pay at these exits after real spreads"
+}
