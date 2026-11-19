@@ -1,0 +1,35 @@
+{
+ "id": "squeeze_intraday_2026-11-19",
+ "status": "DRAFT - registered for review 2026-11-19 ~11:10 ET, before any event was built or outcome computed; runs after morning_picks_hold if the operator approves",
+ "operator": "11/19 'what else makes sense' -> 'Yes, draft the short squeeze test' (perspective 1: open because someone has to buy)",
+ "why_new": "short_squeeze_prereg.json (10/23) used DAILY bars and 5-day holds and stopped UNDERPOWERED at its count step (smallest detectable effect 102-119 bp vs a 50 bp bar); no return was read, so the idea is untested, not failed. Intraday events on 1-minute bars are far more numerous and a same-day hold is far less noisy than a week.",
+ "prior": "LOW (~10%). Against: heavily shorted stocks underperform on average (shorts are informed); squeezes are rare tail events; the warehouse is the top-400 liquid names, where very high days-to-cover is less common than in small caps. For: conditioning on an intraday breakout puts shorts under pressure the same day, and HIGH-vs-NORMAL on the same trigger isolates the covering fuel.",
+ "data": {
+  "bars": "SIP warehouse 1-minute bars, 2026-04-28 .. 2026-11-18 (half days skipped)",
+  "short_interest": "FINRA biweekly files already on the mini (data/finra_short_interest/, through settlement 2026-09-30), plus the 2026-10-15 and 2026-10-31 settlement files downloaded from the same free FINRA CDN before any event is built",
+  "availability": "a report counts from settlement + 10 trading days (short_squeeze amended (2)); each day uses the latest report published BEFORE that day"
+ },
+ "groups": "per report: DTC (FINRA daysToCoverQuantity) ranked among the warehouse names present in that report and eligible on price ($20-$400 prior close). HIGH = top decile; NORMAL = below the 70th percentile; the 70-90th band is excluded. ETFs/ETPs excluded (evening_family.ALL_ETF + is_levered_etp).",
+ "trigger": "the first minute t in 30..330 (10:00-15:00) where (a) the close is above every earlier high of the day, (b) the close is >= +3% vs the prior close, (c) cumulative volume through t >= 1.5 x the prior day's volume x the elapsed share of the session; price $20-$400. One event per name per day.",
+ "entry": "open of minute t+1",
+ "exits": {
+  "PRIMARY": "hold to the close of the 15:55 bar with a -3% stop (fill at the stop or the bar open if gapped through) - the morning_picks_hold exit",
+  "info": "close of t+30; the desk bracket (+20 / -50 bp within 15 min)"
+ },
+ "cost": "real SIP quoted spread in the 60 s before entry (news_source.fetch_quotes); net = gross - spread",
+ "count_step (outcome-blind, before any return is computed)": "HIGH and NORMAL event counts in DECIDE and CONFIRM, and a projected smallest detectable effect (2.8 x the day-clustered SE of HIGH-minus-NORMAL, from the dispersion of the same exit on random eligible name-minutes, no event outcome). If HIGH < 300 events in DECIDE or the smallest detectable effect > 20 bp: UNDERPOWERED, not scored.",
+ "decides": "2026-04-28 .. 2026-09-23",
+ "confirms": "2026-09-24 .. 2026-11-18",
+ "pass (PRIMARY exit)": {
+  "profit": "HIGH mean net >= +10 bp per trade on DECIDE",
+  "fuel": "HIGH minus NORMAL >= +10 bp with day-clustered t >= 2.5 on DECIDE",
+  "both_halves": "HIGH net > 0 and HIGH minus NORMAL > 0 in both halves of DECIDE",
+  "not_a_few_names": "HIGH minus NORMAL still > 0 after dropping the top 5 names",
+  "confirm": "HIGH net > 0 and HIGH minus NORMAL > 0 on CONFIRM",
+  "fail": "anything else, after the count step passes"
+ },
+ "information_only": "DTC deciles (dose-response); short interest rising vs falling into the event (changePercent); 30-minute and desk-bracket exits; time of day; events per day and per 10 minutes; median spread; HIGH events that were also on the desk's book that day",
+ "if_pass": "result-skeptic review; then a 'squeeze' book source behind a default-off switch (latest FINRA DTC + the live breakout trigger), replayed through the live code, on paper under the operator's 11/18 rule",
+ "if_fail": "record; intraday breakouts in heavily shorted liquid names do not pay more than other breakouts",
+ "declared_deviations": ["the warehouse holds the top-400 liquid names only; true squeeze candidates are often smaller", "DTC uses FINRA's own average daily volume; float-based short % is not available free", "a report is up to ~4 weeks old by the end of its window"]
+}
