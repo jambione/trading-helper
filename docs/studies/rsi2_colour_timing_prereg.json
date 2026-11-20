@@ -50,7 +50,7 @@
   "GREEN_END": "completed bar t with RSI2[t] > 10 and RSI2[t-1] <= 10. Buy the OPEN of t+1. Exit at the OPEN after the first completed bar s > t that ends a red segment (RSI2[s] < 90 after some bar in (t, s) >= 90); if none by t+15, sell the CLOSE of t+15.",
   "RED_STOP": "operator 11/20 'Yes, add the red stop rule' (the real-time version of 'the run starts at the beginning of red'). At the open of bar t, with RSI2[t-1] < 90 and Wilder state (avg gain G, avg loss L, close C) from completed bar t-1, the trigger price is P = C + 9L - G (the close at which RSI2[t] would equal 90; if 9L - G <= 0, P = C). A buy-stop rests at P for bar t only. FILL if high[t] >= P, at max(P, open[t]) (a gap through fills at the open). Exit: the OPEN after the first completed bar s >= t with RSI2[s] < 90 (a pop that fails within bar t sells at the open of t+1); else the CLOSE of t+15. Same filter, window, refractory, spread gate and cost (spread in the 60 s before bar t starts) as the other rules; extra stop slippage of +2 bp printed as a sensitivity."
  },
- "controls for RED_STOP": "PRIMARY same-minute: up to 5 other filtered names bought at the OPEN of t+1 (the first price after the fill bar), same RSI-2 exit; same-name stop control: a buy-stop at the same percent above the prior close at a random later bar (t+16..t+60) on the same name-day, same fill and exit rules; both on GROSS. Also printed: fill rate (fills / bars armed) and the share of fills whose bar t closes below P (failed pops).",
+ "controls for RED_STOP": "SUPERSEDED by amended_1 'RED_STOP (skeptic addendum)' B3 and M8 (same-distance buy-stop controls; same-name window exit+2..exit+62 measured from close[t'-1]).",
  "multiplicity": "three rules (RED_START, GREEN_END, RED_STOP); the EDGE bar t >= 2.5 stays above Bonferroni-3 (2.39)",
  "amended_1": {
   "when": "2026-11-20, after result-skeptic round 1 (FIX FIRST: 2 blockers, 5 majors, 5 minors), before any script or outcome",
@@ -73,7 +73,9 @@
    "M7 filter timing": "for RED_STOP the name filter (day change >= +1.5%, $20-$400) is read at close[t-1]; the 09:45-15:30 window applies to bar t's start",
    "M8 same-name stop control": "percent distance relative to close[t'-1] of the control bar; entry bar in exit+2 .. exit+62 on the same name-day; held to the signal's hold length",
    "sampling": "RED_STOP candidates are FILLS (drawn by hash), not armed bars; armed / filled / failed-pop counts printed per half; gross-first runs on all fills"
-  }
+  },
+  "C1 verdict rows": "EDGE on ALL candidates (gross); PROFITABLE on spread-gated traded rows (m5 'verdict on traded rows' applies to PROFITABLE only)",
+  "C2 strict colours need warm-up": "if the chart match makes the SMA-strict colours primary, every series prepends the last 220 regular-hours bars of the prior session (SMA200 is otherwise undefined until ~12:50); name-days without them are counted and scored with in-session warm-up only as information. Strict red uses RSI > 90, matching the panel; the plain-level rules keep >= 90."
  },
  "status": "amended_1 after skeptic round 1 incl. RED_STOP addendum; script next, then skeptic code review"
 }
