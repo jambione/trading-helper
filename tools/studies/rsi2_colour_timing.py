@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import pickle
 import sys
 from collections import defaultdict
@@ -433,20 +434,33 @@ def _rule_report(rows, unc, rule, full=True):
     return rep_
 
 
+def _red_day_task(path):
+    """One cached day -> (main rows, unconditional draws, +1.5%-filtered rows). Pure given the file."""
+    z = np.load(path)
+    d = {k: z[k] for k in z.files}
+    d["syms"] = [str(x) for x in z["syms"]]
+    d["day"] = Path(path).stem
+    if "m199_pine" not in d:
+        raise SystemExit("cache built before amended_6 (no m199_pine): rerun build")
+    dr, filt = [], []
+    for k in range(len(d["syms"])):
+        dr += red_screen_name(d, k, chg_min=-1e9)
+        filt += red_screen_name(d, k)
+    return dr, red_unconditional(d, dr, -1e9), filt
+
+
 def red_screen():
     """amended_8 step 1 report. MAIN = no day filter ($20-$400 band only); the +1.5% filtered slice is information.
     Gate to step 2 (fixed in the prereg before the run): RED_STOP (main) passes on ANY ONE of fix5 / fix15 / ratchet
     - lift > 0 in both halves, pooled day-t >= 1.0, each half's MDE <= 10 bp."""
+    from multiprocessing import Pool
+    paths = [str(p) for p in sorted(CACHE.glob("*.npz")) if SEARCH[0] <= p.stem <= SEARCH[1]]
     rows, unc, filt = [], [], []
-    for d in load_days(*SEARCH):
-        if "m199_pine" not in d:
-            sys.exit("cache built before amended_6 (no m199_pine): rerun build")
-        dr = []
-        for k in range(len(d["syms"])):
-            dr += red_screen_name(d, k, chg_min=-1e9)
-            filt += red_screen_name(d, k)
-        rows += dr
-        unc += red_unconditional(d, dr, -1e9)
+    with Pool(int(os.environ.get("RED_WORKERS", "6"))) as pool:        # one day per task; same results as serial
+        for dr, du, df_ in pool.imap(_red_day_task, paths):
+            rows += dr
+            unc += du
+            filt += df_
     out = {"prereg": "docs/studies/rsi2_colour_timing_prereg.json amended_8 step 1 (bar-level; ratchet APPROXIMATE)",
            "labels": {"fix5": "close of the 5th bar counting the entry bar", "fix15": "close of the 15th bar",
                       "capmiss": "LOWER BOUND - only opens gapping past P + 5 bp"},
