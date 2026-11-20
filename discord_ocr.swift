@@ -238,14 +238,19 @@ if loopSec > 0 {
     guard let out = outPath else { fail("--loop needs --out PATH") }
     setvbuf(stdout, nil, _IOLBF, 0)
     print("[discord_ocr] loop every \(loopSec)s -> \(out)")
-    while true {
-        let t0 = Date()
-        let (lines, err) = autoreleasepool { capturePass() }
-        writeJSON(out, lines: lines, error: err)
-        if let e = err { fputs("[discord_ocr] pass failed: \(e)\n", stderr) }
-        let left = loopSec - Date().timeIntervalSince(t0)
-        if left > 0 { Thread.sleep(forTimeInterval: left) }
+    // The loop runs on a background thread and the main thread runs its run loop: ScreenCaptureKit delivers on the
+    // main queue, so a loop that blocks main worked once and then timed out on every pass (11/20).
+    Thread.detachNewThread {
+        while true {
+            let t0 = Date()
+            let (lines, err) = autoreleasepool { capturePass() }
+            writeJSON(out, lines: lines, error: err)
+            if let e = err { fputs("[discord_ocr] pass failed: \(e)\n", stderr) }
+            let left = loopSec - Date().timeIntervalSince(t0)
+            if left > 0 { Thread.sleep(forTimeInterval: left) }
+        }
     }
+    RunLoop.main.run()
 }
 
 let (lines, err) = capturePass()
