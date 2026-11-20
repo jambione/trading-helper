@@ -387,7 +387,7 @@ def score_cell(rows, name, layers):
         ph = [t for d, _, t in pairs if sel(d)]
         unm_h[h] = (sum(1 for t in ph if t == "unmatched") / len(ph)) if ph else 1.0
     unmatched = max(unm_h.values())
-    gap_ok = True
+    gap_ok = False                                   # too few control trades to check = blocked, not passed
     if len(later_g) > 2 and len(unc_g) > 2:
         se = math.sqrt(np.var(later_g, ddof=1) / len(later_g) + np.var(unc_g, ddof=1) / len(unc_g))
         gap_ok = abs(np.mean(later_g) - np.mean(unc_g)) <= 2 * se
@@ -444,7 +444,7 @@ def run_score():
             st["verdict"] = "EDGE (PROFITABLE check next)" if st["EDGE"] else "NO EDGE"
             scored.append(c)
         if "S" in layers and s_valid is not True:
-            st["verdict"] += " - S layer pending live validation (amended_1 #3)"
+            st["verdict"] = "NO VERDICT (S pending/failed live validation, amended_1 #3); would read: " + st["verdict"]
         if c == "K3":
             st["info_R1_on_vs_unconditional"] = {"on_gross_mean": st["on_gross_mean"], "unconditional_gross_mean": st["unc_gross_mean"],
                                                  "note": "same-time matching cancels SPY; SPY-fallback names make R the SPY sign"}
