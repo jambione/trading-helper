@@ -66,3 +66,24 @@ def test_catalysts_from_local_caches(monkeypatch):
     assert "BBB" not in c and c["_news_cache_age_sec"] == 12.0
     s = sl.snapshot(_state(), 0.0)
     assert set(s["catalysts"]) >= {"_news_cache_age_sec"}
+
+
+def test_parse_halts_and_ssr():
+    xml = """<rss><channel><item><title>NTCL</title><ndaq:HaltDate>11/19/2026</ndaq:HaltDate>
+    <ndaq:HaltTime>19:50:00.000</ndaq:HaltTime><ndaq:IssueSymbol>NTCL</ndaq:IssueSymbol><ndaq:ReasonCode>T1</ndaq:ReasonCode>
+    <ndaq:ResumptionQuoteTime /><ndaq:ResumptionTradeTime /></item></channel></rss>"""
+    h = sl.parse_halts(xml)
+    assert h == [{"sym": "NTCL", "date": "11/19/2026", "time": "19:50:00.000", "reason": "T1", "resume_quote": "",
+                  "resume_trade": ""}]
+    ssr = sl.parse_ssr("Symbol,Security Name,Market Category,Trigger Time\nQTRX,Quanterix,Q,11/18/2026 9:30:00 AM\n")
+    assert ssr == {"QTRX"}
+
+
+def test_short_interest_table(tmp_path, monkeypatch):
+    f = tmp_path / "shrt20261030.csv"
+    f.write_text('"accountingYearMonthNumber"|"symbolCode"|"issueName"|"currentShortPositionQuantity"|"daysToCoverQuantity"|"settlementDate"\n'
+                 '"20261030"|"A"|"Agilent"|"4892390"|"2.24"|"2026-10-30"\n')
+    monkeypatch.setattr(sl, "SI_DIR", tmp_path)
+    sl._slow["si_file"] = None
+    t = sl.short_interest_table()
+    assert t["A"] == {"short": 4892390, "dtc": 2.24, "settle": "2026-10-30"}
