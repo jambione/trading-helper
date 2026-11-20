@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import pickle
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -46,7 +47,10 @@ GATE_BP, CAP_PER_HALF = 15.0, 1500
 EDGE_T, MIN_NET, MIN_N, MDE_MAX = 2.5, 2.0, 300, 10.0
 STOP_SLIP_BP, STRESS = 5.0, 1.5
 TICK = 0.01
-RULES = ("RED_START", "GREEN_END", "RED_STOP")
+RULES = ("RED_START", "GREEN_END", "RED_STOP", "GREEN_CROSS")
+STOP_RULES = ("RED_STOP", "GREEN_CROSS")
+PINE_KEYS = ("rsi_pine", "U_pine", "D_pine", "s200_pine", "s5_pine", "m4_pine", "red_pine", "green_pine")
+ETH = OUT / "eth"
 
 
 # ---------------------------------------------------------------- indicator (pure)
@@ -160,31 +164,107 @@ def stop_fill(P, o_t, h_t):
     return base + TICK
 
 
+def stop_valid_red(P, c_prev, s200_prev, m4_prev, s5_prev):
+    """amended_3 RED_STOP validity: close[t-1] < SMA200 and > SMA5 at t-1, and P > mean(closes t-4..t-1) (a close at
+    P keeps close > SMA5) and P < SMA200[t-1]. Pure."""
+    vals = (P, c_prev, s200_prev, m4_prev, s5_prev)
+    if not all(np.isfinite(v) for v in vals):
+        return False
+    return c_prev < s200_prev and c_prev > s5_prev and P > m4_prev and P < s200_prev
+
+
+def green_cross_trigger(c_prev, up, down, m4_prev, s200_prev):
+    """amended_cross_price GREEN_CROSS: the lower of P10 (close at which RSI-2 returns to 10: c + max(D/9 - U, tick))
+    and S5 (close reaching the 5-bar mean incl. itself = mean of closes t-4..t-1), each rounded UP to the cent; NaN
+    unless P > SMA200[t-1]. Pure."""
+    if not all(np.isfinite(v) for v in (c_prev, up, down, m4_prev, s200_prev)):
+        return np.nan
+    p10 = math.ceil(round((c_prev + max(down / 9.0 - up, TICK)) * 100, 6)) / 100.0
+    s5 = math.ceil(round(m4_prev * 100, 6)) / 100.0
+    P = min(p10, s5)
+    return P if P > s200_prev else np.nan
+
+
+def pine_day(rth_prev, ext, rth_today):
+    """amended_3 series: prior-session RTH closes (390, NaN gaps) + extended-hours closes (in time order) + today's
+    RTH closes (390). -> dict of today's 390-arrays: rsi_pine, U_pine, D_pine, s200_pine, s5_pine, m4_pine (mean of
+    the 4 closes ending at t), red_pine, green_pine; on a minute with no bar the state carries. Pure."""
+    seq, pos = [], np.full(390, -1)
+    for v in rth_prev:
+        if np.isfinite(v):
+            seq.append(float(v))
+    for v in ext:
+        if np.isfinite(v):
+            seq.append(float(v))
+    for t, v in enumerate(rth_today):
+        if np.isfinite(v):
+            seq.append(float(v))
+        pos[t] = len(seq) - 1
+    x = np.array(seq, float)
+    rsi, U, D = pine_rsi(x)
+    s200, s5 = sma(x, 200), sma(x, 5)
+    m4 = sma(x, 4)
+    out = {k: np.full(390, np.nan) for k in ("rsi_pine", "U_pine", "D_pine", "s200_pine", "s5_pine", "m4_pine")}
+    red, green = np.zeros(390, bool), np.zeros(390, bool)
+    for t in range(390):
+        i = pos[t]
+        if i < 0:
+            continue
+        for k, arr in (("rsi_pine", rsi), ("U_pine", U), ("D_pine", D), ("s200_pine", s200), ("s5_pine", s5),
+                       ("m4_pine", m4)):
+            out[k][t] = arr[i]
+        c, r, a, b = x[i], rsi[i], s200[i], s5[i]
+        if np.isfinite(r) and np.isfinite(a) and np.isfinite(b):
+            red[t] = r > 90 and c < a and c > b
+            green[t] = r < 10 and c > a and c < b
+    out["red_pine"], out["green_pine"] = red, green
+    return out
+
+
 def trades_for_name(rule, d, k, mode):
     """All trades of one rule on one name-day (row k of day d) with the refractory. -> list of dicts. Pure."""
     o, h, l, c = d["o"][k], d["h"][k], d["l"][k], d["c"][k]
     pc = d["pc"][k]
     red, green = d[f"red_{mode}"][k], d[f"green_{mode}"][k]
-    rsi = d["rsi"][k]
+    pine = mode == "pine"
+    rsi = d["rsi_pine"][k] if pine else d["rsi"][k]
+    UU, DD = (d["U_pine"][k], d["D_pine"][k]) if pine else (d["U"][k], d["D"][k])
+    s200, m4 = (d["s200_pine"][k], d["m4_pine"][k]) if pine else (None, None)
     out, busy_until, last_entry = [], -1, -10 ** 9
     counts = defaultdict(int)
     for t in range(T_LO, T_HI + 1):
+        if pine and not np.isfinite(c[t]) and rule not in STOP_RULES:
+            continue                              # no bar this minute: state carries, nothing fires (amended_3)
         if rule == "RED_START":
             fire = bool(red[t]) and not bool(red[t - 1])
         elif rule == "GREEN_END":
             fire = (not bool(green[t])) and bool(green[t - 1]) and np.isfinite(rsi[t])
+            if fire and pine and not (np.isfinite(s200[t]) and c[t] > s200[t]):
+                counts["green_end_down"] += 1     # green ended by breaking SMA200: not an entry (amended_3)
+                fire = False
+        elif rule == "GREEN_CROSS":               # armed at the open of t if completed bar t-1 was green
+            fire = bool(green[t - 1]) and np.isfinite(rsi[t - 1])
         else:   # RED_STOP: armed at the open of t if bar t-1 is not red; filter at close[t-1] (M7)
             fire = np.isfinite(rsi[t - 1]) and rsi[t - 1] < 90 and not bool(red[t - 1])
         if not fire:
             continue
-        fbar = t - 1 if rule == "RED_STOP" else t
+        fbar = t - 1 if rule in STOP_RULES else t
         if not passes_filter(c, pc, fbar):
             continue
         if t < busy_until or t < last_entry + 15:
             counts["refractory"] += 1
             continue
-        if rule == "RED_STOP":
-            P = red_trigger(c[t - 1], d["U"][k][t - 1], d["D"][k][t - 1])
+        if rule in STOP_RULES:
+            if rule == "RED_STOP":
+                P = red_trigger(c[t - 1], UU[t - 1], DD[t - 1])
+                if pine and not stop_valid_red(P, c[t - 1], s200[t - 1], m4[t - 1], d["s5_pine"][k][t - 1]):
+                    counts["sma_invalid"] += 1
+                    continue
+            else:
+                P = green_cross_trigger(c[t - 1], UU[t - 1], DD[t - 1], m4[t - 1], s200[t - 1])
+                if not np.isfinite(P):
+                    counts["sma_invalid"] += 1
+                    continue
             entry = stop_fill(P, o[t], h[t])
             counts["armed"] += 1
             if not np.isfinite(entry):
@@ -192,7 +272,7 @@ def trades_for_name(rule, d, k, mode):
             counts["filled"] += 1
             if np.isfinite(c[t]) and c[t] < P:
                 counts["failed_pop"] += 1
-            kind, ebar, xpx = exit_for(rule, red, t, t, o, c)
+            kind, ebar, xpx = exit_for("GREEN_END" if rule == "GREEN_CROSS" else rule, red, t, t, o, c)
             ent_bar, dist = t, P / c[t - 1] - 1
             thin = (h[t] - P) / P * 1e4 < 2.0
         else:
@@ -205,8 +285,8 @@ def trades_for_name(rule, d, k, mode):
         g = (xpx / entry - 1) * 1e4
         out.append({"sym": d["syms"][k], "t": t, "ent_bar": ent_bar, "entry": entry, "kind": kind, "ebar": ebar,
                     "gross": g, "dist": dist, "thin": thin,
-                    "fix5": (px_or(c, ent_bar + 4) / entry - 1) * 1e4 if rule != "RED_STOP" else (px_or(c, t + 5) / entry - 1) * 1e4,
-                    "fix15": (px_or(c, ent_bar + 14) / entry - 1) * 1e4 if rule != "RED_STOP" else (px_or(c, t + 15) / entry - 1) * 1e4})
+                    "fix5": (px_or(c, ent_bar + 4) / entry - 1) * 1e4 if rule not in STOP_RULES else (px_or(c, t + 5) / entry - 1) * 1e4,
+                    "fix15": (px_or(c, ent_bar + 14) / entry - 1) * 1e4 if rule not in STOP_RULES else (px_or(c, t + 15) / entry - 1) * 1e4})
         busy_until = ebar + (1 if kind == "cap" else 0)
         last_entry = t
     return out, counts
@@ -218,7 +298,7 @@ def ctl_trade(rule, d, j, row):
     c_j[t-1], same fill model, same exit. -> gross bp or NaN (no fill / no price). Pure."""
     o, h, c = d["o"][j], d["h"][j], d["c"][j]
     t = row["t"]
-    if rule == "RED_STOP":
+    if rule in STOP_RULES:
         cp = px_or(c, t - 1)
         if not np.isfinite(cp):
             return np.nan
@@ -240,7 +320,7 @@ def same_name_later(rule, d, k, row):
     first = row["ebar"] + 2
     span = 61
     x = first + hkey("rsi2col-later", d["day"], row["sym"], row["t"]) % span
-    if rule == "RED_STOP":
+    if rule in STOP_RULES:
         cp = px_or(c, x - 1)
         if not np.isfinite(cp):
             return np.nan
@@ -266,7 +346,7 @@ def day_rows(rule, d, mode):
         for key, v in cn.items():
             counts[key] += v
         for r in tr:
-            fbar = r["t"] - 1 if rule == "RED_STOP" else r["t"]
+            fbar = r["t"] - 1 if rule in STOP_RULES else r["t"]
             others = [j for j in range(U) if j != k and passes_filter(d["c"][j], d["pc"][j], fbar)]
             others = sorted(others, key=lambda j: hkey("rsi2col-ctl", d["day"], d["syms"][j], r["t"]))[:5]
             cg = [ctl_trade(rule, d, j, r) for j in others]
@@ -281,7 +361,7 @@ def day_rows(rule, d, mode):
                 sl = np.nan
             r["later"] = sl
             spy = (price_at(r["kind"], r["ebar"], d["spy_o"], d["spy_c"]) / px_or(d["spy_o"], r["ent_bar"]) - 1) * 1e4 \
-                if rule != "RED_STOP" else (price_at(r["kind"], r["ebar"], d["spy_o"], d["spy_c"]) / px_or(d["spy_c"], r["t"] - 1) - 1) * 1e4
+                if rule not in STOP_RULES else (price_at(r["kind"], r["ebar"], d["spy_o"], d["spy_c"]) / px_or(d["spy_c"], r["t"] - 1) - 1) * 1e4
             r["spy"] = spy
             r["day"] = d["day"]
             rows.append(r)
@@ -380,6 +460,14 @@ def build():
         if day["idx"].get("SPY") is None:
             prev = fp
             continue
+        ef = ETH / f"{fp.stem}.pkl"
+        if not ef.exists():
+            print(fp.stem, "no ETH file - skipped (run eth first)", flush=True)
+            prev = fp
+            continue
+        ext_day = {k: np.array([c for _, c in v], float) for k, v in pickle.load(open(ef, "rb")).items()}
+        n_noext = 0
+        PN = {kk: [] for kk in PINE_KEYS}
         syms, O, H, L, C, PC, RSI, UU, DD, RP, GP, RS, GS = ([] for _ in range(13))
         for s in universe(day, pday, set(ALL_ETF)):
             i, j = day["idx"][s], pday["idx"].get(s)
@@ -391,6 +479,12 @@ def build():
             warm = pday["c"][j][~np.isnan(pday["c"][j])][-WARM:]
             full = np.concatenate([np.pad(warm, (WARM - len(warm), 0), constant_values=np.nan), day["c"][i]])
             col = colours(full, WARM)
+            if s not in ext_day:
+                n_noext += 1                       # no extended-hours bars fetched for this name-day: dropped (counted)
+                continue
+            pine = pine_day(pday["c"][j], ext_day[s], day["c"][i])
+            for kk in PINE_KEYS:
+                PN[kk].append(pine[kk])
             syms.append(s)
             for lst, arr in ((O, day["o"][i]), (H, day["h"][i]), (L, day["l"][i]), (C, day["c"][i])):
                 lst.append(arr)
@@ -401,9 +495,66 @@ def build():
         np.savez_compressed(CACHE / f"{fp.stem}.npz", syms=np.array(syms), o=np.array(O, np.float64), h=np.array(H),
                             l=np.array(L), c=np.array(C), pc=np.array(PC), rsi=np.array(RSI, np.float32),
                             U=np.array(UU), D=np.array(DD), red_plain=np.array(RP), green_plain=np.array(GP),
-                            red_strict=np.array(RS), green_strict=np.array(GS), spy_o=day["o"][k], spy_c=day["c"][k])
-        print(fp.stem, len(syms), flush=True)
+                            red_strict=np.array(RS), green_strict=np.array(GS), spy_o=day["o"][k], spy_c=day["c"][k],
+                            **{kk: np.array(PN[kk]) for kk in PINE_KEYS})
+        print(fp.stem, len(syms), "no_ext", n_noext, flush=True)
         prev = fp
+
+
+def eth_fetch():
+    """amended_3: SIP extended-hours 1-minute closes per universe name-day: prior session 16:00-20:00 and today
+    04:00-09:29 ET. -> ai_reports/rsi2_colour/eth/DAY.pkl {sym: [(epoch, close)]}. Resumable; after 16:05 ET only. I/O."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    import time
+    from relative_strength_scan import load_day
+    from board_structure_family import universe
+    from evening_family import ALL_ETF, WH_SIP
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    from alpaca.data.enums import DataFeed, Adjustment
+    et = ZoneInfo("America/New_York")
+    hm = datetime.now(et).strftime("%H%M")
+    if datetime.now(et).weekday() < 5 and "0900" <= hm < "1605":
+        sys.exit("market hours - rerun after 16:05 ET (shared data key)")
+    k = json.load(open(ROOT / "secrets_data.json"))
+    cl = StockHistoricalDataClient(k["alpaca_data_api_key"], k["alpaca_data_secret_key"])
+    ETH.mkdir(parents=True, exist_ok=True)
+    files = sorted(p for p in WH_SIP.glob("20??-??-??.npz") if p.stem <= CONFIRM[1])
+    failed = []
+    for a, b in zip(files, files[1:]):
+        if b.stem < SEARCH[0] or (ETH / f"{b.stem}.pkl").exists():
+            continue
+        day, pday = load_day(b), load_day(a)
+        syms = sorted(universe(day, pday, set(ALL_ETF)))
+        s0 = datetime.fromisoformat(a.stem + "T16:00").replace(tzinfo=et)
+        s1 = datetime.fromisoformat(b.stem + "T09:30").replace(tzinfo=et)
+        res = {}
+        ok = True
+        for i in range(0, len(syms), 100):
+            got = None
+            for attempt in range(6):
+                try:
+                    got = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=syms[i:i + 100], timeframe=TimeFrame.Minute,
+                                                             start=s0, end=s1, feed=DataFeed.SIP, adjustment=Adjustment.RAW))
+                    break
+                except Exception as e:              # noqa: BLE001
+                    time.sleep(60 if "429" in str(e) else 5 * (attempt + 1))
+            if got is None:
+                ok = False
+                break
+            for sym, rows in (got.data or {}).items():
+                res[sym] = [(r.timestamp.timestamp(), float(r.close)) for r in rows]
+        if not ok:
+            failed.append(b.stem)
+            print(b.stem, "FAILED", flush=True)
+            continue
+        for sym in syms:
+            res.setdefault(sym, [])                 # fetched, no extended-hours trades: an empty list, not missing
+        pickle.dump(res, open(ETH / f"{b.stem}.pkl", "wb"))
+        print(b.stem, len(syms), sum(len(v) for v in res.values()), flush=True)
+    print("ETH_DONE failed", failed, flush=True)
 
 
 def load_days(lo, hi):
@@ -697,11 +848,13 @@ def main(argv):
         return chart_eth()
     if cmd == "chart":
         return chart()
+    if cmd == "eth":
+        return eth_fetch()
     if cmd == "build":
         return build()
     mode = argv[argv.index("--colours") + 1] if "--colours" in argv else None
-    if mode not in ("plain", "strict"):
-        sys.exit("--colours plain|strict is required (decided by the chart match, amended_1 B2)")
+    if mode not in ("plain", "strict", "pine"):
+        sys.exit("--colours plain|strict|pine is required (pine = amended_3)")
     OUT.mkdir(parents=True, exist_ok=True)
     out = {"mode": mode, "prereg": "docs/studies/rsi2_colour_timing_prereg.json (amended_1)", "rules": {}}
     for rule in RULES:

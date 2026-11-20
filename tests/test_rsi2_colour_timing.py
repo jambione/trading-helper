@@ -147,3 +147,27 @@ def test_null_canary_no_edge_and_planted_edge_found():
     assert v0 == "NO EDGE", st0
     v1, st1 = _edge(_synthetic_days(16, 12, 15.0, 8))
     assert v1 == "EDGE", st1
+
+
+def test_green_cross_trigger_and_red_validity():
+    import rsi2_colour_timing as r
+    # c 100, U 0.1, D 1.8 -> P10 = 100 + max(0.2 - 0.1, .01) = 100.10; S5 = mean 100.50 -> P = 100.10 (> SMA200 99)
+    assert r.green_cross_trigger(100.0, 0.1, 1.8, 100.5, 99.0) == 100.10
+    assert np.isnan(r.green_cross_trigger(100.0, 0.1, 1.8, 100.5, 101.0))      # P below SMA200: not valid
+    assert r.stop_valid_red(50.5, 50.2, 52.0, 50.1, 50.0)
+    assert not r.stop_valid_red(50.5, 50.2, 50.4, 50.1, 50.0)                  # P above SMA200
+
+
+def test_pine_day_aligns_and_carries_over_missing_minutes():
+    import rsi2_colour_timing as r
+    prev = np.linspace(100, 110, 390)
+    ext = np.array([110.0, 109.0])
+    today = np.full(390, np.nan)
+    today[0], today[1], today[3] = 108.0, 107.0, 112.0
+    out = r.pine_day(prev, ext, today)
+    full = np.concatenate([prev, ext, [108.0, 107.0, 112.0]])
+    rsi, _, _ = r.pine_rsi(full)
+    assert abs(out["rsi_pine"][1] - rsi[-2]) < 1e-12 and abs(out["rsi_pine"][3] - rsi[-1]) < 1e-12
+    assert out["rsi_pine"][2] == out["rsi_pine"][1]                             # no bar at minute 2: state carries
+    assert abs(out["s200_pine"][3] - full[-200:].mean()) < 1e-9
+    assert abs(out["m4_pine"][3] - full[-4:].mean()) < 1e-9
