@@ -250,7 +250,7 @@ if loopSec > 0 {
             if left > 0 { Thread.sleep(forTimeInterval: left) }
         }
     }
-    RunLoop.main.run()
+    _app.run()   // a full AppKit run loop: ScreenCaptureKit needs a running NSApplication in an agent
 }
 
 let (lines, err) = capturePass()
