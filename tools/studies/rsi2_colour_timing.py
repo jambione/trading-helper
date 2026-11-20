@@ -663,7 +663,7 @@ def eth_bars(cl, sym, day):
     d = datetime.fromisoformat(day + "T04:00").replace(tzinfo=ET)
     p = d - timedelta(days=3 if d.weekday() == 0 else 1)
     r = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=sym, timeframe=TimeFrame.Minute, start=p,
-                                           end=d + timedelta(hours=16), feed=DataFeed.SIP, adjustment=Adjustment.RAW))
+                                           end=min(d + timedelta(hours=16), datetime.now(ET) - timedelta(minutes=16)), feed=DataFeed.SIP, adjustment=Adjustment.RAW))
     return [(b.timestamp.astimezone(ET), float(b.close)) for b in (r.data or {}).get(sym, [])]
 
 
