@@ -200,3 +200,25 @@ def test_wick_and_cross_vs_close():
     close = [{"day": "d", "sym": "A", "t": 5, "gross": 6.0}]
     out = r.cross_vs_close(stop, close)
     assert out["matched"] == 1 and out["cross_minus_close_gross"] == 4.0 and out["unmatched_fills"] == 1
+
+
+def test_red_trigger_exact_takes_the_binding_condition():
+    import rsi2_colour_timing as r
+    # RSI part binds: c 50, D 0.1, U 0.2 -> P_rsi = 50 + 0.7 + .01 = 50.71; m4 49.0 -> 49.01; below m199 51
+    assert r.red_trigger_exact(50.0, 0.2, 0.1, 49.0, 51.0) == (50.71, True)
+    # SMA5 part binds: RSI already high (9D-U < 0) -> P = m4 + tick
+    assert r.red_trigger_exact(50.0, 1.0, 0.05, 50.30, 51.0) == (50.31, True)
+    # above the 200-bar mean -> RED_UP side
+    assert r.red_trigger_exact(50.0, 1.0, 0.05, 50.30, 50.2)[1] is False
+
+
+def test_ratchet_exit_stop_breakeven_and_trail():
+    import rsi2_colour_timing as r
+    n = 20
+    o = np.full(n, 100.0); h = np.full(n, 100.0); l = np.full(n, 99.9); c = np.full(n, 100.0)
+    l[3] = 99.3                                        # touches entry - 0.6% = 99.4 -> exit at min(stop, open)=99.4
+    assert abs(r.ratchet_exit(o, h, l, c, 0, 100.0) - 99.4) < 1e-9
+    o2 = o.copy(); h2 = h.copy(); l2 = l.copy(); c2 = c.copy()
+    l2[3] = 99.9; h2[2] = 101.0                        # high 101 -> trail stop 100.394; bar 4 low 100.3 exits
+    l2[4] = 100.3; o2[4] = 100.5
+    assert abs(r.ratchet_exit(o2, h2, l2, c2, 0, 100.0) - 101.0 * 0.994) < 1e-9
