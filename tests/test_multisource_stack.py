@@ -65,3 +65,11 @@ def test_market_bucket_and_gaps():
     assert ms.bucket(None) is None
     inp = {"daily": {"SPY": {"2026-05-01": 100.0, "2026-05-04": 101.0}}, "bars": {"2026-05-04": {"SPY": {0: (98.0, 98.5)}}}}
     assert abs(ms.market_gaps(inp)["2026-05-04"] - (98 / 100 - 1)) < 1e-12
+
+
+def test_wick_pressure():
+    bars = {k: (10.0, 10.0, 10.5, 9.5) for k in range(10)}       # equal wicks -> 0
+    assert ms.wick_pressure(bars, 10, 5) == 0.0
+    bars2 = {k: (10.0, 10.1, 10.1, 9.6) for k in range(10)}      # long lower wicks -> buying
+    assert ms.wick_pressure(bars2, 10, 5) > 0.2 and ms.wick_bucket(ms.wick_pressure(bars2, 10, 5)) == "buying>+0.2"
+    assert ms.wick_pressure(bars, 3, 5) is None                  # not enough completed bars

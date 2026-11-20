@@ -56,5 +56,6 @@
   "forward power": "stated now: ~20 sessions x ~14 events gives K6 ~30 ON events, also underpowered; the forward window extends until K6 has >= 150 ON events (estimated 2-3 months), with an interim read at 20 sessions as information"
  },
  "status": "amended_1 after skeptic round 1; backfill running with the coverage fix; script next",
- "amended_market_split": "INFORMATION ONLY (operator 11/20 'yes, add the market split'; added before any outcome was read): every scored cell's lift is also printed by MARKET OPEN GAP = SPY's official 09:30 open / SPY's prior regular-session close - 1, in three buckets: <= -1%, between, >= +1% (day counts per bucket printed). Never promoted to a verdict; a regime gate needs its own prereg."
+ "amended_market_split": "INFORMATION ONLY (operator 11/20 'yes, add the market split'; added before any outcome was read): every scored cell's lift is also printed by MARKET OPEN GAP = SPY's official 09:30 open / SPY's prior regular-session close - 1, in three buckets: <= -1%, between, >= +1% (day counts per bucket printed). Never promoted to a verdict; a regime gate needs its own prereg.",
+ "amended_wick_split": "INFORMATION ONLY (operator 11/20 'yes, add the wick split'; added before any outcome was read): WICK PRESSURE = (sum of lower wicks - sum of upper wicks) / sum of ranges over the 5 (and 3) completed 1-minute bars before the event/entry bar; buckets selling < -0.2, neutral, buying > +0.2. Each scored cell's result is printed by the ON event's bucket. Never promoted to a verdict; a wick layer needs its own prereg."
 }

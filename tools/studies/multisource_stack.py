@@ -157,7 +157,7 @@ def inputs():
         day_bars = {}
         for s, rows in (got.data or {}).items():
             day_bars[s] = {(r.timestamp.astimezone(ET).hour - 9) * 60 + r.timestamp.astimezone(ET).minute - 30:
-                           (float(r.open), float(r.close)) for r in rows}
+                           (float(r.open), float(r.close), float(r.high), float(r.low)) for r in rows}
         inp["bars"][day] = day_bars
         if n % 10 == 0:
             pickle.dump(inp, open(p, "wb"))
@@ -244,6 +244,7 @@ def build_rows(inp, sent_cache, down=None):
             continue
         closes = {k: v[1] for k, v in bars.items()}
         opens = {k: v[0] for k, v in bars.items()}
+        wp3, wp5 = wick_pressure(bars, m, 3), wick_pressure(bars, m, 5)
         ex = [k for k in closes if ent <= k <= ent + HOLD - 1]
         pre = [k for k in closes if m - 30 <= k <= m - 1]
         gross = (closes[max(ex)] / entry - 1) * 1e4 if ex else None
@@ -256,7 +257,7 @@ def build_rows(inp, sent_cache, down=None):
         N = n_layer(inp["news"].get(f"{day}|{sym}", []), ts) if f"{day}|{sym}" in inp["news"] else None
         R = (s15 is not None and e15 is not None and s15 > 0 and e15 > 0) if s15 is not None and e15 is not None else None
         rows.append({"day": day, "sym": sym, "m": m, "ent": ent, "entry": entry, "gross": gross, "pre": pre_ret,
-                     "S": S, "N": N, "R": R, "etf": etf, "closes": closes, "opens": opens})
+                     "S": S, "N": N, "R": R, "etf": etf, "closes": closes, "opens": opens, "wp3": wp3, "wp5": wp5})
     return rows, dict(counts)
 
 
@@ -404,6 +405,39 @@ def score_cell(rows, name, layers):
     return st
 
 
+def wick_pressure(bars, m, n):
+    """(sum of lower wicks - sum of upper wicks) / sum of ranges over the n COMPLETED bars before minute m
+    (amended_wick_split). bars: {minute: (open, close, high, low)}. None if fewer than n bars or zero range. Pure."""
+    ks = [k for k in range(m - n, m) if k in bars and len(bars[k]) >= 4]
+    if len(ks) < n:
+        return None
+    up = lo = rng = 0.0
+    for k in ks:
+        o, c, h, l = bars[k][:4]
+        up += h - max(o, c)
+        lo += min(o, c) - l
+        rng += h - l
+    return (lo - up) / rng if rng > 0 else None
+
+
+def wick_bucket(w):
+    if w is None:
+        return None
+    return "buying>+0.2" if w > 0.2 else ("selling<-0.2" if w < -0.2 else "neutral")
+
+
+def split_by_wick(rows, layers, key="wp5"):
+    """Matched-difference mean per wick-pressure bucket of the ON event (information). Pure."""
+    res = {}
+    for bk in ("selling<-0.2", "neutral", "buying>+0.2"):
+        keep = {(r["day"], r["sym"], r["m"]) for r in rows if wick_bucket(r.get(key)) == bk}
+        sub = [r for r in rows if cell_on(r, layers) is not True or (r["day"], r["sym"], r["m"]) in keep]
+        pairs = [(d, x) for d, x, t in matched_diffs(sub, layers) if x is not None]
+        m, t, nd = day_t(pairs)
+        res[bk] = {"diff": None if m is None else round(m, 2), "t": None if t is None else round(t, 2), "days": nd, "n": len(pairs)}
+    return res
+
+
 def bucket(g):
     """Market open-gap bucket (information split, amended_market_split). Pure."""
     if g is None or not np.isfinite(g):
@@ -511,8 +545,14 @@ def run_score():
     gaps = market_gaps(inp)
     out["info_market_split"] = {"days_per_bucket": dict(__import__("collections").Counter(bucket(g) for g in gaps.values())),
                                 "cells": {c: split_by_market(rows, CELLS[c], gaps) for c in CELLS}}
+    out["info_wick_split"] = {c: {"wp5": split_by_wick(rows, CELLS[c], "wp5"), "wp3": split_by_wick(rows, CELLS[c], "wp3")}
+                              for c in CELLS}
+    alld = [r for r in rows if r["gross"] is not None]
+    out["info_wick_all_trending"] = {bk: (lambda v: {"n": len(v), "gross": round(float(np.mean(v)), 2) if v else None})(
+        [r["gross"] for r in alld if wick_bucket(r.get("wp5")) == bk]) for bk in ("selling<-0.2", "neutral", "buying>+0.2")}
     (OUT / "score.json").write_text(json.dumps(out, indent=1, default=str))
     print(json.dumps({"VERDICT": out["VERDICT"], "canaries": [rates, plant], "market_split": out["info_market_split"],
+                      "wick_all_trending": out["info_wick_all_trending"],
                       "cells": {c: {k: v.get(k) for k in ("n_on", "diff_h1", "diff_h2", "t", "later", "unconditional")}
                                 for c, v in out["cells"].items()}}, indent=1, default=str))
 
