@@ -500,6 +500,8 @@ def search():
     else:
         can["c_planted_stack_found"] = None
     out["canaries"] = can
+    if not (can["a_permuted_does_not_beat_null"] and can["b_selection_plant_not_credited_to_timing"] and can.get("c_planted_stack_found")):
+        out["verdict"] = "HARNESS INVALID (canary failed): " + str(out["verdict"])
     (OUT / "search.json").write_text(json.dumps(out, indent=1, default=str))
     top = sorted(((st["t"] or -99, s) for s, st in stats.items()), reverse=True)[:20]
     lines = ["# Stack search (gross, beta-adjusted lift vs M-matched same-minute control)", "",

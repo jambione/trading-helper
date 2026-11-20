@@ -81,6 +81,7 @@
   "canary b": "+15 bp planted on the GROSS of every M4 bar and the M-matched lifts rebuilt; any T != T0 stack whose gain exceeds its T0 counterpart's by > 5 bp is flagged",
   "canary c": "planted on the eligible (MDE <= 10 both halves, no zero layer) stack with the most events; ties broken by the larger stack id",
   "counts": "refractory skips per stack, missing bars, raw n before the cap, name-days on the default beta of 1.0",
-  "declared deviations": "the luck null ignores the refractory and samples <= 3,000 pool bars per day per (M,D) weighted by pool size; the cap hash omits the stack (as the prereg wording); beta = 1.0 until a name has 10 prior sessions, and the warehouse starts 2026-04-27, so 4/28-~5/11 run on beta 1.0 (counted); T3 is false right after a NaN bar (live compares with the last valid RSI) - checked in the FORWARD parity step; the quotes/PROFITABLE/CONFIRM 'run' step is written only if the chosen stack passes EDGE"
+  "declared deviations": "the luck null ignores the refractory and samples <= 3,000 pool bars per day per (M,D) weighted by pool size; the cap hash omits the stack (as the prereg wording); beta = 1.0 until a name has 10 prior sessions, and the warehouse starts 2026-04-27, so 4/28-~5/11 run on beta 1.0 (counted); T3 is false right after a NaN bar (live compares with the last valid RSI) - checked in the FORWARD parity step; the quotes/PROFITABLE/CONFIRM 'run' step is written only if the chosen stack passes EDGE",
+  "canary gate": "a failed canary (a, b or c) invalidates the harness: the verdict reads HARNESS INVALID and no EDGE claim is made"
  }
 }
