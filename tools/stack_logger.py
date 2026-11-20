@@ -11,7 +11,10 @@ It never trades, never writes to the dashboard, and only reads. Weekdays 04:00-2
     .venv/bin/python tools/stack_logger.py            # loop (run by the LaunchAgent com.jambi.stack-logger)
     .venv/bin/python tools/stack_logger.py --once     # one snapshot to stdout (check)
 
-Snapshot record: {"ts", "et", "trending": [...], "movers": [...], "ai": [...], "tickers": [...], "discord_n", "health"}
+Snapshot record: {"ts", "et", "trending": [...], "movers": [...], "ai": [...], "tickers": [...], "catalysts": {sym: {...}},
+"discord_n", "health"}. "catalysts" (operator 11/20: "We need to have multiple sources, such as catalysts outside of
+price and volume") is read from the desk's local caches only - news_feed (headline count, minutes since, bullish /
+bearish keyword flags, cache age) and float_feed (shares out) - so the logger makes no extra data-provider calls.
 """
 from __future__ import annotations
 
@@ -61,6 +64,9 @@ def snapshot(state: dict, now: float) -> dict:
         if isinstance(fn, dict):
             row["funnel"] = _pick(fn, FUNNEL_KEYS)
         tickers.append(row)
+    syms = sorted({r.get("symbol") for k in ("trending", "movers", "ai_suggestions")
+                   for r in ((state.get(k) or {}).get("rows") or []) if isinstance(r, dict) and r.get("symbol")}
+                  | {t.get("ticker") for t in (state.get("tickers") or []) if t.get("ticker")})
     return {
         "ts": round(now, 1),
         "et": datetime.fromtimestamp(now, ET).strftime("%H:%M:%S"),
@@ -68,11 +74,41 @@ def snapshot(state: dict, now: float) -> dict:
         "movers": [_pick(r, MOVER_KEYS) for r in (mv.get("rows") or []) if isinstance(r, dict)],
         "ai": [_pick(r, AI_KEYS) for r in (ai.get("rows") or []) if isinstance(r, dict)],
         "tickers": tickers,
+        "catalysts": catalysts(syms, now),
         "discord_n": dc.get("count"),
         "health": {"trending_updated": tr.get("updated"), "trending_error": tr.get("error") or None,
                    "trending_volume_error": tr.get("volume_error") or None, "rvol_coverage": tr.get("rvol_coverage"),
                    "movers_ts": mv.get("ts"), "discord_running": dc.get("running"), "discord_last_ts": dc.get("last_ts")},
     }
+
+
+def catalysts(syms, now: float) -> dict:
+    """Per-symbol catalyst layer from local caches (never the network). Missing caches -> {}. Pure apart from reading
+    the two cache files."""
+    out = {}
+    try:
+        import news_feed
+        age = news_feed.cache_age_sec()
+    except Exception:                               # noqa: BLE001
+        news_feed, age = None, None
+    try:
+        import float_feed
+        fcache = float_feed.load_cache()
+    except Exception:                               # noqa: BLE001
+        fcache = {}
+    for s in syms:
+        row = {}
+        if news_feed is not None:
+            f = news_feed.features_for(s, now)
+            row.update({k: v for k, v in f.items() if v is not None})
+        fl = fcache.get(s) if isinstance(fcache, dict) else None
+        if isinstance(fl, dict):
+            row.update({k: fl.get(k) for k in ("shares_out", "float") if fl.get(k) is not None})
+        if row:
+            out[s] = row
+    if age is not None:
+        out["_news_cache_age_sec"] = round(age, 1)
+    return out
 
 
 def in_window(now: float) -> bool:

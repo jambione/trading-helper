@@ -52,3 +52,17 @@ def test_append_is_readable_as_one_stream(tmp_path, monkeypatch):
     p = next(tmp_path.glob("*.jsonl.gz"))
     rows = [json.loads(x) for x in gzip.open(p, "rt")]
     assert [r["i"] for r in rows] == [0, 1, 2]
+
+
+def test_catalysts_from_local_caches(monkeypatch):
+    import types
+    nf = types.SimpleNamespace(cache_age_sec=lambda: 12.0,
+                               features_for=lambda s, now: {"n_news_24h": 2, "mins_since": 5, "bearish": None} if s == "AAA" else {"n_news_24h": None})
+    ff = types.SimpleNamespace(load_cache=lambda: {"AAA": {"shares_out": 10.5, "other": 1}})
+    monkeypatch.setitem(sys.modules, "news_feed", nf)
+    monkeypatch.setitem(sys.modules, "float_feed", ff)
+    c = sl.catalysts(["AAA", "BBB"], 0.0)
+    assert c["AAA"] == {"n_news_24h": 2, "mins_since": 5, "shares_out": 10.5}
+    assert "BBB" not in c and c["_news_cache_age_sec"] == 12.0
+    s = sl.snapshot(_state(), 0.0)
+    assert set(s["catalysts"]) >= {"_news_cache_age_sec"}
