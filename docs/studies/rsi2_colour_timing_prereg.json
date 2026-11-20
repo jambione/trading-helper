@@ -77,7 +77,7 @@
   "C1 verdict rows": "EDGE on ALL candidates (gross); PROFITABLE on spread-gated traded rows (m5 'verdict on traded rows' applies to PROFITABLE only)",
   "C2 strict colours need warm-up": "if the chart match makes the SMA-strict colours primary, every series prepends the last 220 regular-hours bars of the prior session (SMA200 is otherwise undefined until ~12:50); name-days without them are counted and scored with in-session warm-up only as information. Strict red uses RSI > 90, matching the panel; the plain-level rules keep >= 90."
  },
- "status": "amended_5; live-exit build (Saturday) with the RED_STOP arming fix and the example-trade check before scoring",
+ "status": "amended_6: backtest-only Saturday, exact trigger, cap model, dist and SMA200 splits; Neon review before run",
  "amended_2": {
   "when": "2026-11-20, after the operator supplied the panel's Pine source (ChrisMoody _CM_RSI_2_Strategy_Lower) and before any score; the 11/19 chart match had failed (~6/10) under both earlier definitions",
   "colour rule (replaces B2's either/or)": "exactly the Pine source: GREEN (lime) = close > SMA200 and close < SMA5 and RSI2 < 10; RED = close < SMA200 and close > SMA5 and RSI2 > 90; else silver. SMA200/SMA5 and RSI2 on the SAME 1-minute close series.",
@@ -158,5 +158,15 @@
   "day filter (review flaw C, information)": "each rule is also reported WITHOUT the +1.5% day-change filter (price band and time window kept), because 'up 1.5% on the day yet below the 200-bar average' selects names fading from earlier highs",
   "example trades (review item 3)": "before the score, print each rule's mechanical entry and live-exit times on the operator's chart names/minutes (RTH ones; MU/UNH/early ANT were premarket and are outside the registered window) so the operator can confirm the rule matches what he calls a trade",
   "correction of the record": "RED_START's colour exit held a median of 1 bar (not 15 minutes); its fixed 5-/15-minute holds were +0.18 / -0.72 bp gross, win 39%. The opening-slice quote fetch for GREEN_END was triggered by raw gross > 0, not by any lift - it was not a signal"
+ },
+ "amended_6_neon_round2": {
+  "when": "2026-11-20 ~19:00 ET, after Neon's second review (operator-supplied); RED_STOP not scored",
+  "scope": "Saturday = BACKTEST ONLY on the existing 103-session SIP cache. No live, paper or shadow lane unless RED_STOP passes EDGE and PROFITABLE after the real spread",
+  "trigger price (exact)": "P = max(P_rsi + 1 tick, m4 + 1 tick), rounded up to the cent (RSI-2 strictly > 90 and close strictly > the 5-bar mean incl. itself), valid only if P < mean of the last 199 closes (close strictly below the 200-bar mean incl. itself); no condition on bar t-1's position vs SMA5",
+  "order of work": "(1) bar-level screen on the cache: RED_STOP and RED_START with fixed 5-/15-minute holds and a bar-level approximation of the desk ratchet (labelled approximate); gross first. (2) Only if RED_STOP's gross screen passes: the second-level live-exit replay (amended_4) on SIP prints for the verdict",
+  "fill-cap model (adverse selection)": "in the second-level replay, the entry is a capped buy at P + k bp (k = 5, information k = 10/20): it fills only if a print/ask at or below the cap occurs within 2 s of the first print >= P; uncapped (stop) and capped results are both reported, with the share of winners lost to the cap. Bar-level: fills where open[t] > P + cap are counted as missed",
+  "information splits": "by trigger distance dist = P/close[t-1] - 1 (< 5 bp, 5-20, 20-50, > 50 bp); and Pine red (close < SMA200) vs the same trigger above SMA200 (plain RSI-2 > 90 uptrend thrusts) - information only, the uptrend rule needs its own prereg (operator: later)",
+  "live parity (before any live use)": "the live desk's RSI-2/SMA warm-up (symbol_ohlc / live_cm_rsi on IEX with a clock window) must be checked against this SIP extended-hours series on replayed days",
+  "review gate": "Neon (outside reviewer, via the operator) reviews code + this prereg before each run; nothing runs without the operator's go"
  }
 }
