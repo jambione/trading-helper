@@ -75,5 +75,14 @@
   "m7 data": "full-day raw warehouse bars (relative_strength_scan.load_day), not the opening_grid cache (09:30-10:39 only)",
   "power": "event counts and the MDE per cell and half are printed before any quote is fetched"
  },
- "status": "amended_1 after skeptic round 1; script next, then skeptic code review"
+ "status": "amended_1 after skeptic round 1; script next, then skeptic code review",
+ "amended_2": {
+  "when": "2026-11-20, after the result-skeptic code review (FIX FIRST), before any edge/score step; the events step had run (CPU) but no outcome was read, and its files were set aside (.stale_pre_review) and rebuilt",
+  "canary (replaces M3 pass rule)": "outcomes are first shuffled within each day (a null on real rows), then +15 bp is added to SPEED-high events. Pass = SPEED_hi reads EDGE, and SPEED_lo/SPEED_mid (no SPEED-high events) do not; with no plant it must fail. The per-cell 'within 2 SE of plant x share' check was dropped: across 15 cells at 2 SE it fails by chance on a pure null.",
+  "control mismatch": "for EACH control (same-minute, same-name later), its mean beside the unconditional mean with a day-clustered t; |diff| > 3 bp or |t| > 2 blocks an EDGE",
+  "unconditional window": "minutes from 10:25 (bar 55, the first bar an event can occur) to 15:30",
+  "later window": "entry minute in t+17..t+77 exactly (bars t+16..t+76 as the signal bar)",
+  "printed": "day-mean lifts per half beside trade means; volume NaN count; the ctl / later / unconditional means in report.md",
+  "known limits": "a dip whose sigma is undefined (start before ~10:25) produces no event and blocks new dips for up to 120 bars, so early-peaking names lose later dips (prereg 'fewer = no event'); blind-entry rows include such dips"
+ }
 }

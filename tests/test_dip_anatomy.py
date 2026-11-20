@@ -101,4 +101,4 @@ def test_null_canary_no_edge_on_a_random_walk():
     assert counts["events"] > 100
     assert st["verdict"] != "EDGE", st
     cuts = da.cut_points(rows)
-    assert da.canary(rows, cuts)
+    assert not da.canary(rows, cuts, 0.0) and da.canary(rows, cuts, 15.0) and da.canary(rows, cuts, 30.0)

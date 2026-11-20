@@ -33,6 +33,7 @@ SPLIT = "2026-07-11"
 OPEN_WIN, MAX_AGE, DEPTH_MIN = 30, 120, 2.0
 SIG_BARS, SIG_MIN, SIG_SKIP = 60, 40, 15          # sigma: last 60 same-session bars before s0, >= 40, excluding 09:30-09:44
 T_LO, T_HI, HOLD, REFRACT = 15, 360, 15, 15
+U_LO = SIG_SKIP + SIG_MIN                         # earliest minute an event can occur (sigma needs 40 bars after 09:44)
 CHG_MIN, PX_LO, PX_HI = 1.5, 20.0, 400.0
 EDGE_T, AGE_T, MDE_MAX, MIN_NET, MIN_N = 3.0, 2.0, 10.0, 2.0, 300
 GATE_BP, CAP_PER_HALF, STRESS = 15.0, 1500, 1.5
@@ -194,12 +195,12 @@ def day_events(day, d, counts):
             okm = px_ok[:, t] & up_ok[:, s0] & fin15[:, t]
             pick = first_ok(order[t], okm, k)
             tpick = first_ok(order[t], okm & turns[:, t], k)
-            cand = [u for u in range(t + 16, min(t + 77, 389 - HOLD) + 1) if np.isfinite(f15[k, u])]
+            cand = [u for u in range(t + 16, min(t + 76, 389 - HOLD) + 1) if np.isfinite(f15[k, u])]
             later = float(f15[k, cand[hkey("dipanat-later", day, d["syms"][k], t) % len(cand)]]) if cand else np.nan
             unc = np.nan
             for z in range(30):
                 hz = hkey("dipanat-unc", day, d["syms"][k], t, z)
-                j, u = hz % U, T_LO + (hz >> 20) % (T_HI - T_LO + 1)
+                j, u = hz % U, U_LO + (hz >> 20) % (T_HI - U_LO + 1)
                 if px_ok[j, u] and np.isfinite(chg[j, u]) and chg[j, u] >= CHG_MIN and np.isfinite(f15[j, u]):
                     unc = float(f15[j, u])
                     break
@@ -214,6 +215,7 @@ def day_events(day, d, counts):
                          "ctl5": float(np.nanmean(f5[pick, t])) if pick else np.nan,
                          "later": later, "unc": unc, "spy": float(sp)})
             counts["events"] += 1
+            counts["volume_nan"] += int(not np.isfinite(e["VOLUME"]))
     rows += blind(day, d, up_ok, px_ok, f15, dips, order)
     return rows
 
@@ -322,16 +324,20 @@ def edge_cell(rows):
     ll, lu = mean(rows, "lift_later"), mean(rows, "lift_unc")
     mde_a = 3.84 * sea if sea else None
     mde_b = 3.84 * seb if seb else None
-    ctl_m, unc_m = mean(rows, "ctl"), mean(rows, "unc")
-    cu = [r["ctl"] - r["unc"] for r in rows if np.isfinite(r.get("ctl", np.nan)) and np.isfinite(r.get("unc", np.nan))]
-    cu_t = float(np.mean(cu) / (np.std(cu, ddof=1) / math.sqrt(len(cu)))) if len(cu) > 10 and np.std(cu) > 0 else None
+    mism = {}
+    for key in ("ctl", "later"):       # TEST_STANDARD: each control's mean beside the unconditional mean, day-clustered t
+        dd = [{"day": r["day"], "x": r[key] - r["unc"]} for r in rows
+              if np.isfinite(r.get(key, np.nan)) and np.isfinite(r.get("unc", np.nan))]
+        tt, _ = day_t(dd, "x")
+        mism[key] = {"mean": r2(mean(rows, key)), "unc_mean": r2(mean(rows, "unc")), "diff": r2(mean(dd, "x")), "t_day": r2(tt)}
+    dm = lambda rr: (float(np.mean(list(day_means(rr, "lift").values()))) if day_means(rr, "lift") else None)
     st = {"n": len(rows), "n_h1": len(a), "n_h2": len(b), "days": len({r["day"] for r in rows}),
           "gross": r2(mean(rows, "gross")), "lift_h1": r2(la), "lift_h2": r2(lb), "t": r2(t),
           "mde_h1": r2(mde_a), "mde_h2": r2(mde_b), "winsor_lift_h1": r2(wa), "winsor_lift_h2": r2(wb),
           "lift_same_name_later": r2(ll), "lift_unconditional": r2(lu), "lift_turn_matched_info": r2(mean(rows, "lift_turn")),
           "lift_5min_info": r2(mean(rows, "lift5")), "spy_hedged_gross_info": r2(mean(rows, "lift_spy")),
           "bracket_gross_info": r2(mean(rows, "bracket")),
-          "control_minus_unconditional": r2(None if ctl_m is None or unc_m is None else ctl_m - unc_m), "control_vs_unc_t": r2(cu_t),
+          "control_mismatch": mism, "lift_daymean": r2(dm(rows)), "lift_daymean_h1": r2(dm(a)), "lift_daymean_h2": r2(dm(b)),
           "win_pct": r2(100 * float(np.mean([r["gross"] > 0 for r in rows]))) if rows else None}
     if (mde_a or 99) > MDE_MAX or (mde_b or 99) > MDE_MAX:
         v = "UNDERPOWERED -> UNPROVEN"
@@ -339,9 +345,9 @@ def edge_cell(rows):
         ok = (la is not None and lb is not None and la > 0 and lb > 0 and t is not None and t >= EDGE_T
               and (ll or -1) > 0 and (lu or -1) > 0 and (wa or -1) > 0 and (wb or -1) > 0)
         v = "EDGE" if ok else "NO EDGE"
-        if ok and ((st["control_minus_unconditional"] is not None and abs(st["control_minus_unconditional"]) > 3)
-                   or (cu_t is not None and abs(cu_t) > 2)):
-            v = "BLOCKED (control vs unconditional mismatch)"
+        bad = [k for k, m in mism.items() if (m["diff"] is not None and abs(m["diff"]) > 3) or (m["t_day"] is not None and abs(m["t_day"]) > 2)]
+        if ok and bad:
+            v = f"BLOCKED (control vs unconditional mismatch: {', '.join(bad)})"
     st["verdict"] = v
     return st
 
@@ -391,25 +397,36 @@ def spearman(rows):
 
 
 def canary(rows, cuts, plant=15.0):
-    """amended_1 M3 on real rows: shift SPEED-high outcomes by +plant; each cell's lift CHANGE must be within 2 SE of
-    plant x (its share of SPEED-high events), and SPEED-high's change ~ plant. Prints pass/fail only. Pure."""
-    planted = [dict(r) for r in rows]
-    for r in planted:
-        if tertile(r["SPEED"], cuts["SPEED"]) == "hi":
-            r["gross"] += plant
-            r["lift"] += plant
-    base, pl = cells(rows, cuts), cells(planted, cuts)
-    ok = True
-    for name in base:
-        b, p = base[name], pl[name]
-        if not b:
+    """amended_1 M3 on real rows (review fix): first make a null by shuffling outcomes WITHIN each day (seeded), then add
+    +plant to SPEED-high events. Pass = SPEED_hi reads EDGE and no cell with NO SPEED-high events reads EDGE (the
+    per-cell 'within 2 SE of plant x share' check was dropped: 15 cells at 2 SE fail by chance on a null; deviation
+    recorded in the prereg). With plant = 0 it must FAIL. Pure."""
+    by_day = defaultdict(list)
+    for r in rows:
+        by_day[r["day"]].append(r)
+    pl = []
+    for day, rr in by_day.items():
+        rng = np.random.default_rng(hkey("dipanat-canary", day) % 2 ** 32)
+        perm = rng.permutation(len(rr))
+        for i, r in enumerate(rr):
+            src = rr[perm[i]]
+            x = dict(r)
+            for k in ("gross", "ctl", "later", "unc", "ctl_turn", "gross5", "ctl5", "spy", "bracket"):
+                x[k] = src.get(k, np.nan)
+            if tertile(x["SPEED"], cuts["SPEED"]) == "hi":
+                x["gross"] = x["gross"] + plant
+            pl.append(x)
+    add_lifts(pl)
+    cs = cells(pl, cuts)
+    if edge_cell(cs["SPEED_hi"])["verdict"] != "EDGE":
+        return False
+    for name, rr in cs.items():      # no leak: cells without SPEED-high events must not read EDGE
+        if name == "SPEED_hi" or not rr:
             continue
-        share = np.mean([tertile(r["SPEED"], cuts["SPEED"]) == "hi" for r in b])
-        d = (mean(p, "lift") or 0) - (mean(b, "lift") or 0)
-        _, se = day_t(b, "lift")
-        if se is None or abs(d - plant * share) > 2 * se:
-            ok = False
-    return ok
+        share = np.mean([tertile(r["SPEED"], cuts["SPEED"]) == "hi" for r in rr])
+        if share == 0 and edge_cell(rr)["verdict"] == "EDGE":
+            return False
+    return True
 
 
 # ---------------------------------------------------------------- I/O
@@ -492,10 +509,13 @@ def edge(write=True):
     if write:
         (OUT / "edge.json").write_text(json.dumps(out, indent=1, default=str))
     lines = ["# Dip anatomy - EDGE (gross, all events; prereg docs/studies/dip_anatomy_prereg.json amended_1)", "",
-             "| cell | verdict | n h1/h2 | lift h1 | lift h2 | t | MDE h1/h2 | later | unc | gross |", "|---|---|---|---|---|---|---|---|---|---|"]
+             "| cell | verdict | n h1/h2 | lift h1 | lift h2 | day-mean h1/h2 | t | MDE h1/h2 | later | unc | ctl / later / unc means | gross |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for k, s in out["cells"].items():
-        lines.append(f"| {k} | {s['verdict']} | {s['n_h1']}/{s['n_h2']} | {s['lift_h1']} | {s['lift_h2']} | {s['t']} | "
-                     f"{s['mde_h1']}/{s['mde_h2']} | {s['lift_same_name_later']} | {s['lift_unconditional']} | {s['gross']} |")
+        mm = s["control_mismatch"]
+        lines.append(f"| {k} | {s['verdict']} | {s['n_h1']}/{s['n_h2']} | {s['lift_h1']} | {s['lift_h2']} | "
+                     f"{s['lift_daymean_h1']}/{s['lift_daymean_h2']} | {s['t']} | {s['mde_h1']}/{s['mde_h2']} | "
+                     f"{s['lift_same_name_later']} | {s['lift_unconditional']} | {mm['ctl']['mean']} / {mm['later']['mean']} / {mm['ctl']['unc_mean']} | {s['gross']} |")
     lines += ["", f"Age question: {out['age_question']['verdict']} - {json.dumps(out['age_question'])}",
               f"Canary pass: {out['canary_pass']}", f"Blind entry (info): {json.dumps(bl_out)}"]
     if write:
