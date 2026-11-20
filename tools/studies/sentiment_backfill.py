@@ -34,7 +34,7 @@ OUT = ROOT / "ai_reports" / "sentiment_backfill"
 JOURNAL = ROOT / "momentum-monitor" / "journal"
 ET = ZoneInfo("America/New_York")
 LO, HI = "2026-08-03", "2026-11-19"
-PACE, WANT, MAX_PAGES = 12.0, 30, 12
+PACE, WANT, MAX_PAGES = 28.0, 30, 12     # ~130 req/h: Stocktwits throttles unauthenticated clients near 200/h, and the live logger shares the IP
 UA = {"User-Agent": "Mozilla/5.0 (research logger)"}
 
 
