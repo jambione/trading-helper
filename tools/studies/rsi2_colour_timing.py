@@ -265,7 +265,10 @@ def ratchet_exit(o, h, l, c, ent_bar, entry, at_open, last=FLAT_T):
         if hi >= entry * (1 + BE_PCT / 100):
             stop = max(stop, entry)
         stop = max(stop, hi * (1 - TRAIL_PCT / 100))
-    return px_or(c, end), end
+    for b in range(end, first - 1, -1):          # Neon: a missing bar at `end` falls back to the last finite close
+        if np.isfinite(c[b]):
+            return float(c[b]), b
+    return np.nan, end
 
 
 def passes_filter_chg(cl, pc, i, chg_min):
@@ -302,12 +305,16 @@ def red_screen_name(d, k, chg_min=None):
     pc = d["pc"][k]
     red = d["red_pine"][k]
     U, D, m4, m199 = d["U_pine"][k], d["D_pine"][k], d["m4_pine"][k], d["m199_pine"][k]
+    rsi, s5 = d["rsi_pine"][k], d["s5_pine"][k]
     out = []
     free = {"RED_STOP": -1, "RED_UP": -1, "RED_START": -1}       # first bar a new signal may fire
     for t in range(T_LO, T_HI + 1):
         if not bool(red[t - 1]) and passes_filter_chg(c, pc, t - 1, chg):
             P, below, hot = red_trigger_exact(px_or(c, t - 1), U[t - 1], D[t - 1], m4[t - 1], m199[t - 1])
-            if np.isfinite(P):
+            streak = np.isfinite(rsi[t - 1]) and np.isfinite(s5[t - 1]) and rsi[t - 1] > 90 and c[t - 1] > s5[t - 1]
+            # amended_8 (Neon): a buy-stop must sit above the last close (P > c[t-1]); RED_UP needs a fresh cross
+            # (not already RSI-2 > 90 and above SMA5 at t-1), apples to apples with RED_STOP
+            if np.isfinite(P) and P > c[t - 1] and (below or not streak):
                 rule = "RED_STOP" if below else "RED_UP"
                 if t >= free[rule]:
                     e = stop_fill(P, px_or(o, t), px_or(h, t))
@@ -331,7 +338,8 @@ def _red_row(rule, d, k, t, ent, e, dist, chg, capmiss, hot):
     at_open = rule == "RED_START"
     f5, f15, rt, xb = _outcomes(o, h, l, c, ent, e, at_open)
     r = {"rule": rule, "day": d["day"], "sym": d["syms"][k], "t": t, "ent_bar": ent, "entry": e, "dist": dist,
-         "capmiss": capmiss, "hot": hot, "fix5": f5, "fix15": f15, "ratchet": rt, "exit_bar": xb}
+         "capmiss": capmiss, "hot": hot, "fix5": f5, "fix15": f15, "ratchet": rt, "exit_bar": xb,
+         "ratchet_capped": np.nan if capmiss else rt}
     fbar = t if at_open else t - 1
     U_ = len(d["syms"])
     peers = sorted((j for j in range(U_) if j != k and passes_filter_chg(d["c"][j], d["pc"][j], fbar, chg)),
@@ -349,9 +357,8 @@ def _red_row(rule, d, k, t, ent, e, dist, chg, capmiss, hot):
     for key, v in vals.items():
         v = [x for x in v if np.isfinite(x)]
         r[f"ctl_{key}"] = float(np.mean(v)) if v else np.nan
-        base = "ratchet" if key == "ratchet_capped" else key
-        ok = v and np.isfinite(r[base]) and not (key == "ratchet_capped" and capmiss)
-        r[f"lift_{key}"] = r[base] - r[f"ctl_{key}"] if ok else np.nan
+        ok = v and np.isfinite(r[key])
+        r[f"lift_{key}"] = r[key] - r[f"ctl_{key}"] if ok else np.nan
     r["peers"] = len(vals["ratchet"])
     return r
 
@@ -389,57 +396,72 @@ def _stat(rr, key):
             "mde_h1": r2(mde(ba, lk)), "mde_h2": r2(mde(bb, lk)), "n_lift_h1": len(ba), "n_lift_h2": len(bb)}
 
 
+def _gate_one(st):
+    if st["mde_h1"] is None or st["mde_h2"] is None or st["mde_h1"] > 10 or st["mde_h2"] > 10:
+        return "UNDERPOWERED"
+    if st["lift_h1"] is not None and st["lift_h2"] is not None and st["lift_h1"] > 0 and st["lift_h2"] > 0 \
+            and (st["t"] or 0) >= 1.0:
+        return "PASS"
+    return "FAIL"
+
+
+def _rule_report(rows, unc, rule, full=True):
+    rr = [r for r in rows if r["rule"] == rule]
+    a, b = halves(rr)
+    rep_ = {"n": len(rr), "n_h1": len(a), "n_h2": len(b), "no_peer": sum(1 for r in rr if r["peers"] == 0),
+            "ratchet_nan": sum(1 for r in rr if not np.isfinite(r["ratchet"]))}
+    for key in (("fix5", "fix15", "ratchet", "ratchet_capped") if full else ("fix5", "fix15", "ratchet")):
+        rep_[key] = _stat(rr, key)
+    if not full:
+        return rep_
+    u = [g for rl, g in unc if rl == rule]
+    cm, um = mean(rr, "ctl_ratchet"), (float(np.mean(u)) if u else None)
+    rep_["peer_mean_ratchet"], rep_["unconditional_mean_ratchet"] = r2(cm), r2(um)
+    rep_["peer_vs_unconditional"] = r2(cm - um if cm is not None and um is not None else None)
+    rep_["peer_vs_unconditional_t"] = r2(welch_t([r["ctl_ratchet"] for r in rr if np.isfinite(r["ctl_ratchet"])], u))
+    if rule != "RED_START":
+        rep_["dist_buckets (ratchet / fix15 lift)"] = {
+            nm: {"n": len(x), "ratchet_gross": r2(mean(x, "ratchet")), "ratchet_lift": r2(mean(x, "lift_ratchet")),
+                 "fix15_lift": r2(mean(x, "lift_fix15"))}
+            for nm, x in (("<5bp", [r for r in rr if r["dist"] < 5e-4]),
+                          ("5-20bp", [r for r in rr if 5e-4 <= r["dist"] < 2e-3]),
+                          ("20-50bp", [r for r in rr if 2e-3 <= r["dist"] < 5e-3]),
+                          (">50bp", [r for r in rr if r["dist"] >= 5e-3]))}
+        rep_["rsi_already_hot"] = {"n": sum(1 for r in rr if r["hot"]),
+                                   "ratchet_lift": r2(mean([r for r in rr if r["hot"]], "lift_ratchet"))}
+        rep_["cap_miss_share (lower bound)"] = r2(float(np.mean([r["capmiss"] for r in rr]))) if rr else None
+    return rep_
+
+
 def red_screen():
-    """amended_7 step 1 report. Gate to step 2 (written in the prereg before the run): RED_STOP ratchet lift > 0 in
-    both halves AND pooled day-t >= 1.0 AND each half's MDE <= 10 bp (else UNDERPOWERED: no step 2)."""
-    rows, unc = [], []
+    """amended_8 step 1 report. MAIN = no day filter ($20-$400 band only); the +1.5% filtered slice is information.
+    Gate to step 2 (fixed in the prereg before the run): RED_STOP (main) passes on ANY ONE of fix5 / fix15 / ratchet
+    - lift > 0 in both halves, pooled day-t >= 1.0, each half's MDE <= 10 bp."""
+    rows, unc, filt = [], [], []
     for d in load_days(*SEARCH):
         if "m199_pine" not in d:
             sys.exit("cache built before amended_6 (no m199_pine): rerun build")
         dr = []
         for k in range(len(d["syms"])):
-            dr += red_screen_name(d, k)
+            dr += red_screen_name(d, k, chg_min=-1e9)
+            filt += red_screen_name(d, k)
         rows += dr
-        unc += red_unconditional(d, dr, CHG_MIN)
-    out = {"prereg": "docs/studies/rsi2_colour_timing_prereg.json amended_7 step 1 (bar-level, ratchet APPROXIMATE)",
+        unc += red_unconditional(d, dr, -1e9)
+    out = {"prereg": "docs/studies/rsi2_colour_timing_prereg.json amended_8 step 1 (bar-level; ratchet APPROXIMATE)",
            "labels": {"fix5": "close of the 5th bar counting the entry bar", "fix15": "close of the 15th bar",
-                      "capmiss": "LOWER BOUND - only opens gapping past P + 5 bp; fast moves through the cap inside a bar are not seen"}}
-    for rule in ("RED_STOP", "RED_START", "RED_UP"):
-        rr = [r for r in rows if r["rule"] == rule]
-        a, b = halves(rr)
-        u = [g for rl, g in unc if rl == rule]
-        rep_ = {"n": len(rr), "n_h1": len(a), "n_h2": len(b), "no_peer": sum(1 for r in rr if r["peers"] == 0),
-                "ratchet_nan": sum(1 for r in rr if not np.isfinite(r["ratchet"]))}
-        for key in ("fix5", "fix15", "ratchet", "ratchet_capped"):
-            rep_[key] = _stat(rr, key)
-        cm, um = mean(rr, "ctl_ratchet"), (float(np.mean(u)) if u else None)
-        rep_["peer_mean_ratchet"], rep_["unconditional_mean_ratchet"] = r2(cm), r2(um)
-        rep_["peer_vs_unconditional"] = r2(cm - um if cm is not None and um is not None else None)
-        rep_["peer_vs_unconditional_t"] = r2(welch_t([r["ctl_ratchet"] for r in rr if np.isfinite(r["ctl_ratchet"])], u))
-        if rule != "RED_START":
-            rep_["dist_buckets (ratchet)"] = {nm: {"n": len(x), "gross": r2(mean(x, "ratchet")), "lift": r2(mean(x, "lift_ratchet"))}
-                                              for nm, x in (("<5bp", [r for r in rr if r["dist"] < 5e-4]),
-                                                            ("5-20bp", [r for r in rr if 5e-4 <= r["dist"] < 2e-3]),
-                                                            ("20-50bp", [r for r in rr if 2e-3 <= r["dist"] < 5e-3]),
-                                                            (">50bp", [r for r in rr if r["dist"] >= 5e-3]))}
-            rep_["rsi_already_hot (ratchet)"] = {"n": sum(1 for r in rr if r["hot"]), "lift": r2(mean([r for r in rr if r["hot"]], "lift_ratchet"))}
-            rep_["cap_miss_share (lower bound)"] = r2(float(np.mean([r["capmiss"] for r in rr]))) if rr else None
-        out[rule] = rep_
-    nf = []
-    for d in load_days(*SEARCH):                  # information: no +1.5% day filter (amended_5)
-        for k in range(len(d["syms"])):
-            nf += red_screen_name(d, k, chg_min=-1e9)
-    out["no_day_filter (information)"] = {rule: {"n": len(x), **_stat(x, "ratchet")}
-                                          for rule in ("RED_STOP", "RED_START", "RED_UP")
-                                          for x in [[r for r in nf if r["rule"] == rule]]}
-    s_ = out["RED_STOP"]["ratchet"]
-    if s_["mde_h1"] is None or s_["mde_h2"] is None or s_["mde_h1"] > 10 or s_["mde_h2"] > 10:
-        gate = "UNDERPOWERED - no step 2"
-    elif s_["lift_h1"] > 0 and s_["lift_h2"] > 0 and (s_["t"] or 0) >= 1.0:
-        gate = "PASS - run the second-level live-exit replay"
+                      "capmiss": "LOWER BOUND - only opens gapping past P + 5 bp"},
+           "MAIN (no day filter)": {rule: _rule_report(rows, unc, rule) for rule in ("RED_STOP", "RED_START", "RED_UP")},
+           "day_filter_1.5pct (information)": {rule: _rule_report(filt, [], rule, full=False)
+                                               for rule in ("RED_STOP", "RED_START", "RED_UP")}}
+    st = out["MAIN (no day filter)"]["RED_STOP"]
+    per = {key: _gate_one(st[key]) for key in ("fix5", "fix15", "ratchet")}
+    out["STEP2_GATE_parts"] = per
+    if any(v == "PASS" for v in per.values()):
+        out["STEP2_GATE"] = "PASS - run the second-level live-exit replay (step 2, behind Neon and the operator)"
+    elif all(v == "UNDERPOWERED" for v in per.values()):
+        out["STEP2_GATE"] = "UNDERPOWERED - no step 2"
     else:
-        gate = "STOP - RED_STOP ratchet lift not > 0 in both halves with t >= 1.0"
-    out["STEP2_GATE"] = gate
+        out["STEP2_GATE"] = "STOP - RED_STOP shows no lift on fix5, fix15 or the approximate ratchet"
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "red_screen.json").write_text(json.dumps(out, indent=1, default=str))
     print(json.dumps(out, indent=1, default=str))

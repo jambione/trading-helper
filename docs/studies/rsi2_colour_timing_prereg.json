@@ -77,7 +77,7 @@
   "C1 verdict rows": "EDGE on ALL candidates (gross); PROFITABLE on spread-gated traded rows (m5 'verdict on traded rows' applies to PROFITABLE only)",
   "C2 strict colours need warm-up": "if the chart match makes the SMA-strict colours primary, every series prepends the last 220 regular-hours bars of the prior session (SMA200 is otherwise undefined until ~12:50); name-days without them are counted and scored with in-session warm-up only as information. Strict red uses RSI > 90, matching the panel; the plain-level rules keep >= 90."
  },
- "status": "amended_7: step-1 screen fixed after skeptic review; waiting for Neon's review and the operator's go",
+ "status": "amended_8: step 1 runs (Neon's go via the operator)",
  "amended_2": {
   "when": "2026-11-20, after the operator supplied the panel's Pine source (ChrisMoody _CM_RSI_2_Strategy_Lower) and before any score; the 11/19 chart match had failed (~6/10) under both earlier definitions",
   "colour rule (replaces B2's either/or)": "exactly the Pine source: GREEN (lime) = close > SMA200 and close < SMA5 and RSI2 < 10; RED = close < SMA200 and close > SMA5 and RSI2 > 90; else silver. SMA200/SMA5 and RSI2 on the SAME 1-minute close series.",
@@ -178,5 +178,12 @@
   "controls": "same-minute peers with the same entry type and exits (primary lift) plus an unconditional random filtered name-minute with the same entry type and exits, printed beside the peer mean with a Welch t",
   "reporting": "gross on all rows and on the rows that have a lift; n per statistic; holds labelled 'close of the 5th / 15th bar counting the entry bar'; cap-miss share is a lower bound and a capped line excludes cap-missed signals and peers",
   "no-day-filter line": "passed as a parameter (no global toggle)"
+ },
+ "amended_8_neon_round3": {
+  "when": "2026-11-20 ~20:10 ET, Neon's review of 6768c37c relayed by the operator ('Ask Neon first' -> Neon: '...once tests pass you have my go to run Step 1'); nothing scored",
+  "main test": "NO day-change filter ($20-$400 price band kept); the +1.5% filtered slice is information (0 of the operator's chart windows pass +1.5%: Pine red needs close < SMA200, so it fires on down days and pullbacks). A live version would need its own admission lane",
+  "step-2 gate": "RED_STOP (main) passes on ANY ONE of fix5, fix15 or the approximate ratchet: lift > 0 in both halves, pooled day-clustered t >= 1.0, each half's MDE <= 10 bp. DISCLOSED: three looks at one screening gate (it only decides whether to spend on step 2; the verdict is step 2's)",
+  "fixes": "ratchet_capped stored per row (crash fix); a buy-stop must sit above the last close (P > c[t-1]); RED_UP arms only on a fresh cross (not RSI-2 > 90 and close > SMA5 at t-1); ratchet falls back to the last finite close when the end bar is missing",
+  "reporting": "the main (no-filter) run carries the full report (holds, ratchet, capped, buckets, controls, gate); the filtered slice is compact"
  }
 }

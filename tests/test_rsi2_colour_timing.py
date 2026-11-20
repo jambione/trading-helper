@@ -228,3 +228,46 @@ def test_ratchet_exit_stop_breakeven_and_trail():
     l3 = l.copy(); l3[3] = 99.9; l3[0] = 99.0          # an entry at the open watches its own bar (review fix 2)
     assert r.ratchet_exit(o, h, l3, c, 0, 100.0, True)[1] == 0
     assert r.ratchet_exit(o, h, l3, c, 0, 100.0, False)[1] != 0
+
+
+def _fake_day(n_names=3):
+    import rsi2_colour_timing as r
+    rng = np.random.default_rng(1)
+    d = {"day": "2026-05-01", "syms": [f"S{i}" for i in range(n_names)], "pc": [30.0] * n_names}
+    for key in ("o", "h", "l", "c"):
+        d[key] = []
+    for i in range(n_names):
+        c = 30 + np.cumsum(rng.normal(0, 0.05, 390))
+        d["o"].append(c - 0.01); d["c"].append(c); d["h"].append(c + 0.05); d["l"].append(c - 0.05)
+    prev = 31 + np.cumsum(rng.normal(0, 0.05, 390))
+    for kk in r.PINE_KEYS:
+        d[kk] = []
+    for i in range(n_names):
+        p = r.pine_day(prev, np.array([]), d["c"][i])
+        for kk in r.PINE_KEYS:
+            d[kk].append(p[kk])
+    return d
+
+
+def test_red_screen_rows_have_every_stat_key_and_stops_sit_above_the_close():
+    import rsi2_colour_timing as r
+    d = _fake_day()
+    rows = []
+    for k in range(3):
+        rows += r.red_screen_name(d, k, chg_min=-1e9)
+    assert rows, "fake day should produce signals"
+    for key in ("fix5", "fix15", "ratchet", "ratchet_capped"):
+        r._stat(rows, key)                                    # Neon bug 1: no KeyError
+    for x in rows:
+        if x["rule"] != "RED_START":
+            assert x["dist"] > 0                              # Neon bug 2: P > c[t-1]
+
+
+def test_ratchet_falls_back_to_last_finite_close():
+    import rsi2_colour_timing as r
+    n = 80
+    o = np.full(n, 100.0); h = np.full(n, 100.0); l = np.full(n, 99.9); c = np.full(n, 100.0)
+    c[60] = np.nan; o[60] = np.nan
+    c[59] = 100.05
+    px, b = r.ratchet_exit(o, h, l, c, 0, 100.0, False)
+    assert b == 59 and px == 100.05
