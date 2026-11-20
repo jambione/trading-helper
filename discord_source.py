@@ -1224,19 +1224,47 @@ def _run_ocr_native(cfg: dict) -> tuple[list[str], bool, str, str]:
         return [], False, kind, detail
 
 
+def _via_open(cmd: list[str]) -> subprocess.CompletedProcess:
+    """Launch DiscordOCR.app through LaunchServices (`open`) so macOS charges Screen Recording to the app's own
+    bundle identity (granted once, remembered) instead of to the Python that spawned it. Run as a direct child,
+    macOS 26+ re-asked "Python ... bypass the private window picker" on every desk restart (2026-11-20).
+    `open -W` does not pass the app's exit status through, so a run counts as failed when the app wrote an ERROR
+    line. LSUIElement keeps it out of the Dock."""
+    import tempfile
+    app = _OCR_APP_BIN.parent.parent.parent
+    with tempfile.TemporaryDirectory(prefix="discord_ocr_") as td:
+        so, se = Path(td) / "out.txt", Path(td) / "err.txt"
+        r = subprocess.run(["open", "-W", "-n", "-g", "-a", str(app), "--stdout", str(so), "--stderr", str(se),
+                            "--args", *cmd[1:]], capture_output=True, text=True, timeout=18, start_new_session=True)
+        out_s = so.read_text(errors="replace") if so.exists() else ""
+        err_s = se.read_text(errors="replace") if se.exists() else ""
+    rc = r.returncode
+    if rc == 0 and "ERROR" in err_s:
+        rc = 1
+    return subprocess.CompletedProcess(cmd, rc, out_s, err_s + (r.stderr or ""))
+
+
+def _use_open(cmd: list[str]) -> bool:
+    return (bool(cmd) and cmd[0] == str(_OCR_APP_BIN) and sys.platform == "darwin"
+            and os.environ.get("DISCORD_OCR_DIRECT", "") != "1")
+
+
 def _run_ocr_binary(cmd: list[str]) -> tuple[list[str], bool, str, str]:
     """Swift binary fallback. Own process group so hung children can be killed.
 
     Returns (lines, ok, kind, detail).
     """
     try:
-        out = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=18,
-            start_new_session=True,
-        )
+        if _use_open(cmd):
+            out = _via_open(cmd)
+        else:
+            out = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=18,
+                start_new_session=True,
+            )
     except subprocess.TimeoutExpired as e:
         if getattr(e, "pid", None):
             try:
