@@ -1298,13 +1298,40 @@ def _run_ocr_binary(cmd: list[str]) -> tuple[list[str], bool, str, str]:
     return [ln for ln in out.stdout.splitlines() if ln.strip()], True, "ok", ""
 
 
+OCR_LIVE_PATH = ROOT / "ai_reports" / "discord_ocr_live.json"
+
+
+def _read_ocr_live(path: Path, now: float, max_age: float) -> tuple[list[str], bool, str, str]:
+    """The long-running DiscordOCR.app (`--loop N --out FILE`, LaunchAgent com.jambi.discord-ocr) writes each
+    capture to FILE. Reading it instead of spawning the app means macOS asks for Screen Recording once per agent
+    launch, not once per poll (2026-11-20: spawned/`open`ed captures re-asked on every launch). Pure but for the read."""
+    try:
+        d = json.loads(path.read_text())
+    except FileNotFoundError:
+        return [], False, "daemon_missing", f"{path.name} missing - is com.jambi.discord-ocr loaded?"
+    except (OSError, ValueError) as e:
+        return [], False, "daemon_unreadable", str(e)[:200]
+    age = now - float(d.get("ts") or 0)
+    if age > max_age:
+        return [], False, "daemon_stale", f"last capture {age:.0f}s ago (limit {max_age:.0f}s)"
+    if not d.get("ok"):
+        detail = str(d.get("error") or "capture failed")
+        return [], False, _ocr_failure_kind(detail), detail
+    return [ln for ln in d.get("lines") or [] if str(ln).strip()], True, "ok", ""
+
+
 def _run_ocr(cmd: list[str], cfg: dict | None = None) -> tuple[list[str], bool, str, str]:
-    """Run one OCR pass. Prefers DiscordOCR.app binary; native PyObjC is fallback.
+    """Run one OCR pass. With discord_ocr_daemon on, read the long-running app's latest capture (never spawn);
+    else prefer the DiscordOCR.app binary, native PyObjC as fallback.
 
     Returns (lines, ok, kind, detail). ok=False = process-level failure
     (no window, permission, crash) — distinct from a successful capture with
     zero text lines.
     """
+    c = cfg or {}
+    if c.get("discord_ocr_daemon"):
+        poll = float(c.get("discord_ocr_poll_sec", 2.5) or 2.5)
+        return _read_ocr_live(OCR_LIVE_PATH, time.time(), max(15.0, 4 * poll))
     if not cmd:
         return _run_ocr_native(cfg or _load_config())
     return _run_ocr_binary(cmd)

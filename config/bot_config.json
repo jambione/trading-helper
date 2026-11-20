@@ -303,6 +303,7 @@
   "desk_product": "scalp_legacy",
   "discord_ocr_enabled": true,
   "discord_ocr_poll_sec": 2.5,
+  "discord_ocr_daemon": true,
   "discord_window_owner": "Discord",
   "discord_window_title": "",
   "ema_long": 21,

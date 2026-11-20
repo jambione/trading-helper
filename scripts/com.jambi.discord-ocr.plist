@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.jambi.discord-ocr - the long-running DiscordOCR.app: captures the Discord window every 2.5 s and writes
+  ai_reports/discord_ocr_live.json; discord_source.py reads that file when discord_ocr_daemon is true and never spawns
+  a capture. launchd runs the bundle's own binary (no shell, no Python parent), so macOS charges Screen Recording to
+  "Discord OCR" and asks once per agent launch (11/20: per-poll spawns re-asked every launch). A rebuild changes the
+  ad-hoc signature, so expect one fresh Allow after scripts/build_ocr.sh. Install (from the mini's GUI session):
+    cp scripts/com.jambi.discord-ocr.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jambi.discord-ocr.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jambi.discord-ocr</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/jambimac/repo/trading-helper/DiscordOCR.app/Contents/MacOS/discord_ocr</string>
+    <string>--loop</string>
+    <string>2.5</string>
+    <string>--out</string>
+    <string>/Users/jambimac/repo/trading-helper/ai_reports/discord_ocr_live.json</string>
+  </array>
+  <key>AssociatedBundleIdentifiers</key>
+  <string>com.jbrasfield.trading-helper.discord-ocr</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>StandardOutPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/discord_ocr.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/discord_ocr.log</string>
+</dict>
+</plist>

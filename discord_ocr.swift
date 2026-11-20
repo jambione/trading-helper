@@ -8,7 +8,7 @@
 // on macOS 15+/26 (Python/Quartz path is ~10–30ms), but the SDK marks it
 // unavailable for compile-time linking — dynamic lookup avoids that.
 //
-// Usage:   discord_ocr [--owner <appName>] [--title <substring>] [--accurate]
+// Usage:   discord_ocr [--owner <appName>] [--title <substring>] [--accurate] [--loop <sec> --out <file.json>]
 // Build:   bash scripts/build_ocr.sh
 
 import Foundation
@@ -37,6 +37,8 @@ private let _cgDisplayCreateImage: CGDisplayCreateImageFn? = {
 var ownerName = "Discord"
 var titleSub: String? = nil
 var accurate = false
+var loopSec: Double = 0      // --loop N: stay running, capture every N s (one TCC grant per launch)
+var outPath: String? = nil  // --out PATH: write each pass as JSON {ts, ok, lines, error} (atomic)
 do {
     let args = CommandLine.arguments
     var i = 1
@@ -48,6 +50,10 @@ do {
             if i + 1 < args.count { titleSub = args[i + 1]; i += 1 }
         case "--accurate":
             accurate = true
+        case "--loop":
+            if i + 1 < args.count { loopSec = Double(args[i + 1]) ?? 0; i += 1 }
+        case "--out":
+            if i + 1 < args.count { outPath = args[i + 1]; i += 1 }
         default: break
         }
         i += 1
@@ -193,35 +199,60 @@ func captureSCK(ownerNeedle: String, titleNeedle: String?) -> CGImage? {
     return out
 }
 
-// ── Main ────────────────────────────────────────────────────────────────────
-if !CGPreflightScreenCaptureAccess() {
-    _ = CGRequestScreenCaptureAccess()
+// ── Main ──────────────────────────────────────────────────────────────────────
+// One pass: (lines, nil) on success, ([], error) on failure.
+func capturePass() -> ([String], String?) {
     if !CGPreflightScreenCaptureAccess() {
-        fail(
-            "Screen Recording not granted. System Settings → Privacy & Security → " +
-            "Screen & System Audio Recording → enable Ghostty/Terminal (launcher) " +
-            "and/or Discord OCR, then re-run."
-        )
+        _ = CGRequestScreenCaptureAccess()
+        if !CGPreflightScreenCaptureAccess() {
+            return ([], "Screen Recording not granted. System Settings → Privacy & Security → " +
+                        "Screen & System Audio Recording → enable Discord OCR, then re-run.")
+        }
     }
-}
-
-var captured: CGImage? = captureSCK(ownerNeedle: ownerName, titleNeedle: titleSub)
-if captured == nil {
-    // Fallback: the legacy display capture + crop.
-    guard let win = findWindow(ownerNeedle: ownerName, titleNeedle: titleSub) else {
-        fail("no on-screen window found for owner '\(ownerName)' — is Discord open and visible? (ScreenCaptureKit: \(sckError))")
-    }
-    captured = captureWindow(win)
+    sckError = ""
+    var captured: CGImage? = captureSCK(ownerNeedle: ownerName, titleNeedle: titleSub)
     if captured == nil {
-        fail(
-            "display capture/crop failed for window id=\(win.id) " +
-            "(\(Int(win.bounds.width))x\(Int(win.bounds.height))). " +
-            "Grant Screen Recording; keep Discord on-screen. (ScreenCaptureKit: \(sckError))"
-        )
+        guard let win = findWindow(ownerNeedle: ownerName, titleNeedle: titleSub) else {
+            return ([], "no on-screen window found for owner '\(ownerName)' — is Discord open and visible? (ScreenCaptureKit: \(sckError))")
+        }
+        captured = captureWindow(win)
+        if captured == nil {
+            return ([], "display capture/crop failed for window id=\(win.id) " +
+                        "(\(Int(win.bounds.width))x\(Int(win.bounds.height))). " +
+                        "Grant Screen Recording; keep Discord on-screen. (ScreenCaptureKit: \(sckError))")
+        }
+    }
+    return (recognize(captured!, accurate: accurate), nil)
+}
+
+func writeJSON(_ path: String, lines: [String], error: String?) {
+    var obj: [String: Any] = ["ts": Date().timeIntervalSince1970, "ok": error == nil, "lines": lines,
+                              "pid": Int(getpid())]
+    if let e = error { obj["error"] = e }
+    guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
+    let tmp = path + ".tmp"
+    if FileManager.default.createFile(atPath: tmp, contents: data) { _ = rename(tmp, path) }
+}
+
+if loopSec > 0 {
+    guard let out = outPath else { fail("--loop needs --out PATH") }
+    setvbuf(stdout, nil, _IOLBF, 0)
+    print("[discord_ocr] loop every \(loopSec)s -> \(out)")
+    while true {
+        let t0 = Date()
+        let (lines, err) = autoreleasepool { capturePass() }
+        writeJSON(out, lines: lines, error: err)
+        if let e = err { fputs("[discord_ocr] pass failed: \(e)\n", stderr) }
+        let left = loopSec - Date().timeIntervalSince(t0)
+        if left > 0 { Thread.sleep(forTimeInterval: left) }
     }
 }
-let cg = captured!
 
-let lines = recognize(cg, accurate: accurate)
+let (lines, err) = capturePass()
+if let e = err {
+    if let out = outPath { writeJSON(out, lines: [], error: e) }
+    fail(e)
+}
+if let out = outPath { writeJSON(out, lines: lines, error: nil) }
 FileHandle.standardOutput.write(Data((lines.joined(separator: "\n") + "\n").utf8))
 exit(0)
