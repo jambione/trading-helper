@@ -77,7 +77,7 @@
   "C1 verdict rows": "EDGE on ALL candidates (gross); PROFITABLE on spread-gated traded rows (m5 'verdict on traded rows' applies to PROFITABLE only)",
   "C2 strict colours need warm-up": "if the chart match makes the SMA-strict colours primary, every series prepends the last 220 regular-hours bars of the prior session (SMA200 is otherwise undefined until ~12:50); name-days without them are counted and scored with in-session warm-up only as information. Strict red uses RSI > 90, matching the panel; the plain-level rules keep >= 90."
  },
- "status": "amended_8: step 1 runs (Neon's go via the operator)",
+ "status": "STEP 1 SCORED 11/20: STOP - mid-bar and bar-close red match same-minute peers (MDE 1-2 bp); no step 2",
  "amended_2": {
   "when": "2026-11-20, after the operator supplied the panel's Pine source (ChrisMoody _CM_RSI_2_Strategy_Lower) and before any score; the 11/19 chart match had failed (~6/10) under both earlier definitions",
   "colour rule (replaces B2's either/or)": "exactly the Pine source: GREEN (lime) = close > SMA200 and close < SMA5 and RSI2 < 10; RED = close < SMA200 and close > SMA5 and RSI2 > 90; else silver. SMA200/SMA5 and RSI2 on the SAME 1-minute close series.",
@@ -185,5 +185,15 @@
   "step-2 gate": "RED_STOP (main) passes on ANY ONE of fix5, fix15 or the approximate ratchet: lift > 0 in both halves, pooled day-clustered t >= 1.0, each half's MDE <= 10 bp. DISCLOSED: three looks at one screening gate (it only decides whether to spend on step 2; the verdict is step 2's)",
   "fixes": "ratchet_capped stored per row (crash fix); a buy-stop must sit above the last close (P > c[t-1]); RED_UP arms only on a fresh cross (not RSI-2 > 90 and close > SMA5 at t-1); ratchet falls back to the last finite close when the end bar is missing",
   "reporting": "the main (no-filter) run carries the full report (holds, ratchet, capped, buckets, controls, gate); the filtered slice is compact"
+ },
+ "result_step1_2026-11-20": {
+  "gate": "STOP - RED_STOP shows no lift on fix5, fix15 or the approximate ratchet (all three FAIL); no step 2",
+  "RED_STOP (mid-bar red, no day filter)": "163,626 fills over 103 sessions. Lift vs same-minute peers (same-distance stop, same exits): 5-bar -0.33/-0.10 bp, 15-bar -0.94/-0.04, ratchet -1.09/-0.41 (t -1.9); MDE 1.0-2.1 bp - a precise zero. Gross before costs +1.6/0.0 (5-bar), +1.2/0.0 (ratchet) - below any spread",
+  "RED_START (bar close)": "146,571; lift +0.04/-0.54 (5-bar), -0.26/-0.31 (ratchet), MDE < 1 bp",
+  "RED_UP (same trigger above SMA200, information)": "179,858; lift ~0 on every hold (t 0.0-0.2)",
+  "distance buckets (RED_STOP)": "no bucket positive on the ratchet; > 50 bp jumps (2,091) show +4.0 bp fix15 lift but -4.5 ratchet - information, not a finding",
+  "controls": "peer mean (ratchet) 1.54 vs unconditional 0.31 bp (Welch t 5.1): same-minute peers with a filled same-distance stop do better than random minutes, so against the unconditional the signal is also ~0 (gross 1.15/0.01 vs 0.31)",
+  "+1.5% day filter (information)": "RED_STOP 17,160 / RED_START 15,419: lifts -1.8..+0.3 bp, none positive in both halves on ratchet",
+  "output": "ai_reports/rsi2_colour/red_screen.json (mini), commit cb81f8bc"
  }
 }
