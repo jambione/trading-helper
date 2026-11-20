@@ -53,6 +53,7 @@
   "controls": "later and unconditional controls computed for CONFIRMED rows, each > 0 in both halves",
   "exits": "name and SPY both need a close at the exit bar",
   "power": "day-clustered projected MDE from pre-event returns for the separation and the confirmed lift",
-  "lost data": "no bars + no prior warm-up + no control > 2% of events = no verdict"
+  "lost data": "no bars + no prior warm-up + no control > 2% of events = no verdict",
+  "peer price": "same-minute peers have no $2 floor (the prereg sets none); disclosed"
  }
 }

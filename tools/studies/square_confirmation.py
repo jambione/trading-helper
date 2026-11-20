@@ -418,7 +418,7 @@ def score():
             "confirmed_lift_px_ge_20": day_t([(r["day"], r["lift"]) for r in rows if r["group"] == "CONFIRMED" and r["px"] >= 20])[0],
             "market_split": {bk: day_t([(r["day"], r["lift"]) for r in rows if r["group"] == "CONFIRMED" and r["mkt"] == bk])[0]
                              for bk in ("down<=-1%", "flat", "up>=+1%")}}
-    out = {"prereg": "docs/studies/square_confirmation_prereg.json (amended_1)", "counts": counts, "power": pwj["power"],
+    out = {"prereg": "docs/studies/square_confirmation_prereg.json (amended_1, amended_2)", "counts": counts, "power": pwj["power"],
            "separation": {"h1": sa, "t_h1": ta, "h2": sb, "t_h2": tb, "pooled": sp, "t": tsep},
            "confirmed_lift": {"h1": ca, "t_h1": tca, "h2": cb, "t_h2": tcb, "pooled": cp, "t": tc},
            "controls": {"same_name_later": {"h1": la, "h2": lb}, "unconditional": {"h1": ua, "h2": ub}, "gaps_ok": gap_ok,
