@@ -1,0 +1,34 @@
+{
+ "name": "midpoint_fill",
+ "written": "2026-11-20, before any script was written or any quote/trade fetched for this purpose",
+ "operator": "11/20: 'Yes, pre-register the midpoint test' (option 4: cut the cost instead of finding a bigger edge)",
+ "question": "For the desk's own entries, does resting a buy limit at the midpoint for a short wait (and buying at the ask if it has not filled) cost less than buying at the ask immediately - after counting the trades where the price runs away while we wait?",
+ "prior_work_disclosed": "flow_resting 10/22 FAIL (a resting bid on strong buy flow: per fill -8 bp, fills came on the trades that went against us); move_to_cost 10/30 NOT SUPPORTED (move-to-cost is just the spread); paper-limit-fills note (Alpaca paper fills a limit only when the SIP bid reaches it, so paper cannot validate this); trading-cost-is-the-spread (fills at the touch, loss ~ half the cost). None measured a midpoint wait with an at-the-ask fallback on the desk's entries.",
+ "prior": "LOW-MODERATE, about 25%: half the spread is on the table on every fill, but the entries are momentum entries, which are the ones most likely to run away while waiting.",
+ "events": "every desk BUY submission in ai_reports/fills/*.jsonl ('event': 'submit', 'action': 'BUY') from 2026-09-24 to 2026-11-19 (1,563 counted before any quote was read); decision moment tau = the submission timestamp. Halves split by date at 2026-10-22.",
+ "data": "Alpaca SIP historical quotes and trades (feed=SIP) for each event: quotes in [tau - 60 s, tau + 65 s] and trades in [tau, tau + 65 s]; fetched only after 16:05 ET (data key shared with the live dashboard); cached under ai_reports/midpoint_fill/.",
+ "policies": {
+  "BASE (today)": "buy at the SIP ask in force at tau (the last quote at or before tau)",
+  "MID30 (primary)": "a buy limit L = the SIP midpoint at tau rounded DOWN to the cent, resting 30 s. FILLED if within (tau, tau + 30 s] a SIP trade prints strictly BELOW L, or the SIP ask is at or below L; fill price L. If not filled, buy at the SIP ask in force at tau + 30 s (chase).",
+  "information": "MID10 and MID60 (10 s and 60 s waits); SKIP variants (no chase: unfilled orders are dropped) with the 15-minute markout of filled vs skipped trades; a 'trade at L counts' fill rule (optimistic)"
+ },
+ "statistic": "saving per event = (BASE price - policy price) / mid(tau) in bp; positive = cheaper than today. Because both policies end in the same position held to the same exit, the entry price difference is the whole return difference for a chase policy. Day-clustered t.",
+ "pass (MID30)": "mean saving >= +1.0 bp in BOTH halves and pooled day-clustered t >= 2.0; also reported: fill rate, mean saving on filled vs chased events, and the 95th percentile of chase cost",
+ "power": "MDE = 2.8 x day-clustered SE printed before the mean; MDE > 1.5 bp in either half = UNPROVEN",
+ "fail": "anything short of pass. No retuning of the wait, the rounding, or the fill rule; a change is a new prereg.",
+ "caveats": [
+  "Fills are modelled from public SIP prints, not our own order: a strict trade-through rule is used so a modelled fill needs someone to sell below our price; queue position and hidden liquidity are not modelled, which can go either way.",
+  "Paper cannot validate a midpoint fill (Alpaca paper fills limits only when the bid reaches them), so a PASS leads to a small LIVE-account trial only with the operator's separate approval, never automatically.",
+  "Desk entries are momentum entries on 1-minute arms; results may not transfer to other entry rules."
+ ],
+ "checks": [
+  "unit tests: rounding down to the cent; strict trade-through fill; ask-at-or-below fill; chase at the ask at tau + 30 s; saving sign",
+  "a null canary: on events where the quote is frozen for 30 s with no prints, MID30 must equal BASE + chase = 0 saving",
+  "counts printed: events, no quote at tau, crossed or locked quotes (skipped), filled, chased, missing data"
+ ],
+ "if_pass": "result-skeptic review; then the operator decides on a small live-order trial (a few days, a handful of shares) - the only way to see real midpoint fills",
+ "if_fail": "record it: on these entries, waiting at the mid loses more to runaway prices than it saves; the spread is the price of the momentum entry",
+ "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)",
+ "script": "tools/studies/midpoint_fill.py (to be written after the review)",
+ "status": "DROPPED 2026-11-20 by the operator ('No, drop it') after the result-skeptic pre-run review (FIX FIRST, 7 findings) showed the exit-side midpoint_policy study (11/03) already measured the effect: +0.27 bp/exit PROMISING with the calibrated fill rule; entry-side ceiling ~half a 1-cent spread. No script written, no data fetched."
+}
