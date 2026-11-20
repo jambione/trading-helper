@@ -25,6 +25,7 @@ def test_fetch_event_drops_messages_at_or_after_t(monkeypatch):
     monkeypatch.setattr(sb, "get", fake_get2)
     monkeypatch.setattr(sb, "iso_ts", lambda s: dt.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
     cal = sb.Calib([(1_000_000.0, 1_000_000), (2_000_000.0, 2_000_000)])
-    msgs, req = sb.fetch_event(cal, 1_500_000.0, "X")
+    msgs, req, valid = sb.fetch_event(cal, 1_500_000.0, "X")
+    assert valid
     assert len(msgs) == 30 and all(int(m["id"]) < 1_500_000 for m in msgs)
     assert 1_500_000 - 60 <= max(int(m["id"]) for m in msgs) < 1_500_000   # the latest message strictly before T

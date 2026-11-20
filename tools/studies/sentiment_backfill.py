@@ -145,27 +145,45 @@ def anchor(cal, target_ts, sym="SPY", iters=24):
 
 
 def fetch_event(cal, ts, sym):
-    """Latest WANT messages created strictly before ts. -> (messages before ts, requests used)."""
+    """Latest WANT messages created strictly before ts. -> (messages before ts, requests used, valid).
+    Coverage check (skeptic 11/20 #2): valid only if some page's newest message is at or after ts (so nothing between
+    the start point and ts can be missing), or a query with max = id(ts + 3 h) confirms the symbol had no message
+    between its newest one and ts."""
     margin = min(max(cal.gap(ts) * 0.2, 600), 3 * 3600)
     mx = cal.id_at(ts + margin)
-    got, req = [], 0
+    got, req, covered = [], 0, False
+    first = True
     while req < MAX_PAGES:
         d = get(f"https://api.stocktwits.com/api/2/streams/symbol/{sym}.json?max={mx}")
         req += 1
         ms = d.get("messages") or []
+        if first:
+            first = False
+            if ms and iso_ts(ms[0]["created_at"]) >= ts:
+                covered = True
+            elif not covered:
+                d2 = get(f"https://api.stocktwits.com/api/2/streams/symbol/{sym}.json?max={cal.id_at(ts + 3 * 3600)}")
+                req += 1
+                ms2 = d2.get("messages") or []
+                for m in ms2:
+                    cal.add(iso_ts(m["created_at"]), int(m["id"]))
+                if not ms2 or iso_ts(ms2[0]["created_at"]) >= ts or (ms and ms2[0]["id"] == ms[0]["id"]):
+                    covered = True
+                    if ms2 and iso_ts(ms2[0]["created_at"]) >= ts:
+                        ms = ms2               # restart from the confirmed page
         if not ms:
             break
         for m in ms:
             t = iso_ts(m["created_at"])
             cal.add(t, int(m["id"]))
-            if t < ts:
+            if t < ts and all(int(m["id"]) != int(g["id"]) for g in got):
                 got.append(m)
         oldest = iso_ts(ms[-1]["created_at"])
         if len(got) >= WANT or oldest < ts - 24 * 3600:
             break
         mx = int(ms[-1]["id"]) - 1
     got.sort(key=lambda m: -int(m["id"]))
-    return got[:WANT], req
+    return got[:WANT], req, covered
 
 
 def run():
@@ -187,9 +205,9 @@ def run():
         key = f"{day}|{sym}"
         if key in cache["events"]:
             continue
-        msgs, req = fetch_event(cal, ts, sym)
+        msgs, req, valid = fetch_event(cal, ts, sym)
         summ = parse_stream({"messages": msgs}, ts)
-        cache["events"][key] = {"ts": ts, "et": et, **summ, "requests": req,
+        cache["events"][key] = {"ts": ts, "et": et, **summ, "requests": req, "valid": valid,
                                 "oldest_age_min": round((ts - iso_ts(msgs[-1]["created_at"])) / 60, 1) if msgs else None}
         if n % 10 == 0:
             cache["calib"] = list(zip(cal.t, cal.i))[-20000:]

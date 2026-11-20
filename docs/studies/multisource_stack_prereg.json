@@ -1,0 +1,59 @@
+{
+ "name": "multisource_stack",
+ "written": "2026-11-20, before any script was written or any price/outcome fetched for this purpose (the Stocktwits sentiment backfill - inputs only - started minutes earlier)",
+ "operator": "11/20: 'Stack only is valuable if we have different sources in our stack ... We need to have multiple sources' -> 'Can we possibly start testing this before 20 to 30 sessions?' -> 'yeah' -> 'Can we start testing the stack?'",
+ "question": "On past Stocktwits trending entries (attention), does adding layers from OTHER sources - crowd sentiment, news, the market/sector, short interest - pick the entries that go up over the next 30 minutes, alone and stacked, better than trending entries without them at about the same time?",
+ "builds_on": "docs/studies/trending_two_step_prereg.json amended_1 for the event set, entry, matching, look-ahead, cost, API and control rules (cited, not repeated). That study's STEP 2 (price/volume direction variables) is unchanged and is scored in the same run as a separate block.",
+ "prior_work_disclosed": "trending as a desk source -0.031R (unconditioned); stack_search 11/20 (150 price/volume stacks: NO EDGE); news source 11/17 (fails on real spreads); short squeeze (FINRA DTC breakouts) underpowered; analyst upgrades underpowered; Discord momentum alerts fade premarket. Crowd SENTIMENT was never tested; no study stacked layers from different sources.",
+ "prior": "LOW, about 10%",
+ "events": "trending_two_step amended_1: first st_new per name-day on weekdays 09:35-15:00 ET, 2026-08-03..2026-11-19 (11/20 excluded), monitor-down stretches dropped, entry at the open of the first SIP bar within 2 minutes after the event, price at entry >= $2 (PRIMARY). Expected ~1,486 events before the floor.",
+ "outcome": "30-minute GROSS return from entry to the close 30 minutes later; net = gross - (half the entry spread + half the exit spread) for PROFITABLE",
+ "halves": "2026-08-03..09-30 and 2026-10-01..11-19",
+ "layers (fixed here; all known strictly before the event minute)": {
+  "S SENTIMENT (Stocktwits)": "S1 = bull_share >= 0.70 with >= 5 tagged messages among the latest 30 before the event (ai_reports/sentiment_backfill, the same summary the live logger records)",
+  "N NEWS (Alpaca news)": "N1 = at least one headline in the 24 h before the event and none of news_feed's BEARISH words (offering, dilution, pricing of, registered direct, shelf ...) in that window",
+  "R MARKET/SECTOR": "R1 = SPY 15-minute return before the event > 0 AND the name's sector ETF 15-minute return > 0, where the sector ETF is the one of XLK XLF XLE XLV XLI XLY XLP XLU XLB XLRE XLC SMH XBI IBIT KRE with the highest correlation of daily returns to the name over the 60 sessions before the event day (SPY alone if no ETF has correlation >= 0.3)",
+  "F SHORT INTEREST (FINRA)": "F1 = days to cover >= 5 in the latest FINRA file whose publication (settlement + 8 business days) precedes the event day"
+ },
+ "cells (6 hypotheses)": {
+  "K1": "S1",
+  "K2": "N1",
+  "K3": "R1",
+  "K4": "S1 and N1",
+  "K5": "S1 and R1",
+  "K6": "S1 and N1 and R1 (the full stack)"
+ },
+ "information only": "F1 alone and stacked (F1 & S1); S1 at 0.60 and 0.80; sentiment message pace (msgs/hour top tertile); SSR-listed names; each cell at >= $20 (the desk floor)",
+ "statistic": "for each cell, each ON event minus the mean of OFF trending events (same cell's condition false) on the same day within +/-30 minutes, widened to +/-60, then same day with a time-of-day term (trending_two_step amended_1 #6); day-clustered t",
+ "pass (per cell)": {
+  "EDGE": "difference > 0 in BOTH halves and pooled day-clustered t >= 2.64 (two-sided 5% over 6 cells); the same-name later and unconditional controls also > 0; mismatch rule as in trending_two_step",
+  "PROFITABLE (only with EDGE)": "the ON group's mean net >= +10 bp in both halves after the real spread, and > 0 with the desk's 15 bp entry gate on >= 100 gated events"
+ },
+ "power": "MDE = 2.8 x day-clustered SE printed per cell and half BEFORE any mean; MDE > 60 bp in either half = UNDERPOWERED -> UNPROVEN. Stated in advance: with ~1,486 events, stacked cells (K4-K6) may hold only a few hundred ON events, so only large effects are detectable; this is a fast first read, not the final word.",
+ "holdout": "this history has been read by earlier trending studies, so any PASS is at most PROMISING; the forward check is the stack logger's sessions from 2026-11-20 (live layers, same definitions), scored after 20 sessions",
+ "data and fetch": "SIP 1-minute and 60-day daily bars for event names and the ETFs, Alpaca news, SIP quotes: after 16:05 ET only (shared data key), batched, retry on 429, > 2% failed = no verdict; Stocktwits backfill at a polite pace (one request per 12 s)",
+ "checks": [
+  "unit tests: each layer from hand-made inputs; news window strictly before the event; FINRA publication lag; sector ETF choice uses only prior sessions",
+  "a null canary: layers assigned at random with the same ON rates must not pass; a planted +60 bp on K6 ON events must pass",
+  "counts printed: events, ON/OFF per cell and half, unmatched share, sentiment coverage (events with < 5 tagged messages), news coverage"
+ ],
+ "fail": "anything short of pass. No retuning of the 0.70 sentiment line, the 24 h news window, the 15-minute direction windows, the sector rule or the 30-minute hold; a change is a new prereg.",
+ "if_pass": "result-skeptic review; then the forward check on the stack logger's live sessions before any desk change",
+ "if_fail": "record which layers moved the difference at all; the forward logger keeps collecting for a larger sample",
+ "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)",
+ "script": "tools/studies/multisource_stack.py (to be written after the review)",
+ "amended_1": {
+  "when": "2026-11-20, after result-skeptic round 1 (FIX FIRST: 9 findings), before any price or outcome fetch; the backfill (inputs only) was restarted with the coverage fix",
+  "1 power gate (disclosed loosening)": "before any outcome fetch: ON/OFF counts per cell and half from the inputs, and the projected MDE from the SD of the pre-event 30-minute return (no outcomes). A cell above 60 bp is UNPROVEN-by-design and not scored for EDGE. DISCLOSED: the parent trending_two_step set a 25 bp bar (projected ~70 bp); this prereg moves it to 60 bp because the operator asked for a fast first read; only large effects can show.",
+  "2 backfill coverage": "an event's sentiment is valid only if a page's newest message is at or after T, or a query with max = id(T + 3 h) confirms nothing was missed (tools/studies/sentiment_backfill.py 'valid'); invalid events are counted and dropped from S cells, never set OFF",
+  "3 deleted messages": "validation from 2026-11-20: the backfill method is run on events the live logger also recorded; if S1 agrees < 90% of the time there is no verdict on S cells. The bull_share distribution is reported by half (older months have had longer to lose deleted spam).",
+  "4 forward definitions": "forward S = the latest live logger record at or before T and <= 10 minutes old, else missing; forward R = the 15-minute change from the logger's ETF snapshot series (IEX), feed stated",
+  "5 coverage, not OFF": "K1, K4, K5, K6 use only events with valid S and >= 5 tagged messages; uncovered events are excluded from both sides and counted",
+  "6 news": "Alpaca news by created_at, fully paginated; headlines tagging >= 5 symbols (movers recaps) skipped; the BEARISH list as in news_feed.py but 'halt' resumption headlines excluded and 'ATM' matched case-sensitively; the N1 ON rate printed; if > 85% ON, K2 (and N in K4/K6) is information only",
+  "7 R1 under matching": "same-time matching cancels SPY, so K3 effectively tests the sector-ETF sign; stated. Information: the unmatched R1 ON mean vs the unconditional random-minute mean. Names with < 40 prior sessions use SPY as their ETF.",
+  "8 FINRA": "publication = settlement + 8 business days on the exchange holiday calendar; F1 coverage per file printed; F1 stays information only",
+  "9 controls": "for S cells only the same-name later and unconditional controls apply (no sentiment exists for non-trending names); each printed beside the random-minute mean, a gap > 2 SE blocks. The parent STEP 2 block and every information line are never promoted to a result.",
+  "forward power": "stated now: ~20 sessions x ~14 events gives K6 ~30 ON events, also underpowered; the forward window extends until K6 has >= 150 ON events (estimated 2-3 months), with an interim read at 20 sessions as information"
+ },
+ "status": "amended_1 after skeptic round 1; backfill running with the coverage fix; script next"
+}
