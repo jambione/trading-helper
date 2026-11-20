@@ -132,9 +132,6 @@ func displayID(containing point: CGPoint) -> CGDirectDisplayID {
 }
 
 func captureWindow(_ win: WinMeta) -> CGImage? {
-    if !CGPreflightScreenCaptureAccess() {
-        _ = CGRequestScreenCaptureAccess()
-    }
     guard let createImage = _cgDisplayCreateImage else { return nil }
 
     let center = CGPoint(x: win.bounds.midX, y: win.bounds.midY)
@@ -201,9 +198,11 @@ func captureSCK(ownerNeedle: String, titleNeedle: String?) -> CGImage? {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 // One pass: (lines, nil) on success, ([], error) on failure.
+var askedTCC = false   // ask macOS once per process; a looping agent must not re-prompt every pass
+
 func capturePass() -> ([String], String?) {
     if !CGPreflightScreenCaptureAccess() {
-        _ = CGRequestScreenCaptureAccess()
+        if !askedTCC { askedTCC = true; _ = CGRequestScreenCaptureAccess() }
         if !CGPreflightScreenCaptureAccess() {
             return ([], "Screen Recording not granted. System Settings → Privacy & Security → " +
                         "Screen & System Audio Recording → enable Discord OCR, then re-run.")
