@@ -76,7 +76,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 echo "Codesigning ${DISPLAY_NAME}.app ($IDENT) …"
-codesign --force --deep --sign - --identifier "$IDENT" "$APP"
+# Designated requirement by IDENTIFIER, not the ad-hoc cdhash: macOS keys the Screen Recording grant to this
+# requirement, so with the default (cdhash) every rebuild looked like a new app and lost the grant (11/20).
+codesign --force --deep --sign - --identifier "$IDENT" -r="designated => identifier \"$IDENT\"" "$APP"
 
 # Flat path expected by discord_source.py / docs
 ln -sfn "DiscordOCR.app/Contents/MacOS/discord_ocr" "$LINK"

@@ -201,15 +201,16 @@ func captureSCK(ownerNeedle: String, titleNeedle: String?) -> CGImage? {
 var askedTCC = false   // ask macOS once per process; a looping agent must not re-prompt every pass
 
 func capturePass() -> ([String], String?) {
-    if !CGPreflightScreenCaptureAccess() {
-        if !askedTCC { askedTCC = true; _ = CGRequestScreenCaptureAccess() }
-        if !CGPreflightScreenCaptureAccess() {
-            return ([], "Screen Recording not granted. System Settings → Privacy & Security → " +
-                        "Screen & System Audio Recording → enable Discord OCR, then re-run.")
-        }
-    }
+    // Preflight can read false in a launchd agent even after the grant (11/20), so it only decides whether to ASK;
+    // the capture itself is always attempted and the denial is reported only if it fails.
+    let preflight = CGPreflightScreenCaptureAccess()
+    if !preflight && !askedTCC { askedTCC = true; _ = CGRequestScreenCaptureAccess() }
     sckError = ""
     var captured: CGImage? = captureSCK(ownerNeedle: ownerName, titleNeedle: titleSub)
+    if captured == nil && !preflight {
+        return ([], "Screen Recording not granted (preflight false; ScreenCaptureKit: \(sckError)). System Settings → " +
+                    "Privacy & Security → Screen & System Audio Recording → enable Discord OCR.")
+    }
     if captured == nil {
         guard let win = findWindow(ownerNeedle: ownerName, titleNeedle: titleSub) else {
             return ([], "no on-screen window found for owner '\(ownerName)' — is Discord open and visible? (ScreenCaptureKit: \(sckError))")
