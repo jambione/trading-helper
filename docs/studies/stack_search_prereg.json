@@ -1,0 +1,76 @@
+{
+ "name": "stack_search",
+ "written": "2026-11-20, before any script was written or any outcome computed",
+ "operator": "11/20: 'Everything in our system is not an isolated event. They all work together to prove a direction and a movement' -> 'Should we have a loop of AB testing with all of our indicators to see what fits well together and performs the best' -> 'Yes, pre-register the stack search and build the logger'",
+ "question": "Among fixed three-layer stacks (a MOVEMENT condition, then a DIRECTION condition, then a TIMING trigger), built only from price/volume data the desk can compute live, is the best stack better than the best of the same search run on random entries, and does it hold on later data and pay the real spread?",
+ "prior_work_disclosed": "opening_grid 11/19 (72 signal x window x filter stacks at the open: FAIL, best net -3.5 bp); combined score 10/9 (failed out of period); confirmation indicators 10/21 (FAIL); needle study (15 features); %R, RSI-2, dips, pullbacks, ORB, VWAP, RVOL each failed alone. New here: conditional three-layer stacks over the whole session, with a luck null over the whole search. The social layers (trending score, mentions) are NOT in this search: they were not recorded; com.jambi.stack-logger records them from 2026-11-20 for a later search.",
+ "prior": "LOW, about 10-15%",
+ "data": "warehouse SIP 1-minute bars, top-400 by prior-day dollar volume, ETFs/ETPs excluded (the opening_grid universe), regular hours, with the prior session for warm-up. SEARCH 2026-04-28..2026-08-31 (halves split 2026-07-15); CONFIRM 2026-09-01..2026-11-19, opened ONCE for the chosen stack after the choice is written with a timestamp; FORWARD the next 20 live sessions.",
+ "name filter": "price $20-$400 at bar t (the desk band); signal bar 09:45-15:30 ET",
+ "layers (thresholds fixed here; everything from bars that closed at or before t)": {
+  "MOVEMENT": {
+   "M0": "none",
+   "M1 RVOL": "cumulative RTH volume to t / the prior session's cumulative RTH volume to the same minute >= 2.0",
+   "M2 GAP": "|open / prior close - 1| >= 3%",
+   "M3 RANGE": "(max high - min low) of the 30 bars ending t >= 2 x the median of the prior session's 30-bar ranges",
+   "M4 MOVER": "|close / prior close - 1| >= 3%"
+  },
+  "DIRECTION": {
+   "D0": "none",
+   "D1 UP": "close / prior close - 1 > 0",
+   "D2 VWAP": "close > session VWAP (from 09:30)",
+   "D3 MOM": "close[t] / close[t-15] - 1 > 0",
+   "D4 SLOW": "slow %R (112, EWM 3, the desk's slow line, prior-session warm-up) rose over the last 5 bars",
+   "D5 SPY": "SPY close[t] / close[t-15] - 1 > 0"
+  },
+  "TIMING": {
+   "T0": "any bar (the first bar where M and D both hold)",
+   "T1 TURN": "close[t] > close[t-1] and low[t] > low[t-1]",
+   "T2 BREAK": "close[t] > max high of bars t-5..t-1",
+   "T3 GREEN END": "RSI-2 (Wilder, ai_entry_watch.cm_rsi_series arithmetic) back above 10 after a bar at or below 10",
+   "T4 EXH": "fast %R (21, EWM 7) crosses to >= -20 (from below)"
+  }
+ },
+ "stacks": "every combination M x D x T = 5 x 6 x 5 = 150 stacks. Event = a bar t where M and D hold at the close of t and T fires at t; one entry per (stack, name) per 30 minutes.",
+ "trade": "buy the OPEN of t+1; PRIMARY exit the CLOSE of t+30 (30-minute hold); information: 15-minute hold and the desk bracket",
+ "score (SEARCH, gross)": "lift = gross - the mean of up to 5 other names passing the name filter at bar t (same entry and exit bars); day-clustered t of lift",
+ "choice": "on SEARCH: the stack with the highest day-clustered t of lift among stacks with >= 300 events in EACH half; the choice and its timestamp are written to ai_reports/stack_search/choice.json before CONFIRM is read",
+ "luck null": "200 runs of the whole search where each stack's events are replaced by the same number of random (name, minute) pairs passing only the name filter (same days, same hold, same control), the winner chosen by the same rule; the chosen real stack's mean lift must exceed the 95th percentile of the 200 null winners' mean lifts",
+ "pass (all required)": {
+  "EDGE on SEARCH": "chosen stack lift > 0 in both halves, pooled day-clustered t >= 3.0, and above the luck-null 95th percentile; the same-name later control (entry in exit+2..exit+62) and the unconditional random-minute control also show lift > 0",
+  "PROFITABLE on SEARCH": "mean net >= +2.0 bp in both halves after the real SIP spread (half at entry + half at exit, median quote over 60 s), 15 bp entry-spread gate, >= 300 traded per half; net > 0 at 1.5 x spread; top-1% winsorized net > 0",
+  "CONFIRM (once)": "lift > 0 with day-clustered t >= 2.0 and mean net > 0 on 9/1-11/19",
+  "FORWARD": "20 live sessions, mean net > 0, day-clustered t >= 1.5, scored on the live IEX feed after a check that study and live fire on the same bars on one replayed day"
+ },
+ "power": "MDE (3.84 x day-clustered SE) printed per stack and half; the chosen stack needs MDE <= 10 bp in each half, else UNPROVEN",
+ "gross-first and early stop": "quotes are fetched only for the chosen stack (and its top-3 runners-up as information) and only if its gross upper bound reaches +2 bp; early_stop.screen on the first quarter of SEARCH days",
+ "information_only": [
+  "the top-20 stacks table (n, lift by half, t); marginal lift of each layer value averaged over the others",
+  "15-minute hold and the desk bracket; >= $10 band",
+  "runner-ups on CONFIRM, read only after the choice is written"
+ ],
+ "checks": [
+  "unit tests: each layer condition on hand-made bars; refractory; same-minute control excludes the event name",
+  "invariance: conditions computed from bars truncated at t equal the full-day computation",
+  "canary: a planted +15 bp on events of one stack is chosen and passes EDGE; with no plant, the search's winner does not beat the null",
+  "counts printed: events per stack and half, refractory skips, missing bars"
+ ],
+ "fail": "anything short of pass. No retuning of thresholds, the 30-minute hold, the refractory or the choice rule; a changed stack set is a new prereg on data that has now been seen.",
+ "if_pass": "result-skeptic review of the positive; IEX rescore; forward holdout; then a default-off arm",
+ "if_fail": "record the marginal layer table (which layers moved lift at all); the price-only stack search is closed; the social-layer search waits for 20-30 sessions of stack_log",
+ "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)",
+ "script": "tools/studies/stack_search.py (to be written after the review)",
+ "amended_1": {
+  "when": "2026-11-20, after result-skeptic round 1 (FIX FIRST: 9 findings, 3 blocking), before any script or outcome",
+  "1 matched luck null (replaces 'luck null')": "for each stack, the same count of random minutes drawn from bars on the same name-days where that stack's M and D hold (T dropped), same refractory and cap, winner chosen by the same rule; for M0/D0 a plain random minute. 200 runs; the chosen stack's mean lift must exceed the 95th percentile of the null winners'.",
+  "2 control and beta (replaces the primary lift)": "PRIMARY lift = beta-adjusted event gross minus the mean beta-adjusted gross of up to 5 other names at bar t that pass the name filter AND the stack's M condition; beta-adjusted gross = return - beta x SPY return over the same bars, beta from the prior 20 sessions' 1-minute returns. The unmatched (any-name) control is reported. D5 SPY is a time-only condition: against a same-minute control it measures beta, which beta adjustment removes; it is kept and this is stated.",
+  "3 canaries (replace the canary check)": "(a) no-plant canary: the full search on SEARCH with each day's gross matrix rolled by a random day offset (outcomes detached from conditions) must not beat its own null; (b) plant +15 bp on ALL M4 bars (selection, no timing): an M4 stack may be credited but no stack with T != T0 may be credited over its M4/T0 counterpart; (c) plant +15 bp on one named stack's events: it is chosen and passes EDGE",
+  "4 choice and cap": "events capped at 1,000 per stack per half by the lowest sha256('stack'|day|sym|t); choose only among stacks with MDE (3.84 x day-clustered SE) <= 10 bp in each half; the null is capped the same way",
+  "5 window": "signal bar 09:45-15:29 (the 30-minute exit at bar t+30 <= 389). M3 uses in-session bars only, so M3 stacks start at 10:00. The same-name later control cannot exist after ~14:58; its coverage is printed.",
+  "6 T0 and refractory": "T0 = every bar where M and D hold, subject to the one-entry-per-(stack,name)-per-30-minutes refractory (so the first such bar, then the next one 30+ minutes later)",
+  "7 live parity": "prior close = the 15:59 RTH bar close; RSI-2 seeded from the prior session's closes; both %R lines use minute_grid's prior-session warm-up (last 112 bars); the desk's slow %R includes premarket and the study's does not, so FORWARD adds a parity check on D4 and T4; the invariance test covers all 15 layer conditions",
+  "8 contamination": "CONFIRM 9/1-11/19 overlaps opening_grid and many single-layer studies: reported as semi-held-out; only FORWARD (20 sessions, IEX) is clean; a pass before FORWARD is at most PROMISING",
+  "9 early stop": "early_stop.screen on the SEARCH-rule winner chosen on the screen days only, with the +2 bp net bar; the screen days are part of SEARCH (disclosed)"
+ },
+ "status": "amended_1 after skeptic round 1; script next, then skeptic code review"
+}
