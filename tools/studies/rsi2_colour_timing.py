@@ -658,6 +658,8 @@ def eth_bars(cl, sym, day):
     from alpaca.data.timeframe import TimeFrame
     from alpaca.data.enums import DataFeed, Adjustment
     from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    ET = ZoneInfo("America/New_York")
     d = datetime.fromisoformat(day + "T04:00").replace(tzinfo=ET)
     p = d - timedelta(days=3 if d.weekday() == 0 else 1)
     r = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=sym, timeframe=TimeFrame.Minute, start=p,
