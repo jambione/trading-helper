@@ -256,3 +256,5 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 - arm_gates_check: A/B/C/D all UNCLEAR (|lift| ~1 bp, |t| ~1); gates neither help nor hurt. No change.
 - low_heat_rising: FAIL (desk -7.7 bp, heat<20 -8.6 bp). steady_5m: BOX5/TREND5/LOWHEAT5 all FAIL (-7 to -10 bp). morning_picks_hold: VOL/RS/GAP FAIL.
 - opening_square (11/19): FAIL -10.7 bp decide, -11.5 confirm.
+- 11/20 DAILY %R SWING (Path A, docs/studies/daily_wr_swing_prereg.json): WR3 FAIL, WR5 FAIL, WR10 UNPROVEN (underpowered). Lift vs other uptrend names over the same days +4.6 / +7.1 / +15.0 bp (t 0.9 / 1.1 / 1.7) against a 30 bp cost; first half negative, late 2020-2022 positive only. RSI-2 info line same shape (+11.6, t 1.3). 10-slot account -3..-17%/yr vs SPY +10%. Daily %R as designed does not pay.
+- 11/20 RSI-2 COLOUR TIMING (docs/studies/rsi2_colour_timing_prereg.json): script + tests done; chart match on 11/19 FIGS/COLD ~6/10 under both colour definitions -> waiting on the operator's panel name/settings before scoring.
