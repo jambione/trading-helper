@@ -213,6 +213,7 @@ def build_day(day, d, pday, betas):
         L_[m] = control_lifts(G, Mmat[m], order, pxok).astype(np.float32)
     events = {}
     pools = {}
+    skips = {}
     for m in MS:
         for dd in DS:
             md = Mmat[m] & np.array([lay[dd] for lay in lays]) & pxok & win[None, :] & np.isfinite(L_[m])
@@ -224,8 +225,10 @@ def build_day(day, d, pday, betas):
                 mask = md & np.array([lay[tt] for lay in lays])
                 ev = [(k, t) for k in range(U) for t in refractory_pick(mask[k])]
                 events[(m, dd, tt)] = np.array(ev, np.int16).reshape(-1, 2)
+                skips[(m, dd, tt)] = int(mask.sum()) - len(ev)
     return {"day": day, "syms": d["syms"], "L": L_, "events": events, "pools": pools, "G": G.astype(np.float32),
-            "M4": Mmat["M4"], "px": pxok}
+            "M4": Mmat["M4"], "px": pxok, "Mmat": Mmat, "skips": skips,
+            "missing_bars": int(np.isnan(d["c"][:, T_LO:T_HI + 1]).sum()), "beta_default": int(sum(b == 1.0 for b in betas))}
 
 
 def load_days_pairs(lo, hi):
@@ -292,18 +295,18 @@ def cap_rows(rows, cap=CAP):
 
 
 def stack_stats(rows):
-    a = cap_rows([r for r in rows if r[0] < SPLIT])
-    b = cap_rows([r for r in rows if r[0] >= SPLIT])
+    ra, rb = [r for r in rows if r[0] < SPLIT], [r for r in rows if r[0] >= SPLIT]
+    a, b = cap_rows(ra), cap_rows(rb)
     ma, sea, ta, na = day_stats([r[3] for r in a], [r[0] for r in a])
     mb, seb, tb, nb = day_stats([r[3] for r in b], [r[0] for r in b])
     mp, sep, tp, npp = day_stats([r[3] for r in a + b], [r[0] for r in a + b])
-    return {"n_h1": na, "n_h2": nb, "lift_h1": ma, "lift_h2": mb, "t": tp, "lift": mp,
+    return {"n_raw_h1": len(ra), "n_raw_h2": len(rb), "n_h1": na, "n_h2": nb, "lift_h1": ma, "lift_h2": mb, "t": tp, "lift": mp,
             "mde_h1": 3.84 * sea if sea else None, "mde_h2": 3.84 * seb if seb else None, "rows": a + b}
 
 
 def choose(stats):
     ok = [(s["t"], k) for k, s in stats.items() if s["t"] is not None and (s["mde_h1"] or 99) <= MDE_MAX
-          and (s["mde_h2"] or 99) <= MDE_MAX]
+          and (s["mde_h2"] or 99) <= MDE_MAX and (s.get("n_h1") or 0) >= 300 and (s.get("n_h2") or 0) >= 300]
     return max(ok)[1] if ok else None
 
 
@@ -324,7 +327,8 @@ def null_winner(pools, counts, rng):
         _, sea, _, _ = day_stats(*la)
         _, seb, _, _ = day_stats(*lb)
         mp, _, tp, _ = day_stats(np.concatenate([la[0], lb[0]]), np.concatenate([la[1], lb[1]]))
-        st[s] = {"t": tp, "lift": mp, "mde_h1": 3.84 * sea if sea else None, "mde_h2": 3.84 * seb if seb else None}
+        st[s] = {"t": tp, "lift": mp, "mde_h1": 3.84 * sea if sea else None, "mde_h2": 3.84 * seb if seb else None,
+                 "n_h1": n1, "n_h2": n2}
     w = choose(st)
     return st[w]["lift"] if w else None
 
@@ -345,9 +349,10 @@ def gather(lo, hi, variant="base", plant=None):
         if variant == "permute":
             perm = np.random.default_rng(hkey("stack-canary", day) % 2 ** 32).permutation(len(syms))
             L = {m: L[m][perm] for m in MS}
-        if variant == "plantM4":
-            for m in MS:
-                L[m] = L[m] + 15.0 * r["M4"]
+        if variant == "plantM4":     # plant +15 bp on the GROSS of every M4 bar, then rebuild the matched lifts
+            Gp = r["G"].astype(float) + 15.0 * r["M4"]
+            order = [np.random.default_rng(hkey("stack-ctl", day, t) % 2 ** 32).permutation(len(syms)) for t in range(390)]
+            L = {m: control_lifts(Gp, r["Mmat"][m], order, r["px"]) for m in MS}
         half = 0 if day < SPLIT else 1
         for s, ev in r["events"].items():
             for k, t in ev:
@@ -384,7 +389,7 @@ def chosen_controls(rows):
     by_day = defaultdict(list)
     for r in rows:
         by_day[r[0]].append(r)
-    later, unc, ev_g, unc_g = [], [], [], []
+    later, unc, ev_g, unc_g, later_g = [], [], [], [], []
     for day, rr in by_day.items():
         c = pickle.load(open(CACHE / f"{day}.pkl", "rb"))
         G, px, syms = c["G"].astype(float), c["px"], c["syms"]
@@ -400,6 +405,7 @@ def chosen_controls(rows):
             if cand:
                 u = cand[hkey("stack-later", day, sym, t) % len(cand)]
                 later.append((day, g - G[k, u]))
+                later_g.append(G[k, u])
             if len(ok):
                 j, u = ok[hkey("stack-unc", day, sym, t) % len(ok)]
                 unc.append((day, g - G[j, u]))
@@ -409,7 +415,9 @@ def chosen_controls(rows):
     mu, _, tu, nu = day_stats([x[1] for x in unc], [x[0] for x in unc])
     return {"lift_same_name_later": ml, "t_later": tl, "n_later": nl, "lift_unconditional": mu, "t_unc": tu, "n_unc": nu,
             "event_gross_mean": float(np.mean([x[1] for x in ev_g])) if ev_g else None,
-            "unconditional_gross_mean": float(np.mean([x[1] for x in unc_g])) if unc_g else None}
+            "unconditional_gross_mean": float(np.mean([x[1] for x in unc_g])) if unc_g else None,
+            "later_gross_mean": float(np.mean(later_g)) if later_g else None,
+            "later_coverage": round(nl / max(len(rows), 1), 3)}
 
 
 def search_once(rows, pools, n_null=N_NULL, seed=20261120):
@@ -438,10 +446,21 @@ def search():
                                                  "written": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=1))
     out = {"prereg": "docs/studies/stack_search_prereg.json (amended_1)", "chosen": sid(win) if win else None,
            "null_winner_lift_p95": p95, "stacks": table}
+    out["verdict"] = "UNPROVEN (no stack with MDE <= 10 bp and n >= 300 in both halves)" if not win else None
+    counts = {"refractory_skips": defaultdict(int), "missing_bars": 0, "beta_default_name_days": 0}
+    for p in sorted(CACHE.glob("*.pkl")):
+        if SEARCH[0] <= p.stem <= SEARCH[1]:
+            r = pickle.load(open(p, "rb"))
+            for k, v in r["skips"].items():
+                counts["refractory_skips"][sid(k)] += v
+            counts["missing_bars"] += r["missing_bars"]
+            counts["beta_default_name_days"] += r["beta_default"]
+    out["counts"] = {k: (dict(v) if isinstance(v, defaultdict) else v) for k, v in counts.items()}
     if win:
         ctl = chosen_controls(stats[win]["rows"])
         out["chosen_controls"] = ctl
         out["EDGE"] = edge(stats[win], p95) and (ctl["lift_same_name_later"] or -1) > 0 and (ctl["lift_unconditional"] or -1) > 0
+        out["verdict"] = "EDGE on SEARCH (quotes, CONFIRM, FORWARD next)" if out["EDGE"] else "NO EDGE"
     # marginal layer table (information)
     marg = {}
     for i, vals in enumerate((MS, DS, TS)):
@@ -449,31 +468,43 @@ def search():
             ls = [stats[s]["lift"] for s in STACKS if s[i] == v and stats[s]["lift"] is not None]
             marg[v] = round(float(np.mean(ls)), 2) if ls else None
     out["marginal_layers"] = marg
-    # canaries (amended_1 #3)
+    # canaries (amended_1 #3, code-review fixes)
+    del rows, pools
     can = {}
     r_, p_ = gather(*SEARCH, variant="permute")
     st_, w_, p95_ = search_once(r_, p_, n_null=100)
-    can["a_permuted_no_edge"] = not (w_ and edge(st_[w_], p95_))
+    can["a_permuted_does_not_beat_null"] = not (w_ and (st_[w_]["lift"] or -99) > (p95_ if p95_ is not None else 99))
+    can["a_detail"] = {"winner": sid(w_) if w_ else None, "lift": st_[w_]["lift"] if w_ else None,
+                       "t": st_[w_]["t"] if w_ else None, "p95": p95_}
+    del r_, p_
     r_, p_ = gather(*SEARCH, variant="plantM4")
-    st_, w_, p95_ = search_once(r_, p_, n_null=100)
+    st_, w_, p95_ = search_once(r_, p_, n_null=20)
     bad = []
-    for s in STACKS:
-        if s[0] == "M4" and s[2] != "T0" and st_[s]["lift"] is not None and st_[(s[0], s[1], "T0")]["lift"] is not None:
-            base = stats[s]["lift"] or 0
-            base0 = stats[(s[0], s[1], "T0")]["lift"] or 0
-            if (st_[s]["lift"] - base) - (st_[(s[0], s[1], "T0")]["lift"] - base0) > 5.0:
-                bad.append(sid(s))
+    for s_ in STACKS:
+        z = (s_[0], s_[1], "T0")
+        if s_[2] == "T0" or None in (st_[s_]["lift"], stats[s_]["lift"], st_[z]["lift"], stats[z]["lift"]):
+            continue
+        if (st_[s_]["lift"] - stats[s_]["lift"]) - (st_[z]["lift"] - stats[z]["lift"]) > 5.0:
+            bad.append(sid(s_))
     can["b_selection_plant_not_credited_to_timing"] = not bad
-    plant = max((min(st["n_h1"], st["n_h2"]), s) for s, st in stats.items() if "0" not in "".join(x[1] for x in s))[1]
-    r_, p_ = gather(*SEARCH, variant="plantStack", plant=plant)
-    st_, w_, p95_ = search_once(r_, p_, n_null=100)
-    can["c_planted_stack"] = sid(plant)
-    can["c_planted_stack_found"] = bool(w_ == plant and edge(st_[w_], p95_))
+    can["b_flagged"] = bad
+    del r_, p_
+    elig = [(min(st["n_h1"], st["n_h2"]), sid(s_), s_) for s_, st in stats.items()
+            if "0" not in "".join(x[1] for x in s_) and (st["mde_h1"] or 99) <= MDE_MAX and (st["mde_h2"] or 99) <= MDE_MAX]
+    plant = max(elig)[2] if elig else None      # most events; ties broken by the larger stack id (lexicographic)
+    if plant:
+        r_, p_ = gather(*SEARCH, variant="plantStack", plant=plant)
+        st_, w_, p95_ = search_once(r_, p_, n_null=100)
+        can["c_planted_stack"] = sid(plant)
+        can["c_planted_stack_found"] = bool(w_ == plant and edge(st_[w_], p95_))
+    else:
+        can["c_planted_stack_found"] = None
     out["canaries"] = can
     (OUT / "search.json").write_text(json.dumps(out, indent=1, default=str))
     top = sorted(((st["t"] or -99, s) for s, st in stats.items()), reverse=True)[:20]
     lines = ["# Stack search (gross, beta-adjusted lift vs M-matched same-minute control)", "",
-             f"chosen {out['chosen']}  EDGE {out.get('EDGE')}  null p95 {p95}  canaries {can}", "",
+             f"verdict {out['verdict']}  chosen {out['chosen']}  null p95 {p95}", f"canaries {json.dumps(can, default=str)}",
+             f"chosen controls {json.dumps(out.get('chosen_controls'), default=str)}", "",
              "| stack | n h1/h2 | lift h1 | lift h2 | lift | t | MDE h1/h2 |", "|---|---|---|---|---|---|---|"]
     for _, s in top:
         t_ = table[sid(s)]

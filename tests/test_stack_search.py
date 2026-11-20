@@ -84,9 +84,10 @@ def test_control_lifts_exclude_self_and_need_m():
 
 
 def test_choose_and_day_stats():
-    st = {("M0", "D0", "T0"): {"t": 9.0, "mde_h1": 20, "mde_h2": 5},
-          ("M1", "D1", "T1"): {"t": 3.1, "mde_h1": 8, "mde_h2": 9}}
-    assert ss.choose(st) == ("M1", "D1", "T1")
+    st = {("M0", "D0", "T0"): {"t": 9.0, "mde_h1": 20, "mde_h2": 5, "n_h1": 1000, "n_h2": 1000},
+          ("M1", "D1", "T1"): {"t": 3.1, "mde_h1": 8, "mde_h2": 9, "n_h1": 400, "n_h2": 400},
+          ("M2", "D1", "T1"): {"t": 5.0, "mde_h1": 8, "mde_h2": 9, "n_h1": 299, "n_h2": 400}}
+    assert ss.choose(st) == ("M1", "D1", "T1")     # MDE gate and the >= 300 per half rule
     m, se, t, n = ss.day_stats([1, 2, 3, 4, 5, 6], ["a", "a", "b", "b", "c", "c"])
     assert abs(m - 3.5) < 1e-12 and n == 6
 
