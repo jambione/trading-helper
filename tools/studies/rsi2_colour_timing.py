@@ -5,8 +5,8 @@ names and pays the real spread? Operator 11/20 (screenshots). Prereg + amended_1
 
     .venv/bin/python tools/studies/rsi2_colour_timing.py chart              # 11/19 FIGS + COLD per-bar RSI-2 / colours
     .venv/bin/python tools/studies/rsi2_colour_timing.py build              # CPU: per-day cache (no API)
-    .venv/bin/python tools/studies/rsi2_colour_timing.py edge  --colours plain|strict   # EDGE verdicts (gross, no quotes)
-    .venv/bin/python tools/studies/rsi2_colour_timing.py run   --colours plain|strict   # + quotes, PROFITABLE, report
+    .venv/bin/python tools/studies/rsi2_colour_timing.py edge  --colours pine           # EDGE verdicts (gross, no quotes); plain|strict = old diagnostics
+    .venv/bin/python tools/studies/rsi2_colour_timing.py run   --colours pine           # + quotes, PROFITABLE, report (amended_3; eth + build first)
 
 The colour mode is decided by the chart match (amended_1 B2) and must be passed explicitly. Quote fetches use the data key
 shared with the live dashboard: 'run' refuses to fetch 09:00-16:05 ET.
@@ -49,6 +49,7 @@ STOP_SLIP_BP, STRESS = 5.0, 1.5
 TICK = 0.01
 RULES = ("RED_START", "GREEN_END", "RED_STOP", "GREEN_CROSS")
 STOP_RULES = ("RED_STOP", "GREEN_CROSS")
+BUILD_SHA = ""
 PINE_KEYS = ("rsi_pine", "U_pine", "D_pine", "s200_pine", "s5_pine", "m4_pine", "red_pine", "green_pine")
 ETH = OUT / "eth"
 
@@ -134,7 +135,7 @@ def exit_for(rule, red, t_from, t, o, c):
     cap = t + CAP_BARS
     if rule == "GREEN_END":
         seen = False
-        for s in range(t + 1, cap + 1):
+        for s in range(t_from, cap + 1):          # GREEN_END: t+1; GREEN_CROSS: the fill bar t (review 11/20)
             if red[s]:
                 seen = True
             elif seen:
@@ -232,6 +233,8 @@ def trades_for_name(rule, d, k, mode, t_lo=None, t_hi=None):
     s200, m4 = (d["s200_pine"][k], d["m4_pine"][k]) if pine else (None, None)
     out, busy_until, last_entry = [], -1, -10 ** 9
     counts = defaultdict(int)
+    if rule == "GREEN_CROSS" and not pine:
+        return [], counts                         # GREEN_CROSS exists only on the Pine series (amended_3)
     for t in range(T_LO if t_lo is None else t_lo, (T_HI if t_hi is None else t_hi) + 1):
         if pine and not np.isfinite(c[t]) and rule not in STOP_RULES:
             continue                              # no bar this minute: state carries, nothing fires (amended_3)
@@ -285,6 +288,7 @@ def trades_for_name(rule, d, k, mode, t_lo=None, t_hi=None):
         g = (xpx / entry - 1) * 1e4
         out.append({"sym": d["syms"][k], "t": t, "ent_bar": ent_bar, "entry": entry, "kind": kind, "ebar": ebar,
                     "gross": g, "dist": dist, "thin": thin, "wick": wick_pressure(o, h, l, c, fbar + 1 if rule in STOP_RULES else t + 1),
+                    "wick3": wick_pressure(o, h, l, c, fbar + 1 if rule in STOP_RULES else t + 1, n=3),
                     "fix5": (px_or(c, ent_bar + 4) / entry - 1) * 1e4 if rule not in STOP_RULES else (px_or(c, t + 5) / entry - 1) * 1e4,
                     "fix15": (px_or(c, ent_bar + 14) / entry - 1) * 1e4 if rule not in STOP_RULES else (px_or(c, t + 15) / entry - 1) * 1e4})
         busy_until = ebar + (1 if kind == "cap" else 0)
@@ -478,6 +482,9 @@ def edge_verdict(rows):
 # ---------------------------------------------------------------- build / load (I/O)
 
 def build():
+    global BUILD_SHA
+    import subprocess
+    BUILD_SHA = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
     from relative_strength_scan import load_day
     from board_structure_family import universe
     from evening_family import ALL_ETF, WH_SIP
@@ -491,6 +498,9 @@ def build():
             continue
         day, pday = load_day(fp), load_day(prev)
         if day["idx"].get("SPY") is None:
+            st = json.loads((OUT / "build_stats.json").read_text()) if (OUT / "build_stats.json").exists() else {}
+            st[fp.stem] = {"skipped": "no SPY row"}
+            (OUT / "build_stats.json").write_text(json.dumps(st))
             prev = fp
             continue
         ef = ETH / f"{fp.stem}.pkl"
@@ -506,15 +516,17 @@ def build():
         open_ts = _dt.fromisoformat(fp.stem + "T09:30").replace(tzinfo=_Z("America/New_York")).timestamp()
         # the fetch's end is inclusive: the 09:30 bar is RTH t=0 already, so keep extended bars strictly before it
         ext_day = {k: np.array([c for ts, c in v if ts < open_ts], float) for k, v in pickle.load(open(ef, "rb")).items()}
-        n_noext = 0
+        n_noext = n_noprior = 0
         PN = {kk: [] for kk in PINE_KEYS}
         syms, O, H, L, C, PC, RSI, UU, DD, RP, GP, RS, GS = ([] for _ in range(13))
         for s in universe(day, pday, set(ALL_ETF)):
             i, j = day["idx"][s], pday["idx"].get(s)
             if j is None:
+                n_noprior += 1
                 continue
             pc = ns.last_close(pday["c"][j])
             if not pc > 0:
+                n_noprior += 1
                 continue
             warm = pday["c"][j][~np.isnan(pday["c"][j])][-WARM:]
             full = np.concatenate([np.pad(warm, (WARM - len(warm), 0), constant_values=np.nan), day["c"][i]])
@@ -536,10 +548,10 @@ def build():
                             l=np.array(L), c=np.array(C), pc=np.array(PC), rsi=np.array(RSI, np.float32),
                             U=np.array(UU), D=np.array(DD), red_plain=np.array(RP), green_plain=np.array(GP),
                             red_strict=np.array(RS), green_strict=np.array(GS), spy_o=day["o"][k], spy_c=day["c"][k],
-                            **{kk: np.array(PN[kk]) for kk in PINE_KEYS})
+                            build_sha=np.array(BUILD_SHA), **{kk: np.array(PN[kk]) for kk in PINE_KEYS})
         print(fp.stem, len(syms), "no_ext", n_noext, flush=True)
         stats = json.loads((OUT / "build_stats.json").read_text()) if (OUT / "build_stats.json").exists() else {}
-        stats[fp.stem] = {"names": len(syms), "no_ext": n_noext}
+        stats[fp.stem] = {"names": len(syms), "no_ext": n_noext, "no_prior": n_noprior, "sha": BUILD_SHA}
         (OUT / "build_stats.json").write_text(json.dumps(stats))
         prev = fp
 
@@ -766,11 +778,11 @@ def edge_report(rule, rows, counts, unc):
     return rep
 
 
-def wick_split(rows):
+def wick_split(rows, key="wick"):
     """Lift by wick-pressure bucket (amended_wick_split, information). Pure."""
     out = {}
     for nm, f in (("selling<-0.2", lambda w: w < -0.2), ("neutral", lambda w: -0.2 <= w <= 0.2), ("buying>0.2", lambda w: w > 0.2)):
-        rr = [r for r in rows if r.get("wick") is not None and f(r["wick"])]
+        rr = [r for r in rows if r.get(key) is not None and f(r[key])]
         out[nm] = {"n": len(rr), "lift": r2(mean(rr, "lift")) if rr else None, "gross": r2(mean(rr, "gross")) if rr else None}
     return out
 
@@ -951,10 +963,18 @@ def main(argv):
         rows_of[rule] = rows
         e = edge_report(rule, rows, counts, unc)
         out["rules"][rule] = {"EDGE": e}
-        e["wick_split (information)"] = wick_split(rows)
+        e["wick_split_5 (information)"] = wick_split(rows)
+        e["wick_split_3 (information)"] = wick_split(rows, "wick3")
         o_rows, o_counts, o_unc = all_rows(rule, mode, *SEARCH, t_lo=1, t_hi=60)
         ov, ost = edge_verdict(o_rows)
-        e["opening_slice_0930_1030 (information, gross)"] = {**ost, "n": len(o_rows), "gross": r2(mean(o_rows, "gross"))}
+        osl = {**ost, "n": len(o_rows), "gross": r2(mean(o_rows, "gross"))}
+        if cmd == "run" and osl["gross"] is not None and osl["gross"] > 0:
+            otr = draw_fetched(rule, o_rows)      # real SIP spread at those minutes (amended_opening_slice)
+            osl.update({"traded": len(otr), "net": r2(mean(otr, "net")) if otr else None,
+                        "spread": r2(mean(otr, "spread")) if otr else None})
+        elif osl["gross"] is not None:
+            osl["net"] = "gross <= 0, so net after the spread is lower still (no quotes fetched)"
+        e["opening_slice_0930_1030 (information)"] = osl
         print(rule, json.dumps(e), flush=True)
         if cmd == "run":
             p = profitable(rule, rows, e)
