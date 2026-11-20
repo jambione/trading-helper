@@ -219,6 +219,6 @@ def test_ratchet_exit_stop_breakeven_and_trail():
     l[3] = 99.3                                        # touches entry - 0.6% = 99.4 -> exit at min(stop, open)=99.4
     assert abs(r.ratchet_exit(o, h, l, c, 0, 100.0) - 99.4) < 1e-9
     o2 = o.copy(); h2 = h.copy(); l2 = l.copy(); c2 = c.copy()
-    l2[3] = 99.9; h2[2] = 101.0                        # high 101 -> trail stop 100.394; bar 4 low 100.3 exits
+    l2[3] = 100.5; h2[2] = 101.0                       # high 101 -> trail stop 100.394; bar 4 low 100.3 exits
     l2[4] = 100.3; o2[4] = 100.5
     assert abs(r.ratchet_exit(o2, h2, l2, c2, 0, 100.0) - 101.0 * 0.994) < 1e-9
