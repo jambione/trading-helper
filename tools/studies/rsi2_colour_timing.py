@@ -1156,6 +1156,63 @@ def chart_eth():
         print(f"{sym} {day} {want} {a}-{b}: {h}/{len(got)}  {got}")
     print(f"MATCH {hit}/{tot} = {100 * hit / max(tot, 1):.0f}% (need >= 90%)")
 
+EXAMPLES = (("INVH", "2026-11-20"), ("ANT", "2026-11-20"), ("SPCX", "2026-11-20"), ("FIGS", "2026-11-19"),
+            ("COLD", "2026-11-19"))
+
+
+def examples():
+    """amended_5/6: the red rules' mechanical entries and approximate-ratchet exits on the operator's RTH chart names
+    (no peers, every signal shown, the +1.5% filter marked), from fetched SIP bars. For the operator and Neon to check
+    the rule trades the way he does. I/O."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    from alpaca.data.enums import DataFeed, Adjustment
+    et = ZoneInfo("America/New_York")
+    k = json.load(open(ROOT / "secrets_data.json"))
+    cl = StockHistoricalDataClient(k["alpaca_data_api_key"], k["alpaca_data_secret_key"])
+    for sym, day in EXAMPLES:
+        dd = datetime.fromisoformat(day + "T04:00").replace(tzinfo=et)
+        pdd = dd - timedelta(days=3 if dd.weekday() == 0 else 1)
+        r = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=sym, timeframe=TimeFrame.Minute, start=pdd,
+                                               end=min(dd + timedelta(hours=16), datetime.now(et) - timedelta(minutes=16)),
+                                               feed=DataFeed.SIP, adjustment=Adjustment.RAW))
+        bars = [(b.timestamp.astimezone(et), float(b.open), float(b.high), float(b.low), float(b.close))
+                for b in (r.data or {}).get(sym, [])]
+        def rth(day_s):
+            a = {n: np.full(390, np.nan) for n in "ohlc"}
+            for t, o_, h_, l_, c_ in bars:
+                if t.strftime("%Y-%m-%d") == day_s:
+                    m = (t.hour - 9) * 60 + t.minute - 30
+                    if 0 <= m < 390:
+                        a["o"][m], a["h"][m], a["l"][m], a["c"][m] = o_, h_, l_, c_
+            return a
+        pday = pdd.strftime("%Y-%m-%d")
+        P_, T_ = rth(pday), rth(day)
+        o0 = datetime.fromisoformat(pday + "T16:00").replace(tzinfo=et)
+        o1 = datetime.fromisoformat(day + "T09:30").replace(tzinfo=et)
+        ext = np.array([c_ for t, _, _, _, c_ in bars if o0 <= t < o1])
+        pine = pine_day(P_["c"], ext, T_["c"])
+        pc = ns_last_close(P_["c"])
+        d1 = {"o": [T_["o"]], "h": [T_["h"]], "l": [T_["l"]], "c": [T_["c"]], "pc": [pc], "syms": [sym], "day": day,
+              **{kk: [pine[kk]] for kk in PINE_KEYS}}
+        rows = red_screen_name(d1, 0, chg_min=-1e9)
+        hm = lambda i: f"{9 + (30 + i) // 60:02d}:{(30 + i) % 60:02d}"
+        print(f"== {sym} {day}  prior close {pc:.2f}")
+        for x in rows:
+            up = (T_["c"][x["t"] - (0 if x["rule"] == "RED_START" else 1)] / pc - 1) * 100
+            print(f"  {x['rule']:9} signal {hm(x['t'])}  entry {hm(x['ent_bar'])} @ {x['entry']:.2f}  exit {hm(x['exit_bar'])}"
+                  f"  ratchet {x['ratchet']:+.0f} bp  5-bar {x['fix5']:+.0f}  15-bar {x['fix15']:+.0f}"
+                  f"  day chg {up:+.1f}% {'(passes +1.5%)' if up >= CHG_MIN else '(below the +1.5% filter)'}")
+
+
+def ns_last_close(arr):
+    v = arr[np.isfinite(arr)]
+    return float(v[-1]) if len(v) else np.nan
+
+
 def main(argv):
     cmd = argv[1]
     if cmd == "chart_eth":
@@ -1166,6 +1223,8 @@ def main(argv):
         return eth_fetch()
     if cmd == "red_screen":
         return red_screen()
+    if cmd == "examples":
+        return examples()
     if cmd == "build":
         return build()
     mode = argv[argv.index("--colours") + 1] if "--colours" in argv else None
