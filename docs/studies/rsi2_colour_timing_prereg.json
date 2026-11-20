@@ -77,7 +77,7 @@
   "C1 verdict rows": "EDGE on ALL candidates (gross); PROFITABLE on spread-gated traded rows (m5 'verdict on traded rows' applies to PROFITABLE only)",
   "C2 strict colours need warm-up": "if the chart match makes the SMA-strict colours primary, every series prepends the last 220 regular-hours bars of the prior session (SMA200 is otherwise undefined until ~12:50); name-days without them are counted and scored with in-session warm-up only as information. Strict red uses RSI > 90, matching the panel; the plain-level rules keep >= 90."
  },
- "status": "amended_2 (exact Pine colours, ETH series); chart match after 16:05, then code update + skeptic review, then score",
+ "status": "amended_cross_price (4 rules); chart match after 16:05, then code update + skeptic review, then score",
  "amended_2": {
   "when": "2026-11-20, after the operator supplied the panel's Pine source (ChrisMoody _CM_RSI_2_Strategy_Lower) and before any score; the 11/19 chart match had failed (~6/10) under both earlier definitions",
   "colour rule (replaces B2's either/or)": "exactly the Pine source: GREEN (lime) = close > SMA200 and close < SMA5 and RSI2 < 10; RED = close < SMA200 and close > SMA5 and RSI2 > 90; else silver. SMA200/SMA5 and RSI2 on the SAME 1-minute close series.",
@@ -113,5 +113,13 @@
    ]
   },
   "grey checks": "INVH 14:57-15:00 RSI ~84-90 grey; SPCX 13:52-13:56 RSI ~95 grey (close below SMA200 or above SMA5 at those bars)"
+ },
+ "amended_cross_price": {
+  "when": "2026-11-20 ~15:30 ET, operator 'Yes, add the cross-price entry line'; before any chart match, score or outcome",
+  "red": "already registered: RED_STOP is the cross-price red entry (buy-stop at the price that turns the bar red, amended_1 B3/M6/M7/M8 and amended_2). No change.",
+  "GREEN_CROSS (new, scored, 4th rule)": "at the open of bar t, if completed bar t-1 was GREEN (Pine rule), compute the two prices at which green ends UPWARD on bar t: P10 = close[t-1] + max(L/9 - G, 0) rounded up to the cent (RSI2 back to 10, Pine rma state G/L from t-1) and S5 = mean of closes t-4..t-1 rounded up (close reaches the 5-bar average including itself). Buy-stop at P = min(P10, S5) for bar t only, valid only if P > SMA200 at t-1. Fill and slippage exactly as RED_STOP (M6: high[t] >= P + 0.01, fill max(P, open[t]) + 0.01; +5 bp stress). Exit as GREEN_END (the open after the first completed bar that ends a red segment), else the close of t+15. Filter read at close[t-1] (M7); controls = same-distance buy-stops on up to 5 other names (B3) and the same-name later stop (M8); armed / filled counts printed.",
+  "comparison (information)": "per colour, cross-price entry minus bar-close entry (RED_STOP vs RED_START, GREEN_CROSS vs GREEN_END) on matched signals: the bp a faster entry adds, and how many fills the bar-close rule would never have taken (colour reverted before the close)",
+  "feed line (information)": "each scored rule rerun with fills only when an IEX print crossed P (live-feed realism); the gap from SIP is the per-trade value of real-time SIP (operator 11/20: willing to buy SIP if the test proves profit)",
+  "multiplicity": "four scored rules; EDGE bar t >= 2.5 equals Bonferroni-4 (2.50); unchanged"
  }
 }
