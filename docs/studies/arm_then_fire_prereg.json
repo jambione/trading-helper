@@ -60,7 +60,7 @@
   "10 canaries": "+15 bp planted on W1xF2 AND on the smallest scored cell - both must read EDGE, else that cell is UNPROVEN; the shuffle canary (20 seeds) and the arm-shift placebo of #3b both required; any canary failure = no verdict",
   "printed first": "news coverage per month from 4/28 and the UNARMED share of name-days, before any lift"
  },
- "status": "amended_1 after skeptic round 1; script next, then skeptic code review",
+ "status": "SCORED 11/20: NO EDGE (powered F2/F3 cells), rest UNPROVEN",
  "amended_2": {
   "when": "2026-11-20, after the result-skeptic code review (FIX FIRST), before any score; the CPU fires build had run part-way and is rebuilt",
   "unarmed": "UNARMED needs no headline of ANY class (qualifying, bearish, recap, reactive, late-updated) in the lookback = max(72 h, back to the start of the prior session from the full warehouse calendar); otherwise the fire is excluded",
@@ -71,5 +71,13 @@
   "counts": "headline class shares, headlines per day, fires by trigger and arm state, vt None share, pre-09:45 crossings lost; CONFIRM as information",
   "minor (declared)": "same-name later enters at exit+3 as in stack_search; the shuffle canary permutes each name's whole news history across names"
  },
- "amended_market_split": "INFORMATION ONLY (operator 11/20 'yes, add the market split'; added before any outcome was read): every scored cell's lift is also printed by MARKET OPEN GAP = SPY's official 09:30 open / SPY's prior regular-session close - 1, in three buckets: <= -1%, between, >= +1% (day counts per bucket printed). Never promoted to a verdict; a regime gate needs its own prereg."
+ "amended_market_split": "INFORMATION ONLY (operator 11/20 'yes, add the market split'; added before any outcome was read): every scored cell's lift is also printed by MARKET OPEN GAP = SPY's official 09:30 open / SPY's prior regular-session close - 1, in three buckets: <= -1%, between, >= +1% (day counts per bucket printed). Never promoted to a verdict; a regime gate needs its own prereg.",
+ "result_2026-11-20": {
+  "verdict": "NO EDGE where powered; UNPROVEN elsewhere. 0 of 12 cells pass.",
+  "powered (MDE 2-3 bp)": "F2 BREAK and F3 TURN with news armed 1-6 h (W2) or 6-30 h (W3): lift -0.3..+0.6 bp per half, t -0.5..+0.2 - a news-armed name's breakout or turn is no better than the same trigger on an unarmed name at the same time",
+  "W1 (0-60 min) F2/F3": "UNPROVEN (MDE 16/23 bp in half 1); lifts -2..+7 bp, t <= 1.1",
+  "F1 RVOL and F4 MOVER": "UNPROVEN (MDE 45-182 bp: few unarmed peers fire these triggers); point lifts large but unstable across halves (e.g. W1xF1 -13.7 / +130.7, t 1.5)",
+  "canaries": "shuffle 0% and arm-shift <= 5% per cell; planted +15 bp recovered (W1xF2, W2xF2) - harness valid",
+  "output": "ai_reports/arm_then_fire/score.json (mini)"
+ }
 }
