@@ -1,0 +1,79 @@
+{
+ "name": "dip_anatomy",
+ "written": "2026-11-20, before any script was written or any outcome computed",
+ "operator": "11/20: 'can't we wait for a big dip before we get in ... wait for the big dip to finish and ride the recovery wave' -> 'Can't we make an educated guess of the longer the dip goes on, the closer the recovery is going to be' -> 'You can better my question ... I welcome any of your ideas' -> 'Yes, pre-register the dip anatomy test'",
+ "question": "On 1-minute bars of liquid up-on-the-day names, when a dip ends with a first turn up, do some dips recover better than a random minute on other names - by AGE (the operator's question), DEPTH in the stock's own normal-move units, SPEED, the VOLUME shape inside the dip, or whether the MARKET dipped too - and does any kind pay the real spread?",
+ "prior_work_disclosed": "limit_below 10/14 FAIL (dips after a signal were the fall); oversold-leave 10/15 FAIL; connors_green 10/14 FAIL (green start, 1-min); pullback family 10/30 CLOSED (trend_dip, uptrend_pullback FAIL, powered); INDICATOR_LEVELS 10/02 (VWAP reclaim, PMH/PDH break FAIL); three_minute_reread 10/21 (3-min runs symmetric); the universe fades at every horizon (30 m to 5 d). None split dips by age, normal-move depth, speed, in-dip volume shape or market co-movement. Also near: dip_ideas (cut and reclaim after a signal), structure_pullback S2 ('last higher low'), fib_pullback.",
+ "prior": "LOW, about 10%",
+ "data": "warehouse SIP 1-minute bars, top-400 by prior-day dollar volume, ETFs/ETPs excluded (the opening_grid universe), regular hours. SEARCH 2026-04-28..2026-09-23, halves split at 2026-07-11. 2026-09-24..2026-11-18 INFORMATION only.",
+ "name filter": "price $20-$400 at the turn bar; day change vs prior close >= +1.5% at the dip's start bar (an up-on-the-day name, the desk's admission floor); turn bar 09:45-15:30 ET",
+ "dip definition (all from completed bars)": {
+  "start": "s0 = the bar of the highest close in the 30 bars ending t (the dip's starting high Hs = close[s0])",
+  "normal move": "sigma = median of (high - low) / close over the 60 bars before s0 (needs >= 40 finite; fewer = no event)",
+  "depth": "D(t) = (Hs - close[t]) / (Hs x sigma), in normal moves",
+  "age": "A(t) = t - s0 minutes",
+  "in a dip": "D >= 2.0 at some bar in (s0, t]"
+ },
+ "event (the turn)": "the FIRST bar t after the dip's lowest close so far with close[t] > close[t-1] AND low[t] > low[t-1], while the dip is live (close[t] < Hs). One event per dip; a dip ends when close >= Hs or a new 30-bar high forms. Refractory: one event per name per 15 minutes.",
+ "entry and exit": "buy the OPEN of t+1. PRIMARY exit: the CLOSE of t+15 (15-minute hold). Information: 5-minute hold; the desk bracket (+20/-50, 15 min).",
+ "features at the turn (known at the close of t)": {
+  "AGE": "A(t), minutes since the starting high (the operator's question)",
+  "DEPTH": "D at the dip's lowest close, normal moves",
+  "SPEED": "that depth / minutes from s0 to the lowest close",
+  "VOLUME": "mean volume of the last 3 bars before the turn / mean volume over all dip bars (low = sellers drying up, high = still heavy)",
+  "MARKET": "SPY return from close[s0] to close[t] in bp (very negative = market dip too; near zero or positive = a stock-only dip)"
+ },
+ "bins": "each feature split into tertiles (low / mid / high) at cut points computed from the feature values of ALL SEARCH events before any outcome is read; cut points written to the output. Features are tested ONE AT A TIME (5 x 3 = 15 cells) plus ALL events (16 cells); no crossing.",
+ "controls (TEST_STANDARD, on GROSS)": {
+  "PRIMARY same-minute": "up to 5 other names passing the name filter at bar t, bought at the open of t+1 and sold at the close of t+15 (hold-matched)",
+  "same-name later": "an entry minute in t+17 .. t+77 on the same name-day (hash), same 15-minute hold; dropped if past the close",
+  "unconditional": "a random filtered (name, minute) on the same day, same hold; a control mean more than 3 bp from it, or |t| > 2 against it, blocks the verdict"
+ },
+ "cost": "net = gross - the real SIP quoted spread in the 60 s before the open of t+1 (news_source.fetch_quotes, shared cache); spread > 15 bp not traded; stress 1.5 x spread",
+ "pass (per cell, all required)": {
+  "EDGE": "lift over the PRIMARY control > 0 in both halves and pooled day-clustered t >= 3.0 (two-sided 5% over 16 cells), on ALL events (gross, no quotes)",
+  "PROFITABLE": "mean net >= +2.0 bp in both halves on spread-gated traded rows; net > 0 at 1.5 x spread; top-1% winsorized mean net > 0 in both halves",
+  "size": ">= 300 traded per half; MDE (2.8 x day-clustered SE) > 10 bp in either half = UNDERPOWERED -> UNPROVEN"
+ },
+ "the operator's age question (reported regardless of pass)": "lift of the oldest AGE tertile minus the youngest, with its day-clustered t per half. 'Longer dips recover better' is SUPPORTED only if the difference is > 0 in both halves with pooled t >= 2.0; otherwise NOT SUPPORTED (or UNPROVEN if the MDE of the difference > 10 bp).",
+ "screens (TEST_STANDARD)": "gross-first: a cell whose gross upper bound (mean + 2 x day-clustered SE) is below +2.0 bp gets no quotes and cannot be PROFITABLE; early stop: early_stop.screen on the first quarter of SEARCH days for any quoted cell",
+ "sample": "per quoted cell, candidates drawn by the lowest sha256('dipanat'|cell|day|sym|t); quote, keep if spread <= 15 bp; stop at 1,500 traded per half",
+ "information_only": [
+  "5-minute hold and the desk bracket as exits",
+  "blind entry at fixed dip ages (5, 10, 20 minutes after s0) without waiting for the turn",
+  "RSI-2 green end as the turn signal instead of the higher-low turn (if the colour definition is pinned by then)",
+  "CONFIRM period 9/24-11/18",
+  "a SPY-hedged lift; win %; time of day"
+ ],
+ "checks": [
+  "unit tests: dip start, depth, age, the turn fires once per dip on the first higher-low up-close after the lowest close, the dip ends at a new high",
+  "null canary: a random walk with no edge must not read EDGE in any cell; a planted +15 bp recovery after fast dips must read EDGE in the SPEED-high cell only",
+  "counts printed: dips, events, refractory skips, events per cell and half, gated by spread, missing quotes"
+ ],
+ "fail": "anything short of pass. No retuning of the 30-bar start window, the 2.0 normal-move dip floor, the turn rule, the 15-minute hold or the tertile cuts; a change is a new prereg.",
+ "if_pass": "result-skeptic review; IEX rescore of the drawn rows; then the 20-session forward holdout and a live-equivalence check before any default-off arm",
+ "if_fail": "record which features moved the lift at all; dip-buying on 1-minute bars joins the pullback family as closed",
+ "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)",
+ "fetch rule": "quotes only after 16:05 ET (data key shared with the live dashboard), behind any study already in the fetch queue",
+ "script": "tools/studies/dip_anatomy.py (to be written after the review)",
+ "amended_1": {
+  "when": "2026-11-20, after result-skeptic round 1 (FIX FIRST: 2 blockers, 6 majors, 7 minors), before any script or outcome",
+  "B1 fixed dip start": "a dip OPENS at bar s0 when close[s0] is the highest close of the 30 bars ending s0; s0 and Hs then stay FIXED until close >= Hs, the session ends, or 120 bars pass. Age is uncapped up to 120. The 30-bar window only opens a dip. Unit test: a 45-minute dip reports A = 45.",
+  "B2 event order": "the event is the first bar t, AFTER D first reaches 2.0, with close[t] > close[t-1], low[t] > low[t-1], and t-1 at or after the lowest close since s0; earlier turns do not count. A turn needs bar t-1 to exist; entry uses the next existing bar within 2 minutes, else the event is dropped and counted.",
+  "M1 sigma": "sigma from same-session regular-hours bars before s0, excluding 09:30-09:44, at least 40 finite; event counts per hour printed for each tertile",
+  "M2 collinearity": "Spearman correlations between all five features printed; information line 'old minus young within each DEPTH tertile, averaged'; the age verdict states whether the effect survives that conditioning",
+  "M3 canary": "planted on REAL bars (outcomes shifted +15 bp for SPEED-high events): passes if SPEED-high reads EDGE and every other cell's lift is within 2 SE of 15 x (its share of SPEED-high events). Invariance test: features from bars truncated at t equal features from the full day.",
+  "M4 EDGE completed": "EDGE also needs the same-name later and the unconditional control lifts > 0 pooled, and the top-1% winsorized gross lift > 0 in both halves. PROFITABLE requires EDGE.",
+  "M5 MDE": "MDE = 3.84 x day-clustered SE for EDGE (t >= 3.0 bar); 2.8 x SE for the age difference (t >= 2.0 bar); UNDERPOWERED if above 10 bp",
+  "M6 feed": "if_pass: the IEX rescore re-detects events and features on IEX bars for the same days; if the warehouse has no IEX bars for those days, the 20-session forward holdout on the live IEX feed is the transfer check and is stated as such",
+  "m1 control anchor": "control names must be up >= 1.5% on the day at the event's s0 minute (the same anchor as the event)",
+  "m2 volume": "'last 3 bars' = t-3..t-1 (before the turn bar); needs >= 4 dip bars, else NaN and counted",
+  "m3 age difference": "computed per day, paired, on days that have both the oldest and youngest tertile; the number of such days printed",
+  "m4 hash": "sampling hash keyed on the event sha256('dipanat'|day|sym|t), shared across cells, so quotes are fetched once per event",
+  "m5 turn-matched control": "information: same-minute control restricted to other names whose bar t is also a higher-low up-close",
+  "m6 cut points": "tertile cut points computed on the final SEARCH event set after filters and refractory (both halves pooled; no outcome read)",
+  "m7 data": "full-day raw warehouse bars (relative_strength_scan.load_day), not the opening_grid cache (09:30-10:39 only)",
+  "power": "event counts and the MDE per cell and half are printed before any quote is fetched"
+ },
+ "status": "amended_1 after skeptic round 1; script next, then skeptic code review"
+}
