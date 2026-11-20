@@ -77,7 +77,7 @@
   "C1 verdict rows": "EDGE on ALL candidates (gross); PROFITABLE on spread-gated traded rows (m5 'verdict on traded rows' applies to PROFITABLE only)",
   "C2 strict colours need warm-up": "if the chart match makes the SMA-strict colours primary, every series prepends the last 220 regular-hours bars of the prior session (SMA200 is otherwise undefined until ~12:50); name-days without them are counted and scored with in-session warm-up only as information. Strict red uses RSI > 90, matching the panel; the plain-level rules keep >= 90."
  },
- "status": "amended_3: SIP Pine colours; ETH fetch + build + code review, then score",
+ "status": "amended_4: live ratchet exit is primary; colour-exit run finishing as information; live-exit build next",
  "amended_2": {
   "when": "2026-11-20, after the operator supplied the panel's Pine source (ChrisMoody _CM_RSI_2_Strategy_Lower) and before any score; the 11/19 chart match had failed (~6/10) under both earlier definitions",
   "colour rule (replaces B2's either/or)": "exactly the Pine source: GREEN (lime) = close > SMA200 and close < SMA5 and RSI2 < 10; RED = close < SMA200 and close > SMA5 and RSI2 > 90; else silver. SMA200/SMA5 and RSI2 on the SAME 1-minute close series.",
@@ -141,5 +141,14 @@
   "RED_STOP": "P = the RSI-2 > 90 trigger (red_trigger); valid only if close[t-1] < SMA200[t-1], close[t-1] > SMA5[t-1], and P > mean of closes t-4..t-1 (P keeps close > SMA5) and P < SMA200[t-1]",
   "GREEN_CROSS": "as amended_cross_price, on the same series",
   "information lines": "opening slice, cross-price vs bar-close comparison and wick split are reported; the IEX feed line follows after the score"
+ },
+ "amended_4_live_exit": {
+  "when": "2026-11-20 ~18:20 ET, operator: '\"sell when the red ends\" does not play a part. We should be only using the stop ratchet exit that's a part of the current system.' Made after RED_START (colour exit) was scored NO EDGE and while the other three rules were mid-run - disclosed",
+  "primary exit (all four rules)": "the desk's LIVE exit stack (stop, ratchet/trail, trend hold, dead_trade) replayed second by second on SIP prints with the live config, via tools/studies/exit_capture.py / leash_replay.walk (fidelity-checked 10/21: recall 63%, gap 3.8 bp); flat by 15:50",
+  "entries": "unchanged (RED_START, RED_STOP, GREEN_END, GREEN_CROSS on the Pine SIP series, amended_3)",
+  "control": "the same live exit replayed from the same-minute peers' entries (hold-matched peers replaced by exit-matched peers: each peer runs the same exit code from the same minute)",
+  "sample": "up to 1,500 signals per rule per half by the registered hash order (second-level prints are fetched per signal); counts printed",
+  "colour-exit results": "kept as INFORMATION (RED_START colour exit: NO EDGE, MDE < 1 bp; its fixed 5-/15-minute holds were also ~0)",
+  "pass": "unchanged criteria (EDGE lift > 0 both halves, t >= 2.5; PROFITABLE net >= +2 bp both halves after the real spread)"
  }
 }
