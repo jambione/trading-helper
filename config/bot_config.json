@@ -530,7 +530,7 @@
   "ai_watch_ai_pick_max_price": 400.0,
   "ai_watch_tight_min_rvol": 0.0,
   "ai_tight_max_spread_lookups": 80,
-  "ai_watch_wr_trend_min_rise": 0.0,
+  "ai_watch_wr_trend_min_rise": 15.0,
   "ai_movers_max_rows": 50,
   "ai_watch_wr_slow_5m_veto": false,
   "ai_watch_wr_slow_5m_min_pitch": 0.0,
