@@ -1,0 +1,57 @@
+{
+ "name": "mention_count",
+ "written": "2026-11-20, before any script was written or any price/quote fetched for this purpose",
+ "operator": "11/20: 'The mention system works off of how many times a name was repeated in discord. Each time the name was repeated ... its climbing in profit or it's moving somehow. I don't think we ever use that appropriately' -> 'Yes, pre-register the mention-count test'",
+ "question": "When a name is alerted again and again in the Discord alert feed, does it do better over the next 30 minutes than a name alerted for the first time - and does a rising mention rate help - premarket and in regular hours, before and after the real spread?",
+ "prior_work_disclosed": "momentum alerts fade premarket (11/06: buy at the FIRST alert, premarket $2+, -366 bp / 30 min, RTH $2+ median -39 bp); momentum source was the desk's worst (Aug-Sep, -0.066R, t -4.3); premarket-burst note (bursts fire 63% premarket; premarket access would not fix it); DISCORD_SQUEEZE_LEVELS 9/27 (posted levels are fades). The desk uses mentions only to SEED names (any mention or a burst) and then ranks by % change; the repeat COUNT and the mention RATE were never tested as a signal. Mention BURSTS are already listed FAIL in docs/EDGE_SEARCH_MAP_2026-11-06.md:13, so the RATE line is information only.",
+ "prior": "LOW, about 10%",
+ "data": {
+  "alerts": "ai_reports/sessions/DAY/discord.jsonl.gz on the mini (OCR of the alert channel): 25 session files 2026-10-19..2026-11-20. Rows with a symbol; SPY/QQQ/IWM/DIA and other ETF symbols, and rows with no parsable symbol, are excluded and counted.",
+  "feed health": "alert volume fell from ~115-285 per session (10/19-11/11) to 9-32 (11/17-11/20). PRIMARY sample = sessions with >= 50 alerts; thin sessions are reported separately as information. The cause of the drop is out of scope here and reported to the operator.",
+  "prices": "Alpaca historical SIP 1-minute bars 04:00-16:00 ET for each alerted name-day (fetched after 16:05 ET; data key shared with the live dashboard); SIP quotes for the spread at entry"
+ },
+ "halves": "by session date: H1 10/19-11/02, H2 11/03 onward (primary sessions only); counts printed",
+ "event": "every alert row for a symbol (time = the row's ET timestamp). For each: COUNT k = number of alerts for that symbol earlier the same session + 1; RATE = alerts in the last 10 minutes vs the 10 minutes before (RISING = last-10 >= 2 and > prior-10; else NOT RISING). Only the FIRST alert at each count group per name-day is scored (k=1, the first alert with k in 2..3, the first with k >= 4), so one name-day contributes at most three events.",
+ "entry and exit": "buy the OPEN of the first SIP 1-minute bar starting after the alert minute; PRIMARY exit the CLOSE 30 minutes later (last finite close); information: 15 minutes.",
+ "sessions (scored separately)": "PREMARKET (alert 04:00-09:24; a hold that crosses 09:30 simply runs through the open) and RTH (alert 09:30-15:25)",
+ "price bands (reported, not separate verdicts)": "< $2, $2-10, $10-20, >= $20 (the desk floor)",
+ "primary comparison (the operator's question)": "per session type: mean 30-min GROSS of the k >= 4 events minus the k = 1 events, day-clustered (difference of day means on days with both). Also k 2-3 minus k = 1, and RISING minus NOT RISING, as secondary lines.",
+ "controls": {
+  "same-name later": "for each event, a random minute in exit+2 .. exit+62 on the same name-day, same 30-min hold (TEST_STANDARD)",
+  "unconditional": "a random minute on a random alerted name-day of the same session type, same hold; a group mean more than 2 day-clustered SE from it is flagged"
+ },
+ "cost": "net = gross - the real SIP quoted spread (60 s before entry). Reported with no gate and with the desk's 15 bp gate (most alerted names will fail the gate; the share is printed).",
+ "pass": {
+  "REPEATS MATTER (per session type)": "k >= 4 minus k = 1 > 0 in BOTH halves and pooled day-clustered t >= 2.24 (two-sided 5% over 2 session types)",
+  "PROFITABLE (only if REPEATS MATTER)": "the k >= 4 group's mean net (real spread, no gate) > +10 bp in both halves and > 0 with the 15 bp gate on >= 100 gated events",
+  "power": "MDE = 2.8 x day-clustered SE of the primary difference printed before any mean; MDE > 60 bp = UNDERPOWERED -> UNPROVEN (this sample can only see large effects)"
+ },
+ "information_only": [
+  "15-minute hold; win %; median and 90th percentile 30-min max favourable / adverse excursion per group",
+  "price-band breakdown; thin-feed sessions 11/17-11/20",
+  "the desk's actual momentum-seed rule (any mention or a burst) vs k >= 4"
+ ],
+ "checks": [
+  "unit tests: k counts only earlier alerts the same session; one event per count group per name-day; RATE windows; entry is the first bar after the alert minute",
+  "symbol parse audit: 50 random alert lines printed with their parsed symbol before scoring",
+  "counts printed: alerts, excluded ETFs/unparsed, events per group, missing bars, missing quotes"
+ ],
+ "fail": "anything short of pass. No retuning of the count groups, the 10-minute rate windows, the 30-minute hold or the session split; a change is a new prereg.",
+ "if_pass": "result-skeptic review; then a forward read on the next 20 primary sessions (a working feed) before any desk change; the operator decides on any premarket use (premarket trading is shelved until SIP)",
+ "if_fail": "record it: repeated mentions do not mark the names that keep climbing; the mention feed stays a name source only",
+ "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)",
+ "script": "tools/studies/mention_count.py (to be written after the review)",
+ "amended_1": {
+  "when": "2026-11-20, after result-skeptic round 1 (FIX FIRST: 9 findings, 4 blocking), before any script, price or quote",
+  "1 dedupe": "alert key = (symbol, alert type [New Daily High / Volatility Spike / ELITE card / level line], price parsed to 2 decimals); a row whose key appeared earlier in the session is dropped; '$SYM ... ! | Price $x' relay rows are dropped; rows at the same ts count once. Raw and deduped k both printed.",
+  "2 price floor": "PRIMARY = SIP price at entry >= $2.00 (set from SIP bars, never from OCR prices); under $2 is information only",
+  "3 same-time comparison (replaces the primary difference)": "each k >= 4 event minus the mean of k = 1 events on OTHER names in the same session within +/-15 minutes (unmatched events dropped and counted); each group's run from its first alert to entry printed. The pooled difference of day means is a secondary line.",
+  "4 recorder coverage": "a session type is excluded if the recorder's first row is after 04:05 (premarket) or 09:25 (RTH); alerts in the first 10 minutes after the first row count toward k but cannot open k = 1; rows at or after 16:00 ignored; weekend files (10/31, 11/01, 11/08) excluded by name",
+  "5 bars": "entry bar must start within 2 minutes of the alert, else dropped; exit = close of the last bar starting in [t+25, t+30], else dropped; drops counted per group; premarket holds capped at 09:29 (no run through the open)",
+  "6 cost": "net = gross - (half the entry spread + half the exit spread), each the median SIP quoted spread over 60 s with >= 5 quotes, else dropped; premarket minimum 5 bp per side",
+  "7 power": "critical t = Student-t with df = days - 1, two-sided 2.5% per cell; MDE printed per half; UNPROVEN if MDE > 60 bp in either half or fewer than 5 days with both groups in a half. Stated in advance: with 11 + 7 primary sessions, UNPROVEN is the likely outcome unless the effect is large.",
+  "8 controls": "each group's mean printed next to the unconditional mean; a same-name later control more than 2 SE from the unconditional mean blocks the verdict",
+  "9 symbol audit": "a word stoplist (OR, BB, PPL, A, I, IT, ... plus ETFs); the audit prints 50 parsed lines per half and needs >= 48 correct, else VOID"
+ },
+ "status": "amended_1 after skeptic round 1; script next, then skeptic code review"
+}
