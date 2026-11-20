@@ -77,7 +77,7 @@
   "C1 verdict rows": "EDGE on ALL candidates (gross); PROFITABLE on spread-gated traded rows (m5 'verdict on traded rows' applies to PROFITABLE only)",
   "C2 strict colours need warm-up": "if the chart match makes the SMA-strict colours primary, every series prepends the last 220 regular-hours bars of the prior session (SMA200 is otherwise undefined until ~12:50); name-days without them are counted and scored with in-session warm-up only as information. Strict red uses RSI > 90, matching the panel; the plain-level rules keep >= 90."
  },
- "status": "chart match FAILED 57% (75% segment-adjusted); stopped before scoring, awaiting the operator",
+ "status": "amended_3: SIP Pine colours; ETH fetch + build + code review, then score",
  "amended_2": {
   "when": "2026-11-20, after the operator supplied the panel's Pine source (ChrisMoody _CM_RSI_2_Strategy_Lower) and before any score; the 11/19 chart match had failed (~6/10) under both earlier definitions",
   "colour rule (replaces B2's either/or)": "exactly the Pine source: GREEN (lime) = close > SMA200 and close < SMA5 and RSI2 < 10; RED = close < SMA200 and close > SMA5 and RSI2 > 90; else silver. SMA200/SMA5 and RSI2 on the SAME 1-minute close series.",
@@ -132,5 +132,14 @@
   "pattern": "most misses are the first minute of a segment (segment convention) or whole segments where SIP RSI2 stayed below 90 (MU 07:20-07:21, INVH 14:53-14:54) or above (INVH 14:41-14:43 red on SIP, grey on the chart). The operator's TradingView chart is labelled 'Indicative data' (not the consolidated SIP tape), so its 1-minute closes differ; RSI-2 on 1-minute bars flips on a few cents, so the colour of a single bar depends on the feed",
   "action": "per amended_1 B2 / amended_2: STOP before any score and report to the operator. No outcome has been computed.",
   "output": "ai_reports/rsi2_colour_timing/chart_match_2026-11-20.txt (mini)"
+ },
+ "amended_3_sip_colours": {
+  "when": "2026-11-20 ~17:25 ET, operator 'Yes, use SIP colours' after the chart match failed (57% / 75% segment-adjusted); before any score",
+  "decision": "the signal is the Pine rule (amended_2) computed on consolidated SIP 1-minute bars including extended hours - what the desk would trade on - not the operator's 'indicative data' chart; the 90% chart-match gate is waived by the operator with this disclosure",
+  "implementation (fixed here)": "series = prior session RTH (warehouse) + prior 16:00-20:00 and today 04:00-09:29 SIP bars + today RTH; Pine ta.rsi(2) (rma seeded by the mean of the first 2) and SMA200/SMA5 over bars that exist; on an RTH minute with no bar the state carries and no signal fires",
+  "GREEN_END under Pine colours": "counts only when green ends UPWARD (close[t] > SMA200[t]); a green segment ended by the close breaking below SMA200 is not an entry (counted)",
+  "RED_STOP": "P = the RSI-2 > 90 trigger (red_trigger); valid only if close[t-1] < SMA200[t-1], close[t-1] > SMA5[t-1], and P > mean of closes t-4..t-1 (P keeps close > SMA5) and P < SMA200[t-1]",
+  "GREEN_CROSS": "as amended_cross_price, on the same series",
+  "information lines": "opening slice, cross-price vs bar-close comparison and wick split are reported; the IEX feed line follows after the score"
  }
 }
