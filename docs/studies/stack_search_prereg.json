@@ -72,7 +72,7 @@
   "8 contamination": "CONFIRM 9/1-11/19 overlaps opening_grid and many single-layer studies: reported as semi-held-out; only FORWARD (20 sessions, IEX) is clean; a pass before FORWARD is at most PROMISING",
   "9 early stop": "early_stop.screen on the SEARCH-rule winner chosen on the screen days only, with the +2 bp net bar; the screen days are part of SEARCH (disclosed)"
  },
- "status": "amended_1 after skeptic round 1; script next, then skeptic code review",
+ "status": "SCORED 2026-11-20: NO EDGE (canary c not runnable; a and b passed)",
  "amended_2": {
   "when": "2026-11-20, after the result-skeptic code review (FIX FIRST), before any score; the CPU build had run part-way (outcomes cached, none read) and its cache was set aside (days.stale_pre_review_*) and rebuilt",
   "choice": ">= 300 events per half AND MDE <= 10 bp in each half (both rules; the null carries the same n)",
@@ -83,5 +83,6 @@
   "counts": "refractory skips per stack, missing bars, raw n before the cap, name-days on the default beta of 1.0",
   "declared deviations": "the luck null ignores the refractory and samples <= 3,000 pool bars per day per (M,D) weighted by pool size; the cap hash omits the stack (as the prereg wording); beta = 1.0 until a name has 10 prior sessions, and the warehouse starts 2026-04-27, so 4/28-~5/11 run on beta 1.0 (counted); T3 is false right after a NaN bar (live compares with the last valid RSI) - checked in the FORWARD parity step; the quotes/PROFITABLE/CONFIRM 'run' step is written only if the chosen stack passes EDGE",
   "canary gate": "a failed canary (a, b or c) invalidates the harness: the verdict reads HARNESS INVALID and no EDGE claim is made"
- }
+ },
+ "result_2026-11-20": "NO EDGE (verdict line reads 'HARNESS INVALID (canary failed): NO EDGE' because canary (c) could not run: no stack without a zero layer met the MDE <= 10 bp gate in both halves, so there was nothing eligible to plant on; canaries a and b PASSED). Chosen by the rule: M0.D3.T0 (any name, 15-min momentum up, any bar): lift +4.1 / -0.5 bp (t 1.37), below the matched luck null's p95 of +4.46 bp; same-name later -0.5, unconditional +0.2. No stack reached t 3.0; best t 2.3 (M1.D2.T3: RVOL>=2, above VWAP, RSI-2 green end: +7.5 / +2.8 bp, MDE 12.7/14.1). Most stacks were underpowered at 1,000 events per half (MDE 10-34 bp). Marginal layer lifts (bp, averaged over the other layers): timing T0 +1.3, T3 +0.3, T4 -0.3, T1 -2.0, T2 -2.7 (turns and breakouts did worse than any bar); M1 RVOL +0.3, M3 range -2.1; D1 up 0.0, D4 slow %R -1.7. Plain words: no fixed price/volume stack beats matched random entries; the best gross lifts (+3-8 bp over 30 min) are inside the luck band and below a round-trip spread. No quotes fetched. ai_reports/stack_search/search.json on the mini."
 }
