@@ -156,6 +156,7 @@ def test_green_cross_trigger_and_red_validity():
     assert np.isnan(r.green_cross_trigger(100.0, 0.1, 1.8, 100.5, 101.0))      # P below SMA200: not valid
     assert r.stop_valid_red(50.5, 50.2, 52.0, 50.1, 50.0)
     assert not r.stop_valid_red(50.5, 50.2, 50.4, 50.1, 50.0)                  # P above SMA200
+    assert r.stop_valid_red(50.5, 49.9, 52.0, 50.1, 50.0)                      # amended_5: t-1 below SMA5 (ignition) counts
 
 
 def test_pine_day_aligns_and_carries_over_missing_minutes():

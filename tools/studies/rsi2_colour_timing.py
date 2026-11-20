@@ -171,7 +171,7 @@ def stop_valid_red(P, c_prev, s200_prev, m4_prev, s5_prev):
     vals = (P, c_prev, s200_prev, m4_prev, s5_prev)
     if not all(np.isfinite(v) for v in vals):
         return False
-    return c_prev < s200_prev and c_prev > s5_prev and P > m4_prev and P < s200_prev
+    return P > m4_prev and P < s200_prev                   # amended_5: no close[t-1] > SMA5 requirement
 
 
 def green_cross_trigger(c_prev, up, down, m4_prev, s200_prev):
