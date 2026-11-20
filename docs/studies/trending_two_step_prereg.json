@@ -1,0 +1,66 @@
+{
+ "name": "trending_two_step",
+ "written": "2026-11-20, before any script was written or any price fetched for this purpose",
+ "operator": "11/20: 'trending score tells that name is going to move. Other variables (RVOL, etc) tell me that it will move in positive direction' -> 'Yes, pre-register the two-step trending test' and 'Everything in our system is not an isolated event. They all work together to prove a direction and a movement ... We should always have multiple sources that tells us movement and direction for our decision to open and when'",
+ "question": "STEP 1: does a name entering the Stocktwits trending list (and its rank) predict a BIGGER move than other names at the same minute? STEP 2: among those trending names, do the direction variables (RVOL, day change, VWAP side, recent momentum), alone and stacked, pick the ones that move UP - after the real spread?",
+ "prior_work_disclosed": "trending as a desk source (Aug-Sep): -0.031R/trade, t -2.67 (direction, unconditioned); volume-is-predictable-not-directional (rho 0.66 persistence, no direction); rvol_pace gate 10/1 (OOS +6 bp t ~0.8, live worse); combined score 10/9 (volume features, failed out of period); confirmation indicators 10/21 (confluence filters FAIL); watchlists find volatility, not direction (9/27). None conditioned the direction variables on a movement filter, which is the operator's two-step model.",
+ "prior": "STEP 1 likely (about 70%); STEP 2 LOW (about 10%)",
+ "data": {
+  "trending events": "momentum-monitor/journal/DAY.jsonl on the mini, kind 'st_new' (a name newly entering the Stocktwits trending list): 8,201 events over 105 days 2026-08-02..2026-11-20, fields sym, st_rank (1 = top), session_window, et. The trending SCORE itself is not recorded; st_rank (ordered by that score) stands in for it - stated deviation.",
+  "prices": "Alpaca historical SIP 1-minute bars for each event's name-day and the prior session (fetched after 16:05 ET; shared data key), plus the same for the comparison names",
+  "comparison universe": "the warehouse SIP top-400 by prior-day dollar volume (ETFs excluded) for the same days, price band matched (see below)"
+ },
+ "events used": "the FIRST st_new per name-day with et 09:35-15:00 (RTH, PRIMARY); premarket (04:00-09:29) entries reported as information; overnight (CLOSED) entries excluded and counted. Entry = the open of the first SIP bar after the event minute (within 2 minutes, else dropped). Price at entry >= $2.00 (PRIMARY); >= $20 (the desk floor) reported as a sub-line.",
+ "halves": "2026-08-03..2026-09-30 and 2026-10-01..2026-11-20 by date",
+ "STEP 1 (movement)": {
+  "outcome": "30-minute RANGE = (max high - min low) / entry over the 30 bars after entry, and |30-minute return|",
+  "comparison": "for each event, up to 5 comparison names at the same minute from the universe in the same price band (2-10 / 10-20 / 20-50 / 50+), same measure; lift = event minus their mean",
+  "rank": "rank tertiles (1-10, 11-20, 21+) reported; the top tertile is the 'high score' set used in STEP 2 information lines",
+  "pass": "RANGE lift > 0 in both halves with day-clustered t >= 2.0 (a necessary check that 'trending means it will move' holds; failing it means STEP 2 is still scored but the model's first premise is reported as unsupported)"
+ },
+ "STEP 2 (direction, among trending events)": {
+  "variables (all known at the event minute, live-computable)": {
+   "D1 RVOL": "cumulative volume to the event minute / the same name's prior-session cumulative volume to the same minute (SIP) >= 2.0",
+   "D2 UP": "day change vs prior close > 0",
+   "D3 VWAP": "price above the session VWAP (from 09:30 bars)",
+   "D4 MOM": "15-minute return before the event > 0"
+  },
+  "cells": "each variable ON vs OFF (4 cells) and the STACK (all four ON) vs not-all-on (1 cell): 5 cells",
+  "outcome": "30-minute GROSS return from entry to the close 30 minutes later",
+  "statistic": "difference ON minus OFF using same-time matching: each ON event minus the mean of OFF trending events within +/-30 minutes on the same day (unmatched dropped and counted); day-clustered t",
+  "pass (per cell)": "difference > 0 in BOTH halves and pooled day-clustered t >= 2.58 (two-sided 5% over 5 cells)"
+ },
+ "PROFITABLE (only for a STEP 2 cell that passes)": "the ON group's mean net = gross - (half the entry spread + half the exit spread), real SIP quotes (median over 60 s, >= 5 quotes), >= +10 bp in both halves; also with the desk's 15 bp entry-spread gate on >= 100 gated events",
+ "controls (TEST_STANDARD)": "each STEP 2 ON group also against (a) the same name later (entry in exit+2..exit+62, same hold) and (b) comparison-universe names with the same variable ON at the same minute (does conditioning on trending add anything?); each control's mean printed beside an unconditional random-minute mean of trending names, mismatch > 2 SE blocks",
+ "power": "MDE = 2.8 x day-clustered SE printed per half before any mean; MDE > 25 bp in either half = UNDERPOWERED -> UNPROVEN",
+ "information_only": [
+  "premarket events; >= $20 sub-line; rank tertiles inside STEP 2",
+  "15-minute and rest-of-day horizons",
+  "stack among the top rank tertile only"
+ ],
+ "checks": [
+  "unit tests: first event per name-day; RVOL same-minute pace; VWAP from 09:30; same-time matching window; entry within 2 minutes",
+  "a null canary: random 'events' on random universe names must not pass STEP 2 cells; a planted +30 bp on STACK events must",
+  "counts printed: events by session window, dropped (overnight, price, no bars, unmatched), per cell and half"
+ ],
+ "fail": "anything short of pass. No retuning of the variables' thresholds, the 30-minute hold, the windows or the price floor; a change is a new prereg.",
+ "if_pass": "result-skeptic review; forward read on 20 live sessions on the live (IEX) feed before any desk change",
+ "if_fail": "record which step failed: if STEP 1 passes and STEP 2 fails, the trending list finds movers but these variables cannot tell their direction",
+ "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)",
+ "script": "tools/studies/trending_two_step.py (to be written after the review)",
+ "amended_1": {
+  "when": "2026-11-20, after result-skeptic round 1 (FIX FIRST, 12 findings), before any script or price fetch",
+  "1 n": "expected n ~1,486 first-per-name-day RTH weekday events 09:35-15:00 before the $2 floor (H1 966 / H2 520; 1,660 weekend and 4,485 CLOSED-window events excluded). Monitor-down stretches (no journal record of any kind for 30 RTH minutes) are dropped and listed; 11/20 excluded.",
+  "2 event meaning": "st_new = first entry into the monitor's displayed 10-row trending panel after its $35 price filter, once per process lifetime; names already listed at startup never fire. Bands 2-10 / 10-20 / 20-35; rank tertiles reported within band only (rank is mixed with price).",
+  "3 timing": "polls are ~5 minutes apart and 338 events cluster at :05-:06 (likely an hourly batch), so a listing can be up to an hour old; at the event, day change IQR is -3.8%..+4.9% (names have already moved). Not look-ahead; stated in the write-up.",
+  "4 STEP 1 matching": "comparison names matched on price band AND quintile of the pre-event 30-minute range (% of price) AND |day change| quintile; PASS judged on the volatility-matched lift (band-only lift is information); >= 3 comparisons per event, else dropped and counted",
+  "5 no look-ahead": "all variables use bars starting before floor(event minute); RVOL counts RTH bars (09:30+) on both days, SIP 1-minute both sides; MOM = close of the last completed bar vs 15 bars earlier",
+  "6 matching pool": "if fewer than 2 OFF peers within +/-30 min, widen to +/-60 min, then same day with a time-of-day term; unmatched share printed per cell; > 30% unmatched in a half = UNPROVEN",
+  "7 power gate before fetching outcomes": "compute the projected MDE from pre-event 30-minute return SD (no outcomes). If it exceeds 25 bp, report UNPROVEN-by-design and ask the operator before spending the API budget. Reviewer's estimate: ~70 bp.",
+  "8 control window": "control (a) capped at 15:59; events whose window holds < 10 minutes dropped from control (a) and counted; unconditional mean = uniform RTH minutes 09:35-15:00 on the same trending name-days, same 30-minute hold",
+  "9 cost": "net reported by price band; a $2-10 cell needs net >= +10 bp on its own; the 15 bp gate count printed",
+  "10 API": "batched fetches with retry on 429; every failed name listed; > 2% dropped = no verdict",
+  "12 prior": "the 9/27 watchlist finding already largely answers STEP 1; STEP 2 conditioning on trending is new"
+ },
+ "status": "amended_1 after skeptic round 1; projected power ~70 bp MDE vs 25 bp bar -> operator decision before any fetch"
+}
