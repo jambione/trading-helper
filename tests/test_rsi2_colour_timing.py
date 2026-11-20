@@ -204,11 +204,13 @@ def test_wick_and_cross_vs_close():
 
 def test_red_trigger_exact_takes_the_binding_condition():
     import rsi2_colour_timing as r
-    # RSI part binds: c 50, D 0.1, U 0.2 -> P_rsi = 50 + 0.7 + .01 = 50.71; m4 49.0 -> 49.01; below m199 51
-    assert r.red_trigger_exact(50.0, 0.2, 0.1, 49.0, 51.0) == (50.71, True)
-    # SMA5 part binds: RSI already high (9D-U < 0) -> P = m4 + tick
-    assert r.red_trigger_exact(50.0, 1.0, 0.05, 50.30, 51.0) == (50.31, True)
-    # above the 200-bar mean -> RED_UP side
+    # RSI part binds: c 50, D 0.1, U 0.2 -> x = 50.7 -> lowest cent strictly above = 50.71; m4 49.0 -> 49.01
+    assert r.red_trigger_exact(50.0, 0.2, 0.1, 49.0, 51.0)[:2] == (50.71, True)
+    # off-cent threshold: x = 10.003 -> 10.01 (review fix 1)
+    assert r.red_trigger_exact(10.0, 0.0, 0.003 / 9, 9.0, 20.0)[:2] == (10.01, True)
+    # RSI already hot (U > 9D): threshold below c; SMA5 part binds at m4 + tick
+    P, below, hot = r.red_trigger_exact(50.0, 1.0, 0.05, 50.30, 51.0)
+    assert (P, below, hot) == (50.31, True, True)
     assert r.red_trigger_exact(50.0, 1.0, 0.05, 50.30, 50.2)[1] is False
 
 
@@ -217,8 +219,12 @@ def test_ratchet_exit_stop_breakeven_and_trail():
     n = 20
     o = np.full(n, 100.0); h = np.full(n, 100.0); l = np.full(n, 99.9); c = np.full(n, 100.0)
     l[3] = 99.3                                        # touches entry - 0.6% = 99.4 -> exit at min(stop, open)=99.4
-    assert abs(r.ratchet_exit(o, h, l, c, 0, 100.0) - 99.4) < 1e-9
+    assert r.ratchet_exit(o, h, l, c, 0, 100.0, False) == (99.4, 3)
     o2 = o.copy(); h2 = h.copy(); l2 = l.copy(); c2 = c.copy()
     l2[3] = 100.5; h2[2] = 101.0                       # high 101 -> trail stop 100.394; bar 4 low 100.3 exits
     l2[4] = 100.3; o2[4] = 100.5
-    assert abs(r.ratchet_exit(o2, h2, l2, c2, 0, 100.0) - 101.0 * 0.994) < 1e-9
+    px, b = r.ratchet_exit(o2, h2, l2, c2, 0, 100.0, False)
+    assert abs(px - 101.0 * 0.994) < 1e-9 and b == 4
+    l3 = l.copy(); l3[3] = 99.9; l3[0] = 99.0          # an entry at the open watches its own bar (review fix 2)
+    assert r.ratchet_exit(o, h, l3, c, 0, 100.0, True)[1] == 0
+    assert r.ratchet_exit(o, h, l3, c, 0, 100.0, False)[1] != 0

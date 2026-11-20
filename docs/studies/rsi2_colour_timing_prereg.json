@@ -77,7 +77,7 @@
   "C1 verdict rows": "EDGE on ALL candidates (gross); PROFITABLE on spread-gated traded rows (m5 'verdict on traded rows' applies to PROFITABLE only)",
   "C2 strict colours need warm-up": "if the chart match makes the SMA-strict colours primary, every series prepends the last 220 regular-hours bars of the prior session (SMA200 is otherwise undefined until ~12:50); name-days without them are counted and scored with in-session warm-up only as information. Strict red uses RSI > 90, matching the panel; the plain-level rules keep >= 90."
  },
- "status": "amended_6: backtest-only Saturday, exact trigger, cap model, dist and SMA200 splits; Neon review before run",
+ "status": "amended_7: step-1 screen fixed after skeptic review; waiting for Neon's review and the operator's go",
  "amended_2": {
   "when": "2026-11-20, after the operator supplied the panel's Pine source (ChrisMoody _CM_RSI_2_Strategy_Lower) and before any score; the 11/19 chart match had failed (~6/10) under both earlier definitions",
   "colour rule (replaces B2's either/or)": "exactly the Pine source: GREEN (lime) = close > SMA200 and close < SMA5 and RSI2 < 10; RED = close < SMA200 and close > SMA5 and RSI2 > 90; else silver. SMA200/SMA5 and RSI2 on the SAME 1-minute close series.",
@@ -168,5 +168,15 @@
   "information splits": "by trigger distance dist = P/close[t-1] - 1 (< 5 bp, 5-20, 20-50, > 50 bp); and Pine red (close < SMA200) vs the same trigger above SMA200 (plain RSI-2 > 90 uptrend thrusts) - information only, the uptrend rule needs its own prereg (operator: later)",
   "live parity (before any live use)": "the live desk's RSI-2/SMA warm-up (symbol_ohlc / live_cm_rsi on IEX with a clock window) must be checked against this SIP extended-hours series on replayed days",
   "review gate": "Neon (outside reviewer, via the operator) reviews code + this prereg before each run; nothing runs without the operator's go"
+ },
+ "amended_7_skeptic_step1": {
+  "when": "2026-11-20 ~19:40 ET, after the result-skeptic code review of step 1 (FIX FIRST, 6 + minors); nothing run",
+  "trigger wording": "P = the lowest cent strictly above the RSI threshold x and strictly above m4: x = c[t-1] + 9D - U when 9D - U >= 0, else (RSI already > 90) x = c[t-1] - (U/9 - D); valid if P < m199; the 'RSI already hot' trades are reported separately",
+  "step-2 gate (fixed before the run)": "RED_STOP approximate-ratchet lift > 0 in both halves AND pooled day-clustered t >= 1.0 AND each half's MDE (2.8 x SE) <= 10 bp; MDE above 10 = UNDERPOWERED, no step 2",
+  "refractory": "a signal is skipped while that rule's trade on the name is open (until the ratchet exit bar) and entries are >= 15 bars apart",
+  "ratchet": "approximate: stop entry - 0.6%, breakeven at +0.15%, trail running high - 0.6% (the live config has be_at_pct 0.15, give_r 0.12R with 1R ~ 5% of price, give_max_pct 1.0; the bar-level shape is the one_two_three approximation, not the live code). Entries at the open are watched from their own bar; mid-bar stop fills from the next bar",
+  "controls": "same-minute peers with the same entry type and exits (primary lift) plus an unconditional random filtered name-minute with the same entry type and exits, printed beside the peer mean with a Welch t",
+  "reporting": "gross on all rows and on the rows that have a lift; n per statistic; holds labelled 'close of the 5th / 15th bar counting the entry bar'; cap-miss share is a lower bound and a capped line excludes cap-missed signals and peers",
+  "no-day-filter line": "passed as a parameter (no global toggle)"
  }
 }

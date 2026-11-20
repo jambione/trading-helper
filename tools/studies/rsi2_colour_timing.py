@@ -226,147 +226,220 @@ def pine_day(rth_prev, ext, rth_today):
     return out
 
 
+def cent_above(x):
+    """Lowest cent price strictly above x. Pure."""
+    return round(math.floor(round(x * 100, 6)) / 100.0 + TICK, 2)
+
+
 def red_trigger_exact(c_prev, up, down, m4_prev, m199_prev):
-    """amended_6: the lowest cent price at which bar t closes red - RSI-2 strictly > 90 (P_rsi + 1 tick) and close
-    strictly above the 5-bar mean incl. itself (m4 + 1 tick) - and whether it is below the 200-bar mean incl. itself
-    (close < m199). -> (P, below_sma200) or (NaN, None). Pure."""
+    """amended_6/7: the lowest cent price at which bar t closes red - RSI-2 strictly > 90 and close strictly above
+    the 5-bar mean incl. itself (> m4) - and whether it is strictly below the 200-bar mean incl. itself (< m199).
+    RSI threshold x: if 9D - U >= 0 a rise of 9D - U is needed (x = c + 9D - U); if RSI is already above 90 (U > 9D)
+    a fall of up to U/9 - D still keeps it above 90 (x = c - (U/9 - D)). -> (P, below_sma200, rsi_already_hot) or
+    (NaN, None, None). Pure."""
     if not all(np.isfinite(v) for v in (c_prev, up, down, m4_prev, m199_prev)):
-        return np.nan, None
-    p_rsi = math.ceil(round((c_prev + max(9.0 * down - up, 0.0) + TICK) * 100, 6)) / 100.0
-    p_sma = math.floor(round(m4_prev * 100, 6)) / 100.0 + TICK
-    P = round(max(p_rsi, p_sma), 2)
-    return P, P < m199_prev
+        return np.nan, None, None
+    hot = 9.0 * down - up < 0
+    x = c_prev - (up / 9.0 - down) if hot else c_prev + 9.0 * down - up
+    P = max(cent_above(x), cent_above(m4_prev))
+    return P, P < m199_prev, hot
 
 
-def ratchet_exit(o, h, l, c, ent_bar, entry, last=FLAT_T):
-    """APPROXIMATE desk exit on 1-minute bars (amended_6 step 1): stop = entry - 0.6%; once a bar's high reaches
-    entry + 0.15% the stop is at least entry; the stop trails the running high of COMPLETED bars - 0.6%; a bar whose
-    low touches the stop exits at min(stop, open); flat at the close of bar `last` (15:50) or after 60 bars.
-    The entry bar's own high/low count from the next bar (the fill's position inside bar ent_bar is unknown). -> exit
-    price or NaN. Pure."""
+def ratchet_exit(o, h, l, c, ent_bar, entry, at_open, last=FLAT_T):
+    """APPROXIMATE desk exit on 1-minute bars (amended_6 step 1): stop = entry - 0.6%; once the running high reaches
+    entry + 0.15% the stop is at least entry; the stop trails the running high - 0.6% (live: give_r 0.12R ~ 0.6% at
+    1R ~ 5%, be_at_pct 0.15; the shape is one_two_three's approximation, not the live code). A bar whose low touches
+    the stop exits at min(stop, open). An entry AT THE OPEN (at_open) is watched from its own bar; a stop fill inside
+    bar t from bar t+1 (its position inside bar t is unknown). The stop is tested before the bar's high updates it.
+    Flat at the close of `last` (15:50) or after 60 bars. -> (exit price, exit bar) or (NaN, bar). Pure."""
     stop = entry * (1 - TRAIL_PCT / 100)
     hi = entry
+    first = ent_bar if at_open else ent_bar + 1
     end = min(last, ent_bar + RATCHET_CAP, len(c) - 1)
-    for b in range(ent_bar + 1, end + 1):
+    for b in range(first, end + 1):
         if not all(np.isfinite(x[b]) for x in (o, h, l, c)):
             continue
         if l[b] <= stop:
-            return min(stop, o[b])
+            return min(stop, o[b]), b
         hi = max(hi, h[b])
         if hi >= entry * (1 + BE_PCT / 100):
             stop = max(stop, entry)
         stop = max(stop, hi * (1 - TRAIL_PCT / 100))
-    return px_or(c, end)
+    return px_or(c, end), end
 
 
-def red_screen_name(d, k):
-    """amended_6 step 1 for one name-day: RED_STOP (exact trigger, below SMA200), RED_UP (same trigger at or above
-    SMA200, information) and RED_START (bar close), each with fixed 5/15-bar holds and the approximate ratchet.
-    -> list of trade dicts. Pure."""
+def passes_filter_chg(cl, pc, i, chg_min):
+    if not (0 <= i < len(cl)) or not np.isfinite(cl[i]) or not pc > 0:
+        return False
+    return PX_LO <= cl[i] <= PX_HI and (cl[i] / pc - 1) * 100 >= chg_min
+
+
+def _outcomes(o, h, l, c, ent, e, at_open):
+    """Gross bp for the close of the 5th / 15th bar counting the entry bar, and the approximate ratchet. Pure."""
+    rx, xb = ratchet_exit(o, h, l, c, ent, e, at_open)
+    return ((px_or(c, ent + 4) / e - 1) * 1e4, (px_or(c, ent + 14) / e - 1) * 1e4, (rx / e - 1) * 1e4, xb)
+
+
+def _entry_on(rule, o, h, c, t, dist):
+    """Same entry type on any name: RED_START buys open[t+1]; stop rules place a same-distance buy-stop above
+    close[t-1] for bar t (stop_fill). -> (entry, entry bar, capmiss) or (NaN, None, False). Pure."""
+    if rule == "RED_START":
+        return px_or(o, t + 1), t + 1, False
+    cp = px_or(c, t - 1)
+    if not np.isfinite(cp):
+        return np.nan, None, False
+    P = math.ceil(round(cp * (1 + dist) * 100, 6)) / 100.0
+    e = stop_fill(P, px_or(o, t), px_or(h, t))
+    return e, t, bool(np.isfinite(o[t]) and o[t] > P * (1 + CAP_BP / 1e4))
+
+
+def red_screen_name(d, k, chg_min=None):
+    """amended_6/7 step 1 for one name-day: RED_STOP (exact trigger, below SMA200), RED_UP (same trigger at or above
+    SMA200, information) and RED_START (bar close). A signal is skipped while that rule's trade on the name is open
+    (refractory to the ratchet exit bar, and >= 15 bars between entries). -> list of trade dicts. Pure."""
+    chg = CHG_MIN if chg_min is None else chg_min
     o, h, l, c = d["o"][k], d["h"][k], d["l"][k], d["c"][k]
     pc = d["pc"][k]
     red = d["red_pine"][k]
     U, D, m4, m199 = d["U_pine"][k], d["D_pine"][k], d["m4_pine"][k], d["m199_pine"][k]
-    out, last = [], {"RED_STOP": -10 ** 9, "RED_UP": -10 ** 9, "RED_START": -10 ** 9}
+    out = []
+    free = {"RED_STOP": -1, "RED_UP": -1, "RED_START": -1}       # first bar a new signal may fire
     for t in range(T_LO, T_HI + 1):
-        # stop rules: armed at the open of t if completed bar t-1 was not red; filter at close[t-1]
-        if not bool(red[t - 1]) and passes_filter(c, pc, t - 1):
-            P, below = red_trigger_exact(px_or(c, t - 1), U[t - 1], D[t - 1], m4[t - 1], m199[t - 1])
+        if not bool(red[t - 1]) and passes_filter_chg(c, pc, t - 1, chg):
+            P, below, hot = red_trigger_exact(px_or(c, t - 1), U[t - 1], D[t - 1], m4[t - 1], m199[t - 1])
             if np.isfinite(P):
                 rule = "RED_STOP" if below else "RED_UP"
-                if t >= last[rule] + 15:
+                if t >= free[rule]:
                     e = stop_fill(P, px_or(o, t), px_or(h, t))
                     if np.isfinite(e):
-                        last[rule] = t
-                        out.append(_red_row(rule, d, k, t, t, e, P / c[t - 1] - 1,
-                                            capmiss=np.isfinite(o[t]) and o[t] > P * (1 + CAP_BP / 1e4)))
-        if np.isfinite(c[t]) and bool(red[t]) and not bool(red[t - 1]) and passes_filter(c, pc, t) \
-                and t >= last["RED_START"] + 15:
+                        r = _red_row(rule, d, k, t, t, e, P / c[t - 1] - 1, chg,
+                                     capmiss=bool(np.isfinite(o[t]) and o[t] > P * (1 + CAP_BP / 1e4)), hot=hot)
+                        free[rule] = max(r["exit_bar"] + 1, t + 15)
+                        out.append(r)
+        if np.isfinite(c[t]) and bool(red[t]) and not bool(red[t - 1]) and passes_filter_chg(c, pc, t, chg) \
+                and t >= free["RED_START"]:
             e = px_or(o, t + 1)
             if np.isfinite(e):
-                last["RED_START"] = t
-                out.append(_red_row("RED_START", d, k, t, t + 1, e, None, capmiss=False))
+                r = _red_row("RED_START", d, k, t, t + 1, e, None, chg, capmiss=False, hot=None)
+                free["RED_START"] = max(r["exit_bar"] + 1, t + 15)
+                out.append(r)
     return out
 
 
-def _red_row(rule, d, k, t, ent, e, dist, capmiss):
+def _red_row(rule, d, k, t, ent, e, dist, chg, capmiss, hot):
     o, h, l, c = d["o"][k], d["h"][k], d["l"][k], d["c"][k]
+    at_open = rule == "RED_START"
+    f5, f15, rt, xb = _outcomes(o, h, l, c, ent, e, at_open)
     r = {"rule": rule, "day": d["day"], "sym": d["syms"][k], "t": t, "ent_bar": ent, "entry": e, "dist": dist,
-         "capmiss": bool(capmiss),
-         "fix5": (px_or(c, ent + 5) / e - 1) * 1e4, "fix15": (px_or(c, ent + 15) / e - 1) * 1e4,
-         "ratchet": (ratchet_exit(o, h, l, c, ent, e) / e - 1) * 1e4}
-    # same-minute peers: same entry type (same-distance stop, or the next open) and the same exits on THEIR bars
-    fbar = t - 1 if rule != "RED_START" else t
+         "capmiss": capmiss, "hot": hot, "fix5": f5, "fix15": f15, "ratchet": rt, "exit_bar": xb}
+    fbar = t if at_open else t - 1
     U_ = len(d["syms"])
-    peers = sorted((j for j in range(U_) if j != k and passes_filter(d["c"][j], d["pc"][j], fbar)),
+    peers = sorted((j for j in range(U_) if j != k and passes_filter_chg(d["c"][j], d["pc"][j], fbar, chg)),
                    key=lambda j: hkey("rsi2red-peer", d["day"], d["syms"][j], t))[:5]
-    vals = {"fix5": [], "fix15": [], "ratchet": []}
+    vals = {"fix5": [], "fix15": [], "ratchet": [], "ratchet_capped": []}
     for j in peers:
         oj, hj, lj, cj = d["o"][j], d["h"][j], d["l"][j], d["c"][j]
-        if rule == "RED_START":
-            ej, entj = px_or(oj, t + 1), t + 1
-        else:
-            cp = px_or(cj, t - 1)
-            if not np.isfinite(cp):
-                continue
-            Pj = math.ceil(round(cp * (1 + dist) * 100, 6)) / 100.0
-            ej, entj = stop_fill(Pj, px_or(oj, t), px_or(hj, t)), t
+        ej, entj, cmj = _entry_on(rule, oj, hj, cj, t, dist)
         if not np.isfinite(ej):
             continue
-        vals["fix5"].append((px_or(cj, entj + 5) / ej - 1) * 1e4)
-        vals["fix15"].append((px_or(cj, entj + 15) / ej - 1) * 1e4)
-        vals["ratchet"].append((ratchet_exit(oj, hj, lj, cj, entj, ej) / ej - 1) * 1e4)
+        a5, a15, art, _ = _outcomes(oj, hj, lj, cj, entj, ej, at_open)
+        vals["fix5"].append(a5); vals["fix15"].append(a15); vals["ratchet"].append(art)
+        if not cmj:
+            vals["ratchet_capped"].append(art)
     for key, v in vals.items():
         v = [x for x in v if np.isfinite(x)]
         r[f"ctl_{key}"] = float(np.mean(v)) if v else np.nan
-        r[f"lift_{key}"] = r[key] - r[f"ctl_{key}"] if v and np.isfinite(r[key]) else np.nan
+        base = "ratchet" if key == "ratchet_capped" else key
+        ok = v and np.isfinite(r[base]) and not (key == "ratchet_capped" and capmiss)
+        r[f"lift_{key}"] = r[base] - r[f"ctl_{key}"] if ok else np.nan
     r["peers"] = len(vals["ratchet"])
     return r
 
 
+def red_unconditional(d, rows, chg):
+    """P2 control: for each signal row of the day, a random filtered (name, minute) with the same entry type
+    (same-distance stop or next open) and the same exits. -> list of (rule, ratchet gross). Pure given the hash."""
+    out = []
+    U_ = len(d["syms"])
+    for r in rows:
+        rng = np.random.default_rng(hkey("rsi2red-unc", d["day"], r["sym"], r["t"], r["rule"]) % 2 ** 32)
+        for _ in range(20):
+            j, t = int(rng.integers(0, U_)), int(rng.integers(T_LO, T_HI + 1))
+            if passes_filter_chg(d["c"][j], d["pc"][j], t if r["rule"] == "RED_START" else t - 1, chg):
+                break
+        else:
+            continue
+        oj, hj, lj, cj = d["o"][j], d["h"][j], d["l"][j], d["c"][j]
+        ej, entj, _ = _entry_on(r["rule"], oj, hj, cj, t, r["dist"])
+        if np.isfinite(ej):
+            g = _outcomes(oj, hj, lj, cj, entj, ej, r["rule"] == "RED_START")[2]
+            if np.isfinite(g):
+                out.append((r["rule"], g))
+    return out
+
+
+def _stat(rr, key):
+    a, b = halves(rr)
+    lk = f"lift_{key}"
+    both = [r for r in rr if np.isfinite(r.get(lk, np.nan)) and np.isfinite(r.get(key, np.nan))]
+    ba, bb = halves(both)
+    return {"gross_h1": r2(mean(a, key)), "gross_h2": r2(mean(b, key)),
+            "gross_on_lift_rows_h1": r2(mean(ba, key)), "gross_on_lift_rows_h2": r2(mean(bb, key)),
+            "lift_h1": r2(mean(ba, lk)), "lift_h2": r2(mean(bb, lk)), "t": r2(day_t(both, lk)),
+            "mde_h1": r2(mde(ba, lk)), "mde_h2": r2(mde(bb, lk)), "n_lift_h1": len(ba), "n_lift_h2": len(bb)}
+
+
 def red_screen():
-    """amended_6 step 1 report: per rule and half, mean gross (5/15-bar holds, approximate ratchet), lift vs the
-    same-minute peers, day-clustered t and MDE; gate to step 2 = RED_STOP's ratchet lift > 0 in both halves.
-    Information: trigger-distance buckets, cap-miss share, RED_UP (above SMA200), no-day-filter line."""
-    rows = []
+    """amended_7 step 1 report. Gate to step 2 (written in the prereg before the run): RED_STOP ratchet lift > 0 in
+    both halves AND pooled day-t >= 1.0 AND each half's MDE <= 10 bp (else UNDERPOWERED: no step 2)."""
+    rows, unc = [], []
     for d in load_days(*SEARCH):
         if "m199_pine" not in d:
             sys.exit("cache built before amended_6 (no m199_pine): rerun build")
+        dr = []
         for k in range(len(d["syms"])):
-            rows += red_screen_name(d, k)
-    out = {"prereg": "docs/studies/rsi2_colour_timing_prereg.json amended_6 step 1 (bar-level, ratchet APPROXIMATE)"}
+            dr += red_screen_name(d, k)
+        rows += dr
+        unc += red_unconditional(d, dr, CHG_MIN)
+    out = {"prereg": "docs/studies/rsi2_colour_timing_prereg.json amended_7 step 1 (bar-level, ratchet APPROXIMATE)",
+           "labels": {"fix5": "close of the 5th bar counting the entry bar", "fix15": "close of the 15th bar",
+                      "capmiss": "LOWER BOUND - only opens gapping past P + 5 bp; fast moves through the cap inside a bar are not seen"}}
     for rule in ("RED_STOP", "RED_START", "RED_UP"):
         rr = [r for r in rows if r["rule"] == rule]
         a, b = halves(rr)
-        rep_ = {"n": len(rr), "n_h1": len(a), "n_h2": len(b), "no_peer": sum(1 for r in rr if r["peers"] == 0)}
-        for key in ("fix5", "fix15", "ratchet"):
-            rep_[key] = {"gross_h1": r2(mean(a, key)), "gross_h2": r2(mean(b, key)),
-                         "lift_h1": r2(mean(a, f"lift_{key}")), "lift_h2": r2(mean(b, f"lift_{key}")),
-                         "t": r2(day_t(rr, f"lift_{key}")), "mde_h1": r2(mde(a, f"lift_{key}")),
-                         "mde_h2": r2(mde(b, f"lift_{key}"))}
+        u = [g for rl, g in unc if rl == rule]
+        rep_ = {"n": len(rr), "n_h1": len(a), "n_h2": len(b), "no_peer": sum(1 for r in rr if r["peers"] == 0),
+                "ratchet_nan": sum(1 for r in rr if not np.isfinite(r["ratchet"]))}
+        for key in ("fix5", "fix15", "ratchet", "ratchet_capped"):
+            rep_[key] = _stat(rr, key)
+        cm, um = mean(rr, "ctl_ratchet"), (float(np.mean(u)) if u else None)
+        rep_["peer_mean_ratchet"], rep_["unconditional_mean_ratchet"] = r2(cm), r2(um)
+        rep_["peer_vs_unconditional"] = r2(cm - um if cm is not None and um is not None else None)
+        rep_["peer_vs_unconditional_t"] = r2(welch_t([r["ctl_ratchet"] for r in rr if np.isfinite(r["ctl_ratchet"])], u))
         if rule != "RED_START":
             rep_["dist_buckets (ratchet)"] = {nm: {"n": len(x), "gross": r2(mean(x, "ratchet")), "lift": r2(mean(x, "lift_ratchet"))}
                                               for nm, x in (("<5bp", [r for r in rr if r["dist"] < 5e-4]),
                                                             ("5-20bp", [r for r in rr if 5e-4 <= r["dist"] < 2e-3]),
                                                             ("20-50bp", [r for r in rr if 2e-3 <= r["dist"] < 5e-3]),
                                                             (">50bp", [r for r in rr if r["dist"] >= 5e-3]))}
-            rep_["cap_miss_share (open past P+5bp)"] = r2(float(np.mean([r["capmiss"] for r in rr]))) if rr else None
-            rep_["cap_missed (ratchet gross)"] = r2(mean([r for r in rr if r["capmiss"]], "ratchet"))
+            rep_["rsi_already_hot (ratchet)"] = {"n": sum(1 for r in rr if r["hot"]), "lift": r2(mean([r for r in rr if r["hot"]], "lift_ratchet"))}
+            rep_["cap_miss_share (lower bound)"] = r2(float(np.mean([r["capmiss"] for r in rr]))) if rr else None
         out[rule] = rep_
-    global CHG_MIN                              # information: the same rules without the +1.5% day filter (amended_5)
-    keep, CHG_MIN = CHG_MIN, -1e9
     nf = []
-    for d in load_days(*SEARCH):
+    for d in load_days(*SEARCH):                  # information: no +1.5% day filter (amended_5)
         for k in range(len(d["syms"])):
-            nf += red_screen_name(d, k)
-    CHG_MIN = keep
-    out["no_day_filter (information)"] = {
-        rule: {"n": len(x), "ratchet_gross": r2(mean(x, "ratchet")), "ratchet_lift": r2(mean(x, "lift_ratchet")),
-               "t": r2(day_t(x, "lift_ratchet"))}
-        for rule in ("RED_STOP", "RED_START", "RED_UP") for x in [[r for r in nf if r["rule"] == rule]]}
+            nf += red_screen_name(d, k, chg_min=-1e9)
+    out["no_day_filter (information)"] = {rule: {"n": len(x), **_stat(x, "ratchet")}
+                                          for rule in ("RED_STOP", "RED_START", "RED_UP")
+                                          for x in [[r for r in nf if r["rule"] == rule]]}
     s_ = out["RED_STOP"]["ratchet"]
-    go = s_["lift_h1"] is not None and s_["lift_h2"] is not None and s_["lift_h1"] > 0 and s_["lift_h2"] > 0
-    out["STEP2_GATE"] = "PASS - run the second-level live-exit replay" if go else "STOP - RED_STOP ratchet lift not > 0 in both halves"
+    if s_["mde_h1"] is None or s_["mde_h2"] is None or s_["mde_h1"] > 10 or s_["mde_h2"] > 10:
+        gate = "UNDERPOWERED - no step 2"
+    elif s_["lift_h1"] > 0 and s_["lift_h2"] > 0 and (s_["t"] or 0) >= 1.0:
+        gate = "PASS - run the second-level live-exit replay"
+    else:
+        gate = "STOP - RED_STOP ratchet lift not > 0 in both halves with t >= 1.0"
+    out["STEP2_GATE"] = gate
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "red_screen.json").write_text(json.dumps(out, indent=1, default=str))
     print(json.dumps(out, indent=1, default=str))
