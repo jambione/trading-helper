@@ -53,5 +53,10 @@
   "6 power": "MDE = 3.71 x day-clustered SE (80% power at t 2.87, arm_then_fire amended_1 #8), > 12 bp = UNPROVEN; > 30% of ON fires dropped for no peer = UNPROVEN (#7); peer-weighted control mean; SE over days with both ON and OFF fires only, with those day counts printed per half",
   "7 controls": "time-shift placebo: R1 read at t +/- 60..120 minutes on the same day (20 shifts), EDGE in <= 10% per cell; information: the mapped ETF's own beta-adjusted return over t+1..t+30 ON vs OFF (sector continuation vs name-specific); top-1% winsorize veto (arm_then_fire amended_1 #9) on every cell",
   "8 family": "the 5-minute lookback, the R1 decomposition and the gap/wick splits are never promoted; this prereg shares a family with arm_then_fire on the same fires; any PASS is at most PROMISING until the IEX rescore and the forward check"
+ },
+ "amended_opening_slice": {
+  "when": "2026-11-20 ~17:15 ET, operator 'sure' (capture the 09:30-10:30 thrust); before any score",
+  "opening slice (information only)": "every scored cell is also reported for signals/fires in 09:30-10:30 ET, judged after the real SIP spread at those minutes (wider at the open); indicators may start at 09:30 because the warm-up uses extended-hours (RSI-2) or prior bars; never promoted to a verdict - an opening-hour rule needs its own prereg (prior: opening_grid FAIL 11/19)",
+  "rsi window note": "fires before 09:45 are not built by arm_then_fire; this slice covers 09:45-10:30 unless the fires are rebuilt from 09:31 for this line (counted and stated)"
  }
 }

@@ -121,5 +121,10 @@
   "comparison (information)": "per colour, cross-price entry minus bar-close entry (RED_STOP vs RED_START, GREEN_CROSS vs GREEN_END) on matched signals: the bp a faster entry adds, and how many fills the bar-close rule would never have taken (colour reverted before the close)",
   "feed line (information)": "each scored rule rerun with fills only when an IEX print crossed P (live-feed realism); the gap from SIP is the per-trade value of real-time SIP (operator 11/20: willing to buy SIP if the test proves profit)",
   "multiplicity": "four scored rules; EDGE bar t >= 2.5 equals Bonferroni-4 (2.50); unchanged"
+ },
+ "amended_opening_slice": {
+  "when": "2026-11-20 ~17:15 ET, operator 'sure' (capture the 09:30-10:30 thrust); before any score",
+  "opening slice (information only)": "every scored cell is also reported for signals/fires in 09:30-10:30 ET, judged after the real SIP spread at those minutes (wider at the open); indicators may start at 09:30 because the warm-up uses extended-hours (RSI-2) or prior bars; never promoted to a verdict - an opening-hour rule needs its own prereg (prior: opening_grid FAIL 11/19)",
+  "rsi window note": "RSI-2 is computed on the ETH series (amended_2), so 09:30-09:44 signals exist; they go only into this slice, the scored window stays 09:45-15:30"
  }
 }
