@@ -23,6 +23,10 @@ Added 11/20 (operator: "Yes, add those three to the logger"):
   "ssr"    - today's short-sale-restriction list (Nasdaq Reg SHO file), the snapshot's symbols that are on it + count
   "short"  - per snapshot symbol, the latest FINRA short interest (short position, days to cover, settlement date)
              from data/finra_short_interest; new FINRA files are fetched at most hourly outside 04:00-20:00
+  "sentiment" (operator 11/20 "Yes, add sentiment") - Stocktwits users' Bullish/Bearish tags on the latest 30
+             messages per symbol (public symbol stream), refreshed every 10 minutes for up to 20 symbols per cycle
+             (trending first): n, tagged, bull, bear, bull_share, newest message age, messages per hour. Attention
+             (trending score) and lean (sentiment) are kept as separate layers.
 """
 from __future__ import annotations
 
@@ -248,7 +252,51 @@ def fetch_finra(now: float) -> list[str]:
     return saved
 
 
-def slow_layers(syms, now: float) -> dict:
+SENT_EVERY, SENT_MAX = 600.0, 20
+_sent = {"t": 0.0, "data": {}, "rr": 0}
+
+
+def parse_stream(payload: dict, now: float) -> dict:
+    """Stocktwits symbol stream -> sentiment summary of its latest messages. Pure."""
+    msgs = payload.get("messages") or []
+    tags = [((m.get("entities") or {}).get("sentiment") or {}).get("basic") for m in msgs]
+    bull, bear = tags.count("Bullish"), tags.count("Bearish")
+    ts = []
+    for m in msgs:
+        try:
+            ts.append(datetime.fromisoformat(str(m.get("created_at")).replace("Z", "+00:00")).timestamp())
+        except ValueError:
+            pass
+    span_h = (max(ts) - min(ts)) / 3600 if len(ts) >= 2 else None
+    return {"n": len(msgs), "tagged": bull + bear, "bull": bull, "bear": bear,
+            "bull_share": round(bull / (bull + bear), 3) if bull + bear else None,
+            "newest_age_min": round((now - max(ts)) / 60, 1) if ts else None,
+            "msgs_per_hour": round((len(ts) - 1) / span_h, 2) if span_h else None}
+
+
+def sentiment(priority, others, now: float) -> dict:
+    """Refresh at most every 10 minutes, at most 20 symbols per cycle (priority first, the rest round-robin);
+    returns the latest summary per symbol with its age."""
+    if now - _sent["t"] >= SENT_EVERY:
+        _sent["t"] = now
+        pr = [s for s in priority if s]
+        rest = [s for s in others if s and s not in pr]
+        k = _sent["rr"] % max(len(rest), 1)
+        pick = (pr + rest[k:] + rest[:k])[:SENT_MAX]
+        _sent["rr"] += max(SENT_MAX - len(pr), 0)
+        for s in pick:
+            txt = _get(f"https://api.stocktwits.com/api/2/streams/symbol/{s}.json")
+            if txt is None:
+                continue
+            try:
+                _sent["data"][s] = {**parse_stream(json.loads(txt), now), "at": round(now, 1)}
+            except ValueError:
+                continue
+    return {s: {**v, "age_min": round((now - v["at"]) / 60, 1)} for s, v in _sent["data"].items()
+            if s in set(priority) | set(others)}
+
+
+def slow_layers(syms, now: float, priority=()) -> dict:
     """The three 11/20 layers for one snapshot. Never raises."""
     out = {}
     try:
@@ -264,6 +312,10 @@ def slow_layers(syms, now: float) -> dict:
         out["ssr"] = {"n": len(ssr), "on_list": sorted(set(syms) & ssr)}
     except Exception as e:                          # noqa: BLE001
         out["ssr"] = {"_error": str(e)[:120]}
+    try:
+        out["sentiment"] = sentiment(list(priority), [s for s in syms if s not in set(priority)], now)
+    except Exception as e:                          # noqa: BLE001
+        out["sentiment"] = {"_error": str(e)[:120]}
     try:
         si = short_interest_table()
         out["short"] = {s: si[s] for s in syms if s in si}
@@ -307,7 +359,8 @@ def main(argv) -> int:
             rec = snapshot(st, now)
             rec.update(slow_layers(sorted({r.get("symbol") for k in ("trending", "movers", "ai") for r in rec[k]
                                            if r.get("symbol")}), now))
-            print(json.dumps({k: rec[k] for k in ("etfs", "halts", "ssr", "short", "short_file")}, default=str)[:3000])
+            rec.update({"sentiment": sentiment([r.get("symbol") for r in rec["trending"]][:3], [], now)})
+            print(json.dumps({k: rec[k] for k in ("etfs", "halts", "ssr", "short", "short_file", "sentiment")}, default=str)[-1500:])
         return 0 if st else 1
     while True:
         now = time.time()
@@ -318,7 +371,7 @@ def main(argv) -> int:
                 syms = [k for k in rec["catalysts"] if not k.startswith("_")] + [t.get("ticker") for t in rec["tickers"]
                                                                                  if t.get("ticker")]
                 syms = sorted(set(syms) | {r.get("symbol") for k in ("trending", "movers", "ai") for r in rec[k] if r.get("symbol")})
-                rec.update(slow_layers(syms, now))
+                rec.update(slow_layers(syms, now, priority=[r.get("symbol") for r in rec["trending"]]))
                 append(rec, now)
             else:
                 append({"ts": round(now, 1), "et": datetime.fromtimestamp(now, ET).strftime("%H:%M:%S"),

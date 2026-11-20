@@ -87,3 +87,24 @@ def test_short_interest_table(tmp_path, monkeypatch):
     sl._slow["si_file"] = None
     t = sl.short_interest_table()
     assert t["A"] == {"short": 4892390, "dtc": 2.24, "settle": "2026-10-30"}
+
+
+def test_parse_stream_sentiment():
+    p = {"messages": [{"created_at": "2026-11-20T11:52:11Z", "entities": {"sentiment": None}},
+                      {"created_at": "2026-11-20T11:42:11Z", "entities": {"sentiment": {"basic": "Bullish"}}},
+                      {"created_at": "2026-11-20T11:22:11Z", "entities": {"sentiment": {"basic": "Bearish"}}},
+                      {"created_at": "2026-11-20T10:52:11Z", "entities": {"sentiment": {"basic": "Bullish"}}}]}
+    now = datetime_ts = 1795175531.0     # 2026-11-20T11:52:11Z
+    r = sl.parse_stream(p, now)
+    assert r["n"] == 4 and r["bull"] == 2 and r["bear"] == 1 and r["bull_share"] == round(2 / 3, 3)
+    assert r["newest_age_min"] == 0.0 and r["msgs_per_hour"] == 3.0
+
+
+def test_sentiment_caps_and_throttles(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sl, "_get", lambda url, timeout=8.0: calls.append(url) or '{"messages": []}')
+    sl._sent.update({"t": 0.0, "data": {}, "rr": 0})
+    out = sl.sentiment([f"P{i}" for i in range(5)], [f"O{i}" for i in range(40)], 10_000.0)
+    assert len(calls) == 20 and all(f"P{i}" in out for i in range(5))
+    sl.sentiment(["P0"], [], 10_100.0)
+    assert len(calls) == 20                  # within 10 minutes: no new fetches
