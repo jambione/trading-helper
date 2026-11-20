@@ -88,5 +88,32 @@
   "note": "in Connors' design red (below the 200-bar average, above the 5-bar average, RSI2 > 90) is a SHORT setup - a bounce inside a downtrend; the operator reads it as an exhaustion rise. The test scores it as registered (a long entry).",
   "chart match references": "FIGS 2026-11-19 15:05-15:30 and COLD 2026-11-19 14:25-15:00 (operator screenshots), plus UNH 2026-11-20 premarket ~06:30-06:45 ET (operator screenshot: green segment ending ~06:38, then a jump) - colours compared bar by bar on extended-hours SIP bars; MU 2026-11-20 premarket 06:50-07:35 ET (operator screenshot: red segments ~07:10-07:14, ~07:20-07:21, ~07:25-07:28); ANT 2026-11-20 premarket 08:20-09:10 ET (operator screenshot: red ~08:43-08:44 at the start of the 84 -> 88 rally, ~08:48-08:49, ~08:56-09:00, ~09:03-09:08)"
  },
- "amended_wick_split": "INFORMATION ONLY (operator 11/20 'yes, add the wick split'; added before any outcome was read): WICK PRESSURE = (sum of lower wicks - sum of upper wicks) / sum of ranges over the 5 (and 3) completed 1-minute bars before the event/entry bar; buckets selling < -0.2, neutral, buying > +0.2. Each scored cell's result is printed by the ON event's bucket. Never promoted to a verdict; a wick layer needs its own prereg."
+ "amended_wick_split": "INFORMATION ONLY (operator 11/20 'yes, add the wick split'; added before any outcome was read): WICK PRESSURE = (sum of lower wicks - sum of upper wicks) / sum of ranges over the 5 (and 3) completed 1-minute bars before the event/entry bar; buckets selling < -0.2, neutral, buying > +0.2. Each scored cell's result is printed by the ON event's bucket. Never promoted to a verdict; a wick layer needs its own prereg.",
+ "amended_references_3": {
+  "when": "2026-11-20 ~15:05 ET, operator screenshots during RTH; before any colour check or outcome was run",
+  "use": "colour-match check only (>=90% of the operator's coloured bars must match, as amended_2). NOT edge evidence: the operator chose these after seeing the price that followed",
+  "minutes (ET, read off the chart axis, +-1 min)": {
+   "INVH 2026-11-20 RED": [
+    "14:37-14:40",
+    "14:44-14:46",
+    "14:53-14:54"
+   ],
+   "ANT 2026-11-20 RED": [
+    "12:55-13:00",
+    "13:04-13:05",
+    "13:16-13:21",
+    "13:24-13:25"
+   ],
+   "ANT 2026-11-20 boxed, looks GREY near 90": [
+    "12:44-12:54 (operator to confirm the colour)"
+   ],
+   "SPCX 2026-11-20 GREEN": [
+    "13:39-13:41",
+    "13:57-13:59",
+    "14:11-14:12",
+    "14:21-14:24"
+   ]
+  },
+  "grey checks": "INVH 14:57-15:00 RSI ~84-90 grey; SPCX 13:52-13:56 RSI ~95 grey (close below SMA200 or above SMA5 at those bars)"
+ }
 }
