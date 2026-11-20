@@ -171,3 +171,31 @@ def test_pine_day_aligns_and_carries_over_missing_minutes():
     assert out["rsi_pine"][2] == out["rsi_pine"][1]                             # no bar at minute 2: state carries
     assert abs(out["s200_pine"][3] - full[-200:].mean()) < 1e-9
     assert abs(out["m4_pine"][3] - full[-4:].mean()) < 1e-9
+
+
+def test_green_cross_treated_as_stop_rule():
+    import rsi2_colour_timing as r
+    row = {"t": 50}
+    assert r.qbar("GREEN_CROSS", row) == r.qbar("RED_STOP", row) == 49
+
+
+def test_green_cross_exit_after_fill_bar():
+    import rsi2_colour_timing as r
+    red = np.zeros(390, bool)
+    red[53] = True
+    o = np.arange(390, dtype=float)
+    c = o + 0.5
+    kind, bar, px = r.exit_for("GREEN_END", red, 50, 50, o, c)      # red at 53, ends at 54 -> sell open of 55
+    assert (kind, bar, px) == ("open", 55, 55.0)
+    kind, bar, px = r.exit_for("GREEN_END", np.zeros(390, bool), 50, 50, o, c)
+    assert (kind, bar, px) == ("cap", 65, 65.5)
+
+
+def test_wick_and_cross_vs_close():
+    import rsi2_colour_timing as r
+    o = np.full(10, 10.0); c = np.full(10, 10.0); h = np.full(10, 10.5); l = np.full(10, 9.0)
+    assert abs(r.wick_pressure(o, h, l, c, 6) - (5 * 1.0 - 5 * 0.5) / (5 * 1.5)) < 1e-12
+    stop = [{"day": "d", "sym": "A", "t": 5, "gross": 10.0}, {"day": "d", "sym": "B", "t": 7, "gross": -4.0}]
+    close = [{"day": "d", "sym": "A", "t": 5, "gross": 6.0}]
+    out = r.cross_vs_close(stop, close)
+    assert out["matched"] == 1 and out["cross_minus_close_gross"] == 4.0 and out["unmatched_fills"] == 1

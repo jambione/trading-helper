@@ -221,7 +221,7 @@ def pine_day(rth_prev, ext, rth_today):
     return out
 
 
-def trades_for_name(rule, d, k, mode):
+def trades_for_name(rule, d, k, mode, t_lo=None, t_hi=None):
     """All trades of one rule on one name-day (row k of day d) with the refractory. -> list of dicts. Pure."""
     o, h, l, c = d["o"][k], d["h"][k], d["l"][k], d["c"][k]
     pc = d["pc"][k]
@@ -232,7 +232,7 @@ def trades_for_name(rule, d, k, mode):
     s200, m4 = (d["s200_pine"][k], d["m4_pine"][k]) if pine else (None, None)
     out, busy_until, last_entry = [], -1, -10 ** 9
     counts = defaultdict(int)
-    for t in range(T_LO, T_HI + 1):
+    for t in range(T_LO if t_lo is None else t_lo, (T_HI if t_hi is None else t_hi) + 1):
         if pine and not np.isfinite(c[t]) and rule not in STOP_RULES:
             continue                              # no bar this minute: state carries, nothing fires (amended_3)
         if rule == "RED_START":
@@ -284,7 +284,7 @@ def trades_for_name(rule, d, k, mode):
             continue
         g = (xpx / entry - 1) * 1e4
         out.append({"sym": d["syms"][k], "t": t, "ent_bar": ent_bar, "entry": entry, "kind": kind, "ebar": ebar,
-                    "gross": g, "dist": dist, "thin": thin,
+                    "gross": g, "dist": dist, "thin": thin, "wick": wick_pressure(o, h, l, c, fbar + 1 if rule in STOP_RULES else t + 1),
                     "fix5": (px_or(c, ent_bar + 4) / entry - 1) * 1e4 if rule not in STOP_RULES else (px_or(c, t + 5) / entry - 1) * 1e4,
                     "fix15": (px_or(c, ent_bar + 14) / entry - 1) * 1e4 if rule not in STOP_RULES else (px_or(c, t + 15) / entry - 1) * 1e4})
         busy_until = ebar + (1 if kind == "cap" else 0)
@@ -337,12 +337,12 @@ def same_name_later(rule, d, k, row):
     return (xpx / entry - 1) * 1e4
 
 
-def day_rows(rule, d, mode):
+def day_rows(rule, d, mode, t_lo=None, t_hi=None):
     """Every trade of a rule on a day with its controls. -> (rows, counts). Pure."""
     rows, counts = [], defaultdict(int)
     U = len(d["syms"])
     for k in range(U):
-        tr, cn = trades_for_name(rule, d, k, mode)
+        tr, cn = trades_for_name(rule, d, k, mode, t_lo, t_hi)
         for key, v in cn.items():
             counts[key] += v
         for r in tr:
@@ -368,22 +368,34 @@ def day_rows(rule, d, mode):
     return rows, counts
 
 
-def unconditional(rule, d, mode, holds, rng_seed):
-    """Random filtered (name, minute) on the day, held a hold length drawn from this day's signal holds. -> list of
-    gross. Pure given the seed."""
+def unconditional(rule, d, mode, specs, rng_seed):
+    """Random filtered (name, minute) on the day, one per signal spec (hold bars, exit price type, stop distance) drawn
+    from this day's signals. Bar-close rules buy o[t+1]; stop rules place the same-distance buy-stop at bar t with the
+    same fill model (filter at close[t-1]). Exit price type matches the signal's (price_at). -> list of gross. Pure
+    given the seed."""
     rng = np.random.default_rng(rng_seed)
     U = len(d["syms"])
     out = []
-    for hold in holds:
+    stop = rule in STOP_RULES
+    for hold, kind, dist in specs:
         for _ in range(20):
             k = int(rng.integers(0, U))
             t = int(rng.integers(T_LO, T_HI + 1))
-            if passes_filter(d["c"][k], d["pc"][k], t):
+            if passes_filter(d["c"][k], d["pc"][k], t - 1 if stop else t):
                 break
         else:
             continue
-        e, x = px_or(d["o"][k], t + 1), t + 1 + hold
-        xp = px_or(d["o"][k], x) if x <= 389 else np.nan
+        o, h, c = d["o"][k], d["h"][k], d["c"][k]
+        if stop:
+            cp = px_or(c, t - 1)
+            if not (np.isfinite(cp) and dist is not None):
+                continue
+            P = math.ceil(round(cp * (1 + dist) * 100, 6)) / 100.0
+            e, ent = stop_fill(P, px_or(o, t), px_or(h, t)), t
+        else:
+            e, ent = px_or(o, t + 1), t + 1
+        x = ent + hold
+        xp = price_at(kind, x, o, c) if x <= 389 else np.nan
         if np.isfinite(e) and np.isfinite(xp):
             out.append((xp / e - 1) * 1e4)
     return out
@@ -415,6 +427,27 @@ def mde(rows, key):
 def mean(rows, key):
     v = [r[key] for r in rows if r[key] is not None and np.isfinite(r[key])]
     return float(np.mean(v)) if v else None
+
+
+def welch_t(a, b):
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    if len(a) < 3 or len(b) < 3:
+        return None
+    se = math.sqrt(a.var(ddof=1) / len(a) + b.var(ddof=1) / len(b))
+    return float((a.mean() - b.mean()) / se) if se > 0 else None
+
+
+def wick_pressure(o, h, l, c, bar, n=5):
+    """(sum lower wicks - sum upper wicks) / sum ranges over the n completed bars before `bar` (amended_wick_split).
+    None if a bar is missing or ranges sum to 0. Pure."""
+    lo_, up_, rg = 0.0, 0.0, 0.0
+    for i in range(bar - n, bar):
+        if i < 0 or not all(np.isfinite(x[i]) for x in (o, h, l, c)):
+            return None
+        lo_ += min(o[i], c[i]) - l[i]
+        up_ += h[i] - max(o[i], c[i])
+        rg += h[i] - l[i]
+    return (lo_ - up_) / rg if rg > 0 else None
 
 
 def winsor(x, top=0.01):
@@ -463,9 +496,16 @@ def build():
         ef = ETH / f"{fp.stem}.pkl"
         if not ef.exists():
             print(fp.stem, "no ETH file - skipped (run eth first)", flush=True)
+            st = json.loads((OUT / "build_stats.json").read_text()) if (OUT / "build_stats.json").exists() else {}
+            st[fp.stem] = {"skipped": "no ETH file"}
+            (OUT / "build_stats.json").write_text(json.dumps(st))
             prev = fp
             continue
-        ext_day = {k: np.array([c for _, c in v], float) for k, v in pickle.load(open(ef, "rb")).items()}
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _Z
+        open_ts = _dt.fromisoformat(fp.stem + "T09:30").replace(tzinfo=_Z("America/New_York")).timestamp()
+        # the fetch's end is inclusive: the 09:30 bar is RTH t=0 already, so keep extended bars strictly before it
+        ext_day = {k: np.array([c for ts, c in v if ts < open_ts], float) for k, v in pickle.load(open(ef, "rb")).items()}
         n_noext = 0
         PN = {kk: [] for kk in PINE_KEYS}
         syms, O, H, L, C, PC, RSI, UU, DD, RP, GP, RS, GS = ([] for _ in range(13))
@@ -498,6 +538,9 @@ def build():
                             red_strict=np.array(RS), green_strict=np.array(GS), spy_o=day["o"][k], spy_c=day["c"][k],
                             **{kk: np.array(PN[kk]) for kk in PINE_KEYS})
         print(fp.stem, len(syms), "no_ext", n_noext, flush=True)
+        stats = json.loads((OUT / "build_stats.json").read_text()) if (OUT / "build_stats.json").exists() else {}
+        stats[fp.stem] = {"names": len(syms), "no_ext": n_noext}
+        (OUT / "build_stats.json").write_text(json.dumps(stats))
         prev = fp
 
 
@@ -600,7 +643,7 @@ def market_hours_now():
 
 def qbar(rule, row):
     """Quote key bar: the 60 s before the entry moment. news_source keys t = 'before the open of t+1'."""
-    return row["t"] - 1 if rule == "RED_STOP" else row["t"]
+    return row["t"] - 1 if rule in STOP_RULES else row["t"]
 
 
 def spread_lookup():
@@ -652,7 +695,7 @@ def draw(rule, rows, cap=CAP_PER_HALF, days=None):
                 continue
             if sp is None or sp > GATE_BP:
                 continue
-            slip = STOP_SLIP_BP if rule == "RED_STOP" else 0.0
+            slip = STOP_SLIP_BP if rule in STOP_RULES else 0.0
             traded.append({**r, "spread": sp, "net": r["gross"] - sp, "stress": r["gross"] - STRESS * sp - slip})
             n_ok += 1
     return traded, missing
@@ -671,15 +714,21 @@ def draw_fetched(rule, rows, days=None, rounds=6):
 
 # ---------------------------------------------------------------- run
 
-def all_rows(rule, mode, lo, hi):
+def all_rows(rule, mode, lo, hi, t_lo=None, t_hi=None):
     rows, counts, unc = [], defaultdict(int), []
+    n_days = defaultdict(int)
     for d in load_days(lo, hi):
-        rr, cn = day_rows(rule, d, mode)
+        rr, cn = day_rows(rule, d, mode, t_lo, t_hi)
         rows += rr
         for k, v in cn.items():
             counts[k] += v
-        holds = [r["ebar"] - r["ent_bar"] for r in rr][:200]
-        unc += unconditional(rule, d, mode, holds, hkey("rsi2col-unc", rule, d["day"]) % 2 ** 32)
+        specs = [(r["ebar"] - r["ent_bar"], r["kind"], r["dist"]) for r in rr][:200]
+        unc += unconditional(rule, d, mode, specs, hkey("rsi2col-unc", rule, d["day"]) % 2 ** 32)
+        half = "h1" if d["day"] < SPLIT else "h2"
+        for k, v in cn.items():
+            counts[f"{half}_{k}"] += v
+        n_days[half] += 1
+    counts["sessions_scored_h1"], counts["sessions_scored_h2"] = n_days["h1"], n_days["h2"]
     return rows, dict(counts), unc
 
 
@@ -698,13 +747,43 @@ def edge_report(rule, rows, counts, unc):
            "median_hold_bars": float(np.median([r["ebar"] - r["ent_bar"] for r in rows])) if rows else None,
            "win_pct": r2(100 * float(np.mean([r["gross"] > 0 for r in rows]))) if rows else None,
            "counts": counts}
-    # TEST_STANDARD mismatch (amended_1 m1): control far from the unconditional mean blocks the verdict
-    if rep["control_vs_unconditional"] is not None and abs(rep["control_vs_unconditional"]) > 3.0:
-        rep["verdict"] = "BLOCKED (control vs unconditional mismatch > 3 bp)"
-    if rule == "RED_STOP":
+    later_vals = [r["later"] for r in rows if r["later"] is not None and np.isfinite(r["later"])]
+    ctl_vals = [r["ctl"] for r in rows if np.isfinite(r.get("ctl", np.nan))]
+    rep["later_mean"] = r2(float(np.mean(later_vals)) if later_vals else None)
+    rep["later_vs_unconditional"] = r2(rep["later_mean"] - unc_m if later_vals and unc_m is not None else None)
+    rep["control_vs_unconditional_t"] = r2(welch_t(ctl_vals, unc))
+    rep["later_vs_unconditional_t"] = r2(welch_t(later_vals, unc))
+    rep["no_price_share"] = r2(counts.get("no_price", 0) / max(len(rows) + counts.get("no_price", 0), 1))
+    # TEST_STANDARD mismatch (amended_1 m1, P2): either control far from the unconditional mean blocks the verdict
+    for nm in ("control", "later"):
+        dlt, tt = rep[f"{nm}_vs_unconditional"], rep[f"{nm}_vs_unconditional_t"]
+        if dlt is not None and (abs(dlt) > 3.0 or (tt is not None and abs(tt) > 2.0)):
+            rep["verdict"] = f"BLOCKED ({nm} vs unconditional mismatch: {dlt} bp, t {tt})"
+            break
+    if rule in STOP_RULES:
         rep["control_fill_rate"] = r2(counts.get("ctl_filled", 0) / counts["ctl_tried"]) if counts.get("ctl_tried") else None
         rep["thin_fill_share"] = r2(float(np.mean([r["thin"] for r in rows]))) if rows else None
     return rep
+
+
+def wick_split(rows):
+    """Lift by wick-pressure bucket (amended_wick_split, information). Pure."""
+    out = {}
+    for nm, f in (("selling<-0.2", lambda w: w < -0.2), ("neutral", lambda w: -0.2 <= w <= 0.2), ("buying>0.2", lambda w: w > 0.2)):
+        rr = [r for r in rows if r.get("wick") is not None and f(r["wick"])]
+        out[nm] = {"n": len(rr), "lift": r2(mean(rr, "lift")) if rr else None, "gross": r2(mean(rr, "gross")) if rr else None}
+    return out
+
+
+def cross_vs_close(stop_rows, close_rows):
+    """Cross-price fills matched to the bar-close signal on the same name-day and bar (amended_cross_price,
+    information): mean gross difference on matched pairs, and the stop fills the bar-close rule never took
+    (the colour reverted before the close). Pure."""
+    by = {(r["day"], r["sym"], r["t"]): r for r in close_rows}
+    pairs = [(r, by[(r["day"], r["sym"], r["t"])]) for r in stop_rows if (r["day"], r["sym"], r["t"]) in by]
+    un = [r for r in stop_rows if (r["day"], r["sym"], r["t"]) not in by]
+    return {"matched": len(pairs), "cross_minus_close_gross": r2(float(np.mean([a["gross"] - b["gross"] for a, b in pairs])) if pairs else None),
+            "unmatched_fills": len(un), "unmatched_gross": r2(mean(un, "gross")) if un else None}
 
 
 def profitable(rule, rows, edge_rep):
@@ -855,12 +934,27 @@ def main(argv):
     mode = argv[argv.index("--colours") + 1] if "--colours" in argv else None
     if mode not in ("plain", "strict", "pine"):
         sys.exit("--colours plain|strict|pine is required (pine = amended_3)")
+    if cmd == "run" and mode != "pine":
+        sys.exit("run writes a verdict: only the registered mode (--colours pine, amended_3) is allowed")
     OUT.mkdir(parents=True, exist_ok=True)
-    out = {"mode": mode, "prereg": "docs/studies/rsi2_colour_timing_prereg.json (amended_1)", "rules": {}}
+    import subprocess
+    sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+    stats = json.loads((OUT / "build_stats.json").read_text()) if (OUT / "build_stats.json").exists() else {}
+    out = {"mode": mode, "prereg": "docs/studies/rsi2_colour_timing_prereg.json (amended_3_sip_colours)", "sha": sha,
+           "sessions": {"built": sum(1 for v in stats.values() if "names" in v),
+                        "skipped": {k: v["skipped"] for k, v in stats.items() if "skipped" in v},
+                        "name_days_no_ext": sum(v.get("no_ext", 0) for v in stats.values())},
+           "rules": {}}
+    rows_of = {}
     for rule in RULES:
         rows, counts, unc = all_rows(rule, mode, *SEARCH)
+        rows_of[rule] = rows
         e = edge_report(rule, rows, counts, unc)
         out["rules"][rule] = {"EDGE": e}
+        e["wick_split (information)"] = wick_split(rows)
+        o_rows, o_counts, o_unc = all_rows(rule, mode, *SEARCH, t_lo=1, t_hi=60)
+        ov, ost = edge_verdict(o_rows)
+        e["opening_slice_0930_1030 (information, gross)"] = {**ost, "n": len(o_rows), "gross": r2(mean(o_rows, "gross"))}
         print(rule, json.dumps(e), flush=True)
         if cmd == "run":
             p = profitable(rule, rows, e)
@@ -868,6 +962,10 @@ def main(argv):
             out["rules"][rule]["PASS"] = e["verdict"] == "EDGE" and p["verdict"] == "PROFITABLE"
             print(rule, json.dumps(p), flush=True)
         (OUT / f"{cmd}_{mode}.json").write_text(json.dumps(out, indent=1, default=str))
+    out["cross_vs_close (information)"] = {"RED_STOP vs RED_START": cross_vs_close(rows_of["RED_STOP"], rows_of["RED_START"]),
+                                           "GREEN_CROSS vs GREEN_END": cross_vs_close(rows_of["GREEN_CROSS"], rows_of["GREEN_END"])}
+    print("cross_vs_close", json.dumps(out["cross_vs_close (information)"]), flush=True)
+    (OUT / f"{cmd}_{mode}.json").write_text(json.dumps(out, indent=1, default=str))
     if cmd == "run":
         for rule in RULES:   # CONFIRM is information only, gross edge (no quotes)
             rows, counts, unc = all_rows(rule, mode, *CONFIRM)
