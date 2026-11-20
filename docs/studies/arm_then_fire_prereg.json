@@ -1,0 +1,64 @@
+{
+ "name": "arm_then_fire",
+ "written": "2026-11-20, before any script was written or any news/outcome fetched for this purpose",
+ "operator": "11/20: 'the timing of another measure of the stack doesn't need to be parallel to the news or even sequential to the news, but can rely on the news as part of an arming mechanism. So the timing, I think, is also part of the stack work' -> 'Yes, pre-register the arm-then-fire test'",
+ "question": "When a non-dilution headline ARMS a name, does a later price/volume trigger on that name (FIRE) do better than the same trigger firing at about the same time on names that were not armed - and does it depend on how long ago the name was armed?",
+ "prior_work_disclosed": "news as an entry TRIGGER failed (NEWS_AND_SECTOR 10/15: buying the minute after a headline -10.6 / -17.7 bp; the move is over within the headline minute); news names as extra supply failed on real spreads (11/17). stack_search 11/20: the price/volume triggers used here (RVOL, breakout, turn, mover) had no edge as same-moment stacks. News as an ARMING condition with a delayed, separate trigger has not been tested.",
+ "prior": "untested in this role (operator 11/20: odds on the test's own merit - no number borrowed from unrelated failures)",
+ "data": "warehouse SIP 1-minute bars, top-400 by prior-day dollar volume, ETFs/ETPs excluded (the opening_grid / stack_search universe and its per-day caches where reusable); Alpaca historical news (Benzinga) with created_at, fetched after 16:05 ET (shared data key), fully paginated. SEARCH 2026-04-28..2026-08-31 (halves split 2026-07-15); CONFIRM 2026-09-01..2026-11-19 reported as semi-held-out information; FORWARD on live sessions only if something passes.",
+ "name filter": "price $20-$400 at the fire bar (the desk band); fire bar 09:45-15:29 ET (exit at bar t+30 <= 15:59)",
+ "ARM (news)": "a headline tagging the name, created_at strictly before the CLOSE of the fire bar t, skipping headlines that tag >= 5 symbols (recaps) and any with the BEARISH words of multisource_stack (offering, dilution, pricing of, registered direct, shelf, S-1, S-3, warrant, reverse split, going concern, delist, downgrade, cut target; ATM case-sensitive; 'halt' not counted). The name's MOST RECENT qualifying headline sets its arm age.",
+ "arm windows (by the age of the most recent headline at the fire bar)": {
+  "W1": "0-60 minutes",
+  "W2": "1-6 hours",
+  "W3": "6-30 hours (typically the prior session or overnight)",
+  "UNARMED": "no qualifying headline in the 30 hours before the fire bar (and none bearish in that window)"
+ },
+ "FIRE triggers (from bars closed at t; one fire per (trigger, name) per 30 minutes)": {
+  "F1 RVOL": "cumulative RTH volume to t / the prior session's to the same minute first reaches >= 2.0 today",
+  "F2 BREAK": "close[t] > max high of bars t-5..t-1",
+  "F3 TURN": "close[t] > close[t-1] and low[t] > low[t-1]",
+  "F4 MOVER": "close / prior close - 1 first reaches >= +3% today"
+ },
+ "cells": "3 windows x 4 triggers = 12 cells (W x F)",
+ "trade": "buy the OPEN of t+1, sell the CLOSE of t+30; beta-adjusted gross as in stack_search (return - beta x SPY over the same bars, beta from prior sessions)",
+ "statistic": "lift = armed fire's beta-adjusted gross minus the mean beta-adjusted gross of up to 5 UNARMED names whose SAME trigger fired within +/-15 minutes of t (entry and exit on their own fire bar, same hold); events with no such peer are dropped and counted; day-clustered t",
+ "pass (per cell)": {
+  "EDGE": "lift > 0 in both halves, pooled day-clustered t >= 2.87 (two-sided 5% over 12 cells), the same-name later control (entry in exit+2..exit+62) and the unconditional random-minute control also > 0, each control printed beside the random-minute mean and a gap > 2 SE blocks",
+  "PROFITABLE (only with EDGE)": "mean net >= +2 bp in both halves after the real SIP spread (half at entry + half at exit, median quote over 60 s), 15 bp entry gate, >= 300 traded per half; net > 0 at 1.5 x spread",
+  "power": "MDE = 2.8 x day-clustered SE per half printed before any mean; > 12 bp in either half = UNPROVEN"
+ },
+ "the operator's timing question (reported regardless)": "for each trigger, lift by window W1 / W2 / W3 side by side; 'arming age matters' is reported as the W1-minus-W3 difference with its day-clustered t (information)",
+ "information_only": [
+  "bullish-word headlines only (news_feed BULLISH list)",
+  "15-minute hold",
+  "CONFIRM 9/1-11/19",
+  "sentiment and trending as the ARM layer once the sentiment backfill completes (a separate prereg)"
+ ],
+ "checks": [
+  "unit tests: arm age uses only headlines strictly before the fire bar's close; recap and bearish filters; UNARMED needs no headline in 30 h; each trigger on hand-made bars; refractory; matched-trigger peers exclude the name",
+  "invariance: arm and fire state computed from data truncated at the fire bar equal the full computation",
+  "canaries: news times shuffled across names within a day must not read EDGE (20 seeds, <= 10% per cell); a planted +15 bp on W1xF2 events must read EDGE; a canary failure means no verdict",
+  "counts printed: headlines per day, armed share of fires per window, dropped (no peer), fetch failures (> 2% = no verdict)"
+ ],
+ "fail": "anything short of pass. No retuning of the windows, the triggers, the word lists, the 30-minute hold or the peer window; a change is a new prereg on seen data.",
+ "if_pass": "result-skeptic review; IEX rescore; forward check on live sessions (the stack logger records news per minute); then a default-off arming lane",
+ "if_fail": "record the window-by-trigger table; news arming does not make these triggers worth more at our speed",
+ "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)",
+ "script": "tools/studies/arm_then_fire.py (to be written after the review)",
+ "amended_1": {
+  "when": "2026-11-20, after result-skeptic round 1 (FIX FIRST: 10 findings), before any script, news or outcome",
+  "1 latency": "a headline arms only if created_at <= the OPEN of fire bar t (at least 60 s before entry at the open of t+1); word filters use the headline as first published, and a headline with updated_at > created_at + 60 s is dropped",
+  "2 reactive headlines": "skipped as arms: 'shares are trading', 'stock is moving', 'why ... shares', 'movers', 'trading higher', 'trading lower', 'stocks moving' (case-insensitive, fixed here); W1 also needs the fire bar >= 2 minutes after created_at",
+  "3 name-type controls": "(a) same-name placebo: the same name's same trigger on sessions with no headline within +/-20 sessions must point the same way (lift > 0); (b) arm-shift placebo: each name's headline times shifted by +/-1..5 sessions (20 shifts) must read EDGE in <= 10% per cell; peers are also matched on prior-20-day volatility tercile and opening-gap bucket (< -1%, -1..+1%, > +1%)",
+  "4 earnings": "each cell also reported ex-earnings (no headline in the window matching earnings / EPS / results / guidance / Q1-Q4); a pass that disappears ex-earnings is labelled 'earnings-day drift', not arming",
+  "5 gaps and time of day": "F1 and F4 crossings before 09:45 mean no fire that day for that trigger (share of armed name-days lost printed); each cell's fire-time histogram printed beside its peers'",
+  "6 unarmed window": "UNARMED = no qualifying headline in the prior 72 calendar hours and since the start of the prior session; arm ages 30-72 h excluded from both groups",
+  "7 peer power": "per cell: events, events with >= 1 peer, mean peers per event; > 30% of events dropped for no peer = UNPROVEN; the gross of dropped events printed beside kept ones; the control mean is weighted by peer count",
+  "8 MDE": "MDE = 3.71 x day-clustered SE (80% power at t 2.87); > 12 bp in either half = UNPROVEN",
+  "9 controls": "PRIMARY = matched-trigger unarmed peers (t >= 2.87). SECONDARY, each must be > 0 pooled: random same-minute names, same-name later (entry exit+2..exit+62), and the same-name placebo of #3a; every control's mean printed beside the unconditional random-minute mean, a gap > 2 SE blocks; top-1% winsorized lift > 0 in both halves (veto)",
+  "10 canaries": "+15 bp planted on W1xF2 AND on the smallest scored cell - both must read EDGE, else that cell is UNPROVEN; the shuffle canary (20 seeds) and the arm-shift placebo of #3b both required; any canary failure = no verdict",
+  "printed first": "news coverage per month from 4/28 and the UNARMED share of name-days, before any lift"
+ },
+ "status": "amended_1 after skeptic round 1; script next, then skeptic code review"
+}
