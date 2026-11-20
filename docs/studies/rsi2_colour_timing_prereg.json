@@ -99,13 +99,11 @@
     "14:53-14:54"
    ],
    "ANT 2026-11-20 RED": [
+    "12:46-12:54 (operator 11/20: red, hidden behind the indicator's value text)",
     "12:55-13:00",
     "13:04-13:05",
     "13:16-13:21",
     "13:24-13:25"
-   ],
-   "ANT 2026-11-20 boxed, looks GREY near 90": [
-    "12:44-12:54 (operator to confirm the colour)"
    ],
    "SPCX 2026-11-20 GREEN": [
     "13:39-13:41",
