@@ -196,6 +196,28 @@ func captureSCK(ownerNeedle: String, titleNeedle: String?) -> CGImage? {
     return out
 }
 
+// ── screencapture CLI (2026-11-20) ────────────────────────────────────────────
+// In the launchd agent ScreenCaptureKit timed out on every pass even with the grant. Apple's own screencapture tool,
+// run as OUR child, inherits this app's Screen Recording grant (macOS charges the responsible process) and captures one
+// window by id (-l), covered or not.
+var cliError = ""
+
+func captureCLI(_ win: WinMeta) -> CGImage? {
+    let path = NSTemporaryDirectory() + "discord_ocr_\(getpid()).png"
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+    p.arguments = ["-x", "-o", "-l", "\(win.id)", "-t", "png", path]
+    do { try p.run() } catch { cliError = "\(error)"; return nil }
+    let deadline = Date().addingTimeInterval(8)
+    while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+    if p.isRunning { p.terminate(); cliError = "screencapture timed out"; return nil }
+    guard p.terminationStatus == 0 else { cliError = "screencapture exit \(p.terminationStatus)"; return nil }
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { cliError = "unreadable png"; return nil }
+    return img
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 // One pass: (lines, nil) on success, ([], error) on failure.
 var askedTCC = false   // ask macOS once per process; a looping agent must not re-prompt every pass
@@ -205,8 +227,12 @@ func capturePass() -> ([String], String?) {
     // the capture itself is always attempted and the denial is reported only if it fails.
     let preflight = CGPreflightScreenCaptureAccess()
     if !preflight && !askedTCC { askedTCC = true; _ = CGRequestScreenCaptureAccess() }
-    sckError = ""
-    var captured: CGImage? = captureSCK(ownerNeedle: ownerName, titleNeedle: titleSub)
+    sckError = ""; cliError = ""
+    var captured: CGImage? = nil
+    if loopSec > 0, let w = findWindow(ownerNeedle: ownerName, titleNeedle: titleSub) {
+        captured = captureCLI(w)
+    }
+    if captured == nil { captured = captureSCK(ownerNeedle: ownerName, titleNeedle: titleSub) }
     if captured == nil && !preflight {
         return ([], "Screen Recording not granted (preflight false; ScreenCaptureKit: \(sckError)). System Settings → " +
                     "Privacy & Security → Screen & System Audio Recording → enable Discord OCR.")
@@ -219,7 +245,7 @@ func capturePass() -> ([String], String?) {
         if captured == nil {
             return ([], "display capture/crop failed for window id=\(win.id) " +
                         "(\(Int(win.bounds.width))x\(Int(win.bounds.height))). " +
-                        "Grant Screen Recording; keep Discord on-screen. (ScreenCaptureKit: \(sckError))")
+                        "Grant Screen Recording; keep Discord on-screen. (ScreenCaptureKit: \(sckError); screencapture: \(cliError))")
         }
     }
     return (recognize(captured!, accurate: accurate), nil)
