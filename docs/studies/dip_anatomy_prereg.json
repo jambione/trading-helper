@@ -75,7 +75,7 @@
   "m7 data": "full-day raw warehouse bars (relative_strength_scan.load_day), not the opening_grid cache (09:30-10:39 only)",
   "power": "event counts and the MDE per cell and half are printed before any quote is fetched"
  },
- "status": "amended_1 after skeptic round 1; script next, then skeptic code review",
+ "status": "SCORED 2026-11-20: NO EDGE (all cells); age question NOT SUPPORTED",
  "amended_2": {
   "when": "2026-11-20, after the result-skeptic code review (FIX FIRST), before any edge/score step; the events step had run (CPU) but no outcome was read, and its files were set aside (.stale_pre_review) and rebuilt",
   "canary (replaces M3 pass rule)": "outcomes are first shuffled within each day (a null on real rows), then +15 bp is added to SPEED-high events. Pass = SPEED_hi reads EDGE, and SPEED_lo/SPEED_mid (no SPEED-high events) do not; with no plant it must fail. The per-cell 'within 2 SE of plant x share' check was dropped: across 15 cells at 2 SE it fails by chance on a pure null.",
@@ -84,5 +84,6 @@
   "later window": "entry minute in t+17..t+77 exactly (bars t+16..t+76 as the signal bar)",
   "printed": "day-mean lifts per half beside trade means; volume NaN count; the ctl / later / unconditional means in report.md",
   "known limits": "a dip whose sigma is undefined (start before ~10:25) produces no event and blocks new dips for up to 120 bars, so early-peaking names lose later dips (prereg 'fewer = no event'); blind-entry rows include such dips"
- }
+ },
+ "result_2026-11-20": "NO EDGE in all 16 cells, fully powered (MDE 1.6-3.7 bp per half vs the 10 bp limit). 39,888 SEARCH turn events (21,229 / 18,659). Lift over the same minute on other names, bp per 15-min trade (h1 / h2, pooled t): ALL -1.0 / +0.4 (t -0.64); best cell AGE_mid -0.7 / +2.0 (t 1.12); every cell |t| < 1.7. Mean gross of a dip turn: -0.04 bp. Operator's age question NOT SUPPORTED: oldest minus youngest dips -1.3 / -0.1 bp (pooled t -0.93, 103 paired days), -0.6 within depth tertiles. Blind entries at dip age 5/10/20 min (info): +0.2 / -0.1 / -0.6 bp. Canary passed (planted +15 bp found). No cell reached EDGE, so no quotes were fetched (PROFITABLE requires EDGE). Plain words: after a dip in an up-on-the-day name turns up, the next 15 minutes are a coin flip; age, depth, speed, volume shape and whether the market dipped too change nothing. ai_reports/dip_anatomy/edge.json on the mini."
 }
