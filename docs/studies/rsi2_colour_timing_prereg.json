@@ -77,5 +77,14 @@
   "C1 verdict rows": "EDGE on ALL candidates (gross); PROFITABLE on spread-gated traded rows (m5 'verdict on traded rows' applies to PROFITABLE only)",
   "C2 strict colours need warm-up": "if the chart match makes the SMA-strict colours primary, every series prepends the last 220 regular-hours bars of the prior session (SMA200 is otherwise undefined until ~12:50); name-days without them are counted and scored with in-session warm-up only as information. Strict red uses RSI > 90, matching the panel; the plain-level rules keep >= 90."
  },
- "status": "amended_1 after skeptic round 1 incl. RED_STOP addendum; script next, then skeptic code review"
+ "status": "amended_2 (exact Pine colours, ETH series); chart match after 16:05, then code update + skeptic review, then score",
+ "amended_2": {
+  "when": "2026-11-20, after the operator supplied the panel's Pine source (ChrisMoody _CM_RSI_2_Strategy_Lower) and before any score; the 11/19 chart match had failed (~6/10) under both earlier definitions",
+  "colour rule (replaces B2's either/or)": "exactly the Pine source: GREEN (lime) = close > SMA200 and close < SMA5 and RSI2 < 10; RED = close < SMA200 and close > SMA5 and RSI2 > 90; else silver. SMA200/SMA5 and RSI2 on the SAME 1-minute close series.",
+  "RSI arithmetic": "Pine rma(n=2): the first value is the simple mean of the first 2 changes, then alpha 1/2; down == 0 -> 100, up == 0 -> 0 (Pine order)",
+  "series": "the operator's chart shows ETH, so indicators are computed on 1-minute SIP bars INCLUDING extended hours (04:00-20:00 ET) with all prior bars as warm-up; entries/exits stay in regular hours 09:45-15:30 as registered",
+  "RED_STOP": "the trigger price is solved for the RSI2 > 90 condition only; a fill counts as RED_STOP only if the SMA conditions (close < SMA200 and > SMA5) also held at the completed bar t-1 and would hold at P (P > SMA5 recomputed with P)",
+  "chart match (redone before any score)": "fetch extended-hours SIP bars for FIGS and COLD on 11/19 (after 16:05 ET) and print the colour per bar against the operator's screenshots; >= 90% of the operator's coloured bars must match, else stop and report",
+  "note": "in Connors' design red (below the 200-bar average, above the 5-bar average, RSI2 > 90) is a SHORT setup - a bounce inside a downtrend; the operator reads it as an exhaustion rise. The test scores it as registered (a long entry)."
+ }
 }
