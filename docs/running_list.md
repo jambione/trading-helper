@@ -266,3 +266,4 @@ Status: **open**, **running** (queued or in progress), **done**, **dropped** (wi
 - 11/20 later: relative_strength_admit back ON (operator); the other three standard-week settings stay.
 - 11/20 ~11:39 ET LIVE CONFIG (operator: put these back): rte_confluence_max 15 -> 20, ai_watch_wr_trend_min_rise 15 -> 0, ai_watch_wr_slow_5m_veto true -> false (restores 11/19 a413bcd9 loosening).
 - 11/20 (operator 'put these back'): rte_confluence_max 20, ai_watch_wr_trend_min_rise 0, ai_watch_wr_slow_5m_veto off (the 11/19 afternoon loosenings) restored; commit d1af7dbf. Live now: those three loose + range cap 90, decision age 15 s, double-check 180 s/both, relative_strength_admit on. Tonight's settings replay covers the four 11/20 morning changes only, not these three.
+- 11/20 (operator 'revert this one'): ai_watch_wr_trend_min_rise back to 15; rte_confluence_max stays 20, slow_5m_veto stays off.
