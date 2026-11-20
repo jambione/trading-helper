@@ -83,3 +83,9 @@ def test_fires_need_no_future_bars():
         lay2, chg2 = layers(cut(o), cut(h), cut(l), cut(c), cut(v), pc, ph, pl, pv, cut(spy))
         part = af.fires_for_name(lay2, chg2, G, px)
         assert [f for f in part if f[1] <= t] == [f for f in full if f[1] <= t]
+
+
+def test_market_split_buckets():
+    rows = [{"day": "d1", "lift": 10.0, "w": 1.0}, {"day": "d2", "lift": -5.0, "w": 1.0}, {"day": "d3", "lift": 2.0, "w": 1.0}]
+    out = af.split_by_market(rows, {"d1": -0.02, "d2": 0.0, "d3": 0.015})
+    assert out["down<=-1%"]["n"] == 1 and out["flat"]["n"] == 1 and out["up>=+1%"]["n"] == 1

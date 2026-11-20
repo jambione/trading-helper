@@ -55,5 +55,6 @@
   "9 controls": "for S cells only the same-name later and unconditional controls apply (no sentiment exists for non-trending names); each printed beside the random-minute mean, a gap > 2 SE blocks. The parent STEP 2 block and every information line are never promoted to a result.",
   "forward power": "stated now: ~20 sessions x ~14 events gives K6 ~30 ON events, also underpowered; the forward window extends until K6 has >= 150 ON events (estimated 2-3 months), with an interim read at 20 sessions as information"
  },
- "status": "amended_1 after skeptic round 1; backfill running with the coverage fix; script next"
+ "status": "amended_1 after skeptic round 1; backfill running with the coverage fix; script next",
+ "amended_market_split": "INFORMATION ONLY (operator 11/20 'yes, add the market split'; added before any outcome was read): every scored cell's lift is also printed by MARKET OPEN GAP = SPY's official 09:30 open / SPY's prior regular-session close - 1, in three buckets: <= -1%, between, >= +1% (day counts per bucket printed). Never promoted to a verdict; a regime gate needs its own prereg."
 }

@@ -404,6 +404,37 @@ def score_cell(rows, name, layers):
     return st
 
 
+def bucket(g):
+    """Market open-gap bucket (information split, amended_market_split). Pure."""
+    if g is None or not np.isfinite(g):
+        return None
+    return "down<=-1%" if g <= -0.01 else ("up>=+1%" if g >= 0.01 else "flat")
+
+
+def market_gaps(inp):
+    """day -> SPY 09:30 open / prior regular-session close - 1 (prior close from the daily bars dated before the day)."""
+    spy_d = inp["daily"].get("SPY", {})
+    out = {}
+    for day, b in inp["bars"].items():
+        o = (b.get("SPY") or {}).get(0)
+        prev = [d for d in spy_d if d < day]
+        if o and prev:
+            out[day] = o[0] / spy_d[max(prev)] - 1
+    return out
+
+
+def split_by_market(rows, layers, gaps):
+    """Matched-difference mean and day count per market bucket (information). Pure."""
+    res = {}
+    for bk in ("down<=-1%", "flat", "up>=+1%"):
+        sub = [r for r in rows if bucket(gaps.get(r["day"])) == bk]
+        pairs = [(d, x) for d, x, t in matched_diffs(sub, layers) if x is not None]
+        m, t, nd = day_t(pairs)
+        res[bk] = {"diff": None if m is None else round(m, 2), "t": None if t is None else round(t, 2), "days": nd,
+                   "n": len(pairs)}
+    return res
+
+
 def load_sent():
     return json.loads(SENT.read_text()).get("events", {}) if SENT.exists() else {}
 
@@ -477,8 +508,11 @@ def run_score():
         out["VERDICT"] = "NO VERDICT (" + ("fetch failures > 2%" if failed_share > 0.02 else "canary failed") + ")"
     else:
         out["VERDICT"] = {c: v["verdict"] for c, v in out["cells"].items()}
+    gaps = market_gaps(inp)
+    out["info_market_split"] = {"days_per_bucket": dict(__import__("collections").Counter(bucket(g) for g in gaps.values())),
+                                "cells": {c: split_by_market(rows, CELLS[c], gaps) for c in CELLS}}
     (OUT / "score.json").write_text(json.dumps(out, indent=1, default=str))
-    print(json.dumps({"VERDICT": out["VERDICT"], "canaries": [rates, plant],
+    print(json.dumps({"VERDICT": out["VERDICT"], "canaries": [rates, plant], "market_split": out["info_market_split"],
                       "cells": {c: {k: v.get(k) for k in ("n_on", "diff_h1", "diff_h2", "t", "later", "unconditional")}
                                 for c, v in out["cells"].items()}}, indent=1, default=str))
 

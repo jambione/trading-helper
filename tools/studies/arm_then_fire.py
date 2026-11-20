@@ -366,6 +366,43 @@ def secondary(res, fs, rows, trig):
     return out
 
 
+def bucket(g):
+    """Market open-gap bucket (information split, amended_market_split). Pure."""
+    if g is None or not np.isfinite(g):
+        return None
+    return "down<=-1%" if g <= -0.01 else ("up>=+1%" if g >= 0.01 else "flat")
+
+
+def market_gaps(days):
+    """day -> SPY official 09:30 open / prior regular-session close - 1, from the warehouse day files."""
+    from relative_strength_scan import load_day
+    from evening_family import WH_SIP
+    files = sorted(p.stem for p in WH_SIP.glob("20??-??-??.npz"))
+    out = {}
+    for day in days:
+        if day not in files or files.index(day) == 0:
+            continue
+        d, p = load_day(WH_SIP / f"{day}.npz"), load_day(WH_SIP / f"{files[files.index(day) - 1]}.npz")
+        if d["idx"].get("SPY") is None or p["idx"].get("SPY") is None:
+            continue
+        o = d["o"][d["idx"]["SPY"]]
+        pc = p["c"][p["idx"]["SPY"]]
+        o, pc = o[np.isfinite(o)], pc[np.isfinite(pc)]
+        if len(o) and len(pc):
+            out[day] = float(o[0] / pc[-1] - 1)
+    return out
+
+
+def split_by_market(rows, gaps):
+    """Lift mean (peer-weighted, day-clustered) and day count per market bucket (information). Pure."""
+    res = {}
+    for bk in ("down<=-1%", "flat", "up>=+1%"):
+        sub = [r for r in rows if bucket(gaps.get(r["day"])) == bk]
+        m, _, t, nd = day_stats(sub)
+        res[bk] = {"lift": None if m is None else round(m, 2), "t": None if t is None else round(t, 2), "days": nd, "n": len(sub)}
+    return res
+
+
 def score():
     res = pickle.load(open(OUT / "fires.pkl", "rb"))
     nw = pickle.load(open(OUT / "news.pkl", "rb"))
@@ -397,6 +434,8 @@ def score():
                      "vt_none_share": round(sum(1 for f in fs if f["vt"] is None) / max(len(fs), 1), 3),
                      "pre_0945_crossings_lost": dict(early_arm), "dropped_failed_news_names": len(failed_syms)}
     out["counts"]["fires_by_arm"] = {f"{k[0]}|{k[1]}": v for k, v in out["counts"]["fires_by_arm"].items()}
+    gaps = market_gaps(sorted(full_days))
+    out["market_days_per_bucket"] = dict(__import__("collections").Counter(bucket(gaps.get(d)) for d in res["days"]))
     scored = []
     for w in WINDOWS:
         for trig in TRIGS:
@@ -420,6 +459,7 @@ def score():
             else:
                 st["verdict"] = "NO EDGE"
                 scored.append(c)
+            st["info_market_split"] = split_by_market(st["rows"], gaps)
             st.pop("rows")
             out["cells"][c] = st
     # canaries: shuffle news across names within day (20 seeds); arm-shift placebo (20 shifts); planted +15 bp

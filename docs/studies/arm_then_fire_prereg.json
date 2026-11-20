@@ -70,5 +70,6 @@
   "gap rule": "applies to all four controls",
   "counts": "headline class shares, headlines per day, fires by trigger and arm state, vt None share, pre-09:45 crossings lost; CONFIRM as information",
   "minor (declared)": "same-name later enters at exit+3 as in stack_search; the shuffle canary permutes each name's whole news history across names"
- }
+ },
+ "amended_market_split": "INFORMATION ONLY (operator 11/20 'yes, add the market split'; added before any outcome was read): every scored cell's lift is also printed by MARKET OPEN GAP = SPY's official 09:30 open / SPY's prior regular-session close - 1, in three buckets: <= -1%, between, >= +1% (day counts per bucket printed). Never promoted to a verdict; a regime gate needs its own prereg."
 }

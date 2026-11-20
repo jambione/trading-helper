@@ -58,3 +58,10 @@ def test_hold_ret_same_shape_as_event():
     assert abs(ms.hold_ret(r, 10) - (129 / 100 - 1) * 1e4) < 1e-9
     r2 = {"opens": {10: 100.0}, "closes": {10: 100.0, 15: 101.0}}
     assert ms.hold_ret(r2, 10) is None          # < 10 minutes of window
+
+
+def test_market_bucket_and_gaps():
+    assert ms.bucket(-0.012) == "down<=-1%" and ms.bucket(0.0) == "flat" and ms.bucket(0.02) == "up>=+1%"
+    assert ms.bucket(None) is None
+    inp = {"daily": {"SPY": {"2026-05-01": 100.0, "2026-05-04": 101.0}}, "bars": {"2026-05-04": {"SPY": {0: (98.0, 98.5)}}}}
+    assert abs(ms.market_gaps(inp)["2026-05-04"] - (98 / 100 - 1)) < 1e-12
