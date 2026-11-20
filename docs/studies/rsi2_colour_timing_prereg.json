@@ -85,6 +85,7 @@
   "series": "the operator's chart shows ETH, so indicators are computed on 1-minute SIP bars INCLUDING extended hours (04:00-20:00 ET) with all prior bars as warm-up; entries/exits stay in regular hours 09:45-15:30 as registered",
   "RED_STOP": "the trigger price is solved for the RSI2 > 90 condition only; a fill counts as RED_STOP only if the SMA conditions (close < SMA200 and > SMA5) also held at the completed bar t-1 and would hold at P (P > SMA5 recomputed with P)",
   "chart match (redone before any score)": "fetch extended-hours SIP bars for FIGS and COLD on 11/19 (after 16:05 ET) and print the colour per bar against the operator's screenshots; >= 90% of the operator's coloured bars must match, else stop and report",
-  "note": "in Connors' design red (below the 200-bar average, above the 5-bar average, RSI2 > 90) is a SHORT setup - a bounce inside a downtrend; the operator reads it as an exhaustion rise. The test scores it as registered (a long entry)."
+  "note": "in Connors' design red (below the 200-bar average, above the 5-bar average, RSI2 > 90) is a SHORT setup - a bounce inside a downtrend; the operator reads it as an exhaustion rise. The test scores it as registered (a long entry).",
+  "chart match references": "FIGS 2026-11-19 15:05-15:30 and COLD 2026-11-19 14:25-15:00 (operator screenshots), plus UNH 2026-11-20 premarket ~06:30-06:45 ET (operator screenshot: green segment ending ~06:38, then a jump) - colours compared bar by bar on extended-hours SIP bars"
  }
 }
