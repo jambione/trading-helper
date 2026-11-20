@@ -69,18 +69,18 @@ def classify(h: dict) -> str:
     return "qualify"
 
 
-def arm_state(headlines: list[dict], fire_open: float):
+def arm_state(headlines: list[dict], fire_open: float, lookback: float = UNARMED_H):
     """-> (window or 'UNARMED' or None (excluded), earnings flag). headlines: [{t, headline, n_symbols, updated}],
-    only those with t <= fire_open count (amended_1 #1). Pure."""
-    past = [h for h in headlines if h["t"] <= fire_open and fire_open - h["t"] <= UNARMED_H]
+    only those with t <= fire_open count (amended_1 #1). UNARMED needs NO headline of any class in the lookback
+    (max of 72 h and the start of the prior session; amended_2). Earnings = any headline in the lookback. Pure."""
+    past = [h for h in headlines if h["t"] <= fire_open and fire_open - h["t"] <= lookback]
     cls = [(h, classify(h)) for h in past]
     q = [h for h, c in cls if c == "qualify"]
-    bear = any(c == "bearish" for _, c in cls)
+    earn = any(EARNINGS.search(h.get("headline") or "") for h in past)
     if not q:
-        return ("UNARMED" if not bear else None), False
+        return ("UNARMED" if not past else None), earn
     last = max(q, key=lambda h: h["t"])
     age = fire_open - last["t"]
-    earn = any(EARNINGS.search(h.get("headline") or "") for h in q if fire_open - h["t"] <= age + 1)
     for w, (lo, hi) in WINDOWS.items():
         if lo <= age < hi:
             if w == "W1" and age < 120:            # fire bar at least 2 minutes after the headline (#2)
@@ -94,6 +94,16 @@ def arm_state(headlines: list[dict], fire_open: float):
 def first_cross(mask: np.ndarray):
     idx = np.where(mask)[0]
     return int(idx[0]) if len(idx) else None
+
+
+def early_crossings(lay: dict, chg: np.ndarray) -> list[str]:
+    """F1/F4 whose first crossing came before 09:45 (no fire that day). Pure."""
+    out = []
+    for trig, mask in (("F1", lay["M1"]), ("F4", np.nan_to_num(chg) >= 0.03)):
+        t = first_cross(mask)
+        if t is not None and t < T_LO:
+            out.append(trig)
+    return out
 
 
 def fires_for_name(lay: dict, chg: np.ndarray, G_row: np.ndarray, px_row: np.ndarray) -> list[tuple[str, int]]:
@@ -137,7 +147,7 @@ def fires():
                 vol.append(float(np.std(np.diff(np.log(h)), ddof=1)) if len(h) >= 15 else np.nan)
             v = np.array(vol)
             q = np.nanquantile(v, [1 / 3, 2 / 3]) if np.isfinite(v).sum() >= 30 else [np.nan, np.nan]
-            ev = []
+            ev, early = [], []
             for k, s in enumerate(d["syms"]):
                 lay, chg = layers(d["o"][k], d["h"][k], d["l"][k], d["c"][k], d["v"][k],
                                   p["c"][k], p["h"][k], p["l"][k], p["v"][k], d["spy_c"])
@@ -146,9 +156,11 @@ def fires():
                 gap = (o0[0] / pc[-1] - 1) if len(pc) and len(o0) else np.nan
                 gb = None if not np.isfinite(gap) else (0 if gap < -0.01 else (1 if gap <= 0.01 else 2))
                 vt = None if not np.isfinite(v[k]) or not np.isfinite(q[0]) else int((v[k] > q[0]) + (v[k] > q[1]))
+                for trig in early_crossings(lay, chg):
+                    early.append({"sym": s, "trig": trig})
                 for trig, t in fires_for_name(lay, chg, G[k], px[k]):
                     ev.append({"day": day, "sym": s, "k": k, "trig": trig, "t": t, "g": float(G[k, t]), "vt": vt, "gb": gb})
-            res["days"][day] = {"fires": ev, "syms": d["syms"], "G": c["G"], "px": px}
+            res["days"][day] = {"fires": ev, "early": early, "syms": d["syms"], "G": c["G"], "px": px}
             pickle.dump(res, open(dst, "wb"))
             print(day, len(ev), flush=True)
         for k, s in enumerate(d["syms"]):
@@ -171,6 +183,7 @@ def news():
     syms = sorted({s for d in res["days"].values() for s in d["syms"]})
     dst = OUT / "news.pkl"
     out = pickle.load(open(dst, "rb")) if dst.exists() else {"news": {}, "failed": []}
+    out["failed"] = []                               # retried below; only this run's failures count
     for i in range(0, len(syms), 25):
         ch = [s for s in syms[i:i + 25] if s not in out["news"]]
         if not ch:
@@ -201,14 +214,25 @@ def news():
 
 # ---------------------------------------------------------------- scoring (pure on fires + news)
 
-def assign(res, news, shift=None):
-    """Arm state for every fire. shift: {sym: k sessions} moves that name's headlines (placebo). -> list of fire dicts
-    with 'arm' and 'earn'. Pure."""
+def all_sessions():
+    from evening_family import WH_SIP
+    return sorted(p.stem for p in WH_SIP.glob("20??-??-??.npz"))
+
+
+def assign(res, news, shift=None, sessions=None, skip_syms=frozenset()):
+    """Arm state for every fire. shift: {sym: k sessions} moves that name's headlines (placebo). sessions: the full
+    warehouse day list (for the prior-session lookback). skip_syms: names whose news fetch failed (dropped).
+    -> list of fire dicts with 'arm' and 'earn'. Pure."""
     days = sorted(res["days"])
     pos = {d: i for i, d in enumerate(days)}
+    sess = sessions or days
+    spos = {d: i for i, d in enumerate(sess)}
     out = []
     for day in days:
+        prev = sess[spos[day] - 1] if day in spos and spos[day] > 0 else None
         for f in res["days"][day]["fires"]:
+            if f["sym"] in skip_syms:
+                continue
             hs = news.get(f["sym"], [])
             if shift and shift.get(f["sym"]):
                 k = shift[f["sym"]]
@@ -217,7 +241,9 @@ def assign(res, news, shift=None):
                     continue
                 delta = bar_open_ts(day, 0) - bar_open_ts(days[j], 0)
                 hs = [dict(h, t=h["t"] + delta) for h in hs]
-            arm, earn = arm_state(hs, bar_open_ts(day, f["t"]))
+            fo = bar_open_ts(day, f["t"])
+            lb = max(UNARMED_H, fo - bar_open_ts(prev, 0)) if prev else UNARMED_H
+            arm, earn = arm_state(hs, fo, lb)
             out.append(dict(f, arm=arm, earn=earn))
     return out
 
@@ -236,8 +262,9 @@ def lifts(fs, cell_w, trig, ex_earn=False):
         for f in ff:
             if f["arm"] != cell_w or (ex_earn and f["earn"]):
                 continue
-            peers = [u["g"] for u in un if u["sym"] != f["sym"] and abs(u["t"] - f["t"]) <= PEER_MIN
+            cands = [u for u in un if u["sym"] != f["sym"] and abs(u["t"] - f["t"]) <= PEER_MIN
                      and u["vt"] == f["vt"] and u["gb"] == f["gb"]]
+            peers = [u["g"] for u in sorted(cands, key=lambda u: hkey("atf-peer", day, f["sym"], f["t"], u["sym"]))[:5]]
             if not peers:
                 dropped += 1
                 dg.append(f["g"])
@@ -296,7 +323,7 @@ def secondary(res, fs, rows, trig):
     for f in fs:
         if f["trig"] == trig and f["arm"] == "UNARMED":
             un_by[f["sym"]].append(f)
-    later, rand, plac, unc, peer_g, later_g = [], [], [], [], [], []
+    later, rand, plac, unc, peer_g, later_g, rand_g, plac_g = [], [], [], [], [], [], [], []
     for r in rows:
         D = res["days"][r["day"]]
         G, px, syms = np.asarray(D["G"], float), D["px"], D["syms"]
@@ -310,10 +337,12 @@ def secondary(res, fs, rows, trig):
         if ok:
             pick = sorted(ok, key=lambda j: hkey("atf-rand", r["day"], syms[j], r["t"]))[:5]
             rand.append({"day": r["day"], "x": r["g"] - float(np.mean(G[pick, r["t"]]))})
+            rand_g.append(float(np.mean(G[pick, r["t"]])))
         pl = [u for u in un_by.get(r["sym"], []) if u["day"] != r["day"] and abs(pos[u["day"]] - pos[r["day"]]) <= 20]
         if pl:
             u = pl[hkey("atf-plac", r["day"], r["sym"]) % len(pl)]
             plac.append({"day": r["day"], "x": r["g"] - u["g"]})
+            plac_g.append(u["g"])
         okm = np.argwhere(px & np.isfinite(G))
         okm = okm[(okm[:, 1] >= T_LO) & (okm[:, 1] <= T_HI)]
         if len(okm):
@@ -326,7 +355,7 @@ def secondary(res, fs, rows, trig):
            "peer_control_mean": float(np.mean(peer_g)) if peer_g else None,
            "later_control_mean": float(np.mean(later_g)) if later_g else None}
     gaps = {}
-    for name, xs in (("peer", peer_g), ("later", later_g)):
+    for name, xs in (("peer", peer_g), ("later", later_g), ("random_same_minute", rand_g), ("placebo", plac_g)):
         if len(xs) > 2 and len(unc) > 2:
             se = math.sqrt(np.var(xs, ddof=1) / len(xs) + np.var(unc, ddof=1) / len(unc))
             gaps[name] = abs(np.mean(xs) - np.mean(unc)) <= 2 * se
@@ -341,8 +370,11 @@ def score():
     res = pickle.load(open(OUT / "fires.pkl", "rb"))
     nw = pickle.load(open(OUT / "news.pkl", "rb"))
     news, failed = nw["news"], nw["failed"]
-    res["days"] = {d: v for d, v in res["days"].items() if SEARCH[0] <= d <= SEARCH[1]}
-    fs = assign(res, news)
+    failed_syms = frozenset(s for batch in failed for s in batch)
+    sessions = all_sessions()
+    full_days = res["days"]
+    res["days"] = {d: v for d, v in full_days.items() if SEARCH[0] <= d <= SEARCH[1]}
+    fs = assign(res, news, sessions=sessions, skip_syms=failed_syms)
     cov = defaultdict(int)
     for hs in news.values():
         for h in hs:
@@ -351,6 +383,20 @@ def score():
     out = {"prereg": "docs/studies/arm_then_fire_prereg.json (amended_1)", "news_per_month": dict(sorted(cov.items())),
            "unarmed_share_of_name_days": round(sum(1 for a in namedays.values() if a == "UNARMED") / max(len(namedays), 1), 3),
            "fetch_failed_batches": len(failed), "cells": {}}
+    cls_counts = defaultdict(int)
+    for hs in news.values():
+        for h in hs:
+            cls_counts[classify(h)] += 1
+    nd = max(len(res["days"]), 1)
+    early_arm = defaultdict(int)
+    for day, D in res["days"].items():
+        for e in D.get("early", []):
+            early_arm[e["trig"]] += 1
+    out["counts"] = {"headline_classes": dict(cls_counts), "headlines_per_day": round(sum(cls_counts.values()) / nd, 1),
+                     "fires_by_arm": dict(__import__("collections").Counter((f["trig"], f["arm"]) for f in fs).most_common()),
+                     "vt_none_share": round(sum(1 for f in fs if f["vt"] is None) / max(len(fs), 1), 3),
+                     "pre_0945_crossings_lost": dict(early_arm), "dropped_failed_news_names": len(failed_syms)}
+    out["counts"]["fires_by_arm"] = {f"{k[0]}|{k[1]}": v for k, v in out["counts"]["fires_by_arm"].items()}
     scored = []
     for w in WINDOWS:
         for trig in TRIGS:
@@ -382,9 +428,9 @@ def score():
     for seed in range(20):
         rng = np.random.default_rng(seed)
         perm = dict(zip(syms, rng.permutation(syms)))
-        fs_s = assign(res, {s: news[perm[s]] for s in syms})
+        fs_s = assign(res, {s: news[perm[s]] for s in syms}, sessions=sessions, skip_syms=failed_syms)
         sh = {s: int(rng.choice([-5, -4, -3, -2, -1, 1, 2, 3, 4, 5])) for s in syms}
-        fs_h = assign(res, news, shift=sh)
+        fs_h = assign(res, news, shift=sh, sessions=sessions, skip_syms=failed_syms)
         for w in WINDOWS:
             for trig in TRIGS:
                 shuf_rate[f"{w}x{trig}"] += cell_stats(fs_s, w, trig)["edge_core"] / 20
@@ -402,6 +448,11 @@ def score():
         out["VERDICT"] = "NO VERDICT (" + ("fetch failures > 2%" if nf > 0.02 else "canary failed") + ")"
     else:
         out["VERDICT"] = {c: v["verdict"] for c, v in out["cells"].items()}
+    conf = {"days": {d: v for d, v in full_days.items() if CONFIRM[0] <= d <= CONFIRM[1]}}
+    if conf["days"]:
+        fc = assign(conf, news, sessions=sessions, skip_syms=failed_syms)
+        out["confirm_info"] = {f"{w}x{t}": {k: cell_stats(fc, w, t)[k] for k in ("lift", "t", "n_with_peer")}
+                               for w in WINDOWS for t in TRIGS}
     for trig in TRIGS:   # the operator's timing question (information)
         out[f"timing_{trig}"] = {w: out["cells"][f"{w}x{trig}"]["lift"] for w in WINDOWS}
     (OUT / "score.json").write_text(json.dumps(out, indent=1, default=str))

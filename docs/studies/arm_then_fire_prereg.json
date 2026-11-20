@@ -60,5 +60,15 @@
   "10 canaries": "+15 bp planted on W1xF2 AND on the smallest scored cell - both must read EDGE, else that cell is UNPROVEN; the shuffle canary (20 seeds) and the arm-shift placebo of #3b both required; any canary failure = no verdict",
   "printed first": "news coverage per month from 4/28 and the UNARMED share of name-days, before any lift"
  },
- "status": "amended_1 after skeptic round 1; script next, then skeptic code review"
+ "status": "amended_1 after skeptic round 1; script next, then skeptic code review",
+ "amended_2": {
+  "when": "2026-11-20, after the result-skeptic code review (FIX FIRST), before any score; the CPU fires build had run part-way and is rebuilt",
+  "unarmed": "UNARMED needs no headline of ANY class (qualifying, bearish, recap, reactive, late-updated) in the lookback = max(72 h, back to the start of the prior session from the full warehouse calendar); otherwise the fire is excluded",
+  "earnings flag": "any headline in the lookback matching the earnings words",
+  "failed news": "fires on names in a failed news batch are dropped; failures reset each run",
+  "peers": "capped at 5 by hash",
+  "gap rule": "applies to all four controls",
+  "counts": "headline class shares, headlines per day, fires by trigger and arm state, vt None share, pre-09:45 crossings lost; CONFIRM as information",
+  "minor (declared)": "same-name later enters at exit+3 as in stack_search; the shuffle canary permutes each name's whole news history across names"
+ }
 }

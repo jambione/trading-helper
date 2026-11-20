@@ -34,7 +34,10 @@ def test_arm_windows_latency_and_exclusions():
     assert af.arm_state([H(T - 40 * 3600)], T)[0] is None     # 30-72 h excluded
     assert af.arm_state([H(T - 80 * 3600)], T)[0] == "UNARMED"
     assert af.arm_state([H(T - 600, "offering priced")], T)[0] is None   # bearish only: neither armed nor unarmed
+    assert af.arm_state([H(T - 600, "Movers: 10 stocks")], T)[0] is None  # any skipped headline: not UNARMED
     assert af.arm_state([H(T - 7200, "Q3 earnings beat")], T) == ("W2", True)
+    assert af.arm_state([H(T - 20 * 3600, "Q3 results"), H(T - 600)], T) == ("W1", True)   # earnings anywhere in window
+    assert af.arm_state([H(T - 80 * 3600)], T, lookback=90 * 3600)[0] is None              # prior-session lookback
 
 
 def test_fires_first_cross_and_refractory():
@@ -59,3 +62,24 @@ def test_lifts_match_trigger_vol_gap_and_exclude_self():
           {"day": "2026-05-01", "sym": "D", "trig": "F3", "t": 100, "g": 90.0, "vt": 1, "gb": 1, "arm": "UNARMED", "earn": False}]
     rows, dropped, _, _ = af.lifts(fs, "W1", "F2")
     assert dropped == 0 and rows[0]["lift"] == 20.0 and rows[0]["w"] == 0.5
+
+
+def test_fires_need_no_future_bars():
+    from stack_search import layers
+    rng = np.random.default_rng(5)
+    def walk(px):
+        c = px * np.exp(np.cumsum(rng.normal(0, 0.002, 390)))
+        o = np.concatenate(([c[0]], c[:-1]))
+        return o, np.maximum(o, c) * 1.001, np.minimum(o, c) * 0.999, c, rng.uniform(500, 3000, 390)
+    po, ph, pl, pc, pv = walk(50)
+    o, h, l, c, v = walk(pc[-1])
+    v = v * 3
+    spy = 400 * np.exp(np.cumsum(rng.normal(0, 0.0005, 390)))
+    lay, chg = layers(o, h, l, c, v, pc, ph, pl, pv, spy)
+    G, px = np.zeros(390), np.ones(390, bool)
+    full = af.fires_for_name(lay, chg, G, px)
+    for t in (60, 200, 340):
+        cut = lambda a: np.concatenate([a[: t + 1], np.full(389 - t, np.nan)])
+        lay2, chg2 = layers(cut(o), cut(h), cut(l), cut(c), cut(v), pc, ph, pl, pv, cut(spy))
+        part = af.fires_for_name(lay2, chg2, G, px)
+        assert [f for f in part if f[1] <= t] == [f for f in full if f[1] <= t]
