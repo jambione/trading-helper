@@ -1,0 +1,79 @@
+{
+ "name": "rsi2_colour_timing",
+ "written": "2026-11-20, before any script was written or any outcome computed",
+ "operator": "11/20, with 7 chart screenshots (11/19-11/20, 1-minute, RSI-2 panel with 90/10 bands): 'The red exhaustion bars tell you there is an exhaustion rise in profit coming, mostly followed by an exhaustion stall. A green exhaustion bar tells you that they're oversold and a profit run is coming after the green is done ... The run of profit starts at the beginning of the red exhaustion indicator and after the green exhaustion indicator ends.' My restatement of the two timings was confirmed: 'Yes, pre-register it'.",
+ "question": "On 1-minute bars, does buying at (1) the start of a red segment (RSI-2 first at or above 90) or (2) the end of a green segment (RSI-2 first back above 10) catch a run that beats the same minute on other names and pays the real spread?",
+ "prior_work_disclosed": "connors_green (10/14): bought the START of green (RSI-2 < 10 with close > SMA200 and < SMA5), 10-min hold: FAIL both halves (net -6 / -16 bp; 5-min lift +7.8 bp t 1.85 faded by 15 min). rsi2_red_exit (10/14): red used only as an EXIT. falling-entries note (10/1): RSI-2 > 95 at desk entry was noise (n small). strength-entry note: the +0.86% EXH+RSI strength entry was look-ahead. Neither timing below (red START as an entry, green END as an entry) was graded.",
+ "prior": "LOW, about 10%: every 1-minute indicator event so far has matched a random minute ([[entry-setups-are-noise-equivalent]], [[rsi-and-macd-gap-add-nothing]]); the operator's examples are hand-picked and some show no run (COLD 11/19 14:39, 15:20).",
+ "data": "warehouse SIP 1-minute bars, top-400 by prior-day dollar volume, ETFs/ETPs excluded (the opening_grid universe), regular hours only. SEARCH 2026-04-28..2026-09-23, halves split at 2026-07-11 (by session count, printed). 2026-09-24..2026-11-18 is INFORMATION (already read by earlier studies). Extended hours are out (premarket shelved until SIP: [[premarket-shelved-until-sip]]).",
+ "name filter (at the signal bar, live values only)": "price $20-$400; day change vs prior close >= +1.5% (the desk's admission floor); signal bar 09:45-15:30 ET",
+ "indicator": "RSI-2, Wilder (alpha 1/2, adjust=False) on SIP 1-minute closes of the session, seeded at the first change from 09:30; >= 10 bars after the seed before any signal (weight of the seed < 0.1%). avg loss 0 -> 100; avg gain = avg loss = 0 -> no reading. A NaN close restarts the seed.",
+ "refractory": "one entry per (rule, name) per 15 minutes; a signal while that rule's trade on the name is open is skipped (counted)",
+ "timing note (live vs chart)": "the chart colours the line segment leading INTO the bar that reaches 90, so on a finished chart red appears to start at the low. Live, red is known only when bar t closes at >= 90; the rule uses that moment.",
+ "cost": "net = gross - the real SIP quoted spread in the 60 s before entry (news_source.fetch_quotes, shared cache); spread > 15 bp not traded",
+ "gross-first (TEST_STANDARD)": "before any quote: a rule whose gross upper bound (mean + 2 x day-clustered SE over all its candidates) is below +2.0 bp is FAIL-gross and no quotes are fetched for it",
+ "sample": "per rule, candidates drawn in order of the lowest sha256('rsi2col'|rule|day|sym|t); quote, keep if spread <= 15 bp; stop at 1,500 traded per half",
+ "controls (TEST_STANDARD, all on GROSS with the same exit rule applied to the control series)": {
+  "PRIMARY same-minute": "the same entry minute on up to 5 other universe names passing the same filter at that minute, same exit rule evaluated on THEIR RSI-2 series (if their exit condition never fires, the 15-bar cap)",
+  "same-name later": "a random minute strictly after t+15 on the same name-day (up to 60 min later), same exit rule",
+  "fixed-hold": "the same entry held a fixed 5 and 15 minutes (information: shows whether the colour exit adds anything over a plain hold)",
+  "unconditional": "a random minute on a random filtered name-day, same exit rule"
+ },
+ "statistic": "per rule and half: mean gross, mean net, lift over the primary control (gross), day-clustered t; MDE = 2.8 x SE printed before any mean",
+ "pass (per rule, all required)": {
+  "edge": "lift over the PRIMARY control > 0 in both halves, pooled day-clustered t >= 2.5",
+  "profitable": "mean net (after the real spread) >= +2.0 bp in both halves",
+  "robust": "top-1% winsorized mean net > 0 in both halves",
+  "size": ">= 300 traded per half; MDE > 10 bp in either half = UNDERPOWERED -> UNPROVEN (not FAIL)"
+ },
+ "fail": "anything short of pass. No retuning of 90/10, the exits, the 15-bar cap, the filter or the window; a change is a new prereg on data that has now been seen.",
+ "information_only": [
+  "the desk bracket (+20/-50, 15 min) as the exit for both rules",
+  "the panel's SMA conditions (close vs 1-minute SMA200 with prior-session warm-up, and vs SMA5) added to each rule",
+  "RED_START restricted to bars where RSI2[t-1] < 50 (a fast rise into red)",
+  "CONFIRM period 9/24-11/18 (already read by other studies)",
+  "win %, median hold, share of total from the top 1% of trades, by time of day"
+ ],
+ "checks before scoring": [
+  "chart match: fetch SIP 1-minute bars for 11/19 (after 16:05 ET) for FIGS (15:05-15:30) and COLD (14:25-15:00) and print RSI-2 per bar; the red and green bars must match the operator's screenshots (red from ~15:14 on FIGS; green ~14:38-14:39, 14:41-14:42, 14:47-14:50 on COLD). A mismatch is reported to the operator before any score.",
+  "unit tests: RSI-2 matches a hand computation; RED_START fires only on the cross bar; GREEN_END fires on the first bar back above 10; exits sell the next open; the 15-bar cap sells the close of t+15",
+  "null canary: a random walk with no edge must not read EDGE; a planted +15 bp run after red start must read EDGE",
+  "counts printed: signals, refractory skips, gated by spread, missing quotes, FAIL-gross"
+ ],
+ "if_pass": "result-skeptic review; then the same 20-session forward holdout on recorded IEX quotes as opening_grid, and a check that live ai_entry_watch.live_cm_rsi fires on the same bars on one replayed day, before any default-off arm",
+ "if_fail": "record it; RSI-2 colour timing on 1-minute bars joins the green-start and red-exit results as closed",
+ "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)",
+ "fetch rule": "quotes only after 16:05 ET (data key shared with the live dashboard), behind any study already in the fetch queue",
+ "script": "tools/studies/rsi2_colour_timing.py (to be written after the review)",
+ "rules (three hypotheses)": {
+  "RED_START": "completed bar t with RSI2[t] >= 90 and RSI2[t-1] < 90. Buy the OPEN of t+1. Exit at the OPEN after the first completed bar s > t with RSI2[s] < 90 (the stall); if none by t+15, sell the CLOSE of t+15.",
+  "GREEN_END": "completed bar t with RSI2[t] > 10 and RSI2[t-1] <= 10. Buy the OPEN of t+1. Exit at the OPEN after the first completed bar s > t that ends a red segment (RSI2[s] < 90 after some bar in (t, s) >= 90); if none by t+15, sell the CLOSE of t+15.",
+  "RED_STOP": "operator 11/20 'Yes, add the red stop rule' (the real-time version of 'the run starts at the beginning of red'). At the open of bar t, with RSI2[t-1] < 90 and Wilder state (avg gain G, avg loss L, close C) from completed bar t-1, the trigger price is P = C + 9L - G (the close at which RSI2[t] would equal 90; if 9L - G <= 0, P = C). A buy-stop rests at P for bar t only. FILL if high[t] >= P, at max(P, open[t]) (a gap through fills at the open). Exit: the OPEN after the first completed bar s >= t with RSI2[s] < 90 (a pop that fails within bar t sells at the open of t+1); else the CLOSE of t+15. Same filter, window, refractory, spread gate and cost (spread in the 60 s before bar t starts) as the other rules; extra stop slippage of +2 bp printed as a sensitivity."
+ },
+ "controls for RED_STOP": "PRIMARY same-minute: up to 5 other filtered names bought at the OPEN of t+1 (the first price after the fill bar), same RSI-2 exit; same-name stop control: a buy-stop at the same percent above the prior close at a random later bar (t+16..t+60) on the same name-day, same fill and exit rules; both on GROSS. Also printed: fill rate (fills / bars armed) and the share of fills whose bar t closes below P (failed pops).",
+ "multiplicity": "three rules (RED_START, GREEN_END, RED_STOP); the EDGE bar t >= 2.5 stays above Bonferroni-3 (2.39)",
+ "amended_1": {
+  "when": "2026-11-20, after result-skeptic round 1 (FIX FIRST: 2 blockers, 5 majors, 5 minors), before any script or outcome",
+  "B1 hold-matched control (replaces the PRIMARY same-minute control)": "PRIMARY = up to 5 other filtered names at the same minute, held over EXACTLY the signal's interval (open of t+1, or for RED_STOP the open of t+1 after the fill bar, to the signal's exit open, or the close of t+15 at the cap). Information: the control with its own colour exit, mean hold printed.",
+  "B2 colour definition decided by the chart match BEFORE any score": "if any screenshot bar with RSI2 >= 90 (or <= 10) is NOT coloured on the operator's panel, the SMA-strict colours (green: close > SMA200, close < SMA5, RSI < 10; red: RSI > 90, close < SMA200, close > SMA5) become primary. Pass = at least 90% of coloured bars match on FIGS and COLD 11/19; otherwise stop and report to the operator; do not score.",
+  "M1 separate verdicts": "EDGE is judged on GROSS over all candidates (no quotes needed). PROFITABLE is judged on spread-gated traded rows. A FAIL-gross rule is still judged for EDGE and recorded as a component if EDGE passes.",
+  "M2 stress cost": "PROFITABLE also needs net > 0 in both halves at 1.5 x the quoted spread",
+  "M3 feed": "if_pass adds, before the forward holdout: rescore the drawn rows with signals computed on Alpaca IEX bars for the same days; EDGE must hold. Declared deviations: live fires intrabar on the live print; symbol_ohlc may include extended-hours bars.",
+  "M4 prior tests": "RSI2T (RSI-2 oversold turn, 10/13, EARLY_ENTRY_MID_RSI2_2026-10-13.md) FAILED with lift +2.2 / -0.6 bp and is close to GREEN_END; rsi2_daily and latch_gate's RSI-2 term are also prior. The family is 3 rules here and about 6 RSI-2 rules overall; the EDGE bar stays t >= 2.5.",
+  "M5 same-name control": "an entry minute in exit+2 .. exit+62 on the same name-day, held the same length; a control running past 16:00 is dropped and counted",
+  "m1 mismatch threshold": "a control mean more than 3 bp from the unconditional random-minute mean, or |t| > 2 against it, blocks the verdict",
+  "m2 match live": "RSI-2 is computed with ai_entry_watch.cm_rsi_series itself (flat bars -> 100, missing minutes skipped, as live and TradingView do); a unit test asserts equality with the script's series",
+  "m3 early stop": "early_stop.screen on the first quarter of SEARCH days, as TEST_STANDARD requires",
+  "m4 print caveat": "entry after an up-close likely fills at the ask and the RED_START exit after a down-close at the bid; stated as a caveat on any FAIL",
+  "m5 details": "verdict on spread-gated traded rows, all candidates as information; halves split at the calendar date 2026-07-11; a SPY-hedged lift is printed",
+  "RED_STOP (skeptic addendum)": {
+   "trigger": "P from ai_entry_watch.rsi2_trigger_prices itself (P = C + 9L - G; RSI2[t-1] < 90 implies 9L - G > 0), rounded UP to the cent; unit test: a bar closing exactly at P reads RSI2 >= 90. A fill means price TOUCHED P, not that bar t closed red.",
+   "B3 primary control (replaces 'controls for RED_STOP' PRIMARY)": "up to 5 other filtered names in the same minute, each with a buy-stop at the same percent distance (P/C - 1) above its own close[t-1], same fill rule and fill model, held to the signal's exit time; lift among filled controls; control fill rate printed. The open[t+1] control is information only.",
+   "M6 fill model": "FILL only if high[t] >= P + 0.01, at max(P, open[t]) + 0.01. Slippage sensitivity +5 bp (replaces +2), included in the PROFITABLE stress cost. Share of fills with high[t] - P < 2 bp printed.",
+   "M7 filter timing": "for RED_STOP the name filter (day change >= +1.5%, $20-$400) is read at close[t-1]; the 09:45-15:30 window applies to bar t's start",
+   "M8 same-name stop control": "percent distance relative to close[t'-1] of the control bar; entry bar in exit+2 .. exit+62 on the same name-day; held to the signal's hold length",
+   "sampling": "RED_STOP candidates are FILLS (drawn by hash), not armed bars; armed / filled / failed-pop counts printed per half; gross-first runs on all fills"
+  }
+ },
+ "status": "amended_1 after skeptic round 1 incl. RED_STOP addendum; script next, then skeptic code review"
+}
