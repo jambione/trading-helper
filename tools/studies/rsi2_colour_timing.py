@@ -585,8 +585,114 @@ def profitable(rule, rows, edge_rep):
     return rep
 
 
+
+# ---------------------------------------------------------------- amended_2: exact Pine colours on the ETH series
+
+def pine_rsi(closes):
+    """Pine ta.rsi(close, 2) over bars that exist (NaN entries skipped): change -> up/down, rma(2) seeded with the
+    simple mean of the first 2 values, then alpha 1/2; down == 0 -> 100, up == 0 -> 0. -> (rsi, up, down). Pure."""
+    n = len(closes)
+    rsi, U, D = np.full(n, np.nan), np.full(n, np.nan), np.full(n, np.nan)
+    prev, ups, downs, up, down = None, [], [], None, None
+    for i in range(n):
+        c = closes[i]
+        if not np.isfinite(c):
+            continue
+        if prev is not None:
+            d = c - prev
+            g, l_ = max(d, 0.0), max(-d, 0.0)
+            if up is None:
+                ups.append(g); downs.append(l_)
+                if len(ups) == 2:
+                    up, down = sum(ups) / 2, sum(downs) / 2
+            else:
+                up, down = 0.5 * g + 0.5 * up, 0.5 * l_ + 0.5 * down
+            if up is not None:
+                U[i], D[i] = up, down
+                rsi[i] = 100.0 if down == 0 else (0.0 if up == 0 else 100.0 - 100.0 / (1.0 + up / down))
+        prev = c
+    return rsi, U, D
+
+
+def pine_colours(closes):
+    """amended_2 colour per bar: 'R' red (close < SMA200, close > SMA5, RSI2 > 90), 'G' green (close > SMA200,
+    close < SMA5, RSI2 < 10), '.' silver; all on the same bar series. Pure."""
+    rsi, _, _ = pine_rsi(closes)
+    s200, s5 = sma(closes, 200), sma(closes, 5)
+    out = []
+    for c, r, a, b in zip(closes, rsi, s200, s5):
+        if not (np.isfinite(c) and np.isfinite(r) and np.isfinite(a) and np.isfinite(b)):
+            out.append("?")
+        elif r > 90 and c < a and c > b:
+            out.append("R")
+        elif r < 10 and c > a and c < b:
+            out.append("G")
+        else:
+            out.append(".")
+    return out, rsi
+
+
+CHART_REFS = [   # (sym, day, colour, from, to) - operator screenshots (prereg amended_2, amended_references_3)
+    ("UNH", "2026-11-20", "G", "06:3?", None), ("MU", "2026-11-20", "R", "07:10", "07:14"),
+    ("MU", "2026-11-20", "R", "07:20", "07:21"), ("MU", "2026-11-20", "R", "07:25", "07:28"),
+    ("ANT", "2026-11-20", "R", "08:43", "08:44"), ("ANT", "2026-11-20", "R", "08:48", "08:49"),
+    ("ANT", "2026-11-20", "R", "08:56", "09:00"), ("ANT", "2026-11-20", "R", "09:03", "09:08"),
+    ("INVH", "2026-11-20", "R", "14:37", "14:40"), ("INVH", "2026-11-20", "R", "14:44", "14:46"),
+    ("INVH", "2026-11-20", "R", "14:53", "14:54"),
+    ("ANT", "2026-11-20", "R", "12:46", "12:54"), ("ANT", "2026-11-20", "R", "12:55", "13:00"),
+    ("ANT", "2026-11-20", "R", "13:04", "13:05"), ("ANT", "2026-11-20", "R", "13:16", "13:21"),
+    ("ANT", "2026-11-20", "R", "13:24", "13:25"),
+    ("SPCX", "2026-11-20", "G", "13:39", "13:41"), ("SPCX", "2026-11-20", "G", "13:57", "13:59"),
+    ("SPCX", "2026-11-20", "G", "14:11", "14:12"), ("SPCX", "2026-11-20", "G", "14:21", "14:24"),
+]
+CHART_WINDOWS = {("FIGS", "2026-11-19"): ("15:05", "15:30"), ("COLD", "2026-11-19"): ("14:25", "15:00"),
+                 ("UNH", "2026-11-20"): ("06:25", "06:50"), ("MU", "2026-11-20"): ("06:50", "07:35"),
+                 ("ANT", "2026-11-20"): ("08:20", "13:30"), ("INVH", "2026-11-20"): ("14:30", "15:00"),
+                 ("SPCX", "2026-11-20"): ("13:30", "14:30")}
+
+
+def eth_bars(cl, sym, day):
+    """SIP 1-minute bars 04:00-20:00 ET for the prior weekday and `day` (Pine's warm-up is all prior bars). -> list of
+    (datetime ET, close). I/O."""
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    from alpaca.data.enums import DataFeed, Adjustment
+    from datetime import datetime, timedelta
+    d = datetime.fromisoformat(day + "T04:00").replace(tzinfo=ET)
+    p = d - timedelta(days=3 if d.weekday() == 0 else 1)
+    r = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=sym, timeframe=TimeFrame.Minute, start=p,
+                                           end=d + timedelta(hours=16), feed=DataFeed.SIP, adjustment=Adjustment.RAW))
+    return [(b.timestamp.astimezone(ET), float(b.close)) for b in (r.data or {}).get(sym, [])]
+
+
+def chart_eth():
+    """amended_2 chart match: Pine colours on ETH SIP bars vs the operator's coloured minutes; prints per-bar colours
+    in each screenshot window and the match share (>= 90% of the operator's coloured bars required)."""
+    from alpaca.data.historical import StockHistoricalDataClient
+    k = json.load(open(ROOT / "secrets_data.json"))
+    cl = StockHistoricalDataClient(k["alpaca_data_api_key"], k["alpaca_data_secret_key"])
+    cols = {}
+    for (sym, day), (a, b) in CHART_WINDOWS.items():
+        bars = eth_bars(cl, sym, day)
+        col, rsi = pine_colours(np.array([c for _, c in bars]))
+        cols[(sym, day)] = {t.strftime("%H:%M"): (cc, r, c) for (t, c), cc, r in zip(bars, col, rsi)
+                            if t.strftime("%Y-%m-%d") == day}
+        print(f"== {sym} {day} {a}-{b}: " + " ".join(f"{hm}{v[0]}" for hm, v in sorted(cols[(sym, day)].items())
+                                                       if a <= hm <= b))
+    hit = tot = 0
+    for sym, day, want, a, b in CHART_REFS:
+        if b is None:
+            continue
+        got = [(hm, v[0], round(v[1], 1)) for hm, v in sorted(cols[(sym, day)].items()) if a <= hm <= b]
+        h = sum(1 for _, c, _ in got if c == want)
+        hit, tot = hit + h, tot + len(got)
+        print(f"{sym} {day} {want} {a}-{b}: {h}/{len(got)}  {got}")
+    print(f"MATCH {hit}/{tot} = {100 * hit / max(tot, 1):.0f}% (need >= 90%)")
+
 def main(argv):
     cmd = argv[1]
+    if cmd == "chart_eth":
+        return chart_eth()
     if cmd == "chart":
         return chart()
     if cmd == "build":
