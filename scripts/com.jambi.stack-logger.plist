@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.jambi.stack-logger - one read-only snapshot of /api/state per minute, weekdays 04:00-20:00 ET, to
+  ai_reports/stack_log/DAY.jsonl.gz (operator 11/20 "build the logger"). Never trades, never writes to the dashboard.
+  KeepAlive: launchd supervises the foreground loop. Bootstrapped into gui/<uid> so it inherits the console session
+  (the dashboard auth path the momentum monitor uses). Install:
+    cp scripts/com.jambi.stack-logger.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jambi.stack-logger.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jambi.stack-logger</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd /Users/jambimac/repo/trading-helper &amp;&amp; exec nice -n 10 .venv/bin/python -u tools/stack_logger.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/stack_logger.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/stack_logger.log</string>
+</dict>
+</plist>
