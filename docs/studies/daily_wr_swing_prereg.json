@@ -1,0 +1,75 @@
+{
+ "name": "daily_wr_swing",
+ "written": "2026-11-20, before any script was written or any outcome computed",
+ "operator": "11/20 'Yes, pre-register A' (Path A from a pasted review: raw daily %R oversold mean reversion in an uptrend, held 1-5 days)",
+ "question": "On daily bars, does buying a liquid stock that is above its 200-day average when raw Williams %R says oversold, and selling on the snap-back, beat buying other uptrend names over the same days, by enough to pay a realistic cost?",
+ "prior_work_not_repeated": "rsi2_daily (10/9: RSI-2 < 10 above SMA200, held open->close of ONE day only, as a day-trading picker); daily_horizon #4 one-week losers (11/11: bottom tenth by 5-day return, no trend filter, 5-day hold, FAIL beta-adj -17.9 bp t -1.65); monthly_book R5 one-month reversal (FAIL). None used %R, the SMA200 filter AND an exit on the snap-back. Every intraday %R test failed; this is %R on the timeframe it was designed for.",
+ "prior": "LOW, about 15%: published daily mean-reversion rules (Connors RSI-2, %R) have weakened since ~2010 and are strongest in index ETFs, not single stocks; one-week losers already failed here.",
+ "data": "~/lh_cache/panel.npz on the mini: 2016-01-04..2026-09-25, 6,227 symbols with adjusted o/h/l/c/v, raw close rc and status (active/inactive). Verdict window 2017-01-03..2022-12-30 only, halves split at 2020-01-01, because inactive (delisted) names are present for those years but almost absent for 2023+ (the 10/7 earnings study counted ~21). 2023-01..2026-09 is printed as INFORMATION, never a verdict. The script prints, per year, the count of names that stop trading.",
+ "universe": "on day t, a name is tradeable when its raw close on t >= $10 and its mean raw dollar volume (rc x v) over the 20 sessions ending t >= $20M, with >= 190 finite closes in the 200 sessions ending t. SPY and every symbol in the SPY/QQQ/IWM/DIA-style ETF list the script prints are excluded from the stock test (ETFs are an information line).",
+ "signal (decided at the close of t, raw, unsmoothed)": {
+  "trend": "C[t] > SMA200[t] (simple mean of the 200 adjusted closes ending t)",
+  "wr": "%R_N[t] = -100 x (max(H[t-N+1..t]) - C[t]) / (max(H[t-N+1..t]) - min(L[t-N+1..t])); a zero range is no signal",
+  "oversold": "%R_N[t] <= -90",
+  "variants (three hypotheses)": {
+   "WR3": "N = 3",
+   "WR5": "N = 5",
+   "WR10": "N = 10"
+  }
+ },
+ "trade": {
+  "entry": "buy at the OPEN of t+1 (no look-ahead: the signal uses t's close)",
+  "exit": "the first close s >= t+1 with %R_N[s] > -20 OR C[s] > SMA5[s]; sell at the OPEN of s+1. If neither by the close of t+5, sell at the open of t+6 (hold at most 5 sessions)",
+  "one position per name": "no new entry on a name while its previous trade is open",
+  "delisting": "a name that stops trading is sold at its last close",
+  "clip": "per-trade return clipped to [-90%, +300%] (data errors), count printed"
+ },
+ "cost": "money line 30 bp per round trip (the desk measured ~31 bp for market orders at the open; same line as daily_horizon); 10 bp printed as information",
+ "control (primary)": "per trade: the equal-weight mean return of ALL tradeable names on the signal day that are above their SMA200 and NOT oversold on that variant, bought at the same open of t+1 and sold at the same exit open, same clip and delisting rule. Lift = (1+r)/(1+c) - 1 per trade.",
+ "controls (information)": "(a) same-name control: the same name on a random tradeable day within +/-60 sessions with C > SMA200 and %R_N > -50, held the same number of sessions (seed 41); (b) all tradeable names, no trend filter; (c) SPY over the same window.",
+ "statistic": "per variant, trade-weighted mean lift (bp) and the beta-adjusted residual r - beta x c (beta = OLS of r on c over all of that variant's trades in the half); t clustered by ENTRY WEEK (overlapping holds share weeks).",
+ "power": "before any mean is read: per variant and half, SE and MDE = 2.8 x SE. A variant whose MDE > 30 bp in either half is UNDERPOWERED, no verdict.",
+ "pass (per variant, all required)": {
+  "edge": "mean lift > 0 in both halves AND pooled clustered t >= 2.39 (two-sided 5% over 3 variants) AND the beta-adjusted residual's clustered t >= 2.39",
+  "money": "mean lift - 30 bp > 0 in BOTH halves",
+  "robust": "still > 0 (lift - 30 bp) after dropping the top 1% of trades by lift, and after dropping the best calendar quarter",
+  "size": ">= 1,000 trades per half"
+ },
+ "fail": "anything short of pass. No retuning of N, the -90/-20 levels, SMA200/SMA5, the 5-session cap or the entry/exit timing; a changed rule is a new prereg on data that has now been seen.",
+ "information_only": [
+  "entry at the CLOSE of t instead of the next open (the textbook MOC version; mildly optimistic)",
+  "%R_N <= -95",
+  "RSI2 (operator 11/20 'Yes, add the RSI-2 line'): signal RSI-2 < 10 (Wilder, 2-period, on adjusted closes, >= 20 bars of history) above SMA200; exit on the first close with RSI-2 > 70 OR C > SMA5, else the 5-session cap; same entry, control (uptrend names with RSI-2 >= 10), lift, beta residual and 30 bp line, printed next to the three %R variants; information only, not a fourth hypothesis",
+  "no SMA200 filter",
+  "exit on %R only, and on SMA5 only",
+  "ETF line (SPY, QQQ, IWM, DIA and sector SPDRs present in the panel), same rule",
+  "2023-2026 (survivorship-exposed)",
+  "a 10-slot equal-weight account after 30 bp vs SPY: yearly return, worst drawdown, Sharpe, over 200 tie-break seeds (median and range)",
+  "win %, median hold, share of total from the top 1% of trades"
+ ],
+ "checks": [
+  "unit test: %R matches a hand computation on a 10-bar series",
+  "unit test: the exit fires on the first qualifying close and sells the next open; the 5-session cap sells at t+6's open",
+  "null canary: synthetic drift with no edge must not read PASS; a planted +60 bp snap-back must read EDGE",
+  "assert >= 100 tradeable names on every entry day",
+  "print counts: signals, skipped for open position, clipped, delisted exits"
+ ],
+ "if_pass": "result-skeptic review; then a paper swing book is a SEPARATE decision for the operator (the day desk is unchanged)",
+ "if_fail": "record it; daily %R mean reversion joins one-week losers and RSI-2 daily as closed",
+ "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)",
+ "script": "tools/studies/daily_wr_swing.py (to be written after the review)",
+ "amended_1": {
+  "when": "2026-11-20, after the result-skeptic pre-run review (FIX FIRST: 1 blocker, 4 majors, 4 minors), before any script or outcome; the skeptic's power probe printed SEs only",
+  "B1 verdict window (replaces the 2017-2022 window)": "no name in the panel stops trading before 2018-06 (last-bar years 2017: 0, 2018: 90, 2019: 217, 2020: 139, 2021: 211, 2022: 142, 2023: 3). Verdict window 2018-07-02..2022-12-30, halves split at 2020-10-01. 2017-01..2018-06 and 2023+ are INFORMATION. The per-year stop count is printed for all names and for names liquid at their last bar.",
+  "M1 beta-timing (added to EDGE)": "(a) SPY residual r - beta x SPY over the same open-to-open window, clustered t >= 2.39; (b) vol-matched control: equal-weight of control names in the same trailing 20-day realized-vol quintile at t, mean lift > 0 in both halves; (c) entry-day-weighted mean lift (each entry day counted once) > 0 in both halves. Canary added: a market factor with heterogeneous betas plus a planted index reversal and no stock-specific edge must not read EDGE.",
+  "M2 clustering": "all t statistics and the MDE are clustered by ENTRY CALENDAR MONTH (replaces entry week)",
+  "M3 power": "UNDERPOWERED (MDE > 30 bp) in either half = UNPROVEN, recorded as such, not FAIL and not closed",
+  "M4 same-name control": "drawn only from t+hold+2 .. t+hold+62, C > SMA200, %R_N > -50, same hold length; each control's mean is printed beside the unconditional mean (a random uptrend name-day, same hold); a control far from that mean (|diff| > 2 SE) blocks the verdict",
+  "m1 ETF line": "dropped: none of SPY/QQQ/IWM/DIA/sector or leveraged ETFs are in the panel's symbol list; the script prints any ETF-like symbols it finds",
+  "m2 data hygiene": "status is as of today and is never a filter. %R and SMA windows need every bar finite; a NaN bar during a hold exits at the last close before it; a NaN open at t+1 skips the signal (counted)",
+  "m3 robustness": "the TEST_STANDARD veto is the top-1% winsorized mean (lift - 30 bp > 0 in both halves); dropping the top 1% of trades and the best quarter remain as stricter extra vetoes",
+  "m4 money lines": "also print raw net r - 30 bp per half as the TEST_STANDARD PROFITABLE line; the 30 bp-on-lift line stays the money bar",
+  "RSI2 line (skeptic addendum)": "the RSI-2 line uses the amended verdict window, SPY residual, vol-matched and entry-day-weighted controls, monthly clusters and the post-trade same-name control, and shares every trade rule (one position per name, delisting exit at the last close, [-90%,+300%] clip, NaN-open skip, NaN-gap exit). Wilder RSI-2: smoothing alpha 1/2 (adjust=False) seeded at the first change, computed only on contiguous finite closes (a NaN gap restarts the seed), >= 20 bars after the seed; avg loss 0 -> RSI 100; avg gain = avg loss = 0 -> no signal. Signals with C[t] >= SMA5[t] (any variant) are counted and printed, not dropped. The RSI-2 line cannot promote, rescue or replace a %R variant; a good RSI-2 number needs its own prereg on a forward window."
+ },
+ "status": "amended_1 after skeptic round 1 (incl. RSI-2 addendum); script next, then skeptic code review"
+}
