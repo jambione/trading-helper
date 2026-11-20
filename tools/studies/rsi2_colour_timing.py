@@ -1,0 +1,620 @@
+#!/usr/bin/env python3
+"""rsi2_colour_timing - does buying at the START of a red RSI-2 segment (RED_START), the END of a green one (GREEN_END),
+or on a resting buy-stop at the price that turns the bar red (RED_STOP) catch a run that beats the same minute on other
+names and pays the real spread? Operator 11/20 (screenshots). Prereg + amended_1: docs/studies/rsi2_colour_timing_prereg.json.
+
+    .venv/bin/python tools/studies/rsi2_colour_timing.py chart              # 11/19 FIGS + COLD per-bar RSI-2 / colours
+    .venv/bin/python tools/studies/rsi2_colour_timing.py build              # CPU: per-day cache (no API)
+    .venv/bin/python tools/studies/rsi2_colour_timing.py edge  --colours plain|strict   # EDGE verdicts (gross, no quotes)
+    .venv/bin/python tools/studies/rsi2_colour_timing.py run   --colours plain|strict   # + quotes, PROFITABLE, report
+
+The colour mode is decided by the chart match (amended_1 B2) and must be passed explicitly. Quote fetches use the data key
+shared with the live dashboard: 'run' refuses to fetch 09:00-16:05 ET.
+
+RSI-2 is ai_entry_watch.cm_rsi_series arithmetic (Wilder alpha 1/2, first delta seeds, down == 0 -> 100, missing minutes
+skipped) on the last 220 regular-hours closes of the prior session + today's closes, as live symbol_ohlc feeds it. For the
+plain rules (prereg: seeded at 09:30) the prior-session warm-up changes RSI-2 by < 1e-4 after 09:45 (seed weight 0.5^15).
+The red trigger price is ai_entry_watch.rsi2_trigger_prices arithmetic (P = C + 9D - U), rounded UP to the cent. Both
+equalities are unit-tested against the live functions.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools" / "studies"))
+
+OUT = ROOT / "ai_reports" / "rsi2_colour"
+CACHE = OUT / "cache"
+OWNQ = OUT / "quotes.json"
+SEARCH = ("2026-04-28", "2026-09-23")
+CONFIRM = ("2026-09-24", "2026-11-18")
+SPLIT = "2026-07-11"                      # halves by calendar date (amended_1 m5)
+WARM = 220                                # prior-session RTH bars prepended
+T_LO, T_HI = 15, 360                      # signal bar 09:45 .. 15:30
+CAP_BARS = 15
+CHG_MIN, PX_LO, PX_HI = 1.5, 20.0, 400.0
+GATE_BP, CAP_PER_HALF = 15.0, 1500
+EDGE_T, MIN_NET, MIN_N, MDE_MAX = 2.5, 2.0, 300, 10.0
+STOP_SLIP_BP, STRESS = 5.0, 1.5
+TICK = 0.01
+RULES = ("RED_START", "GREEN_END", "RED_STOP")
+
+
+# ---------------------------------------------------------------- indicator (pure)
+
+def rsi_state(closes):
+    """cm_rsi_series arithmetic over a 1-D array with NaN gaps skipped. -> (rsi, up, down) arrays aligned to closes;
+    NaN where the close is NaN or before the first delta. Pure."""
+    n = len(closes)
+    rsi, U, D = np.full(n, np.nan), np.full(n, np.nan), np.full(n, np.nan)
+    prev, up, down, k = None, 0.0, 0.0, 0
+    for i in range(n):
+        c = closes[i]
+        if not np.isfinite(c):
+            continue
+        if prev is not None:
+            d = c - prev
+            g, l_ = (d if d > 0 else 0.0), (-d if d < 0 else 0.0)
+            if k == 0:
+                up, down = g, l_
+            else:
+                up, down = 0.5 * g + 0.5 * up, 0.5 * l_ + 0.5 * down
+            k += 1
+            U[i], D[i] = up, down
+            rsi[i] = 100.0 if down == 0 else (0.0 if up == 0 else 100.0 - 100.0 / (1.0 + up / down))
+        prev = c
+    return rsi, U, D
+
+
+def red_trigger(c_prev, up, down):
+    """Close of the next bar at which RSI-2 reaches 90 (rsi2_trigger_prices: c + max(9D - U, 0.01)), rounded UP to
+    the cent. Pure."""
+    if not (np.isfinite(c_prev) and np.isfinite(up) and np.isfinite(down)):
+        return np.nan
+    p = c_prev + max(9.0 * down - up, 0.01)
+    return math.ceil(round(p * 100, 6)) / 100.0
+
+
+def sma(x, n):
+    """Trailing simple mean over the last n FINITE values ending at each index (NaN until n exist). Pure."""
+    out = np.full(len(x), np.nan)
+    buf = []
+    for i, v in enumerate(x):
+        if np.isfinite(v):
+            buf.append(v)
+            if len(buf) > n:
+                buf.pop(0)
+        if len(buf) == n and np.isfinite(v):
+            out[i] = sum(buf) / n
+    return out
+
+
+def colours(closes_full, warm):
+    """closes_full = prior-session warm-up (length warm) + today's 390. -> dict of today's arrays: rsi, U, D,
+    red/green plain (>= 90 / <= 10) and strict (panel: red RSI > 90 & c < SMA200 & c > SMA5; green RSI < 10 &
+    c > SMA200 & c < SMA5). Pure."""
+    rsi, U, D = rsi_state(closes_full)
+    s200, s5 = sma(closes_full, 200), sma(closes_full, 5)
+    c = closes_full
+    with np.errstate(invalid="ignore"):
+        red_s = (rsi > 90) & (c < s200) & (c > s5)
+        green_s = (rsi < 10) & (c > s200) & (c < s5)
+        red_p, green_p = rsi >= 90, rsi <= 10
+    sl = slice(warm, None)
+    return {"rsi": rsi[sl], "U": U[sl], "D": D[sl], "red_plain": red_p[sl], "green_plain": green_p[sl],
+            "red_strict": red_s[sl], "green_strict": green_s[sl]}
+
+
+# ---------------------------------------------------------------- trades (pure)
+
+def hkey(*p):
+    return int(hashlib.sha256("|".join(str(x) for x in p).encode()).hexdigest(), 16)
+
+
+def px_or(arr, i):
+    return float(arr[i]) if 0 <= i < len(arr) and np.isfinite(arr[i]) else np.nan
+
+
+def exit_for(rule, red, t_from, t, o, c):
+    """Exit of a trade whose first eligible exit bar is t_from (RED_START/GREEN_END: t+1; RED_STOP: t). Cap: the close
+    of t+15. -> (exit_kind, exit_bar, exit_px): kind 'open' sells o[s+1], 'cap' sells c[t+15]. Pure."""
+    cap = t + CAP_BARS
+    if rule == "GREEN_END":
+        seen = False
+        for s in range(t + 1, cap + 1):
+            if red[s]:
+                seen = True
+            elif seen:
+                return "open", s + 1, px_or(o, s + 1)
+    else:
+        for s in range(t_from, cap + 1):
+            if not red[s]:
+                return "open", s + 1, px_or(o, s + 1)
+    return "cap", cap, px_or(c, cap)
+
+
+def price_at(kind, bar, o, c):
+    return px_or(o, bar) if kind == "open" else px_or(c, bar)
+
+
+def passes_filter(cl, pc, i):
+    if not (0 <= i < len(cl)) or not np.isfinite(cl[i]) or not pc > 0:
+        return False
+    return PX_LO <= cl[i] <= PX_HI and (cl[i] / pc - 1) * 100 >= CHG_MIN
+
+
+def stop_fill(P, o_t, h_t):
+    """Buy-stop at P for one bar: fill only if high >= P + 1 tick, at max(P, open) + 1 tick (amended_1 M6). Pure."""
+    if not (np.isfinite(P) and np.isfinite(h_t)) or h_t < P + TICK - 1e-9:
+        return np.nan
+    base = P if not np.isfinite(o_t) else max(P, o_t)
+    return base + TICK
+
+
+def trades_for_name(rule, d, k, mode):
+    """All trades of one rule on one name-day (row k of day d) with the refractory. -> list of dicts. Pure."""
+    o, h, l, c = d["o"][k], d["h"][k], d["l"][k], d["c"][k]
+    pc = d["pc"][k]
+    red, green = d[f"red_{mode}"][k], d[f"green_{mode}"][k]
+    rsi = d["rsi"][k]
+    out, busy_until, last_entry = [], -1, -10 ** 9
+    counts = defaultdict(int)
+    for t in range(T_LO, T_HI + 1):
+        if rule == "RED_START":
+            fire = bool(red[t]) and not bool(red[t - 1])
+        elif rule == "GREEN_END":
+            fire = (not bool(green[t])) and bool(green[t - 1]) and np.isfinite(rsi[t])
+        else:   # RED_STOP: armed at the open of t if bar t-1 is not red; filter at close[t-1] (M7)
+            fire = np.isfinite(rsi[t - 1]) and rsi[t - 1] < 90 and not bool(red[t - 1])
+        if not fire:
+            continue
+        fbar = t - 1 if rule == "RED_STOP" else t
+        if not passes_filter(c, pc, fbar):
+            continue
+        if t < busy_until or t < last_entry + 15:
+            counts["refractory"] += 1
+            continue
+        if rule == "RED_STOP":
+            P = red_trigger(c[t - 1], d["U"][k][t - 1], d["D"][k][t - 1])
+            entry = stop_fill(P, o[t], h[t])
+            counts["armed"] += 1
+            if not np.isfinite(entry):
+                continue
+            counts["filled"] += 1
+            if np.isfinite(c[t]) and c[t] < P:
+                counts["failed_pop"] += 1
+            kind, ebar, xpx = exit_for(rule, red, t, t, o, c)
+            ent_bar, dist = t, P / c[t - 1] - 1
+            thin = (h[t] - P) / P * 1e4 < 2.0
+        else:
+            entry = px_or(o, t + 1)
+            kind, ebar, xpx = exit_for(rule, red, t + 1, t, o, c)
+            ent_bar, dist, thin = t + 1, None, False
+        if not (np.isfinite(entry) and np.isfinite(xpx)):
+            counts["no_price"] += 1
+            continue
+        g = (xpx / entry - 1) * 1e4
+        out.append({"sym": d["syms"][k], "t": t, "ent_bar": ent_bar, "entry": entry, "kind": kind, "ebar": ebar,
+                    "gross": g, "dist": dist, "thin": thin,
+                    "fix5": (px_or(c, ent_bar + 4) / entry - 1) * 1e4 if rule != "RED_STOP" else (px_or(c, t + 5) / entry - 1) * 1e4,
+                    "fix15": (px_or(c, ent_bar + 14) / entry - 1) * 1e4 if rule != "RED_STOP" else (px_or(c, t + 15) / entry - 1) * 1e4})
+        busy_until = ebar + (1 if kind == "cap" else 0)
+        last_entry = t
+    return out, counts
+
+
+def ctl_trade(rule, d, j, row):
+    """Gross of the hold-matched control on name j for a signal row (amended_1 B1/B3). RED_START/GREEN_END: buy o[t+1],
+    sell at the signal's exit (same bar, same price type). RED_STOP: a buy-stop at the same percent distance above
+    c_j[t-1], same fill model, same exit. -> gross bp or NaN (no fill / no price). Pure."""
+    o, h, c = d["o"][j], d["h"][j], d["c"][j]
+    t = row["t"]
+    if rule == "RED_STOP":
+        cp = px_or(c, t - 1)
+        if not np.isfinite(cp):
+            return np.nan
+        P = math.ceil(round(cp * (1 + row["dist"]) * 100, 6)) / 100.0
+        entry = stop_fill(P, o[t], h[t])
+    else:
+        entry = px_or(o, t + 1)
+    xpx = price_at(row["kind"], row["ebar"], o, c)
+    if not (np.isfinite(entry) and np.isfinite(xpx)):
+        return np.nan
+    return (xpx / entry - 1) * 1e4
+
+
+def same_name_later(rule, d, k, row):
+    """Same name-day, an entry in exit+2 .. exit+62 (hash), held the same number of bars with the same price types
+    (amended_1 M5/M8). Dropped if it runs past the session. -> gross or NaN. Pure."""
+    o, h, c = d["o"][k], d["h"][k], d["c"][k]
+    hold = row["ebar"] - row["ent_bar"]
+    first = row["ebar"] + 2
+    span = 61
+    x = first + hkey("rsi2col-later", d["day"], row["sym"], row["t"]) % span
+    if rule == "RED_STOP":
+        cp = px_or(c, x - 1)
+        if not np.isfinite(cp):
+            return np.nan
+        P = math.ceil(round(cp * (1 + row["dist"]) * 100, 6)) / 100.0
+        entry, ent = stop_fill(P, px_or(o, x), px_or(h, x)), x
+    else:
+        entry, ent = px_or(o, x), x
+    xb = ent + hold
+    if xb > 389:
+        return None
+    xpx = price_at(row["kind"], xb, o, c)
+    if not (np.isfinite(entry) and np.isfinite(xpx)):
+        return np.nan
+    return (xpx / entry - 1) * 1e4
+
+
+def day_rows(rule, d, mode):
+    """Every trade of a rule on a day with its controls. -> (rows, counts). Pure."""
+    rows, counts = [], defaultdict(int)
+    U = len(d["syms"])
+    for k in range(U):
+        tr, cn = trades_for_name(rule, d, k, mode)
+        for key, v in cn.items():
+            counts[key] += v
+        for r in tr:
+            fbar = r["t"] - 1 if rule == "RED_STOP" else r["t"]
+            others = [j for j in range(U) if j != k and passes_filter(d["c"][j], d["pc"][j], fbar)]
+            others = sorted(others, key=lambda j: hkey("rsi2col-ctl", d["day"], d["syms"][j], r["t"]))[:5]
+            cg = [ctl_trade(rule, d, j, r) for j in others]
+            cg = [x for x in cg if np.isfinite(x)]
+            counts["ctl_tried"] += len(others)
+            counts["ctl_filled"] += len(cg)
+            r["ctl"] = float(np.mean(cg)) if cg else np.nan
+            r["ctl_n"] = len(cg)
+            sl = same_name_later(rule, d, k, r)
+            if sl is None:
+                counts["later_past_close"] += 1
+                sl = np.nan
+            r["later"] = sl
+            spy = (price_at(r["kind"], r["ebar"], d["spy_o"], d["spy_c"]) / px_or(d["spy_o"], r["ent_bar"]) - 1) * 1e4 \
+                if rule != "RED_STOP" else (price_at(r["kind"], r["ebar"], d["spy_o"], d["spy_c"]) / px_or(d["spy_c"], r["t"] - 1) - 1) * 1e4
+            r["spy"] = spy
+            r["day"] = d["day"]
+            rows.append(r)
+    return rows, counts
+
+
+def unconditional(rule, d, mode, holds, rng_seed):
+    """Random filtered (name, minute) on the day, held a hold length drawn from this day's signal holds. -> list of
+    gross. Pure given the seed."""
+    rng = np.random.default_rng(rng_seed)
+    U = len(d["syms"])
+    out = []
+    for hold in holds:
+        for _ in range(20):
+            k = int(rng.integers(0, U))
+            t = int(rng.integers(T_LO, T_HI + 1))
+            if passes_filter(d["c"][k], d["pc"][k], t):
+                break
+        else:
+            continue
+        e, x = px_or(d["o"][k], t + 1), t + 1 + hold
+        xp = px_or(d["o"][k], x) if x <= 389 else np.nan
+        if np.isfinite(e) and np.isfinite(xp):
+            out.append((xp / e - 1) * 1e4)
+    return out
+
+
+# ---------------------------------------------------------------- statistics (pure)
+
+def day_means(rows, key):
+    per = defaultdict(list)
+    for r in rows:
+        v = r[key]
+        if v is not None and np.isfinite(v):
+            per[r["day"]].append(v)
+    return {k: float(np.mean(v)) for k, v in per.items()}
+
+
+def day_t(rows, key):
+    m = list(day_means(rows, key).values())
+    if len(m) < 3 or np.std(m, ddof=1) == 0:
+        return None
+    return float(np.mean(m) / (np.std(m, ddof=1) / math.sqrt(len(m))))
+
+
+def mde(rows, key):
+    m = list(day_means(rows, key).values())
+    return float(2.8 * np.std(m, ddof=1) / math.sqrt(len(m))) if len(m) >= 3 else None
+
+
+def mean(rows, key):
+    v = [r[key] for r in rows if r[key] is not None and np.isfinite(r[key])]
+    return float(np.mean(v)) if v else None
+
+
+def winsor(x, top=0.01):
+    x = np.asarray(x, float)
+    return float(np.minimum(x, np.quantile(x, 1 - top)).mean()) if len(x) else None
+
+
+def r2(x):
+    return None if x is None else round(x, 2)
+
+
+def halves(rows):
+    return [r for r in rows if r["day"] < SPLIT], [r for r in rows if r["day"] >= SPLIT]
+
+
+def edge_verdict(rows):
+    """EDGE on ALL candidates (gross): lift = gross - hold-matched same-minute control; > 0 in both halves and pooled
+    day-clustered t >= 2.5 (amended_1 M1/C1). Pure."""
+    for r in rows:
+        r["lift"] = r["gross"] - r["ctl"] if np.isfinite(r.get("ctl", np.nan)) else np.nan
+    a, b = halves(rows)
+    la, lb, t = mean(a, "lift"), mean(b, "lift"), day_t(rows, "lift")
+    ok = la is not None and lb is not None and la > 0 and lb > 0 and t is not None and t >= EDGE_T
+    return ("EDGE" if ok else "NO EDGE"), {"lift_h1": r2(la), "lift_h2": r2(lb), "t": r2(t),
+                                           "mde_h1": r2(mde(a, "lift")), "mde_h2": r2(mde(b, "lift"))}
+
+
+# ---------------------------------------------------------------- build / load (I/O)
+
+def build():
+    from relative_strength_scan import load_day
+    from board_structure_family import universe
+    from evening_family import ALL_ETF, WH_SIP
+    import news_source as ns
+    CACHE.mkdir(parents=True, exist_ok=True)
+    files = sorted(p for p in WH_SIP.glob("20??-??-??.npz") if p.stem <= CONFIRM[1])
+    prev = None
+    for fp in files:
+        if fp.stem < SEARCH[0] or (CACHE / f"{fp.stem}.npz").exists() or prev is None:
+            prev = fp
+            continue
+        day, pday = load_day(fp), load_day(prev)
+        if day["idx"].get("SPY") is None:
+            prev = fp
+            continue
+        syms, O, H, L, C, PC, RSI, UU, DD, RP, GP, RS, GS = ([] for _ in range(13))
+        for s in universe(day, pday, set(ALL_ETF)):
+            i, j = day["idx"][s], pday["idx"].get(s)
+            if j is None:
+                continue
+            pc = ns.last_close(pday["c"][j])
+            if not pc > 0:
+                continue
+            warm = pday["c"][j][~np.isnan(pday["c"][j])][-WARM:]
+            full = np.concatenate([np.pad(warm, (WARM - len(warm), 0), constant_values=np.nan), day["c"][i]])
+            col = colours(full, WARM)
+            syms.append(s)
+            for lst, arr in ((O, day["o"][i]), (H, day["h"][i]), (L, day["l"][i]), (C, day["c"][i])):
+                lst.append(arr)
+            PC.append(pc)
+            RSI.append(col["rsi"]); UU.append(col["U"]); DD.append(col["D"])
+            RP.append(col["red_plain"]); GP.append(col["green_plain"]); RS.append(col["red_strict"]); GS.append(col["green_strict"])
+        k = day["idx"]["SPY"]
+        np.savez_compressed(CACHE / f"{fp.stem}.npz", syms=np.array(syms), o=np.array(O, np.float64), h=np.array(H),
+                            l=np.array(L), c=np.array(C), pc=np.array(PC), rsi=np.array(RSI, np.float32),
+                            U=np.array(UU), D=np.array(DD), red_plain=np.array(RP), green_plain=np.array(GP),
+                            red_strict=np.array(RS), green_strict=np.array(GS), spy_o=day["o"][k], spy_c=day["c"][k])
+        print(fp.stem, len(syms), flush=True)
+        prev = fp
+
+
+def load_days(lo, hi):
+    for p in sorted(CACHE.glob("*.npz")):
+        if lo <= p.stem <= hi:
+            z = np.load(p)
+            d = {k: z[k] for k in z.files}
+            d["syms"] = [str(s) for s in z["syms"]]
+            d["day"] = p.stem
+            yield d
+
+
+def chart(day="2026-11-19", names=(("FIGS", "15:05", "15:30"), ("COLD", "14:25", "15:00"))):
+    """Per-bar RSI-2 and colours for the operator's screenshot names (amended_1 B2). Warehouse only, no API."""
+    from relative_strength_scan import load_day
+    from evening_family import WH_SIP
+    files = sorted(p.stem for p in WH_SIP.glob("20??-??-??.npz"))
+    pday = load_day(WH_SIP / f"{files[files.index(day) - 1]}.npz")
+    dd = load_day(WH_SIP / f"{day}.npz")
+    for s, a, b in names:
+        i, j = dd["idx"][s], pday["idx"][s]
+        warm = pday["c"][j][~np.isnan(pday["c"][j])][-WARM:]
+        full = np.concatenate([np.pad(warm, (WARM - len(warm), 0), constant_values=np.nan), dd["c"][i]])
+        col = colours(full, WARM)
+        P = [red_trigger(dd["c"][i][t - 1], col["U"][t - 1], col["D"][t - 1]) if t else np.nan for t in range(390)]
+        print(f"== {s} {day}  minute  close  rsi2  plain(R/G)  strict(R/G)  red-trigger-for-this-bar")
+        for t in range(390):
+            hm = f"{9 + (30 + t) // 60:02d}:{(30 + t) % 60:02d}"
+            if a <= hm <= b:
+                print(f"{hm}  {dd['c'][i][t]:.2f}  {col['rsi'][t]:6.1f}  "
+                      f"{'R' if col['red_plain'][t] else ('G' if col['green_plain'][t] else '.')}  "
+                      f"{'R' if col['red_strict'][t] else ('G' if col['green_strict'][t] else '.')}  {P[t]:.2f}")
+
+
+# ---------------------------------------------------------------- quotes (I/O)
+
+def market_hours_now():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    hm = datetime.now(ZoneInfo("America/New_York")).strftime("%H%M")
+    return "0900" <= hm < "1605"
+
+
+def qbar(rule, row):
+    """Quote key bar: the 60 s before the entry moment. news_source keys t = 'before the open of t+1'."""
+    return row["t"] - 1 if rule == "RED_STOP" else row["t"]
+
+
+def spread_lookup():
+    import news_source as ns
+    main = json.load(open(ns.QUOTES)) if ns.QUOTES.exists() else {}
+    own = json.loads(OWNQ.read_text()) if OWNQ.exists() else {}
+
+    def f(day, sym, t):
+        k = ns.qkey(day, sym, t)
+        return main[k] if k in main else (own[k] if k in own else "missing")
+    return f
+
+
+def fetch(keys, n=4):
+    from multiprocessing import Process
+    import news_source as ns
+    if market_hours_now():
+        print("market hours - stopping before fetch; rerun after 16:05 (quotes so far are kept)", flush=True)
+        sys.exit(0)
+    main = json.load(open(ns.QUOTES)) if ns.QUOTES.exists() else {}
+    plan = [("rsi2col", d, s, t, 0.0) for d, s, t in keys]
+    parts = [OUT / f"quotes_part{i}.json" for i in range(n)]
+    procs = [Process(target=ns.fetch_quotes, args=(plan[i::n],), kwargs={"path": parts[i], "skip": set(main)})
+             for i in range(n)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join()
+    own = json.loads(OWNQ.read_text()) if OWNQ.exists() else {}
+    for p in parts:
+        if p.exists():
+            own.update(json.loads(p.read_text()))
+    OWNQ.write_text(json.dumps(own))
+
+
+def draw(rule, rows, cap=CAP_PER_HALF, days=None):
+    """Hash-ordered walk, spread gate 15 bp, cap traded per half. -> (traded, missing keys). Pure given the lookup."""
+    f = spread_lookup()
+    traded, missing = [], []
+    for half in halves([r for r in rows if days is None or r["day"] in days]):
+        n_ok = 0
+        for r in sorted(half, key=lambda r: hkey("rsi2col", rule, r["day"], r["sym"], r["t"])):
+            if n_ok >= cap:
+                break
+            sp = f(r["day"], r["sym"], qbar(rule, r))
+            if sp == "missing":
+                missing.append((r["day"], r["sym"], qbar(rule, r)))
+                n_ok += 1
+                continue
+            if sp is None or sp > GATE_BP:
+                continue
+            slip = STOP_SLIP_BP if rule == "RED_STOP" else 0.0
+            traded.append({**r, "spread": sp, "net": r["gross"] - sp, "stress": r["gross"] - STRESS * sp - slip})
+            n_ok += 1
+    return traded, missing
+
+
+def draw_fetched(rule, rows, days=None, rounds=6):
+    for _ in range(rounds):
+        tr, miss = draw(rule, rows, days=days)
+        print(rule, "traded", len(tr), "missing quotes", len(miss), flush=True)
+        if not miss:
+            return tr
+        fetch(sorted(set(miss)))
+    print("WARNING: quotes still missing", flush=True)
+    return draw(rule, rows, days=days)[0]
+
+
+# ---------------------------------------------------------------- run
+
+def all_rows(rule, mode, lo, hi):
+    rows, counts, unc = [], defaultdict(int), []
+    for d in load_days(lo, hi):
+        rr, cn = day_rows(rule, d, mode)
+        rows += rr
+        for k, v in cn.items():
+            counts[k] += v
+        holds = [r["ebar"] - r["ent_bar"] for r in rr][:200]
+        unc += unconditional(rule, d, mode, holds, hkey("rsi2col-unc", rule, d["day"]) % 2 ** 32)
+    return rows, dict(counts), unc
+
+
+def edge_report(rule, rows, counts, unc):
+    v, st = edge_verdict(rows)
+    a, b = halves(rows)
+    ctl_m, unc_m = mean(rows, "ctl"), (float(np.mean(unc)) if unc else None)
+    later = [r["gross"] - r["later"] for r in rows if r["later"] is not None and np.isfinite(r["later"])]
+    rep = {"verdict": v, **st, "n": len(rows), "n_h1": len(a), "n_h2": len(b), "days": len({r["day"] for r in rows}),
+           "gross": r2(mean(rows, "gross")), "gross_h1": r2(mean(a, "gross")), "gross_h2": r2(mean(b, "gross")),
+           "control_mean": r2(ctl_m), "unconditional_mean": r2(unc_m),
+           "control_vs_unconditional": r2(None if ctl_m is None or unc_m is None else ctl_m - unc_m),
+           "same_name_later_lift": r2(float(np.mean(later)) if later else None),
+           "spy_hedged_gross": r2(float(np.mean([r["gross"] - r["spy"] for r in rows if np.isfinite(r["spy"])])) if rows else None),
+           "fixed_hold_5": r2(mean(rows, "fix5")), "fixed_hold_15": r2(mean(rows, "fix15")),
+           "median_hold_bars": float(np.median([r["ebar"] - r["ent_bar"] for r in rows])) if rows else None,
+           "win_pct": r2(100 * float(np.mean([r["gross"] > 0 for r in rows]))) if rows else None,
+           "counts": counts}
+    # TEST_STANDARD mismatch (amended_1 m1): control far from the unconditional mean blocks the verdict
+    if rep["control_vs_unconditional"] is not None and abs(rep["control_vs_unconditional"]) > 3.0:
+        rep["verdict"] = "BLOCKED (control vs unconditional mismatch > 3 bp)"
+    if rule == "RED_STOP":
+        rep["control_fill_rate"] = r2(counts.get("ctl_filled", 0) / counts["ctl_tried"]) if counts.get("ctl_tried") else None
+        rep["thin_fill_share"] = r2(float(np.mean([r["thin"] for r in rows]))) if rows else None
+    return rep
+
+
+def profitable(rule, rows, edge_rep):
+    from early_stop import gross_screen, screen, screen_days
+    v, gst = gross_screen([{"day": r["day"], "gross": r["gross"]} for r in rows], pass_mean=MIN_NET)
+    if v == "SKIP_QUOTES":
+        return {"verdict": "FAIL-gross (no quotes fetched)", "gross_screen": gst}
+    sdays = set(screen_days([r["day"] for r in rows]))
+    first = draw_fetched(rule, rows, days=sdays)
+    sv, sst = screen(first, key="net", pass_mean=MIN_NET)
+    if sv == "STOP":
+        return {"verdict": "FAIL-early (first-quarter screen)", "gross_screen": gst, "screen": sst}
+    tr = draw_fetched(rule, rows)
+    a, b = halves(tr)
+    na, nb = mean(a, "net"), mean(b, "net")
+    sa, sb = mean(a, "stress"), mean(b, "stress")
+    wa = winsor([r["net"] for r in a]) if a else None
+    wb = winsor([r["net"] for r in b]) if b else None
+    ma, mb = mde(a, "net"), mde(b, "net")
+    rep = {"n_h1": len(a), "n_h2": len(b), "net_h1": r2(na), "net_h2": r2(nb), "stress_h1": r2(sa), "stress_h2": r2(sb),
+           "winsor_h1": r2(wa), "winsor_h2": r2(wb), "mde_h1": r2(ma), "mde_h2": r2(mb), "t_net": r2(day_t(tr, "net")),
+           "median_spread": r2(float(np.median([r["spread"] for r in tr]))) if tr else None,
+           "gross_screen": gst, "screen": sst}
+    if len(a) < MIN_N or len(b) < MIN_N or (ma or 99) > MDE_MAX or (mb or 99) > MDE_MAX:
+        rep["verdict"] = "UNDERPOWERED -> UNPROVEN"
+    else:
+        ok = all(x is not None and x >= MIN_NET for x in (na, nb)) and all(x is not None and x > 0 for x in (sa, sb, wa, wb))
+        rep["verdict"] = "PROFITABLE" if ok else "NOT PROFITABLE"
+    return rep
+
+
+def main(argv):
+    cmd = argv[1]
+    if cmd == "chart":
+        return chart()
+    if cmd == "build":
+        return build()
+    mode = argv[argv.index("--colours") + 1] if "--colours" in argv else None
+    if mode not in ("plain", "strict"):
+        sys.exit("--colours plain|strict is required (decided by the chart match, amended_1 B2)")
+    OUT.mkdir(parents=True, exist_ok=True)
+    out = {"mode": mode, "prereg": "docs/studies/rsi2_colour_timing_prereg.json (amended_1)", "rules": {}}
+    for rule in RULES:
+        rows, counts, unc = all_rows(rule, mode, *SEARCH)
+        e = edge_report(rule, rows, counts, unc)
+        out["rules"][rule] = {"EDGE": e}
+        print(rule, json.dumps(e), flush=True)
+        if cmd == "run":
+            p = profitable(rule, rows, e)
+            out["rules"][rule]["PROFITABLE"] = p
+            out["rules"][rule]["PASS"] = e["verdict"] == "EDGE" and p["verdict"] == "PROFITABLE"
+            print(rule, json.dumps(p), flush=True)
+        (OUT / f"{cmd}_{mode}.json").write_text(json.dumps(out, indent=1, default=str))
+    if cmd == "run":
+        for rule in RULES:   # CONFIRM is information only, gross edge (no quotes)
+            rows, counts, unc = all_rows(rule, mode, *CONFIRM)
+            out["rules"][rule]["confirm_info"] = edge_report(rule, rows, counts, unc)
+        (OUT / f"{cmd}_{mode}.json").write_text(json.dumps(out, indent=1, default=str))
+    print(json.dumps({r: {k: (v.get("verdict") if isinstance(v, dict) else v) for k, v in x.items()}
+                      for r, x in out["rules"].items()}, indent=1))
+
+
+if __name__ == "__main__":
+    main(sys.argv)
