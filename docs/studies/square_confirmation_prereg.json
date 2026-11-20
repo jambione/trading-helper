@@ -44,5 +44,15 @@
   "8 power gate": "before any outcome fetch: per-group counts and a projected MDE from the SD of the pre-event 30-minute return (no outcomes); > 30 bp in either half = UNPROVEN by design and not scored. Stated: edges measured as real on this desk have been 2-5 bp, far below what this sample can detect; a pass would need a large effect.",
   "9 canary": "random labels with empirical decision times (see #1); planted +30 bp kept"
  },
- "status": "amended_1 after skeptic round 1; power gate first; script next"
+ "status": "amended_1 after skeptic round 1; power gate first; script next",
+ "amended_2": {
+  "when": "2026-11-20, after the result-skeptic code review (FIX FIRST), before inputs/power ran",
+  "fallback beta (declared deviation)": "fallback controls (when fewer than 2 trending peers) use the stack_search cache's beta-adjusted G, whose betas use up to 20 prior sessions, not the prior session only; the fallback share is printed",
+  "peers": "same-minute peers are every event name that day with data whose st_new came at or before the control minute - no starter required (a starter would condition on the future)",
+  "per-half t": "EDGE needs t >= 2.0 in EACH half for both the separation and the confirmed lift; canaries use the same rule",
+  "controls": "later and unconditional controls computed for CONFIRMED rows, each > 0 in both halves",
+  "exits": "name and SPY both need a close at the exit bar",
+  "power": "day-clustered projected MDE from pre-event returns for the separation and the confirmed lift",
+  "lost data": "no bars + no prior warm-up + no control > 2% of events = no verdict"
+ }
 }

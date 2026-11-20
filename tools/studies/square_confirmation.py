@@ -11,6 +11,7 @@ Same-day bars come from ai_reports/multisource_stack/inputs.pkl (fetched by mult
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import math
@@ -85,13 +86,23 @@ def classify(t_s, entries, zone, n=N_CONF):
     return ("CONFIRMED", tc) if tc is not None else ("UNCONFIRMED", None)
 
 
-def hold_ret(o, c, entry_bar, exit_bar):
-    """Buy o[entry_bar], sell the last finite close in [entry_bar, exit_bar]; None if out of session. Pure."""
+def hold_ret(o, c, entry_bar, exit_bar, strict=False):
+    """Buy o[entry_bar], sell the last finite close in [entry_bar, exit_bar] (strict: the close AT exit_bar must
+    exist); None if out of session. Pure."""
     if exit_bar > 389 or entry_bar > 389 or not np.isfinite(o[entry_bar]) or o[entry_bar] <= 0:
         return None
+    if strict:
+        return float((c[exit_bar] / o[entry_bar] - 1) * 1e4) if np.isfinite(c[exit_bar]) else None
     w = c[entry_bar: exit_bar + 1]
     f = np.where(np.isfinite(w))[0]
     return float((w[f[-1]] / o[entry_bar] - 1) * 1e4) if len(f) else None
+
+
+def badj_ret(o, c, so, sc, beta, entry, exit_):
+    """Beta-adjusted return; name and SPY both need a close AT the exit bar (review #9). Pure."""
+    r = hold_ret(o, c, entry, exit_, strict=True)
+    s_ = hold_ret(so, sc, entry, exit_, strict=True)
+    return None if r is None or s_ is None else r - beta * s_
 
 
 def beta_prev(prev_c, spy_prev_c):
@@ -194,6 +205,13 @@ def build(n=N_CONF):
     evs = events()
     for ts, day, sym, et in evs:
         st_time[day][sym] = minute_of(ts)
+    pool = defaultdict(dict)        # day -> sym -> (o, c, beta): every event name with data, starter or not (review #2)
+    for ts, day, sym, et in evs:
+        tb, pb = ms["bars"].get(day, {}).get(sym), pr["prior"].get(day, {}).get(sym)
+        spy_p = pr["prior"].get(day, {}).get("SPY")
+        if tb and pb and spy_p and sym not in pool[day]:
+            today = to_arrays(tb)
+            pool[day][sym] = (today[0], today[1], beta_prev(to_arrays(pb)[1], to_arrays(spy_p)[1]))
     for ts, day, sym, et in evs:
         counts["events"] += 1
         if day in down:
@@ -215,62 +233,69 @@ def build(n=N_CONF):
         if t_s is None:
             counts["no_starter"] += 1
             continue
-        if not np.isfinite(o[min(t_s + 1, 389)]) or o[min(t_s + 1, 389)] < MIN_PX:
-            counts["under_2_or_no_entry"] += 1
-            continue
         if t_s + 45 > 389:
             counts["past_close"] += 1
             continue
+        if not np.isfinite(o[t_s + 1]) or o[t_s + 1] < MIN_PX:
+            counts["under_2_or_no_entry"] += 1
+            continue
         entries, zone = square_state(prev, today)
         group, t_c = classify(t_s, entries, zone, n)
-        so, sc = to_arrays(spy_t)[0], to_arrays(spy_t)[1]
-        beta = beta_prev(prev[1], to_arrays(spy_p)[1])
-
-        def badj(entry, exit_):
-            r = hold_ret(o, c, entry, exit_)
-            s = hold_ret(so, sc, entry, exit_)
-            return None if r is None or s is None else r - beta * s
-        fwd = badj(t_s + 16, t_s + 45)
+        sa = to_arrays(spy_t)
+        so, sc = sa[0], sa[1]
+        beta = pool[day][sym][2]
+        fwd = badj_ret(o, c, so, sc, beta, t_s + 16, t_s + 45)
         if fwd is None:
             counts["past_close_or_gap"] += 1
             continue
+        cm = t_s + 16
+        peers = [q for q, v in pool[day].items() if q != sym and st_time[day].get(q, 999) <= cm]
+        peers = sorted(peers, key=lambda q: hkey("sqc-ctl", day, q, sym, cm))
+        vals = []
+        for q in peers:
+            qo, qc, qb = pool[day][q]
+            v = badj_ret(qo, qc, so, sc, qb, cm, cm + 29)
+            if v is not None:
+                vals.append(v)
+            if len(vals) == 5:
+                break
+        fb = False
+        if len(vals) < 2:
+            vals, fb = fallback_controls(day, cm, sym), True
+            counts["fallback_control"] += 1
+        if not vals:
+            counts["no_control"] += 1
+            continue
+        ctl = float(np.mean(vals))
         rows.append({"day": day, "sym": sym, "m": m, "t_s": t_s, "t_c": t_c, "group": group, "fwd": fwd,
-                     "starter": badj(t_s + 1, t_s + 30), "add": badj(t_c + 1, t_c + 30) if t_c is not None else None,
+                     "ctl": ctl, "lift": fwd - ctl, "fallback": fb, "px": float(o[t_s + 1]),
+                     "starter": badj_ret(o, c, so, sc, beta, t_s + 1, t_s + 30),
+                     "add": badj_ret(o, c, so, sc, beta, t_c + 1, t_c + 30) if t_c is not None and t_c + 30 <= 389 else None,
                      "o": o, "c": c, "so": so, "sc": sc, "beta": beta,
                      "pre": hold_ret(o, c, max(m - 30, 0), m - 1) if m >= 1 else None,
                      "wp5": wick_pressure(tb, t_s + 16, 5), "mkt": bucket(gaps.get(day))})
         counts[group] += 1
-    # same-minute control: other trending names whose st_new came at or before the control minute (amended_1 #4)
-    by_day = defaultdict(list)
-    for r in rows:
-        by_day[r["day"]].append(r)
-    for day, rr in by_day.items():
-        for r in rr:
-            cm = r["t_s"] + 16
-            peers = [q for q in rr if q["sym"] != r["sym"] and st_time[day].get(q["sym"], 999) <= cm]
-            peers = sorted(peers, key=lambda q: hkey("sqc-ctl", day, q["sym"], r["sym"], cm))[:5]
-            vals = []
-            for q in peers:
-                rq = hold_ret(q["o"], q["c"], cm, cm + 29)
-                sq = hold_ret(r["so"], r["sc"], cm, cm + 29)
-                if rq is not None and sq is not None:
-                    vals.append(rq - q["beta"] * sq)
-            if len(vals) < 2:
-                vals = fallback_controls(day, cm, r["sym"])
-                counts["fallback_control"] += 1
-            r["ctl"] = float(np.mean(vals)) if vals else None
-            r["lift"] = r["fwd"] - r["ctl"] if r["ctl"] is not None else None
+    counts["prior_fetch_failed_days"] = len(pr.get("failed", []))
     return rows, dict(counts)
+
+
+@functools.lru_cache(maxsize=4)
+def _ss_day(day):
+    p = SS_CACHE / f"{day}.pkl"
+    if not p.exists():
+        return None
+    cch = pickle.load(open(p, "rb"))
+    return np.asarray(cch["G"], float), cch["px"], cch["syms"]
 
 
 def fallback_controls(day, cm, sym, k=5):
     """stack_search universe at the same minute: its cached beta-adjusted G[j, cm-1] is exactly 'buy the open of cm,
-    sell the close of cm+29' (same SIP RTH 1-minute bars; amended_1 #4)."""
-    p = SS_CACHE / f"{day}.pkl"
-    if not p.exists():
+    sell the close of cm+29' on the same SIP RTH bars. DEVIATION (amended_2): those betas use up to 20 prior
+    sessions, not the prior session only; the fallback share is printed."""
+    d = _ss_day(day)
+    if d is None:
         return []
-    cch = pickle.load(open(p, "rb"))
-    G, px, syms = np.asarray(cch["G"], float), cch["px"], cch["syms"]
+    G, px, syms = d
     t = cm - 1
     ok = [j for j in range(len(syms)) if syms[j] != sym and px[j, t] and np.isfinite(G[j, t])]
     ok = sorted(ok, key=lambda j: hkey("sqc-fb", day, syms[j], cm))[:k]
@@ -278,42 +303,63 @@ def fallback_controls(day, cm, sym, k=5):
 
 
 def controls_extra(rows):
-    """Same-name later (entry in exit+2..exit+62, i.e. t_s+47..t_s+107) and unconditional random minute. Pure."""
+    """For CONFIRMED rows (the add; review #4): same-name later (entry t_s+47..t_s+107) and unconditional random
+    minute, both beta-adjusted with strict exits. -> later, unc, later_g, unc_g (lists of (day, x) / gross)."""
     later, unc, later_g, unc_g = [], [], [], []
+    base = [r for r in rows if r["group"] in ("CONFIRMED", "UNCONFIRMED")]
     for r in rows:
-        if r["lift"] is None or r["group"] == "ALREADY_SQUARED":
+        if r["group"] != "CONFIRMED":
             continue
         cand = [u for u in range(r["t_s"] + 47, min(r["t_s"] + 107, 360) + 1)
-                if hold_ret(r["o"], r["c"], u, u + 29) is not None]
+                if badj_ret(r["o"], r["c"], r["so"], r["sc"], r["beta"], u, u + 29) is not None]
         if cand:
             u = cand[hkey("sqc-later", r["day"], r["sym"]) % len(cand)]
-            g = hold_ret(r["o"], r["c"], u, u + 29) - r["beta"] * (hold_ret(r["so"], r["sc"], u, u + 29) or 0.0)
+            g = badj_ret(r["o"], r["c"], r["so"], r["sc"], r["beta"], u, u + 29)
             later.append((r["day"], r["fwd"] - g))
             later_g.append(g)
-        q = rows[hkey("sqc-unc", r["day"], r["sym"]) % len(rows)]
+        q = base[hkey("sqc-unc", r["day"], r["sym"]) % len(base)]
         u = 5 + hkey("sqc-unc-m", r["day"], r["sym"]) % 325
-        g = hold_ret(q["o"], q["c"], u, u + 29)
+        g = badj_ret(q["o"], q["c"], q["so"], q["sc"], q["beta"], u, u + 29)
         if g is not None:
-            g = g - q["beta"] * (hold_ret(q["so"], q["sc"], u, u + 29) or 0.0)
             unc.append((r["day"], r["fwd"] - g))
             unc_g.append(g)
     return later, unc, later_g, unc_g
 
 
+def halves_t(pairs):
+    """(mean h1, t h1, mean h2, t h2, pooled mean, pooled t). Pure."""
+    a = [x for x in pairs if x[0] < SPLIT]
+    b = [x for x in pairs if x[0] >= SPLIT]
+    ma, _, ta, _ = day_t(a)
+    mb, _, tb, _ = day_t(b)
+    mp, _, tp, _ = day_t(pairs)
+    return ma, ta, mb, tb, mp, tp
+
+
+def both_halves_t(pairs):
+    ma, ta, mb, tb, _, _ = halves_t(pairs)
+    return (ma or -1) > 0 and (mb or -1) > 0 and (ta or 0) >= T_CRIT and (tb or 0) >= T_CRIT
+
+
 # ---------------------------------------------------------------- power, score
 
 def power(rows):
+    """Day-clustered projected MDE on PRE-event returns (no outcomes; review #6): for the separation (days with both
+    groups) and for the CONFIRMED lift, per half."""
     out = {}
+    pre_rows = [dict(r, lift=r["pre"]) for r in rows]
     for h, sel in (("h1", lambda d: d < SPLIT), ("h2", lambda d: d >= SPLIT)):
-        rr = [r for r in rows if sel(r["day"])]
-        nc = sum(1 for r in rr if r["group"] == "CONFIRMED")
-        nu = sum(1 for r in rr if r["group"] == "UNCONFIRMED")
-        pre = [r["pre"] for r in rr if r["pre"] is not None and r["group"] != "ALREADY_SQUARED"]
-        sd = float(np.std(pre, ddof=1)) if len(pre) > 2 else None
-        mde = 2.8 * sd * math.sqrt(1 / max(nc, 1) + 1 / max(nu, 1)) * 1.2 if sd else None
-        out[h] = {"confirmed": nc, "unconfirmed": nu, "already_squared": sum(1 for r in rr if r["group"] == "ALREADY_SQUARED"),
-                  "pre_sd_bp": None if sd is None else round(sd, 1), "projected_mde_bp": None if mde is None else round(mde, 1)}
-    out["unproven_by_design"] = any((out[h]["projected_mde_bp"] or 999) > MDE_MAX for h in ("h1", "h2"))
+        rr = [r for r in pre_rows if sel(r["day"])]
+        _, se_s, _, nd_s = day_t(separation(rr))
+        _, se_c, _, nd_c = day_t([(r["day"], r["lift"]) for r in rr if r["group"] == "CONFIRMED"])
+        out[h] = {"confirmed": sum(1 for r in rr if r["group"] == "CONFIRMED"),
+                  "unconfirmed": sum(1 for r in rr if r["group"] == "UNCONFIRMED"),
+                  "already_squared": sum(1 for r in rr if r["group"] == "ALREADY_SQUARED"),
+                  "days_with_both": nd_s,
+                  "mde_separation_bp": None if se_s is None else round(2.8 * se_s, 1),
+                  "mde_confirmed_bp": None if se_c is None else round(2.8 * se_c, 1)}
+    out["unproven_by_design"] = any((out[h][k] or 999) > MDE_MAX for h in ("h1", "h2")
+                                    for k in ("mde_separation_bp", "mde_confirmed_bp"))
     return out
 
 
@@ -334,20 +380,16 @@ def score():
         (OUT / "score.json").write_text(json.dumps({"VERDICT": "UNPROVEN by design", "power": pwj}, indent=1))
         return
     rows, counts = build()
+    lost = counts.get("no_bars", 0) + counts.get("no_prior_warmup", 0) + counts.get("no_control", 0)
+    lost_share = lost / max(counts.get("events", 1), 1)
     sep = separation(rows)
-    a = [x for x in sep if x[0] < SPLIT]
-    b = [x for x in sep if x[0] >= SPLIT]
-    sa, _, _, _ = day_t(a)
-    sb, _, _, _ = day_t(b)
-    sp, _, tsep, nd = day_t(sep)
+    sa, ta, sb, tb, sp, tsep = halves_t(sep)
     conf = [(r["day"], r["lift"]) for r in rows if r["group"] == "CONFIRMED"]
-    ca, _, _, _ = day_t([x for x in conf if x[0] < SPLIT])
-    cb, _, _, _ = day_t([x for x in conf if x[0] >= SPLIT])
-    cp, _, tc, _ = day_t(conf)
+    ca, tca, cb, tcb, cp, tc = halves_t(conf)
     later, unc, later_g, unc_g = controls_extra(rows)
-    ml, _, _, _ = day_t(later)
-    mu, _, _, _ = day_t(unc)
-    ctl_g = [r["ctl"] for r in rows if r.get("ctl") is not None]
+    la, _, lb, _, ml, _ = halves_t(later)
+    ua, _, ub, _, mu, _ = halves_t(unc)
+    ctl_g = [r["ctl"] for r in rows if r["group"] in ("CONFIRMED", "UNCONFIRMED")]
     gap_ok = {}
     for name, xs in (("same_minute", ctl_g), ("later", later_g)):
         if len(xs) > 2 and len(unc_g) > 2:
@@ -355,36 +397,40 @@ def score():
             gap_ok[name] = bool(abs(np.mean(xs) - np.mean(unc_g)) <= 2 * se)
         else:
             gap_ok[name] = False
-    edge = ((sa or -1) > 0 and (sb or -1) > 0 and (tsep or 0) >= T_CRIT and (ca or -1) > 0 and (cb or -1) > 0
-            and (tc or 0) >= T_CRIT and (ml or -1) > 0 and (mu or -1) > 0 and all(gap_ok.values()))
-    # canary (amended_1 #9): random CONFIRMED labels at the same rate with empirical decision times; planted +30 bp
+    edge = (both_halves_t(sep) and both_halves_t(conf) and (la or -1) > 0 and (lb or -1) > 0
+            and (ua or -1) > 0 and (ub or -1) > 0 and all(gap_ok.values()))
     elig = [r for r in rows if r["group"] in ("CONFIRMED", "UNCONFIRMED")]
     rate = (sum(1 for r in elig if r["group"] == "CONFIRMED") / len(elig)) if elig else 0
     hits = 0
     for seed in range(20):
         rng = np.random.default_rng(seed)
         rr = [dict(r, group=("CONFIRMED" if rng.random() < rate else "UNCONFIRMED")) for r in elig]
-        s_, _, t_, _ = day_t(separation(rr))
-        aa, _, _, _ = day_t([x for x in separation(rr) if x[0] < SPLIT])
-        bb, _, _, _ = day_t([x for x in separation(rr) if x[0] >= SPLIT])
-        hits += bool((aa or -1) > 0 and (bb or -1) > 0 and (t_ or 0) >= T_CRIT)
-    planted = [dict(r, lift=(r["lift"] + 30.0 if r["group"] == "CONFIRMED" and r["lift"] is not None else r["lift"])) for r in elig]
-    _, _, tpl, _ = day_t(separation(planted))
-    canary_ok = hits / 20 <= 0.10 and (tpl or 0) >= T_CRIT
+        hits += both_halves_t(separation(rr))
+    planted = [dict(r, lift=r["lift"] + 30.0 if r["group"] == "CONFIRMED" else r["lift"]) for r in elig]
+    planted_ok = both_halves_t(separation(planted))
+    tpl = halves_t(separation(planted))[5]
+    canary_ok = hits / 20 <= 0.10 and planted_ok
     info = {"starter_30m_by_group": {g: day_t([(r["day"], r["starter"]) for r in rows if r["group"] == g])[0]
                                      for g in ("CONFIRMED", "UNCONFIRMED", "ALREADY_SQUARED")},
             "add_at_tc_30m": day_t([(r["day"], r["add"]) for r in rows if r["add"] is not None])[0],
             "median_minutes_to_confirmation": float(np.median([r["t_c"] - r["t_s"] for r in rows if r["t_c"] is not None]))
             if any(r["t_c"] is not None for r in rows) else None,
+            "confirmed_lift_px_ge_20": day_t([(r["day"], r["lift"]) for r in rows if r["group"] == "CONFIRMED" and r["px"] >= 20])[0],
             "market_split": {bk: day_t([(r["day"], r["lift"]) for r in rows if r["group"] == "CONFIRMED" and r["mkt"] == bk])[0]
                              for bk in ("down<=-1%", "flat", "up>=+1%")}}
     out = {"prereg": "docs/studies/square_confirmation_prereg.json (amended_1)", "counts": counts, "power": pwj["power"],
-           "separation": {"h1": sa, "h2": sb, "pooled": sp, "t": tsep, "days": nd},
-           "confirmed_lift": {"h1": ca, "h2": cb, "pooled": cp, "t": tc},
-           "controls": {"same_name_later": ml, "unconditional": mu, "gaps_ok": gap_ok},
+           "separation": {"h1": sa, "t_h1": ta, "h2": sb, "t_h2": tb, "pooled": sp, "t": tsep},
+           "confirmed_lift": {"h1": ca, "t_h1": tca, "h2": cb, "t_h2": tcb, "pooled": cp, "t": tc},
+           "controls": {"same_name_later": {"h1": la, "h2": lb}, "unconditional": {"h1": ua, "h2": ub}, "gaps_ok": gap_ok,
+                        "same_minute_mean": float(np.mean(ctl_g)) if ctl_g else None,
+                        "later_mean": float(np.mean(later_g)) if later_g else None,
+                        "unconditional_mean": float(np.mean(unc_g)) if unc_g else None},
+           "lost_share": round(lost_share, 4),
+           "fallback_share": round(sum(1 for r in rows if r["fallback"]) / max(len(rows), 1), 3),
            "canary": {"random_label_pass_rate": hits / 20, "planted_t": tpl, "ok": canary_ok},
            "EDGE": bool(edge), "info": info}
-    out["VERDICT"] = ("NO VERDICT (canary failed)" if not canary_ok else
+    out["VERDICT"] = ("NO VERDICT (> 2% of events lost to missing data)" if lost_share > 0.02 else
+                      "NO VERDICT (canary failed)" if not canary_ok else
                       ("EDGE - PROFITABLE check (quotes) next" if edge else "NO EDGE"))
     (OUT / "score.json").write_text(json.dumps(out, indent=1, default=str))
     print(json.dumps({k: v for k, v in out.items() if k != "info"}, indent=1, default=str))

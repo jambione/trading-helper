@@ -50,3 +50,33 @@ def test_beta_prev_recovers_slope():
     spy = 400 * np.exp(np.concatenate([[0], np.cumsum(x)]))
     name = 50 * np.exp(np.concatenate([[0], np.cumsum(1.5 * x + rng.normal(0, 0.0002, 389))]))
     assert abs(sc.beta_prev(name, spy) - 1.5) < 0.1
+
+
+def _walk(seed, px=50.0, n=390):
+    rng = np.random.default_rng(seed)
+    c = px * np.exp(np.cumsum(rng.normal(0, 0.002, n)))
+    o = np.concatenate(([c[0]], c[:-1]))
+    return o, c, np.maximum(o, c) * 1.001, np.minimum(o, c) * 0.999
+
+
+def test_square_state_matches_desk_square_and_ignores_future_bars():
+    from evening_family import minute_grid
+    from opening_square import square_bars
+    prev, today = _walk(1), _walk(2)
+    entries, zone = sc.square_state(prev, today)
+    cc, hh, ll, off = minute_grid(prev[1], prev[2], prev[3], today[1], today[2], today[3])
+    assert entries == square_bars(cc, hh, ll, off)
+    for t_s in (60, 150, 250):
+        g_full = sc.classify(t_s, entries, zone)
+        cut = tuple(np.concatenate([a[: t_s + 16], np.full(390 - t_s - 16, np.nan)]) for a in today)
+        e2, z2 = sc.square_state(prev, cut)
+        assert sc.classify(t_s, e2, z2) == g_full          # nothing after the decision window is used
+
+
+def test_starter_ignores_future():
+    o, c, h, l = _walk(3)
+    t = sc.starter_bar(h, c, 100)
+    if t is not None:
+        hc, cc = h.copy(), c.copy()
+        hc[t + 1:], cc[t + 1:] = np.nan, np.nan
+        assert sc.starter_bar(hc, cc, 100) == t
