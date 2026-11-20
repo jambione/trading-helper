@@ -180,20 +180,15 @@ def inputs():
         key = f"{day}|{sym}"
         if key in inp["news"]:
             continue
-        rows, page = [], None
-        while True:
-            kw = {"page_token": page} if page else {}
-            got = call(nc.get_news, NewsRequest(symbols=sym, start=datetime.fromtimestamp(ts - 86400, timezone.utc),
-                                                end=datetime.fromtimestamp(ts, timezone.utc), limit=50, **kw))
-            if got is None:
-                inp["failed"].append(("news", key))
-                break
-            items = (got.data or {}).get("news", []) if hasattr(got, "data") else []
-            for it in items:
+        rows = []
+        # no limit: alpaca-py pages internally until exhausted (a 'limit' would silently cap it; review #1)
+        got = call(nc.get_news, NewsRequest(symbols=sym, start=datetime.fromtimestamp(ts - 86400, timezone.utc),
+                                            end=datetime.fromtimestamp(ts, timezone.utc)))
+        if got is None:
+            inp["failed"].append(("news", key))
+        else:
+            for it in (got.data or {}).get("news", []):
                 rows.append({"t": it.created_at.timestamp(), "headline": it.headline, "n_symbols": len(it.symbols or [])})
-            page = getattr(got, "next_page_token", None)
-            if not page:
-                break
         inp["news"][key] = rows
         if n % 50 == 0:
             pickle.dump(inp, open(p, "wb"))
@@ -204,10 +199,35 @@ def inputs():
 
 # ---------------------------------------------------------------- building rows (pure given inputs)
 
-def build_rows(inp, sent_cache):
+def monitor_down_days():
+    """Days with a >= 30-minute stretch in 09:30-16:00 ET with no journal record of any kind (parent amended_1 #1)."""
+    from sentiment_backfill import JOURNAL
+    bad = []
+    for f in sorted(JOURNAL.glob("2026-*.jsonl")):
+        ts = []
+        for line in open(f):
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            et = str(r.get("et", ""))
+            if "09:30:00" <= et <= "16:00:00":
+                h, m, s_ = (int(x) for x in et.split(":"))
+                ts.append(h * 3600 + m * 60 + s_)
+        ts = sorted([9 * 3600 + 1800] + ts + [16 * 3600])
+        if max(np.diff(ts)) >= 1800:
+            bad.append(f.stem)
+    return set(bad)
+
+
+def build_rows(inp, sent_cache, down=None):
     rows, counts = [], defaultdict(int)
+    down = down if down is not None else set()
     for ts, day, sym, et in events():
         counts["events"] += 1
+        if day in down:
+            counts["monitor_down_day"] += 1
+            continue
         b = inp["bars"].get(day, {})
         bars = b.get(sym)
         if not bars:
@@ -223,6 +243,7 @@ def build_rows(inp, sent_cache):
             counts["under_2"] += 1
             continue
         closes = {k: v[1] for k, v in bars.items()}
+        opens = {k: v[0] for k, v in bars.items()}
         ex = [k for k in closes if ent <= k <= ent + HOLD - 1]
         pre = [k for k in closes if m - 30 <= k <= m - 1]
         gross = (closes[max(ex)] / entry - 1) * 1e4 if ex else None
@@ -235,7 +256,7 @@ def build_rows(inp, sent_cache):
         N = n_layer(inp["news"].get(f"{day}|{sym}", []), ts) if f"{day}|{sym}" in inp["news"] else None
         R = (s15 is not None and e15 is not None and s15 > 0 and e15 > 0) if s15 is not None and e15 is not None else None
         rows.append({"day": day, "sym": sym, "m": m, "ent": ent, "entry": entry, "gross": gross, "pre": pre_ret,
-                     "S": S, "N": N, "R": R, "etf": etf, "closes": closes})
+                     "S": S, "N": N, "R": R, "etf": etf, "closes": closes, "opens": opens})
     return rows, dict(counts)
 
 
@@ -247,19 +268,24 @@ def cell_on(row, layers):
 
 
 def power(rows):
-    """ON/OFF counts per cell and half, projected MDE from the pre-event 30-minute return SD (no outcomes)."""
+    """ON/OFF counts per cell and half; projected MDE = 2.8 x day-clustered SE of matched differences computed on the
+    PRE-event 30-minute return (no outcomes; review #4)."""
     out = {}
     for c, layers in CELLS.items():
         res = {}
-        for h, sel in (("h1", lambda r: r["day"] < SPLIT), ("h2", lambda r: r["day"] >= SPLIT)):
-            rr = [r for r in rows if sel(r)]
+        pre_rows = [dict(r, gross=r["pre"]) for r in rows]
+        for h, sel in (("h1", lambda d: d < SPLIT), ("h2", lambda d: d >= SPLIT)):
+            rr = [r for r in rows if sel(r["day"])]
             on = [r for r in rr if cell_on(r, layers) is True]
             off = [r for r in rr if cell_on(r, layers) is False]
-            pre = [r["pre"] for r in on + off if r["pre"] is not None]
-            sd = float(np.std(pre, ddof=1)) if len(pre) > 2 else None
-            mde = 2.8 * sd * math.sqrt(1 / max(len(on), 1) + 1 / max(len(off), 1)) * 1.2 if sd else None
-            res[h] = {"on": len(on), "off": len(off), "uncovered": len(rr) - len(on) - len(off),
-                      "pre_sd_bp": round(sd, 1) if sd else None, "projected_mde_bp": round(mde, 1) if mde else None}
+            pairs = [(d, x) for d, x, t in matched_diffs([r for r in pre_rows if sel(r["day"])], layers) if x is not None]
+            per = defaultdict(list)
+            for d, x in pairs:
+                per[d].append(x)
+            m = [float(np.mean(v)) for v in per.values()]
+            mde = 2.8 * float(np.std(m, ddof=1)) / math.sqrt(len(m)) if len(m) >= 3 else None
+            res[h] = {"on": len(on), "off": len(off), "uncovered": len(rr) - len(on) - len(off), "matched_days": len(m),
+                      "projected_mde_bp": round(mde, 1) if mde else None}
         res["unproven_by_design"] = any((res[h]["projected_mde_bp"] or 999) > MDE_MAX for h in ("h1", "h2"))
         out[c] = res
     for layer in ("S", "N", "R"):
@@ -269,8 +295,9 @@ def power(rows):
 
 
 def matched_diffs(rows, layers):
-    """Each ON event minus the mean gross of OFF events the same day within +/-30 min (>= 2 peers), else +/-60, else
-    the same day's OFF mean (flagged). -> list of (day, diff, tier). Pure."""
+    """Each ON event minus the mean gross of OFF events the same day within +/-30 min (>= 2 peers), else +/-60;
+    otherwise UNMATCHED (the same-day fallback without a time-of-day term counted as unmatched; review #5).
+    -> list of (day, diff or None, tier). Pure."""
     by_day = defaultdict(list)
     for r in rows:
         if r["gross"] is not None and cell_on(r, layers) is not None:
@@ -287,10 +314,7 @@ def matched_diffs(rows, layers):
                     out.append((day, r["gross"] - float(np.mean(peers)), tier))
                     break
             else:
-                if off:
-                    out.append((day, r["gross"] - float(np.mean([o["gross"] for o in off])), "day"))
-                else:
-                    out.append((day, None, "unmatched"))
+                out.append((day, None, "unmatched"))
     return out
 
 
@@ -306,28 +330,42 @@ def day_t(pairs):
     return float(np.mean(m)), float(np.mean(m) / se), len(m)
 
 
+def hold_ret(r, u):
+    """Same trade shape as the event: buy opens[u], sell the last close at or before u+29 (>= 10 minutes of window,
+    else None). Pure."""
+    if u not in r["opens"]:
+        return None
+    ks = [k for k in r["closes"] if u <= k <= u + HOLD - 1]
+    if not ks or max(ks) - u < 9:
+        return None
+    return (r["closes"][max(ks)] / r["opens"][u] - 1) * 1e4
+
+
 def later_and_unc(rows, layers):
-    """Same-name later (entry at exit+2..exit+62 minutes, same 30-min hold) and unconditional (a random RTH minute
-    09:35-15:00 on the same trending name-days) differences for ON events. Pure."""
-    later, unc, unc_g = [], [], []
+    """Same-name later (entry minute in exit+2..exit+62, capped at 15:59) and unconditional (a random trending row,
+    a random minute 09:35-15:00) - same trade shape as the event (review #2). -> later, unc, unc_g, later_g, dropped."""
+    later, unc, unc_g, later_g, dropped = [], [], [], [], 0
     pool = [r for r in rows if r["gross"] is not None]
     for r in rows:
         if cell_on(r, layers) is not True or r["gross"] is None:
             continue
-        c = r["closes"]
         start = r["ent"] + HOLD + 2
-        cand = [u for u in range(start, min(start + 60, 359)) if u in c and u + HOLD - 1 in c]
+        cand = [u for u in range(start, min(start + 61, 389)) if hold_ret(r, u) is not None]
         if cand:
             u = cand[hkey("ms-later", r["day"], r["sym"], r["m"]) % len(cand)]
-            later.append((r["day"], r["gross"] - (c[u + HOLD - 1] / c[u] - 1) * 1e4))
+            g = hold_ret(r, u)
+            later.append((r["day"], r["gross"] - g))
+            later_g.append(g)
+        else:
+            dropped += 1
         if pool:
             o = pool[hkey("ms-unc", r["day"], r["sym"], r["m"]) % len(pool)]
             u = 5 + hkey("ms-unc-m", r["day"], r["sym"]) % (330 - 5)
-            if u in o["closes"] and u + HOLD - 1 in o["closes"]:
-                g = (o["closes"][u + HOLD - 1] / o["closes"][u] - 1) * 1e4
+            g = hold_ret(o, u)
+            if g is not None:
                 unc.append((r["day"], r["gross"] - g))
                 unc_g.append(g)
-    return later, unc, unc_g
+    return later, unc, unc_g, later_g, dropped
 
 
 def score_cell(rows, name, layers):
@@ -341,16 +379,28 @@ def score_cell(rows, name, layers):
     ma, _, _ = day_t(a)
     mb, _, _ = day_t(b)
     mp, tp, nd = day_t(good)
-    later, unc, unc_g = later_and_unc(rows, layers)
+    later, unc, unc_g, later_g, dropped = later_and_unc(rows, layers)
     ml, _, _ = day_t(later)
     mu, _, _ = day_t(unc)
-    unmatched = tiers["unmatched"] / max(len(pairs), 1)
+    unm_h = {}
+    for h, sel in (("h1", lambda d: d < SPLIT), ("h2", lambda d: d >= SPLIT)):
+        ph = [t for d, _, t in pairs if sel(d)]
+        unm_h[h] = (sum(1 for t in ph if t == "unmatched") / len(ph)) if ph else 1.0
+    unmatched = max(unm_h.values())
+    gap_ok = True
+    if len(later_g) > 2 and len(unc_g) > 2:
+        se = math.sqrt(np.var(later_g, ddof=1) / len(later_g) + np.var(unc_g, ddof=1) / len(unc_g))
+        gap_ok = abs(np.mean(later_g) - np.mean(unc_g)) <= 2 * se
     on_g = [r["gross"] for r in rows if cell_on(r, layers) is True and r["gross"] is not None]
-    st = {"n_on": len(pairs), "tiers": dict(tiers), "unmatched_share": round(unmatched, 3), "diff_h1": ma, "diff_h2": mb,
+    st = {"n_on": len(pairs), "tiers": dict(tiers), "unmatched_share_by_half": {k: round(v, 3) for k, v in unm_h.items()},
+          "later_gross_mean": float(np.mean(later_g)) if later_g else None, "later_dropped": dropped,
+          "control_gap_ok": bool(gap_ok), "diff_h1": ma, "diff_h2": mb,
           "diff": mp, "t": tp, "days": nd, "later": ml, "unconditional": mu,
           "on_gross_mean": float(np.mean(on_g)) if on_g else None, "unc_gross_mean": float(np.mean(unc_g)) if unc_g else None}
-    ok = (ma or -1) > 0 and (mb or -1) > 0 and (tp or 0) >= T_CRIT and (ml or -1) > 0 and (mu or -1) > 0 and unmatched <= 0.30
+    ok = (ma or -1) > 0 and (mb or -1) > 0 and (tp or 0) >= T_CRIT and (ml or -1) > 0 and (mu or -1) > 0
     st["EDGE"] = bool(ok)
+    st["UNPROVEN_reason"] = ("unmatched > 30% in a half" if unmatched > 0.30 else
+                             ("later vs unconditional control gap > 2 SE" if not gap_ok else None))
     return st
 
 
@@ -360,7 +410,7 @@ def load_sent():
 
 def run_power():
     inp = pickle.load(open(OUT / "inputs.pkl", "rb"))
-    rows, counts = build_rows(inp, load_sent())
+    rows, counts = build_rows(inp, load_sent(), monitor_down_days())
     pw = power(rows)
     out = {"counts": counts, "power": pw, "inputs_failed": len(inp["failed"])}
     (OUT / "power.json").write_text(json.dumps(out, indent=1, default=str))
@@ -370,37 +420,67 @@ def run_power():
 def run_score():
     inp = pickle.load(open(OUT / "inputs.pkl", "rb"))
     sent = load_sent()
-    rows, counts = build_rows(inp, sent)
+    missing_valid = [k for k, v in sent.items() if "valid" not in v]
+    assert not missing_valid, f"{len(missing_valid)} backfill entries lack the coverage flag - refetch first"
+    down = monitor_down_days()
+    rows, counts = build_rows(inp, sent, down)
     pw = power(rows)
+    n_ev = max(counts.get("events", 1), 1)
+    failed_share = len(inp["failed"]) / n_ev
+    vfile = OUT / "validation.json"
+    s_valid = json.loads(vfile.read_text()).get("agreement", 0) >= 0.90 if vfile.exists() else None
     out = {"prereg": "docs/studies/multisource_stack_prereg.json (amended_1)", "counts": counts, "power": pw,
-           "sentiment_events": len(sent), "sentiment_valid": sum(1 for v in sent.values() if v.get("valid")), "cells": {}}
+           "monitor_down_days": sorted(down), "inputs_failed_share": round(failed_share, 4),
+           "sentiment_events": len(sent), "sentiment_valid": sum(1 for v in sent.values() if v.get("valid")),
+           "sentiment_live_validation": s_valid, "cells": {}}
+    scored = []
     for c, layers in CELLS.items():
-        if pw[c]["unproven_by_design"] or ("N" in layers and (pw.get("N_on_rate") or 0) > 0.85):
-            out["cells"][c] = {"verdict": "UNPROVEN-by-design or non-discriminating (not scored for EDGE)",
-                               "info": score_cell(rows, c, layers)}
-            continue
         st = score_cell(rows, c, layers)
-        st["verdict"] = "EDGE (PROFITABLE check next)" if st["EDGE"] else "NO EDGE"
+        if pw[c]["unproven_by_design"] or ("N" in layers and (pw.get("N_on_rate") or 0) > 0.85):
+            st["verdict"] = "UNPROVEN-by-design or non-discriminating (information only)"
+        elif st["UNPROVEN_reason"]:
+            st["verdict"] = "UNPROVEN (" + st["UNPROVEN_reason"] + ")"
+        else:
+            st["verdict"] = "EDGE (PROFITABLE check next)" if st["EDGE"] else "NO EDGE"
+            scored.append(c)
+        if "S" in layers and s_valid is not True:
+            st["verdict"] += " - S layer pending live validation (amended_1 #3)"
+        if c == "K3":
+            st["info_R1_on_vs_unconditional"] = {"on_gross_mean": st["on_gross_mean"], "unconditional_gross_mean": st["unc_gross_mean"],
+                                                 "note": "same-time matching cancels SPY; SPY-fallback names make R the SPY sign"}
         out["cells"][c] = st
-    # canaries: random layers at the same ON rates; planted +60 bp on K6 ON events
-    rng = np.random.default_rng(20261120)
-    rr = [dict(r) for r in rows]
-    for layer in ("S", "N", "R"):
-        rate = pw.get(f"{layer}_on_rate") or 0.5
-        for r in rr:
-            if r[layer] is not None:
-                r[layer] = bool(rng.random() < rate)
-    out["canary_random_layers_edge"] = {c: score_cell(rr, c, l)["EDGE"] for c, l in CELLS.items()}
-    rp = [dict(r) for r in rows]
-    for r in rp:
-        if cell_on(r, CELLS["K6"]) is True and r["gross"] is not None:
-            r["gross"] += 60.0
-    out["canary_planted_K6_edge"] = score_cell(rp, "K6", CELLS["K6"])["EDGE"]
+    # canaries (review #7): 20 random-layer seeds (pass rate <= 10% per cell); +60 bp planted on each scored cell
+    rates = {}
+    for c, layers in CELLS.items():
+        hits = 0
+        for seed in range(20):
+            rng = np.random.default_rng(seed)
+            rr = [dict(r) for r in rows]
+            for layer in ("S", "N", "R"):
+                rate = pw.get(f"{layer}_on_rate") or 0.5
+                for r in rr:
+                    if r[layer] is not None:
+                        r[layer] = bool(rng.random() < rate)
+            hits += score_cell(rr, c, layers)["EDGE"]
+        rates[c] = hits / 20
+    plant = {}
+    for c in scored:
+        rp = [dict(r) for r in rows]
+        for r in rp:
+            if cell_on(r, CELLS[c]) is True and r["gross"] is not None:
+                r["gross"] += 60.0
+        plant[c] = score_cell(rp, c, CELLS[c])["EDGE"]
+    out["canary_random_layer_pass_rates"] = rates
+    out["canary_planted_found"] = plant
+    canary_ok = all(v <= 0.10 for v in rates.values()) and all(plant.values())
+    if failed_share > 0.02 or not canary_ok:
+        out["VERDICT"] = "NO VERDICT (" + ("fetch failures > 2%" if failed_share > 0.02 else "canary failed") + ")"
+    else:
+        out["VERDICT"] = {c: v["verdict"] for c, v in out["cells"].items()}
     (OUT / "score.json").write_text(json.dumps(out, indent=1, default=str))
-    print(json.dumps({c: (v.get("verdict"), v.get("diff_h1") or (v.get("info") or {}).get("diff_h1"),
-                          v.get("diff_h2") or (v.get("info") or {}).get("diff_h2"), v.get("t") or (v.get("info") or {}).get("t"))
-                      for c, v in out["cells"].items()}, indent=1, default=str))
-    print("canaries", out["canary_random_layers_edge"], out["canary_planted_K6_edge"])
+    print(json.dumps({"VERDICT": out["VERDICT"], "canaries": [rates, plant],
+                      "cells": {c: {k: v.get(k) for k in ("n_on", "diff_h1", "diff_h2", "t", "later", "unconditional")}
+                                for c, v in out["cells"].items()}}, indent=1, default=str))
 
 
 if __name__ == "__main__":

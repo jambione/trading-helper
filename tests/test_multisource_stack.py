@@ -50,4 +50,11 @@ def test_matched_diffs_tiers():
             {"day": "d", "m": 120, "gross": 20.0, "S": False, "N": None, "R": None},
             {"day": "d", "m": 300, "gross": 0.0, "S": True, "N": None, "R": None}]
     out = ms.matched_diffs(rows, ("S",))
-    assert out[0] == ("d", 35.0, "30") and out[1][2] == "day"
+    assert out[0] == ("d", 35.0, "30") and out[1] == ("d", None, "unmatched")
+
+
+def test_hold_ret_same_shape_as_event():
+    r = {"opens": {10: 100.0}, "closes": {k: 100.0 + (k - 10) for k in range(10, 40)}}
+    assert abs(ms.hold_ret(r, 10) - (129 / 100 - 1) * 1e4) < 1e-9
+    r2 = {"opens": {10: 100.0}, "closes": {10: 100.0, 15: 101.0}}
+    assert ms.hold_ret(r2, 10) is None          # < 10 minutes of window
