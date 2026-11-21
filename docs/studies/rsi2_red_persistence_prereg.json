@@ -43,7 +43,7 @@
  "if_fail": "record it; red length is visible in hindsight but buying after 2-3 red bars does not beat the same minute on other names",
  "review gate": "result-skeptic, then Neon (via the operator), before any code runs on outcomes; nothing runs without the operator's go",
  "script": "tools/studies/rsi2_colour_timing.py (new command, reusing the parent's cache, peers, exits and controls)",
- "status": "amended_2 (Neon); script next, then Neon code check, then the operator's go",
+ "status": "STEP 1 SCORED 11/20: STOP - buying after 2 or 3 red bars = same-minute peers; length helps only in hindsight",
  "amended_1": {
   "when": "2026-11-20 ~19:30 ET, after result-skeptic round 1 (FIX FIRST: 5 + 5 minor); no code, no outcome",
   "1 family bar": "step-2 EDGE needs pooled day-clustered t >= 2.5 (the parent's RSI-2 family bar, amended_1 M4), not 2.24",
@@ -70,5 +70,16 @@
  "amended_3_example_fix": {
   "when": "2026-11-20 ~20:05 ET, from the code-only example check (signals, no outcomes)",
   "RVMD": "RVMD 2026-11-18 has no SIP bar at 09:57 (red_pine carries; amended_1 #6 says a missing minute breaks the run), so the expected P3 at 09:57 in amended_1 #7 was written under the carried count and is removed; P2 at 09:56 stands. All other 16 checks passed as written"
+ },
+ "result_step1_2026-11-20": {
+  "gate": "STOP - no rule/exit passes the step-1 gate on SEARCH; no step 2; CONFIRM stays sealed (unused)",
+  "P2 (close of the 2nd red bar)": "94,781 signals (47,593 / 47,188). Lift vs same-minute peers: 5-bar -0.11/-0.44 bp, 15-bar -0.67/+0.36, ratchet -0.20/+0.05 (t -0.25); MDE 0.7-1.7 bp; gross before costs -0.3..-0.2 bp",
+  "P3 (3rd red bar)": "54,791 signals; lift -0.47..+0.81 bp, t -1.7..+0.35; gross -0.4..0.0 bp",
+  "does length matter (vs reds that ended after 1 bar, same minute)": "P2 is WORSE than 1-bar-ended reds: -0.5/-0.47 bp on the 5-bar hold (t -2.7), -0.63/-0.25 on the ratchet (t -2.0); full sample -0.1..-0.2 (t ~ -0.7). Red length does not help",
+  "does the red state matter (vs non-red RSI-2 > 90 pushes)": "full sample P2 - pushes +0.3..+0.8 bp (t 1.6-2.5) but the exact same-minute match is ~0 (t -0.3..0.7) - no stable evidence",
+  "HINDSIGHT (never promotable)": "P2 trades whose red ended at the entry bar: -5.4 bp ratchet lift; red lasting 1-2 more bars: +2.2; longer: +17.9. The run is in the bars that are not yet known at entry - the long reds on the charts are visible only after the fact",
+  "segments": "322,080 red segments (SEARCH): 46% reach 2 bars, 22% reach 3, 5% reach 5",
+  "controls": "no mismatch block on any exit; same-name-later controls ~0 to slightly negative",
+  "output": "ai_reports/rsi2_colour/persist_screen.json (mini), commit bee27dc1"
  }
 }
