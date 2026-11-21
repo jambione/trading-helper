@@ -1,0 +1,33 @@
+{
+ "name": "rsi2_red_inplay",
+ "written": "2026-11-21, before any script or outcome for this question",
+ "operator": "11/21: 'My eye is not going to be used in this project' -> the last untested machine-checkable context is stocks in play (Neon's universe-dilution point) -> 'complete the RSI testing'. If this fails, RSI-2 red is closed as an entry.",
+ "question": "On stocks that are IN PLAY at the minute (fast-moving right now), does RSI-2 red - bought mid-bar as it appears, or at the next open after it closes red - beat OTHER in-play stocks at the same minute over 1-5 minutes and on the desk's exit?",
+ "what was seen before writing this (disclosed)": [
+  "all RSI-2 red variants on the full ~400-name universe = same-minute peers (rsi2_colour_timing, persistence, htf, washout, approach); gross 0-1.7 bp",
+  "the operator's winning examples (BE, WDC, ON, CBRS on 11/16-18) were fast movers; Neon (11/21) flagged universe dilution; Neon's prior for this test 10-15%",
+  "volatility was never used as a selector in the RSI-2 tests; SEARCH outcomes of red starts are known only in aggregate. CONFIRM 2026-09-24..11-18 minus 11/16-18 unopened"
+ ],
+ "in play (known at the signal minute)": "the name's mean 1-minute range (high - low) / close over the 15 completed minutes before the signal bar, in the TOP DECILE of all universe names with a value at that same minute (cross-sectional, so a quiet day does not empty the set); information: top quintile",
+ "no climax": "mid-bar entries: bar t-1's range <= 1.5 x the name's 15-minute mean range; bar-close entries: the red bar t's range <= 1.5 x that mean",
+ "rules (2 scored)": {
+  "S (mid-bar)": "the parent RED_STOP entry (exact trigger, fresh cross, P > close[t-1], below SMA200; buy-stop fill inside bar t) on an in-play, no-climax name",
+  "C (bar close)": "a closed red start (bar t red, t-1 not), in play and no climax at t; buy the open of t+1"
+ },
+ "peers (primary control)": "up to 5 OTHER in-play names at the same minute (same decile rule), with the same entry type (same-distance buy-stop for S, the same open for C) and the same exits - this isolates red from 'fast stocks move more'",
+ "names, window, refractory": "~400 by prior-day dollar volume (ETFs excluded), $20-$400, no day filter, entries 09:45-15:30; per rule per name until the ratchet exit and >= 15 minutes",
+ "exits": "close of the 1st / 3rd / 5th minute counting the entry minute; the parent's approximate desk ratchet",
+ "step 1 (SEARCH only; CONFIRM counts only)": {
+  "gate": "a rule passes on ANY ONE of the 3-minute, 5-minute or ratchet exits: lift vs in-play peers > 0 in both halves, pooled day t >= 1.0, each half's MDE <= 10 bp, pooled lift >= +3 bp, pooled gross >= +5 bp on ALL exits counted (in-play moves are larger, so the cost bar is the spread: gross >= +5 bp), same-name-later lift >= 0; 6 looks, disclosed",
+  "information": "top-quintile version; lift vs ALL same-minute names (not only in-play); share of the operator's 11/16-18 examples that count as in play"
+ },
+ "step 2 (only if the gate passes)": "live-exit replay on SIP prints; CONFIRM lift > 0 with day t >= 2.0 and >= 300 signals; PROFITABLE: net >= +2 bp both halves after the real SIP spread (in-play spreads are wider - the 15 bp entry gate applies)",
+ "fail": "anything short of step 2's pass; then RSI-2 red is CLOSED as an entry signal (operator 11/21)",
+ "checks": [
+  "unit tests: the 15-minute range uses completed bars only; the decile is per minute across names; climax rule; peers are in-play at the same minute",
+  "examples (signals only): BE 2026-11-17 ~10:55 and WDC 2026-11-18 ~11:58 should be in play"
+ ],
+ "review gate": "result-skeptic reviews this prereg and the script together before any outcome",
+ "script": "tools/studies/rsi2_red_inplay.py",
+ "status": "DRAFT"
+}
