@@ -46,5 +46,21 @@
  "if_fail": "record it; red early off a washout low, with or without the oversold-exit triangle, does not beat the same minute",
  "review gate": "result-skeptic before code runs on outcomes (operator 11/20: Neon optional)",
  "script": "tools/studies/rsi2_red_washout.py (reusing rsi2_colour_timing's cache, trigger, ratchet, peers and controls; %R from early_entry_honest/opening_square helpers)",
- "status": "DRAFT; skeptic review next"
+ "status": "amended_1; ETH OHLC fetch + code + skeptic code review, then step 1",
+ "amended_1": {
+  "when": "2026-11-21, after result-skeptic round 1 (FIX FIRST: 10) and the code-only example check (signals, no outcomes); operator: 'go with your suggestion'",
+  "example check (signals only)": "on SIP, red-to-low gaps: BE 11/17 10:55 = 2 (A fires), WDC 11/18 11:58 ~3, SHW 11/18 10:12 = 4 (low 10:08), losers BE 10:23 = 5, WDC 11:24 = 4. Bars-since-low alone cannot separate SHW (win) from WDC 11:24 (loss)",
+  "rules (replace)": {
+   "A": "unchanged: mid-bar red with the 15-minute low 1 or 2 bars before; information lines for gaps 1, 3 and 4 and for 10- and 30-minute lows (never promotable)",
+   "B1": "a red segment whose FIRST CLOSED red bar s has its 15-minute low 1-4 bars before s, and the %R oversold-exit triangle at bar u with s <= u <= s+2; entry = open of u+1. B1 does not require an A fill; u need not still be red"
+  },
+  "1-3 windows": "all windows are on the RTH minute grid (bar t = minute t); the low uses existing bars in minutes t-15..t-1 (no ETH bars), ties go to the latest bar; gap = t minus that index",
+  "4 %R series": "PRIMARY: fast %R(21, EWM 7) and slow %R(112, EWM 3) on the SIP extended-hours bar series (prior RTH + prior 16:00-20:00 + today 04:00-09:29 + today RTH, existing bars, bar-count windows) = TradingView with ETH on, as the RSI-2 here; prior-RTH warm-up as information; the live desk's 112-minute clock window is a separate parity check before any live use; share of B1 signals before 11:22 printed",
+  "5 triangle": "exactly tools/studies/early_entry_honest.py os_leave_flag (OS_LEAVE_BARS = 3, OB_THR = 20 -> -80, TIGHT = 15, EPS = 0.05 rising; rejects 'both <= -80 but wide'); the code imports it",
+  "7 refractory": "per rule per name until the approximate-ratchet exit bar and >= 15 minutes; all exits score the same rows",
+  "8 does the context add": "A is compared with the COMPLEMENT (mid-bar red fills that are not A) at the same minute-day and trigger-distance bucket, day-clustered difference; information control: same-minute names with a fresh low (gap 1-2) but no red trigger, with a same-distance buy-stop - separates red from a plain bounce off the low",
+  "9 seen data": "A is a subset of the parent's 163,626 RED_STOP fills (SEARCH, outcomes known only in aggregate); the parent's distance, wick and wick3 splits were reported as information (distance read; wick per-row values not read for this question). SEARCH pooled t >= 2.5 is INFORMATION in step 2; CONFIRM carries the verdict",
+  "10 power": "counts per half printed before any outcome; CONFIRM needs >= 300 signals per rule and CONFIRM MDE <= 6 bp, else UNPROVEN (not FAIL); step-2 cap 1,500 per rule per SEARCH half and in CONFIRM",
+  "family": "about 14 RSI-2 red variants scored 11/20-21 (colour_timing, persistence, htf, this); CONFIRM t >= 2.0 with 2 rules is the held-out bar"
+ }
 }
