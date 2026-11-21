@@ -44,7 +44,7 @@
  "if_fail": "record it; RSI-2 red is closed on 1-, 5- and 10-minute bars as a standalone entry",
  "review gate": "result-skeptic, then Neon (via the operator), before code runs on outcomes; nothing runs without the operator's go",
  "script": "tools/studies/rsi2_colour_timing.py (new htf commands reusing the parent's cache, eth/ files, peers, exits, controls)",
- "status": "amended_1; HTF fetch + build next, then step 1 (no Neon, operator 11/20)",
+ "status": "STEP 1 SCORED 11/20: STOP - 5/10-minute red = peers; 10-min mid-bar +1.7 bp, below the size bar",
  "amended_1": {
   "when": "2026-11-20 ~21:20 ET, after result-skeptic round 1 (FIX FIRST: 9); no code, no outcome. Operator: build and run without Neon",
   "1 S peers": "each peer's buy-stop is armed at the START of HTF bar b at the same percent distance above the peer's own last close before b, valid for b's minutes only; it fills at its own first crossing and its exits run from its own fill. Fill rates of signals and peers printed. C and P2 peers buy the same open minute",
@@ -56,5 +56,14 @@
   "7 step-2 selection": "at most 2 cells advance, in order of their step-1 gate t; each needs CONFIRM lift > 0 with t >= 2.0 (the out-of-sample test); SEARCH t >= 2.5 is a secondary check",
   "8 step-2 power": "step-2 MDE per half printed before outcomes; a half above 10 bp = UNDERPOWERED",
   "9 overlap and exclusions": "report the share of HTF signals with a 1-minute red start inside the same HTF bar; 11/17-18 are excluded from CONFIRM because the operator's 1-minute persistence examples were drawn from those days"
+ },
+ "result_step1_2026-11-20": {
+  "gate": "STOP - no 5- or 10-minute cell passes the step-1 gate on SEARCH; no step 2; CONFIRM sealed, unused",
+  "5-minute": "S (mid-bar) 64,642: lift -0.8..+0.7 bp on every exit (t <= 1.0); C (bar close) 45,775: -1.1..+1.1; P2 23,528: -1.5..+0.6; MDE 0.9-3.1 bp; gross -0.5..+1.2 bp",
+  "10-minute": "S 11,654: ratchet lift +2.41 / +1.04 bp (t 2.5, MDE 2.5) - positive in both halves but pooled ~1.7 bp and gross 1.7 bp, under the pre-set +3 bp lift / +5 bp gross bars, so FAIL; holds h1/h3 ~0. C 7,271 and P2 3,532: ~0 (P2 h3 UNDERPOWERED)",
+  "coverage": "2026-04-28 had no history file (dropped); 27,655 name-days lacked 210 ten-minute buckets of history (dropped for 10-minute, counted)",
+  "overlap": "13-41% of HTF signals contain a 1-minute red start in the same HTF bar",
+  "note": "the 10-minute mid-bar line is the only consistent sign in the RSI-2 family; at ~1.7 bp it is far below any spread - information, not a finding",
+  "output": "ai_reports/rsi2_colour/htf_screen.json (mini), commit fb065c45"
  }
 }
