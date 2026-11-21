@@ -43,7 +43,7 @@
  "if_fail": "record it; red length is visible in hindsight but buying after 2-3 red bars does not beat the same minute on other names",
  "review gate": "result-skeptic, then Neon (via the operator), before any code runs on outcomes; nothing runs without the operator's go",
  "script": "tools/studies/rsi2_colour_timing.py (new command, reusing the parent's cache, peers, exits and controls)",
- "status": "amended_1 after skeptic round 1; Neon review next, then the operator's go",
+ "status": "amended_2 (Neon); script next, then Neon code check, then the operator's go",
  "amended_1": {
   "when": "2026-11-20 ~19:30 ET, after result-skeptic round 1 (FIX FIRST: 5 + 5 minor); no code, no outcome",
   "1 family bar": "step-2 EDGE needs pooled day-clustered t >= 2.5 (the parent's RSI-2 family bar, amended_1 M4), not 2.24",
@@ -56,5 +56,15 @@
   "8 hindsight line": "'lift by segment length reached after entry' is labelled HINDSIGHT and can never be promoted",
   "9 counts and CONFIRM cap": "P2/P3 counts for SEARCH halves and CONFIRM printed before any outcome; step 2 caps 1,500 per rule per SEARCH half and 1,500 per rule in CONFIRM",
   "10 clean test": "SEARCH is partly seen (the parent's RED_START 15-bar windows cover P2/P3 minutes); CONFIRM (2026-09-24..11-18 minus 11/17-18) is the clean test"
+ },
+ "amended_2_neon": {
+  "when": "2026-11-20 ~19:45 ET, Neon's review of 01e905cf relayed by the operator; no code, no outcome",
+  "1 CONFIRM sealed": "the step-1 gate uses SEARCH only; CONFIRM outcomes are first computed in step 2 (CONFIRM signal COUNTS may be printed in step 1, no outcomes). Replaces the CONFIRM part of amended_1 #5's step-1 gate",
+  "2 control-mismatch block": "blocks only if |peer - unconditional| > 3 bp AND |day-clustered t| > 2 (both printed always); replaces amended_1 #2's OR / trade-level t",
+  "3 controls (a)/(b)": "exact-minute matches print their match rate (share of signals with >= 1 match); a full-sample day-clustered comparison is added beside them (all P2 vs all 1-bar-ended reds, and all P2 vs all 2-bar non-red RSI-2 > 90 events on the same days, same exits; paired by day); for P3: (a) = 3 bars of RSI-2 > 90 not red, (b) = reds that ended after 1 or 2 bars",
+  "4 step-2 hygiene": "step-2 PROFITABLE keeps the parent's spread <= 15 bp entry gate and requires the top-1% winsorized mean net > 0 in both halves; the same-name-later control runs the SAME exit rule from an entry in exit+2 .. exit+62 (no forced bar count)",
+  "5 step-1 gross bar": "+3 bp pooled gross for fix5, +5 bp for fix15 and the ratchet (lift bar +3 bp unchanged)",
+  "6 consecutive test": "unit tests cover a missing (NaN) minute at t-2, t-1 and t (red_pine carries state across gaps; the count must not)",
+  "review": "script + tests + the example-reproduction printout go to Neon for a code check before step 1 runs"
  }
 }
