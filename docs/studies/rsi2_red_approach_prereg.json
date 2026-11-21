@@ -1,0 +1,35 @@
+{
+ "name": "rsi2_red_approach",
+ "written": "2026-11-21, before any script or outcome for this question",
+ "operator": "11/21, CBRS 11/18: 'RSI Red steep is followed by a steep decline. I would stay away from these steep indicators. They signal a stall coming' vs 'RSI Red has more of a plateau and rounding peak that lets us know there's not going to be a sharp drop off' -> the knowable-at-entry part is the approach into red -> 'yes'",
+ "question": "Does a red that follows a GRADUAL climb in RSI-2 (already high the bar before) do better over 1-5 minutes than a red that follows a JUMP (RSI-2 low the bar before), and better than other names at the same minute?",
+ "what was seen before writing this (disclosed)": [
+  "every RSI-2 red variant scored 11/20-21 (start, mid-bar, after 2/3 bars, 5/10-minute, early off a low, with the %R triangle) = same-minute peers at 1-5 minutes; the 'RSI already hot' line of the mid-bar test (n 8) is the only prior look at RSI before red",
+  "CBRS 2026-11-18 (SIP): 10:14 red after RSI 61 -> failed; 11:58 after 50 -> ran; 12:16 after 85 -> ran; QCOM 2026-11-16 15:26 after 88 -> a 4-bar plateau that lost. 11/16-18 are excluded from scoring",
+  "SEARCH 2026-04-28..09-23 red-start outcomes are known in aggregate (~0); CONFIRM 2026-09-24..11-18 minus 11/16-18 is unopened"
+ ],
+ "signals": "a red START that CLOSED red (bar t red, t-1 not red, minute t has a bar; operator's Pine rule on SIP incl. extended hours, the rsi2_colour_timing amended_8 cache) - no mid-bar flickers; entry = the OPEN of t+1 (the first moment a closed red is known)",
+ "groups (by RSI-2 on the bar BEFORE the red, known at entry)": {
+  "G gradual": "RSI-2[t-1] >= 80",
+  "J jump": "RSI-2[t-1] < 60",
+  "M middle (information)": "60 <= RSI-2[t-1] < 80 (CBRS 10:14 at 61 falls here)"
+ },
+ "names and window": "~400 top names by prior-day dollar volume (ETFs excluded), $20-$400 at t, no day filter, entries 09:45-15:30; refractory per group per name until the ratchet exit and >= 15 minutes",
+ "exits": "close of the 1st / 3rd / 5th minute counting the entry minute, and the approximate desk ratchet (stop -0.6%, breakeven +0.15%, trail high -0.6%; open entries watched from their own minute)",
+ "scored comparisons (step 1, SEARCH only; CONFIRM counts only)": {
+  "G vs peers": "G's lift over up to 5 same-minute filtered names buying the same open with the same exits",
+  "G minus J": "same-day difference of G's and J's mean outcome (day-clustered), the operator's contrast",
+  "gate to step 2": "G passes on ANY ONE of the 3-minute, 5-minute or ratchet exits if BOTH: (a) G vs peers: lift > 0 in both halves, day t >= 1.0, each half MDE <= 10, pooled lift >= +3 bp, pooled gross >= +3 bp (3/5-min) / +5 bp (ratchet); and (b) G minus J > 0 in both halves. 3 looks, disclosed"
+ },
+ "controls (printed)": "J vs peers; M vs peers; unconditional random filtered name-minute with an open entry; same-name later (exit+2..exit+62, same exits); peer vs unconditional with day t (block only if |gap| > 3 bp and |t| > 2)",
+ "step 2 (only if the gate passes)": "the desk's live exit replayed on SIP prints; EDGE needs lift > 0 in both SEARCH halves and CONFIRM lift > 0 with CONFIRM day t >= 2.0 (CONFIRM >= 300 G signals and MDE <= 6 bp, else UNPROVEN); PROFITABLE: net >= +2 bp both halves after the real SIP spread",
+ "checks": [
+  "unit tests: group assignment uses RSI-2[t-1] only; entry is open[t+1]; nothing after t+1's open used for the signal",
+  "examples (signals only): CBRS 11/18 12:16 -> G (85 before); 11:58 -> J (50 before); 10:14 -> M (61 before); QCOM 11/16 15:26 -> G (88 before)",
+  "counts per half before outcomes: closed red starts, G / J / M, no-peer drops, NaN exits"
+ ],
+ "fail": "anything short of step 2's pass; no retuning of 80 / 60, the exits or the window",
+ "review gate": "result-skeptic reviews this prereg AND the script together before any outcome is computed (operator 11/20: Neon optional)",
+ "script": "tools/studies/rsi2_red_approach.py (reusing rsi2_colour_timing and rsi2_red_washout helpers)",
+ "status": "DRAFT; script + skeptic next"
+}
