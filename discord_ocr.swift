@@ -248,6 +248,11 @@ func capturePass() -> ([String], String?) {
                         "Grant Screen Recording; keep Discord on-screen. (ScreenCaptureKit: \(sckError); screencapture: \(cliError))")
         }
     }
+    if let dbg = ProcessInfo.processInfo.environment["DISCORD_OCR_DEBUG_PNG"], !dbg.isEmpty,
+       let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: dbg) as CFURL, "public.png" as CFString, 1, nil) {
+        CGImageDestinationAddImage(dest, captured!, nil)      // debug: the exact image OCR sees (11/21 blank-read check)
+        _ = CGImageDestinationFinalize(dest)
+    }
     return (recognize(captured!, accurate: accurate), nil)
 }
 
