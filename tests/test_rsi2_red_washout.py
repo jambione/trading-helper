@@ -7,13 +7,22 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools" / "studies"))
 import rsi2_red_washout as W  # noqa: E402
+from early_entry_honest import os_leave_flag  # noqa: E402
 
 
-def test_low_bar_completed_only_and_early():
-    l = np.array([10.0] * 20)
-    l[17] = 9.0
-    assert W.low_bar(l, 19) == 17 and W.early(l, 19)       # low 2 bars back
-    assert W.early(l, 18)                                    # low 1 bar back
-    assert not W.early(l, 17)                                # bar 17 itself is not yet completed at t=17 -> low elsewhere
-    l2 = l.copy(); l2[12] = 8.0
-    assert not W.early(l2, 19)                               # the 15-minute low is 7 bars back
+def test_gap_completed_bars_ties_latest():
+    l = np.array([10.0] * 40)
+    l[37] = 9.0
+    assert W.gap_to_low(l, 39) == 2 and W.gap_to_low(l, 38) == 1
+    l[35] = 9.0                                          # tie: latest wins
+    assert W.gap_to_low(l, 39) == 2
+    l2 = np.array([10.0] * 40); l2[30] = 8.0
+    assert W.gap_to_low(l2, 39) == 9
+    l2[38] = np.nan
+    assert W.gap_to_low(l2, 39) == 9                     # missing bar skipped
+
+
+def test_triangle_is_the_imported_function():
+    assert W.os_leave_flag is os_leave_flag
+    fast = np.array([-90.0, -90.0, -70.0]); slow = np.array([-88.0, -88.0, -85.0])
+    assert os_leave_flag(fast, slow, 2)                  # left the oversold triangle, fast rising
