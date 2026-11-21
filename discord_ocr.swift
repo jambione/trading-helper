@@ -220,7 +220,20 @@ func captureCLI(_ win: WinMeta) -> CGImage? {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 // One pass: (lines, nil) on success, ([], error) on failure.
-var askedTCC = false   // ask macOS once per process; a looping agent must not re-prompt every pass
+var askedTCC = false
+var passCount = 0
+
+func meanLuma(_ img: CGImage) -> Double {
+    // average brightness 0-255 of a 32x32 downscale (0 = black frame)
+    let w = 32, h = 32
+    var px = [UInt8](repeating: 0, count: w * h * 4)
+    guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return -1 }
+    ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+    var sum = 0.0
+    for i in stride(from: 0, to: px.count, by: 4) { sum += 0.299 * Double(px[i]) + 0.587 * Double(px[i + 1]) + 0.114 * Double(px[i + 2]) }
+    return sum / Double(w * h)
+}   // ask macOS once per process; a looping agent must not re-prompt every pass
 
 func capturePass() -> ([String], String?) {
     // Preflight can read false in a launchd agent even after the grant (11/20), so it only decides whether to ASK;
@@ -229,10 +242,15 @@ func capturePass() -> ([String], String?) {
     if !preflight && !askedTCC { askedTCC = true; _ = CGRequestScreenCaptureAccess() }
     sckError = ""; cliError = ""
     var captured: CGImage? = nil
+    var via = "none"
     if loopSec > 0, let w = findWindow(ownerNeedle: ownerName, titleNeedle: titleSub) {
         captured = captureCLI(w)
+        if captured != nil { via = "screencapture(win \(w.id))" }
     }
-    if captured == nil { captured = captureSCK(ownerNeedle: ownerName, titleNeedle: titleSub) }
+    if captured == nil {
+        captured = captureSCK(ownerNeedle: ownerName, titleNeedle: titleSub)
+        if captured != nil { via = "sck" }
+    }
     if captured == nil && !preflight {
         return ([], "Screen Recording not granted (preflight false; ScreenCaptureKit: \(sckError)). System Settings → " +
                     "Privacy & Security → Screen & System Audio Recording → enable Discord OCR.")
@@ -248,12 +266,23 @@ func capturePass() -> ([String], String?) {
                         "Grant Screen Recording; keep Discord on-screen. (ScreenCaptureKit: \(sckError); screencapture: \(cliError))")
         }
     }
-    if let dbg = ProcessInfo.processInfo.environment["DISCORD_OCR_DEBUG_PNG"], !dbg.isEmpty,
-       let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: dbg) as CFURL, "public.png" as CFString, 1, nil) {
-        CGImageDestinationAddImage(dest, captured!, nil)      // debug: the exact image OCR sees (11/21 blank-read check)
-        _ = CGImageDestinationFinalize(dest)
+    if via == "none" { via = "legacy-display" }
+    let img = captured!
+    var dbgNote = "no-debug"
+    if let dbg = ProcessInfo.processInfo.environment["DISCORD_OCR_DEBUG_PNG"], !dbg.isEmpty {
+        if let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: dbg) as CFURL, "public.png" as CFString, 1, nil) {
+            CGImageDestinationAddImage(dest, img, nil)      // debug: the exact image OCR sees (11/21 blank-read check)
+            dbgNote = CGImageDestinationFinalize(dest) ? "png-written" : "png-finalize-failed"
+        } else {
+            dbgNote = "png-dest-nil"
+        }
     }
-    return (recognize(captured!, accurate: accurate), nil)
+    let lines = recognize(img, accurate: accurate)
+    passCount += 1
+    if passCount <= 3 || passCount % 40 == 0 {
+        fputs("[discord_ocr] diag pass \(passCount): via \(via) \(img.width)x\(img.height) mean \(String(format: "%.1f", meanLuma(img))) lines \(lines.count) \(dbgNote)\n", stderr)
+    }
+    return (lines, nil)
 }
 
 func writeJSON(_ path: String, lines: [String], error: String?) {
