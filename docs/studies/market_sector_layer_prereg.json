@@ -42,7 +42,7 @@
  "if_fail": "record the cell table; the market/sector tailwind does not lift these fires at 30 minutes, alone or stacked with news",
  "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)",
  "script": "tools/studies/market_sector_layer.py (to be written after the review; reuses arm_then_fire's loaders and peer code)",
- "status": "amended_2 after code review; score next (operator 11/20: run without Neon)",
+ "status": "SCORED 11/20: NO EDGE on powered cells; F1/F4 UNPROVEN",
  "amended_1": {
   "when": "2026-11-20 ~17:00 ET, after result-skeptic round 1 (FIX FIRST: 8 findings), before any script, ETF fetch or outcome, and before arm_then_fire is scored",
   "1 commit": "committed now, before arm_then_fire scores (its armed cells would partly reveal C3)",
@@ -66,5 +66,13 @@
   "MDE source (declared deviation)": "MDE = 3.71 x the day-clustered SE of the outcome lift (as arm_then_fire), not the pre-fire 30-minute return SD",
   "information implemented": "R1 decomposition (SPY-only up vs neither), the unmapped group (SPY up vs down), opening 09:45-10:30 for C1, full 2x2 for C3; NOT yet: 5-minute lookback, gap/wick splits, the ETF's own forward return, the desk-fills R1 share, CONFIRM (to follow the verdict, before the write-up)",
   "PROFITABLE": "only if a cell reaches EDGE (real spread, 15 bp gate, >= 300 per half, 1.5 x spread) - a follow-up step"
+ },
+ "result_2026-11-20": {
+  "verdict": "NO EDGE where powered (F2 breakout, F3 turn: C1, C2, C3); UNPROVEN on F1 RVOL and F4 +3% (75-81% of ON fires had no matched peer, MDE 47-250 bp)",
+  "C1 market+sector tailwind (sector given SPY)": "F2 lift -1.78/+0.90 bp (t -1.1, MDE 3.1/4.2, n 83,167); F3 -0.77/+0.64 (t -0.35, MDE 2.7/4.1)",
+  "C2 sector beating SPY": "F2 -0.91/+2.05 (t 0.41, MDE 2.6/4.0, n 128,810); F3 -0.71/+1.45 (t 0.22)",
+  "C3 news AND tailwind": "F2/F3 vs armed+R1-off -1.0..+0.9, vs unarmed+R1-on -0.7..+0.9 (t < 1); 2x2 mean G within +/-0.4 bp",
+  "harness": "planted +15 bp canary read EDGE; time-shift placebo and ETF-shuffle 0% in every cell; ETF coverage complete; 620,086 fires with states; 8.8% of name-days unmapped",
+  "output": "ai_reports/market_sector_layer/score.json (mini), commit 4ceaff48 + daily-close fix"
  }
 }
