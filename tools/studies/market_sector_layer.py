@@ -266,6 +266,42 @@ def apply_controls(st, ct, placebo_rate, shuffle_rate):
     return "EDGE"
 
 
+def fetch_daily():
+    """Daily SIP closes 2026-01-15..11-19 for every name that ever fired (the sector map needs 60 sessions before each
+    fire day; the warehouse starts 2026-04-27). -> OUT/name_daily.pkl {sym: {day: close}}. After 16:05 ET."""
+    import arm_then_fire as A
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    from alpaca.data.enums import DataFeed, Adjustment
+    now = datetime.now(ET)
+    if now.weekday() < 5 and "0900" <= now.strftime("%H%M") < "1605":
+        sys.exit("market hours - rerun after 16:05 ET")
+    res = pickle.load(open(A.OUT / "fires.pkl", "rb"))
+    names = sorted({f["sym"] for D in res["days"].values() for f in D["fires"]})
+    k = json.load(open(ROOT / "secrets_data.json"))
+    cl = StockHistoricalDataClient(k["alpaca_data_api_key"], k["alpaca_data_secret_key"])
+    out, failed = {}, []
+    for i in range(0, len(names), 100):
+        got = None
+        for attempt in range(6):
+            try:
+                got = cl.get_stock_bars(StockBarsRequest(symbol_or_symbols=names[i:i + 100], timeframe=TimeFrame.Day,
+                                                         start=datetime.fromisoformat(START).replace(tzinfo=ET),
+                                                         end=datetime.fromisoformat(END + "T23:59").replace(tzinfo=ET),
+                                                         feed=DataFeed.SIP, adjustment=Adjustment.RAW))
+                break
+            except Exception as e:                      # noqa: BLE001
+                time.sleep(60 if "429" in str(e) else 5 * (attempt + 1))
+        if got is None:
+            failed.append(i)
+            continue
+        for s_, rows in (got.data or {}).items():
+            out[s_] = {r.timestamp.astimezone(ET).strftime("%Y-%m-%d"): float(r.close) for r in rows}
+    pickle.dump(out, open(OUT / "name_daily.pkl", "wb"))
+    print("DAILY_DONE names", len(out), "failed batches", failed, flush=True)
+
+
 def score():
     import arm_then_fire as A
     AT = A.OUT
@@ -279,18 +315,9 @@ def score():
     res["days"] = {d: v for d, v in res["days"].items() if SEARCH[0] <= d <= SEARCH[1]}
     fs = A.assign(res, nw["news"], sessions=sessions, skip_syms=failed_syms)
     # daily closes for the correlation map: names from the warehouse, ETFs from the fetch
-    from relative_strength_scan import load_day
-    from evening_family import WH_SIP
-    cal = [d for d in sessions if "2026-01-15" <= d <= SEARCH[1]]
-    names = {f["sym"] for f in fs}
-    ncl = defaultdict(dict)
-    for d in cal:
-        z = load_day(WH_SIP / f"{d}.npz")
-        for s in names:
-            i = z["idx"].get(s)
-            if i is not None:
-                ncl[s][d] = daily_close(z["c"][i])
+    ncl = defaultdict(dict, pickle.load(open(OUT / "name_daily.pkl", "rb")))     # daily SIP closes from 2026-01-15
     ecl = {e: {d: daily_close(v[3]) for d, v in etf[e].items()} for e in SECTORS}
+    cal = sorted(etf["SPY"])                                                      # trading days with SPY bars
     maps, mcount = {}, defaultdict(int)
     for f in fs:
         key = (f["day"], f["sym"])
@@ -401,4 +428,4 @@ def score():
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
-    {"fetch": fetch, "score": score}.get(cmd, lambda: sys.exit(__doc__))()
+    {"fetch": fetch, "fetch_daily": fetch_daily, "score": score}.get(cmd, lambda: sys.exit(__doc__))()
