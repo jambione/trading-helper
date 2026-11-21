@@ -108,11 +108,11 @@ def corr_map(name_closes, etf_closes, days, day):
     corr >= 0.3) or None (UNMAPPED). name_closes/etf_closes: {day: close}. Pure."""
     prior = [d for d in days if d < day][-61:]
     best, bc = None, 0.3
-    nr = [(prior[i], name_closes.get(prior[i]), name_closes.get(prior[i - 1])) for i in range(1, len(prior))]
+    nr = [(prior[i], prior[i - 1], name_closes.get(prior[i]), name_closes.get(prior[i - 1])) for i in range(1, len(prior))]
     for e in SECTORS:
         x, y = [], []
-        for d, a, b in nr:
-            ea, eb = etf_closes[e].get(d), etf_closes[e].get(prior[prior.index(d) - 1])
+        for d, dp, a, b in nr:
+            ea, eb = etf_closes[e].get(d), etf_closes[e].get(dp)
             if all(v is not None and np.isfinite(v) and v > 0 for v in (a, b, ea, eb)):
                 x.append(a / b - 1)
                 y.append(ea / eb - 1)
@@ -123,11 +123,13 @@ def corr_map(name_closes, etf_closes, days, day):
     return best
 
 
-def layer_rows(res, etf, fs, maps, shift=0):
-    """Attach SPY/sector 15-minute states (read at t + shift for the placebo) to every fire. Pure."""
+def layer_rows(res, etf, fs, maps, shift=0, remap=None):
+    """Attach SPY/sector 15-minute states (read at t + shift for the time placebo; from another day's ETF bars when
+    remap {day: day'} is given - the ETF-shuffle canary) to every fire. Pure."""
     out = []
     for f in fs:
-        day, t = f["day"], f["t"] + shift
+        day0, t = f["day"], f["t"] + shift
+        day = remap.get(day0, day0) if remap else day0
         if not (0 <= t < 390) or day not in etf["SPY"]:
             continue
         spy = ret15(etf["SPY"][day][3], t)
@@ -135,7 +137,7 @@ def layer_rows(res, etf, fs, maps, shift=0):
         sr = ret15(etf[sec][day][3], t) if sec and day in etf[sec] else None
         if spy is None or (sec and sr is None):
             continue
-        out.append(dict(f, spy=spy, sec=sec, sr=sr,
+        out.append(dict(f, spy=spy, sec=sec, sr=sr, spy_up=spy > 0, sec_up=(sr > 0) if sec else None,
                         R1=bool(spy > 0 and (sr if sec else spy) > 0), SECT=(sr - spy > 0) if sec else None))
     return out
 
@@ -190,12 +192,12 @@ def cell(rows, dropped):
     n = len(rows) + dropped
     st = {"n": len(rows), "dropped": dropped, "dropped_share": round(dropped / n, 3) if n else None,
           "lift_h1": m1, "lift_h2": m2, "t": t, "mde_h1": mde1, "mde_h2": mde2, "days_h1": d1, "days_h2": d2,
-          "winsor_lift": A.winsor([r["lift"] for r in rows])}
+          "winsor_h1": A.winsor([r["lift"] for r in a]), "winsor_h2": A.winsor([r["lift"] for r in b])}
     if (mde1 or 99) > MDE_MAX or (mde2 or 99) > MDE_MAX:
         st["verdict"] = "UNPROVEN (MDE)"
     elif (st["dropped_share"] or 1) > 0.30:
         st["verdict"] = "UNPROVEN (> 30% without a peer)"
-    elif m1 and m2 and m1 > 0 and m2 > 0 and (t or 0) >= EDGE_T and (st["winsor_lift"] or 0) > 0:
+    elif m1 and m2 and m1 > 0 and m2 > 0 and (t or 0) >= EDGE_T and (st["winsor_h1"] or 0) > 0 and (st["winsor_h2"] or 0) > 0:
         st["verdict"] = "EDGE (pending controls)"
     else:
         st["verdict"] = "NO EDGE"
@@ -230,10 +232,38 @@ def controls(res, lr):
     diffs = [pc[d] - uc[d] for d in pc if d in uc]
     t = float(np.mean(diffs) / (np.std(diffs, ddof=1) / math.sqrt(len(diffs)))) if len(diffs) > 2 and np.std(diffs) > 0 else None
     lm, _, lt, _ = A.day_stats(later, weighted=False)
+    later_v = dm([{"day": x["day"], "v": x["v"]} for x in later])
+    ld = [later_v[d] - uc[d] for d in later_v if d in uc]
+    lt2 = float(np.mean(ld) / (np.std(ld, ddof=1) / math.sqrt(len(ld)))) if len(ld) > 2 and np.std(ld) > 0 else None
+    on = dm([{"day": r["day"], "v": r["g"]} for r in lr])
+    od = [on[d] - uc[d] for d in on if d in uc]
+    om = float(np.mean(od)) if od else None
     return {"peer_mean": float(np.mean([x["v"] for x in ctl])) if ctl else None,
             "unconditional_mean": float(np.mean([x["v"] for x in unc])) if unc else None,
             "peer_vs_unconditional_day": {"diff": float(np.mean(diffs)) if diffs else None, "t": t},
+            "later_vs_unconditional_day": {"diff": float(np.mean(ld)) if ld else None, "t": lt2},
+            "on_minus_unconditional": om,
             "same_name_later_lift": lm, "same_name_later_t": lt}
+
+
+def apply_controls(st, ct, placebo_rate, shuffle_rate):
+    """Final verdict for an EDGE candidate (amended_1 #7 + arm_then_fire rules): time-shift placebo and ETF-shuffle
+    <= 10%, same-name later lift > 0, ON minus unconditional > 0, peer and later controls within 2 SE of the
+    unconditional mean. Pure."""
+    if not st["verdict"].startswith("EDGE"):
+        return st["verdict"]
+    pu, lu = ct["peer_vs_unconditional_day"], ct["later_vs_unconditional_day"]
+    if placebo_rate > 0.10:
+        return "BLOCKED (time-shift placebo)"
+    if shuffle_rate is not None and shuffle_rate > 0.10:
+        return "BLOCKED (ETF-shuffle canary)"
+    if not (ct["same_name_later_lift"] or -1) > 0:
+        return "BLOCKED (same-name later lift not > 0)"
+    if not (ct["on_minus_unconditional"] or -1) > 0:
+        return "BLOCKED (ON fires not above the unconditional mean)"
+    if (pu["t"] is not None and abs(pu["t"]) > 2) or (lu["t"] is not None and abs(lu["t"]) > 2):
+        return "BLOCKED (control vs unconditional gap > 2 SE)"
+    return "EDGE"
 
 
 def score():
@@ -273,45 +303,98 @@ def score():
                       "unmapped_share": round(mcount.get("UNMAPPED", 0) / max(sum(mcount.values()), 1), 3)}, "cells": {}}
     armed = lambda f: f["arm"] in ("W1", "W2", "W3")
     defs = {
-        "C1": (lambda f: f["R1"], lambda f: not f["R1"], True),
-        "C2": (lambda f: f["SECT"] is True, lambda f: f["SECT"] is False, True),
+        "C1": (lambda f: f["R1"], lambda f: not f["R1"]),
+        "C2": (lambda f: f["SECT"] is True, lambda f: f["SECT"] is False),
     }
+    sdays = sorted(res["days"])
+    shuffles = []
+    for seed in range(20):
+        perm = list(np.random.default_rng(1000 + seed).permutation(sdays))
+        shuffles.append(dict(zip(sdays, perm)))
+    out["counts"]["etf_day_coverage_missing"] = [d for d in sdays if d not in etf["SPY"]]
+    cover_ok = len(out["counts"]["etf_day_coverage_missing"]) <= 0.02 * len(sdays)
+    canary_ok = None
     for trig in ("F1", "F2", "F3", "F4"):
+        fsT = [f for f in fs if f["trig"] == trig]
         rr = [f for f in rows if f["trig"] == trig]
-        for c, (on, off, ms) in defs.items():
-            lr, dr = peer_lift(rr, on, off, match_spy=ms)
+        for c, (on, off) in defs.items():
+            lr, dr = peer_lift(rr, on, off)
             st = cell(lr, dr)
-            # time-shift placebo (20 shifts of +/-60..120 minutes): EDGE rate <= 10%
+            ab = [x for x in rr if x["sec"]]
+            st["on_share_h1"] = round(float(np.mean([on(x) for x in ab if x["day"] < SPLIT])), 3) if ab else None
+            st["on_share_h2"] = round(float(np.mean([on(x) for x in ab if x["day"] >= SPLIT])), 3) if ab else None
             hits = 0
-            for s in range(20):
-                sh = (60 + s * 3) * (1 if s % 2 else -1)
-                pr = layer_rows(res, etf, [f for f in fs if f["trig"] == trig], maps, shift=sh)
-                pl, pd = peer_lift(pr, on, off, match_spy=ms)
+            for k_ in range(20):
+                sh = (60 + k_ * 3) * (1 if k_ % 2 else -1)
+                pl, pd = peer_lift(layer_rows(res, etf, fsT, maps, shift=sh), on, off)
+                hits += cell(pl, pd)["verdict"].startswith("EDGE")
+            sh_hits = 0
+            for rm in shuffles:
+                pl, pd = peer_lift(layer_rows(res, etf, fsT, maps, remap=rm), on, off)
+                sh_hits += cell(pl, pd)["verdict"].startswith("EDGE")
+            st["time_shift_placebo_rate"], st["etf_shuffle_rate"] = hits / 20, sh_hits / 20
+            ct = controls(res, lr)
+            st["controls"] = ct
+            st["verdict"] = apply_controls(st, ct, hits / 20, sh_hits / 20)
+            if c == "C1" and trig == "F2":
+                pl = [dict(x, lift=x["lift"] + 15.0) for x in lr]
+                canary_ok = cell(pl, dr)["verdict"].startswith("EDGE")
+                out["canary_planted_C1xF2"] = canary_ok
+            out["cells"][f"{c}x{trig}"] = st
+        # C3 (all names, not only mapped): armed+R1 must beat BOTH armed+R1-off AND unarmed+R1-on; full 2x2 printed
+        on3 = lambda f: armed(f) and f["R1"]
+        comps = {"vs_armed_R1_off": lambda f: armed(f) and not f["R1"],
+                 "vs_unarmed_R1_on": lambda f: f["arm"] == "UNARMED" and f["R1"],
+                 "vs_unarmed_R1_off (original C3)": lambda f: f["arm"] == "UNARMED" and not f["R1"]}
+        c3 = {}
+        for nm, offf in comps.items():
+            lr, dr = peer_lift(rr, on3, offf, mapped_only=False)
+            st = cell(lr, dr)
+            hits = 0
+            for k_ in range(20):
+                sh = (60 + k_ * 3) * (1 if k_ % 2 else -1)
+                pl, pd = peer_lift(layer_rows(res, etf, fsT, maps, shift=sh), on3, offf, mapped_only=False)
                 hits += cell(pl, pd)["verdict"].startswith("EDGE")
             st["time_shift_placebo_rate"] = hits / 20
             ct = controls(res, lr)
             st["controls"] = ct
-            pu = ct["peer_vs_unconditional_day"]
-            if st["verdict"].startswith("EDGE") and hits / 20 > 0.10:
-                st["verdict"] = "BLOCKED (time-shift placebo)"
-            elif st["verdict"].startswith("EDGE") and not ((ct["same_name_later_lift"] or -1) > 0):
-                st["verdict"] = "BLOCKED (same-name later control not > 0)"
-            elif st["verdict"].startswith("EDGE") and pu["diff"] is not None and abs(pu["diff"]) > 3 and abs(pu["t"] or 0) > 2:
-                st["verdict"] = "BLOCKED (peer vs unconditional mismatch)"
-            elif st["verdict"].startswith("EDGE"):
-                st["verdict"] = "EDGE"
-            if c == "C1" and trig == "F2":     # planted canary: +15 bp on ON fires must read EDGE
-                pl = [dict(x, lift=x["lift"] + 15.0) for x in lr]
-                out["canary_planted_C1xF2"] = cell(pl, dr)["verdict"]
-            out["cells"][f"{c}x{trig}"] = st
-        # C3: armed+R1 must beat BOTH armed+R1-off AND unarmed+R1-on
-        la, da = peer_lift(rr, lambda f: armed(f) and f["R1"], lambda f: armed(f) and not f["R1"], True)
-        lb, db = peer_lift(rr, lambda f: armed(f) and f["R1"], lambda f: f["arm"] == "UNARMED" and f["R1"], True)
-        sa, sb = cell(la, da), cell(lb, db)
-        v = "EDGE (pending controls)" if sa["verdict"].startswith("EDGE") and sb["verdict"].startswith("EDGE") else \
-            ("UNPROVEN" if "UNPROVEN" in sa["verdict"] or "UNPROVEN" in sb["verdict"] else "NO EDGE")
-        out["cells"][f"C3x{trig}"] = {"vs_armed_R1_off": sa, "vs_unarmed_R1_on": sb, "verdict": v}
-    out["VERDICT"] = {k: v["verdict"] for k, v in out["cells"].items()}
+            st["verdict"] = apply_controls(st, ct, hits / 20, None)
+            c3[nm] = st
+        # arm-shift placebo: each name's headlines moved by 1-5 sessions (20 seeds); must not read EDGE > 10%
+        ashift = 0
+        names = sorted({f["sym"] for f in fsT})
+        for seed in range(20):
+            rng = np.random.default_rng(2000 + seed)
+            shift = {s_: int(rng.integers(1, 6)) for s_ in names}
+            fs2 = A.assign({"days": {d: res["days"][d] for d in res["days"]}}, nw["news"], shift=shift,
+                           sessions=sessions, skip_syms=failed_syms)
+            r2_ = layer_rows(res, etf, [f for f in fs2 if f["trig"] == trig], maps)
+            ok_ = all(cell(*peer_lift(r2_, on3, comps[k_], mapped_only=False))["verdict"].startswith("EDGE")
+                      for k_ in ("vs_armed_R1_off", "vs_unarmed_R1_on"))
+            ashift += ok_
+        ex = [f for f in rr if not f.get("earn")]
+        exc = {k_: cell(*peer_lift(ex, on3, comps[k_], mapped_only=False))["verdict"] for k_ in ("vs_armed_R1_off", "vs_unarmed_R1_on")}
+        both = c3["vs_armed_R1_off"]["verdict"] == "EDGE" and c3["vs_unarmed_R1_on"]["verdict"] == "EDGE"
+        if both and ashift / 20 > 0.10:
+            v = "BLOCKED (arm-shift placebo)"
+        elif both and not all(x.startswith("EDGE") for x in exc.values()):
+            v = "earnings-day effect (not the stack)"
+        elif both:
+            v = "PROMISING (same-name placebo #3a not implemented - cannot be EDGE)"
+        else:
+            v = "UNPROVEN" if any("UNPROVEN" in c3[k_]["verdict"] for k_ in ("vs_armed_R1_off", "vs_unarmed_R1_on")) else "NO EDGE"
+        out["cells"][f"C3x{trig}"] = {**c3, "arm_shift_placebo_rate": ashift / 20, "ex_earnings": exc, "verdict": v,
+                                      "two_by_two_mean_g": {f"{a_}|R1={r_}": round(float(np.mean([f["g"] for f in rr if (armed(f) if a_ == "armed" else f["arm"] == "UNARMED") and f["R1"] == r_])), 2)
+                                                            if any((armed(f) if a_ == "armed" else f["arm"] == "UNARMED") and f["R1"] == r_ for f in rr) else None
+                                                            for a_ in ("armed", "unarmed") for r_ in (True, False)}}
+        # information: R1 decomposition and the unmapped group
+        out.setdefault("information", {})[trig] = {
+            "spy_only_up": cell(*peer_lift(rr, lambda f: f["spy_up"] and f["sec"] and not f["sec_up"], lambda f: not f["spy_up"] and f["sec"] and not f["sec_up"]))["lift_h1"],
+            "unmapped_spy_up_vs_down": cell(*peer_lift([dict(f, sec=None) for f in rr if not f["sec"]], lambda f: f["spy_up"], lambda f: not f["spy_up"], match_spy=False, mapped_only=False)),
+            "opening_0945_1030_C1": cell(*peer_lift([f for f in rr if f["t"] <= 60], defs["C1"][0], defs["C1"][1]))}
+    if canary_ok is False or not cover_ok:
+        out["VERDICT_OVERRIDE"] = "NO VERDICT (" + ("planted canary failed" if canary_ok is False else "ETF coverage > 2% missing") + ")"
+    out["VERDICT"] = out.get("VERDICT_OVERRIDE") or {k: v["verdict"] for k, v in out["cells"].items()}
     (OUT / "score.json").write_text(json.dumps(out, indent=1, default=str))
     print(json.dumps(out, indent=1, default=str))
 

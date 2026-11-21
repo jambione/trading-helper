@@ -42,7 +42,7 @@
  "if_fail": "record the cell table; the market/sector tailwind does not lift these fires at 30 minutes, alone or stacked with news",
  "pre_run_review": "result-skeptic reviews this prereg before any code runs (standing checkpoint)",
  "script": "tools/studies/market_sector_layer.py (to be written after the review; reuses arm_then_fire's loaders and peer code)",
- "status": "amended_1 after skeptic round 1; script after the ETF fetch (weekend)",
+ "status": "amended_2 after code review; score next (operator 11/20: run without Neon)",
  "amended_1": {
   "when": "2026-11-20 ~17:00 ET, after result-skeptic round 1 (FIX FIRST: 8 findings), before any script, ETF fetch or outcome, and before arm_then_fire is scored",
   "1 commit": "committed now, before arm_then_fire scores (its armed cells would partly reveal C3)",
@@ -58,5 +58,13 @@
   "when": "2026-11-20 ~17:15 ET, operator 'sure' (capture the 09:30-10:30 thrust); before any score",
   "opening slice (information only)": "every scored cell is also reported for signals/fires in 09:30-10:30 ET, judged after the real SIP spread at those minutes (wider at the open); indicators may start at 09:30 because the warm-up uses extended-hours (RSI-2) or prior bars; never promoted to a verdict - an opening-hour rule needs its own prereg (prior: opening_grid FAIL 11/19)",
   "rsi window note": "fires before 09:45 are not built by arm_then_fire; this slice covers 09:45-10:30 unless the fires are rebuilt from 09:31 for this line (counted and stated)"
+ },
+ "amended_2_code_review": {
+  "when": "2026-11-20 ~22:15 ET, after the result-skeptic code review (FIX FIRST); before any score",
+  "gates now in code": "planted +15 bp canary and ETF coverage (> 2% missing) gate the whole verdict (NO VERDICT); ETF-shuffle canary (20 seeds, <= 10%) and time-shift placebo gate C1/C2; winsor veto per half; same-name later lift > 0, ON fires above the unconditional mean, and peer/later controls within 2 SE of the unconditional mean",
+  "C3": "scored on ALL names (not only mapped); must beat both singles; time-shift and arm-shift placebos, ex-earnings split; the same-name placebo (arm_then_fire #3a) is NOT implemented, so C3 can read at most PROMISING (declared)",
+  "MDE source (declared deviation)": "MDE = 3.71 x the day-clustered SE of the outcome lift (as arm_then_fire), not the pre-fire 30-minute return SD",
+  "information implemented": "R1 decomposition (SPY-only up vs neither), the unmapped group (SPY up vs down), opening 09:45-10:30 for C1, full 2x2 for C3; NOT yet: 5-minute lookback, gap/wick splits, the ETF's own forward return, the desk-fills R1 share, CONFIRM (to follow the verdict, before the write-up)",
+  "PROFITABLE": "only if a cell reaches EDGE (real spread, 15 bp gate, >= 300 per half, 1.5 x spread) - a follow-up step"
  }
 }
