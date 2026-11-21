@@ -163,7 +163,8 @@ def screen():
             st["peer_vs_unconditional_day"] = pu
             st["mismatch_block"] = bool(pu["diff"] is not None and pu["t"] is not None and abs(pu["diff"]) > 3 and abs(pu["t"]) > 2)
             lat = [r for r in rr if np.isfinite(r.get(f"lift_later_{ex}", np.nan))]
-            st["same_name_later"] = {"n": len(lat), "lift": R.r2(R.mean(lat, f"lift_later_{ex}")), "t": R.r2(R.day_t(lat, f"lift_later_{ex}"))}
+            st["same_name_later"] = {"n": len(lat), "lift": R.r2(R.mean(lat, f"lift_later_{ex}")), "t": R.r2(R.day_t(lat, f"lift_later_{ex}")),
+                                     "later_mean": R.r2(R.mean([dict(r, _lm=r[ex] - r[f"lift_later_{ex}"]) for r in lat], "_lm")) if lat else None}
             if g == "G":
                 st["G_minus_J"] = g_minus_j(rows, ex)
                 if ex in ("m3", "m5", "ratchet"):
@@ -171,10 +172,17 @@ def screen():
                     g1 = R._gate_one(st)
                     gj = st["G_minus_J"]
                     ok = (g1 == "PASS" and (st["lift_pooled"] or -1) >= 3.0 and (st["gross_pooled"] or -1) >= gbar
-                          and not st["mismatch_block"] and (gj["h1"]["diff"] or -1) > 0 and (gj["h2"]["diff"] or -1) > 0)
+                          and not st["mismatch_block"] and (gj["h1"]["diff"] or -1) > 0 and (gj["h2"]["diff"] or -1) > 0
+                          and gj["h1"]["days"] >= 20 and gj["h2"]["days"] >= 20
+                          and (st["same_name_later"]["lift"] if st["same_name_later"]["lift"] is not None else -1) >= 0)
                     st["step1_gate"] = "PASS" if ok else ("UNDERPOWERED" if g1 == "UNDERPOWERED" else "FAIL")
                     gate |= ok
             rep[ex] = st
+        if g == "G":                          # review fix 1: split by where RSI-2 was the bar before (information)
+            rep["split (information)"] = {
+                nm: {ex: {"n": len(x), "lift": R.r2(R.mean(x, f"lift_{ex}")), "t": R.r2(R.day_t(x, f"lift_{ex}"))} for ex in ("m3", "m5", "ratchet")}
+                for nm, x in (("G80_90 (climbed into red)", [r for r in rr if r["rsi_prev"] < 90]),
+                              (">=90 (RSI already high; an SMA condition flipped)", [r for r in rr if r["rsi_prev"] >= 90]))}
         out[g] = rep
     out["STEP2_GATE"] = "PASS - step 2" if gate else "STOP - gradual-approach red does not pass the step-1 gate on SEARCH"
     R.OUT.mkdir(parents=True, exist_ok=True)

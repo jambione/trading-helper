@@ -31,5 +31,13 @@
  "fail": "anything short of step 2's pass; no retuning of 80 / 60, the exits or the window",
  "review gate": "result-skeptic reviews this prereg AND the script together before any outcome is computed (operator 11/20: Neon optional)",
  "script": "tools/studies/rsi2_red_approach.py (reusing rsi2_colour_timing and rsi2_red_washout helpers)",
- "status": "DRAFT; script + skeptic next"
+ "status": "amended_1; run step 1",
+ "amended_1": {
+  "when": "2026-11-21, after the combined skeptic review (FIX FIRST: 3), no outcome",
+  "1 G split": "G stays pooled (RSI-2[t-1] >= 80) as the scored group; split printed as information: 80-90 (a climb into red) vs >= 90 (RSI already high, red started because an SMA condition flipped)",
+  "2 same-name later": "later mean printed beside the unconditional mean; the step-1 gate also requires G's lift vs the same-name-later control >= 0 pooled",
+  "3 G-J days": "G-J needs >= 20 shared G/J days in each half (day t printed)",
+  "feed": "step 2 is SIP-only; an IEX rerun is required before any live claim (FIRST_PRESQ and %R+RSI confluence did not carry to IEX)",
+  "power": "read the printed G counts first; step 2 needs >= 300 CONFIRM G signals"
+ }
 }
