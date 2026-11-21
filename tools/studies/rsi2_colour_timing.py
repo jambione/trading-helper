@@ -543,63 +543,103 @@ def _open_trade(d, j, t):
 EXITS3 = ("fix5", "fix15", "ratchet")
 
 
+def _seg_final_len(L, t):
+    """HINDSIGHT: total length of the red run containing t (counts bars after t). Information only. Pure."""
+    n = t
+    while n + 1 < len(L) and L[n + 1] == L[n] + 1:
+        n += 1
+    return int(L[n])
+
+
 def persist_day(path):
-    """One cached day -> rows for P2/P3 with: own exits, same-minute peers (filtered names buying the same open),
-    exact-minute (a)/(b) matches, unconditional, same-name later; plus full-sample event outcomes for (a)/(b).
-    Refractory per rule: until the ratchet exit and >= 15 bars. Pure given the file."""
+    """One cached day -> (rows, full, counts). rows: P1 (information), P2, P3 with own exits, same-minute peers,
+    exact-minute (a)/(b), unconditional and same-name-later controls on all three exits. full: every P2/P3/A/B event
+    (no refractory) with exits, for the full-sample comparison. counts: segments, lengths reached, drops. Refractory
+    per rule: until the ratchet exit and >= 15 bars. Pure given the file."""
     z = np.load(path)
     d = {kk: z[kk] for kk in z.files}
     d["syms"] = [str(x) for x in z["syms"]]
     d["day"] = Path(path).stem
     U_ = len(d["syms"])
     evs = [persist_events(d, k) for k in range(U_)]
-    rows, full = [], {x: [] for x in ("A2", "A3", "B1", "B12")}
+    Ls = [red_run_length(d["red_pine"][k], d["c"][k]) for k in range(U_)]
+    cnt = defaultdict(int)
     for k in range(U_):
-        for kind in ("A2", "A3", "B1", "B12"):
+        L = Ls[k]
+        for t in range(T_LO, T_HI + 1):
+            if L[t] == 1 and passes_filter_chg(d["c"][k], d["pc"][k], t, -1e9):
+                cnt["segments"] += 1
+                fl = _seg_final_len(L, t)
+                for n_ in (2, 3, 5):
+                    cnt[f"reach_{n_}"] += fl >= n_
+    full = {x: [] for x in ("P2", "P3", "A2", "A3", "B1", "B12")}
+    for k in range(U_):
+        for kind in full:
             for t in evs[k][kind]:
                 tr = _open_trade(d, k, t)
                 if tr:
                     full[kind].append({"day": d["day"], **dict(zip(EXITS3, tr[:3]))})
-    for rule, ka, kb in (("P2", "A2", "B1"), ("P3", "A3", "B12")):
+    rows = []
+    p1 = {k: [t for t in range(T_LO, T_HI + 1) if Ls[k][t] == 1 and passes_filter_chg(d["c"][k], d["pc"][k], t, -1e9)]
+          for k in range(U_)}
+    for rule, ka, kb in (("P1", None, None), ("P2", "A2", "B1"), ("P3", "A3", "B12")):
         for k in range(U_):
             free = -1
-            for t in evs[k][rule]:
+            sig = p1[k] if rule == "P1" else evs[k][rule]
+            for t in sig:
                 if t < free:
+                    cnt[f"{rule}_refractory"] += 1
                     continue
                 tr = _open_trade(d, k, t)
                 if not tr:
+                    cnt[f"{rule}_nan_open"] += 1
                     continue
-                r = {"rule": rule, "day": d["day"], "sym": d["syms"][k], "t": t, **dict(zip(EXITS3, tr[:3])),
-                     "exit_bar": tr[3]}
+                c = d["c"][k]
+                L = Ls[k]
+                s0 = t - int(L[t]) + 1                    # first red bar of the run
+                P, _, _ = red_trigger_exact(px_or(c, s0 - 1), d["U_pine"][k][s0 - 1], d["D_pine"][k][s0 - 1],
+                                            d["m4_pine"][k][s0 - 1], d["m199_pine"][k][s0 - 1])
+                r = {"rule": rule, "day": d["day"], "sym": d["syms"][k], "t": t, "ent_bar": t + 1,
+                     **dict(zip(EXITS3, tr[:3])), "exit_bar": tr[3],
+                     "dist_first_bar": (P / c[s0 - 1] - 1) if np.isfinite(P) and np.isfinite(c[s0 - 1]) else np.nan,
+                     "rsi_entry": float(d["rsi_pine"][k][t]), "hindsight_len": _seg_final_len(L, t)}
                 free = max(tr[3] + 1, t + 15)
-                others = sorted((j for j in range(U_) if j != k), key=lambda j: hkey("persist-peer", d["day"], d["syms"][j], t))
+                others = sorted((j for j in range(U_) if j != k),
+                                key=lambda j: hkey("persist-peer", d["day"], d["syms"][j], t))
                 peers = [j for j in others if passes_filter_chg(d["c"][j], d["pc"][j], t, -1e9)][:5]
-                ma = [j for j in others if t in evs[j][ka]][:5]
-                mb = [j for j in others if t in evs[j][kb]][:5]
-                for tag, js in (("peer", peers), ("a", ma), ("b", mb)):
-                    vals = [_open_trade(d, j, t) for j in js]
-                    vals = [v for v in vals if v]
+                r["peer_red_share"] = float(np.mean([bool(d["red_pine"][j][t]) for j in peers])) if peers else np.nan
+                groups = [("peer", peers)]
+                if ka:
+                    groups += [("a", [j for j in others if t in evs[j][ka]][:5]),
+                               ("b", [j for j in others if t in evs[j][kb]][:5])]
+                for tag, js in groups:
+                    vals = [v for v in (_open_trade(d, j, t) for j in js) if v]
                     r[f"n_{tag}"] = len(vals)
                     for i, ex in enumerate(EXITS3):
                         xs = [v[i] for v in vals if np.isfinite(v[i])]
                         m = float(np.mean(xs)) if xs else np.nan
                         r[f"{tag}_{ex}"] = m
-                        r[f"lift_{tag}_{ex}" if tag != "peer" else f"lift_{ex}"] = r[ex] - m if xs and np.isfinite(r[ex]) else np.nan
-                # unconditional: a random filtered name-minute, same entry type and exits
+                        r[f"lift_{ex}" if tag == "peer" else f"lift_{tag}_{ex}"] = r[ex] - m if xs and np.isfinite(r[ex]) else np.nan
                 rng = np.random.default_rng(hkey("persist-unc", d["day"], r["sym"], t, rule) % 2 ** 32)
-                r["unc_ratchet"] = np.nan
+                for ex in EXITS3:
+                    r[f"unc_{ex}"] = np.nan
                 for _ in range(20):
                     j, tt = int(rng.integers(0, U_)), int(rng.integers(T_LO, T_HI + 1))
                     if passes_filter_chg(d["c"][j], d["pc"][j], tt, -1e9):
                         v = _open_trade(d, j, tt)
-                        r["unc_ratchet"] = v[2] if v else np.nan
+                        if v:
+                            for i, ex in enumerate(EXITS3):
+                                r[f"unc_{ex}"] = v[i]
                         break
-                # same-name later: entry in exit+2 .. exit+62, the same exit rule
-                x0 = tr[3] + 2 + hkey("persist-later", d["day"], r["sym"], t) % 61
-                v = _open_trade(d, k, x0 - 1) if x0 <= T_HI else None
-                r["later_ratchet"] = v[2] if v else np.nan
+                x0 = tr[3] + 2 + hkey("persist-later", d["day"], r["sym"], t) % 61       # entry bar of the later trade
+                r["later_entry_bar"] = x0
+                v = _open_trade(d, k, x0 - 1) if x0 <= T_HI + 1 else None
+                r["later_lost"] = v is None
+                for i, ex in enumerate(EXITS3):
+                    r[f"later_{ex}"] = v[i] if v else np.nan
+                    r[f"lift_later_{ex}"] = r[ex] - v[i] if v and np.isfinite(v[i]) and np.isfinite(r[ex]) else np.nan
                 rows.append(r)
-    return rows, full
+    return rows, full, dict(cnt)
 
 
 def persist_counts(path):
@@ -625,48 +665,90 @@ def _paired_day_t(rows_a, key_a, rows_b, key_b):
 
 
 def persist_screen():
-    """rsi2_red_persistence step 1 on SEARCH only (CONFIRM sealed: counts only). Gate per amended_1 #5 + amended_2."""
+    """rsi2_red_persistence step 1 on SEARCH only (CONFIRM sealed: counts only). Counts print first, then outcomes.
+    Gate per amended_1 #5 + amended_2."""
     from multiprocessing import Pool
     sp = [str(p) for p in sorted(CACHE.glob("*.npz")) if SEARCH[0] <= p.stem <= SEARCH[1]]
     cp = [str(p) for p in sorted(CACHE.glob("*.npz")) if CONFIRM[0] <= p.stem <= CONFIRM[1]
           and p.stem not in ("2026-11-17", "2026-11-18")]
-    rows, full = [], {x: [] for x in ("A2", "A3", "B1", "B12")}
+    rows, full = [], {x: [] for x in ("P2", "P3", "A2", "A3", "B1", "B12")}
+    cnt = {"h1": defaultdict(int), "h2": defaultdict(int)}
     with Pool(int(os.environ.get("RED_WORKERS", "6"))) as pool:
-        for rr, ff in pool.imap(persist_day, sp):
+        for pth, (rr, ff, cc) in zip(sp, pool.imap(persist_day, sp)):
             rows += rr
             for kk, v in ff.items():
                 full[kk] += v
+            for kk, v in cc.items():
+                cnt["h1" if Path(pth).stem < SPLIT else "h2"][kk] += v
         ccount = defaultdict(int)
         for n in pool.imap(persist_counts, cp):
             for kk, v in n.items():
                 ccount[kk] += v
-    out = {"prereg": PERSIST_PREREG, "CONFIRM_counts (sealed, no outcomes)": dict(ccount)}
+    counts = {"SEARCH_h1": dict(cnt["h1"]), "SEARCH_h2": dict(cnt["h2"]),
+              "signals": {rule: {h: sum(1 for r in x if r["rule"] == rule) for h, x in zip(("h1", "h2"), halves(rows))}
+                          for rule in ("P1", "P2", "P3")},
+              "nan_exits": {rule: {ex: sum(1 for r in rows if r["rule"] == rule and not np.isfinite(r[ex])) for ex in EXITS3}
+                            for rule in ("P1", "P2", "P3")},
+              "CONFIRM_counts (sealed, no outcomes)": dict(ccount)}
+    print("COUNTS", json.dumps(counts, default=str), flush=True)
+    out = {"prereg": PERSIST_PREREG, "counts": counts,
+           "notes": {"full_sample": "all P2/P3 events (no refractory) vs all (a)/(b) events, paired by day",
+                     "peers": "peers may themselves be red at t; peer_red_share printed",
+                     "hindsight": "lift by the run length reached AFTER entry is HINDSIGHT - never promotable"}}
     gate_any = False
-    for rule, ka, kb in (("P2", "A2", "B1"), ("P3", "A3", "B12")):
+    for rule, ka, kb in (("P2", "A2", "B1"), ("P3", "A3", "B12"), ("P1", None, None)):
         rr = [r for r in rows if r["rule"] == rule]
         a, b = halves(rr)
         rep_ = {"n": len(rr), "n_h1": len(a), "n_h2": len(b), "no_peer": sum(1 for r in rr if r["n_peer"] == 0),
-                "match_rate_a": r2(float(np.mean([r["n_a"] > 0 for r in rr]))) if rr else None,
-                "match_rate_b": r2(float(np.mean([r["n_b"] > 0 for r in rr]))) if rr else None}
+                "peer_red_share": r2(mean(rr, "peer_red_share"))}
+        if ka:
+            rep_["match_rate_a"] = r2(float(np.mean([r["n_a"] > 0 for r in rr]))) if rr else None
+            rep_["match_rate_b"] = r2(float(np.mean([r["n_b"] > 0 for r in rr]))) if rr else None
         for ex in EXITS3:
             st = _stat(rr, ex)
             st["gross_pooled"] = r2(mean(rr, ex))
             st["lift_pooled"] = r2(mean([r for r in rr if np.isfinite(r.get(f"lift_{ex}", np.nan))], f"lift_{ex}"))
-            st["vs_a_exact"] = {"lift": r2(mean(rr, f"lift_a_{ex}")), "t": r2(day_t(rr, f"lift_a_{ex}"))}
-            st["vs_b_exact"] = {"lift": r2(mean(rr, f"lift_b_{ex}")), "t": r2(day_t(rr, f"lift_b_{ex}"))}
-            st["vs_a_full_sample"] = _paired_day_t(rr, ex, full[ka], ex)
-            st["vs_b_full_sample"] = _paired_day_t(rr, ex, full[kb], ex)
-            gbar = 3.0 if ex == "fix5" else 5.0
-            ok = (_gate_one(st) == "PASS" and (st["lift_pooled"] or -1) >= 3.0 and (st["gross_pooled"] or -1) >= gbar)
-            st["step1_gate"] = "PASS" if ok else ("UNDERPOWERED" if _gate_one(st) == "UNDERPOWERED" else "FAIL")
-            gate_any |= ok
+            st["peer_mean"], st["unconditional_mean"] = r2(mean(rr, f"peer_{ex}")), r2(mean(rr, f"unc_{ex}"))
+            pu = _paired_day_t(rr, f"peer_{ex}", rr, f"unc_{ex}")
+            st["peer_vs_unconditional_day"] = pu
+            st["mismatch_block"] = bool(pu["diff"] is not None and pu["t"] is not None and abs(pu["diff"]) > 3 and abs(pu["t"]) > 2)
+            lat = [r for r in rr if np.isfinite(r.get(f"lift_later_{ex}", np.nan))]
+            la, lb = halves(lat)
+            st["same_name_later"] = {"n": len(lat), "lost_to_session_end": sum(1 for r in rr if r["later_lost"]),
+                                     "later_mean": r2(mean(rr, f"later_{ex}")),
+                                     "lift_h1": r2(mean(la, f"lift_later_{ex}")), "lift_h2": r2(mean(lb, f"lift_later_{ex}")),
+                                     "t": r2(day_t(lat, f"lift_later_{ex}")),
+                                     "same_sign_as_primary": None}
+            if ka:
+                for tag in ("a", "b"):
+                    xa, xb = halves([r for r in rr if np.isfinite(r.get(f"lift_{tag}_{ex}", np.nan))])
+                    st[f"vs_{tag}_exact"] = {"lift_h1": r2(mean(xa, f"lift_{tag}_{ex}")), "lift_h2": r2(mean(xb, f"lift_{tag}_{ex}")),
+                                             "t": r2(day_t(xa + xb, f"lift_{tag}_{ex}"))}
+                st["vs_a_full_sample"] = _paired_day_t(full[rule], ex, full[ka], ex)
+                st["vs_b_full_sample"] = _paired_day_t(full[rule], ex, full[kb], ex)
+            if st["lift_pooled"] is not None and st["same_name_later"]["t"] is not None:
+                lm = mean(lat, f"lift_later_{ex}")
+                st["same_name_later"]["same_sign_as_primary"] = bool(lm is not None and (lm > 0) == (st["lift_pooled"] > 0))
+            if rule != "P1":
+                gbar = 3.0 if ex == "fix5" else 5.0
+                g1 = _gate_one(st)
+                ok = g1 == "PASS" and (st["lift_pooled"] or -1) >= 3.0 and (st["gross_pooled"] or -1) >= gbar
+                st["step1_gate"] = "PASS" if ok else ("UNDERPOWERED" if g1 == "UNDERPOWERED" else "FAIL")
+                gate_any |= ok
             rep_[ex] = st
-        pm = mean(rr, "peer_ratchet")
-        um = mean(rr, "unc_ratchet")
-        rep_["peer_mean_ratchet"], rep_["unconditional_mean_ratchet"] = r2(pm), r2(um)
-        rep_["peer_vs_unconditional_day"] = _paired_day_t(rr, "peer_ratchet", rr, "unc_ratchet")
-        rep_["same_name_later_mean_ratchet"] = r2(mean(rr, "later_ratchet"))
-        rep_["opening_0945_1030 (information)"] = _stat([r for r in rr if r["t"] <= 60], "ratchet")
+        if rule != "P1":
+            rep_["opening_0945_1030 (information)"] = _stat([r for r in rr if r["t"] <= 60], "ratchet")
+            rep_["by_rsi_at_entry (information, ratchet lift)"] = {
+                nm: r2(mean([r for r in rr if f(r["rsi_entry"])], "lift_ratchet"))
+                for nm, f in (("90-95", lambda v: v <= 95), ("95-99", lambda v: 95 < v <= 99), (">99", lambda v: v > 99))}
+            rep_["by_first_bar_distance (information, ratchet lift)"] = {
+                nm: r2(mean([r for r in rr if np.isfinite(r["dist_first_bar"]) and f(r["dist_first_bar"])], "lift_ratchet"))
+                for nm, f in (("<5bp", lambda v: v < 5e-4), ("5-20bp", lambda v: 5e-4 <= v < 2e-3), (">=20bp", lambda v: v >= 2e-3))}
+            rep_["HINDSIGHT by final run length (never promotable)"] = {
+                nm: r2(mean([r for r in rr if f(r["hindsight_len"])], "lift_ratchet"))
+                for nm, f in (("ends at entry bar", lambda v: v == (2 if rule == "P2" else 3)),
+                              ("+1-2 more", lambda v: (2 if rule == "P2" else 3) < v <= (4 if rule == "P2" else 5)),
+                              ("longer", lambda v: v > (4 if rule == "P2" else 5)))}
         out[rule] = rep_
     out["STEP2_GATE"] = ("PASS - step 2 (live-exit replay, CONFIRM unsealed) after Neon and the operator" if gate_any
                          else "STOP - no rule/exit passes the step-1 gate on SEARCH")

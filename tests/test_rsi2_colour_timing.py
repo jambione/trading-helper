@@ -294,3 +294,26 @@ def test_persist_events_kinds():
     ev = r.persist_events(d, 0)
     assert ev["P2"] == [21] and ev["P3"] == [] and 41 in ev["B1"] and 22 in ev["B12"] and 22 not in ev["B1"]
     assert ev["A2"] == [61] and ev["A3"] == [62]
+
+
+def test_persist_day_entries_refractory_controls(tmp_path):
+    import rsi2_colour_timing as r
+    d = _fake_day(4)
+    for i in range(4):
+        d["red_pine"][i][:] = False
+    d["red_pine"][0][30:32] = True           # P2 at t=31
+    d["red_pine"][0][33:35] = True           # P2 at t=34: inside the refractory (>= 15 bars) -> skipped
+    arrays = {k: np.array(v) for k, v in d.items() if k not in ("day", "syms")}
+    path = tmp_path / "2026-05-01.npz"
+    np.savez(path, syms=np.array(d["syms"]), **arrays)
+    rows, full, cnt = r.persist_day(str(path))
+    p2 = [x for x in rows if x["rule"] == "P2"]
+    assert [x["t"] for x in p2] == [31] and p2[0]["ent_bar"] == 32 and p2[0]["sym"] == "S0"
+    assert cnt.get("P2_refractory", 0) == 1
+    x = p2[0]
+    assert x["exit_bar"] + 2 <= x["later_entry_bar"] <= x["exit_bar"] + 62
+    assert x["n_peer"] <= 3                                   # peers exclude S0
+    for key in ("fix5", "fix15", "ratchet", "lift_ratchet", "unc_fix5", "unc_ratchet", "later_fix15", "lift_later_ratchet",
+                "n_a", "n_b", "lift_a_fix5", "lift_b_ratchet", "peer_red_share", "rsi_entry", "dist_first_bar", "hindsight_len"):
+        assert key in x
+    assert len(full["P2"]) == 2                                # full sample keeps both P2 events (no refractory)
