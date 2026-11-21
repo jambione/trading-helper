@@ -43,5 +43,18 @@
  "if_fail": "record it; red length is visible in hindsight but buying after 2-3 red bars does not beat the same minute on other names",
  "review gate": "result-skeptic, then Neon (via the operator), before any code runs on outcomes; nothing runs without the operator's go",
  "script": "tools/studies/rsi2_colour_timing.py (new command, reusing the parent's cache, peers, exits and controls)",
- "status": "DRAFT; skeptic review next"
+ "status": "amended_1 after skeptic round 1; Neon review next, then the operator's go",
+ "amended_1": {
+  "when": "2026-11-20 ~19:30 ET, after result-skeptic round 1 (FIX FIRST: 5 + 5 minor); no code, no outcome",
+  "1 family bar": "step-2 EDGE needs pooled day-clustered t >= 2.5 (the parent's RSI-2 family bar, amended_1 M4), not 2.24",
+  "2 control mismatch blocks": "a peer-vs-unconditional gap > 3 bp or |t| > 2 BLOCKS the verdict (TEST_STANDARD; parent m1). Step 1 of the parent already showed peers 1.2 bp above unconditional (t 5.1) - stated in advance",
+  "3 same-name control": "same name-day, entry at a random minute in exit+2 .. exit+62, held the same length with the same exit type; its mean printed beside the unconditional mean and it must point the same way as the primary lift",
+  "4 is it red or just a 2-bar push": "two controls printed beside the verdict: (a) same-minute names with RSI-2 > 90 on both t-1 and t but NOT Pine-red (an up-push without the red state), (b) same-minute names whose red ended after 1 bar (red at t-1, not at t), buying the same open. The write-up may say 'red length matters' ONLY if P2 beats (b) at t >= 2.0, and 'the red state matters' only if it beats (a) at t >= 2.0",
+  "5 step-1 gate tightened": "in addition to amended text: the passing exit must also show pooled SEARCH lift >= +3 bp and pooled gross >= +5 bp, and CONFIRM lift >= 0 with its MDE printed. Step 2 adds a CONFIRM bar of its own: lift > 0 and day-clustered t >= 1.0 in CONFIRM",
+  "6 consecutive": "'consecutive' = adjacent minutes that BOTH have a bar; a minute with no bar breaks the segment (no carried state for the count); unit test",
+  "7 example reproduction (written now)": "segment starts (first red bar, SIP) and where P2/P3 must fire: IQV 11/17 10:06 (2 bars) -> P2 signal 10:07, entry open 10:08; ENTG 11/17 15:21 (2) -> P2 15:22, entry 15:23; CGON 11/18 10:07 (2) -> P2 10:08, entry 10:09; HOOD 11/18 10:55 (3) -> P2 10:56 / P3 10:57, entries 10:57 / 10:58; RVMD 11/18 09:55 (4) -> P2 09:56 / P3 09:57, entries 09:57 / 09:58; ON 11/17 10:56 (7) -> P2 10:57 / P3 10:58. Never on the 1-bar reds CRWD 11/17 12:17, CRCL 11/18 15:27, ADP 11/18 09:50, BNY 11/18 10:57, nor on the bars that never closed red (ON 11:15, MDB 12:12, GD 10:06, PODD 11:52, RRX 12:32 on 11/17; TMUS 10:49, CRS 10:56 on 11/18). These two days are excluded from scoring; the check is code-only",
+  "8 hindsight line": "'lift by segment length reached after entry' is labelled HINDSIGHT and can never be promoted",
+  "9 counts and CONFIRM cap": "P2/P3 counts for SEARCH halves and CONFIRM printed before any outcome; step 2 caps 1,500 per rule per SEARCH half and 1,500 per rule in CONFIRM",
+  "10 clean test": "SEARCH is partly seen (the parent's RED_START 15-bar windows cover P2/P3 minutes); CONFIRM (2026-09-24..11-18 minus 11/17-18) is the clean test"
+ }
 }
