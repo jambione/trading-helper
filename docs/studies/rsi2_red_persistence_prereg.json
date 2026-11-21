@@ -1,0 +1,47 @@
+{
+ "name": "rsi2_red_persistence",
+ "written": "2026-11-20 ~19:15 ET, before any script or outcome for this question",
+ "operator": "11/20, after rsi2_colour_timing step 1 (red start = same-minute peers): 'Did you take into consideration the length of the red line' -> 'that would make a difference - look through the rest of your examples' -> 'yes' (pre-register red persistence)",
+ "question": "Once an RSI-2 red segment (the operator's Pine rule) has already lasted 2 (or 3) consecutive closed bars - which is known live - does buying then catch more run than other names at the same minute, with the desk's exit?",
+ "what was seen before writing this (disclosed)": [
+  "rsi2_colour_timing step 1 (2026-04-28..09-23): red START (mid-bar and bar-close) = same-minute peers on 5/15-bar and approximate-ratchet exits, MDE 1-2 bp; segment length was not measured",
+  "16 hand-drawn examples on 2026-11-17/18 (docs/studies/RSI2_RED_EXAMPLES_2026-11-20.txt and the chat): of 9 that closed red, 1-bar reds averaged -11 bp at 15 minutes from the first red bar and 2+-bar reds +76 bp - measured FROM THE FIRST BAR, which is circular (a long red means price kept rising); 7 of 16 never closed red",
+  "ON 2026-11-17: a 7-bar red 10:56-11:02 at the start of a 66.5 -> 67.8 rally"
+ ],
+ "red (unchanged from rsi2_colour_timing amended_3)": "Pine rule on SIP 1-minute bars including extended hours: RSI-2 > 90, close > SMA5, close < SMA200 (Pine rma seeding; state carries over missing minutes)",
+ "rules (2 scored)": {
+  "P2": "completed bars t-1 and t are both red and bar t-2 is not (the CLOSE of the 2nd red bar of a segment); buy the OPEN of t+1",
+  "P3": "completed bars t-2, t-1, t red and t-3 not (close of the 3rd red bar); buy the OPEN of t+1",
+  "information": "P1 (the 1st red bar, = RED_START) on the same days for reference; the share of red segments reaching 2 / 3 / 5 bars"
+ },
+ "names and window": "the ~400 top names by prior-day dollar volume (ETFs excluded), price $20-$400 at the signal bar, NO day-change filter (amended_8 of the parent: the operator's examples are down days); signal bar 09:45-15:30 ET; one entry per rule per name until its trade exits and >= 15 bars apart",
+ "data": "the parent's cache (ai_reports/rsi2_colour/cache, built at amended_8): SEARCH 2026-04-28..09-23 halves split at 2026-07-11; CONFIRM 2026-09-24..2026-11-18 EXCLUDING 2026-11-17 and 11-18 (the days the examples came from)",
+ "step 1 (bar-level, no API)": {
+  "exits": "close of the 5th and 15th bar counting the entry bar, and the parent's APPROXIMATE desk ratchet (stop -0.6%, breakeven at +0.15%, trail running high -0.6%, entries at the open watched from their own bar)",
+  "controls": "same-minute peers (up to 5 filtered names, hash-ordered) buying the same open with the same exits (primary lift); an unconditional random filtered name-minute with the same exits, printed with a Welch t",
+  "gate to step 2": "P2 or P3 passes on ANY ONE of the three exits: lift > 0 in both SEARCH halves AND in CONFIRM, pooled SEARCH day-clustered t >= 1.0, each half's MDE (2.8 x SE) <= 10 bp; MDE above 10 = UNDERPOWERED (no step 2). DISCLOSED: a screening gate with several looks; the verdict is step 2's"
+ },
+ "step 2 (verdict, only if the gate passes)": {
+  "exit": "the desk's LIVE exit stack replayed second by second on SIP prints (tools/studies/exit_capture.py / leash_replay.walk), live config, flat 15:50",
+  "sample": "up to 1,500 signals per rule per half by hash order; same-minute peers run the same exit code from the same minute",
+  "EDGE": "lift > 0 in both SEARCH halves and in CONFIRM; pooled day-clustered t >= 2.24 (two-sided 5%, Bonferroni over 2 rules)",
+  "PROFITABLE": "mean net >= +2 bp in both halves after the real SIP spread (half at entry + half at exit, 60 s median quote); > 0 at 1.5 x spread",
+  "controls": "peer and unconditional means printed; a peer-vs-unconditional gap > 3 bp or |t| > 2 is reported beside the verdict"
+ },
+ "reported (information)": [
+  "lift by segment length reached AFTER entry (is the run in the remaining bars?) - descriptive only",
+  "opening hour 09:45-10:30 vs rest of day",
+  "trigger distance at the 1st red bar; RSI level at entry"
+ ],
+ "checks": [
+  "unit tests: P2 fires only on the 2nd red bar of a segment, P3 only on the 3rd; entry at open[t+1]; nothing after close[t] used for the signal",
+  "the parent's 16 examples reproduce: P2 fires at the 2nd red bar on IQV/ENTG/CGON/HOOD/RVMD and never on the 1-bar reds or the flickers",
+  "counts printed per half: segments, P2/P3 signals, no-peer drops, NaN exits"
+ ],
+ "fail": "anything short of the step-2 pass. No retuning of 2/3 bars, the exits, the peer window or the window; a change is a new prereg on seen data",
+ "if_pass": "result-skeptic + Neon review; then a shadow (no-orders) log on live sessions with IEX bars before any desk use (live parity of the RSI warm-up)",
+ "if_fail": "record it; red length is visible in hindsight but buying after 2-3 red bars does not beat the same minute on other names",
+ "review gate": "result-skeptic, then Neon (via the operator), before any code runs on outcomes; nothing runs without the operator's go",
+ "script": "tools/studies/rsi2_colour_timing.py (new command, reusing the parent's cache, peers, exits and controls)",
+ "status": "DRAFT; skeptic review next"
+}
