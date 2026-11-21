@@ -218,5 +218,67 @@ def run():
     print("DONE", len(cache["events"]), flush=True)
 
 
+def s1(summ: dict) -> bool | None:
+    """multisource_stack S1: bull_share >= 0.70 with >= 5 tagged among the latest 30. None if not computable. Pure."""
+    if summ is None or summ.get("tagged") is None:
+        return None
+    return bool(summ["tagged"] >= 5 and (summ.get("bull_share") or 0) >= 0.70)
+
+
+def live_pairs(days_from="2026-11-20"):
+    """Unique (sym, at) live sentiment readings from the stack logger with their summaries. Pure on the logs."""
+    import gzip
+    seen, out = set(), []
+    for f in sorted((ROOT / "ai_reports" / "stack_log").glob("2026-*.jsonl.gz")):
+        if f.name[:10] < days_from:
+            continue
+        for line in gzip.open(f, "rt"):
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            for sym, v in ((r.get("sentiment") or {}).items() if isinstance(r.get("sentiment"), dict) else []):
+                if not isinstance(v, dict) or "at" not in v:
+                    continue
+                key = (sym, round(float(v["at"]), 1))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"sym": sym, "at": float(v["at"]), "live": {k: v.get(k) for k in ("n", "tagged", "bull", "bear", "bull_share")}})
+    return out
+
+
+def validate(n_max: int = 150):
+    """multisource_stack amended_1 #3: rebuild each sampled live reading with the backfill method (messages strictly
+    before the live time) and compare. Pass = S1 agrees >= 90%. -> OUT/validation.json. Logger-idle hours only."""
+    import hashlib
+    OUT.mkdir(parents=True, exist_ok=True)
+    pairs = live_pairs()
+    pairs.sort(key=lambda p: hashlib.sha256(f"sentval|{p['sym']}|{p['at']}".encode()).hexdigest())
+    pairs = pairs[:n_max]
+    cache = json.loads((OUT / "cache.json").read_text()) if (OUT / "cache.json").exists() else {"calib": []}
+    cal = Calib(cache.get("calib", []))
+    vp = OUT / "validation.json"
+    done = json.loads(vp.read_text()).get("rows", []) if vp.exists() else []
+    have = {(r["sym"], r["at"]) for r in done}
+    for p in pairs:
+        if (p["sym"], p["at"]) in have:
+            continue
+        msgs, req, valid = fetch_event(cal, p["at"] + 1, p["sym"])     # +1 s: the live call saw messages up to its own time
+        rec = parse_stream({"messages": msgs}, p["at"])
+        done.append({**p, "rebuilt": {k: rec.get(k) for k in ("n", "tagged", "bull", "bear", "bull_share")}, "valid": valid})
+        vp.write_text(json.dumps({"rows": done}))
+    both = [r for r in done if s1(r["live"]) is not None and s1(r["rebuilt"]) is not None and r["valid"]]
+    agree = sum(1 for r in both if s1(r["live"]) == s1(r["rebuilt"]))
+    diffs = [abs((r["live"]["bull_share"] or 0) - (r["rebuilt"]["bull_share"] or 0)) for r in both
+             if r["live"]["bull_share"] is not None and r["rebuilt"]["bull_share"] is not None]
+    summary = {"pairs": len(done), "comparable": len(both), "s1_agreement": round(agree / len(both), 3) if both else None,
+               "median_abs_bull_share_diff": round(float(sorted(diffs)[len(diffs) // 2]), 3) if diffs else None,
+               "verdict": ("PASS (>= 90%)" if both and agree / len(both) >= 0.90 else "FAIL (< 90%)") if len(both) >= 50
+               else "TOO FEW (< 50 comparable)"}
+    vp.write_text(json.dumps({"rows": done, "summary": summary}, indent=1))
+    print(json.dumps(summary), flush=True)
+
+
 if __name__ == "__main__":
-    {"run": run}[sys.argv[1]]()
+    {"run": run, "validate": validate}[sys.argv[1]]()

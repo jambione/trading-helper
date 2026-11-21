@@ -29,3 +29,11 @@ def test_fetch_event_drops_messages_at_or_after_t(monkeypatch):
     assert valid
     assert len(msgs) == 30 and all(int(m["id"]) < 1_500_000 for m in msgs)
     assert 1_500_000 - 60 <= max(int(m["id"]) for m in msgs) < 1_500_000   # the latest message strictly before T
+
+
+def test_s1_rule():
+    import sentiment_backfill as sb
+    assert sb.s1({"tagged": 5, "bull_share": 0.7}) is True
+    assert sb.s1({"tagged": 4, "bull_share": 1.0}) is False
+    assert sb.s1({"tagged": 10, "bull_share": 0.69}) is False
+    assert sb.s1({"tagged": None}) is None
