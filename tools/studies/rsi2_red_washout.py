@@ -197,8 +197,9 @@ def day_task(path, outcomes_on=True, ext_variant=True):
         return [], dict(cnt), day
     ef = ETH_OHLC / f"{day}.pkl"
     eth = pickle.load(open(ef, "rb")) if ef.exists() else None
-    if eth is None:
-        cnt["no_eth_file"] += 1
+    if eth is None and ext_variant:
+        cnt["no_eth_file_day_dropped"] += 1             # review fix 1: never mix prior-RTH %R into the primary
+        return [], dict(cnt), day
     pd_ = load_day(WH_SIP / f"{cal[cal.index(day) - 1]}.npz")
     U_ = len(d["syms"])
     gaps = [None] * U_
@@ -214,8 +215,14 @@ def day_task(path, outcomes_on=True, ext_variant=True):
         gaps[k] = [gap_to_low(d["l"][k], t) for t in range(390)]
         red = d["red_pine"][k]
         cnt["red_starts"] += int(sum(1 for t in range(R.T_LO, R.T_HI + 1) if red[t] and not red[t - 1] and np.isfinite(d["c"][k][t])))
+        last_ent = defaultdict(lambda: -10 ** 9)
         for sg in sigs_all[k]:
             cnt[f"{sg['rule']}_raw"] += 1
+            if sg["ent"] >= last_ent[sg["rule"]] + 15:
+                cnt[f"{sg['rule']}_spaced15"] += 1
+                last_ent[sg["rule"]] = sg["ent"]
+            if sg["rule"] == "A" and any(os_leave_flag(fast, slow, off + u) for u in range(sg["t"], min(sg["t"] + 3, 390))):
+                cnt["A_with_triangle_within_2"] += 1
             if sg["rule"] == "B1" and sg["ent"] <= 112:
                 cnt["B1_before_1122"] += 1
     rows = []
@@ -232,6 +239,9 @@ def day_task(path, outcomes_on=True, ext_variant=True):
                 continue
             vals, xb = outcomes(o, h, l, c, ent, e, sg["at_open"])
             free[rule] = max(xb + 1, ent + 15)
+            for ex_, v_ in zip(EX, vals):
+                if not np.isfinite(v_):
+                    cnt[f"{rule}_nan_{ex_}"] += 1
             r = {"rule": rule, "day": day, "sym": s, "t": t, "ent": ent, "gap": sg["gap"], "gap10": sg["gap10"],
                  "gap30": sg["gap30"], "dist": sg["dist"], **dict(zip(EX, vals)), "exit_bar": xb}
             kind = "open" if sg["at_open"] else "stop"
@@ -245,8 +255,12 @@ def day_task(path, outcomes_on=True, ext_variant=True):
                 r[f"peer_{ex}"] = m
                 r[f"lift_{ex}"] = r[ex] - m if np.isfinite(m) and np.isfinite(r[ex]) else np.nan
             if rule == "A":          # information control: fresh low (gap 1-2) but no red trigger, same-distance stop
+                def armed_red(jj):
+                    P_, b_, _ = R.red_trigger_exact(R.px_or(d["c"][jj], t - 1), d["U_pine"][jj][t - 1], d["D_pine"][jj][t - 1],
+                                                    d["m4_pine"][jj][t - 1], d["m199_pine"][jj][t - 1])
+                    return np.isfinite(P_) and b_ and P_ > d["c"][jj][t - 1] and not bool(d["red_pine"][jj][t - 1])
                 fl = [jj for jj in order if gaps[jj] is not None and gaps[jj][t] in (1, 2) and not bool(d["red_pine"][jj][t - 1])
-                      and R.passes_filter_chg(d["c"][jj], d["pc"][jj], t - 1, -1e9)][:5]
+                      and not armed_red(jj) and R.passes_filter_chg(d["c"][jj], d["pc"][jj], t - 1, -1e9)][:5]
                 fv = [peer_trade("stop", d, jj, t, ent, sg["dist"]) for jj in fl]
                 for i, ex in enumerate(EX):
                     m = _mean_of(fv, i)
@@ -256,7 +270,7 @@ def day_task(path, outcomes_on=True, ext_variant=True):
                 r[f"unc_{ex}"] = np.nan
             for _ in range(20):
                 jj, tt = int(rng.integers(0, U_)), int(rng.integers(R.T_LO, R.T_HI + 1))
-                if R.passes_filter_chg(d["c"][jj], d["pc"][jj], tt - 1, -1e9):
+                if R.passes_filter_chg(d["c"][jj], d["pc"][jj], tt if kind == "open" else tt - 1, -1e9):
                     v = peer_trade(kind, d, jj, tt, tt + (1 if kind == "open" else 0), sg["dist"])
                     if v:
                         for i, ex in enumerate(EX):
@@ -272,6 +286,10 @@ def day_task(path, outcomes_on=True, ext_variant=True):
 
 def _counts_only(path):
     return day_task(path, outcomes_on=False)
+
+
+def _prior_rth_variant(path):
+    return day_task(path, ext_variant=False)
 
 
 # ---------------------------------------------------------------- commands
@@ -338,11 +356,14 @@ def screen():
     any_pass = False
     for rule in ("A", "B1"):
         rr = [r for r in rows if r["rule"] == rule]
-        rep = {"n": len(rr), "no_peer": sum(1 for r in rr if r["n_peer"] == 0)}
+        ra, rb = R.halves(rr)
+        rep = {"n": len(rr), "no_peer_h1": sum(1 for r in ra if r["n_peer"] == 0), "no_peer_h2": sum(1 for r in rb if r["n_peer"] == 0)}
         for ex in EX:
             st = R._stat(rr, ex)
             st["gross_pooled"] = R.r2(R.mean(rr, ex))
             st["lift_pooled"] = R.r2(R.mean([r for r in rr if np.isfinite(r.get(f"lift_{ex}", np.nan))], f"lift_{ex}"))
+            dmv = list(R.day_means(rr, f"lift_{ex}").values())
+            st["lift_day_mean"] = R.r2(float(np.mean(dmv))) if dmv else None
             st["peer_mean"], st["unconditional_mean"] = R.r2(R.mean(rr, f"peer_{ex}")), R.r2(R.mean(rr, f"unc_{ex}"))
             pu = R._paired_day_t(rr, f"peer_{ex}", rr, f"unc_{ex}")
             st["peer_vs_unconditional_day"] = pu
@@ -366,6 +387,18 @@ def screen():
         f"{w}min_gap_{g}": {"n": len(x), "ratchet": R.r2(R.mean(x, "lift_ratchet")), "m3": R.r2(R.mean(x, "lift_m3"))}
         for w, key in ((15, "gap"), (10, "gap10"), (30, "gap30")) for g in (1, 2, 3, 4)
         for x in [[r for r in rs if r[key] == g]]}
+    with Pool(int(os.environ.get("RED_WORKERS", "6"))) as pool:     # information: prior-RTH-only %R warm-up variant
+        alt = []
+        for rr2, _, _ in pool.imap(_prior_rth_variant, sp):
+            alt += rr2
+    out["information: prior-RTH %R variant (B1)"] = {ex: {"n": len(x), "lift_h1": R.r2(R.mean(R.halves(x)[0], f"lift_{ex}")),
+                                                          "lift_h2": R.r2(R.mean(R.halves(x)[1], f"lift_{ex}")), "t": R.r2(R.day_t(x, f"lift_{ex}"))}
+                                                     for ex in EX for x in [[r for r in alt if r["rule"] == "B1"]]}
+    red_starts = sum(cnt[h].get("red_starts", 0) for h in ("h1", "h2"))
+    out["counts"]["A_fills_per_red_start (different denominators: fills vs closed red starts)"] = R.r2(
+        sum(cnt[h].get("A_raw", 0) for h in ("h1", "h2")) / max(red_starts, 1))
+    out["notes"] = {"same_name_later": "buys at the open even for A's stop entries (information)",
+                    "lift_pooled": "trade-level mean; lift_day_mean and t are day-clustered"}
     out["STEP2_GATE"] = "PASS - step 2 (live-exit replay, CONFIRM unsealed)" if any_pass else "STOP - neither rule passes the step-1 gate on SEARCH"
     R.OUT.mkdir(parents=True, exist_ok=True)
     (R.OUT / "washout_screen.json").write_text(json.dumps(out, indent=1, default=str))
