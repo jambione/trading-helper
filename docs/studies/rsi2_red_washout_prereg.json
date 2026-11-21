@@ -46,7 +46,7 @@
  "if_fail": "record it; red early off a washout low, with or without the oversold-exit triangle, does not beat the same minute",
  "review gate": "result-skeptic before code runs on outcomes (operator 11/20: Neon optional)",
  "script": "tools/studies/rsi2_red_washout.py (reusing rsi2_colour_timing's cache, trigger, ratchet, peers and controls; %R from early_entry_honest/opening_square helpers)",
- "status": "amended_1; ETH OHLC fetch + code + skeptic code review, then step 1",
+ "status": "STEP 1 SCORED 11/21: STOP - early red and triangle-confirmed red = same-minute peers (A slightly worse)",
  "amended_1": {
   "when": "2026-11-21, after result-skeptic round 1 (FIX FIRST: 10) and the code-only example check (signals, no outcomes); operator: 'go with your suggestion'",
   "example check (signals only)": "on SIP, red-to-low gaps: BE 11/17 10:55 = 2 (A fires), WDC 11/18 11:58 ~3, SHW 11/18 10:12 = 4 (low 10:08), losers BE 10:23 = 5, WDC 11:24 = 4. Bars-since-low alone cannot separate SHW (win) from WDC 11:24 (loss)",
@@ -62,5 +62,13 @@
   "9 seen data": "A is a subset of the parent's 163,626 RED_STOP fills (SEARCH, outcomes known only in aggregate); the parent's distance, wick and wick3 splits were reported as information (distance read; wick per-row values not read for this question). SEARCH pooled t >= 2.5 is INFORMATION in step 2; CONFIRM carries the verdict",
   "10 power": "counts per half printed before any outcome; CONFIRM needs >= 300 signals per rule and CONFIRM MDE <= 6 bp, else UNPROVEN (not FAIL); step-2 cap 1,500 per rule per SEARCH half and in CONFIRM",
   "family": "about 14 RSI-2 red variants scored 11/20-21 (colour_timing, persistence, htf, this); CONFIRM t >= 2.0 with 2 rules is the held-out bar"
+ },
+ "result_step1_2026-11-21": {
+  "gate": "STOP - neither rule passes the step-1 gate on SEARCH; no step 2; CONFIRM sealed, unused",
+  "A (red within 2 bars of the 15-minute low, mid-bar)": "35,087 trades: lift vs same-minute peers 1-min -1.35/-0.43 (t -3.5), 3-min -0.86/-0.48 (t -2.0), 5-min -1.26/-0.71 (t -2.2), ratchet -2.02/-0.27 (t -1.8); gross +0.3..+0.7 bp. Slightly WORSE than other names at the same minute, and -0.4..-1.8 bp vs reds that were not early (t -0.4..-1.9); vs fresh-low names without red ~0",
+  "B1 (red within 4 bars of the low + oversold-exit triangle within 2 bars, next open)": "35,815 trades: lift -0.56..+0.17 bp on every exit (t -0.07..-0.71), MDE 0.4-1.7 bp; gross -0.6..0.0 bp. The prior-RTH %R variant reads the same (t -0.3)",
+  "gap lines (information)": "the EARLIER the red is off the low, the WORSE: ratchet lift gap 1 -1.9, gap 2 -0.9, gap 3 -0.2, gap 4 +0.6 bp (same order on 10- and 30-minute lows) - the opposite of the hypothesis",
+  "counts": "SEARCH: 358k red starts; A fills 40k raw; B1 39k raw; ~41% of A get a triangle within 2 bars",
+  "output": "ai_reports/rsi2_colour/washout_screen.json (mini), commit 3294a5dc"
  }
 }
