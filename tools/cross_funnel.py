@@ -196,8 +196,9 @@ def was_seated_before(sym, t):
 
 # ── ledgers (live files; ledgers are also hard-linked into SNAP at 16:05)
 def lpath(name):
+    from smart_open import resolve
     p = f"{SNAP}/{name}.jsonl"
-    return p if os.path.exists(p) else f"{REPO}/ai_reports/{name}/{DAY}.jsonl"
+    return resolve(p) or resolve(f"{REPO}/ai_reports/{name}/{DAY}.jsonl") or p
 
 
 dec = collections.defaultdict(list)
@@ -214,7 +215,8 @@ for line in open(lpath("fills")):
     if r.get("event") == "fill" and r.get("side") == "buy":
         fills[r["symbol"].upper()].append(datetime.fromisoformat(r["filled_at"]).timestamp())
 adm = collections.defaultdict(list)
-for line in open(lpath("admit_ledger")):
+from smart_open import open_text  # noqa: E402
+for line in open_text(lpath("admit_ledger")):
     if '"symbol"' not in line:
         continue
     try:

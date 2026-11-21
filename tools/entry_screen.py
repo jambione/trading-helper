@@ -255,9 +255,10 @@ def main():
     if args.all_seen:
         for d in args.days:
             p = os.path.join(ROOT, "ai_reports", "admit_ledger", f"{d}.jsonl")
-            if not os.path.exists(p):
+            from smart_open import open_text, resolve
+            if resolve(p) is None:
                 continue
-            for line in open(p):
+            for line in open_text(p):
                 i = line.find('"symbol": "')
                 if i < 0:
                     continue

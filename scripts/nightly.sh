@@ -34,6 +34,7 @@ fi
 # .venv/bin/python tools/studies/replay_costing.py /tmp/tt_run/$d-*.json > /tmp/nightly/tt_costing-$d.txt 2>&1
 .venv/bin/python tools/studies/day_review.py $d > /tmp/nightly/day_review-$d.log 2>&1
 .venv/bin/python tools/desk_vs_spy.py --day $d > /tmp/nightly/desk_vs_spy-$d.log 2>&1   # name-minus-SPY scoreboard per trade and per day (operator 11/20)
+zsh scripts/compress_old_logs.sh > /tmp/nightly/compress_old_logs-$d.log 2>&1   # gzip ledger days + big tape logs older than 7 days (operator 11/21 storage)
 scripts/regression_check.sh > /tmp/nightly/regression-$d.log 2>&1   # new failing tests vs tests/known_failures.txt (operator 11/05)
 .venv/bin/python tools/hold_scorecard.py > /tmp/nightly/hold_scorecard-$d.log 2>&1   # did holding an at-entry trail sale pay? (operator 11/05)
 .venv/bin/python tools/entry_cost_daily.py > /tmp/nightly/entry_cost-$d.log 2>&1   # fill vs SIP mid per fill, never-green share (operator 11/06)

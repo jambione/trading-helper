@@ -37,6 +37,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)          # smart_open (compressed ledger days)
 ET = ZoneInfo("America/New_York")
 
 SIGNAL_WAIT = {"wait_mid_rise", "mid_rise_lost", "mid_rise_stale"}
@@ -78,9 +80,10 @@ def _day_bounds(day: str) -> tuple[float, float]:
 
 def _jsonl(path: str, t0: float, t1: float, kinds: set | None = None,
            prefilter: tuple = ()):
-    if not os.path.exists(path):
+    from smart_open import open_text, resolve
+    if resolve(path) is None:
         return
-    with open(path, errors="replace") as f:
+    with open_text(path) as f:
         for line in f:
             if prefilter and not any(p in line for p in prefilter):
                 continue

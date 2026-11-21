@@ -41,7 +41,8 @@ def main() -> int:
     args = ap.parse_args()
     day = str(args.day).strip()
     path = _ledger_path(day)
-    if not path.exists():
+    from smart_open import open_text, resolve
+    if resolve(path) is None:
         print(f"missing {path}")
         return 1
 
@@ -49,7 +50,7 @@ def main() -> int:
     reason_n: Counter[tuple[str, str]] = Counter()
     syms: set[str] = set()
     n = 0
-    for line in path.open(encoding="utf-8"):
+    for line in open_text(path):
         if not line.strip():
             continue
         try:
