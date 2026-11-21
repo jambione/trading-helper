@@ -1,0 +1,50 @@
+{
+ "name": "rsi2_red_washout",
+ "written": "2026-11-21, before any script or outcome for this question",
+ "operator": "11/21, comparing winning and losing reds on his charts (BE 11/17 10:23 vs 10:55, WDC 11/18 11:24 vs 11:58, SHW 11/18 10:12): 'Why are you buying at 10:24 when the RSI red is done. your late' ... red must be 'confident, but early' -> 'two bars would be OK' -> 'don't they all have a triangle signaling oversold exit' -> 'B1 sounds reasonable'",
+ "question": "Does RSI-2 red that starts EARLY off a fresh low (rule A), and red confirmed by %R leaving oversold (the indicator's triangle) within 2 bars (rule B1), beat other names at the same minute in the 3-5 minute window, with the desk's exit?",
+ "what was seen before writing this (disclosed)": [
+  "RSI-2 red alone (mid-bar, bar close, after 2/3 bars, 5/10-minute bars) = same-minute peers at 1-5 minutes and on the approximate ratchet (rsi2_colour_timing, rsi2_red_persistence, rsi2_red_htf; 1/2/3/5-minute read 11/21)",
+  "%R leaving oversold alone (os_leave, 10/15): FAIL (lift -4 / +1 bp)",
+  "the conditions here were chosen from ~10 hand-inspected charts on 2026-11-16/17/18 (operator's and mine); those days are excluded from scoring",
+  "SEARCH 2026-04-28..09-23 outcomes of red starts are known (~0); CONFIRM 2026-09-24..11-18 minus 11/16-18 is unopened for these rules"
+ ],
+ "definitions": {
+  "red": "the Pine rule on SIP 1-minute bars incl. extended hours (rsi2_colour_timing amended_3/8 cache: red_pine, exact trigger)",
+  "mid-bar red on bar t": "the parent RED_STOP entry: bar t-1 not red, P = exact red trigger (amended_7/8), P > close[t-1], P below the 200-bar mean; buy-stop fill at max(P, open[t]) + 1 tick when high[t] >= P + 1 tick",
+  "15-minute low": "the bar index of the lowest LOW among bars t-15 .. t-1 (completed bars only)",
+  "%R lines": "the desk's fast %R (21, EWM 7) and slow %R (112, EWM 3) on SIP 1-minute bars, warmed up on the prior session's last 112 RTH bars (study convention, as square_confirmation; the operator's chart uses extended hours - an IEX/ETH parity check is required before any live use)",
+  "triangle (oversold exit)": "early_entry_honest.os_leave_flag semantics: at bar u, some bar u-k (k = 1..3) was in the oversold triangle (both %R <= -80 and |fast - slow| <= 15), bar u is not, and fast %R is rising (> previous + 0.05); known at the CLOSE of u"
+ },
+ "rules (2 scored)": {
+  "A (early)": "a mid-bar red on bar t whose 15-minute low is at bar t-1 or t-2 (red within 2 bars of the low); entry = the mid-bar fill on bar t",
+  "B1 (confident)": "a red segment whose first red bar s qualified as A-early (15-minute low before s at s-1 or s-2), and a triangle at bar u with s <= u <= s+2; entry = the OPEN of u+1"
+ },
+ "names and window": "the parent universe (~400 by prior-day dollar volume, ETFs excluded), $20-$400 at the signal, no day filter; entries 09:45-15:30 ET; one entry per rule per name until its trade exits and >= 15 minutes apart",
+ "exits": "the parent's approximate desk ratchet on 1-minute bars (stop -0.6%, breakeven +0.15%, trail running high -0.6%; mid-bar fills watched from the next minute, open entries from their own minute); and holds to the close of the 1st / 3rd / 5th minute counting the entry minute (the operator's 3-5 minute window)",
+ "step 1 (SEARCH only; CONFIRM sealed - counts only)": {
+  "controls": "same-minute peers (up to 5 filtered names, hash-ordered) with the same entry type (same-distance buy-stop for A, the same open for B1) and the same exits = primary lift; unconditional random filtered name-minute and same-name-later (exit+2..exit+62, same exit rule) printed with day t on every exit; also, information: A and B1 against the parent's plain red starts on the same days (does the context add anything over red alone?)",
+  "gate to step 2": "a rule passes on ANY ONE of the ratchet, 3-minute or 5-minute exits: lift > 0 in both SEARCH halves, pooled day-clustered t >= 1.0, each half's MDE (2.8 x SE) <= 10 bp, pooled lift >= +3 bp, pooled gross >= +3 bp (3/5-minute) / +5 bp (ratchet). DISCLOSED: 2 rules x 3 exits = 6 looks at one screening gate",
+  "mismatch": "peer vs unconditional printed; blocks only if |gap| > 3 bp AND |day-clustered t| > 2"
+ },
+ "step 2 (verdict, only if the gate passes)": {
+  "exit": "the desk's LIVE exit replayed second by second on SIP prints (exit_capture / leash_replay.walk), live config, flat 15:50",
+  "EDGE": "lift > 0 in both SEARCH halves AND in CONFIRM with CONFIRM day-clustered t >= 2.0; SEARCH pooled t >= 2.5 as a secondary check; at most the 2 rules advance",
+  "PROFITABLE": "mean net >= +2 bp in both halves after the real SIP spread (15 bp entry gate), top-1% winsorized net > 0, > 0 at 1.5 x spread"
+ },
+ "reference examples (code check, signals only; days excluded from scoring)": {
+  "should fire A and B1": "BE 2026-11-17 red ~10:55 (low ~10:51-10:53, triangle ~10:56); WDC 2026-11-18 red 11:58 (low ~11:55-11:57, triangle ~12:00); SHW 2026-11-18 red 10:12 (low 10:08) - B1 only if a triangle prints by 10:14",
+  "should NOT fire A": "BE 2026-11-17 red 10:23 (15-minute low 10:18, 5 bars earlier); WDC 2026-11-18 red 11:24 (low 11:20, 4 bars earlier)",
+  "rule": "a miss is reported and checked against the bars before any score; expectations written from the operator's chart (indicative feed) may shift by a minute on SIP"
+ },
+ "checks": [
+  "unit tests: 15-minute low uses completed bars only; triangle matches os_leave_flag on hand-made %R paths; B1 entry is the open after the triangle bar; A entry is the mid-bar fill and uses no later minute",
+  "counts per half before outcomes: plain red starts, A, B1, share of reds that are A, share of A that get a triangle, no-peer drops, NaN exits; CONFIRM counts only"
+ ],
+ "fail": "anything short of the step-2 pass; no retuning of 2 bars, the 15-minute low, the triangle definition, the window, the exits; a change is a new prereg",
+ "if_pass": "result-skeptic; IEX + extended-hours %R parity on replayed days; shadow (no orders) on live sessions; then a default-off arm",
+ "if_fail": "record it; red early off a washout low, with or without the oversold-exit triangle, does not beat the same minute",
+ "review gate": "result-skeptic before code runs on outcomes (operator 11/20: Neon optional)",
+ "script": "tools/studies/rsi2_red_washout.py (reusing rsi2_colour_timing's cache, trigger, ratchet, peers and controls; %R from early_entry_honest/opening_square helpers)",
+ "status": "DRAFT; skeptic review next"
+}
