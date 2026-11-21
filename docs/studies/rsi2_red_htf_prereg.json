@@ -1,0 +1,48 @@
+{
+ "name": "rsi2_red_htf",
+ "written": "2026-11-20 ~21:00 ET, before any script or outcome for this question",
+ "operator": "11/20: 'Have we been looking at RSI reds with a different view, other than one minute, like five minutes or 10 minutes' -> (never tested: all RSI-2 red work used 1-minute bars) -> 'yes' (pre-register)",
+ "question": "Does the operator's RSI-2 red (Pine rule) computed on 5-minute or 10-minute bars mark entries that beat other names at the same minute, with the desk's exit - where the 1-minute version did not?",
+ "what was seen before writing this (disclosed)": [
+  "rsi2_colour_timing step 1: 1-minute red start (mid-bar and bar-close) = same-minute peers, 147-180k signals, MDE 1-2 bp, gross 0-1.6 bp",
+  "rsi2_red_persistence step 1: buying after 2/3 one-minute red bars = peers; length paid only in hindsight",
+  "no 5- or 10-minute RSI-2 colour has been computed on any data for any purpose",
+  "SEARCH (2026-04-28..09-23) 1-minute bars of these names were used by both studies; CONFIRM (2026-09-24..11-18, minus 11/17-18) is unopened by both"
+ ],
+ "bars": "5-minute and 10-minute bars aligned to the clock as TradingView does (04:00, 04:05 ... and 04:00, 04:10 ...), built from SIP 1-minute bars INCLUDING extended hours: the warehouse RTH bars and the parent's eth/ files (each day's file holds the prior 16:00-20:00 and that day's 04:00-09:29), chained over consecutive sessions so SMA200 has full history (5-min: 200 bars ~ 1.1 extended sessions; 10-min: ~2.1). A bucket's close = its last 1-minute close; a bucket with no 1-minute bar does not exist (no carried bar)",
+ "red": "the Pine rule on the HTF series: RSI-2 > 90 (Pine rma seeding), close > SMA5, close < SMA200 of HTF closes",
+ "rules (scored, each on 5-min and 10-min = 6 cells)": {
+  "S (mid-bar cross)": "at the start of HTF bar b (previous HTF bar not red), the exact trigger P (lowest cent with RSI-2 > 90 and close > the 5-bar mean incl. itself, below the 200-bar mean incl. itself; parent amended_7 arithmetic on HTF state) is known; a buy-stop at P during b fills at the first 1-minute bar inside b whose high >= P + 1 tick, at max(P, that minute's open) + 1 tick (parent M6)",
+  "C (bar close)": "HTF bar b closes red and b-1 did not: buy the open of the first 1-minute bar after b closes",
+  "P2 (2nd red bar)": "HTF bars b-1 and b both closed red, b-2 did not, adjacent buckets that both exist: buy the open of the first 1-minute bar after b closes"
+ },
+ "names and window": "the parent universe (~400 by prior-day dollar volume, ETFs excluded), $20-$400 at the signal, NO day filter; entries 09:45-15:30 ET; refractory per rule per name per timeframe: until the trade exits and >= 1 HTF bar later",
+ "exits": "the parent's APPROXIMATE desk ratchet on 1-minute bars (stop -0.6%, breakeven +0.15%, trail high -0.6%; mid-bar fills watched from the next minute, open entries from their own minute), and fixed holds of 1 and 3 HTF bars (5/15 minutes on 5-min, 10/30 on 10-min) to the close of the last 1-minute bar",
+ "step 1 (SEARCH only, CONFIRM sealed - counts only)": {
+  "controls": "same-minute peers (up to 5 filtered names, hash-ordered) with the same entry type (same-distance buy-stop at the same minute, or the same open) and the same exits = primary lift; unconditional random filtered name-minute and same-name-later (exit+2..exit+62 minutes, same exit rule) printed with day t on every exit",
+  "gate to step 2": "a cell passes on ANY ONE exit with: lift > 0 in both SEARCH halves, pooled day-clustered t >= 1.0, each half's MDE (2.8 x SE) <= 10 bp, pooled lift >= +3 bp, pooled gross >= +3 bp (shortest hold) / +5 bp (others). DISCLOSED: 6 cells x 3 exits = 18 looks at one screening gate; the verdict is step 2's",
+  "mismatch": "peer vs unconditional printed; blocks only if |gap| > 3 bp AND |day-clustered t| > 2 (parent rule after Neon)"
+ },
+ "step 2 (verdict, only if the gate passes; Neon + operator first)": {
+  "exit": "the desk's LIVE exit replayed second by second on SIP prints (exit_capture / leash_replay.walk), live config, flat 15:50",
+  "EDGE": "lift > 0 in both SEARCH halves and in CONFIRM (CONFIRM t >= 1.0); pooled SEARCH day-clustered t >= 2.5 (RSI-2 family bar)",
+  "PROFITABLE": "mean net >= +2 bp in both halves after the real SIP spread (15 bp entry gate), top-1% winsorized net > 0, > 0 at 1.5 x spread",
+  "sample": "up to 1,500 signals per cell per SEARCH half and 1,500 in CONFIRM"
+ },
+ "reported (information)": [
+  "the 1-minute result beside each HTF cell (same days)",
+  "counts per half before outcomes: HTF red segments, signals per rule, missing buckets, NaN exits; CONFIRM counts only",
+  "opening 09:45-10:30 vs rest; RSI at entry; trigger distance; HINDSIGHT final red length (never promotable)"
+ ],
+ "checks": [
+  "unit tests: clock-aligned buckets incl. extended hours and gaps; HTF close = last 1-minute close; Pine RSI/SMA on HTF closes equal a direct computation; S fills at the first 1-minute bar crossing P inside the HTF bar and uses no later minute; C and P2 enter the minute after the HTF close",
+  "chart sanity: print the 5-minute and 10-minute colours for INVH, ANT and SPCX on 2026-11-20 (operator screenshots exist on 1-minute; he may compare on his 5/10-minute chart) - information, no gate",
+  "the chained ETH series has no session missing (a missing eth/ file = that day's names dropped and counted)"
+ ],
+ "fail": "anything short of the step-2 pass; no retuning of 5/10 minutes, the rules, the exits or the peers; a change is a new prereg",
+ "if_pass": "result-skeptic + Neon; IEX rescore and live warm-up parity; shadow (no orders) on live sessions",
+ "if_fail": "record it; RSI-2 red is closed on 1-, 5- and 10-minute bars as a standalone entry",
+ "review gate": "result-skeptic, then Neon (via the operator), before code runs on outcomes; nothing runs without the operator's go",
+ "script": "tools/studies/rsi2_colour_timing.py (new htf commands reusing the parent's cache, eth/ files, peers, exits, controls)",
+ "status": "DRAFT; skeptic review next"
+}
