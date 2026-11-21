@@ -44,5 +44,17 @@
  "if_fail": "record it; RSI-2 red is closed on 1-, 5- and 10-minute bars as a standalone entry",
  "review gate": "result-skeptic, then Neon (via the operator), before code runs on outcomes; nothing runs without the operator's go",
  "script": "tools/studies/rsi2_colour_timing.py (new htf commands reusing the parent's cache, eth/ files, peers, exits, controls)",
- "status": "DRAFT; skeptic review next"
+ "status": "amended_1; HTF fetch + build next, then step 1 (no Neon, operator 11/20)",
+ "amended_1": {
+  "when": "2026-11-20 ~21:20 ET, after result-skeptic round 1 (FIX FIRST: 9); no code, no outcome. Operator: build and run without Neon",
+  "1 S peers": "each peer's buy-stop is armed at the START of HTF bar b at the same percent distance above the peer's own last close before b, valid for b's minutes only; it fills at its own first crossing and its exits run from its own fill. Fill rates of signals and peers printed. C and P2 peers buy the same open minute",
+  "2 S fixed holds": "1 and 3 HTF bars of minutes counted from the fill minute (close of fill + tf - 1 and fill + 3tf - 1); the same for peers and controls",
+  "3 when a bar is known": "an HTF bar is known closed at its CLOCK end (bucket 10:00-10:04 at 10:05) even if its last 1-minute bar is earlier; C and P2 buy the open of the first minute at or after the clock end; 'previous HTF bar' = the previous EXISTING bucket; S needs bucket b to START at or after 09:45; unit test for a bucket whose last minute is missing",
+  "4 warm-up history": "a new fetch: SIP 1-minute bars (all hours) for each day's names from 04:00 two sessions before through 09:29 of the day, so every name has its own chained extended-hours history (no splicing, no universe-dependence); names with a missing session in the chain are dropped and counted",
+  "5 parent fixes carried": "P > close[b-1] for S, arming only on a fresh cross (b-1 not red), the exact lowest-cent trigger (amended_7), and the ratchet fallback to the last finite close (amended_8)",
+  "6 refractory": "per rule per name per timeframe, until the approximate-ratchet exit and >= 1 HTF bar later; all three exits score the same signal set",
+  "7 step-2 selection": "at most 2 cells advance, in order of their step-1 gate t; each needs CONFIRM lift > 0 with t >= 2.0 (the out-of-sample test); SEARCH t >= 2.5 is a secondary check",
+  "8 step-2 power": "step-2 MDE per half printed before outcomes; a half above 10 bp = UNDERPOWERED",
+  "9 overlap and exclusions": "report the share of HTF signals with a 1-minute red start inside the same HTF bar; 11/17-18 are excluded from CONFIRM because the operator's 1-minute persistence examples were drawn from those days"
+ }
 }
