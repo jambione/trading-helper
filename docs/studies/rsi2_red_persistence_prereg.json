@@ -66,5 +66,9 @@
   "5 step-1 gross bar": "+3 bp pooled gross for fix5, +5 bp for fix15 and the ratchet (lift bar +3 bp unchanged)",
   "6 consecutive test": "unit tests cover a missing (NaN) minute at t-2, t-1 and t (red_pine carries state across gaps; the count must not)",
   "review": "script + tests + the example-reproduction printout go to Neon for a code check before step 1 runs"
+ },
+ "amended_3_example_fix": {
+  "when": "2026-11-20 ~20:05 ET, from the code-only example check (signals, no outcomes)",
+  "RVMD": "RVMD 2026-11-18 has no SIP bar at 09:57 (red_pine carries; amended_1 #6 says a missing minute breaks the run), so the expected P3 at 09:57 in amended_1 #7 was written under the carried count and is removed; P2 at 09:56 stands. All other 16 checks passed as written"
  }
 }
