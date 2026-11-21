@@ -241,15 +241,24 @@ func capturePass() -> ([String], String?) {
     let preflight = CGPreflightScreenCaptureAccess()
     if !preflight && !askedTCC { askedTCC = true; _ = CGRequestScreenCaptureAccess() }
     sckError = ""; cliError = ""
+    // 11/21: screencapture -l returned an all-black frame after the 27.2.1 update; ScreenCaptureKit first, and a black
+    // frame (mean brightness < 1) counts as a failed route so the next one is tried.
     var captured: CGImage? = nil
     var via = "none"
-    if loopSec > 0, let w = findWindow(ownerNeedle: ownerName, titleNeedle: titleSub) {
-        captured = captureCLI(w)
-        if captured != nil { via = "screencapture(win \(w.id))" }
+    var tried: [String] = []
+    if let img = captureSCK(ownerNeedle: ownerName, titleNeedle: titleSub) {
+        if meanLuma(img) >= 1 { captured = img; via = "sck" } else { tried.append("sck black") }
+    } else { tried.append("sck \(sckError)") }
+    if captured == nil, loopSec > 0, let w = findWindow(ownerNeedle: ownerName, titleNeedle: titleSub) {
+        if let img = captureCLI(w) {
+            if meanLuma(img) >= 1 { captured = img; via = "screencapture(win \(w.id))" } else { tried.append("screencapture black") }
+        } else { tried.append("screencapture \(cliError)") }
     }
-    if captured == nil {
-        captured = captureSCK(ownerNeedle: ownerName, titleNeedle: titleSub)
-        if captured != nil { via = "sck" }
+    if captured == nil, let w = findWindow(ownerNeedle: ownerName, titleNeedle: titleSub), let img = captureWindow(w) {
+        if meanLuma(img) >= 1 { captured = img; via = "display" } else { tried.append("display black") }
+    }
+    if captured == nil && !tried.isEmpty && tried.allSatisfy({ $0.hasSuffix("black") }) {
+        return ([], "all capture routes returned a black frame (\(tried.joined(separator: "; "))) - screen locked/asleep or capture blocked")
     }
     if captured == nil && !preflight {
         return ([], "Screen Recording not granted (preflight false; ScreenCaptureKit: \(sckError)). System Settings → " +
@@ -266,7 +275,6 @@ func capturePass() -> ([String], String?) {
                         "Grant Screen Recording; keep Discord on-screen. (ScreenCaptureKit: \(sckError); screencapture: \(cliError))")
         }
     }
-    if via == "none" { via = "legacy-display" }
     let img = captured!
     var dbgNote = "no-debug"
     if let dbg = ProcessInfo.processInfo.environment["DISCORD_OCR_DEBUG_PNG"], !dbg.isEmpty {
