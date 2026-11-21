@@ -29,5 +29,12 @@
  ],
  "review gate": "result-skeptic reviews this prereg and the script together before any outcome",
  "script": "tools/studies/rsi2_red_inplay.py",
- "status": "DRAFT"
+ "status": "amended_1; run",
+ "amended_1": {
+  "when": "2026-11-21, after the combined skeptic review (FIX FIRST: 4), no outcome",
+  "1 refractory": "separate refractory per band (top decile and top quintile rows each on their own), per rule per name",
+  "2 gross bar": "the PASSING exit needs pooled gross >= +5 bp (replaces 'on ALL exits counted'), as in the sibling RSI-2 tests",
+  "3 control means": "raw means of in-play peers, all-name peers, same-name-later, and unconditional random in-play and any-name minutes are printed for every exit",
+  "4 feed": "SIP 1-minute bars (the parent cache); step 2 is SIP-only and an IEX rerun is required before any live claim"
+ }
 }

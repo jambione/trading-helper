@@ -95,43 +95,55 @@ def day_task(path, outcomes_on=True):
     day, U_ = d["day"], len(d["syms"])
     sig, MR, top10, top20 = day_signals(d)
     rows, cnt = [], defaultdict(int)
-    for k, sigs in sig.items():
-        o, h, l, c = d["o"][k], d["h"][k], d["l"][k], d["c"][k]
-        free = defaultdict(lambda: -1)
-        for rule, t, ent, e, dist, at_open in sigs:
-            tsel = t if rule == "S" else t      # in-play read at the signal minute (from completed bars before it)
-            ip10, ip20 = bool(top10[k, tsel]), bool(top20[k, tsel])
-            if not ip20:
-                continue
-            cnt[f"{rule}_top20_raw"] += 1
-            if ip10:
-                cnt[f"{rule}_top10_raw"] += 1
-            if not outcomes_on:
-                continue
-            key = (rule, ip10)
-            if ent < free[rule]:
-                cnt[f"{rule}_refractory"] += 1
-                continue
-            vals, xb = W.outcomes(o, h, l, c, ent, e, at_open)
-            free[rule] = max(xb + 1, ent + 15)
-            r = {"rule": rule, "top10": ip10, "day": day, "sym": d["syms"][k], "t": t, "ent": ent, **dict(zip(EX, vals)), "exit_bar": xb}
-            kind = "open" if at_open else "stop"
-            order = sorted((j for j in range(U_) if j != k), key=lambda j: R.hkey("inplay-peer", day, d["syms"][j], ent))
-            fbar = t - 1 if kind == "stop" else t
-            mask = top10 if ip10 else top20
-            ip_peers = [j for j in order if mask[j, tsel] and R.passes_filter_chg(d["c"][j], d["pc"][j], fbar, -1e9)][:5]
-            all_peers = [j for j in order if R.passes_filter_chg(d["c"][j], d["pc"][j], fbar, -1e9)][:5]
-            for tag, js in (("ip", ip_peers), ("all", all_peers)):
-                pv = [W.peer_trade(kind, d, j, t, ent, dist) for j in js]
-                r[f"n_{tag}"] = sum(1 for v in pv if v)
+    for band, mask in (("top10", top10), ("top20", top20)):          # review fix 1: refractory per band
+        for k, sigs in sig.items():
+            o, h, l, c = d["o"][k], d["h"][k], d["l"][k], d["c"][k]
+            free = defaultdict(lambda: -1)
+            for rule, t, ent, e, dist, at_open in sigs:
+                if not bool(mask[k, t]):
+                    continue
+                cnt[f"{rule}_{band}_raw"] += 1
+                if not outcomes_on:
+                    continue
+                if ent < free[rule]:
+                    cnt[f"{rule}_{band}_refractory"] += 1
+                    continue
+                vals, xb = W.outcomes(o, h, l, c, ent, e, at_open)
+                free[rule] = max(xb + 1, ent + 15)
+                r = {"rule": rule, "band": band, "day": day, "sym": d["syms"][k], "t": t, "ent": ent,
+                     **dict(zip(EX, vals)), "exit_bar": xb}
+                kind = "open" if at_open else "stop"
+                order = sorted((j for j in range(U_) if j != k), key=lambda j: R.hkey("inplay-peer", day, d["syms"][j], ent))
+                fbar = t - 1 if kind == "stop" else t
+                ip_peers = [j for j in order if mask[j, t] and R.passes_filter_chg(d["c"][j], d["pc"][j], fbar, -1e9)][:5]
+                all_peers = [j for j in order if R.passes_filter_chg(d["c"][j], d["pc"][j], fbar, -1e9)][:5]
+                for tag, js in (("ip", ip_peers), ("all", all_peers)):
+                    pv = [W.peer_trade(kind, d, j, t, ent, dist) for j in js]
+                    r[f"n_{tag}"] = sum(1 for v in pv if v)
+                    for i, ex in enumerate(EX):
+                        m = W._mean_of(pv, i)
+                        r[f"{tag}_mean_{ex}"] = m
+                        r[f"lift_{ex}" if tag == "ip" else f"liftall_{ex}"] = r[ex] - m if np.isfinite(m) and np.isfinite(r[ex]) else np.nan
+                # unconditional: a random in-play (same band) name-minute and a random any-name minute, same entry type
+                rng = np.random.default_rng(R.hkey("inplay-unc", day, r["sym"], ent, rule, band) % 2 ** 32)
+                for tag, need_ip in (("unc_ip", True), ("unc_all", False)):
+                    for ex in EX:
+                        r[f"{tag}_{ex}"] = np.nan
+                    for _ in range(40):
+                        j, tt = int(rng.integers(0, U_)), int(rng.integers(R.T_LO, R.T_HI))
+                        fb = tt - 1 if kind == "stop" else tt
+                        if (not need_ip or mask[j, tt]) and R.passes_filter_chg(d["c"][j], d["pc"][j], fb, -1e9):
+                            v = W.peer_trade(kind, d, j, tt, tt + (1 if kind == "open" else 0), dist)
+                            if v:
+                                for i, ex in enumerate(EX):
+                                    r[f"{tag}_{ex}"] = v[i]
+                            break
+                x0 = xb + 2 + R.hkey("inplay-later", day, r["sym"], ent) % 61
+                v = W.outcomes(o, h, l, c, x0, R.px_or(o, x0), True)[0] if x0 <= R.T_HI and np.isfinite(R.px_or(o, x0)) else None
                 for i, ex in enumerate(EX):
-                    m = W._mean_of(pv, i)
-                    r[f"lift_{ex}" if tag == "ip" else f"liftall_{ex}"] = r[ex] - m if np.isfinite(m) and np.isfinite(r[ex]) else np.nan
-            x0 = xb + 2 + R.hkey("inplay-later", day, r["sym"], ent) % 61
-            v = W.outcomes(o, h, l, c, x0, R.px_or(o, x0), True)[0] if x0 <= R.T_HI and np.isfinite(R.px_or(o, x0)) else None
-            for i, ex in enumerate(EX):
-                r[f"lift_later_{ex}"] = r[ex] - v[i] if v and np.isfinite(v[i]) and np.isfinite(r[ex]) else np.nan
-            rows.append(r)
+                    r[f"later_mean_{ex}"] = v[i] if v else np.nan
+                    r[f"lift_later_{ex}"] = r[ex] - v[i] if v and np.isfinite(v[i]) and np.isfinite(r[ex]) else np.nan
+                rows.append(r)
     return rows, dict(cnt), day
 
 
@@ -167,8 +179,8 @@ def screen():
     out = {"prereg": PREREG, "counts": counts}
     gate = False
     for rule in ("S", "C"):
-        for band, sel in (("top10 (scored)", True), ("top20 (information)", None)):
-            rr = [r for r in rows if r["rule"] == rule and (r["top10"] if sel else True)]
+        for band, sel in (("top10 (scored)", "top10"), ("top20 (information)", "top20")):
+            rr = [r for r in rows if r["rule"] == rule and r["band"] == sel]
             rep = {"n": len(rr), "no_inplay_peer": sum(1 for r in rr if r["n_ip"] == 0)}
             for ex in EX:
                 st = R._stat(rr, ex)
@@ -178,7 +190,9 @@ def screen():
                 st["vs_all_names (information)"] = {"lift": R.r2(R.mean(la, f"liftall_{ex}")), "t": R.r2(R.day_t(la, f"liftall_{ex}"))}
                 lat = [r for r in rr if np.isfinite(r.get(f"lift_later_{ex}", np.nan))]
                 st["same_name_later"] = {"n": len(lat), "lift": R.r2(R.mean(lat, f"lift_later_{ex}")), "t": R.r2(R.day_t(lat, f"lift_later_{ex}"))}
-                if sel and ex in ("m3", "m5", "ratchet"):
+                st["control_means (P2)"] = {nm: R.r2(R.mean([x for x in rr if np.isfinite(x.get(f"{nm}_{ex}", np.nan))], f"{nm}_{ex}"))
+                                           for nm in ("ip_mean", "all_mean", "later_mean", "unc_ip", "unc_all")}
+                if sel == "top10" and ex in ("m3", "m5", "ratchet"):
                     g1 = R._gate_one(st)
                     ok = (g1 == "PASS" and (st["lift_pooled"] or -1) >= 3.0 and (st["gross_pooled"] or -1) >= 5.0
                           and (st["same_name_later"]["lift"] if st["same_name_later"]["lift"] is not None else -1) >= 0)
