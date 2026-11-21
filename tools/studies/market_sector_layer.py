@@ -202,6 +202,40 @@ def cell(rows, dropped):
     return st
 
 
+def controls(res, lr):
+    """P2 controls for a cell's ON rows: unconditional (a random price-band minute on a random name that day, hash
+    seed) and same-name later (the name's G at a minute in t+32 .. t+92). Means and the day-clustered gap. Pure."""
+    import arm_then_fire as A
+    unc, later = [], []
+    for r in lr:
+        D = res["days"][r["day"]]
+        G, px = D["G"], D["px"]
+        rng = np.random.default_rng(hkey("msl-unc", r["day"], r["sym"], r["t"]) % 2 ** 32)
+        for _ in range(20):
+            k, t = int(rng.integers(0, G.shape[0])), int(rng.integers(15, 360))
+            if px[k, t] and np.isfinite(G[k, t]):
+                unc.append({"day": r["day"], "v": float(G[k, t])})
+                break
+        k = D["syms"].index(r["sym"])
+        t2 = r["t"] + 32 + hkey("msl-later", r["day"], r["sym"], r["t"]) % 61
+        if t2 < 360 and np.isfinite(G[k, t2]):
+            later.append({"day": r["day"], "v": float(G[k, t2]), "lift": r["g"] - float(G[k, t2])})
+    ctl = [{"day": r["day"], "v": r["g"] - r["lift"]} for r in lr]
+    def dm(rows):
+        per = defaultdict(list)
+        for x in rows:
+            per[x["day"]].append(x["v"])
+        return {k: float(np.mean(v)) for k, v in per.items()}
+    pc, uc = dm(ctl), dm(unc)
+    diffs = [pc[d] - uc[d] for d in pc if d in uc]
+    t = float(np.mean(diffs) / (np.std(diffs, ddof=1) / math.sqrt(len(diffs)))) if len(diffs) > 2 and np.std(diffs) > 0 else None
+    lm, _, lt, _ = A.day_stats(later, weighted=False)
+    return {"peer_mean": float(np.mean([x["v"] for x in ctl])) if ctl else None,
+            "unconditional_mean": float(np.mean([x["v"] for x in unc])) if unc else None,
+            "peer_vs_unconditional_day": {"diff": float(np.mean(diffs)) if diffs else None, "t": t},
+            "same_name_later_lift": lm, "same_name_later_t": lt}
+
+
 def score():
     import arm_then_fire as A
     AT = A.OUT
@@ -255,8 +289,20 @@ def score():
                 pl, pd = peer_lift(pr, on, off, match_spy=ms)
                 hits += cell(pl, pd)["verdict"].startswith("EDGE")
             st["time_shift_placebo_rate"] = hits / 20
+            ct = controls(res, lr)
+            st["controls"] = ct
+            pu = ct["peer_vs_unconditional_day"]
             if st["verdict"].startswith("EDGE") and hits / 20 > 0.10:
                 st["verdict"] = "BLOCKED (time-shift placebo)"
+            elif st["verdict"].startswith("EDGE") and not ((ct["same_name_later_lift"] or -1) > 0):
+                st["verdict"] = "BLOCKED (same-name later control not > 0)"
+            elif st["verdict"].startswith("EDGE") and pu["diff"] is not None and abs(pu["diff"]) > 3 and abs(pu["t"] or 0) > 2:
+                st["verdict"] = "BLOCKED (peer vs unconditional mismatch)"
+            elif st["verdict"].startswith("EDGE"):
+                st["verdict"] = "EDGE"
+            if c == "C1" and trig == "F2":     # planted canary: +15 bp on ON fires must read EDGE
+                pl = [dict(x, lift=x["lift"] + 15.0) for x in lr]
+                out["canary_planted_C1xF2"] = cell(pl, dr)["verdict"]
             out["cells"][f"{c}x{trig}"] = st
         # C3: armed+R1 must beat BOTH armed+R1-off AND unarmed+R1-on
         la, da = peer_lift(rr, lambda f: armed(f) and f["R1"], lambda f: armed(f) and not f["R1"], True)
