@@ -271,3 +271,26 @@ def test_ratchet_falls_back_to_last_finite_close():
     c[59] = 100.05
     px, b = r.ratchet_exit(o, h, l, c, 0, 100.0, False)
     assert b == 59 and px == 100.05
+
+
+def test_red_run_length_breaks_on_missing_minutes():
+    import rsi2_colour_timing as r
+    c = np.array([1.0, 1.0, 1.0, np.nan, 1.0, 1.0, 1.0])
+    red = np.array([True, True, True, True, True, False, True])   # red_pine carries across the NaN at index 3
+    assert list(r.red_run_length(red, c)) == [1, 2, 3, 0, 1, 0, 1]
+    for gap in (0, 1, 2):                                          # a NaN at t-2, t-1 or t
+        cc = np.ones(5); rr = np.ones(5, bool); cc[2 + gap - 2] = np.nan
+        L = r.red_run_length(rr, cc)
+        assert L[2 + gap - 2] == 0 and (gap == 2 or L[2] <= 2)
+
+
+def test_persist_events_kinds():
+    import rsi2_colour_timing as r
+    n = 390
+    d = {"c": [np.full(n, 30.0)], "pc": [30.0], "red_pine": [np.zeros(n, bool)], "rsi_pine": [np.full(n, 50.0)]}
+    d["red_pine"][0][20:22] = True          # 2-bar red -> P2 at 21, B12 at 22 (not B1)
+    d["red_pine"][0][40] = True             # 1-bar red -> B1 and B12 at 41
+    d["rsi_pine"][0][60:63] = 95.0          # 3 non-red RSI>90 bars -> A2 at 61, A3 at 62
+    ev = r.persist_events(d, 0)
+    assert ev["P2"] == [21] and ev["P3"] == [] and 41 in ev["B1"] and 22 in ev["B12"] and 22 not in ev["B1"]
+    assert ev["A2"] == [61] and ev["A3"] == [62]

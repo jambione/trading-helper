@@ -481,6 +481,242 @@ def red_screen():
     print(json.dumps(out, indent=1, default=str))
 
 
+# ---------------------------------------------------------------- rsi2_red_persistence (child prereg)
+
+PERSIST_PREREG = "docs/studies/rsi2_red_persistence_prereg.json (amended_2)"
+
+
+def red_run_length(red, c):
+    """Consecutive closed-red bars ending at each minute, counting only minutes that HAVE a bar: a minute with no
+    bar (NaN close) breaks the run (red_pine carries state across gaps; this count must not). Pure."""
+    L = np.zeros(len(c), int)
+    for t in range(len(c)):
+        if np.isfinite(c[t]) and bool(red[t]):
+            L[t] = (L[t - 1] if t > 0 else 0) + 1
+    return L
+
+
+def hot_run_length(rsi, red, c):
+    """Consecutive bars with RSI-2 > 90 that are NOT Pine-red (an up-push without the red state), same gap rule. Pure."""
+    L = np.zeros(len(c), int)
+    for t in range(len(c)):
+        if np.isfinite(c[t]) and np.isfinite(rsi[t]) and rsi[t] > 90 and not bool(red[t]):
+            L[t] = (L[t - 1] if t > 0 else 0) + 1
+    return L
+
+
+def persist_events(d, k):
+    """Signal minutes on one name-day (no outcomes): P2 (2nd red bar of a run), P3 (3rd), A2/A3 (2nd/3rd bar of a
+    non-red RSI-2 > 90 push), B1 (a red that ended after exactly 1 bar: red at t-1 with run 1, not red at t),
+    B12 (ended after 1 or 2 bars). Filter at t ($20-$400, no day filter), window T_LO..T_HI. -> dict kind -> [t]. Pure."""
+    c, red, rsi = d["c"][k], d["red_pine"][k], d["rsi_pine"][k]
+    L, H = red_run_length(red, c), hot_run_length(rsi, red, c)
+    ev = {x: [] for x in ("P2", "P3", "A2", "A3", "B1", "B12")}
+    for t in range(T_LO, T_HI + 1):
+        if not passes_filter_chg(c, d["pc"][k], t, -1e9):
+            continue
+        if L[t] == 2:
+            ev["P2"].append(t)
+        if L[t] == 3:
+            ev["P3"].append(t)
+        if H[t] == 2:
+            ev["A2"].append(t)
+        if H[t] == 3:
+            ev["A3"].append(t)
+        if L[t] == 0 and np.isfinite(c[t]) and L[t - 1] >= 1:
+            if L[t - 1] == 1:
+                ev["B1"].append(t)
+            if L[t - 1] in (1, 2):
+                ev["B12"].append(t)
+    return ev
+
+
+def _open_trade(d, j, t):
+    """Buy open[t+1] on name j with the three exits. -> (fix5, fix15, ratchet, exit bar) or None. Pure."""
+    o, h, l, c = d["o"][j], d["h"][j], d["l"][j], d["c"][j]
+    e = px_or(o, t + 1)
+    if not np.isfinite(e):
+        return None
+    return _outcomes(o, h, l, c, t + 1, e, True)
+
+
+EXITS3 = ("fix5", "fix15", "ratchet")
+
+
+def persist_day(path):
+    """One cached day -> rows for P2/P3 with: own exits, same-minute peers (filtered names buying the same open),
+    exact-minute (a)/(b) matches, unconditional, same-name later; plus full-sample event outcomes for (a)/(b).
+    Refractory per rule: until the ratchet exit and >= 15 bars. Pure given the file."""
+    z = np.load(path)
+    d = {kk: z[kk] for kk in z.files}
+    d["syms"] = [str(x) for x in z["syms"]]
+    d["day"] = Path(path).stem
+    U_ = len(d["syms"])
+    evs = [persist_events(d, k) for k in range(U_)]
+    rows, full = [], {x: [] for x in ("A2", "A3", "B1", "B12")}
+    for k in range(U_):
+        for kind in ("A2", "A3", "B1", "B12"):
+            for t in evs[k][kind]:
+                tr = _open_trade(d, k, t)
+                if tr:
+                    full[kind].append({"day": d["day"], **dict(zip(EXITS3, tr[:3]))})
+    for rule, ka, kb in (("P2", "A2", "B1"), ("P3", "A3", "B12")):
+        for k in range(U_):
+            free = -1
+            for t in evs[k][rule]:
+                if t < free:
+                    continue
+                tr = _open_trade(d, k, t)
+                if not tr:
+                    continue
+                r = {"rule": rule, "day": d["day"], "sym": d["syms"][k], "t": t, **dict(zip(EXITS3, tr[:3])),
+                     "exit_bar": tr[3]}
+                free = max(tr[3] + 1, t + 15)
+                others = sorted((j for j in range(U_) if j != k), key=lambda j: hkey("persist-peer", d["day"], d["syms"][j], t))
+                peers = [j for j in others if passes_filter_chg(d["c"][j], d["pc"][j], t, -1e9)][:5]
+                ma = [j for j in others if t in evs[j][ka]][:5]
+                mb = [j for j in others if t in evs[j][kb]][:5]
+                for tag, js in (("peer", peers), ("a", ma), ("b", mb)):
+                    vals = [_open_trade(d, j, t) for j in js]
+                    vals = [v for v in vals if v]
+                    r[f"n_{tag}"] = len(vals)
+                    for i, ex in enumerate(EXITS3):
+                        xs = [v[i] for v in vals if np.isfinite(v[i])]
+                        m = float(np.mean(xs)) if xs else np.nan
+                        r[f"{tag}_{ex}"] = m
+                        r[f"lift_{tag}_{ex}" if tag != "peer" else f"lift_{ex}"] = r[ex] - m if xs and np.isfinite(r[ex]) else np.nan
+                # unconditional: a random filtered name-minute, same entry type and exits
+                rng = np.random.default_rng(hkey("persist-unc", d["day"], r["sym"], t, rule) % 2 ** 32)
+                r["unc_ratchet"] = np.nan
+                for _ in range(20):
+                    j, tt = int(rng.integers(0, U_)), int(rng.integers(T_LO, T_HI + 1))
+                    if passes_filter_chg(d["c"][j], d["pc"][j], tt, -1e9):
+                        v = _open_trade(d, j, tt)
+                        r["unc_ratchet"] = v[2] if v else np.nan
+                        break
+                # same-name later: entry in exit+2 .. exit+62, the same exit rule
+                x0 = tr[3] + 2 + hkey("persist-later", d["day"], r["sym"], t) % 61
+                v = _open_trade(d, k, x0 - 1) if x0 <= T_HI else None
+                r["later_ratchet"] = v[2] if v else np.nan
+                rows.append(r)
+    return rows, full
+
+
+def persist_counts(path):
+    z = np.load(path)
+    d = {kk: z[kk] for kk in z.files}
+    d["syms"] = [str(x) for x in z["syms"]]
+    d["day"] = Path(path).stem
+    n = defaultdict(int)
+    for k in range(len(d["syms"])):
+        for kind, ts in persist_events(d, k).items():
+            n[kind] += len(ts)
+    return dict(n)
+
+
+def _paired_day_t(rows_a, key_a, rows_b, key_b):
+    """Day-clustered comparison of two sets on the same days: mean over days of (day mean A - day mean B). Pure."""
+    da, db = day_means(rows_a, key_a), day_means(rows_b, key_b)
+    diffs = [da[k] - db[k] for k in da if k in db]
+    if len(diffs) < 3 or np.std(diffs, ddof=1) == 0:
+        return {"days": len(diffs), "diff": r2(float(np.mean(diffs))) if diffs else None, "t": None}
+    return {"days": len(diffs), "diff": r2(float(np.mean(diffs))),
+            "t": r2(float(np.mean(diffs) / (np.std(diffs, ddof=1) / math.sqrt(len(diffs)))))}
+
+
+def persist_screen():
+    """rsi2_red_persistence step 1 on SEARCH only (CONFIRM sealed: counts only). Gate per amended_1 #5 + amended_2."""
+    from multiprocessing import Pool
+    sp = [str(p) for p in sorted(CACHE.glob("*.npz")) if SEARCH[0] <= p.stem <= SEARCH[1]]
+    cp = [str(p) for p in sorted(CACHE.glob("*.npz")) if CONFIRM[0] <= p.stem <= CONFIRM[1]
+          and p.stem not in ("2026-11-17", "2026-11-18")]
+    rows, full = [], {x: [] for x in ("A2", "A3", "B1", "B12")}
+    with Pool(int(os.environ.get("RED_WORKERS", "6"))) as pool:
+        for rr, ff in pool.imap(persist_day, sp):
+            rows += rr
+            for kk, v in ff.items():
+                full[kk] += v
+        ccount = defaultdict(int)
+        for n in pool.imap(persist_counts, cp):
+            for kk, v in n.items():
+                ccount[kk] += v
+    out = {"prereg": PERSIST_PREREG, "CONFIRM_counts (sealed, no outcomes)": dict(ccount)}
+    gate_any = False
+    for rule, ka, kb in (("P2", "A2", "B1"), ("P3", "A3", "B12")):
+        rr = [r for r in rows if r["rule"] == rule]
+        a, b = halves(rr)
+        rep_ = {"n": len(rr), "n_h1": len(a), "n_h2": len(b), "no_peer": sum(1 for r in rr if r["n_peer"] == 0),
+                "match_rate_a": r2(float(np.mean([r["n_a"] > 0 for r in rr]))) if rr else None,
+                "match_rate_b": r2(float(np.mean([r["n_b"] > 0 for r in rr]))) if rr else None}
+        for ex in EXITS3:
+            st = _stat(rr, ex)
+            st["gross_pooled"] = r2(mean(rr, ex))
+            st["lift_pooled"] = r2(mean([r for r in rr if np.isfinite(r.get(f"lift_{ex}", np.nan))], f"lift_{ex}"))
+            st["vs_a_exact"] = {"lift": r2(mean(rr, f"lift_a_{ex}")), "t": r2(day_t(rr, f"lift_a_{ex}"))}
+            st["vs_b_exact"] = {"lift": r2(mean(rr, f"lift_b_{ex}")), "t": r2(day_t(rr, f"lift_b_{ex}"))}
+            st["vs_a_full_sample"] = _paired_day_t(rr, ex, full[ka], ex)
+            st["vs_b_full_sample"] = _paired_day_t(rr, ex, full[kb], ex)
+            gbar = 3.0 if ex == "fix5" else 5.0
+            ok = (_gate_one(st) == "PASS" and (st["lift_pooled"] or -1) >= 3.0 and (st["gross_pooled"] or -1) >= gbar)
+            st["step1_gate"] = "PASS" if ok else ("UNDERPOWERED" if _gate_one(st) == "UNDERPOWERED" else "FAIL")
+            gate_any |= ok
+            rep_[ex] = st
+        pm = mean(rr, "peer_ratchet")
+        um = mean(rr, "unc_ratchet")
+        rep_["peer_mean_ratchet"], rep_["unconditional_mean_ratchet"] = r2(pm), r2(um)
+        rep_["peer_vs_unconditional_day"] = _paired_day_t(rr, "peer_ratchet", rr, "unc_ratchet")
+        rep_["same_name_later_mean_ratchet"] = r2(mean(rr, "later_ratchet"))
+        rep_["opening_0945_1030 (information)"] = _stat([r for r in rr if r["t"] <= 60], "ratchet")
+        out[rule] = rep_
+    out["STEP2_GATE"] = ("PASS - step 2 (live-exit replay, CONFIRM unsealed) after Neon and the operator" if gate_any
+                         else "STOP - no rule/exit passes the step-1 gate on SEARCH")
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / "persist_screen.json").write_text(json.dumps(out, indent=1, default=str))
+    print(json.dumps(out, indent=1, default=str))
+
+
+PERSIST_EXAMPLES = {   # amended_1 #7: (sym, day) -> expected P2 / P3 signal minutes (HH:MM)
+    ("IQV", "2026-11-17"): (["10:07"], []), ("ENTG", "2026-11-17"): (["15:22"], []),
+    ("CGON", "2026-11-18"): (["10:08"], []), ("HOOD", "2026-11-18"): (["10:56"], ["10:57"]),
+    ("RVMD", "2026-11-18"): (["09:56"], ["09:57"]), ("ON", "2026-11-17"): (["10:57"], ["10:58"]),
+}
+PERSIST_NEVER = (("CRWD", "2026-11-17", "12:17", "12:18"), ("CRCL", "2026-11-18", "15:27", "15:28"),
+                 ("ADP", "2026-11-18", "09:50", "09:51"), ("BNY", "2026-11-18", "10:57", "10:58"),
+                 ("ON", "2026-11-17", "11:15", "11:17"), ("MDB", "2026-11-17", "12:12", "12:14"),
+                 ("GD", "2026-11-17", "10:06", "10:08"), ("PODD", "2026-11-17", "11:52", "11:54"),
+                 ("RRX", "2026-11-17", "12:32", "12:34"), ("TMUS", "2026-11-18", "10:49", "10:51"),
+                 ("CRS", "2026-11-18", "10:56", "10:58"))
+
+
+def persist_examples():
+    """amended_1 #7 code check (signals only, no outcomes): P2/P3 fire where expected on the operator's examples and
+    never in the windows after the 1-bar reds and the bars that never closed red."""
+    hm = lambda i: f"{9 + (30 + i) // 60:02d}:{(30 + i) % 60:02d}"
+    cache, ok = {}, True
+    def ev(sym, day):
+        if day not in cache:
+            z = np.load(CACHE / f"{day}.npz")
+            dd = {kk: z[kk] for kk in z.files}
+            dd["syms"] = [str(x) for x in z["syms"]]
+            dd["day"] = day
+            cache[day] = dd
+        dd = cache[day]
+        k = dd["syms"].index(sym)
+        e = persist_events(dd, k)
+        return [hm(t) for t in e["P2"]], [hm(t) for t in e["P3"]]
+    for (sym, day), (w2, w3) in PERSIST_EXAMPLES.items():
+        p2, p3 = ev(sym, day)
+        good = all(x in p2 for x in w2) and all(x in p3 for x in w3)
+        ok &= good
+        print(f"{'OK  ' if good else 'MISS'} {sym} {day}: expected P2 {w2} P3 {w3}; got P2 {p2} P3 {p3}")
+    for sym, day, a, b in PERSIST_NEVER:
+        p2, p3 = ev(sym, day)
+        hit = [x for x in p2 + p3 if a <= x <= b]
+        ok &= not hit
+        print(f"{'OK  ' if not hit else 'FIRE'} {sym} {day} {a}-{b}: no P2/P3 expected; got {hit}")
+    print("EXAMPLES", "PASS" if ok else "FAIL")
+
+
 def trades_for_name(rule, d, k, mode, t_lo=None, t_hi=None):
     """All trades of one rule on one name-day (row k of day d) with the refractory. -> list of dicts. Pure."""
     o, h, l, c = d["o"][k], d["h"][k], d["l"][k], d["c"][k]
@@ -1259,6 +1495,10 @@ def main(argv):
         return eth_fetch()
     if cmd == "red_screen":
         return red_screen()
+    if cmd == "persist_examples":
+        return persist_examples()
+    if cmd == "persist_screen":
+        return persist_screen()
     if cmd == "examples":
         return examples()
     if cmd == "build":
