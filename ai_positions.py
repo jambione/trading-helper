@@ -2353,6 +2353,15 @@ def place_scaled_entry(
                 if cap_bp > 0:
                     min_cap = float(cfg.get("ai_marketable_limit_min_cap_dollars", 0.02) or 0.02)
                     tif = str(cfg.get("ai_marketable_limit_tif", "ioc") or "ioc")
+                    # 11/21 anchor fix: `ref` is the decision price, which is the LAST TRADE PRINT when the stream
+                    # is fresh; a print at the bid put the IOC cap below the real ask on 5+ bp spreads, so rising
+                    # names missed or part-filled (N19 11/09-11/11). Anchor to the quoted ask when it is higher.
+                    q_ask = _cached_quote_ask(ticker)
+                    ref_cap, ref_src = marketable_anchor(ref, q_ask, marketable_anchor_max_over_bp(cfg))
+                    if ref_src != "decision":
+                        log_event("marketable_limit_anchor", symbol=ticker, decision_ref=ref, quote_ask=q_ask,
+                                  ref=ref_cap, src=ref_src)
+                    ref = ref_cap
                     out = alpaca_trader.buy_marketable_limit(
                         ticker, ref, qty=parent_qty, cap_bp=cap_bp, min_cap_dollars=min_cap, time_in_force=tif,
                     ) or {}
@@ -3247,6 +3256,44 @@ def marketable_reprice_ref(first_ref: float, fresh_ask: float | None, chase_bp: 
     if r0 <= 0 or a <= 0 or a > r0 * (1.0 + chase_bp / 1e4) + 1e-9:
         return None
     return a
+
+
+def marketable_anchor_max_over_bp(cfg: dict | None) -> float:
+    """ai_marketable_limit_anchor_max_over_bp: a quoted ask more than this far above the decision price is treated as
+    stale / too wide and ignored (default 30 bp, twice the 15 bp spread gate)."""
+    try:
+        return max(0.0, float((cfg or {}).get("ai_marketable_limit_anchor_max_over_bp", 30.0)))
+    except (TypeError, ValueError):
+        return 30.0
+
+
+def marketable_anchor(decision_ref: float, quote_ask: float | None, max_over_bp: float) -> tuple[float, str]:
+    """The marketable-limit cap's reference: the higher of the decision price and the quoted ask, unless the ask is
+    more than max_over_bp above the decision price (then the decision price). -> (ref, source). Pure."""
+    try:
+        r = float(decision_ref)
+    except (TypeError, ValueError):
+        r = 0.0
+    try:
+        a = float(quote_ask) if quote_ask is not None else 0.0
+    except (TypeError, ValueError):
+        a = 0.0
+    if a <= 0 or r <= 0:
+        return (a if r <= 0 and a > 0 else r), ("quote_ask" if r <= 0 and a > 0 else "decision")
+    if a <= r:
+        return r, "decision"
+    if a > r * (1.0 + max_over_bp / 1e4) + 1e-9:
+        return r, "decision_ask_too_far"
+    return a, "quote_ask"
+
+
+def _cached_quote_ask(ticker: str) -> float | None:
+    """The quote ask the pre-arm refresh just cached (refresh_arm_market_data busts and re-pulls it), no new request."""
+    try:
+        import ai_trading
+        return ai_trading._latest_ask(ticker)
+    except Exception:
+        return None
 
 
 def _marketable_missed(out: dict | None) -> bool:

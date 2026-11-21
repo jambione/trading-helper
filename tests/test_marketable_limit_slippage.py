@@ -505,3 +505,28 @@ class TestAIPositionsMarketableLimitRouting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMarketableAnchor(unittest.TestCase):
+    """11/21: the IOC cap anchors to the quoted ask when the decision price (last print) sits below it."""
+
+    def test_anchor_rules(self):
+        self.assertEqual(ai_positions.marketable_anchor(50.00, 50.04, 30.0), (50.04, "quote_ask"))     # print at the bid
+        self.assertEqual(ai_positions.marketable_anchor(50.05, 50.04, 30.0), (50.05, "decision"))      # print above ask
+        self.assertEqual(ai_positions.marketable_anchor(50.00, 50.20, 30.0), (50.00, "decision_ask_too_far"))  # +40 bp
+        self.assertEqual(ai_positions.marketable_anchor(50.00, None, 30.0), (50.00, "decision"))
+        self.assertEqual(ai_positions.marketable_anchor(0, 50.04, 30.0), (50.04, "quote_ask"))
+        self.assertEqual(ai_positions.marketable_anchor_max_over_bp({}), 30.0)
+
+    def test_place_uses_the_quoted_ask_for_the_cap(self):
+        mock_cfg = {"ai_broker_stop_enabled": False, "ai_entry_order_style": "market", "ai_marketable_limit_cap_bp": 5.0,
+                    "ai_marketable_limit_cooldown_sec": 60.0}
+        decision = {"entry_low": 49.90, "entry_high": 50.10, "stop_price": 48.00, "target_1": 54.00, "desk_force": True}
+        with patch("config.load_config_ro", return_value=mock_cfg), \
+             patch("ai_positions._cached_quote_ask", return_value=50.04), \
+             patch("alpaca_trader.buy_marketable_limit") as mock_limit:
+            mock_limit.return_value = {"ok": True, "order_id": "o1", "status": "filled", "limit_px": 50.07}
+            out = ai_positions.place_scaled_entry("AMD", decision, account_equity=25000.0,
+                                                  current_ask=50.00, current_bid=49.98)
+            self.assertTrue(out.get("ok"))
+            self.assertEqual(mock_limit.call_args.args[1], 50.04)
